@@ -194,6 +194,25 @@ function privateJson(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
+// Browser-based MCP clients call /mcp cross-origin. Without CORS on every
+// response — errors included — the browser hides the 401, the client cannot
+// read WWW-Authenticate, and OAuth discovery silently never starts.
+function withMcpCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  for (const [name, value] of Object.entries(CORS_HEADERS)) {
+    headers.set(name, value);
+  }
+  headers.set(
+    "Access-Control-Expose-Headers",
+    "WWW-Authenticate, mcp-session-id, mcp-protocol-version",
+  );
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
 function withSecurityHeaders(
   response: Response,
   requestUrl: URL,
@@ -722,8 +741,10 @@ export function createFetchHandler(
 
       if (path === "/mcp") {
         const authz = await authorize(request, baseUrl, auth);
-        if (!authz.ok) return authz.response;
-        return serveMcp(request, opts, baseUrl, authz.actor, runtimeContext);
+        const response = authz.ok
+          ? await serveMcp(request, opts, baseUrl, authz.actor, runtimeContext)
+          : authz.response;
+        return withMcpCors(response);
       }
 
       return new Response("Not Found", { status: 404 });

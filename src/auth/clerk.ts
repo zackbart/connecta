@@ -29,6 +29,16 @@ const CORS_HEADERS = {
     "Content-Type, Authorization, mcp-protocol-version",
 };
 
+/** Coarse bearer shape for diagnostics — never the token itself. */
+function tokenShape(request: Request): string {
+  const header = request.headers.get("authorization");
+  if (!header) return "none";
+  const token = header.replace(/^Bearer\s+/i, "");
+  if (token.startsWith("oat_")) return "oauth-opaque";
+  if (token.startsWith("eyJ")) return "jwt";
+  return "other";
+}
+
 /** Clerk Frontend API origin, derived from pk_(test|live)_<b64 domain>. */
 function fapiUrl(publishableKey: string): string {
   const key = publishableKey.replace(/^pk_(test|live)_/, "");
@@ -153,20 +163,55 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         const state = await clerk.authenticateRequest(request, {
           // MCP clients use Clerk OAuth access tokens; the browser dashboard
           // uses the signed-in operator's short-lived Clerk session token.
+          // authorizedParties must NOT be passed here: OAuth access tokens may
+          // be JWTs without an azp claim, and Clerk rejects azp=undefined when
+          // that option is set. The sibling-subdomain pin it provided is
+          // enforced below, only for session tokens that actually carry azp.
           acceptsToken: ["oauth_token", "session_token"],
-          // Session JWTs carry `azp`; pin it to this connecta deployment to
-          // prevent a sibling subdomain's cookie/token being replayed here.
-          authorizedParties: [new URL(resolveBase(baseUrl)).origin],
         });
         const auth = state.toAuth();
         if (!auth?.isAuthenticated) {
+          // Reason (not the token) in the logs: bearer rejections are
+          // otherwise indistinguishable 401s in `wrangler tail`.
+          const detail = state as { reason?: string; message?: string };
+          console.warn(
+            `[connecta] clerk rejected request: status=${state.status}` +
+              ` reason=${detail.reason ?? "?"} message=${detail.message ?? ""}` +
+              ` tokenShape=${tokenShape(request)}`,
+          );
           return {
             ok: false,
             response: unauthorized(baseUrl, tokenPresent),
           };
         }
-        userId = (auth as { userId?: string | null }).userId ?? undefined;
-      } catch {
+        // Session JWTs carry `azp` (the origin they were minted for); pin it
+        // to this connecta deployment so a sibling subdomain's cookie/token
+        // cannot be replayed here. OAuth access tokens may have no azp.
+        const typed = auth as {
+          tokenType?: string;
+          sessionClaims?: { azp?: string } | null;
+          userId?: string | null;
+        };
+        if (typed.tokenType === "session_token") {
+          const azp = typed.sessionClaims?.azp;
+          const origin = new URL(resolveBase(baseUrl)).origin;
+          if (azp && azp !== origin) {
+            console.warn(
+              `[connecta] session token azp mismatch: azp=${azp} expected=${origin}`,
+            );
+            return {
+              ok: false,
+              response: unauthorized(baseUrl, tokenPresent),
+            };
+          }
+        }
+        userId = typed.userId ?? undefined;
+      } catch (error) {
+        console.warn(
+          `[connecta] clerk authenticateRequest threw: ${
+            error instanceof Error ? error.message : String(error)
+          } tokenShape=${tokenShape(request)}`,
+        );
         return { ok: false, response: unauthorized(baseUrl, true) };
       }
       if (!userId) {

@@ -82,6 +82,35 @@ describe("server /mcp end-to-end", () => {
     expect(res.headers.get("WWW-Authenticate")).toBeTruthy();
   });
 
+  it("serves CORS on /mcp errors so browsers can read the 401", async () => {
+    const c = makeConnecta();
+    const res = await rpc(c, "tools/list", {});
+    expect(res.status).toBe(401);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
+      "WWW-Authenticate",
+    );
+  });
+
+  it("serves CORS on successful /mcp responses too", async () => {
+    const c = makeConnecta();
+    const res = await rpc(
+      c,
+      "initialize",
+      {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0.0" },
+      },
+      { token: TOKEN },
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
+      "mcp-session-id",
+    );
+  });
+
   it("initialize succeeds with a valid token", async () => {
     const c = makeConnecta();
     const res = await rpc(

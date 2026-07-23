@@ -60,9 +60,82 @@ describe("clerkAuth inbound auth", () => {
       ok: true,
       userId: "user_123",
     });
+    // authorizedParties must not be passed: OAuth access tokens may carry no
+    // azp claim and Clerk rejects azp=undefined when it is set.
     expect(mocks.authenticateRequest).toHaveBeenCalledWith(request, {
       acceptsToken: ["oauth_token", "session_token"],
-      authorizedParties: [BASE],
+    });
+  });
+
+  it("accepts an OAuth access token without an azp claim", async () => {
+    mocks.authenticateRequest.mockResolvedValue({
+      toAuth: () => ({
+        isAuthenticated: true,
+        userId: "user_oauth",
+        tokenType: "oauth_token",
+      }),
+    });
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+      publicUrl: BASE,
+    });
+    const request = new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { Authorization: "Bearer azp-less-oauth-jwt" },
+    });
+
+    await expect(auth.authorize(request, BASE)).resolves.toEqual({
+      ok: true,
+      userId: "user_oauth",
+    });
+  });
+
+  it("still rejects a session token minted for a sibling origin", async () => {
+    mocks.authenticateRequest.mockResolvedValue({
+      toAuth: () => ({
+        isAuthenticated: true,
+        userId: "user_123",
+        tokenType: "session_token",
+        sessionClaims: { azp: "https://billing.example.com" },
+      }),
+    });
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+      publicUrl: BASE,
+    });
+    const request = new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { Authorization: "Bearer replayed-session-jwt" },
+    });
+
+    const result = await auth.authorize(request, BASE);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.response.status).toBe(401);
+  });
+
+  it("accepts a session token whose azp matches this deployment", async () => {
+    mocks.authenticateRequest.mockResolvedValue({
+      toAuth: () => ({
+        isAuthenticated: true,
+        userId: "user_123",
+        tokenType: "session_token",
+        sessionClaims: { azp: BASE },
+      }),
+    });
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+      publicUrl: BASE,
+    });
+    const request = new Request(`${BASE}/ui/data`, {
+      headers: { Authorization: "Bearer clerk-session-jwt" },
+    });
+
+    await expect(auth.authorize(request, BASE)).resolves.toEqual({
+      ok: true,
+      userId: "user_123",
     });
   });
 });
