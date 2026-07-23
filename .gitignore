@@ -1,0 +1,6 @@
+node_modules/
+dist*/
+.dev.vars
+.env
+.connecta-state.json
+*.log

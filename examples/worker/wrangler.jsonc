@@ -1,0 +1,25 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "connecta-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": { "enabled": true },
+
+  // Plain vars. Secrets (CONNECTA_TOKEN, CLERK_SECRET_KEY, DOWNSTREAM_TOKEN)
+  // are set with `wrangler secret put <NAME>`, not here.
+  "vars": {
+    "PUBLIC_URL": "https://connecta.example.workers.dev",
+    "CLERK_PUBLISHABLE_KEY": "pk_test_replace-me"
+  },
+
+  // Create with `wrangler kv namespace create CONNECTA_KV` and paste the id.
+  "kv_namespaces": [
+    { "binding": "CONNECTA_KV", "id": "replace-with-kv-namespace-id" }
+  ],
+
+  // Sandbox for the execute_code meta-tool (code mode). Dynamic Workers is in
+  // open beta on paid plans — delete this block (and the executor line in
+  // src/index.ts) to run with the nine base meta-tools only.
+  "worker_loaders": [{ "binding": "LOADER" }]
+}
