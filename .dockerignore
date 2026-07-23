@@ -1,0 +1,13 @@
+node_modules
+dist*
+test
+examples/worker
+examples/node
+.dev.vars
+.env
+.env.*
+!.env.example
+.connecta-state.json
+*.log
+.git
+.DS_Store

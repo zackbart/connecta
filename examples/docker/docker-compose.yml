@@ -1,0 +1,26 @@
+# connecta — single-service Docker stack.
+#
+# One self-contained MCP service. No database: state is the fileStorage JSON,
+# persisted to the named volume `connecta-state` at /data.
+#
+#   docker compose -f examples/docker/docker-compose.yml up -d
+#
+# The build context is the PACKAGE ROOT (two levels up from this file), so the
+# whole package source is in scope; the Dockerfile path is relative to it.
+
+services:
+  connecta:
+    build:
+      context: ../../
+      dockerfile: examples/docker/Dockerfile
+    image: connecta
+    ports:
+      - "8787:8787"
+    env_file:
+      - .env
+    volumes:
+      - connecta-state:/data
+    restart: unless-stopped
+
+volumes:
+  connecta-state:

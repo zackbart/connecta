@@ -1,0 +1,66 @@
+{
+  "name": "@zackbart/connecta",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind nine meta-tools.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zackbart/connecta.git"
+  },
+  "homepage": "https://github.com/zackbart/connecta#readme",
+  "bugs": {
+    "url": "https://github.com/zackbart/connecta/issues"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "cloudflare-workers",
+    "connectors"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
+    "./quickjs": {
+      "types": "./dist/executors/quickjs.d.ts",
+      "import": "./dist/executors/quickjs.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "generate:cloudflare": "node scripts/generate-cloudflare-manifest.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "check": "npm run typecheck && npm run test && npm run build",
+    "prepack": "npm run check"
+  },
+  "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
+    "@clerk/backend": "^3.12.0",
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "cloudflare": "7.0.0",
+    "quickjs-emscripten": "^0.32.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@cloudflare/codemode": "^0.4.4",
+    "@cloudflare/workers-types": "^4.20250101.0 || ^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.6.0",
+    "vitest": "^4.1.6",
+    "wrangler": "^4.114.0"
+  }
+}
