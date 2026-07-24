@@ -273,8 +273,11 @@ export async function buildSandboxProviders(
         );
         continue;
       }
+      // `await` (not a bare promise return) so a synchronous throw inside
+      // callAddress never sits handler-less for the thenable-adoption
+      // microtask — workerd reports that gap as an unhandled rejection.
       fns[key] = async (args: unknown) =>
-        callAddress(`${connector.id}.${t.name}`, args);
+        await callAddress(`${connector.id}.${t.name}`, args);
     }
     if (Object.keys(fns).length > 0) {
       providers.push({ name: ns, fns });
@@ -292,7 +295,7 @@ export async function buildSandboxProviders(
             `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
           );
         }
-        return Promise.all(
+        return await Promise.all(
           calls.map(async (call) => {
             const item = call as { address?: unknown; args?: unknown };
             try {

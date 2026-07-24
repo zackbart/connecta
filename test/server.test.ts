@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { createConnecta } from "../src/index.js";
+
+// True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
+// executor (emscripten WASM loaded from disk) — Workers deployments use
+// DynamicWorkerExecutor instead — so tests that actually run code skip there.
+const WORKERD =
+  typeof navigator !== "undefined" &&
+  navigator.userAgent?.includes("Cloudflare-Workers");
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
@@ -683,7 +690,7 @@ describe("execute_code registration (code mode)", () => {
     expect(names2).toHaveLength(10);
   });
 
-  it("runs code against connectors end to end", async () => {
+  it.skipIf(WORKERD)("runs code against connectors end to end", async () => {
     const { quickJsExecutor } = await import("../src/executors/quickjs.js");
     const events: ToolCallActivityEvent[] = [];
     const c = createConnecta({
@@ -723,7 +730,7 @@ describe("execute_code registration (code mode)", () => {
     expect(events.every((event) => event.source === "execute_code")).toBe(true);
   });
 
-  it("discovers and calls an API tool inside one execute_code request", async () => {
+  it.skipIf(WORKERD)("discovers and calls an API tool inside one execute_code request", async () => {
     const { quickJsExecutor } = await import("../src/executors/quickjs.js");
     const c = createConnecta({
       connectors: [calc()],

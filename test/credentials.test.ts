@@ -125,11 +125,16 @@ describe("CredentialVault", () => {
       "base64-encoded 32-byte key",
     );
     const vault = new CredentialVault(memoryStorage(), KEY);
-    await expect(vault.set("service", "  ", "user_123")).rejects.toThrow(
-      "cannot be empty",
-    );
-    await expect(
-      vault.set("service", "x".repeat(16_385), "user_123"),
-    ).rejects.toThrow("cannot exceed");
+    // .then(null, handler) attaches the rejection handler synchronously;
+    // expect(...).rejects attaches a microtask later, which workerd (the
+    // Workers test pool) reports as an unhandled rejection.
+    const empty = await vault
+      .set("service", "  ", "user_123")
+      .then(() => null, (e: unknown) => e as Error);
+    expect(empty?.message).toContain("cannot be empty");
+    const oversized = await vault
+      .set("service", "x".repeat(16_385), "user_123")
+      .then(() => null, (e: unknown) => e as Error);
+    expect(oversized?.message).toContain("cannot exceed");
   });
 });

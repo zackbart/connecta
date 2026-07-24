@@ -22,3 +22,24 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run release:check
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build the example image
+        run: docker build -f examples/docker/Dockerfile -t connecta-example .
+      - name: Smoke-test /health
+        run: |
+          docker run -d --rm --name connecta \
+            -e CONNECTA_TOKEN=ci-smoke-token -p 8787:8787 connecta-example
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8787/health >/dev/null; then
+              docker stop connecta
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::container never became healthy"
+          docker logs connecta
+          exit 1
