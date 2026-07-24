@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.3.0 — 2026-07-24
 
 ### Added
 
@@ -24,6 +24,13 @@ All notable changes to this package are documented here.
 - `fileStorage(path, { logger })` — the corrupt-state-file recovery report now
   goes through the package's `Logger` seam instead of being hardwired to
   `console.error`.
+- Workers runtime test suite: the vitest config now runs the suite under both
+  Node and `workerd` (`@cloudflare/vitest-pool-workers`), so Workers-only
+  regressions fail CI instead of surfacing in production. Two real
+  `return await` bugs in the credential and sandbox paths were found and
+  fixed by the new pool.
+- The Docker example is now verified: CI builds `examples/docker/Dockerfile`
+  and smoke-tests `/health` on every push.
 
 ### Fixed
 
