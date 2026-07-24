@@ -418,6 +418,80 @@ describe("server open routes", () => {
     );
   });
 
+  it("dispatches connector-owned routes, inside the security headers", async () => {
+    const withRoute: Connector = {
+      ...calc(),
+      id: "files",
+      async handleRequest(request) {
+        const url = new URL(request.url);
+        if (url.pathname !== "/download/report.txt") return null;
+        return new Response("body", { headers: { "Content-Type": "text/plain" } });
+      },
+    };
+    const c = createConnecta({
+      connectors: [withRoute],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const res = await c.fetch(new Request(`${BASE}/download/report.txt`));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("body");
+    // The seam exists so these routes stop bypassing the wrapper every other
+    // route goes through.
+    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
+    expect(res.headers.get("Strict-Transport-Security")).toBe(
+      "max-age=31536000",
+    );
+  });
+
+  it("declining connector routes fall through to 404", async () => {
+    const c = createConnecta({
+      connectors: [{ ...calc(), async handleRequest() { return null; } }],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    expect((await c.fetch(new Request(`${BASE}/nope`))).status).toBe(404);
+  });
+
+  it("a connector route cannot shadow a built-in route", async () => {
+    const greedy: Connector = {
+      ...calc(),
+      async handleRequest() {
+        return new Response("hijacked", { status: 200 });
+      },
+    };
+    const c = createConnecta({
+      connectors: [greedy],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const health = await c.fetch(new Request(`${BASE}/health`));
+    expect(await health.text()).toContain('"status":"ok"');
+    const mcp = await c.fetch(new Request(`${BASE}/mcp`, { method: "POST" }));
+    expect(mcp.status).toBe(401);
+  });
+
+  it("a throwing connector route is a 500, not a 404", async () => {
+    const c = createConnecta({
+      connectors: [
+        {
+          ...calc(),
+          async handleRequest() {
+            throw new Error("boom");
+          },
+        },
+      ],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { debug() {}, info() {}, warn() {}, error() {} },
+    });
+    expect((await c.fetch(new Request(`${BASE}/anything`))).status).toBe(500);
+  });
+
   it("serves /health over HTTP without redirecting to the public URL", async () => {
     // Container HEALTHCHECKs hit loopback over plain HTTP; a 308 to the public
     // origin would make the probe depend on external DNS and TLS.

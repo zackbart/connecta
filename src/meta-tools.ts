@@ -958,6 +958,26 @@ const AUTHORIZE_DESC =
 const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 
+/**
+ * Connecta refuses downstream tools that are not explicitly annotated
+ * read-only, so its own meta-tools must carry the same hints — otherwise a
+ * host that gates on annotations prompts for every search, and a connecta
+ * aggregated behind another connecta would be refused by its own policy.
+ */
+const READ_ONLY_REMOTE = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  openWorldHint: true,
+} as const;
+
+/** Read-only and served entirely from connecta's own storage. */
+const READ_ONLY_LOCAL = {
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+} as const;
+
 /** Register the nine meta-tools onto an McpServer instance. */
 export function registerMetaTools(
   server: McpServer,
@@ -993,6 +1013,7 @@ export function registerMetaTools(
     {
       description: LIST_DESC,
       inputSchema: { probe: z.boolean().optional() },
+      annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.listConnectors(args as ListArgs),
   );
@@ -1009,6 +1030,7 @@ export function registerMetaTools(
         fullDescriptions: z.boolean().optional(),
         includeSchemas: z.enum(["compact", "json"]).optional(),
       },
+      annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.searchTools(args as SearchArgs),
   );
@@ -1022,6 +1044,7 @@ export function registerMetaTools(
         format: z.enum(["compact", "json"]).optional(),
         fullDescriptions: z.boolean().optional(),
       },
+      annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.describeTools(args as DescribeArgs),
   );
@@ -1039,6 +1062,9 @@ export function registerMetaTools(
         maxRetries: z.number().int().min(0).max(2).optional(),
         diagnostics: z.boolean().optional(),
       },
+      // call_tool admits only tools that are themselves explicitly read-only;
+      // anything else is refused and routed to call_destructive_tool.
+      annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.callTool(args as CallArgs),
   );
@@ -1073,6 +1099,13 @@ export function registerMetaTools(
         connector: z.string(),
         force: z.boolean().optional(),
       },
+      // Starts (or with force, resets) a downstream OAuth flow — it changes
+      // stored connector auth state, so it is deliberately not read-only.
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (args) => mt.authorizeConnector(args as AuthorizeArgs),
   );
@@ -1086,6 +1119,7 @@ export function registerMetaTools(
         offset: z.number().int().nonnegative().optional(),
         maxBytes: z.number().int().positive().optional(),
       },
+      annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.getResult(args as GetResultArgs),
   );
@@ -1114,6 +1148,9 @@ export function registerMetaTools(
         maxRetries: z.number().int().min(0).max(2).optional(),
         diagnostics: z.boolean().optional(),
       },
+      // Same gate as call_tool: every call in the batch must be explicitly
+      // read-only or the batch is refused.
+      annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.batchCall(args as BatchArgs),
   );

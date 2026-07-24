@@ -72,16 +72,18 @@ function html(
   branding?: ConnectaBranding,
 ): Response {
   const brand = resolveBranding(branding);
-  const title = brand.ownerName
-    ? `${brand.productName} — ${brand.ownerName}`
-    : brand.productName;
+  const title = brand.pageTitle;
   const owner = brand.ownerName
     ? brand.ownerUrl
       ? `<a class="brand" href="${escapeHtml(brand.ownerUrl)}">${escapeHtml(brand.ownerName)}</a>`
       : `<span class="brand">${escapeHtml(brand.ownerName)}</span>`
-    : `<span class="brand">${escapeHtml(brand.productName)}</span>`;
+    : brand.productUrl
+      ? `<a class="brand" href="${escapeHtml(brand.productUrl)}">${escapeHtml(brand.productName)}</a>`
+      : `<span class="brand">${escapeHtml(brand.productName)}</span>`;
   const product = brand.ownerName
-    ? `<span class="product">${escapeHtml(brand.productName)}</span>`
+    ? brand.productUrl
+      ? `<a class="product" href="${escapeHtml(brand.productUrl)}">${escapeHtml(brand.productName)}</a>`
+      : `<span class="product">${escapeHtml(brand.productName)}</span>`
     : "";
   return new Response(
     `<!doctype html>
@@ -89,8 +91,8 @@ function html(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#ffffff">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="${escapeHtml(brand.themeColor)}">
+<link rel="icon" href="${escapeHtml(brand.faviconHref)}" type="image/svg+xml">
 <link rel="shortcut icon" href="/favicon.ico">
 <title>${escapeHtml(title)}</title>
 <style>
@@ -662,7 +664,7 @@ export function createFetchHandler(
       }
 
       if (request.method === "GET" && path === "/favicon.svg") {
-        return new Response(CONNECTA_FAVICON_SVG, {
+        return new Response(opts.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
           headers: {
             "Content-Type": "image/svg+xml",
             "Cache-Control": "public, max-age=86400",
@@ -671,7 +673,7 @@ export function createFetchHandler(
       }
 
       if (request.method === "GET" && path === "/favicon.ico") {
-        return new Response(CONNECTA_FAVICON_ICO, {
+        return new Response(opts.branding?.favicon?.ico ?? CONNECTA_FAVICON_ICO, {
           headers: {
             "Content-Type": "image/x-icon",
             "Cache-Control": "public, max-age=86400",
@@ -752,6 +754,27 @@ export function createFetchHandler(
           ? await serveMcp(request, opts, baseUrl, authz.actor, runtimeContext)
           : authz.response;
         return withMcpCors(response);
+      }
+
+      // Connector-owned public routes, dispatched last: a connector can add a
+      // route but never shadow one of connecta's own. A throw here is the
+      // connector's bug, not a missing route, so it surfaces as 500 rather
+      // than falling through to 404.
+      for (const connector of registry.listConnectors()) {
+        if (!connector.handleRequest) continue;
+        try {
+          const connectorResponse = await connector.handleRequest(
+            request,
+            registry.contextFor(connector.id, baseUrl),
+          );
+          if (connectorResponse) return connectorResponse;
+        } catch (error) {
+          opts.logger.error(
+            `[connecta] connector "${connector.id}" handleRequest failed`,
+            error,
+          );
+          return new Response("Internal Server Error", { status: 500 });
+        }
       }
 
       return new Response("Not Found", { status: 404 });

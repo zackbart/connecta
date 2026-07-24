@@ -23,7 +23,29 @@ export function fileStorage(path: string): KVStorage {
   if (existsSync(path)) {
     try {
       data = JSON.parse(readFileSync(path, "utf8")) as Record<string, Entry>;
-    } catch {
+    } catch (error) {
+      // Never let a damaged state file be silently replaced by an empty one:
+      // the next set() would persist {} over irreplaceable downstream OAuth
+      // tokens and credential-vault entries. Quarantine the bytes so they
+      // survive for manual recovery, and refuse to start if even that fails —
+      // losing the file loudly beats losing it quietly.
+      const quarantine = `${path}.corrupt-${Date.now()}`;
+      try {
+        renameSync(path, quarantine);
+      } catch (renameError) {
+        throw new Error(
+          `[connecta] state file ${path} is not valid JSON and could not be ` +
+            `moved aside (${String(renameError)}). Refusing to start rather ` +
+            `than overwrite it. Move or repair the file, then restart.`,
+        );
+      }
+      console.error(
+        `[connecta] state file ${path} is not valid JSON ` +
+          `(${error instanceof Error ? error.message : String(error)}) — ` +
+          `moved to ${quarantine}, starting from empty state. Downstream ` +
+          `OAuth connectors must be re-authorized and stored credentials ` +
+          `re-entered.`,
+      );
       data = {};
     }
   }

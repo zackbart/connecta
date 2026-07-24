@@ -17,6 +17,9 @@ const ENTRY = join(SRC, "index.ts");
 
 const FORBIDDEN_NODE_IMPORT = /\bfrom\s+["']node:/;
 const FORBIDDEN_NODE_REQUIRE = /\brequire\(\s*["']node:/;
+// A dynamic import is the one way a node: builtin can reach the Workers-clean
+// entry without matching either pattern above.
+const FORBIDDEN_NODE_DYNAMIC_IMPORT = /\bimport\(\s*["']node:/;
 
 /** Extract relative import/export specifiers (the `"./x.js"` in `from "./x.js"`). */
 function relativeSpecifiers(source: string): string[] {
@@ -82,6 +85,10 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
       expect(
         FORBIDDEN_NODE_REQUIRE.test(source),
         `${file} requires a node: builtin`,
+      ).toBe(false);
+      expect(
+        FORBIDDEN_NODE_DYNAMIC_IMPORT.test(source),
+        `${file} dynamically imports a node: builtin`,
       ).toBe(false);
     }
   });
