@@ -68,6 +68,10 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/health` → open JSON `{ status: "ok", connectors: <count> }`.
    - `/oauth/callback/<connectorId>` → downstream-OAuth completion (open).
    - `/mcp` → **auth gate**, then MCP.
+   - a connector's `handleRequest` (open), in registration order — dispatched
+     only after every built-in route misses, so a connector can add a route but
+     never shadow one of connecta's. First non-null Response wins; a throw is a
+     500, not a fall-through to 404.
    - anything else → 404.
    Responses include `nosniff` and a no-referrer policy. HTTPS responses include
    HSTS, and `/ui` additionally refuses framing through CSP and
@@ -1070,3 +1074,37 @@ tool count, any status message, and a clickable authorization link when
 tool names/descriptions. The current token is sent only as the `Authorization:
 Bearer` header on `/ui/data`. Clerk session tokens are kept in Clerk's session
 state and refreshed by ClerkJS; they are never copied into `localStorage`.
+
+### Branding
+
+Nothing about the operator is baked into the package: every deployment-facing
+label and image on `/ui` and the OAuth result pages comes from
+`ConnectaConfig.branding`, and each field falls back to a neutral Connecta
+default when omitted.
+
+```ts
+createConnecta({
+  connectors,
+  branding: {
+    productName: "Acme MCP",              // default "Connecta"
+    productUrl: "https://acme.example",   // makes the product label a link
+    ownerName: "Acme Inc",                // shown beside the product label
+    ownerUrl: "https://acme.example/about",
+    description: "Tools Acme exposes to agents.",  // dashboard intro + meta description
+    pageTitle: "Acme Tools",              // default "<productName> — <ownerName>"
+    themeColor: "#101010",                // default "#ffffff"
+    favicon: {
+      svg: "<svg …>",                     // served at /favicon.svg
+      ico: acmeIcoBytes,                  // Uint8Array, served at /favicon.ico
+      href: "https://cdn.acme.example/icon.svg", // or link an icon you host
+    },
+  },
+});
+```
+
+The top-left corner reads `<ownerName> <productName>` when an owner is set, and
+just `<productName>` otherwise; each half becomes a link when its matching URL
+is configured. `favicon.svg` and `favicon.ico` are independent — override one
+and the other keeps connecta's default mark. `favicon.href` only changes what
+the page's `<link rel="icon">` points at; the `/favicon.*` routes keep serving
+whatever `svg`/`ico` provide.

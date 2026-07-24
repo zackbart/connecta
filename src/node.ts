@@ -1,10 +1,37 @@
 import { createServer } from "node:http";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 import type { Connecta } from "./index.js";
 
 export { fileStorage } from "./storage/file.js";
 
-async function toRequest(req: IncomingMessage): Promise<Request> {
+/** 10 MiB. Tool arguments are JSON; nothing legitimate approaches this. */
+const DEFAULT_MAX_BODY_BYTES = 10 * 1024 * 1024;
+
+export interface ListenOptions {
+  port: number;
+  /** Interface to bind. Defaults to Node's own (all interfaces). */
+  host?: string;
+  /** Reject request bodies larger than this with 413. Default 10 MiB. */
+  maxBodyBytes?: number;
+  /**
+   * Stop accepting connections on SIGTERM/SIGINT, let in-flight requests
+   * finish, drain deferred work, then exit. Default true — Docker sends
+   * SIGTERM on every `compose up` recreate and Node's default is to die
+   * mid-request. Set false to install your own handlers.
+   */
+  gracefulShutdown?: boolean;
+  /** Shutdown deadline before forcing exit. Default 10s (Docker's own grace). */
+  shutdownTimeoutMs?: number;
+}
+
+const BODY_TOO_LARGE = Symbol("body-too-large");
+
+async function toRequest(
+  req: IncomingMessage,
+  maxBodyBytes: number,
+): Promise<Request | typeof BODY_TOO_LARGE> {
   const host = req.headers.host ?? "localhost";
   const proto =
     (req.headers["x-forwarded-proto"] as string | undefined) ?? "http";
@@ -18,7 +45,14 @@ async function toRequest(req: IncomingMessage): Promise<Request> {
   let body: Uint8Array | undefined;
   if (method !== "GET" && method !== "HEAD") {
     const chunks: Buffer[] = [];
-    for await (const chunk of req) chunks.push(chunk as Buffer);
+    let size = 0;
+    for await (const chunk of req) {
+      size += (chunk as Buffer).length;
+      // Stop reading as soon as the cap is passed rather than buffering the
+      // rest of a body we have already decided to reject.
+      if (size > maxBodyBytes) return BODY_TOO_LARGE;
+      chunks.push(chunk as Buffer);
+    }
     if (chunks.length) body = new Uint8Array(Buffer.concat(chunks));
   }
   return new Request(url, {
@@ -36,27 +70,88 @@ async function writeResponse(
 ): Promise<void> {
   res.statusCode = response.status;
   response.headers.forEach((value, key) => res.setHeader(key, value));
-  const buf = Buffer.from(await response.arrayBuffer());
-  res.end(buf);
+  if (!response.body) {
+    res.end();
+    return;
+  }
+  // Stream rather than buffer: a connector-served route may return a large
+  // proxied file body, and materializing it would hold the whole thing in
+  // memory before the first byte reaches the client.
+  await pipeline(
+    Readable.fromWeb(response.body as Parameters<typeof Readable.fromWeb>[0]),
+    res,
+  );
 }
 
 /**
  * Serve a Connecta over node:http. Thin adapter: IncomingMessage → Request,
- * Response → ServerResponse. No dependencies beyond node core.
+ * Response → ServerResponse, plus the process-level concerns a long-running
+ * container needs (body cap, response streaming, graceful shutdown). No
+ * dependencies beyond node core.
  */
-export function listen(connecta: Connecta, port: number): Server {
+export function listen(
+  connecta: Connecta,
+  portOrOptions: number | ListenOptions,
+): Server {
+  const opts: ListenOptions =
+    typeof portOrOptions === "number" ? { port: portOrOptions } : portOrOptions;
+  const maxBodyBytes = opts.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
+
+  // Node has no ExecutionContext, so deferred work (activity sinks) would
+  // otherwise be an untracked floating promise. Track it here and drain it on
+  // shutdown so both runtimes behave the same.
+  const pending = new Set<Promise<unknown>>();
+  const ctx = {
+    waitUntil(promise: Promise<unknown>): void {
+      pending.add(promise);
+      void promise.finally(() => pending.delete(promise));
+    },
+  };
+
   const server = createServer((req, res) => {
     void (async () => {
       try {
-        const request = await toRequest(req);
-        const response = await connecta.fetch(request);
+        const request = await toRequest(req, maxBodyBytes);
+        if (request === BODY_TOO_LARGE) {
+          res.statusCode = 413;
+          res.end("Payload Too Large");
+          return;
+        }
+        const response = await connecta.fetch(request, undefined, ctx);
         await writeResponse(res, response);
-      } catch {
-        res.statusCode = 500;
+      } catch (error) {
+        // A headless deployment has nothing else to go on; never swallow this.
+        console.error("[connecta] request failed", error);
+        if (!res.headersSent) res.statusCode = 500;
         res.end("Internal Server Error");
       }
     })();
   });
-  server.listen(port);
+
+  if (opts.gracefulShutdown !== false) {
+    const timeoutMs = opts.shutdownTimeoutMs ?? 10_000;
+    let shuttingDown = false;
+    const shutdown = (signal: string): void => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      console.info(`[connecta] ${signal} received, draining`);
+      const forced = setTimeout(() => {
+        console.warn("[connecta] shutdown timed out, exiting");
+        process.exit(1);
+      }, timeoutMs);
+      forced.unref?.();
+      server.close(() => {
+        void Promise.allSettled([...pending]).then(() => {
+          clearTimeout(forced);
+          process.exit(0);
+        });
+      });
+    };
+    process.on("SIGTERM", () => shutdown("SIGTERM"));
+    process.on("SIGINT", () => shutdown("SIGINT"));
+  }
+
+  if (opts.host) server.listen(opts.port, opts.host);
+  else server.listen(opts.port);
   return server;
 }

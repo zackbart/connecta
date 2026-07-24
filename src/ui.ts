@@ -13,25 +13,39 @@ export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vie
 
 interface ResolvedBranding {
   productName: string;
+  productUrl?: string;
   ownerName?: string;
   ownerUrl?: string;
   description: string;
+  /** Browser tab title and page meta name. */
+  pageTitle: string;
+  /** href for the page's icon link. */
+  faviconHref: string;
+  themeColor: string;
 }
 
 export function resolveBranding(
   branding?: ConnectaBranding,
 ): ResolvedBranding {
+  const productName = branding?.productName?.trim() || "Connecta";
+  const ownerName = branding?.ownerName?.trim();
   return {
-    productName: branding?.productName?.trim() || "Connecta",
-    ...(branding?.ownerName?.trim()
-      ? { ownerName: branding.ownerName.trim() }
+    productName,
+    ...(branding?.productUrl?.trim()
+      ? { productUrl: branding.productUrl.trim() }
       : {}),
+    ...(ownerName ? { ownerName } : {}),
     ...(branding?.ownerUrl?.trim()
       ? { ownerUrl: branding.ownerUrl.trim() }
       : {}),
     description:
       branding?.description?.trim() ||
-      "Manage the services this Connecta instance makes available to agents.",
+      `Manage the services this ${productName} instance makes available to agents.`,
+    pageTitle:
+      branding?.pageTitle?.trim() ||
+      (ownerName ? `${productName} — ${ownerName}` : productName),
+    faviconHref: branding?.favicon?.href?.trim() || "/favicon.svg",
+    themeColor: branding?.themeColor?.trim() || "#ffffff",
   };
 }
 
@@ -282,16 +296,21 @@ export function renderUiHtml(
 ): string {
   const auth = uiAuth ?? { kind: "bearer" as const };
   const brand = resolveBranding(branding);
-  const title = brand.ownerName
-    ? `${brand.productName} — ${brand.ownerName}`
-    : brand.productName;
+  const title = brand.pageTitle;
+  // Top-left corner. With an owner set it reads "<owner> <product>"; without
+  // one the product label stands alone. Either half links out when the
+  // matching URL is configured.
   const owner = brand.ownerName
     ? brand.ownerUrl
       ? `<a class="brand navlink" href="${escapeHtmlAttr(brand.ownerUrl)}">${escapeHtmlAttr(brand.ownerName)}</a>`
       : `<span class="brand">${escapeHtmlAttr(brand.ownerName)}</span>`
-    : `<span class="brand">${escapeHtmlAttr(brand.productName)}</span>`;
+    : brand.productUrl
+      ? `<a class="brand navlink" href="${escapeHtmlAttr(brand.productUrl)}">${escapeHtmlAttr(brand.productName)}</a>`
+      : `<span class="brand">${escapeHtmlAttr(brand.productName)}</span>`;
   const product = brand.ownerName
-    ? `<span class="product">${escapeHtmlAttr(brand.productName)}</span>`
+    ? brand.productUrl
+      ? `<a class="product navlink" href="${escapeHtmlAttr(brand.productUrl)}">${escapeHtmlAttr(brand.productName)}</a>`
+      : `<span class="product">${escapeHtmlAttr(brand.productName)}</span>`
     : "";
   const clerkScript =
     uiAuth?.kind === "clerk"
@@ -303,8 +322,9 @@ export function renderUiHtml(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#ffffff">
-<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="${escapeHtmlAttr(brand.themeColor)}">
+<meta name="description" content="${escapeHtmlAttr(brand.description)}">
+<link rel="icon" href="${escapeHtmlAttr(brand.faviconHref)}" type="image/svg+xml">
 <link rel="shortcut icon" href="/favicon.ico">
 <title>${escapeHtmlAttr(title)}</title>
 ${clerkScript}
@@ -620,7 +640,7 @@ ${clerkScript}
             <button id="copyMcpUrl" class="linklike" type="button">Copy URL</button>
           </div>
         </div>
-        <p class="cap" id="serverInfo">Connecta status dashboard</p>
+        <p class="cap" id="serverInfo">${escapeHtmlAttr(brand.productName)} status dashboard</p>
       </div>
     </div>
     <section class="section pgrid" aria-labelledby="connectorsHeading">
@@ -745,7 +765,7 @@ async function load() {
   $("app").classList.remove("hidden");
   $("appNav").classList.remove("hidden");
   const si = DATA.serverInfo || {};
-  $("serverInfo").textContent = (si.name || "Connecta") + " v" + (si.version || "?");
+  $("serverInfo").textContent = (si.name || ${JSON.stringify(brand.productName)}) + " v" + (si.version || "?");
   $("activityTab").classList.toggle("hidden", !DATA.activityEnabled);
   render();
 }

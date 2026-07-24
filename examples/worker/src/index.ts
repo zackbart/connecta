@@ -101,8 +101,15 @@ function build(env: Env) {
 let connecta: ReturnType<typeof build> | undefined;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  // Pass `ctx` through: connecta hands deferred work (activity sinks) to
+  // ctx.waitUntil so it settles after the response is returned instead of
+  // being cancelled with the request.
+  async fetch(
+    request: Request,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<Response> {
     connecta ??= build(env);
-    return connecta.fetch(request);
+    return connecta.fetch(request, env, ctx);
   },
 };

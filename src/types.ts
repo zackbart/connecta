@@ -181,6 +181,21 @@ export interface Connector {
   verifyState?(state: string | null, ctx: ConnectorContext): Promise<boolean>;
   /** Optional: complete a downstream OAuth flow (called by /oauth/callback/<id>). */
   finishAuth?(code: string, ctx: ConnectorContext): Promise<void>;
+  /**
+   * Optional: serve a connector-owned HTTP route — for example a signed
+   * download link minted by one of the connector's tools. Called only after
+   * every built-in route misses, so a connector can never shadow `/mcp`,
+   * `/ui`, `/health`, or the credential API. The first connector to return a
+   * Response wins, in registration order; return null to decline.
+   *
+   * These routes are PUBLIC: connecta applies no auth gate to them. A
+   * connector that serves data here MUST authenticate the request itself — for
+   * example with a signed capability token in the URL.
+   */
+  handleRequest?(
+    request: Request,
+    ctx: ConnectorContext,
+  ): Promise<Response | null>;
 }
 
 /** Result of one sandboxed code execution. */
@@ -221,16 +236,41 @@ export type UiAuthConfig = {
   signUpUrl?: string;
 };
 
-/** Optional labels used by Connecta's browser UI and OAuth result pages. */
+/**
+ * Optional labels and marks used by the browser UI and OAuth result pages.
+ * Every deployment-identifying string and image is configurable here — nothing
+ * about the operator is baked into the package.
+ */
 export interface ConnectaBranding {
   /** Product label. Defaults to "Connecta". */
   productName?: string;
+  /** Optional link for the product label. */
+  productUrl?: string;
   /** Organization or owner shown beside the product label. */
   ownerName?: string;
   /** Optional link for the organization or owner label. */
   ownerUrl?: string;
   /** Status-dashboard introduction. */
   description?: string;
+  /**
+   * Browser tab title and page meta name. Defaults to
+   * `"<productName> — <ownerName>"`, or just `productName` when no owner is set.
+   */
+  pageTitle?: string;
+  /**
+   * Replace the default monochrome "C" mark. `svg` is served at
+   * `/favicon.svg`, `ico` at `/favicon.ico`; omit either to keep the default
+   * for that format. Use `href` instead to point the page at an icon you host
+   * elsewhere (it replaces the `/favicon.svg` link in the page head; the
+   * `/favicon.*` routes still serve whatever `svg`/`ico` provide).
+   */
+  favicon?: {
+    svg?: string;
+    ico?: Uint8Array;
+    href?: string;
+  };
+  /** `theme-color` meta value. Defaults to "#ffffff". */
+  themeColor?: string;
 }
 
 /** An inbound authentication provider (bearer token, Clerk, ...). */

@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
+import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
   ConnectorContext,
@@ -144,7 +145,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // generation, so a remote such as Stripe fails during tools/list unless
       // the SDK's edge-safe validator is selected explicitly.
       const c = new Client(
-        { name: "connecta", version: "0.1.0" },
+        { name: "connecta", version: CONNECTA_VERSION },
         { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
       );
       const t = buildTransport(ctx, state);

@@ -544,6 +544,13 @@ export function registerExecuteTool(
           .string()
           .describe("A JavaScript async arrow function to execute."),
       },
+      // The sandbox exposes only tools that are explicitly read-only, and the
+      // executor grants no network, filesystem, env, or timer capabilities.
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        openWorldHint: true,
+      },
     },
     async (args) => handler(args as { code: string }),
   );

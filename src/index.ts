@@ -2,6 +2,7 @@ import { CredentialVault } from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { memoryStorage } from "./storage/memory.js";
+import { CONNECTA_VERSION } from "./version.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
   Connector,
@@ -123,7 +124,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     publicUrl: config.publicUrl,
     serverInfo: {
       name: config.serverInfo?.name ?? "connecta",
-      version: config.serverInfo?.version ?? "0.1.0",
+      version: config.serverInfo?.version ?? CONNECTA_VERSION,
     },
     logger,
     activity: config.activity,
@@ -150,14 +151,11 @@ export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
 export { bearerToken } from "./auth/bearer.js";
 export { memoryStorage } from "./storage/memory.js";
-export { CredentialVault } from "./credentials.js";
-export { Registry } from "./registry.js";
-export { createMetaTools } from "./meta-tools.js";
-export {
-  buildSandboxProviders,
-  createExecuteTool,
-  sanitizeIdentifier,
-} from "./execute.js";
+export { CONNECTA_VERSION } from "./version.js";
+// Registry is reachable through `Connecta.registry`, so its type is public;
+// the class itself, the credential vault, and the meta-tool/sandbox factories
+// are internal factoring and are deliberately not part of the API surface.
+export type { Registry } from "./registry.js";
 
 export type { RemoteMcpOptions, RemoteMcpAuth } from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";
