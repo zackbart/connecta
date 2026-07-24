@@ -23,6 +23,12 @@ and non-goals live in [`docs/design.md`](./docs/design.md).
 - [ ] Semantic tool search (embeddings) vs. today's substring match.
 - [ ] Verify the Docker image build (daemon was unavailable; the compose stack was
       reviewed but never actually built).
+- [ ] Group `ConnectaConfig`'s three `activity*` fields and four catalog/result
+      tuning knobs into nested objects. Breaking; batch with the next intentional
+      breaking release.
+- [ ] Run `branding.productUrl` / `ownerUrl` / `favicon.href` through
+      `isSafeHttpUrl`. Operator-controlled config today, so not a live
+      vulnerability — required the moment branding becomes settable from `/ui`.
 
 ## Later (code mode)
 

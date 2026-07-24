@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
 import {
@@ -723,6 +724,116 @@ describe("call_tool", () => {
     expect(parsed.error.message).toContain("timed out");
     expect(parsed.error.retryable).toBe(true);
     expect(parsed.attempts).toBe(1);
+  });
+
+  it("a typed non-retryable error is not retried even if its text says timeout", async () => {
+    let calls = 0;
+    const connector = api("typed", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            calls++;
+            throw new ConnectorCallError(
+              "connector_call_failed",
+              'downstream rejected field "timeout"',
+              { retryable: false },
+            );
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "typed.read",
+        resultMode: "value",
+        maxRetries: 2,
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: { code: string; retryable: boolean };
+    };
+    // The regex heuristic would have coded this "timeout" and retried it.
+    expect(parsed).toMatchObject({
+      ok: false,
+      attempts: 1,
+      error: { code: "connector_call_failed", retryable: false },
+    });
+    expect(calls).toBe(1);
+  });
+
+  it("a typed auth_required from a call keeps its code so the agent can re-auth", async () => {
+    const connector = api("expired", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError(
+              "auth_required",
+              'Connector "expired" requires authorization — call authorize_connector({ connector: "expired" }).',
+            );
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "expired.read",
+        resultMode: "value",
+        maxRetries: 2,
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: { code: string; message: string; retryable: boolean };
+    };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.attempts).toBe(1);
+    expect(parsed.error.code).toBe("auth_required");
+    expect(parsed.error.retryable).toBe(false);
+    expect(parsed.error.message).toContain("authorize_connector");
+  });
+
+  it("schema-invalid args fail closed as invalid_args without reaching the handler", async () => {
+    let calls = 0;
+    const connector = api("strict", {
+      tools: [
+        {
+          name: "page",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: { page: { type: "integer" } },
+            required: ["page"],
+          },
+          handler: () => {
+            calls++;
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "strict.page",
+        resultMode: "value",
+        args: { page: "3" },
+        maxRetries: 2,
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: { code: string; retryable: boolean };
+    };
+    expect(parsed).toMatchObject({
+      ok: false,
+      attempts: 1,
+      error: { code: "invalid_args", retryable: false },
+    });
+    expect(calls).toBe(0);
   });
 });
 

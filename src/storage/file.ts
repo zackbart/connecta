@@ -6,11 +6,16 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname } from "node:path";
-import type { KVStorage } from "../types.js";
+import type { KVStorage, Logger } from "../types.js";
 
 interface Entry {
   value: string;
   exp?: number; // epoch ms
+}
+
+export interface FileStorageOptions {
+  /** Destination for the corrupt-state-file recovery report. Default console. */
+  logger?: Logger;
 }
 
 /**
@@ -18,7 +23,11 @@ interface Entry {
  * a temp-file + rename (atomic-ish). Only reachable via the "@zackbart/connecta/node"
  * subpath so the main entry stays Workers-clean.
  */
-export function fileStorage(path: string): KVStorage {
+export function fileStorage(
+  path: string,
+  opts: FileStorageOptions = {},
+): KVStorage {
+  const logger: Logger = opts.logger ?? console;
   let data: Record<string, Entry> = {};
   if (existsSync(path)) {
     try {
@@ -39,7 +48,7 @@ export function fileStorage(path: string): KVStorage {
             `than overwrite it. Move or repair the file, then restart.`,
         );
       }
-      console.error(
+      logger.error(
         `[connecta] state file ${path} is not valid JSON ` +
           `(${error instanceof Error ? error.message : String(error)}) — ` +
           `moved to ${quarantine}, starting from empty state. Downstream ` +

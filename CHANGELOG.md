@@ -2,6 +2,37 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Added
+
+- `ConnectorCallError` — a typed failure contract for `Connector.callTool`.
+  Connectors can classify failures exactly (`timeout`, `auth_required`,
+  `rate_limited`, `unavailable`, `invalid_args`, `connector_call_failed`) and
+  set `retryable` explicitly, instead of the meta-tools regexing message text.
+  Plain `Error`s keep the old heuristic as a fallback, so existing connectors
+  are unaffected. `remoteMcp()` now converts the SDK's `UnauthorizedError`
+  into a per-call `auth_required` error that names `authorize_connector`, so
+  a token that expires between `status()` and `callTool` routes the agent to
+  re-auth instead of a generic failure.
+- `api()` validates call arguments against each tool's `inputSchema` (draft
+  2020-12, using the existing `@cfworker/json-schema` dependency) before the
+  handler runs. Mismatches fail closed as non-retryable `invalid_args` errors
+  naming the offending locations. Opt out per connector with
+  `validateArgs: false`. Remote MCP connectors deliberately stay
+  pass-through — the downstream server is authoritative for its own schemas.
+- `fileStorage(path, { logger })` — the corrupt-state-file recovery report now
+  goes through the package's `Logger` seam instead of being hardwired to
+  `console.error`.
+
+### Fixed
+
+- A connector error whose legitimate message text merely mentioned "timeout"
+  was misclassified as a retryable timeout and re-run (and recorded as
+  outcome "timeout" in activity). Typed errors are now authoritative for
+  classification wherever they pass through `call_tool`, `batch_call`, and
+  `execute_code` host calls.
+
 ## 0.2.1 — 2026-07-24
 
 ### Added

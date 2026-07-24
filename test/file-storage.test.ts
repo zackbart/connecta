@@ -51,4 +51,21 @@ describe("fileStorage", () => {
   it("starts from empty state when no file exists yet", async () => {
     expect(await fileStorage(tempStatePath()).get("k")).toBeNull();
   });
+
+  it("routes the corruption report through an injected logger", async () => {
+    const path = tempStatePath();
+    writeFileSync(path, "{ not json");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const error = vi.fn();
+
+    fileStorage(path, {
+      logger: { debug: () => {}, info: () => {}, warn: () => {}, error },
+    });
+
+    expect(error).toHaveBeenCalledOnce();
+    expect(error.mock.calls[0][0]).toContain("not valid JSON");
+    expect(consoleError).not.toHaveBeenCalled();
+  });
 });
