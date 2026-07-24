@@ -745,7 +745,9 @@ credential after saving it.
 `memoryStorage()`), `publicUrl?` (default: per-request origin), `logger?`,
 `toolCacheTtlSeconds?` (default 300), `persistToolCatalog?` (default true),
 `toolCatalogStaleSeconds?` (default 3600), `deploymentInfo?` (exposed by
-`/health`), `serverInfo?` (`{ name, version }`, default `connecta`/`0.1.0`),
+`/health`), `serverInfo?` (`{ name, version, title?, websiteUrl?, icons? }` per the MCP
+icons spec — clients render the declared icon/title instead of a scraped
+favicon; default `connecta`/the package version),
 `executor?` (enables code mode — [§13](#13-code-mode-execute_code)).
 
 ### Node

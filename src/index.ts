@@ -61,7 +61,16 @@ export interface ConnectaConfig {
    * stash the full text for get_result paging. Default 50_000.
    */
   maxResultBytes?: number;
-  serverInfo?: { name?: string; version?: string };
+  serverInfo?: {
+    name?: string;
+    version?: string;
+    /** Human-readable name clients may show instead of `name`. */
+    title?: string;
+    /** Homepage clients may link from the server listing. */
+    websiteUrl?: string;
+    /** MCP icons-spec entries; clients render these instead of a scraped favicon. */
+    icons?: Array<{ src: string; mimeType?: string; sizes?: string[] }>;
+  };
   /** Deployment metadata exposed by /health (for example a Worker version). */
   deploymentInfo?: Record<string, unknown>;
   /**
@@ -123,6 +132,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     auth: normalizeAuth(config.auth),
     publicUrl: config.publicUrl,
     serverInfo: {
+      ...config.serverInfo,
       name: config.serverInfo?.name ?? "connecta",
       version: config.serverInfo?.version ?? CONNECTA_VERSION,
     },
