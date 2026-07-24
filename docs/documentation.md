@@ -59,7 +59,8 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
 
 1. **Routing** on `URL.pathname` / method:
    - When `publicUrl` is HTTPS, an incoming HTTP request is redirected to the
-     matching HTTPS URL with 308.
+     matching HTTPS URL with 308. `/health` is exempt so that loopback
+     container probes are not sent out to the public origin.
    - `OPTIONS` → each auth provider's `handleMetadata` gets a chance (CORS
      preflight); otherwise a 204 with wildcard CORS.
    - `/.well-known/*` → auth providers' `handleMetadata` (open, no auth); 404 if

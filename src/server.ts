@@ -587,8 +587,15 @@ export function createFetchHandler(
     const url = new URL(request.url);
     const baseUrl = publicUrl ?? url.origin;
     const path = url.pathname;
+    // Container and orchestrator probes reach /health over plain HTTP on
+    // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to
+    // the public origin would make an internal liveness check depend on
+    // external DNS, TLS, and the tunnel in front of connecta — so /health is
+    // exempt. It is unauthenticated, returns no user data, and sets no
+    // cookies, so forcing HTTPS on it protects nothing.
     if (
       publicUrl &&
+      path !== "/health" &&
       new URL(publicUrl).protocol === "https:" &&
       url.protocol === "http:"
     ) {

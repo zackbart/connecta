@@ -411,13 +411,20 @@ describe("server /mcp end-to-end", () => {
 describe("server open routes", () => {
   it("redirects HTTP to the configured HTTPS public URL", async () => {
     const c = makeConnecta();
-    const res = await c.fetch(
-      new Request("http://connecta.test/health?probe=1"),
-    );
+    const res = await c.fetch(new Request("http://connecta.test/ui?probe=1"));
     expect(res.status).toBe(308);
     expect(res.headers.get("location")).toBe(
-      "https://connecta.test/health?probe=1",
+      "https://connecta.test/ui?probe=1",
     );
+  });
+
+  it("serves /health over HTTP without redirecting to the public URL", async () => {
+    // Container HEALTHCHECKs hit loopback over plain HTTP; a 308 to the public
+    // origin would make the probe depend on external DNS and TLS.
+    const c = makeConnecta();
+    const res = await c.fetch(new Request("http://127.0.0.1:8787/health"));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { status: string }).status).toBe("ok");
   });
 
   it("keeps HTTP available when no HTTPS public URL is configured", async () => {
