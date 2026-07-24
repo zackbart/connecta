@@ -132,6 +132,38 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
   });
 
+  it("initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      serverInfo: {
+        name: "acme-tools",
+        title: "Acme Tools",
+        websiteUrl: "https://acme.example",
+        icons: [{ src: `${BASE}/favicon.svg`, mimeType: "image/svg+xml" }],
+      },
+    });
+    const res = await rpc(
+      c,
+      "initialize",
+      {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "test", version: "1.0.0" },
+      },
+      { token: TOKEN },
+    );
+    const body = await readBody(res);
+    expect(body.result.serverInfo.name).toBe("acme-tools");
+    expect(body.result.serverInfo.title).toBe("Acme Tools");
+    expect(body.result.serverInfo.websiteUrl).toBe("https://acme.example");
+    expect(body.result.serverInfo.icons).toEqual([
+      { src: `${BASE}/favicon.svg`, mimeType: "image/svg+xml" },
+    ]);
+  });
+
   it("tools/list shows exactly the 9 base meta-tools", async () => {
     const c = makeConnecta();
     const res = await rpc(c, "tools/list", {}, { token: TOKEN });

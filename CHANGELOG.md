@@ -2,6 +2,15 @@
 
 All notable changes to this package are documented here.
 
+## 0.2.1 — 2026-07-24
+
+### Added
+
+- `serverInfo` now passes `title`, `websiteUrl`, and `icons` (MCP icons spec)
+  through to the initialize response, so icon-aware clients (claude.ai)
+  render the declared mark and human-readable name instead of a scraped
+  domain favicon.
+
 ## 0.2.0 — 2026-07-24
 
 ### Breaking

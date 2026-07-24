@@ -39,7 +39,9 @@ export interface ServerOptions {
   registry: Registry;
   auth: InboundAuth[];
   publicUrl?: string;
-  serverInfo: { name: string; version: string };
+  // The SDK's Implementation shape: name/version plus optional title,
+  // websiteUrl, and icons (MCP icons spec) that clients may render.
+  serverInfo: ConstructorParameters<typeof McpServer>[0];
   logger: Logger;
   activity?: ActivityStore;
   activityReadGate?: ActivityReadGate;
