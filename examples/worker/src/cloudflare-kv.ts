@@ -1,4 +1,4 @@
-import type { KVStorage } from "../types.js";
+import type { KVStorage } from "@zackbart/connecta";
 
 /**
  * KVStorage backed by a Cloudflare Workers KV namespace binding.

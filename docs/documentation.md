@@ -122,17 +122,15 @@ connecta/
       api.ts              # api() — hand-written tool defs + handlers
     auth/
       bearer.ts           # bearerToken()
-      clerk.ts            # clerkAuth() — OAuth resource server
+      clerk.ts            # optional Clerk adapter ("@zackbart/connecta/auth/clerk")
       downstream-oauth.ts # KvOAuthProvider — OAuthClientProvider over KVStorage
     storage/
       memory.ts           # memoryStorage()
       file.ts             # fileStorage()  (node-only)
-      cloudflare-kv.ts    # cloudflareKvStorage()
-      cloudflare-d1-activity.ts # d1ActivityStore() + bounded retention
     node.ts               # listen() + re-exports fileStorage  ("@zackbart/connecta/node")
   test/                   # vitest suites (see §11)
   examples/
-    worker/               # deployable Cloudflare Worker + wrangler.jsonc
+    worker/               # deployable Worker + deployment-owned KV/D1 adapters
     node/                 # Node example
     docker/               # single-service compose stack
 ```
@@ -562,9 +560,14 @@ through** to a co-configured Clerk provider rather than ending the request.
 ### `clerkAuth(options)`
 
 connecta acts as an OAuth 2.1 **resource server**; Clerk is the **authorization
-server**.
+server. Clerk support is an optional adapter: install `@clerk/backend` in the
+consuming project and import `clerkAuth` from
+`@zackbart/connecta/auth/clerk`. Importing the core package does not load or
+require Clerk.
 
 ```ts
+import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+
 export interface ClerkAuthOptions {
   publishableKey: string;
   secretKey: string;
@@ -691,7 +694,11 @@ interface KVStorage {
 | --- | --- | --- |
 | `memoryStorage()` | `@zackbart/connecta` | Default; in-memory with expiry. Dev / ephemeral. |
 | `fileStorage(path)` | `@zackbart/connecta/node` | JSON file; atomic write (tmp + rename). Node only. |
-| `cloudflareKvStorage(ns)` | `@zackbart/connecta` | Workers KV binding. **60 s minimum TTL** — shorter TTLs are stored without expiry. |
+
+The package intentionally does not ship platform-specific storage. The Worker
+example implements `cloudflareKvStorage(ns)` over the same interface; Workers
+KV has a **60 s minimum TTL**, so that example stores shorter TTLs without
+expiry.
 
 Or implement the three methods over anything you like.
 
@@ -759,11 +766,18 @@ served at `http://localhost:8787/ui` (§14).
 ### Cloudflare Workers
 
 ```ts
+import {
+  bearerToken,
+  createConnecta,
+} from "@zackbart/connecta";
+import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+import { cloudflareKvStorage } from "./cloudflare-kv.js";
+
 const build = (env: Env) =>
   createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage: cloudflareKvStorage(env.CONNECTA_KV),
-    auth: [ bearerToken(env.CONNECTA_TOKEN), clerkAuth({ /* … */ }) ],
+    auth: [ bearerToken(env.CONNECTA_TOKEN), clerkAuth({ /* optional adapter */ }) ],
     connectors: [/* … */],
   });
 
@@ -878,8 +892,6 @@ npm scripts (`package.json`):
 
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm run test` — `vitest run`.
-- `npm run generate:cloudflare` — refresh the pinned Cloudflare operation
-  manifest after intentionally updating the `cloudflare` SDK dependency.
 
 Test suites (`test/`) and what they cover:
 
@@ -910,9 +922,10 @@ real OAuth server.
 - **`docker compose … up --build` needs the Docker daemon running.** The build
   context is the package root; run compose commands referencing
   `examples/docker/docker-compose.yml` from the package root.
-- **Don't upgrade zod / the MCP SDK casually.** `@modelcontextprotocol/sdk` is
-  pinned to **1.29.0** and paired with **zod v3** (`^3.25`). The SDK 1.x line is
-  zod-3; upgrading either in isolation breaks the tool-schema types.
+- **Upgrade Zod / the MCP SDK together and run the full release check.**
+  `@modelcontextprotocol/sdk` is pinned to **1.29.0** and paired with
+  **Zod 4** (`^4.4.3`). The SDK accepts Zod 3 or 4; Connecta uses Zod 4 to keep
+  the optional code-mode peer graph valid without legacy npm resolution.
 - **No server-push / sessions — by design.** The transport is stateless (no
   `sessionIdGenerator`): no SSE server-push, no resumability, no session ids. The
   nine meta-tools are plain request/response, so this is intentional, not a bug.
@@ -994,7 +1007,8 @@ Two known implementations:
   ```
 
 - **Node (or anywhere)** — `quickJsExecutor()` from `@zackbart/connecta/quickjs`:
-  the QuickJS engine compiled to WebAssembly (`quickjs-emscripten`). WASM is
+  install the optional `quickjs-emscripten` peer, then use the QuickJS engine
+  compiled to WebAssembly. WASM is
   memory-safe with no ambient authority, so the guest genuinely cannot reach
   the network or filesystem; options cap memory (default 64 MiB), stack
   (1 MiB), and wall-clock time (30 s, host tool calls included). The 30 s
@@ -1034,7 +1048,8 @@ A minimal, read-only dashboard for operators with no build step. Two routes
 (`src/ui.ts`, served by `src/server.ts`):
 
 - **`GET /ui`** — a single HTML shell. It is served **open**, with no auth gate,
-  because it carries **no data**. When `clerkAuth(...)` is configured, the shell
+  because it carries **no data**. When the optional `clerkAuth(...)` adapter is
+  configured, the shell
   loads ClerkJS from that instance's Frontend API, redirects signed-out users to
   Clerk's hosted sign-in, and retrieves the active session's short-lived token.
   A bearer-only deployment retains the manual `localStorage` token prompt.

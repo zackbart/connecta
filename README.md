@@ -20,6 +20,23 @@ no database of integrations), and the same fetch-based core runs on **Node** and
 **Cloudflare Workers**. Optionally, **code mode** adds a tenth tool that runs
 model-written orchestration code in a sandbox.
 
+## Installation
+
+Node deployments require Node.js 20.9 or newer.
+
+```sh
+npm install @zackbart/connecta
+```
+
+Provider and runtime integrations remain consumer-owned. Install only the
+optional packages a deployment uses—for example:
+
+```sh
+npm install @clerk/backend          # optional Clerk auth adapter
+npm install quickjs-emscripten      # optional Node code-mode executor
+npm install @cloudflare/codemode    # optional Worker code-mode executor
+```
+
 ## The nine meta-tools
 
 A tool **address** is `<connectorId>.<toolName>` (e.g. `notion.search`).
@@ -49,8 +66,10 @@ connector configuration, auth policy, domain, bindings, migrations, and secrets.
 ```ts
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import {
-  api, bearerToken, clerkAuth, cloudflareKvStorage, createConnecta, remoteMcp,
+  api, bearerToken, createConnecta, remoteMcp,
 } from "@zackbart/connecta";
+import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+import { cloudflareKvStorage } from "./cloudflare-kv.js";
 
 const build = (env: Env) =>
   createConnecta({
@@ -86,6 +105,12 @@ export default {
 ```
 
 Deployable example: [`examples/worker/`](./examples/worker/).
+Its Cloudflare KV and D1 implementations are deployment-owned examples over the
+generic `KVStorage` and `ActivityStore` contracts; they are not package exports.
+
+`clerkAuth` is an optional adapter. Install `@clerk/backend` and import it from
+`@zackbart/connecta/auth/clerk` only in deployments that use Clerk. Other
+identity providers can implement the exported `InboundAuth` interface.
 
 ## Quickstart — Node
 
@@ -180,6 +205,10 @@ Set `credentialEncryptionKey` on `createConnecta` to a base64-encoded 32-byte
 key held in the runtime's secret store (`openssl rand -base64 32`). Credential
 mutation routes require the configured Clerk provider and a same-origin browser
 request; the static inbound bearer cannot administer the vault.
+
+Connecta does not bundle service-specific HTTP API connectors. Package consumers
+define them with `api()` (or implement `Connector` directly), keeping endpoint,
+credential, and tool choices in the consuming project.
 
 ## Payload-free tool activity
 

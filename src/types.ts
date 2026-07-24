@@ -73,7 +73,7 @@ export interface ConnectorCredentialFieldConfig {
 
 /** Operator-facing description of the credential set a connector needs. */
 export interface ConnectorCredentialConfig {
-  /** Short group or field label, e.g. "API token" or "Cloudflare credentials". */
+  /** Short group or field label, e.g. "API token" or "Service credentials". */
   label: string;
   /** Plain-language guidance shown in /ui. Never include the credential itself. */
   description?: string;

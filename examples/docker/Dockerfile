@@ -1,9 +1,8 @@
 # connecta — Docker image.
 #
 # Build context is the PACKAGE ROOT, NOT this directory, so the
-# whole package source is available. The package's exports point at .ts files
-# directly, so we run the entrypoint with tsx (no separate compile step) — the
-# simplest approach that works with the package as published.
+# whole package source is available. The package is built to dist/ before the
+# runtime image is assembled; the example entrypoint itself runs through tsx.
 #
 # Build (from the package root):
 #   docker build -f examples/docker/Dockerfile -t connecta .
@@ -12,9 +11,14 @@
 # --- deps: install with a clean, reproducible tree --------------------------
 FROM node:22-slim AS deps
 WORKDIR /app
-# legacy-peer-deps=true (matches the package .npmrc) for a clean install.
-COPY package.json package-lock.json .npmrc ./
+COPY package.json package-lock.json ./
 RUN npm ci
+
+# --- build: create the same dist/ consumed by package exports ----------------
+FROM deps AS build
+COPY tsconfig.json tsconfig.build.json ./
+COPY src ./src
+RUN npm run build
 
 # --- runtime ----------------------------------------------------------------
 FROM node:22-slim AS runtime
@@ -23,9 +27,9 @@ WORKDIR /app
 
 # node_modules from the deps stage (includes tsx + runtime deps).
 COPY --from=deps /app/node_modules ./node_modules
-# Package source (src/ is imported via the "connecta" / "connecta/node" exports).
-COPY package.json package-lock.json .npmrc tsconfig.json ./
-COPY src ./src
+# Built package and TypeScript example entrypoint.
+COPY package.json ./
+COPY --from=build /app/dist ./dist
 COPY examples/docker/server.ts ./examples/docker/server.ts
 
 # State lives on a mounted volume; make it writable by the non-root user.

@@ -25,11 +25,11 @@ import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import {
   api,
   bearerToken,
-  clerkAuth,
-  cloudflareKvStorage,
   createConnecta,
   remoteMcp,
 } from "@zackbart/connecta";
+import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+import { cloudflareKvStorage } from "./cloudflare-kv.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;

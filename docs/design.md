@@ -95,7 +95,7 @@ request-bound transport or promise enters either cache.
 import { createConnecta, remoteMcp, api } from "@zackbart/connecta";
 
 export const connecta = createConnecta({
-  auth: /* inbound: clerk(...) and/or bearerToken(env.CONNECTA_TOKEN) */,
+  auth: /* inbound: an InboundAuth adapter and/or bearerToken(...) */,
   storage: /* KVStorage impl; defaults per runtime */,
   connectors: [
     remoteMcp("someservice", {
@@ -138,13 +138,15 @@ interface KVStorage {
 }
 ```
 
-Implementations: `memoryStorage()` (default, dev), `fileStorage(path)` (Node),
-`cloudflareKvStorage(namespace)` (Workers KV binding).
+Package implementations: `memoryStorage()` (default, dev) and
+`fileStorage(path)` (Node). Platform deployments implement the same interface;
+the Worker example includes a small Workers KV adapter.
 
 ## Serving MCP (settled by research)
 
-Pin `@modelcontextprotocol/sdk@1.29.0` (and zod v3 — the SDK 1.x line is
-zod-3; do not upgrade either casually).
+Pin `@modelcontextprotocol/sdk@1.29.0` and Zod 4. The SDK supports Zod 3 or 4;
+Connecta uses Zod 4 so the optional code-mode integration resolves its peer
+dependencies without legacy npm behavior.
 
 - Transport: `WebStandardStreamableHTTPServerTransport` from
   `@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js` — fetch-native
@@ -188,9 +190,11 @@ keys `conn:<id>:oauth:client` etc.):
 
 ## Inbound auth
 
-Connecta uses a raw-fetch Clerk resource-server implementation on Workers:
+Connecta's optional Clerk adapter uses a raw-fetch resource-server
+implementation on Workers:
 
-- `clerkAuth({ publishableKey, secretKey, publicUrl, gate? })` — connecta is an
+- `clerkAuth({ publishableKey, secretKey, publicUrl, gate? })`, imported from
+  `@zackbart/connecta/auth/clerk` — connecta is an
   OAuth 2.1 **resource server**; Clerk is the authorization server:
   - Serve `/.well-known/oauth-protected-resource` AND
     `/.well-known/oauth-protected-resource/mcp` (clients probe both):
@@ -213,7 +217,7 @@ Connecta uses a raw-fetch Clerk resource-server implementation on Workers:
   branch on this BEFORE the Clerk gate; fall through to OAuth path otherwise.
 - Both can be active at once; either passing admits the request.
 - Auth is checked before any MCP handling. `/health` and `.well-known` are open.
-- Pin versions: `@clerk/backend` ^3.12, MCP SDK per research. We use
+- The adapter has an optional peer on `@clerk/backend` ^3.12. It uses
   `@clerk/backend` directly — NOT `@clerk/mcp-tools` (its adapters are
   Next/Express/Hono only; no raw-fetch adapter).
 
@@ -236,23 +240,23 @@ connecta/
       api.ts              # api() — hand-written tool defs
     auth/
       bearer.ts
-      clerk.ts
+      clerk.ts            # optional "@zackbart/connecta/auth/clerk" adapter
       downstream-oauth.ts # OAuthClientProvider impl over KVStorage + callback route
     storage/
       memory.ts
       file.ts
-      cloudflare-kv.ts
     node.ts               # listen() adapter (subpath export "@zackbart/connecta/node")
   test/                   # vitest; unit tests for registry, meta-tools, auth,
                           # api connector; remote-mcp against an in-process MCP server
   examples/
-    worker/               # deployable example: wrangler.jsonc + src/index.ts
+    worker/               # deployable example + Cloudflare KV/D1 adapters
     node/                 # node example
 ```
 
-Dependencies: `@modelcontextprotocol/sdk`, `zod`, `@clerk/backend` (+
-`@clerk/mcp-tools` if research confirms), dev: typescript, vitest, wrangler,
-`@cloudflare/workers-types`.
+Core dependencies: `@modelcontextprotocol/sdk`, `@cfworker/json-schema`, and
+`zod`. The Clerk and QuickJS subpath adapters declare `@clerk/backend` and
+`quickjs-emscripten` as optional peers. Dev dependencies include TypeScript,
+Vitest, Wrangler, and `@cloudflare/workers-types`.
 
 ## Code mode (added after v1)
 

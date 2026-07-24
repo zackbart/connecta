@@ -1,0 +1,39 @@
+name: Publish
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: npm-publish
+  cancel-in-progress: false
+
+jobs:
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Use an npm CLI with trusted-publishing support
+        run: npm install --global npm@^11.5.1
+      - name: Verify release tag matches package version
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          node -e '
+            const version = require("./package.json").version;
+            const expected = `v${version}`;
+            if (process.env.RELEASE_TAG !== expected) {
+              throw new Error(`Release tag ${process.env.RELEASE_TAG} must equal ${expected}`);
+            }
+          '
+      - run: npm ci
+      - run: npm run release:check
+      - run: npm publish

@@ -10,4 +10,5 @@ examples/node
 .connecta-state.json
 *.log
 .git
+.github
 .DS_Store

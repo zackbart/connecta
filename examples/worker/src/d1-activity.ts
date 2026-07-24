@@ -2,8 +2,8 @@ import type {
   ActivityPage,
   ActivityStore,
   ToolCallActivityEvent,
-} from "../activity.js";
-import { InvalidActivityCursorError } from "../activity.js";
+} from "@zackbart/connecta";
+import { InvalidActivityCursorError } from "@zackbart/connecta";
 
 interface ActivityRow {
   id: string;

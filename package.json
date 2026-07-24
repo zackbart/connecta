@@ -1,10 +1,16 @@
 {
   "name": "@zackbart/connecta",
   "version": "0.1.0",
-  "private": true,
   "type": "module",
+  "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind nine meta-tools.",
   "license": "MIT",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/zackbart/connecta.git"
@@ -21,7 +27,11 @@
   ],
   "files": [
     "dist",
+    "src",
+    "assets",
     "README.md",
+    "CHANGELOG.md",
+    "SECURITY.md",
     "LICENSE"
   ],
   "exports": {
@@ -36,28 +46,48 @@
     "./quickjs": {
       "types": "./dist/executors/quickjs.d.ts",
       "import": "./dist/executors/quickjs.js"
+    },
+    "./auth/clerk": {
+      "types": "./dist/auth/clerk.d.ts",
+      "import": "./dist/auth/clerk.js"
     }
   },
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
-    "generate:cloudflare": "node scripts/generate-cloudflare-manifest.mjs",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
-    "check": "npm run typecheck && npm run test && npm run build",
-    "prepack": "npm run check"
+    "check:examples": "tsc -p tsconfig.examples.node.json && tsc -p tsconfig.examples.worker.json",
+    "check:security": "npm audit --omit=dev --audit-level=high",
+    "check:package": "node scripts/check-package.mjs",
+    "check": "npm run typecheck && npm run test && npm run build && npm run check:examples",
+    "release:check": "npm run check && npm run check:security && npm run check:package",
+    "prepack": "npm run check",
+    "prepublishOnly": "npm run check:security"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
-    "@clerk/backend": "^3.12.0",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "cloudflare": "7.0.0",
-    "quickjs-emscripten": "^0.32.0",
-    "zod": "^3.25.0"
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "@clerk/backend": "^3.12.0",
+    "quickjs-emscripten": "^0.32.0"
+  },
+  "peerDependenciesMeta": {
+    "@clerk/backend": {
+      "optional": true
+    },
+    "quickjs-emscripten": {
+      "optional": true
+    }
   },
   "devDependencies": {
+    "@clerk/backend": "^3.12.0",
     "@cloudflare/codemode": "^0.4.4",
     "@cloudflare/workers-types": "^4.20250101.0 || ^5.0.0",
     "@types/node": "^22.0.0",
+    "quickjs-emscripten": "^0.32.0",
     "tsx": "^4.23.1",
     "typescript": "^5.6.0",
     "vitest": "^4.1.6",

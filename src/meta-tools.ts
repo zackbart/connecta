@@ -1032,7 +1032,7 @@ export function registerMetaTools(
       description: CALL_DESC,
       inputSchema: {
         address: z.string(),
-        args: z.record(z.unknown()).optional(),
+        args: z.record(z.string(), z.unknown()).optional(),
         fields: z.array(z.string()).optional(),
         resultMode: z.enum(["mcp", "value"]).optional(),
         timeoutMs: z.number().int().positive().optional(),
@@ -1049,7 +1049,7 @@ export function registerMetaTools(
       description: CALL_DESTRUCTIVE_DESC,
       inputSchema: {
         address: z.string(),
-        args: z.record(z.unknown()).optional(),
+        args: z.record(z.string(), z.unknown()).optional(),
         fields: z.array(z.string()).optional(),
         resultMode: z.enum(["mcp", "value"]).optional(),
         timeoutMs: z.number().int().positive().optional(),
@@ -1099,7 +1099,7 @@ export function registerMetaTools(
           .array(
             z.object({
               address: z.string(),
-              args: z.record(z.unknown()).optional(),
+              args: z.record(z.string(), z.unknown()).optional(),
               fields: z.array(z.string()).optional(),
               resultMode: z.enum(["mcp", "value"]).optional(),
               timeoutMs: z.number().int().positive().optional(),

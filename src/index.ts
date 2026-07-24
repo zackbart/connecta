@@ -26,7 +26,7 @@ export interface ConnectaConfig {
   activityReadGate?: ActivityReadGate;
   /** Stable deployment label included in activity events, e.g. "production". */
   activityDeploymentId?: string;
-  /** Inbound auth: bearerToken(...) and/or clerkAuth(...). Omit for open (dev). */
+  /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
   /** KVStorage impl. Defaults to memoryStorage(). */
   storage?: KVStorage;
@@ -148,15 +148,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
 
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
-export { cloudflareApi } from "./connectors/cloudflare.js";
-export { clerkAuth } from "./auth/clerk.js";
 export { bearerToken } from "./auth/bearer.js";
 export { memoryStorage } from "./storage/memory.js";
-export { cloudflareKvStorage } from "./storage/cloudflare-kv.js";
-export {
-  d1ActivityStore,
-  pruneActivity,
-} from "./storage/cloudflare-d1-activity.js";
 export { CredentialVault } from "./credentials.js";
 export { Registry } from "./registry.js";
 export { createMetaTools } from "./meta-tools.js";
@@ -168,8 +161,6 @@ export {
 
 export type { RemoteMcpOptions, RemoteMcpAuth } from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";
-export type { CloudflareConnectorOptions } from "./connectors/cloudflare.js";
-export type { ClerkAuthOptions } from "./auth/clerk.js";
 export type {
   Connector,
   ConnectaBranding,

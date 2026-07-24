@@ -8,8 +8,8 @@ and non-goals live in [`docs/design.md`](./docs/design.md).
 - [x] Extract Connecta into its own repository as a reusable, versioned package.
 - [x] Payload-free downstream tool activity history with authenticated actor,
       actual connector tool address, outcome, duration, and call source. The
-      package exposes vendor-neutral and Cloudflare D1 activity stores plus the
-      authenticated `/ui` Activity tab.
+      package exposes vendor-neutral activity contracts plus the authenticated
+      `/ui` Activity tab; the Worker example owns its D1 implementation.
 - [ ] Toolkits / scoped views — a `?toolkit=` filter over the registry for
       per-client deployments.
 - [ ] Per-connector `maxResultBytes` override.

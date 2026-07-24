@@ -17,8 +17,9 @@
  * Run locally:
  *   docker compose -f examples/docker/docker-compose.yml up -d
  */
-import { api, bearerToken, clerkAuth, createConnecta } from "@zackbart/connecta";
+import { api, bearerToken, createConnecta } from "@zackbart/connecta";
 import type { InboundAuth } from "@zackbart/connecta";
+import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 
 const port = Number(process.env.PORT ?? 8787);

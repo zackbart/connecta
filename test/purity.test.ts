@@ -3,9 +3,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-// Guardrail: the main entry (src/index.ts) must stay Workers-clean. Anything
-// node-specific (node: builtins, the listen() adapter, fileStorage) lives only
-// behind the "@zackbart/connecta/node" subpath and must NOT be reachable from index.ts.
+// Guardrail: the main entry (src/index.ts) must stay Workers-clean and free of
+// optional adapters. Node-only code and provider-specific auth integrations live
+// behind explicit package subpaths and must NOT be reachable from index.ts.
 //
 // Kept dependency-free on purpose: it statically walks the relative-import graph
 // with regex + fs, no bundler or TS API. node:fs / node:path here in the test
@@ -86,10 +86,12 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     }
   });
 
-  it("never reaches the node-only modules (node.ts, storage/file.ts)", () => {
+  it("never reaches node-only modules or optional auth adapters", () => {
     const nodeAdapter = join(SRC, "node.ts");
     const fileStorage = join(SRC, "storage", "file.ts");
+    const clerkAdapter = join(SRC, "auth", "clerk.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
     expect(graph.has(fileStorage)).toBe(false);
+    expect(graph.has(clerkAdapter)).toBe(false);
   });
 });
