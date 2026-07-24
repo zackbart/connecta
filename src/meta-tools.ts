@@ -7,6 +7,12 @@ import {
   type ActivityRequestContext,
 } from "./activity.js";
 import { unwrapMcpResult } from "./mcp-result.js";
+import {
+  classifyCallError,
+  ConnectorCallError,
+  messageLooksRetryable,
+  type CallErrorDetails,
+} from "./errors.js";
 import type { Registry } from "./registry.js";
 import { AVAILABLE_SKILLS } from "./skills.js";
 import type { KVStorage, ToolDef } from "./types.js";
@@ -45,21 +51,11 @@ const DEFAULT_SEARCH_LIMIT = 25;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-interface ErrorDetails {
-  code: string;
-  message: string;
-  retryable: boolean;
-}
+type ErrorDetails = CallErrorDetails;
 
+/** Details for failures that never reached a connector (no thrown value). */
 function errorDetails(code: string, message: string): ErrorDetails {
-  return {
-    code,
-    message,
-    retryable:
-      /timeout|timed out|econnreset|econnrefused|temporar|rate.?limit|429|502|503|504|refcountedcanceler|different request/i.test(
-        message,
-      ),
-  };
+  return { code, message, retryable: messageLooksRetryable(message) };
 }
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
@@ -332,11 +328,10 @@ export function createMetaTools(
         ...(errorCode ? { errorCode } : {}),
       });
     };
-    const failed = (code: string, message: string): RunCallOutcome => {
+    const failed = (error: ErrorDetails): RunCallOutcome => {
       const durationMs = Date.now() - started;
-      const error = errorDetails(code, message);
       const diagnostics = timing();
-      record(code === "timeout" ? "timeout" : "error", code);
+      record(error.code === "timeout" ? "timeout" : "error", error.code);
       return {
         toolResult:
           call.resultMode === "value"
@@ -347,7 +342,7 @@ export function createMetaTools(
                 attempts,
                 ...(call.diagnostics ? { timing: diagnostics } : {}),
               })
-            : errorResult(message),
+            : errorResult(error.message),
         durationMs,
         attempts,
         timing: diagnostics,
@@ -355,7 +350,9 @@ export function createMetaTools(
       };
     };
     if (!resolved) {
-      return failed("unknown_address", `Unknown address "${call.address}"`);
+      return failed(
+        errorDetails("unknown_address", `Unknown address "${call.address}"`),
+      );
     }
     const results = registry.resultsStorage();
     const fields = call.fields && call.fields.length > 0 ? call.fields : null;
@@ -375,13 +372,17 @@ export function createMetaTools(
       ).find((tool) => tool.name === resolved.toolName);
     } catch (err) {
       catalogMs += Date.now() - catalogStarted;
-      return failed("catalog_lookup_failed", msg(err));
+      // classifyCallError so a typed auth_required thrown while listing tools
+      // (e.g. a revoked downstream OAuth grant) keeps its code.
+      return failed(classifyCallError(err, "catalog_lookup_failed"));
     }
     catalogMs += Date.now() - catalogStarted;
     if (!definition) {
       return failed(
-        "unknown_tool",
-        `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
+        errorDetails(
+          "unknown_tool",
+          `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
+        ),
       );
     }
     const explicitlyReadOnly =
@@ -389,8 +390,10 @@ export function createMetaTools(
       definition.annotations?.destructiveHint !== true;
     if (!explicitlyReadOnly && !options.allowDestructive) {
       return failed(
-        "destructive_tool_requires_approval",
-        `Tool "${call.address}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+        errorDetails(
+          "destructive_tool_requires_approval",
+          `Tool "${call.address}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+        ),
       );
     }
     const retrySafe =
@@ -420,7 +423,12 @@ export function createMetaTools(
               pending,
               new Promise<never>((_, reject) => {
                 timer = setTimeout(() => {
-                  reject(new Error(`Tool call timed out after ${timeoutMs}ms`));
+                  reject(
+                    new ConnectorCallError(
+                      "timeout",
+                      `Tool call timed out after ${timeoutMs}ms`,
+                    ),
+                  );
                   controller?.abort();
                 }, timeoutMs);
               }),
@@ -441,7 +449,7 @@ export function createMetaTools(
       } catch (err) {
         // Includes connector setup, downstream execution, and timeout wait.
         connectorMs += Date.now() - connectorStarted;
-        const details = errorDetails("connector_call_failed", msg(err));
+        const details = classifyCallError(err);
         if (attempts <= maxRetries && retrySafe && details.retryable) {
           const backoffStarted = Date.now();
           await new Promise((resolve) =>
@@ -455,12 +463,7 @@ export function createMetaTools(
           Date.now() - started,
           err,
         );
-        return failed(
-          /timed out|timeout/i.test(msg(err))
-            ? "timeout"
-            : "connector_call_failed",
-          msg(err),
-        );
+        return failed(details);
       } finally {
         if (timer) clearTimeout(timer);
       }
@@ -531,7 +534,7 @@ export function createMetaTools(
       };
     } catch (err) {
       resultProcessingMs += Date.now() - processingStarted;
-      return failed("result_processing_failed", msg(err));
+      return failed(errorDetails("result_processing_failed", msg(err)));
     }
   }
 
@@ -846,12 +849,11 @@ export function createMetaTools(
       const results = settled.map((s, i) => {
         const address = args.calls[i].address;
         if (s.status === "rejected") {
-          const message = msg(s.reason);
           return {
             address,
             ok: false,
-            error: message,
-            errorDetails: errorDetails("batch_call_failed", message),
+            error: msg(s.reason),
+            errorDetails: classifyCallError(s.reason, "batch_call_failed"),
           };
         }
         const r = s.value;

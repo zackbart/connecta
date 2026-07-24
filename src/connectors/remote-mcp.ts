@@ -4,6 +4,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
+import { ConnectorCallError } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
@@ -59,6 +60,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // from the isolate singleton. Those are request-bound in Cloudflare Workers.
   const states = new WeakMap<object, ConnectionState>();
   const isOauth = opts.auth?.type === "oauth";
+
+  /** Typed per-call auth signal; the SDK's UnauthorizedError stays as cause. */
+  const authRequiredError = (cause: unknown) =>
+    new ConnectorCallError(
+      "auth_required",
+      `Connector "${id}" requires authorization — call authorize_connector({ connector: "${id}" }) and open the returned URL.`,
+      { cause },
+    );
 
   const stateFor = (ctx: ConnectorContext): ConnectionState => {
     const scope = ctx.requestScope ?? ctx;
@@ -176,6 +185,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // "auth_required".
         if (err instanceof UnauthorizedError) {
           state.authRequired = true;
+          throw authRequiredError(err);
         }
         throw err;
       } finally {
@@ -209,19 +219,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     async callTool(name, args, ctx) {
       const state = stateFor(ctx);
       await ensureConnected(ctx, state);
-      return state.client!.callTool(
-        {
-          name,
-          arguments: (args ?? {}) as Record<string, unknown>,
-        },
-        undefined,
-        ctx.timeoutMs || ctx.signal
-          ? {
-              ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
-              ...(ctx.signal ? { signal: ctx.signal } : {}),
-            }
-          : undefined,
-      );
+      try {
+        return await state.client!.callTool(
+          {
+            name,
+            arguments: (args ?? {}) as Record<string, unknown>,
+          },
+          undefined,
+          ctx.timeoutMs || ctx.signal
+            ? {
+                ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
+                ...(ctx.signal ? { signal: ctx.signal } : {}),
+              }
+            : undefined,
+        );
+      } catch (err) {
+        // A grant revoked after connect surfaces here, not in ensureConnected.
+        if (err instanceof UnauthorizedError) {
+          state.authRequired = true;
+          throw authRequiredError(err);
+        }
+        throw err;
+      }
     },
 
     async status(ctx): Promise<ConnectorStatus> {

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
 import { recordToolActivity, type ActivityRequestContext } from "./activity.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
+import { classifyCallError, ConnectorCallError } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import type { Registry } from "./registry.js";
 import type {
@@ -191,7 +192,10 @@ export async function buildSandboxProviders(
     try {
       timer = setTimeout(() => {
         controller.abort(
-          new Error(`Tool call timed out after ${hostCallTimeoutMs}ms`),
+          new ConnectorCallError(
+            "timeout",
+            `Tool call timed out after ${hostCallTimeoutMs}ms`,
+          ),
         );
       }, hostCallTimeoutMs);
       const pending = resolved.connector.callTool(
@@ -216,16 +220,16 @@ export async function buildSandboxProviders(
       return value;
     } catch (err) {
       registry.recordFailure(resolved.connector.id, Date.now() - started, err);
-      const timedOut = /timed out|timeout/i.test(msg(err));
+      const details = classifyCallError(err);
       recordToolActivity(activity, {
         connectorId: resolved.connector.id,
         toolName: resolved.toolName,
         address: `${resolved.connector.id}.${resolved.toolName}`,
         source: "execute_code",
-        outcome: timedOut ? "timeout" : "error",
+        outcome: details.code === "timeout" ? "timeout" : "error",
         durationMs: Date.now() - started,
         attempts: 1,
-        errorCode: timedOut ? "timeout" : "connector_call_failed",
+        errorCode: details.code,
       });
       throw err;
     } finally {

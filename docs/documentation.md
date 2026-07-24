@@ -343,12 +343,27 @@ Registered only when `ConnectaConfig.executor` is set — see
 - **isError results, not exceptions.** A thrown error inside a connector becomes
   `{ content: [{ type: "text", text: <message> }], isError: true }`. It never
   crashes the server.
+- **Typed classification.** A connector (or anything beneath `callTool`) may
+  throw `ConnectorCallError` from the root export to classify a failure
+  exactly: `code` is one of `timeout`, `auth_required`, `rate_limited`,
+  `unavailable`, `invalid_args`, or `connector_call_failed`, and `retryable`
+  defaults per code (timeout, rate_limited, and unavailable retry) with an
+  explicit override. Value-mode results carry the code through as
+  `error: { code, message, retryable }`.
+- **The heuristic fallback.** A plain `Error` is classified by message text —
+  `timeout`/`timed out` marks a timeout; timeouts, 429/5xx, and connection
+  resets read as retryable. This is why typed errors exist: a legitimate
+  message that merely *mentions* "timeout" is misread as a retryable timeout
+  unless the connector throws `ConnectorCallError` instead.
 - **Broken-connector isolation.** If a connector's `listTools` throws,
   `search_tools`/`list_connectors` skip it (its `toolCount` reads 0, status reads
   `error`) — other connectors keep working.
 - **auth_required.** A connector needing downstream OAuth reports status
   `auth_required` with an `authorizationUrl` in `list_connectors`, instead of
-  erroring.
+  erroring. Per **call**, `remoteMcp()` converts the SDK's `UnauthorizedError`
+  into a `ConnectorCallError` with code `auth_required` — so a token that
+  expires *between* `status()` and `callTool` still routes the agent to
+  `authorize_connector` instead of surfacing as a generic failure.
 
 ---
 
@@ -482,6 +497,8 @@ export interface ApiTool {
 export interface ApiOptions {
   title?: string;
   description?: string;
+  /** Validate args against each tool's inputSchema before the handler runs. Default true. */
+  validateArgs?: boolean;
   tools: ApiTool[];
 }
 ```
@@ -528,6 +545,20 @@ export const resend = api("resend", {
 Input/output schemas are **plain JSON Schema objects** — bring your own
 `zod-to-json-schema` if you prefer authoring with zod. A thrown handler error is
 turned into an `isError` result by `call_tool`.
+
+Arguments are validated against `inputSchema` (draft 2020-12, via the
+`@cfworker/json-schema` dependency the package already carries) before the
+handler runs. A mismatch fails closed as a non-retryable `invalid_args`
+`ConnectorCallError` — the model gets a message naming the offending locations
+instead of whatever a handler typed `any` would have done with bad input. Set
+`validateArgs: false` if a deployment relies on the old loose pass-through. A
+schema the validator cannot use (e.g. an unresolvable `$ref`) logs one warning
+and passes args through rather than breaking a working tool.
+
+This is deliberately asymmetric with `remoteMcp()`, which stays pass-through:
+the downstream server is authoritative for its own schemas, and re-validating
+with our draft/format semantics could reject calls the downstream would have
+accepted.
 
 ### Writing a custom connector
 
@@ -698,7 +729,7 @@ interface KVStorage {
 | Impl | Import from | Notes |
 | --- | --- | --- |
 | `memoryStorage()` | `@zackbart/connecta` | Default; in-memory with expiry. Dev / ephemeral. |
-| `fileStorage(path)` | `@zackbart/connecta/node` | JSON file; atomic write (tmp + rename). Node only. |
+| `fileStorage(path, { logger? })` | `@zackbart/connecta/node` | JSON file; atomic write (tmp + rename). Node only. |
 
 The package intentionally does not ship platform-specific storage. The Worker
 example implements `cloudflareKvStorage(ns)` over the same interface; Workers

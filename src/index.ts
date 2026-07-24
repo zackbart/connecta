@@ -159,6 +159,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
 
 export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
+export { ConnectorCallError } from "./errors.js";
+export type { ConnectorCallErrorCode, CallErrorDetails } from "./errors.js";
 export { bearerToken } from "./auth/bearer.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";

@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
-import type { ConnectorContext } from "../src/types.js";
+import { ConnectorCallError } from "../src/errors.js";
+import type { ConnectorContext, Logger } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
 
@@ -95,5 +96,91 @@ describe("api() connector", () => {
     await expect(c.callTool("boom", {}, ctx())).rejects.toThrow(
       /handler exploded/,
     );
+  });
+});
+
+describe("api() argument validation", () => {
+  it("rejects args that miss the schema with a non-retryable invalid_args", async () => {
+    const c = makeApi();
+    const err = await c
+      .callTool("send_email", { to: 42 }, ctx())
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    const typed = err as ConnectorCallError;
+    expect(typed.code).toBe("invalid_args");
+    expect(typed.retryable).toBe(false);
+    expect(typed.message).toContain('resend.send_email');
+    expect(typed.message).toContain("/to");
+  });
+
+  it("rejects omitted args when the schema has required fields", async () => {
+    const c = makeApi();
+    await expect(
+      c.callTool("send_email", undefined, ctx()),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+  });
+
+  it("valid args reach the handler unchanged", async () => {
+    const c = makeApi();
+    const result = await c.callTool("send_email", { to: "a@b.c" }, ctx());
+    expect(result).toEqual({ queued: true, to: "a@b.c", base: BASE });
+  });
+
+  it("tools without an inputSchema stay pass-through", async () => {
+    let seen: unknown;
+    const c = api("x", {
+      tools: [{ name: "peek", handler: (args) => ((seen = args), null) }],
+    });
+    await c.callTool("peek", { anything: true }, ctx());
+    expect(seen).toEqual({ anything: true });
+  });
+
+  it("validateArgs: false restores the pre-validation pass-through", async () => {
+    const c = api("loose", {
+      validateArgs: false,
+      tools: [
+        {
+          name: "coerce",
+          inputSchema: {
+            type: "object",
+            properties: { page: { type: "integer" } },
+            required: ["page"],
+          },
+          handler: (args: { page: unknown }) => ({ got: args.page }),
+        },
+      ],
+    });
+    expect(await c.callTool("coerce", { page: "3" }, ctx())).toEqual({
+      got: "3",
+    });
+  });
+
+  it("a schema the validator cannot use warns once and passes through", async () => {
+    const warn = vi.fn();
+    const logger: Logger = { ...silentLogger, warn };
+    const c = api("refy", {
+      tools: [
+        {
+          name: "broken_schema",
+          // Unresolvable $ref — @cfworker/json-schema only surfaces this on
+          // the first validate() call, not at construction.
+          inputSchema: {
+            type: "object",
+            properties: { x: { $ref: "#/definitions/missing" } },
+          },
+          handler: (args: { x: unknown }) => ({ got: args.x }),
+        },
+      ],
+    });
+    const context = { ...ctx(), logger };
+    expect(await c.callTool("broken_schema", { x: 1 }, context)).toEqual({
+      got: 1,
+    });
+    expect(await c.callTool("broken_schema", { x: 2 }, context)).toEqual({
+      got: 2,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("refy.broken_schema");
   });
 });

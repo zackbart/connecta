@@ -1,8 +1,10 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ConnectorCallError } from "../src/errors.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -119,6 +121,31 @@ describe("remoteMcp() connector", () => {
     const c = await makeConnector();
     const status = await c.status!(ctx());
     expect(status.state).toBe("ok");
+  });
+
+  it("converts the SDK's UnauthorizedError into a typed auth_required call error", async () => {
+    const c = remoteMcp("locked", {
+      url: "https://unused.example/mcp",
+      description: "Locked",
+      _transportFactory: () =>
+        ({
+          async start() {
+            throw new UnauthorizedError("Unauthorized");
+          },
+          async send() {},
+          async close() {},
+        }) as unknown as Transport,
+    });
+    const err = await c
+      .callTool("echo", {}, ctx())
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    const typed = err as ConnectorCallError;
+    expect(typed.code).toBe("auth_required");
+    expect(typed.retryable).toBe(false);
+    expect(typed.message).toContain('authorize_connector({ connector: "locked" })');
+    expect(typed.cause).toBeInstanceOf(UnauthorizedError);
   });
 
   it("reuses a client within one request scope but never across requests", async () => {
