@@ -354,7 +354,12 @@ describe("buildSandboxProviders", () => {
     const tool = providers.find((provider) => provider.name === "safe")!;
     await expect(tool.fns.read({})).resolves.toBe(1);
     await expect(tool.fns.read({})).resolves.toBe(2);
-    await expect(tool.fns.read({})).rejects.toThrow("budget exceeded");
+    // Synchronous rejection-handler attach — expect(...).rejects attaches a
+    // microtask later, which workerd reports as an unhandled rejection.
+    const exceeded = await tool.fns
+      .read({})
+      .then(() => null, (e: unknown) => e as Error);
+    expect(exceeded?.message).toContain("budget exceeded");
     expect(calls).toBe(2);
 
     const connecta = providers.find(

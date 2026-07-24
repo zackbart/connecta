@@ -929,7 +929,20 @@ when this package is public.
 npm scripts (`package.json`):
 
 - `npm run typecheck` — `tsc --noEmit`.
-- `npm run test` — `vitest run`.
+- `npm run test` — `vitest run` (both projects below).
+- `npm run test:node` / `npm run test:workers` — one project at a time.
+
+Tests run as two vitest projects (`vitest.config.ts`):
+
+- **node** — every suite, on Node (as before).
+- **workers** — the runtime-portable suites re-run inside workerd via
+  `@cloudflare/vitest-pool-workers` (matching the Worker example's
+  `compatibility_date` + `nodejs_compat`), so a Workers-only regression — the
+  class of bug the `CfWorkerJsonSchemaValidator` workaround in `remote-mcp.ts`
+  exists for, previously only findable by hand — fails CI. Node-only surfaces
+  (`fileStorage`, the QuickJS executor, the fs-walking guardrail suites) stay
+  Node-project-only, and the two code-mode tests that execute QuickJS WASM
+  skip under workerd.
 
 Test suites (`test/`) and what they cover:
 

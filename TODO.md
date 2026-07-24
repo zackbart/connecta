@@ -21,8 +21,6 @@ and non-goals live in [`docs/design.md`](./docs/design.md).
 - [ ] `skills` meta-tool serving per-connector usage guides.
 - [ ] OpenAPI spec import as a connector factory.
 - [ ] Semantic tool search (embeddings) vs. today's substring match.
-- [ ] Verify the Docker image build (daemon was unavailable; the compose stack was
-      reviewed but never actually built).
 - [ ] Group `ConnectaConfig`'s three `activity*` fields and four catalog/result
       tuning knobs into nested objects. Breaking; batch with the next intentional
       breaking release.

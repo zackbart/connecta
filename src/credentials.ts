@@ -219,7 +219,10 @@ export class CredentialVault {
     value: string,
     updatedBy: string,
   ): Promise<CredentialMetadata> {
-    return this.setAll(connectorId, { value }, updatedBy);
+    // `await` (not a bare promise return) so a validation throw inside setAll
+    // never sits handler-less for the thenable-adoption microtask — workerd
+    // reports that gap as an unhandled rejection.
+    return await this.setAll(connectorId, { value }, updatedBy);
   }
 
   async setAll(
