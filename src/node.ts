@@ -114,6 +114,10 @@ export function listen(
         const request = await toRequest(req, maxBodyBytes);
         if (request === BODY_TOO_LARGE) {
           res.statusCode = 413;
+          // The request stream was abandoned mid-body, so this connection
+          // cannot be reused — say so rather than leaving the client to
+          // discover it as a reset.
+          res.setHeader("Connection", "close");
           res.end("Payload Too Large");
           return;
         }
@@ -122,7 +126,14 @@ export function listen(
       } catch (error) {
         // A headless deployment has nothing else to go on; never swallow this.
         console.error("[connecta] request failed", error);
-        if (!res.headersSent) res.statusCode = 500;
+        if (res.headersSent) {
+          // Mid-stream failure: appending an error string here would corrupt
+          // the partial body the client has already begun reading. Cutting
+          // the connection is the only honest signal left.
+          res.destroy();
+          return;
+        }
+        res.statusCode = 500;
         res.end("Internal Server Error");
       }
     })();
@@ -140,6 +151,9 @@ export function listen(
         process.exit(1);
       }, timeoutMs);
       forced.unref?.();
+      // close() alone waits on idle keep-alive sockets, so a single browser
+      // tab would stall every shutdown until the force-exit deadline.
+      server.closeIdleConnections();
       server.close(() => {
         void Promise.allSettled([...pending]).then(() => {
           clearTimeout(forced);

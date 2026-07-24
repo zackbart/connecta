@@ -55,6 +55,12 @@ All notable changes to this package are documented here.
   bare 500.
 - The import-graph purity test now also rejects dynamic `import("node:…")`,
   which previously slipped past both of its patterns.
+- Operator-supplied `branding.productName` is escaped for the `<script>`
+  context it is inlined into, not just for HTML attributes.
+- A mid-stream response failure destroys the connection instead of appending an
+  error string to the partial body the client is already reading, and graceful
+  shutdown closes idle keep-alive sockets rather than waiting out its own
+  deadline on them.
 
 ## 0.1.1 — 2026-07-24
 

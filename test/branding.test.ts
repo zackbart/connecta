@@ -116,3 +116,26 @@ describe("branding in served pages", () => {
     expect(body).not.toContain("Connecta");
   });
 });
+
+describe("branding is not an injection vector", () => {
+  it("cannot break out of the dashboard's script block", async () => {
+    const body = await (
+      await make({ productName: '</script><img src=x onerror=alert(1)>' }).fetch(
+        new Request(`${BASE}/ui`),
+      )
+    ).text();
+    expect(body).not.toContain("</script><img");
+    expect(body).toContain("<\\/script>");
+  });
+
+  it("escapes branding in HTML attribute and text positions", async () => {
+    const body = await (
+      await make({
+        productName: 'Acme" onload="alert(1)',
+        ownerName: "<b>owner</b>",
+      }).fetch(new Request(`${BASE}/ui`))
+    ).text();
+    expect(body).not.toContain('onload="alert(1)"');
+    expect(body).not.toContain("<b>owner</b>");
+  });
+});

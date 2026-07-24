@@ -50,6 +50,15 @@ export function resolveBranding(
 }
 
 /**
+ * A JS string literal safe to inline in a <script> block. JSON.stringify alone
+ * leaves `/` untouched, so a value containing "</script>" would close the
+ * element early — operator-supplied branding still goes through here.
+ */
+function escapeScriptString(value: string): string {
+  return JSON.stringify(value).replace(/\//g, "\\/");
+}
+
+/**
  * True only for absolute `http:`/`https:` URLs. Downstream connectors control
  * their `authorizationUrl`, so a hostile/misconfigured one could hand back a
  * `javascript:` (or other) scheme; gate it before it can become an href.
@@ -765,7 +774,7 @@ async function load() {
   $("app").classList.remove("hidden");
   $("appNav").classList.remove("hidden");
   const si = DATA.serverInfo || {};
-  $("serverInfo").textContent = (si.name || ${JSON.stringify(brand.productName)}) + " v" + (si.version || "?");
+  $("serverInfo").textContent = (si.name || ${escapeScriptString(brand.productName)}) + " v" + (si.version || "?");
   $("activityTab").classList.toggle("hidden", !DATA.activityEnabled);
   render();
 }
