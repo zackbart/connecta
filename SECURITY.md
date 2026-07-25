@@ -16,7 +16,7 @@ CI blocks high and critical production dependency advisories. Moderate findings
 are reviewed for reachability and recorded when an upstream package has not yet
 released a compatible fix.
 
-The initial release has one such upstream finding:
+As of 0.4.0, one such finding remains open:
 `@modelcontextprotocol/sdk@1.29.0` declares `@hono/node-server` 1.x, which is
 covered by `GHSA-frvp-7c67-39w9`. The advisory affects Hono's Windows
 `serve-static` implementation. Connecta does not import that adapter or serve

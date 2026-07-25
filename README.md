@@ -65,9 +65,7 @@ connector configuration, auth policy, domain, bindings, migrations, and secrets.
 
 ```ts
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
-import {
-  api, bearerToken, createConnecta, remoteMcp,
-} from "@zackbart/connecta";
+import { bearerToken, createConnecta, remoteMcp } from "@zackbart/connecta";
 import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { cloudflareKvStorage } from "./cloudflare-kv.js";
 
@@ -202,9 +200,11 @@ api("example", {
 ```
 
 Set `credentialEncryptionKey` on `createConnecta` to a base64-encoded 32-byte
-key held in the runtime's secret store (`openssl rand -base64 32`). Credential
-mutation routes require the configured Clerk provider and a same-origin browser
-request; the static inbound bearer cannot administer the vault.
+key held in the runtime's secret store (`openssl rand -base64 32`) — a connector
+that declares a credential without one fails at construction rather than booting
+with an unusable vault. Credential mutation routes require the configured Clerk
+provider and a same-origin browser request; the static inbound bearer cannot
+administer the vault.
 
 Connecta does not bundle service-specific HTTP API connectors. Package consumers
 define them with `api()` (or implement `Connector` directly), keeping endpoint,
@@ -233,17 +233,37 @@ const connecta = createConnecta({
 ```
 
 One final event is emitted for each resolved connector call made through
-`call_tool`, `batch_call`, or `execute_code`; retries remain one event with an
-`attempts` count. Implementing `list` enables the authenticated Activity tab in
-`/ui`; `activityReadGate` can narrow reads further. Writes are best-effort and
-never change a tool result. Clerk calls carry the Clerk user ID; shared bearer
-calls are honestly labeled as bearer unless
-`bearerToken(secret, { subjectId })` assigns that credential a stable subject.
+`call_tool`, `call_destructive_tool`, `batch_call`, or `execute_code`; retries
+remain one event with an `attempts` count. Implementing `list` enables the
+authenticated Activity tab in `/ui`; `activityReadGate` can narrow reads
+further. Writes are best-effort and never change a tool result. Clerk calls
+carry the Clerk user ID; shared bearer calls are honestly labeled as bearer
+unless `bearerToken(secret, { subjectId })` assigns that credential a stable
+subject. On Workers, pass `ctx` through to `connecta.fetch(request, env, ctx)`
+so async writes settle on `waitUntil`.
+[`examples/worker/src/d1-activity.ts`](./examples/worker/src/d1-activity.ts) is
+a complete D1 implementation with keyset paging and a retention pass.
+
+## Operator dashboard
+
+`GET /ui` is a read-only dashboard with no build step: connector health, tool
+counts and descriptions with a client-side filter, downstream authorization
+links, the credential controls above, and an Activity tab when an activity store
+is configured. The shell is open because it carries no data; everything it shows
+comes from `/ui/data`, behind the same auth gate as `/mcp`. With Clerk
+configured it signs operators in through Clerk's hosted portal; a bearer-only
+deployment falls back to a pasted token.
+
+Every deployment-facing label and mark on `/ui` and the OAuth result pages comes
+from `ConnectaConfig.branding` — `productName`, `ownerName`, their URLs,
+`description`, `pageTitle`, `themeColor`, and `favicon` — each falling back to a
+neutral Connecta default. Nothing about the operator is baked into the package.
 
 ## Learn more
 
 - **[`docs/documentation.md`](./docs/documentation.md)** — how everything works: architecture,
   the meta-tools, connectors, inbound auth, downstream OAuth, storage, running it
-  (Node / Workers / Docker), Clerk setup, testing, troubleshooting.
+  (Node / Workers / Docker), Clerk setup, testing, troubleshooting, code mode,
+  the status UI, and activity history.
 - **[`docs/design.md`](./docs/design.md)** — why it's built this way, and the non-goals.
-- **Status UI** — a read-only operator dashboard at `GET /ui` (open shell; data from the bearer/Clerk-gated `/ui/data`). See [§14](./docs/documentation.md#14-status-ui).
+- **[`CHANGELOG.md`](./CHANGELOG.md)** — what changed in each release.

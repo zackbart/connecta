@@ -36,9 +36,9 @@ as an optional seam — see "Code mode" below — the platform around it stayed 
 4. `describe_tools` — `{ addresses[], format?, fullDescriptions? }` → concise
    documentation and compact TypeScript-like schemas by default.
 5. `call_tool` — `{ address, args?, fields?, resultMode?, timeoutMs?,
-   maxRetries? }` → raw MCP content or a structured value envelope; bounded
-   retries apply only to read-only/idempotent annotated tools; only explicitly
-   read-only tools are admitted here.
+   maxRetries?, diagnostics? }` → raw MCP content or a structured value
+   envelope; bounded retries apply only to read-only/idempotent annotated
+   tools; only explicitly read-only tools are admitted here.
 6. `call_destructive_tool` — the same call shape, registered with
    `destructiveHint: true`, for individually approved unannotated,
    write-capable, or destructive calls.
@@ -72,6 +72,11 @@ interface ToolDef {
 interface ConnectorContext {
   storage: KVStorage;           // namespaced to this connector
   logger: Logger;
+  baseUrl: string;              // deployment origin, for OAuth callbacks
+  credential?: ConnectorCredentialAccess;  // operator-managed, read-only
+  requestScope?: object;        // identity shared by one inbound request
+  signal?: AbortSignal;         // best-effort per-call cancellation
+  timeoutMs?: number;
 }
 
 /** The whole plugin contract — the one open seam. */
@@ -82,6 +87,9 @@ interface Connector {
   callTool(name: string, args: unknown, ctx: ConnectorContext): Promise<unknown>;
   /** Optional: connector-level health/auth status for list_connectors. */
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;
+  // Plus optional opt-ins: title, kind, credential + testCredential(s),
+  // staticTools, startAuth/verifyState/finishAuth, handleRequest.
+  // Full interface in documentation.md §4.
 }
 ```
 
@@ -120,8 +128,10 @@ export const connecta = createConnecta({
 ```
 
 Entrypoints:
-- Workers: `export default { fetch: connecta.fetch }`
-- Node: `connecta.listen(port)` (thin http wrapper around the same fetch handler)
+- Workers: `export default { fetch: connecta.fetch }` — pass `(request, env, ctx)`
+  through so deferred work (activity writes) can use `ctx.waitUntil`
+- Node: `listen(connecta, port)` from `@zackbart/connecta/node` (a thin
+  `node:http` wrapper around the same fetch handler)
 
 Everything internal is fetch/Web-API based; Node is the adapter, not the base.
 
@@ -152,7 +162,8 @@ dependencies without legacy npm behavior.
   `@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js` — fetch-native
   (`handleRequest(req: Request) => Promise<Response>`), Workers/Node/Bun safe.
 - **Stateless mode**: omit `sessionIdGenerator`. We give up sessions,
-  server-push SSE and resumability — all fine for 5 request/response tools.
+  server-push SSE and resumability — all fine for a fixed set of
+  request/response meta-tools.
 - Create a fresh `McpServer` + transport **per request** (SDK ≥1.26 security
   requirement). The connector registry/tool cache lives outside, per isolate.
 - Route: POST `/mcp`. Also handle GET/DELETE `/mcp` per transport defaults.
@@ -206,7 +217,11 @@ implementation on Workers:
     does browser-side discovery). Allow headers
     `Content-Type, Authorization, mcp-protocol-version`.
   - Verify: `@clerk/backend` `createClerkClient(...).authenticateRequest(req,
-    { acceptsToken: "oauth_token" })` → `toAuth().userId`. Runs on Workers.
+    { acceptsToken: ["oauth_token", "session_token"],
+    authorizedParties: [connectaOrigin] })` → `toAuth().userId`. Runs on
+    Workers. MCP clients present OAuth access tokens; `/ui` presents the
+    signed-in operator's short-lived session token, and `authorizedParties`
+    stops a session token minted for a sibling origin being replayed here.
   - 401s follow RFC 6750: bare challenge when no token, `error="invalid_token"`
     when bad token, `resource_metadata` pointer always; no challenge on 403.
   - Optional `gate(userId, clerkClient) => boolean` hook for restricting which
@@ -234,7 +249,12 @@ connecta/
     types.ts              # Connector, ToolDef, KVStorage, config types
     server.ts             # fetch handler: MCP transport + routes + inbound auth
     meta-tools.ts         # the 9 meta-tools over the connector registry
+    execute.ts            # the optional 10th meta-tool + sandbox host bridge
     registry.ts           # connector registry, tool cache, address resolution
+    catalog.ts            # search ranking + compact schema rendering
+    credentials.ts        # AES-GCM vault for operator-managed connector credentials
+    activity.ts           # payload-free activity contracts
+    ui.ts / favicon.ts    # read-only operator dashboard and default mark
     connectors/
       remote-mcp.ts       # remoteMcp() — SDK client, headers + oauth
       api.ts              # api() — hand-written tool defs
@@ -242,15 +262,18 @@ connecta/
       bearer.ts
       clerk.ts            # optional "@zackbart/connecta/auth/clerk" adapter
       downstream-oauth.ts # OAuthClientProvider impl over KVStorage + callback route
+    executors/
+      quickjs.ts          # optional "@zackbart/connecta/quickjs" sandbox
     storage/
       memory.ts
       file.ts
     node.ts               # listen() adapter (subpath export "@zackbart/connecta/node")
-  test/                   # vitest; unit tests for registry, meta-tools, auth,
-                          # api connector; remote-mcp against an in-process MCP server
+  test/                   # vitest, two projects (node + workerd); see
+                          # documentation.md §11 for the suite-by-suite map
   examples/
     worker/               # deployable example + Cloudflare KV/D1 adapters
     node/                 # node example
+    docker/               # single-service compose stack
 ```
 
 Core dependencies: `@modelcontextprotocol/sdk`, `@cfworker/json-schema`, and
@@ -289,9 +312,36 @@ meta-tool, `execute_code`, behind a config seam shaped like the storage seam:
   Credentials stay host-side; the sandbox has no network, has a 20-call total
   budget, limits batches to 10, and gives host calls a 15-second deadline.
 
+## Operator surface (added after v1)
+
+v1 had no browser surface at all. Three narrow ones were added, each held to the
+same rule — **no runtime admin**: nothing here can add a connector, change a
+policy, or alter what an agent can call. Connectors remain config as code.
+
+- **Read-only status UI** (`/ui`, documentation.md §14). The shell is open
+  because it carries no data; everything it displays comes from `/ui/data`
+  behind the same gate as `/mcp`. Every deployment-facing label and mark is
+  `ConnectaConfig.branding` — nothing about the operator is baked into the
+  package.
+- **Connector credential vault** (documentation.md §7). Rotating an API token
+  should not require a redeploy, but a token is also the one thing a config
+  file should never hold. So values are AES-GCM encrypted into the existing
+  `KVStorage`, readable only by the owning connector through `ctx.credential`,
+  and never returned by `/ui`, the meta-tools, or code mode. Mutations require a
+  Clerk operator and a same-origin request; the static bearer is refused. This
+  is credential *storage*, not connector registration — which tools exist is
+  still code.
+- **Payload-free activity history** (documentation.md §15). Operators need to
+  know which downstream tool ran, for whom, and whether it worked. They do not
+  need the arguments or the results, and storing those would turn an operational
+  log into a data-exfiltration target — so the event type has nowhere to put
+  them. Storage itself stays deployment-owned behind a vendor-neutral seam, like
+  `KVStorage`.
+
 ## Non-goals (v1)
 
 OpenAPI/GraphQL ingestion, multi-tenancy, policies/approvals, runtime connector
-registration, web UI, elicitation passthrough, MCP resources/prompts
-aggregation (tools only), sessions/server-push (stateless transport if viable),
-code-mode approvals/audit-log/snippets (see "Code mode" above).
+registration, a runtime admin UI (the read-only dashboard above is the limit),
+elicitation passthrough, MCP resources/prompts aggregation (tools only),
+sessions/server-push (stateless transport if viable), code-mode
+approvals/audit-log/snippets (see "Code mode" above).

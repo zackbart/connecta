@@ -18,9 +18,12 @@ cp examples/docker/.env.example examples/docker/.env
 docker compose -f examples/docker/docker-compose.yml up -d --build
 ```
 
-The MCP endpoint is then at `http://localhost:8787/mcp`. `/health` is always
-open (used by the container HEALTHCHECK) and is served over plain HTTP even
-when `PUBLIC_URL` is HTTPS, so the probe never leaves the container.
+The MCP endpoint is then at `http://localhost:8787/mcp`, and the read-only
+operator dashboard at `http://localhost:8787/ui` (paste `CONNECTA_TOKEN` when
+running bearer-only; with Clerk configured it signs you in through Clerk).
+`/health` is always open (used by the container HEALTHCHECK) and is served over
+plain HTTP even when `PUBLIC_URL` is HTTPS, so the probe never leaves the
+container.
 
 ```sh
 curl -s http://localhost:8787/health
@@ -65,5 +68,9 @@ that forwards to port 8787 and sets `X-Forwarded-Proto: https`.
 
 Edit [`server.ts`](./server.ts) and rebuild. It ships one demo `time` connector
 and a commented-out `remoteMcp` block showing both downstream-auth variants
-(static `headers` and full `oauth`). See the package
-[README](../../README.md) and [design.md](../../docs/design.md).
+(static `headers` and full `oauth`). Options this entrypoint does not wire —
+code mode (`executor`), the credential vault (`credentialEncryptionKey`),
+activity history (`activity`), and `branding` — are ordinary `createConnecta`
+config; add them there. See the package [README](../../README.md) and
+[documentation.md](../../docs/documentation.md) for the full reference, or
+[design.md](../../docs/design.md) for the rationale.

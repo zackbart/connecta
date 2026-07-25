@@ -20,6 +20,7 @@ for the *why* behind the design see [`design.md`](./design.md).
 12. [Troubleshooting](#12-troubleshooting)
 13. [Code mode (`execute_code`)](#13-code-mode-execute_code)
 14. [Status UI](#14-status-ui)
+15. [Activity history](#15-activity-history)
 
 ---
 
@@ -63,10 +64,21 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
      container probes are not sent out to the public origin.
    - `OPTIONS` → each auth provider's `handleMetadata` gets a chance (CORS
      preflight); otherwise a 204 with wildcard CORS.
+   - `/ui/credentials/<connectorId>[/test]` → the credential vault API
+     (§7), matched **first** so nothing else can shadow it. `OPTIONS` is a 405
+     here: these mutation routes never opt into the wildcard CORS preflight.
    - `/.well-known/*` → auth providers' `handleMetadata` (open, no auth); 404 if
      none handle it.
-   - `/health` → open JSON `{ status: "ok", connectors: <count> }`.
+   - `/health` → open JSON `{ status: "ok", connectors: <count>, server,
+     deployment? }` (`deployment` only when `deploymentInfo` is configured).
    - `/oauth/callback/<connectorId>` → downstream-OAuth completion (open).
+   - `GET /favicon.svg` / `GET /favicon.ico` → the branding mark, or connecta's
+     default (§14).
+   - `GET /ui` → the open status-page shell (no data).
+   - `/ui/data` → **auth gate**, then the dashboard JSON (§14).
+   - `/ui/activity` → **auth gate** + optional `activityReadGate`, then paged
+     activity events (§15). `GET` only; 404 when no `activity.list` is
+     configured.
    - `/mcp` → **auth gate**, then MCP.
    - a connector's `handleRequest` (open), in registration order — dispatched
      only after every built-in route misses, so a connector can add a route but
@@ -83,9 +95,10 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
 3. **Fresh stateless `McpServer` per request** (`serveMcp`): a new `McpServer` +
    `WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true })` are
    created for **every** request (an SDK ≥1.26 security requirement), the nine
-   meta-tools are registered on it, and `transport.handleRequest(request)`
-   returns the response. No `sessionIdGenerator` ⇒ stateless: no sessions, no
-   server-push SSE, no resumability — fine for nine request/response tools.
+   meta-tools are registered on it (plus `execute_code` when an `executor` is
+   configured), and `transport.handleRequest(request)` returns the response.
+   No `sessionIdGenerator` ⇒ stateless: no sessions, no server-push SSE, no
+   resumability — fine for nine request/response tools.
 4. **Meta-tools → registry → connector**: the meta-tool handlers
    (`src/meta-tools.ts`) call into the long-lived `Registry`
    (`src/registry.ts`), which owns the connector set, resolves addresses, caches
@@ -119,11 +132,19 @@ connecta/
     types.ts              # Connector, ToolDef, KVStorage, InboundAuth, ...
     validate.ts           # validateToolInput() — shared by api() and custom connectors
     json-schema.ts        # Validator re-export ("@zackbart/connecta/json-schema")
-    server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth callback
+    server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth + credential routes
     meta-tools.ts         # the nine meta-tools over the registry
+    execute.ts            # the optional execute_code meta-tool + sandbox host bridge
     skills.ts             # initialize instructions + the on-demand usage skill
-    registry.ts           # connector set, address resolution, tool-list TTL cache
+    registry.ts           # connector set, address resolution, in-memory + persisted tool caches
+    catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
+    activity.ts           # payload-free activity contracts + best-effort recorder
+    errors.ts             # ConnectorCallError + error classification
+    mcp-result.ts         # result wrapping, fields selection, truncation/paging
+    ui.ts                 # /ui shell + /ui/data payload builder
+    favicon.ts            # default monochrome mark served at /favicon.*
+    version.ts            # CONNECTA_VERSION (asserted against package.json in tests)
     connectors/
       remote-mcp.ts       # remoteMcp() — SDK client; headers or oauth
       api.ts              # api() — hand-written tool defs + handlers
@@ -131,6 +152,8 @@ connecta/
       bearer.ts           # bearerToken()
       clerk.ts            # optional Clerk adapter ("@zackbart/connecta/auth/clerk")
       downstream-oauth.ts # KvOAuthProvider — OAuthClientProvider over KVStorage
+    executors/
+      quickjs.ts          # quickJsExecutor()  ("@zackbart/connecta/quickjs")
     storage/
       memory.ts           # memoryStorage()
       file.ts             # fileStorage()  (node-only)
@@ -264,7 +287,8 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   attempts }` (`retryAfterMs` only when the connector reported a wait window).
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
   (a `createConnecta` option, default **50 000**), the full text is stashed in
-  storage (namespace `results:`, `crypto.randomUUID()` id, 900 s TTL) and only
+  storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
+  a namespace kept separate from every connector's `conn:<id>:`) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
   `{ "truncated": true, "resultId", "totalBytes", "hint" }`. Page the rest with
   `get_result`, or re-call with `fields` to select less.
@@ -421,6 +445,7 @@ A connector implements the `Connector` interface (`src/types.ts`):
 ```ts
 interface Connector {
   id: string;                    // address prefix; [a-z0-9_-]+
+  title?: string;                // display name; `id` stays the address prefix
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
   credential?: {
@@ -437,12 +462,17 @@ interface Connector {
     ctx: ConnectorContext): Promise<{ ok: boolean; message?: string }>;
   testCredentials?(values: Record<string, string>,
     ctx: ConnectorContext): Promise<{ ok: boolean; message?: string }>;
+  staticTools?: ToolDef[];       // known at construction time (api() sets it)
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;
   callTool(name: string, args: unknown, ctx: ConnectorContext): Promise<unknown>;
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;       // optional health
   startAuth?(ctx: ConnectorContext,                               // optional OAuth kick
     opts?: { force?: boolean }): Promise<ConnectorStatus>;        //   (authorize_connector)
+  verifyState?(state: string | null,                              // optional OAuth CSRF check
+    ctx: ConnectorContext): Promise<boolean>;                     //   (see §6)
   finishAuth?(code: string, ctx: ConnectorContext): Promise<void>; // optional OAuth finish
+  handleRequest?(request: Request,                                // optional public route
+    ctx: ConnectorContext): Promise<Response | null>;
 }
 ```
 
@@ -461,6 +491,18 @@ returns the complete named set. Credential access is read-only from connector
 code: operators add, replace, test, and remove values through `/ui`.
 `testCredential` and `testCredentials` optionally power the card's Test button
 without exposing values to the browser.
+
+`staticTools` is what the startup convention check reads; remote catalogs are
+fetched lazily and have nothing to check at construction time, which is why
+`api()` sets it and `remoteMcp()` does not.
+
+`handleRequest` lets a connector serve its own HTTP route — a signed download
+link one of its tools minted, say. It is dispatched **after** every built-in
+route, so it can never shadow `/mcp`, `/ui`, `/health`, or the credential API,
+and the first connector returning a Response wins. These routes are **public**:
+connecta applies no auth gate to them, so a connector serving data here must
+authenticate the request itself (for example with a signed capability token in
+the URL).
 
 **Result wrapping** (in `call_tool`): `kind: "mcp"` passes the returned
 `{ content, isError }` through as-is; anything else (the `api()` default)
@@ -637,12 +679,18 @@ admits the request** (bearer is always checked before Clerk). `/health` and
 `.well-known` routes are always open. Omit `auth` entirely ⇒ open endpoint (dev
 only).
 
-### `bearerToken(secret)`
+### `bearerToken(secret, options?)`
 
 Constant-time compares the `Authorization: Bearer <token>` value against `secret`.
 The scheme keyword is case-insensitive. On mismatch it returns a 401 with
 `WWW-Authenticate: Bearer` — but because it's checked first, a mismatch **falls
 through** to a co-configured Clerk provider rather than ending the request.
+
+`options.subjectId` assigns this credential a stable identity for activity
+events (§15). A shared token identifies no person, so events are otherwise
+labeled `{ kind: "bearer" }` with no `id`; pass `subjectId` when a token
+belongs to one known caller (`bearerToken(secret, { subjectId: "ci-runner" })`)
+and events carry that instead.
 
 ### `clerkAuth(options)`
 
@@ -738,12 +786,16 @@ token_endpoint_auth_method: "none" }`.
    `list_connectors` returns that `authorizationUrl`.
 5. **Operator opens it**, authenticates/consents downstream, and the provider
    redirects the browser back to **`GET <baseUrl>/oauth/callback/<connectorId>`**.
-6. **Callback → finishAuth.** The server route captures `code`, calls the
-   connector's `finishAuth(code)` → `transport.finishAuth(code)`, which exchanges
-   the code for **tokens** (`saveTokens`), then clears pending state and resets
-   the client so the next call reconnects with fresh tokens. The route returns a
-   tiny "Connected" HTML page (all params HTML-escaped). The registry invalidates
-   the connector's tool cache.
+6. **Callback → verifyState → finishAuth.** The route is public, so before
+   exchanging anything it calls the connector's `verifyState(state)` and rejects
+   with a 400 when the returned `state` doesn't match the flow connecta started
+   — otherwise anyone holding the pending URL could complete consent with their
+   own account. It then captures `code`, calls the connector's `finishAuth(code)`
+   → `transport.finishAuth(code)`, which exchanges the code for **tokens**
+   (`saveTokens`), then clears pending state and resets the client so the next
+   call reconnects with fresh tokens. The route returns a tiny "Connected" HTML
+   page (all params HTML-escaped, branding applied). The registry invalidates the
+   connector's tool cache in both storage layers.
 7. **Auto-refresh.** On a later 401 with a stored refresh token, the SDK
    refreshes automatically. Persistent auth failure degrades the connector back
    to `auth_required` — it never crashes the server or hides other connectors.
@@ -758,10 +810,13 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 | `conn:<id>:oauth:client` | DCR client information |
 | `conn:<id>:oauth:tokens` | access + refresh tokens |
 | `conn:<id>:oauth:verifier` | one-shot PKCE code verifier |
+| `conn:<id>:oauth:state` | one-shot `state` value checked by `verifyState` |
 | `conn:<id>:oauth:pending` | stored authorization URL while a flow is open |
+| `conn:<id>:oauth:generation` | monotonic counter bumped by a `force` re-auth, so an isolate holding a client from a prior generation notices it went stale |
 
-`clearPending()` wipes `pending` + `verifier` after the callback; `tokens` and
-`client` persist. This is why OAuth connectors need **durable** storage (§7).
+`clearPending()` wipes `pending` + `verifier` + `state` after the callback;
+`tokens` and `client` persist. This is why OAuth connectors need **durable**
+storage (§7).
 
 ---
 
@@ -818,23 +873,48 @@ Clerk-authenticated, gate-approved operator, reject the static inbound bearer,
 require a same-origin request, disable wildcard CORS, and never return the
 credential after saving it.
 
+The routes `/ui` drives (all under the same rules above):
+
+| Route | Effect |
+| --- | --- |
+| `PUT /ui/credentials/<connectorId>` | store or replace the credential set |
+| `DELETE /ui/credentials/<connectorId>` | remove it (works even when the stored ciphertext can no longer be decrypted, e.g. after an encryption-key rotation) |
+| `POST /ui/credentials/<connectorId>/test` | run the connector's `testCredential`/`testCredentials` server-side and return only `{ ok, message? }` |
+| `OPTIONS /ui/credentials/*` | 405 — these routes never take part in CORS preflight |
+
+`createConnecta` **throws at construction** when any connector declares
+`credential` and no `credentialEncryptionKey` is configured, naming the
+connectors involved — a deployment cannot silently boot with an unusable vault.
+
 ---
 
 ## 8. Running it
 
-`createConnecta(config)` returns `{ fetch, registry }`. Config
-(`ConnectaConfig`): `connectors` (required), `auth?`, `storage?` (default
-`memoryStorage()`), `publicUrl?` (default: per-request origin), `logger?`,
-`toolCacheTtlSeconds?` (default 300), `persistToolCatalog?` (default true),
-`toolCatalogStaleSeconds?` (default 3600), `defaultToolTimeoutMs?` (deadline
-for `call_tool`/`batch_call` calls that pass no `timeoutMs`; **opt-in — unset by
-default**, since switching it on globally would put a deadline on every call in
-an existing deployment, and an explicit per-call `timeoutMs` always wins),
-`deploymentInfo?` (exposed by
-`/health`), `serverInfo?` (`{ name, version, title?, websiteUrl?, icons? }` per the MCP
-icons spec — clients render the declared icon/title instead of a scraped
-favicon; default `connecta`/the package version),
-`executor?` (enables code mode — [§13](#13-code-mode-execute_code)).
+`createConnecta(config)` returns `{ fetch, registry }`. `fetch` takes the
+Workers `(request, env, ctx)` signature; passing `ctx` through lets connecta
+hand deferred work (activity writes) to `ctx.waitUntil` instead of losing it
+when the response returns. `ConnectaConfig`:
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `connectors` | — (required) | the connector set |
+| `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array (§5) |
+| `storage?` | `memoryStorage()` | the one state seam (§7) |
+| `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
+| `logger?` | `console` prefixed `[connecta]` | `{ debug, info, warn, error }` |
+| `credentialEncryptionKey?` | unset | base64 32-byte AES key for the connector credential vault; **required** when any connector declares `credential` (§7) |
+| `branding?` | neutral Connecta defaults | `/ui` and OAuth result-page labels and marks (§14) |
+| `activity?` | unset | payload-free activity store (§15) |
+| `activityReadGate?` | admits every authenticated actor | narrows who may read `/ui/activity` (§15) |
+| `activityDeploymentId?` | unset | stable label stamped on activity events, e.g. `"production"` |
+| `toolCacheTtlSeconds?` | 300 | fresh TTL for cached tool lists |
+| `persistToolCatalog?` | true | also persist serializable catalogs in storage |
+| `toolCatalogStaleSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
+| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging |
+| `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
+| `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
+| `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
+| `executor?` | unset ⇒ nine tools | code-mode sandbox ([§13](#13-code-mode-execute_code)) |
 
 ### Node
 
@@ -986,6 +1066,18 @@ npm scripts (`package.json`):
 - `npm run typecheck` — `tsc --noEmit`.
 - `npm run test` — `vitest run` (both projects below).
 - `npm run test:node` / `npm run test:workers` — one project at a time.
+- `npm run build` — clean + `tsc -p tsconfig.build.json` into `dist/`.
+- `npm run check:examples` — typechecks `examples/` against the built package
+  under both the Node and Worker tsconfigs, so a broken example fails locally
+  rather than in someone's deployment.
+- `npm run check` — typecheck + test + build + examples. Also the `prepack` hook.
+- `npm run check:security` — `npm audit --omit=dev --audit-level=high`
+  (the `prepublishOnly` hook; see [`SECURITY.md`](../SECURITY.md)).
+- `npm run check:package` — `scripts/check-package.mjs`: `npm pack`s the
+  tarball into a temp dir, asserts the required files are in it (README, LICENSE,
+  hero asset, `dist/` entries, `src/`), asserts no platform-specific
+  implementation leaked in, and imports the packed artifact as a smoke test.
+- `npm run release:check` — everything above, run before tagging a release.
 
 Tests run as two vitest projects (`vitest.config.ts`):
 
@@ -994,10 +1086,11 @@ Tests run as two vitest projects (`vitest.config.ts`):
   `@cloudflare/vitest-pool-workers` (matching the Worker example's
   `compatibility_date` + `nodejs_compat`), so a Workers-only regression — the
   class of bug the `CfWorkerJsonSchemaValidator` workaround in `remote-mcp.ts`
-  exists for, previously only findable by hand — fails CI. Node-only surfaces
-  (`fileStorage`, the QuickJS executor, the fs-walking guardrail suites) stay
-  Node-project-only, and the two code-mode tests that execute QuickJS WASM
-  skip under workerd.
+  exists for, previously only findable by hand — fails CI. The list is explicit
+  (`WORKERS_SUITES` in `vitest.config.ts`): Node-only surfaces (`fileStorage`,
+  the QuickJS executor, the fs-walking guardrail suites, and the Clerk adapter)
+  stay Node-project-only, and the two code-mode tests in `server.test.ts` that
+  execute QuickJS WASM skip under workerd.
 
 Test suites (`test/`) and what they cover:
 
@@ -1010,6 +1103,20 @@ Test suites (`test/`) and what they cover:
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
+| `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
+| `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
+| `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
+| `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
+| `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
+| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the `authorizedParties` rejection of a sibling-origin token |
+| `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
+| `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
+| `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
+| `quickjs-executor.test.ts` | the QuickJS/WASM sandbox — code normalization, host-call bridging incl. `Promise.all`, no ambient capabilities, heap/wall-clock caps, hung-host-call timeout and drain, stalled-promise detection (Node project only) |
+| `codemode-compat.test.ts` | the `Executor` seam stays structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor` (enforced by `tsc`) |
+| `file-storage.test.ts` | `fileStorage()` round-trips across instances, TTL, and quarantining a corrupt state file instead of overwriting it (Node project only) |
+| `package-surface.test.ts` | the published boundary — only generic connector factories ship, platform storage stays in examples, Clerk/QuickJS stay behind optional subpaths, `validateToolInput` and the JSON Schema subpath resolve |
+| `version.test.ts` | `CONNECTA_VERSION` matches `package.json` |
 | `purity.test.ts` | the import-graph guardrail (§2) — the core stays Workers-clean |
 
 **The `_transportFactory` seam.** `RemoteMcpOptions._transportFactory` is an
@@ -1161,20 +1268,39 @@ A minimal, read-only dashboard for operators with no build step. Two routes
   A bearer-only deployment retains the manual `localStorage` token prompt.
 - **`GET /ui/data`** — the JSON the page fetches, behind the **same auth gate as
   `/mcp`** (static bearer, Clerk OAuth token, or Clerk session token admit).
-  Shape: `{ serverInfo,
+  Shape: `{ serverInfo, activityEnabled,
   connectors: [{ id, title?, description?, status, message?, authorizationUrl?,
-  toolCount, tools: [{ name, address, description? }] }] }`. Broken connectors
-  are isolated — they surface `status: "error"` with `tools: []` rather than
-  failing the whole payload.
+  toolCount, tools: [{ name, address, description? }], credential? }] }`. Broken
+  connectors are isolated — they surface `status: "error"` with `tools: []`
+  rather than failing the whole payload. Tools are listed only for a connector
+  whose `status` is `ok`: probing `listTools` on an unauthorized remote
+  connector would start a second OAuth flow and invalidate the URL the operator
+  was just handed.
+- **`/ui/credentials/<connectorId>[/test]`** — the credential vault API
+  (§7), driven by the card's Add / Replace / Test / Remove controls.
+- **`GET /ui/activity`** — paged activity events for the Activity tab
+  ([§15](#15-activity-history)).
+
+`authorizationUrl` is forwarded only when it is an absolute `http(s)` URL —
+a downstream connector cannot turn the operator's one-click authorization link
+into a `javascript:` or `data:` payload. `credential` is present only for a
+connector that declares one **and** only for a Clerk-authenticated operator; the
+static bearer may read connector health but never credential metadata. It carries `{ label, description?, placeholder?,
+fields?, configured, removable?, lastFour?, updatedAt?, testable, error? }` —
+masked metadata only, never a value.
 
 The page renders the instance name/version, one card per connector (display title
 when configured, stable id, description, a status dot — green `ok` / amber `auth_required` / red `error`,
 tool count, any status message, and a clickable authorization link when
 `auth_required`), a collapsible `<details>` list of each connector's tools
 (address in a `<code>` tag + description), and a client-side text filter over
-tool names/descriptions. The current token is sent only as the `Authorization:
-Bearer` header on `/ui/data`. Clerk session tokens are kept in Clerk's session
-state and refreshed by ClerkJS; they are never copied into `localStorage`.
+tool names/descriptions. A connector that declares a credential also renders
+Add / Replace / Test / Remove controls in its card for a Clerk operator (§7),
+and an Activity tab appears when the deployment configures a readable activity
+store ([§15](#15-activity-history)). The current token is sent only as the
+`Authorization: Bearer` header on `/ui/data`. Clerk session tokens are kept in
+Clerk's session state and refreshed by ClerkJS; they are never copied into
+`localStorage`.
 
 ### Branding
 
@@ -1209,3 +1335,104 @@ is configured. `favicon.svg` and `favicon.ico` are independent — override one
 and the other keeps connecta's default mark. `favicon.href` only changes what
 the page's `<link rel="icon">` points at; the `/favicon.*` routes keep serving
 whatever `svg`/`ico` provide.
+
+---
+
+## 15. Activity history
+
+Connecta can record **which** resolved downstream tool was invoked, by whom, and
+how it went — without storing arguments, results, generated code, search text,
+or raw error messages. That exclusion is structural, not a redaction pass: the
+event type has nowhere to put a payload.
+
+It is off unless a deployment supplies a store. The seam is vendor-neutral, so
+D1, Postgres, Analytics Engine, or an array in memory all work:
+
+```ts
+import type { ActivityStore, ToolCallActivityEvent } from "@zackbart/connecta";
+
+const events: ToolCallActivityEvent[] = [];
+
+const activity: ActivityStore = {
+  record(event) {                       // write side — required
+    events.push(event);
+  },
+  async list({ cursor, limit }) {       // read side — optional
+    return { events: events.slice(-limit).reverse() };
+  },
+};
+
+createConnecta({ connectors, activity, activityDeploymentId: "production" });
+```
+
+### The event
+
+```ts
+interface ToolCallActivityEvent {
+  schemaVersion: 1;
+  id: string;                 // uuid
+  occurredAt: string;         // ISO 8601
+  requestId: string;          // shared by every call in one inbound request
+  actor: { kind: string; id?: string };
+  connectorId: string;
+  toolName: string;
+  address: string;            // `${connectorId}.${toolName}`
+  source: "call_tool" | "call_destructive_tool" | "batch_call" | "execute_code";
+  outcome: "success" | "error" | "timeout";
+  durationMs: number;
+  attempts: number;
+  errorCode?: string;         // the ConnectorCallError code, never its message
+  serverName: string;
+  serverVersion: string;
+  deploymentId?: string;      // from activityDeploymentId
+}
+```
+
+One final event per **resolved connector call** — retries collapse into a single
+event with an `attempts` count, and a batch of five produces five events sharing
+one `requestId`. `source` is the meta-tool the call actually entered through, so
+an approved destructive call is recorded as `call_destructive_tool` rather than
+being folded into the ordinary path.
+
+### Actor identity
+
+`actor.id` is deliberately optional: a shared secret cannot honestly identify a
+person. Clerk-authenticated calls carry the Clerk user ID
+(`{ kind: "clerk", id: "user_…" }`); static-bearer calls are labeled
+`{ kind: "bearer" }` with no id unless `bearerToken(secret, { subjectId })`
+assigns that credential a stable subject (§5). An open deployment (no `auth`
+configured) records `{ kind: "anonymous" }`.
+
+### Writes are best-effort
+
+Activity storage can never change a tool result. A sink that throws or rejects
+is logged and swallowed. Synchronous sinks complete inline; async ones are
+attached to `ctx.waitUntil` when the runtime provides it — which is why the
+Worker example passes `ctx` through to `connecta.fetch(request, env, ctx)`.
+Without it, a Worker may cancel the pending write when the response returns.
+
+### Reading it
+
+Implementing `list` enables both `GET /ui/activity` and the Activity tab in
+`/ui`. The route sits behind the same auth gate as `/mcp`, plus the optional
+`activityReadGate(actor)` for narrowing reads further (an admin allowlist, say):
+
+```ts
+createConnecta({
+  connectors,
+  activity,
+  activityReadGate: (actor) => actor.kind === "clerk" && admins.has(actor.id!),
+});
+```
+
+Query params: `?limit=` (1–100, default 50) and `?cursor=` (opaque, ≤500
+chars). The response is `{ events, nextCursor? }`. A reader that cannot decode a
+cursor throws the exported `InvalidActivityCursorError` and the route answers
+400; any other read failure is logged and answered 503, and a deployment with no
+`list` answers 404.
+
+[`examples/worker/src/d1-activity.ts`](../examples/worker/src/d1-activity.ts) is
+a complete deployment-owned implementation over Cloudflare D1 — keyset paging on
+`(occurred_at_ms, id)` plus a batched `pruneActivity(db, retentionDays)`
+retention pass. It lives in the example, not the package: storage backends are
+deployment-owned, exactly like `KVStorage`.
