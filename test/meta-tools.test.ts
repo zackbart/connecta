@@ -931,7 +931,9 @@ describe("call_tool", () => {
       }),
     ) as { ok: boolean; attempts: number; timing: { backoffMs: number } };
     expect(parsed).toMatchObject({ ok: true, attempts: 2 });
-    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(250);
+    // The full 250ms exponential default (less timer slop), not the ~0 a
+    // spent whole-call deadline would have left.
+    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(240);
     expect(calls).toBe(2);
   });
 
@@ -978,7 +980,7 @@ describe("call_tool", () => {
             calls++;
             if (calls === 1) {
               throw new ConnectorCallError("rate_limited", "slow down", {
-                retryAfterMs: 60,
+                retryAfterMs: 150,
               });
             }
             return { ok: true };
@@ -996,7 +998,9 @@ describe("call_tool", () => {
       }),
     ) as { ok: boolean; attempts: number; timing: { backoffMs: number } };
     expect(parsed).toMatchObject({ ok: true, attempts: 2 });
-    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(60);
+    // The whole 150ms window (less timer slop), despite a 25ms per-attempt
+    // budget that a whole-call deadline would have clamped it to.
+    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(140);
     expect(calls).toBe(2);
   });
 
