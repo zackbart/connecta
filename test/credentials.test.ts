@@ -32,11 +32,24 @@ describe("CredentialVault", () => {
 
   it("returns masked metadata without returning the credential", async () => {
     const vault = new CredentialVault(memoryStorage(), KEY);
-    await vault.set("service", "abcdef9876", "user_123");
+    await vault.set("service", "abcdefghij9876", "user_123");
 
     const metadata = await vault.metadata("service");
     expect(metadata?.lastFour).toBe("9876");
     expect(metadata).not.toHaveProperty("value");
+  });
+
+  it("emits lastFour only for values comfortably longer than four chars", async () => {
+    const vault = new CredentialVault(memoryStorage(), KEY);
+
+    const long = await vault.set("long", "abcdefghijklmnop1234", "user_123");
+    expect(long.lastFour).toBe("1234");
+    expect(long.fields?.value.lastFour).toBe("1234");
+
+    const short = await vault.set("short", "abcd1234", "user_123");
+    expect(short).not.toHaveProperty("lastFour");
+    expect(short.fields?.value).not.toHaveProperty("lastFour");
+    expect(short.fields?.value.configured).toBe(true);
   });
 
   it("encrypts and retrieves named multi-field credentials", async () => {

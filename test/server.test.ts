@@ -564,9 +564,10 @@ describe("server open routes", () => {
   it("protects the UI from framing without applying UI CSP to MCP routes", async () => {
     const c = makeConnecta();
     const ui = await c.fetch(new Request(`${BASE}/ui`));
-    expect(ui.headers.get("Content-Security-Policy")).toBe(
-      "frame-ancestors 'none'",
-    );
+    // The /ui page ships a nonce-based script CSP that still forbids framing.
+    const csp = ui.headers.get("Content-Security-Policy") ?? "";
+    expect(csp).toContain("script-src 'nonce-");
+    expect(csp).toContain("frame-ancestors 'none'");
     expect(ui.headers.get("X-Frame-Options")).toBe("DENY");
 
     const health = await c.fetch(new Request(`${BASE}/health`));

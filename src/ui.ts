@@ -29,15 +29,16 @@ export function resolveBranding(
 ): ResolvedBranding {
   const productName = branding?.productName?.trim() || "Connecta";
   const ownerName = branding?.ownerName?.trim();
+  // Operator branding URLs become masthead/callback hrefs, so a non-http(s)
+  // scheme (javascript:, data:) is dropped the same as an unset URL — the
+  // callers already render a <span> instead of an <a> when it is absent.
+  const productUrl = branding?.productUrl?.trim();
+  const ownerUrl = branding?.ownerUrl?.trim();
   return {
     productName,
-    ...(branding?.productUrl?.trim()
-      ? { productUrl: branding.productUrl.trim() }
-      : {}),
+    ...(productUrl && isSafeHttpUrl(productUrl) ? { productUrl } : {}),
     ...(ownerName ? { ownerName } : {}),
-    ...(branding?.ownerUrl?.trim()
-      ? { ownerUrl: branding.ownerUrl.trim() }
-      : {}),
+    ...(ownerUrl && isSafeHttpUrl(ownerUrl) ? { ownerUrl } : {}),
     description:
       branding?.description?.trim() ||
       `Manage the services this ${productName} instance makes available to agents.`,
@@ -302,10 +303,14 @@ export function renderUiHtml(
   uiAuth?: UiAuthConfig,
   mcpUrl = "/mcp",
   branding?: ConnectaBranding,
+  nonce?: string,
 ): string {
   const auth = uiAuth ?? { kind: "bearer" as const };
   const brand = resolveBranding(branding);
   const title = brand.pageTitle;
+  // When the /ui response ships a nonce-based CSP, every <script> it emits must
+  // carry that nonce to run; without a nonce the markup is unchanged.
+  const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   // Top-left corner. With an owner set it reads "<owner> <product>"; without
   // one the product label stands alone. Either half links out when the
   // matching URL is configured.
@@ -323,7 +328,7 @@ export function renderUiHtml(
     : "";
   const clerkScript =
     uiAuth?.kind === "clerk"
-      ? `<script defer crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(uiAuth.publishableKey)}" src="${escapeHtmlAttr(uiAuth.frontendApiUrl)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
+      ? `<script${nonceAttr} defer crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(uiAuth.publishableKey)}" src="${escapeHtmlAttr(uiAuth.frontendApiUrl)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
       : "";
 
   return `<!doctype html>
@@ -683,7 +688,7 @@ ${clerkScript}
   </section>
 </main>
 
-<script>
+<script${nonceAttr}>
 const AUTH = ${jsonForInlineScript(auth)};
 const MCP_URL = ${jsonForInlineScript(mcpUrl)};
 const filterUiConnectors = ${filterUiConnectors.toString()};
