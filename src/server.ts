@@ -63,6 +63,14 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+/** Per-request base64 nonce for the /ui page's inline scripts (Node 20+ and Workers). */
+function uiScriptNonce(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
 function escapeHtml(s: string): string {
   return s
     .replaceAll("&", "&amp;")
@@ -233,9 +241,12 @@ function withSecurityHeaders(
     headers.set("Strict-Transport-Security", "max-age=31536000");
   }
   if (path === "/ui") {
-    // A directive-only CSP does not interfere with the UI's existing scripts,
-    // while preventing the authenticated operator surface from being framed.
-    headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+    // The /ui GET response ships its own nonce-based script CSP (which already
+    // includes frame-ancestors 'none'); only fall back to the framing-only
+    // directive when no CSP is present (e.g. HTTPS redirects, error responses).
+    if (!headers.has("Content-Security-Policy")) {
+      headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+    }
     headers.set("X-Frame-Options", "DENY");
   }
   return new Response(response.body, {
@@ -696,9 +707,22 @@ export function createFetchHandler(
         // Open shell — carries no data; data comes only from the gated /ui/data.
         const uiAuth = auth.find((provider) => provider.uiAuth)?.uiAuth;
         const mcpUrl = new URL("/mcp", baseUrl).toString();
-        return new Response(renderUiHtml(uiAuth, mcpUrl, opts.branding), {
+        // Nonce the page's inline script (and the Clerk loader). 'strict-dynamic'
+        // lets scripts the nonced Clerk loader injects at runtime execute; the
+        // https:/'unsafe-inline' fallbacks are ignored by CSP3 browsers that
+        // honour the nonce and only cover legacy ones. No default-src, so Clerk's
+        // style/font/network needs and the page's inline <style> stay unrestricted
+        // — only script execution, the XSS sink, is gated.
+        const nonce = uiScriptNonce();
+        return new Response(renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce), {
           status: 200,
-          headers: { "Content-Type": "text/html; charset=utf-8" },
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Security-Policy":
+              `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'; ` +
+              "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+            "X-Content-Type-Options": "nosniff",
+          },
         });
       }
 

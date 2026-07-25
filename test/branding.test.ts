@@ -54,6 +54,22 @@ describe("branding defaults", () => {
       "Acme MCP",
     );
   });
+
+  it("omits branding link URLs that are not safe http(s) URLs", () => {
+    const dangerous = resolveBranding({
+      productUrl: "javascript:alert(1)",
+      ownerUrl: "javascript:alert(1)",
+    });
+    expect(dangerous.productUrl).toBeUndefined();
+    expect(dangerous.ownerUrl).toBeUndefined();
+
+    const safe = resolveBranding({
+      productUrl: "https://acme.example/docs",
+      ownerUrl: "https://acme.example",
+    });
+    expect(safe.productUrl).toBe("https://acme.example/docs");
+    expect(safe.ownerUrl).toBe("https://acme.example");
+  });
 });
 
 describe("branding in served pages", () => {

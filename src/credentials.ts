@@ -21,7 +21,8 @@ interface CredentialPlaintext {
 
 export interface CredentialFieldMetadata {
   configured: true;
-  lastFour: string;
+  /** Only emitted when the value is long enough that four chars don't leak much. */
+  lastFour?: string;
   updatedAt: string;
 }
 
@@ -200,7 +201,9 @@ export class CredentialVault {
         field,
         {
           configured: true as const,
-          lastFour: value.slice(-4),
+          // Only reveal the tail on values comfortably longer than four chars;
+          // for a short secret those four would be half of it.
+          ...(value.length >= 12 ? { lastFour: value.slice(-4) } : {}),
           updatedAt: credential.updatedAt,
         },
       ]),
@@ -208,7 +211,7 @@ export class CredentialVault {
     const single = fields.value;
     return {
       configured: true,
-      ...(single ? { lastFour: single.lastFour } : {}),
+      ...(single?.lastFour ? { lastFour: single.lastFour } : {}),
       updatedAt: credential.updatedAt,
       fields,
     };

@@ -7,6 +7,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import {
   filterUiConnectors,
   isSafeHttpUrl,
+  renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
 import type {
@@ -153,7 +154,9 @@ function makeMultiCredentialConnecta() {
       ],
     },
     testCredentials: async (values) => ({
-      ok: values.email === "operator@example.com" && values.apiKey === "key-1234",
+      ok:
+        values.email === "operator@example.com" &&
+        values.apiKey === "api-key-secret-1234",
     }),
     tools: [
       {
@@ -347,6 +350,62 @@ describe("status UI", () => {
     expect(body).toContain(`data-clerk-publishable-key="${publishableKey}"`);
     expect(body).toContain("Sign in with Clerk");
     expect(body).toContain('const AUTH = {"kind":"clerk"');
+  });
+
+  it("/ui sets a nonce-based script CSP and nonces every script tag", async () => {
+    const c = makeConnecta();
+    const res = await c.fetch(new Request(`${BASE}/ui`));
+
+    const csp = res.headers.get("content-security-policy") ?? "";
+    expect(csp).toContain("'strict-dynamic'");
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("base-uri 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+
+    const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
+    expect(nonce).toBeTruthy();
+
+    const body = await res.text();
+    const scriptTags = body.match(/<script[^>]*>/g) ?? [];
+    expect(scriptTags.length).toBeGreaterThan(0);
+    for (const tag of scriptTags) {
+      expect(tag).toContain(`nonce="${nonce}"`);
+    }
+  });
+
+  it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const res = await c.fetch(new Request(`${BASE}/ui`));
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
+    expect(nonce).toBeTruthy();
+
+    const body = await res.text();
+    expect(body).toContain("clerk.browser.js");
+    const scriptTags = body.match(/<script[^>]*>/g) ?? [];
+    expect(scriptTags.length).toBe(2);
+    for (const tag of scriptTags) {
+      expect(tag).toContain(`nonce="${nonce}"`);
+    }
+    const clerkTag = scriptTags.find((tag) => tag.includes("data-clerk"));
+    expect(clerkTag).toContain(`nonce="${nonce}"`);
+  });
+
+  it("renderUiHtml emits no nonce attributes when no nonce is passed", () => {
+    expect(renderUiHtml()).not.toContain("nonce=");
+    const withClerk = renderUiHtml({
+      kind: "clerk",
+      publishableKey: "pk_test_fake",
+      frontendApiUrl: "https://clerk.example.com",
+    });
+    expect(withClerk).toContain("clerk.browser.js");
+    expect(withClerk).not.toContain("nonce=");
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -623,7 +682,7 @@ describe("status UI credential management", () => {
     const { connecta, storage } = makeMultiCredentialConnecta();
     const values = {
       email: "operator@example.com",
-      apiKey: "key-1234",
+      apiKey: "api-key-secret-1234",
     };
 
     const save = await credentialRequest(connecta, "/ui/credentials/multi", {
