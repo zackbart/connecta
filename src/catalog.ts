@@ -109,9 +109,20 @@ function renderSchema(
       "unknown"
     );
   }
+  if (Array.isArray(s.allOf)) {
+    return (
+      s.allOf.map((a) => renderSchema(a, defs, seen, depth + 1)).join(" & ") ||
+      "unknown"
+    );
+  }
   if (Array.isArray(s.enum)) {
     return s.enum.map((value) => JSON.stringify(value)).join(" | ");
   }
+  // Checked before type/properties so a discriminator like
+  // { type: "string", const: "emoji" } renders as "emoji" rather than string.
+  // JSON.stringify(undefined) returns undefined (not a string), so an explicit
+  // `const: undefined` must fall through to the regular type rendering.
+  if (s.const !== undefined) return JSON.stringify(s.const);
 
   const type = s.type;
   if (type === "array" || s.items) {
