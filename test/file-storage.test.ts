@@ -1,4 +1,11 @@
-import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +58,28 @@ describe("fileStorage", () => {
   it("starts from empty state when no file exists yet", async () => {
     expect(await fileStorage(tempStatePath()).get("k")).toBeNull();
   });
+
+  it.skipIf(process.platform === "win32")(
+    "writes the state file owner-only (0600)",
+    async () => {
+      const path = tempStatePath();
+      await fileStorage(path).set("k", "v");
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "repairs a loose-permissioned state file on load",
+    async () => {
+      const path = tempStatePath();
+      writeFileSync(path, JSON.stringify({}));
+      chmodSync(path, 0o644);
+      expect(statSync(path).mode & 0o777).toBe(0o644);
+
+      fileStorage(path); // load repairs the mode
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    },
+  );
 
   it("routes the corruption report through an injected logger", async () => {
     const path = tempStatePath();

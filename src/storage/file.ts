@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readFileSync,
@@ -28,8 +29,20 @@ export function fileStorage(
   opts: FileStorageOptions = {},
 ): KVStorage {
   const logger: Logger = opts.logger ?? console;
+  // The state file holds downstream OAuth access/refresh tokens in cleartext,
+  // so keep it owner-only. Repair is best-effort: chmod is a no-op or throws on
+  // non-POSIX filesystems, and a loose mode must never keep the store from
+  // starting.
+  const tighten = () => {
+    try {
+      chmodSync(path, 0o600);
+    } catch {
+      // Non-POSIX filesystem or a race on the file — leave the mode as-is.
+    }
+  };
   let data: Record<string, Entry> = {};
   if (existsSync(path)) {
+    tighten();
     try {
       data = JSON.parse(readFileSync(path, "utf8")) as Record<string, Entry>;
     } catch (error) {
@@ -60,10 +73,13 @@ export function fileStorage(
   }
   const persist = () => {
     const dir = dirname(path);
-    if (dir) mkdirSync(dir, { recursive: true });
+    if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${path}.tmp`;
-    writeFileSync(tmp, JSON.stringify(data));
+    // 0o600 on the tmp file; the atomic rename below preserves it, so the live
+    // state file is never briefly world-readable.
+    writeFileSync(tmp, JSON.stringify(data), { mode: 0o600 });
     renameSync(tmp, path);
+    tighten();
   };
   const fresh = (key: string): Entry | null => {
     const e = data[key];
