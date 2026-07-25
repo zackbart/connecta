@@ -77,6 +77,22 @@ export interface ConnectaConfig {
    * not explicitly ask to retry.
    */
   defaultToolTimeoutMs?: number;
+  /**
+   * Deadline (ms) applied to each individual downstream probe/catalog call that
+   * the discovery meta-tools fan out — `list_connectors` (with `probe`),
+   * `search_tools`, and `describe_tools` — so a single hung connector can no
+   * longer stall the whole meta-tool call. **Defaults to a generous 30_000**,
+   * chosen to trip only on a pathological hang, not on a realistically slow
+   * probe, so having it on by default will not break existing deployments.
+   * Bounds one downstream call, not the whole fan-out: a connector that outruns
+   * it degrades to an unavailable/errored entry while the rest are unaffected.
+   *
+   * Does NOT apply to `call_tool`/`batch_call` — those carry their own budget
+   * via `defaultToolTimeoutMs` or a per-call `timeoutMs`. Note this bounds the
+   * caller-facing wait only; the underlying fetch is not currently aborted, so
+   * real cancellation of the downstream request is a deferred follow-up.
+   */
+  probeTimeoutMs?: number;
   serverInfo?: {
     name?: string;
     version?: string;
@@ -122,6 +138,58 @@ function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
   });
 }
 
+/**
+ * One-time construction warnings for deployment shapes that run fine but are
+ * usually unintended. Warning-only — never throws and never changes behavior;
+ * each condition emits at most one `logger.warn`. Iterates connectors once.
+ */
+function warnInsecureConfig(
+  config: ConnectaConfig,
+  inboundAuth: InboundAuth[],
+  logger: Logger,
+): void {
+  const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
+  const hasCredentialConnector = config.connectors.some((c) => c.credential);
+
+  // Open mode (no inbound auth) with connectors that expose credentials or
+  // downstream OAuth: any caller reaches everything, including the vault.
+  if (
+    inboundAuth.length === 0 &&
+    (hasCredentialConnector || oauthConnectors.length > 0)
+  ) {
+    logger.warn(
+      "[connecta] running with no inbound authentication: any caller can " +
+        "invoke every connector and read or overwrite stored credentials. " +
+        "Configure `auth` (for example bearerToken(...) or Clerk) to gate access.",
+    );
+  }
+
+  // Unset publicUrl with OAuth connectors: the downstream redirect_uri is
+  // derived per-request from the attacker-influenced inbound Host header.
+  if (oauthConnectors.length > 0 && !config.publicUrl) {
+    logger.warn(
+      "[connecta] publicUrl is unset while OAuth connectors are configured: " +
+        "the downstream OAuth redirect_uri is derived per-request from the " +
+        "inbound Host header, so an attacker who controls that header can point " +
+        "it at their own host and capture the authorization code. Set " +
+        "`publicUrl` to a fixed https origin.",
+    );
+  }
+
+  // OAuth connectors whose callback performs no state/CSRF check: the public
+  // /oauth/callback/<id> route would exchange any delivered code.
+  for (const connector of oauthConnectors) {
+    if (!connector.verifyState) {
+      logger.warn(
+        `[connecta] connector "${connector.id}" has an OAuth callback with no ` +
+          `state/CSRF check: /oauth/callback/${connector.id} will exchange any ` +
+          "delivered code. Implement `verifyState` (the shipped remoteMcp " +
+          "connector already does).",
+      );
+    }
+  }
+}
+
 export function createConnecta(config: ConnectaConfig): Connecta {
   const storage = config.storage ?? memoryStorage();
   const logger = config.logger ?? defaultLogger();
@@ -143,9 +211,11 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     toolCatalogStaleSeconds: config.toolCatalogStaleSeconds,
     maxResultBytes: config.maxResultBytes,
   });
+  const inboundAuth = normalizeAuth(config.auth);
+  warnInsecureConfig(config, inboundAuth, logger);
   const handler = createFetchHandler({
     registry,
-    auth: normalizeAuth(config.auth),
+    auth: inboundAuth,
     publicUrl: config.publicUrl,
     serverInfo: {
       ...config.serverInfo,
@@ -158,6 +228,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     activityDeploymentId: config.activityDeploymentId,
     executor: config.executor,
     defaultToolTimeoutMs: config.defaultToolTimeoutMs,
+    probeTimeoutMs: config.probeTimeoutMs,
     credentialVault,
     deploymentInfo: config.deploymentInfo,
     branding: config.branding,

@@ -15,7 +15,7 @@ import {
 } from "./errors.js";
 import type { Registry } from "./registry.js";
 import { AVAILABLE_SKILLS } from "./skills.js";
-import type { KVStorage, ToolDef } from "./types.js";
+import type { ConnectorStatus, KVStorage, ToolDef } from "./types.js";
 
 interface TextContent {
   type: "text";
@@ -70,6 +70,42 @@ function normalizeTimeoutMs(value: number | undefined): number | undefined {
     return undefined;
   }
   return Math.max(1, Math.trunc(value));
+}
+
+/**
+ * Generous default bound for a single downstream probe/catalog call in the
+ * list/search/describe fan-out. High enough to trip only on a pathological
+ * hang, not a realistically slow probe.
+ */
+const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
+
+/**
+ * Reject `promise` after `ms` if it has not settled, so one hung downstream
+ * cannot stall a whole fan-out. NOTE: this bounds only the caller-facing wait —
+ * the registry probe methods take no AbortSignal, so the underlying fetch is
+ * NOT cancelled and keeps running in the background. Real cancellation
+ * (AbortSignal plumbed through the registry) is a deferred follow-up.
+ */
+function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label: string,
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 /**
@@ -314,11 +350,15 @@ export function createMetaTools(
     maxResultBytes?: number;
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number;
+    /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
+    probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
   } = {},
 ) {
   const cap = opts.maxResultBytes ?? registry.maxResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
+  const probeTimeoutMs =
+    normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
   // createMetaTools() is called once per inbound MCP request. Sharing this
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
@@ -622,25 +662,45 @@ export function createMetaTools(
           const checkedAt = new Date().toISOString();
           const statusStarted = Date.now();
           const observed = registry.healthFor(c.id);
-          let status = probe
-            ? await registry.statusFor(c.id, baseUrl, requestScope)
-            : {
-                state:
-                  observed?.consecutiveFailures &&
-                  observed.consecutiveFailures > 0
-                    ? ("error" as const)
-                    : observed?.lastSuccessAt || c.kind === "api"
-                      ? ("ok" as const)
-                      : ("unknown" as const),
-                ...(observed?.lastError ? { message: observed.lastError } : {}),
-              };
+          let status:
+            | ConnectorStatus
+            | { state: "ok" | "error" | "unknown"; message?: string };
+          if (probe) {
+            try {
+              status = await withTimeout(
+                registry.statusFor(c.id, baseUrl, requestScope),
+                probeTimeoutMs,
+                `list_connectors probe of "${c.id}"`,
+              );
+            } catch (err) {
+              // A probe that outran probeTimeoutMs (or otherwise threw)
+              // degrades this connector to an error status rather than
+              // hanging the whole list_connectors call.
+              status = { state: "error", message: msg(err) };
+            }
+          } else {
+            status = {
+              state:
+                observed?.consecutiveFailures &&
+                observed.consecutiveFailures > 0
+                  ? ("error" as const)
+                  : observed?.lastSuccessAt || c.kind === "api"
+                    ? ("ok" as const)
+                    : ("unknown" as const),
+              ...(observed?.lastError ? { message: observed.lastError } : {}),
+            };
+          }
           let tools = registry.peekTools(c.id);
           // An auth_required status may have just started OAuth. A second
           // listTools probe would overwrite its state/verifier while returning
           // the first (now stale) authorization URL.
           if (probe && status.state === "ok") {
             try {
-              tools = await registry.refreshTools(c.id, baseUrl, requestScope);
+              tools = await withTimeout(
+                registry.refreshTools(c.id, baseUrl, requestScope),
+                probeTimeoutMs,
+                `list_connectors catalog refresh of "${c.id}"`,
+              );
               registry.recordSuccess(c.id, Date.now() - statusStarted);
             } catch (err) {
               status = { state: "error" as const, message: msg(err) };
@@ -687,7 +747,13 @@ export function createMetaTools(
         order: number;
       }> = [];
       const catalogs = await Promise.allSettled(
-        conns.map((c) => registry.getTools(c.id, baseUrl, requestScope)),
+        conns.map((c) =>
+          withTimeout(
+            registry.getTools(c.id, baseUrl, requestScope),
+            probeTimeoutMs,
+            `search_tools probe of "${c.id}"`,
+          ),
+        ),
       );
       let orderBase = 0;
       catalogs.forEach((catalog, connectorIndex) => {
@@ -791,7 +857,13 @@ export function createMetaTools(
         ),
       ];
       const loaded = await Promise.allSettled(
-        connectorIds.map((id) => registry.getTools(id, baseUrl, requestScope)),
+        connectorIds.map((id) =>
+          withTimeout(
+            registry.getTools(id, baseUrl, requestScope),
+            probeTimeoutMs,
+            `describe_tools probe of "${id}"`,
+          ),
+        ),
       );
       const catalogs = new Map<string, ToolDef[] | Error>();
       loaded.forEach((result, index) => {
@@ -1040,12 +1112,14 @@ export function registerMetaTools(
     baseUrl: string;
     maxResultBytes?: number;
     defaultToolTimeoutMs?: number;
+    probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxResultBytes: ctx.maxResultBytes,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    probeTimeoutMs: ctx.probeTimeoutMs,
     activity: ctx.activity,
   });
 

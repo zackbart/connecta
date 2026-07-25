@@ -49,6 +49,8 @@ export interface ServerOptions {
   deploymentInfo?: Record<string, unknown>;
   /** Deadline for call_tool/batch_call calls that pass no timeoutMs. Off when unset. */
   defaultToolTimeoutMs?: number;
+  /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
+  probeTimeoutMs?: number;
   /** When set, the execute_code meta-tool is registered on top of the nine. */
   executor?: Executor;
   /** Encrypted connector-credential storage backing the authenticated /ui controls. */
@@ -523,6 +525,7 @@ async function serveMcp(
     baseUrl,
     activity,
     defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
+    probeTimeoutMs: opts.probeTimeoutMs,
   });
   if (opts.executor) {
     registerExecuteTool(server, opts.registry, {
