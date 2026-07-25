@@ -183,4 +183,49 @@ describe("api() argument validation", () => {
     expect(warn).toHaveBeenCalledTimes(1);
     expect(warn.mock.calls[0][0]).toContain("refy.broken_schema");
   });
+
+  it("strictValidation rejects a call whose schema the validator cannot evaluate", async () => {
+    const warn = vi.fn();
+    const logger: Logger = { ...silentLogger, warn };
+    const c = api("strict", {
+      strictValidation: true,
+      tools: [
+        {
+          name: "broken_schema",
+          inputSchema: {
+            type: "object",
+            properties: { x: { $ref: "#/definitions/missing" } },
+          },
+          handler: (args: { x: unknown }) => ({ got: args.x }),
+        },
+      ],
+    });
+    const err = await c
+      .callTool("broken_schema", { x: 1 }, { ...ctx(), logger })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    const typed = err as ConnectorCallError;
+    expect(typed.code).toBe("invalid_args");
+    expect(typed.retryable).toBe(false);
+    expect(typed.message).toContain("strict.broken_schema");
+  });
+
+  it("default (strictValidation off) still passes an unevaluable schema through", async () => {
+    const c = api("loose", {
+      tools: [
+        {
+          name: "broken_schema",
+          inputSchema: {
+            type: "object",
+            properties: { x: { $ref: "#/definitions/missing" } },
+          },
+          handler: (args: { x: unknown }) => ({ got: args.x }),
+        },
+      ],
+    });
+    expect(await c.callTool("broken_schema", { x: 7 }, ctx())).toEqual({
+      got: 7,
+    });
+  });
 });

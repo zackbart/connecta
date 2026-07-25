@@ -8,7 +8,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectorContext, KVStorage } from "../src/types.js";
+import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -187,6 +187,79 @@ describe("remoteMcp() connector", () => {
 
     expect(result.content[0].text).toBe("echo:next request");
     expect(builds).toBe(2);
+  });
+});
+
+describe("remoteMcp() destination guard", () => {
+  function loggerSpy(): { logger: Logger; warn: ReturnType<typeof vi.fn> } {
+    const warn = vi.fn();
+    return { logger: { ...silentLogger, warn }, warn };
+  }
+
+  it("warns when static headers auth would travel over http://", () => {
+    const { logger, warn } = loggerSpy();
+    remoteMcp("cleartext", {
+      url: "http://example.com/mcp",
+      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
+      logger,
+    });
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("cleartext");
+    expect(warn.mock.calls[0][0]).toMatch(/http:\/\/example\.com/);
+  });
+
+  it("does not warn for headers auth over https://", () => {
+    const { logger, warn } = loggerSpy();
+    remoteMcp("secure", {
+      url: "https://example.com/mcp",
+      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
+      logger,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn for headers auth over http://localhost", () => {
+    const { logger, warn } = loggerSpy();
+    remoteMcp("local", {
+      url: "http://localhost:8787/mcp",
+      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
+      logger,
+    });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not warn when there is no static headers auth, even over http://", () => {
+    const { logger, warn } = loggerSpy();
+    remoteMcp("noauth", { url: "http://example.com/mcp", logger });
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("requireHttps throws a config error for an http:// url", () => {
+    expect(() =>
+      remoteMcp("must-tls", {
+        url: "http://example.com/mcp",
+        requireHttps: true,
+      }),
+    ).toThrow(/requireHttps/);
+  });
+
+  it("requireHttps allows https:// and loopback without throwing", () => {
+    const { logger, warn } = loggerSpy();
+    expect(() =>
+      remoteMcp("tls", {
+        url: "https://example.com/mcp",
+        requireHttps: true,
+        logger,
+      }),
+    ).not.toThrow();
+    expect(() =>
+      remoteMcp("loopback", {
+        url: "http://127.0.0.1:8787/mcp",
+        requireHttps: true,
+        logger,
+      }),
+    ).not.toThrow();
+    expect(warn).not.toHaveBeenCalled();
   });
 });
 

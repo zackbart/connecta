@@ -10,6 +10,7 @@ import type {
   Connector,
   ConnectorContext,
   ConnectorStatus,
+  Logger,
   ToolDef,
 } from "../types.js";
 
@@ -24,6 +25,19 @@ export interface RemoteMcpOptions {
   description?: string;
   auth?: RemoteMcpAuth;
   /**
+   * Refuse to connect to a non-`https://` `url` at construction (default
+   * false). Loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are always
+   * allowed for local development. Off by default, static `headers` credentials
+   * over a cleartext connection are warned about but permitted; set this true
+   * to make that misconfiguration a hard error instead.
+   */
+  requireHttps?: boolean;
+  /**
+   * Destination for the cleartext-credential warning emitted at construction.
+   * Default console.
+   */
+  logger?: Logger;
+  /**
    * @internal Testing seam. When set, this transport is used instead of the
    * HTTP transport, letting tests point the connector at an in-process MCP
    * server (e.g. via InMemoryTransport). Not part of the public API.
@@ -33,6 +47,15 @@ export interface RemoteMcpOptions {
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function isLoopbackHost(hostname: string): boolean {
+  return (
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "[::1]" ||
+    hostname === "::1"
+  );
 }
 
 interface ConnectionState {
@@ -60,6 +83,27 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // from the isolate singleton. Those are request-bound in Cloudflare Workers.
   const states = new WeakMap<object, ConnectionState>();
   const isOauth = opts.auth?.type === "oauth";
+  const logger = opts.logger ?? console;
+
+  // Check the destination scheme once at construction: buildTransport (and the
+  // SDK's fetch) attach any static credentials to every request, so an http://
+  // endpoint sends bearer tokens / API keys in cleartext. Loopback is exempt
+  // for local development.
+  const destination = new URL(opts.url);
+  const insecureDestination =
+    destination.protocol !== "https:" && !isLoopbackHost(destination.hostname);
+  if (insecureDestination) {
+    if (opts.requireHttps) {
+      throw new Error(
+        `[connecta] connector "${id}" url ${opts.url} is not https:// (and not loopback) — refusing to connect (requireHttps).`,
+      );
+    }
+    if (opts.auth?.type === "headers") {
+      logger.warn(
+        `[connecta] connector "${id}" sends static credentials to ${opts.url} over a non-https:// connection — those tokens will be transmitted in cleartext.`,
+      );
+    }
+  }
 
   /** Typed per-call auth signal; the SDK's UnauthorizedError stays as cause. */
   const authRequiredError = (cause: unknown) =>
@@ -98,6 +142,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return state.provider;
   };
 
+  // NOTE: StreamableHTTPClientTransport speaks over fetch, which transparently
+  // follows 3xx redirects. A malicious or compromised downstream MCP could
+  // redirect to an internal address (e.g. http://169.254.169.254/…) and fetch
+  // would re-issue the request — potentially carrying static auth headers. The
+  // scheme check above only guards the first hop; a fully robust guard (manual
+  // redirect handling + per-hop re-validation + stripping auth headers cross-
+  // origin) lives in the SDK transport and is deferred to a future non-patch
+  // release rather than reimplemented here.
   const buildTransport = (
     ctx: ConnectorContext,
     state: ConnectionState,
