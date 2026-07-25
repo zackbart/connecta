@@ -65,6 +65,23 @@ describe("public package boundary", () => {
     expect(packageJson.exports).toHaveProperty("./quickjs");
   });
 
+  it("exports validateToolInput from the core entry", async () => {
+    const core = await import("../src/index.js");
+    expect(typeof core.validateToolInput).toBe("function");
+  });
+
+  it("publishes the JSON Schema validator under an explicit subpath", async () => {
+    expect(packageJson.exports).toHaveProperty("./json-schema");
+    expect(packageJson.exports?.["./json-schema"]).toEqual({
+      types: "./dist/json-schema.d.ts",
+      import: "./dist/json-schema.js",
+    });
+    // The re-export keeps downstream build-time validation off npm hoisting.
+    expect(packageJson.dependencies).toHaveProperty("@cfworker/json-schema");
+    const { Validator } = await import("../src/json-schema.js");
+    expect(typeof Validator).toBe("function");
+  });
+
   it("does not depend on the Cloudflare service API SDK", () => {
     expect(packageJson.dependencies).not.toHaveProperty("cloudflare");
   });

@@ -34,6 +34,8 @@ try {
     "assets/connecta-clay-hero.png",
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/json-schema.js",
+    "dist/json-schema.d.ts",
     "src/index.ts",
   ]) {
     if (!paths.has(required)) {
@@ -58,6 +60,13 @@ try {
     `
 const core = await import("@zackbart/connecta");
 if (typeof core.createConnecta !== "function") throw new Error("missing core");
+if (typeof core.validateToolInput !== "function") {
+  throw new Error("missing validateToolInput");
+}
+const jsonSchema = await import("@zackbart/connecta/json-schema");
+if (typeof jsonSchema.Validator !== "function") {
+  throw new Error("missing Validator re-export");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",

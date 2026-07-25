@@ -23,6 +23,22 @@ All notable changes to this package are documented here.
   by default**: switching it on globally would put a deadline on every call in
   every existing deployment, and the failure mode is a working long-running
   call starting to time out. An explicit per-call `timeoutMs` always wins.
+- `validateToolInput(schema, args, { address, logger? })` — the argument
+  validation `api()` performs, extracted to `src/validate.ts` and exported so
+  connectors that implement the `Connector` interface directly can use it too.
+  Previously enforcement lived inside `api()`, so a hand-rolled connector whose
+  manifest declared `additionalProperties: false` had nothing enforcing it: an
+  unknown argument key was silently dropped, an empty body went upstream, and a
+  200 was reported back as a successful write. It **returns** the non-retryable
+  `invalid_args` `ConnectorCallError` (or `null`) instead of throwing, so the
+  connector owns the decision — its own error prose, or stripping a
+  connector-wide convention argument the tool schema doesn't declare. `api()`
+  now calls it; behaviour is unchanged (`test/api-connector.test.ts` is
+  untouched).
+- `@zackbart/connecta/json-schema` — re-exports `Validator` from
+  `@cfworker/json-schema`. It was already a direct dependency but not public,
+  so downstream build-time validation (a manifest generator asserting its own
+  output) resolved it only through npm hoisting.
 
 ### Fixed
 

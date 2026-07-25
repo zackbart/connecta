@@ -117,6 +117,8 @@ connecta/
   src/
     index.ts              # createConnecta + public re-exports (Workers-clean entry)
     types.ts              # Connector, ToolDef, KVStorage, InboundAuth, ...
+    validate.ts           # validateToolInput() — shared by api() and custom connectors
+    json-schema.ts        # Validator re-export ("@zackbart/connecta/json-schema")
     server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth callback
     meta-tools.ts         # the nine meta-tools over the registry
     skills.ts             # initialize instructions + the on-demand usage skill
@@ -585,6 +587,31 @@ interface above. Implement `listTools`/`callTool`, optionally `status`
 (connector-level health/auth for `list_connectors`) and `finishAuth` (to
 participate in the `/oauth/callback/<id>` route). Persist private state through
 `ctx.storage` — it's already namespaced to your connector.
+
+Argument validation is not exclusive to `api()`. The same routine it uses is
+exported:
+
+```ts
+import { validateToolInput } from "@zackbart/connecta";
+
+const invalid = validateToolInput(tool.inputSchema, args, {
+  address: `${id}.${name}`,
+  logger: ctx.logger, // default console; receives the one-time schema warning
+});
+if (invalid) throw invalid;
+```
+
+It **returns** the `invalid_args` `ConnectorCallError` (or `null`) rather than
+throwing, so the connector decides: throw it as-is, rewrite the message in its
+own prose, or strip connector-wide convention arguments a tool schema doesn't
+declare (a `confirm` flag on writes, say) and re-check before rejecting. The
+compiled validator is cached per schema object, and a schema the validator
+cannot use is warned about once and then passed through — same as inside
+`api()`, because it *is* inside `api()`.
+
+The underlying validator is also public at `@zackbart/connecta/json-schema`
+(a re-export of `Validator` from `@cfworker/json-schema`) for build-time use,
+e.g. a manifest generator asserting its own output compiles.
 
 ### Tool-list caching
 
