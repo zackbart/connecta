@@ -2,6 +2,89 @@
 
 All notable changes to this package are documented here.
 
+## 0.4.1 — 2026-07-25
+
+A security-hardening release from a full audit of the codebase. Every change is
+backward-compatible: new safety that could alter behavior is opt-in or a
+generous default, and existing well-behaved deployments are unaffected. No
+sandbox-escape, RCE, or XSS was found; the items below are the real gaps.
+
+### Security
+
+- **QuickJS sandbox log memory is now bounded.** `execute_code`'s `console.log`
+  capped only the *number* of retained entries (200), not their size, so
+  untrusted guest code — the sandbox's explicit threat model — could
+  `console.log("x".repeat(25_000_000))` two hundred times and retain multiple
+  GB of host memory, OOMing the Node process. Each entry is now truncated to 8k
+  chars and the cumulative buffer to 256k, both at capture time. Small logs are
+  byte-for-byte unchanged.
+
+- **The `fileStorage` state file is now owner-only.** It holds downstream OAuth
+  access/refresh tokens in cleartext on the Node backend and was written with
+  no mode (world-readable `0644`), so any local user could read long-lived
+  tokens. The directory is now `0700`, the temp file `0600` (the atomic rename
+  preserves it), and an existing loose-mode file is repaired to `0600` on load.
+  Repair is best-effort so a non-POSIX filesystem can't block startup.
+
+- **Cleartext-credential and destination guard on `remoteMcp`.** Static
+  `headers` credentials were attached with no scheme check, so an `http://`
+  `url` sent bearer tokens / API keys in cleartext. `remoteMcp` now warns at
+  construction when headers-auth targets a non-https, non-loopback URL, and a
+  new opt-in `requireHttps` makes that a hard error. A `NOTE` documents the
+  residual redirect-following SSRF in the SDK's fetch transport (a malicious
+  downstream could 3xx-redirect to an internal address); a full guard needs
+  manual redirect handling in the SDK and is deferred to a non-patch release.
+
+- **Construction-time warnings for insecure deployment shapes.**
+  `createConnecta` now emits a one-time `logger.warn` when: no inbound `auth`
+  is configured while credential/OAuth connectors are present (any caller
+  reaches the credential vault — connecta's trust model is single-domain, so an
+  open or open-signup deployment grants every caller full access); `publicUrl`
+  is unset while OAuth connectors exist (the downstream `redirect_uri` is
+  derived from the attacker-influenced inbound `Host` header — set `publicUrl`
+  to a fixed https origin); or a connector exposes `finishAuth` but not
+  `verifyState` (its `/oauth/callback` would exchange any delivered `code`).
+  The shipped `remoteMcp` implements `verifyState`, so the last fires only for
+  hand-rolled connectors. Full per-actor authorization remains an architectural
+  change for a future release.
+
+- **The discovery meta-tools no longer hang on a stuck downstream.**
+  `list_connectors`, `search_tools`, and `describe_tools` fanned out live
+  probes to every connector with no deadline, so one hung downstream stalled
+  the whole call. Bounded by the new `probeTimeoutMs` (below); a timed-out
+  connector degrades to an unavailable/errored entry. The bound is
+  caller-facing — the registry takes no `AbortSignal` yet, so the underlying
+  fetch is not cancelled; real cancellation is a documented follow-up.
+
+- **`/ui` now ships a nonce-based script CSP.** The operator page carried no
+  script-restricting CSP, so any future escaping regression would be directly
+  exploitable. It now sends a per-request `script-src 'nonce-…' 'strict-dynamic'
+  https: 'unsafe-inline'; object-src 'none'; base-uri 'none'; frame-ancestors
+  'none'`. `'strict-dynamic'` keeps Clerk's runtime-injected scripts working;
+  the `https:`/`'unsafe-inline'` fallbacks are ignored by modern browsers and
+  only cover legacy ones; and no `default-src` is set so Clerk's network/fonts
+  and the inline styles stay unrestricted. Operator `branding` `productUrl`/
+  `ownerUrl` values are now scheme-gated (a `javascript:` URL is dropped rather
+  than rendered as a link), and credential metadata omits `lastFour` for values
+  shorter than 12 chars so a short secret doesn't leak half of itself.
+
+### Added
+
+- `RemoteMcpOptions.requireHttps` (default `false`) — reject a non-`https://`
+  (non-loopback) `url` at construction, and `RemoteMcpOptions.logger` for the
+  cleartext-credential warning.
+- `ApiOptions.strictValidation` (default `false`) and
+  `ValidateToolInputOptions.failClosed` (default `false`) — reject a call whose
+  `inputSchema` the validator cannot evaluate instead of passing the raw
+  arguments through. The default remains fail-open (a broken schema does not
+  break an otherwise working tool); `api()` also now eagerly compiles each tool
+  schema at construction so a bad one warns once at startup rather than
+  silently on first use.
+- `ConnectaConfig.probeTimeoutMs` (default `30_000`) — per-connector deadline
+  for the `list_connectors`/`search_tools`/`describe_tools` fan-out. Generous
+  by default so it trips only on a pathological hang; does not apply to
+  `call_tool`/`batch_call`, which carry `defaultToolTimeoutMs`.
+
 ## 0.4.0 — 2026-07-25
 
 ### Added
