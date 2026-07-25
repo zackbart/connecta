@@ -1,4 +1,4 @@
-import { validateToolInput } from "../validate.js";
+import { precompileValidator, validateToolInput } from "../validate.js";
 import type {
   Connector,
   ConnectorCredentialConfig,
@@ -49,6 +49,16 @@ export interface ApiOptions {
    * on loose coercion.
    */
   validateArgs?: boolean;
+  /**
+   * Fail-closed on a tool whose `inputSchema` the validator cannot evaluate
+   * (default false). The default surfaces such a schema as a one-time warning
+   * and then passes the raw arguments through, so a broken schema never breaks
+   * an otherwise working tool. Set true to instead reject those calls with a
+   * non-retryable `invalid_args` ConnectorCallError, so a schema that cannot be
+   * enforced never silently admits unvalidated input. Only consulted when
+   * `validateArgs` is not false.
+   */
+  strictValidation?: boolean;
   tools: ApiTool[];
 }
 
@@ -73,6 +83,15 @@ export function api(id: string, opts: ApiOptions): Connector {
   }));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
+  const strictValidation = opts.strictValidation ?? false;
+  if (validateArgs) {
+    // Compile each schema now so a validator-hostile inputSchema surfaces once
+    // here rather than silently on its first call. Warning-only; never throws.
+    for (const t of opts.tools) {
+      if (t.inputSchema)
+        precompileValidator(t.inputSchema, { address: `${id}.${t.name}` });
+    }
+  }
   return {
     id,
     title: opts.title,
@@ -95,6 +114,7 @@ export function api(id: string, opts: ApiOptions): Connector {
         const invalid = validateToolInput(tool.inputSchema, input, {
           address: `${id}.${name}`,
           logger: ctx.logger,
+          failClosed: strictValidation,
         });
         if (invalid) throw invalid;
       }

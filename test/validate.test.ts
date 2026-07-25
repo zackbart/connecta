@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
-import { validateToolInput } from "../src/validate.js";
+import { precompileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema, Logger } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
@@ -99,6 +99,52 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { n: 2 }, OPTS)).toBeNull();
   });
 
+  it("fail-closed: a schema that cannot compile yields invalid_args", () => {
+    const { logger } = loggerSpy();
+    const schema: JsonSchema = {
+      $id: "urn:connecta-test:failclosed-compile",
+      type: "object",
+      $defs: { clash: { $id: "urn:connecta-test:failclosed-compile" } },
+    };
+    const err = validateToolInput(schema, { anything: true }, {
+      address: "acme.dup_id_strict",
+      logger,
+      failClosed: true,
+    });
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    expect(err!.code).toBe("invalid_args");
+    expect(err!.retryable).toBe(false);
+    expect(err!.message).toContain("acme.dup_id_strict");
+    expect(err!.message).toContain("could not be evaluated");
+  });
+
+  it("fail-closed: a schema that only fails on first validate yields invalid_args", () => {
+    const { logger } = loggerSpy();
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { x: { $ref: "#/definitions/missing" } },
+    };
+    const err = validateToolInput(schema, { x: 1 }, {
+      address: "acme.broken_ref_strict",
+      logger,
+      failClosed: true,
+    });
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    expect(err!.code).toBe("invalid_args");
+    expect(err!.message).toContain("acme.broken_ref_strict");
+  });
+
+  it("fail-closed still returns null for input that matches a good schema", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { title: { type: "string" } },
+      required: ["title"],
+    };
+    expect(
+      validateToolInput(schema, { title: "hi" }, { ...OPTS, failClosed: true }),
+    ).toBeNull();
+  });
+
   it("defaults the logger when opts omits one", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -113,5 +159,45 @@ describe("validateToolInput", () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+describe("precompileValidator", () => {
+  it("warns and disables a schema the validator cannot compile, without throwing", () => {
+    const { logger, warn } = loggerSpy();
+    const schema: JsonSchema = {
+      $id: "urn:connecta-test:precompile-bad",
+      type: "object",
+      $defs: { clash: { $id: "urn:connecta-test:precompile-bad" } },
+    };
+    expect(() =>
+      precompileValidator(schema, { address: "acme.precompile_bad", logger }),
+    ).not.toThrow();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain("acme.precompile_bad");
+    // The disabled schema is cached: the runtime path passes through (default)
+    // rather than recompiling and warning a second time.
+    expect(
+      validateToolInput(schema, { anything: true }, {
+        address: "acme.precompile_bad",
+        logger,
+      }),
+    ).toBeNull();
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("silently caches a good schema so the runtime path hits the cache", () => {
+    const { logger, warn } = loggerSpy();
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { n: { type: "integer" } },
+      required: ["n"],
+    };
+    precompileValidator(schema, { address: "acme.precompile_ok", logger });
+    expect(warn).not.toHaveBeenCalled();
+    expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
+    expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe(
+      "invalid_args",
+    );
   });
 });
