@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.4.0 — 2026-07-25
 
 ### Added
 
@@ -42,6 +42,19 @@ All notable changes to this package are documented here.
 
 ### Fixed
 
+- `compactSchema` — the rendering behind `search_tools` and `describe_tools`,
+  and for most models the only description of a tool they ever read — dropped
+  `const` and did not handle `allOf`. A discriminated union, the standard shape
+  for "one of these request bodies", therefore rendered as several textually
+  identical branches with the field that selects them erased
+  (`{ type: string, emoji: string } | { type: string, external: {…} }`), and a
+  schema using `allOf` fell through to raw `JSON.stringify` — on a real
+  connector that measured *longer* than the schema it was meant to compact.
+  `const` now renders as a literal, so unions are self-documenting again, and
+  `allOf` composes with the schema's own shape joined by `&` rather than
+  replacing it: a sibling `properties`, `$ref`, `enum`, `const`, or `items` is
+  no longer silently dropped, and an empty `allOf` beside real properties no
+  longer erases the whole schema.
 - An aborted call — including one the engine itself cancelled at its deadline —
   was classified `connector_call_failed`/`retryable: false`. An aborted `fetch`
   rejects with a `DOMException` named `AbortError` whose message matches
