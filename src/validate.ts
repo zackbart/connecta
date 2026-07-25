@@ -49,6 +49,12 @@ function disableValidation(
  * an unresolvable `$ref`) is warned about once and then passed through — a
  * broken schema should not break an otherwise working tool.
  *
+ * The compiled validator is cached by **schema object identity**, so pass a
+ * stable object: hold the parsed manifest and hand the same schema back on
+ * every call. A schema rebuilt per call is a cache miss every time — it still
+ * validates correctly, but recompiles the validator on each call, silently and
+ * with nothing to show for it but latency.
+ *
  * `api()` uses this internally; it is exported for connectors that implement
  * the `Connector` interface directly.
  */

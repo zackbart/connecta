@@ -609,6 +609,12 @@ compiled validator is cached per schema object, and a schema the validator
 cannot use is warned about once and then passed through — same as inside
 `api()`, because it *is* inside `api()`.
 
+The cache is keyed on **object identity**, so pass a stable schema — hold the
+parsed manifest and hand the same object back on every call. A schema rebuilt
+per call still validates correctly, but misses the cache every time and
+recompiles the validator on each call, with no symptom other than latency.
+`api()` gets this for free: a tool's `inputSchema` is a stable object.
+
 The underlying validator is also public at `@zackbart/connecta/json-schema`
 (a re-export of `Validator` from `@cfworker/json-schema`) for build-time use,
 e.g. a manifest generator asserting its own output compiles.
