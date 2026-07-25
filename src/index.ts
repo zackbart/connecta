@@ -178,6 +178,11 @@ export { remoteMcp } from "./connectors/remote-mcp.js";
 export { api } from "./connectors/api.js";
 export { ConnectorCallError } from "./errors.js";
 export type { ConnectorCallErrorCode, CallErrorDetails } from "./errors.js";
+// The same argument validation api() performs, usable by connectors that
+// implement the Connector interface directly. Returns the error rather than
+// throwing so the caller decides what to do with it.
+export { validateToolInput } from "./validate.js";
+export type { ValidateToolInputOptions } from "./validate.js";
 export { bearerToken } from "./auth/bearer.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";

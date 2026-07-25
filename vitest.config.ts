@@ -21,6 +21,7 @@ const WORKERS_SUITES = [
   "test/remote-mcp.test.ts",
   "test/server.test.ts",
   "test/ui.test.ts",
+  "test/validate.test.ts",
 ];
 
 export default defineConfig({
