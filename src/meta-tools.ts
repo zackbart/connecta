@@ -54,39 +54,46 @@ const dec = new TextDecoder();
 type ErrorDetails = CallErrorDetails;
 
 /**
- * Ceiling on how long the engine will itself sleep between attempts, however
- * long a connector's `retryAfterMs` says to wait. An inbound MCP request is
- * synchronous from the caller's point of view, and the engine already treats
- * ~15 s as the outer bound of one reasonable connector call
- * (EXECUTE_HOST_CALL_TIMEOUT_MS), so parking a request for minutes in *waiting
- * alone* trades a fast, informative failure for a hung one. Longer windows are
- * still reported verbatim as `error.retryAfterMs`, so the agent — which can
- * afford to wait — decides when to re-issue.
+ * The longest the engine will park a synchronous inbound request in *waiting
+ * alone*. The engine already treats ~15 s as the outer bound of one reasonable
+ * connector call (EXECUTE_HOST_CALL_TIMEOUT_MS), so sleeping for minutes trades
+ * a fast, informative failure for a hung one. A connector-reported window this
+ * long isn't truncated — it's declined (see `retryBackoffMs`) and reported
+ * verbatim as `error.retryAfterMs`, so the agent, which can afford to wait,
+ * decides when to re-issue.
  */
 export const MAX_RETRY_BACKOFF_MS = 10_000;
 
-/** A positive integer number of milliseconds, or undefined. */
+/** A finite, positive integer number of milliseconds, or undefined. */
 function normalizeTimeoutMs(value: number | undefined): number | undefined {
-  if (value === undefined || !(value > 0)) return undefined;
+  if (value === undefined || !Number.isFinite(value) || !(value > 0)) {
+    return undefined;
+  }
   return Math.max(1, Math.trunc(value));
 }
 
 /**
- * How long to wait before the next attempt. A connector that read a
- * `Retry-After` header knows the window exactly; the exponential guess is only
- * for connectors that don't. Either way the wait is clamped to
- * `MAX_RETRY_BACKOFF_MS` and, when the call has a deadline, to the time left in
- * it. Exported for direct testing.
+ * How long to wait before the next attempt, or `undefined` for "don't retry".
+ *
+ * A connector that read a `Retry-After` header knows the window exactly, so it
+ * is honoured **exactly or not at all**: truncating an exponential *guess* is
+ * harmless, but truncating a *known* window means deliberately retrying inside
+ * a rate limit — the harm this channel exists to prevent. A window longer than
+ * `MAX_RETRY_BACKOFF_MS` therefore declines the retry rather than shortening
+ * it. (`retryAfterMs` is normalized non-negative, so `0` means "retry now".)
+ * Connectors that report no window keep the historical exponential guess.
+ *
+ * Waits are per attempt, matching the per-attempt `timeoutMs` race in
+ * `runCall`. Exported for direct testing.
  */
 export function retryBackoffMs(
   attempt: number,
   retryAfterMs: number | undefined,
-  remainingMs?: number,
-): number {
-  const requested = retryAfterMs ?? Math.min(250 * 2 ** (attempt - 1), 1_000);
-  const wait = Math.min(requested, MAX_RETRY_BACKOFF_MS);
-  if (remainingMs === undefined) return Math.max(0, wait);
-  return Math.max(0, Math.min(wait, remainingMs));
+): number | undefined {
+  if (retryAfterMs === undefined) {
+    return Math.min(250 * 2 ** (attempt - 1), 1_000);
+  }
+  return retryAfterMs <= MAX_RETRY_BACKOFF_MS ? retryAfterMs : undefined;
 }
 
 /** Details for failures that never reached a connector (no thrown value). */
@@ -399,7 +406,6 @@ export function createMetaTools(
     // An explicit per-call deadline always wins; the config default only fills
     // the gap, and stays off entirely when the deployment sets none.
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
-    const deadline = timeoutMs === undefined ? undefined : started + timeoutMs;
     const maxRetries = Math.min(
       2,
       Math.max(0, Math.trunc(call.maxRetries ?? 0)),
@@ -491,17 +497,18 @@ export function createMetaTools(
         connectorMs += Date.now() - connectorStarted;
         const details = classifyCallError(err);
         if (attempts <= maxRetries && retrySafe && details.retryable) {
-          const backoffStarted = Date.now();
-          const wait = retryBackoffMs(
-            attempts,
-            details.retryAfterMs,
-            deadline === undefined ? undefined : deadline - backoffStarted,
-          );
-          if (wait > 0) {
-            await new Promise((resolve) => setTimeout(resolve, wait));
+          const wait = retryBackoffMs(attempts, details.retryAfterMs);
+          if (wait !== undefined) {
+            const backoffStarted = Date.now();
+            if (wait > 0) {
+              await new Promise((resolve) => setTimeout(resolve, wait));
+            }
+            backoffMs += Date.now() - backoffStarted;
+            continue;
           }
-          backoffMs += Date.now() - backoffStarted;
-          continue;
+          // The reported window is longer than the engine will park a
+          // synchronous request for. Fall through to failure with
+          // retryAfterMs reported verbatim so the agent can re-issue.
         }
         registry.recordFailure(
           resolved.connector.id,

@@ -355,12 +355,16 @@ Registered only when `ConnectaConfig.executor` is set — see
   `error: { code, message, retryable }`.
 - **`retryAfterMs`.** A connector that knows the wait window — from a
   `Retry-After` header, say — passes it as
-  `new ConnectorCallError("rate_limited", msg, { retryAfterMs: 30_000 })`. The
-  retry loop then waits that long instead of its exponential guess, and the
-  value is reported verbatim as `error.retryAfterMs` so an agent that receives
-  the failure can schedule a re-issue rather than guessing. The engine's own
-  wait is capped at **10 s** and at the call's remaining deadline, so a long
-  window can't park an inbound request; the reported value is never capped.
+  `new ConnectorCallError("rate_limited", msg, { retryAfterMs: 30_000 })`. It is
+  reported verbatim as `error.retryAfterMs` so an agent that receives the
+  failure can schedule a re-issue rather than guessing, and the retry loop waits
+  it out in place of the exponential guess. A reported window is honoured
+  **exactly or not at all**: up to **10 s** the engine waits the full window;
+  beyond that it declines to retry and returns the failure immediately, window
+  included. Truncating an exponential *guess* is harmless, but truncating a
+  *known* window would mean deliberately retrying inside a rate limit — and an
+  inbound request can't be parked for minutes either way. The reported value is
+  never capped. Waits are per attempt, like `timeoutMs` itself.
 - **The heuristic fallback.** A plain `Error` is classified by message text —
   `timeout`/`timed out` marks a timeout; timeouts, 429/5xx, and connection
   resets read as retryable. This is why typed errors exist: a legitimate

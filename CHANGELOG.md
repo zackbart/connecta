@@ -12,9 +12,10 @@ All notable changes to this package are documented here.
   `error.retryAfterMs` (and `errorDetails.retryAfterMs` in `batch_call`), so an
   agent that receives the failure can schedule a re-issue instead of guessing,
   and the engine's retry loop waits that long in place of its exponential
-  guess. The engine's own wait is capped at 10 s and at the call's remaining
-  deadline — a `Retry-After: 3600` must not park an inbound request — while the
-  reported value is never capped.
+  guess. A reported window is honoured exactly or not at all: up to 10 s the
+  engine waits it in full; beyond that it declines the retry and returns the
+  failure immediately rather than retrying inside a rate-limit window it was
+  told about. The reported value is never capped.
 - `ConnectaConfig.defaultToolTimeoutMs` — a deadline for `call_tool`/
   `batch_call` calls that pass no `timeoutMs`, giving the connector both a
   budget (`ctx.timeoutMs`) and a cancellation signal (`ctx.signal`) on the
