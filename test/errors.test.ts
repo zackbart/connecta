@@ -13,6 +13,28 @@ describe("ConnectorCallError", () => {
     );
   });
 
+  it("carries an optional retryAfterMs and ignores nonsense values", () => {
+    expect(
+      new ConnectorCallError("rate_limited", "x", { retryAfterMs: 2_500 })
+        .retryAfterMs,
+    ).toBe(2_500);
+    expect(new ConnectorCallError("rate_limited", "x").retryAfterMs).toBe(
+      undefined,
+    );
+    expect(
+      new ConnectorCallError("rate_limited", "x", { retryAfterMs: -1 })
+        .retryAfterMs,
+    ).toBe(undefined);
+    expect(
+      new ConnectorCallError("rate_limited", "x", { retryAfterMs: Number.NaN })
+        .retryAfterMs,
+    ).toBe(undefined);
+    expect(
+      new ConnectorCallError("rate_limited", "x", { retryAfterMs: 1_200.7 })
+        .retryAfterMs,
+    ).toBe(1_200);
+  });
+
   it("honors an explicit retryable override and keeps the cause", () => {
     const cause = new Error("underlying");
     const err = new ConnectorCallError("timeout", "x", {
@@ -53,6 +75,65 @@ describe("classifyCallError", () => {
       code: "connector_call_failed",
       retryable: false,
     });
+  });
+
+  it("round-trips retryAfterMs into the error details, omitting it when unset", () => {
+    expect(
+      classifyCallError(
+        new ConnectorCallError("rate_limited", "slow down", {
+          retryAfterMs: 30_000,
+        }),
+      ),
+    ).toEqual({
+      code: "rate_limited",
+      message: "slow down",
+      retryable: true,
+      retryAfterMs: 30_000,
+    });
+    expect(
+      classifyCallError(new ConnectorCallError("rate_limited", "slow down")),
+    ).toEqual({ code: "rate_limited", message: "slow down", retryable: true });
+    // The heuristic path has no window to report.
+    expect(classifyCallError(new Error("HTTP 429"))).not.toHaveProperty(
+      "retryAfterMs",
+    );
+  });
+
+  it("classifies an aborted call as a retryable timeout", () => {
+    // An aborted fetch rejects with a DOMException named AbortError whose text
+    // matches neither message heuristic — without the name check it would read
+    // as a non-retryable connector_call_failed.
+    const aborted = new DOMException("The operation was aborted", "AbortError");
+    expect(aborted).toBeInstanceOf(Error);
+    expect(classifyCallError(aborted)).toEqual({
+      code: "timeout",
+      message: "The operation was aborted",
+      retryable: true,
+    });
+    // Runtimes word it differently; the name is what's stable.
+    expect(
+      classifyCallError(
+        new DOMException("This operation was aborted", "AbortError"),
+      ),
+    ).toMatchObject({ code: "timeout", retryable: true });
+    // Same for the reason an AbortController hands its listeners.
+    const controller = new AbortController();
+    controller.abort();
+    expect(classifyCallError(controller.signal.reason)).toMatchObject({
+      code: "timeout",
+      retryable: true,
+    });
+    // A connector that typed the failure still wins over the name check.
+    expect(
+      classifyCallError(
+        Object.assign(
+          new ConnectorCallError("invalid_args", "bad field", {
+            retryable: false,
+          }),
+          { name: "AbortError" },
+        ),
+      ),
+    ).toMatchObject({ code: "invalid_args", retryable: false });
   });
 
   it("uses the given fallback code and stringifies non-Error values", () => {

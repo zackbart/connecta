@@ -61,6 +61,22 @@ export interface ConnectaConfig {
    * stash the full text for get_result paging. Default 50_000.
    */
   maxResultBytes?: number;
+  /**
+   * Deadline (ms) applied to call_tool/batch_call calls that pass no
+   * `timeoutMs`, giving the connector both a budget (`ctx.timeoutMs`) and a
+   * cancellation signal (`ctx.signal`). An explicit per-call `timeoutMs` always
+   * wins. **Opt-in — undefined by default**, because switching it on globally
+   * would put a deadline on every call in an existing deployment and the
+   * failure mode is a working long-running call starting to time out.
+   * `execute_code` host calls are unaffected; they already carry a 15 s bound.
+   *
+   * Bounds a single attempt, not the whole call — the same as an explicit
+   * `timeoutMs` has always done. A call that also passes `maxRetries` can
+   * therefore run to roughly `(maxRetries + 1)` times this value plus backoff.
+   * `maxRetries` defaults to 0, so this is the total for every call that does
+   * not explicitly ask to retry.
+   */
+  defaultToolTimeoutMs?: number;
   serverInfo?: {
     name?: string;
     version?: string;
@@ -141,6 +157,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     activityReadGate: config.activityReadGate,
     activityDeploymentId: config.activityDeploymentId,
     executor: config.executor,
+    defaultToolTimeoutMs: config.defaultToolTimeoutMs,
     credentialVault,
     deploymentInfo: config.deploymentInfo,
     branding: config.branding,

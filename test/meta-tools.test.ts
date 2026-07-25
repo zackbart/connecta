@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createMetaTools } from "../src/meta-tools.js";
+import {
+  createMetaTools,
+  MAX_RETRY_BACKOFF_MS,
+  retryBackoffMs,
+} from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
 import {
   authConnector,
@@ -724,6 +728,346 @@ describe("call_tool", () => {
     expect(parsed.error.message).toContain("timed out");
     expect(parsed.error.retryable).toBe(true);
     expect(parsed.attempts).toBe(1);
+  });
+
+  it("no default deadline unless the deployment configures one", async () => {
+    const seen: Array<{ timeoutMs?: number; hasSignal: boolean }> = [];
+    const connector = api("budget", {
+      tools: [
+        {
+          name: "peek",
+          annotations: { readOnlyHint: true },
+          handler: (_args, ctx) => {
+            seen.push({
+              timeoutMs: ctx.timeoutMs,
+              hasSignal: Boolean(ctx.signal),
+            });
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const call = { address: "budget.peek", resultMode: "value" as const };
+
+    // Today's behaviour, unchanged: no budget and no way to be cancelled.
+    await createMetaTools(makeRegistry([connector]), BASE).callTool(call);
+    expect(seen[0]).toEqual({ timeoutMs: undefined, hasSignal: false });
+
+    // defaultToolTimeoutMs fills the gap for callers that pass none…
+    await createMetaTools(makeRegistry([connector]), BASE, {
+      defaultToolTimeoutMs: 5_000,
+    }).callTool(call);
+    expect(seen[1]).toEqual({ timeoutMs: 5_000, hasSignal: true });
+
+    // …and an explicit per-call timeoutMs still wins over it.
+    await createMetaTools(makeRegistry([connector]), BASE, {
+      defaultToolTimeoutMs: 5_000,
+    }).callTool({ ...call, timeoutMs: 25 });
+    expect(seen[2]).toEqual({ timeoutMs: 25, hasSignal: true });
+
+    // Including through batch_call, which fans out through the same path.
+    await createMetaTools(makeRegistry([connector]), BASE, {
+      defaultToolTimeoutMs: 5_000,
+    }).batchCall({ calls: [{ address: "budget.peek" }] });
+    expect(seen[3]).toEqual({ timeoutMs: 5_000, hasSignal: true });
+  });
+
+  it("a configured default deadline aborts and times out a hanging call", async () => {
+    const connector = api("stuck", {
+      tools: [
+        {
+          name: "wait",
+          annotations: { readOnlyHint: true },
+          async handler(_args, ctx) {
+            await new Promise<void>((resolve) => {
+              ctx.signal?.addEventListener("abort", () => resolve(), {
+                once: true,
+              });
+            });
+            return { completedAfterAbort: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE, {
+        defaultToolTimeoutMs: 10,
+      }).callTool({ address: "stuck.wait", resultMode: "value" }),
+    ) as { ok: boolean; error: { code: string; retryable: boolean } };
+    expect(parsed).toMatchObject({
+      ok: false,
+      error: { code: "timeout", retryable: true },
+    });
+  });
+
+  it("surfaces a connector's retryAfterMs in the error envelope", async () => {
+    const connector = api("limited", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError("rate_limited", "slow down", {
+              retryAfterMs: 3_600_000,
+            });
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({ address: "limited.read", resultMode: "value" }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: { code: string; retryable: boolean; retryAfterMs?: number };
+    };
+    // Reported verbatim even though the engine would never wait this long
+    // itself — an hour is the agent's decision to make, not the engine's.
+    expect(parsed).toMatchObject({
+      ok: false,
+      attempts: 1,
+      error: { code: "rate_limited", retryable: true, retryAfterMs: 3_600_000 },
+    });
+
+    const batched = textOf(
+      await mt.batchCall({
+        calls: [{ address: "limited.read" }],
+        resultMode: "value",
+      }),
+    ) as { results: Array<{ errorDetails: { retryAfterMs?: number } }> };
+    expect(batched.results[0].errorDetails.retryAfterMs).toBe(3_600_000);
+  });
+
+  it("omits retryAfterMs when the connector reports no window", async () => {
+    const connector = api("plain", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError("rate_limited", "slow down");
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "plain.read",
+        resultMode: "value",
+      }),
+    ) as { error: Record<string, unknown> };
+    expect(parsed.error).toEqual({
+      code: "rate_limited",
+      message: "slow down",
+      retryable: true,
+    });
+  });
+
+  it("backs off for the connector's retryAfterMs instead of the exponential guess", async () => {
+    let calls = 0;
+    const connector = api("paced", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            calls++;
+            if (calls === 1) {
+              throw new ConnectorCallError("rate_limited", "slow down", {
+                retryAfterMs: 600,
+              });
+            }
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "paced.read",
+        resultMode: "value",
+        maxRetries: 1,
+        diagnostics: true,
+      }),
+    ) as { ok: boolean; attempts: number; timing: { backoffMs: number } };
+    expect(parsed).toMatchObject({ ok: true, attempts: 2 });
+    // The exponential default for attempt 1 is 250ms; the connector said 600.
+    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(550);
+    expect(calls).toBe(2);
+  });
+
+  it("still backs off after an attempt that failed by timing out", async () => {
+    // timeoutMs is a per-attempt budget, so an attempt that spends all of it
+    // must not shorten the wait before the next one. A whole-call deadline
+    // would leave nothing remaining here and retry instantly.
+    let calls = 0;
+    const connector = api("expiring", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          async handler(_args, ctx) {
+            calls++;
+            if (calls === 1) {
+              await new Promise<void>((resolve) => {
+                ctx.signal?.addEventListener("abort", () => resolve(), {
+                  once: true,
+                });
+              });
+            }
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "expiring.read",
+        resultMode: "value",
+        timeoutMs: 50,
+        maxRetries: 1,
+        diagnostics: true,
+      }),
+    ) as { ok: boolean; attempts: number; timing: { backoffMs: number } };
+    expect(parsed).toMatchObject({ ok: true, attempts: 2 });
+    // The full 250ms exponential default (less timer slop), not the ~0 a
+    // spent whole-call deadline would have left.
+    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(240);
+    expect(calls).toBe(2);
+  });
+
+  it("gives every attempt the full timeoutMs budget, not a share of one", async () => {
+    let calls = 0;
+    const connector = api("perattempt", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          async handler() {
+            calls++;
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            if (calls === 1) throw new Error("temporary 503");
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "perattempt.read",
+        resultMode: "value",
+        timeoutMs: 60,
+        maxRetries: 1,
+        diagnostics: true,
+      }),
+    ) as { ok: boolean; attempts: number; timing: { totalMs: number } };
+    // Two 40ms attempts plus a 250ms backoff far exceed the 60ms budget in
+    // total, and that is exactly the point: the budget is per attempt.
+    expect(parsed).toMatchObject({ ok: true, attempts: 2 });
+    expect(parsed.timing.totalMs).toBeGreaterThan(60);
+    expect(calls).toBe(2);
+  });
+
+  it("waits a reported window in full even when it outlasts the per-attempt budget", async () => {
+    let calls = 0;
+    const connector = api("windowed", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            calls++;
+            if (calls === 1) {
+              throw new ConnectorCallError("rate_limited", "slow down", {
+                retryAfterMs: 150,
+              });
+            }
+            return { ok: true };
+          },
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "windowed.read",
+        resultMode: "value",
+        timeoutMs: 25,
+        maxRetries: 1,
+        diagnostics: true,
+      }),
+    ) as { ok: boolean; attempts: number; timing: { backoffMs: number } };
+    expect(parsed).toMatchObject({ ok: true, attempts: 2 });
+    // The whole 150ms window (less timer slop), despite a 25ms per-attempt
+    // budget that a whole-call deadline would have clamped it to.
+    expect(parsed.timing.backoffMs).toBeGreaterThanOrEqual(140);
+    expect(calls).toBe(2);
+  });
+
+  it("declines the retry outright when the reported window is too long to wait", async () => {
+    let calls = 0;
+    const connector = api("parked", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            calls++;
+            throw new ConnectorCallError("rate_limited", "slow down", {
+              retryAfterMs: 30_000,
+            });
+          },
+        },
+      ],
+    });
+    const startedAt = Date.now();
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "parked.read",
+        resultMode: "value",
+        maxRetries: 2,
+        diagnostics: true,
+      }),
+    ) as {
+      ok: boolean;
+      attempts: number;
+      error: { retryAfterMs?: number };
+      timing: { backoffMs: number };
+    };
+    // Retrying inside a 30s rate-limit window is the harm this channel exists
+    // to prevent, and truncating a *known* window to 10s would do exactly
+    // that. So: no retry, no wait, and the window reported verbatim.
+    expect(parsed).toMatchObject({
+      ok: false,
+      attempts: 1,
+      error: { retryAfterMs: 30_000 },
+    });
+    expect(parsed.timing.backoffMs).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    expect(calls).toBe(1);
+  });
+
+  // The 10s ceiling can't be waited out in a test, so it is asserted on the
+  // pure calculation the retry loop calls.
+  it("bounds the backoff: a reported window is honoured exactly or not at all", () => {
+    // No window reported → the historical exponential guess, capped at 1s.
+    expect(retryBackoffMs(1, undefined)).toBe(250);
+    expect(retryBackoffMs(2, undefined)).toBe(500);
+    expect(retryBackoffMs(3, undefined)).toBe(1_000);
+    expect(retryBackoffMs(9, undefined)).toBe(1_000);
+
+    // A reported window replaces the guess, in both directions, and 0 means
+    // "retry now" rather than "no window".
+    expect(retryBackoffMs(1, 40)).toBe(40);
+    expect(retryBackoffMs(1, 4_000)).toBe(4_000);
+    expect(retryBackoffMs(1, 0)).toBe(0);
+
+    // Up to the ceiling it is honoured exactly; past it the retry is declined
+    // (undefined) rather than truncated into the rate-limit window.
+    expect(MAX_RETRY_BACKOFF_MS).toBe(10_000);
+    expect(retryBackoffMs(1, MAX_RETRY_BACKOFF_MS)).toBe(MAX_RETRY_BACKOFF_MS);
+    expect(retryBackoffMs(1, MAX_RETRY_BACKOFF_MS + 1)).toBe(undefined);
+    expect(retryBackoffMs(1, 3_600_000)).toBe(undefined);
   });
 
   it("a typed non-retryable error is not retried even if its text says timeout", async () => {

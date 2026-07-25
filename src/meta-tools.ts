@@ -53,6 +53,49 @@ const dec = new TextDecoder();
 
 type ErrorDetails = CallErrorDetails;
 
+/**
+ * The longest the engine will park a synchronous inbound request in *waiting
+ * alone*. The engine already treats ~15 s as the outer bound of one reasonable
+ * connector call (EXECUTE_HOST_CALL_TIMEOUT_MS), so sleeping for minutes trades
+ * a fast, informative failure for a hung one. A connector-reported window this
+ * long isn't truncated — it's declined (see `retryBackoffMs`) and reported
+ * verbatim as `error.retryAfterMs`, so the agent, which can afford to wait,
+ * decides when to re-issue.
+ */
+export const MAX_RETRY_BACKOFF_MS = 10_000;
+
+/** A finite, positive integer number of milliseconds, or undefined. */
+function normalizeTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || !(value > 0)) {
+    return undefined;
+  }
+  return Math.max(1, Math.trunc(value));
+}
+
+/**
+ * How long to wait before the next attempt, or `undefined` for "don't retry".
+ *
+ * A connector that read a `Retry-After` header knows the window exactly, so it
+ * is honoured **exactly or not at all**: truncating an exponential *guess* is
+ * harmless, but truncating a *known* window means deliberately retrying inside
+ * a rate limit — the harm this channel exists to prevent. A window longer than
+ * `MAX_RETRY_BACKOFF_MS` therefore declines the retry rather than shortening
+ * it. (`retryAfterMs` is normalized non-negative, so `0` means "retry now".)
+ * Connectors that report no window keep the historical exponential guess.
+ *
+ * Waits are per attempt, matching the per-attempt `timeoutMs` race in
+ * `runCall`. Exported for direct testing.
+ */
+export function retryBackoffMs(
+  attempt: number,
+  retryAfterMs: number | undefined,
+): number | undefined {
+  if (retryAfterMs === undefined) {
+    return Math.min(250 * 2 ** (attempt - 1), 1_000);
+  }
+  return retryAfterMs <= MAX_RETRY_BACKOFF_MS ? retryAfterMs : undefined;
+}
+
 /** Details for failures that never reached a connector (no thrown value). */
 function errorDetails(code: string, message: string): ErrorDetails {
   return { code, message, retryable: messageLooksRetryable(message) };
@@ -260,18 +303,22 @@ export interface SkillArgs {
 /**
  * The nine meta-tool handlers over a registry. Exported for direct testing;
  * registerMetaTools() wires them onto an McpServer. `opts.maxResultBytes`
- * overrides the registry's default result-size cap. (execute_code, the optional
- * tenth tool, is registered separately by registerExecuteTool.)
+ * overrides the registry's default result-size cap; `opts.defaultToolTimeoutMs`
+ * supplies a deadline for calls that don't carry one. (execute_code, the
+ * optional tenth tool, is registered separately by registerExecuteTool.)
  */
 export function createMetaTools(
   registry: Registry,
   baseUrl: string,
   opts: {
     maxResultBytes?: number;
+    /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
+    defaultToolTimeoutMs?: number;
     activity?: ActivityRequestContext;
   } = {},
 ) {
   const cap = opts.maxResultBytes ?? registry.maxResultBytes;
+  const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   // createMetaTools() is called once per inbound MCP request. Sharing this
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
@@ -356,10 +403,9 @@ export function createMetaTools(
     }
     const results = registry.resultsStorage();
     const fields = call.fields && call.fields.length > 0 ? call.fields : null;
-    const timeoutMs =
-      call.timeoutMs && call.timeoutMs > 0
-        ? Math.max(1, Math.trunc(call.timeoutMs))
-        : undefined;
+    // An explicit per-call deadline always wins; the config default only fills
+    // the gap, and stays off entirely when the deployment sets none.
+    const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
     const maxRetries = Math.min(
       2,
       Math.max(0, Math.trunc(call.maxRetries ?? 0)),
@@ -451,12 +497,18 @@ export function createMetaTools(
         connectorMs += Date.now() - connectorStarted;
         const details = classifyCallError(err);
         if (attempts <= maxRetries && retrySafe && details.retryable) {
-          const backoffStarted = Date.now();
-          await new Promise((resolve) =>
-            setTimeout(resolve, Math.min(250 * 2 ** (attempts - 1), 1_000)),
-          );
-          backoffMs += Date.now() - backoffStarted;
-          continue;
+          const wait = retryBackoffMs(attempts, details.retryAfterMs);
+          if (wait !== undefined) {
+            const backoffStarted = Date.now();
+            if (wait > 0) {
+              await new Promise((resolve) => setTimeout(resolve, wait));
+            }
+            backoffMs += Date.now() - backoffStarted;
+            continue;
+          }
+          // The reported window is longer than the engine will park a
+          // synchronous request for. Fall through to failure with
+          // retryAfterMs reported verbatim so the agent can re-issue.
         }
         registry.recordFailure(
           resolved.connector.id,
@@ -987,11 +1039,13 @@ export function registerMetaTools(
   ctx: {
     baseUrl: string;
     maxResultBytes?: number;
+    defaultToolTimeoutMs?: number;
     activity?: ActivityRequestContext;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxResultBytes: ctx.maxResultBytes,
+    defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     activity: ctx.activity,
   });
 
