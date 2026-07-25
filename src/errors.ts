@@ -42,7 +42,13 @@ function normalizeRetryAfterMs(value: number | undefined): number | undefined {
 export class ConnectorCallError extends Error {
   readonly code: ConnectorCallErrorCode;
   readonly retryable: boolean;
-  /** Connector-known wait window in ms before this call is worth repeating. */
+  /**
+   * Connector-known wait window in ms before this call is worth repeating,
+   * or undefined when the connector reported none. Always an own property —
+   * under ES2022 class fields the declaration itself defines it, so guarding
+   * the assignment would not keep it off the instance. Keeping the window out
+   * of the wire format is `classifyCallError`'s job, not this constructor's.
+   */
   readonly retryAfterMs?: number;
 
   constructor(
@@ -57,8 +63,7 @@ export class ConnectorCallError extends Error {
     this.name = "ConnectorCallError";
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
-    const retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
-    if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+    this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
   }
 }
 

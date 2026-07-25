@@ -11,6 +11,7 @@ const WORKERS_SUITES = [
   "test/api-connector.test.ts",
   "test/bearer.test.ts",
   "test/branding.test.ts",
+  "test/catalog.test.ts",
   "test/codemode-compat.test.ts",
   "test/credentials.test.ts",
   "test/downstream-oauth.test.ts",
