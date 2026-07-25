@@ -1571,3 +1571,60 @@ describe("authorize_connector", () => {
     expect(invalidated).toBe(1);
   });
 });
+
+describe("probe timeout", () => {
+  /** A connector whose downstream tool listing never resolves. */
+  const hangingConnector: Connector = {
+    id: "hang",
+    kind: "mcp",
+    description: "Never resolves",
+    listTools() {
+      return new Promise<never>(() => {});
+    },
+    async callTool() {
+      throw new Error("n/a");
+    },
+  };
+
+  it("search_tools degrades a hung connector to unavailable within the timeout", async () => {
+    const mt = createMetaTools(makeRegistry([hangingConnector, calcConnector]), BASE, {
+      probeTimeoutMs: 50,
+    });
+    const started = Date.now();
+    const parsed = textOf(await mt.searchTools({ query: "" })) as {
+      connectors: Array<{ id: string }>;
+    };
+    // Returns rather than hanging: the healthy connector still resolves, the
+    // hung one is simply absent (its rejected catalog is dropped).
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const ids = parsed.connectors.map((c) => c.id);
+    expect(ids).toContain("calc");
+    expect(ids).not.toContain("hang");
+  });
+
+  it("list_connectors reports a hung connector as errored within the timeout", async () => {
+    const mt = createMetaTools(makeRegistry([hangingConnector]), BASE, {
+      probeTimeoutMs: 50,
+    });
+    const started = Date.now();
+    const parsed = textOf(await mt.listConnectors({ probe: true })) as {
+      connectors: Array<{ id: string; status: string; message?: string }>;
+    };
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(parsed.connectors[0]).toMatchObject({ id: "hang", status: "error" });
+    expect(parsed.connectors[0].message).toContain("timed out");
+  });
+
+  it("describe_tools reports a hung connector's tool as errored within the timeout", async () => {
+    const mt = createMetaTools(makeRegistry([hangingConnector]), BASE, {
+      probeTimeoutMs: 50,
+    });
+    const started = Date.now();
+    const parsed = textOf(await mt.describeTools({ addresses: ["hang.read"] })) as {
+      tools: Array<{ address: string; error?: string }>;
+    };
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(parsed.tools[0].address).toBe("hang.read");
+    expect(parsed.tools[0].error).toContain("timed out");
+  });
+});
