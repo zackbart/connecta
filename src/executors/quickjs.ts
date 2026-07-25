@@ -32,6 +32,14 @@ export interface QuickJsExecutorOptions {
 }
 
 const MAX_LOG_ENTRIES = 200;
+// Cap each entry AND the cumulative buffer at capture time so untrusted guest
+// code can't retain unbounded host memory: a single `console.log("x".repeat(N))`
+// otherwise copies the whole N-char guest string into a host array we hold for
+// the entire execution. 8k chars/entry is generous for glue-code logging (the
+// join in execute.ts trims the assembled log to 4k anyway), and 256k total
+// keeps the worst case — 200 maxed-out entries — bounded well under a MiB.
+const MAX_LOG_ENTRY_CHARS = 8_000;
+const MAX_LOG_TOTAL_CHARS = 256_000;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -123,12 +131,32 @@ function installBridge(
   };
   armWake(bridge);
 
+  // Running total of chars actually retained in `logs`; once the cumulative
+  // budget is spent we push one marker and drop the rest, so a flood of large
+  // entries can't grow the host array without bound.
+  let logTotalChars = 0;
+  let logBudgetSpent = false;
   const logFn = ctx.newFunction("__log", (h) => {
-    if (logs.length < MAX_LOG_ENTRIES) {
-      logs.push(ctx.getString(h));
-    } else if (logs.length === MAX_LOG_ENTRIES) {
-      logs.push(`[log truncated after ${MAX_LOG_ENTRIES} entries]`);
+    if (logs.length >= MAX_LOG_ENTRIES) {
+      if (logs.length === MAX_LOG_ENTRIES) {
+        logs.push(`[log truncated after ${MAX_LOG_ENTRIES} entries]`);
+      }
+      return;
     }
+    if (logBudgetSpent) return;
+    // Cap the entry before retaining it: `getString` yields a transient copy,
+    // but slicing here keeps only a bounded string alive in `logs`.
+    let entry = ctx.getString(h);
+    if (entry.length > MAX_LOG_ENTRY_CHARS) {
+      entry = `${entry.slice(0, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
+    }
+    if (logTotalChars + entry.length > MAX_LOG_TOTAL_CHARS) {
+      logs.push("[log truncated: size budget exceeded]");
+      logBudgetSpent = true;
+      return;
+    }
+    logs.push(entry);
+    logTotalChars += entry.length;
   });
   ctx.setProp(ctx.global, "__log", logFn);
   logFn.dispose();
