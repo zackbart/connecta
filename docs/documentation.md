@@ -234,7 +234,9 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   resultMode?: "mcp" | "value", timeoutMs?: number, maxRetries?: 0 | 1 | 2,
   diagnostics?: boolean }`
   (`args` defaults to `{}`). Deadlines are best-effort and propagated to custom
-  connectors as `ctx.signal`/`ctx.timeoutMs`. Retries occur only when the tool
+  connectors as `ctx.signal`/`ctx.timeoutMs`. When the caller passes no
+  `timeoutMs`, the deployment's `defaultToolTimeoutMs` applies if one is
+  configured; there is no deadline otherwise. Retries occur only when the tool
   declares `readOnlyHint: true` or `idempotentHint: true` and the error is
   classified retryable. The call itself is allowed only when
   `readOnlyHint: true` and `destructiveHint` is not true. Missing, false, or
@@ -256,7 +258,8 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   JSON-wrapped. `resultMode: "value"` unwraps `toolResult`,
   `structuredContent`, JSON text, or plain text into
   `{ ok: true, data, durationMs, attempts }`; failures return
-  `{ ok: false, error: { code, message, retryable }, durationMs, attempts }`.
+  `{ ok: false, error: { code, message, retryable, retryAfterMs? }, durationMs,
+  attempts }` (`retryAfterMs` only when the connector reported a wait window).
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
   (a `createConnecta` option, default **50 000**), the full text is stashed in
   storage (namespace `results:`, `crypto.randomUUID()` id, 900 s TTL) and only
@@ -292,7 +295,7 @@ through `call_tool`, `batch_call`, and `execute_code`.
   errorDetails?, durationMs, attempts }], durationMs }` in input order. Calls run in
   parallel; one failure never fails the batch. `error` remains a readable
   compatibility string while `errorDetails` supplies `{ code, message,
-  retryable }`. Calls not explicitly and consistently annotated read-only are
+  retryable, retryAfterMs? }`. Calls not explicitly and consistently annotated read-only are
   returned as isolated errors and must be made individually with
   `call_destructive_tool`.
 
@@ -350,11 +353,22 @@ Registered only when `ConnectaConfig.executor` is set — see
   defaults per code (timeout, rate_limited, and unavailable retry) with an
   explicit override. Value-mode results carry the code through as
   `error: { code, message, retryable }`.
+- **`retryAfterMs`.** A connector that knows the wait window — from a
+  `Retry-After` header, say — passes it as
+  `new ConnectorCallError("rate_limited", msg, { retryAfterMs: 30_000 })`. The
+  retry loop then waits that long instead of its exponential guess, and the
+  value is reported verbatim as `error.retryAfterMs` so an agent that receives
+  the failure can schedule a re-issue rather than guessing. The engine's own
+  wait is capped at **10 s** and at the call's remaining deadline, so a long
+  window can't park an inbound request; the reported value is never capped.
 - **The heuristic fallback.** A plain `Error` is classified by message text —
   `timeout`/`timed out` marks a timeout; timeouts, 429/5xx, and connection
   resets read as retryable. This is why typed errors exist: a legitimate
   message that merely *mentions* "timeout" is misread as a retryable timeout
-  unless the connector throws `ConnectorCallError` instead.
+  unless the connector throws `ConnectorCallError` instead. One name is checked
+  before the text: an error named `AbortError` (what an aborted `fetch`
+  rejects with) classifies as a retryable `timeout`, so a connector that passes
+  `ctx.signal` through doesn't have to special-case it.
 - **Broken-connector isolation.** If a connector's `listTools` throws,
   `search_tools`/`list_connectors` skip it (its `toolCount` reads 0, status reads
   `error`) — other connectors keep working.
@@ -775,7 +789,11 @@ credential after saving it.
 (`ConnectaConfig`): `connectors` (required), `auth?`, `storage?` (default
 `memoryStorage()`), `publicUrl?` (default: per-request origin), `logger?`,
 `toolCacheTtlSeconds?` (default 300), `persistToolCatalog?` (default true),
-`toolCatalogStaleSeconds?` (default 3600), `deploymentInfo?` (exposed by
+`toolCatalogStaleSeconds?` (default 3600), `defaultToolTimeoutMs?` (deadline
+for `call_tool`/`batch_call` calls that pass no `timeoutMs`; **opt-in — unset by
+default**, since switching it on globally would put a deadline on every call in
+an existing deployment, and an explicit per-call `timeoutMs` always wins),
+`deploymentInfo?` (exposed by
 `/health`), `serverInfo?` (`{ name, version, title?, websiteUrl?, icons? }` per the MCP
 icons spec — clients render the declared icon/title instead of a scraped
 favicon; default `connecta`/the package version),

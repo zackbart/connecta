@@ -2,6 +2,36 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Added
+
+- `ConnectorCallError` accepts `retryAfterMs` — the wait window a connector
+  already knows (a `Retry-After` header, say) and until now had no way to
+  report. It round-trips into the value-mode error envelope as
+  `error.retryAfterMs` (and `errorDetails.retryAfterMs` in `batch_call`), so an
+  agent that receives the failure can schedule a re-issue instead of guessing,
+  and the engine's retry loop waits that long in place of its exponential
+  guess. The engine's own wait is capped at 10 s and at the call's remaining
+  deadline — a `Retry-After: 3600` must not park an inbound request — while the
+  reported value is never capped.
+- `ConnectaConfig.defaultToolTimeoutMs` — a deadline for `call_tool`/
+  `batch_call` calls that pass no `timeoutMs`, giving the connector both a
+  budget (`ctx.timeoutMs`) and a cancellation signal (`ctx.signal`) on the
+  common path, as `execute_code` host calls have always had. **Opt-in and unset
+  by default**: switching it on globally would put a deadline on every call in
+  every existing deployment, and the failure mode is a working long-running
+  call starting to time out. An explicit per-call `timeoutMs` always wins.
+
+### Fixed
+
+- An aborted call — including one the engine itself cancelled at its deadline —
+  was classified `connector_call_failed`/`retryable: false`. An aborted `fetch`
+  rejects with a `DOMException` named `AbortError` whose message matches
+  neither classification regex. `classifyCallError` now checks the name before
+  the message text and classifies it as a retryable `timeout`, so connectors
+  that pass `ctx.signal` through no longer have to special-case it.
+
 ## 0.3.0 — 2026-07-24
 
 ### Added

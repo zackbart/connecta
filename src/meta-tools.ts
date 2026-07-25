@@ -53,6 +53,42 @@ const dec = new TextDecoder();
 
 type ErrorDetails = CallErrorDetails;
 
+/**
+ * Ceiling on how long the engine will itself sleep between attempts, however
+ * long a connector's `retryAfterMs` says to wait. An inbound MCP request is
+ * synchronous from the caller's point of view, and the engine already treats
+ * ~15 s as the outer bound of one reasonable connector call
+ * (EXECUTE_HOST_CALL_TIMEOUT_MS), so parking a request for minutes in *waiting
+ * alone* trades a fast, informative failure for a hung one. Longer windows are
+ * still reported verbatim as `error.retryAfterMs`, so the agent — which can
+ * afford to wait — decides when to re-issue.
+ */
+export const MAX_RETRY_BACKOFF_MS = 10_000;
+
+/** A positive integer number of milliseconds, or undefined. */
+function normalizeTimeoutMs(value: number | undefined): number | undefined {
+  if (value === undefined || !(value > 0)) return undefined;
+  return Math.max(1, Math.trunc(value));
+}
+
+/**
+ * How long to wait before the next attempt. A connector that read a
+ * `Retry-After` header knows the window exactly; the exponential guess is only
+ * for connectors that don't. Either way the wait is clamped to
+ * `MAX_RETRY_BACKOFF_MS` and, when the call has a deadline, to the time left in
+ * it. Exported for direct testing.
+ */
+export function retryBackoffMs(
+  attempt: number,
+  retryAfterMs: number | undefined,
+  remainingMs?: number,
+): number {
+  const requested = retryAfterMs ?? Math.min(250 * 2 ** (attempt - 1), 1_000);
+  const wait = Math.min(requested, MAX_RETRY_BACKOFF_MS);
+  if (remainingMs === undefined) return Math.max(0, wait);
+  return Math.max(0, Math.min(wait, remainingMs));
+}
+
 /** Details for failures that never reached a connector (no thrown value). */
 function errorDetails(code: string, message: string): ErrorDetails {
   return { code, message, retryable: messageLooksRetryable(message) };
@@ -260,18 +296,22 @@ export interface SkillArgs {
 /**
  * The nine meta-tool handlers over a registry. Exported for direct testing;
  * registerMetaTools() wires them onto an McpServer. `opts.maxResultBytes`
- * overrides the registry's default result-size cap. (execute_code, the optional
- * tenth tool, is registered separately by registerExecuteTool.)
+ * overrides the registry's default result-size cap; `opts.defaultToolTimeoutMs`
+ * supplies a deadline for calls that don't carry one. (execute_code, the
+ * optional tenth tool, is registered separately by registerExecuteTool.)
  */
 export function createMetaTools(
   registry: Registry,
   baseUrl: string,
   opts: {
     maxResultBytes?: number;
+    /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
+    defaultToolTimeoutMs?: number;
     activity?: ActivityRequestContext;
   } = {},
 ) {
   const cap = opts.maxResultBytes ?? registry.maxResultBytes;
+  const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   // createMetaTools() is called once per inbound MCP request. Sharing this
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
@@ -356,10 +396,10 @@ export function createMetaTools(
     }
     const results = registry.resultsStorage();
     const fields = call.fields && call.fields.length > 0 ? call.fields : null;
-    const timeoutMs =
-      call.timeoutMs && call.timeoutMs > 0
-        ? Math.max(1, Math.trunc(call.timeoutMs))
-        : undefined;
+    // An explicit per-call deadline always wins; the config default only fills
+    // the gap, and stays off entirely when the deployment sets none.
+    const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+    const deadline = timeoutMs === undefined ? undefined : started + timeoutMs;
     const maxRetries = Math.min(
       2,
       Math.max(0, Math.trunc(call.maxRetries ?? 0)),
@@ -452,9 +492,14 @@ export function createMetaTools(
         const details = classifyCallError(err);
         if (attempts <= maxRetries && retrySafe && details.retryable) {
           const backoffStarted = Date.now();
-          await new Promise((resolve) =>
-            setTimeout(resolve, Math.min(250 * 2 ** (attempts - 1), 1_000)),
+          const wait = retryBackoffMs(
+            attempts,
+            details.retryAfterMs,
+            deadline === undefined ? undefined : deadline - backoffStarted,
           );
+          if (wait > 0) {
+            await new Promise((resolve) => setTimeout(resolve, wait));
+          }
           backoffMs += Date.now() - backoffStarted;
           continue;
         }
@@ -987,11 +1032,13 @@ export function registerMetaTools(
   ctx: {
     baseUrl: string;
     maxResultBytes?: number;
+    defaultToolTimeoutMs?: number;
     activity?: ActivityRequestContext;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     maxResultBytes: ctx.maxResultBytes,
+    defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     activity: ctx.activity,
   });
 

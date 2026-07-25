@@ -47,6 +47,8 @@ export interface ServerOptions {
   activityReadGate?: ActivityReadGate;
   activityDeploymentId?: string;
   deploymentInfo?: Record<string, unknown>;
+  /** Deadline for call_tool/batch_call calls that pass no timeoutMs. Off when unset. */
+  defaultToolTimeoutMs?: number;
   /** When set, the execute_code meta-tool is registered on top of the nine. */
   executor?: Executor;
   /** Encrypted connector-credential storage backing the authenticated /ui controls. */
@@ -517,7 +519,11 @@ async function serveMcp(
         logger: opts.logger,
       }
     : undefined;
-  registerMetaTools(server, opts.registry, { baseUrl, activity });
+  registerMetaTools(server, opts.registry, {
+    baseUrl,
+    activity,
+    defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
+  });
   if (opts.executor) {
     registerExecuteTool(server, opts.registry, {
       baseUrl,
