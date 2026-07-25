@@ -33,4 +33,6 @@ and non-goals live in [`docs/design.md`](./docs/design.md).
 - [x] Code-mode `execute_code` sandbox — **shipped** (#9) as an optional,
       executor-gated tenth meta-tool (`ConnectaConfig.executor`, `src/execute.ts`,
       `quickJsExecutor` / `DynamicWorkerExecutor`). See [`docs/documentation.md` §13](./docs/documentation.md#13-code-mode-execute_code).
-- [ ] Remaining code-mode follow-ups tracked in issues #12 and #13.
+- [x] Call-contract follow-ups — shipped in 0.4.0: the `retryAfterMs` channel,
+      `AbortError` classification, and the opt-in `defaultToolTimeoutMs` (#13),
+      plus the exported `validateToolInput` (#12).
