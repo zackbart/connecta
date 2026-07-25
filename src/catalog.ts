@@ -79,6 +79,41 @@ function refName(ref: string): string {
   return ref.split("/").pop() ?? ref;
 }
 
+/**
+ * Whether a schema declares anything renderSchema knows how to render on its
+ * own. Used to decide if the non-allOf half of a schema is worth rendering:
+ * without this, a plain `{ allOf: [...] }` would render its (empty) local half
+ * through the raw-JSON fallback and emit `{} & …`.
+ */
+function declaresShape(s: Record<string, unknown>): boolean {
+  return (
+    typeof s.$ref === "string" ||
+    Array.isArray(s.oneOf) ||
+    Array.isArray(s.anyOf) ||
+    Array.isArray(s.enum) ||
+    s.const !== undefined ||
+    s.items !== undefined ||
+    s.properties !== undefined ||
+    s.type !== undefined
+  );
+}
+
+/**
+ * Parenthesize a top-level union so it doesn't read as part of a surrounding
+ * `&`. Only separators outside braces count, so a nested union or a property
+ * description containing a pipe doesn't trigger stray parentheses.
+ */
+function grouped(part: string): string {
+  let nesting = 0;
+  for (let i = 0; i < part.length; i += 1) {
+    const char = part[i];
+    if (char === "{" || char === "(" || char === "[") nesting += 1;
+    else if (char === "}" || char === ")" || char === "]") nesting -= 1;
+    else if (nesting === 0 && part.startsWith(" | ", i)) return `(${part})`;
+  }
+  return part;
+}
+
 function renderSchema(
   schema: unknown,
   defs: Record<string, unknown>,
@@ -90,6 +125,27 @@ function renderSchema(
     return JSON.stringify(schema);
   }
   const s = schema as Record<string, unknown>;
+
+  // allOf composes rather than replaces: it is checked before every other
+  // keyword, and renders the schema's own shape alongside its members instead
+  // of returning early. A schema carrying both allOf and properties (the usual
+  // OpenAPI-derived "extend this base" shape, and equally legal with $ref,
+  // enum, const, or items) would otherwise silently drop whichever half lost
+  // the branch race. The schema's own shape comes first, being the more
+  // specific half, and is rendered at the current depth because its members
+  // sit at this nesting level, not one below.
+  if (Array.isArray(s.allOf)) {
+    const { allOf: _members, ...own } = s;
+    const parts = declaresShape(own)
+      ? [renderSchema(own, defs, seen, depth)]
+      : [];
+    for (const member of s.allOf) {
+      parts.push(renderSchema(member, defs, seen, depth + 1));
+    }
+    if (parts.length === 0) return "unknown";
+    if (parts.length === 1) return parts[0] as string;
+    return parts.map(grouped).join(" & ");
+  }
 
   if (typeof s.$ref === "string") {
     const name = refName(s.$ref);
@@ -112,6 +168,11 @@ function renderSchema(
   if (Array.isArray(s.enum)) {
     return s.enum.map((value) => JSON.stringify(value)).join(" | ");
   }
+  // Checked before type/properties so a discriminator like
+  // { type: "string", const: "emoji" } renders as "emoji" rather than string.
+  // JSON.stringify(undefined) returns undefined (not a string), so an explicit
+  // `const: undefined` must fall through to the regular type rendering.
+  if (s.const !== undefined) return JSON.stringify(s.const);
 
   const type = s.type;
   if (type === "array" || s.items) {
