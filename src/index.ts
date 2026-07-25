@@ -69,6 +69,12 @@ export interface ConnectaConfig {
    * would put a deadline on every call in an existing deployment and the
    * failure mode is a working long-running call starting to time out.
    * `execute_code` host calls are unaffected; they already carry a 15 s bound.
+   *
+   * Bounds a single attempt, not the whole call — the same as an explicit
+   * `timeoutMs` has always done. A call that also passes `maxRetries` can
+   * therefore run to roughly `(maxRetries + 1)` times this value plus backoff.
+   * `maxRetries` defaults to 0, so this is the total for every call that does
+   * not explicitly ask to retry.
    */
   defaultToolTimeoutMs?: number;
   serverInfo?: {
