@@ -104,8 +104,109 @@ describe("compactSchema allOf", () => {
     );
   });
 
+  it("keeps locally declared properties alongside allOf members", () => {
+    // The usual OpenAPI-derived "extend this base" shape. allOf must compose
+    // with the schema's own properties, not replace them — dropping either
+    // half loses declared fields, and the local half is the more specific one.
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        localOnly: { type: "string" },
+        id: { type: "number" },
+      },
+      required: ["localOnly"],
+      allOf: [
+        {
+          type: "object",
+          properties: { inherited: { type: "string" } },
+        },
+      ],
+    };
+
+    const rendered = compactSchema(schema);
+    expect(rendered).toBe(
+      "{ localOnly: string, id?: number } & { inherited?: string }",
+    );
+    for (const key of ["localOnly", "id", "inherited"]) {
+      expect(rendered).toContain(key);
+    }
+  });
+
+  it("keeps a sibling $ref alongside allOf members", () => {
+    const schema: JsonSchema = {
+      $defs: {
+        Base: {
+          type: "object",
+          properties: { id: { type: "string" } },
+          required: ["id"],
+        },
+      },
+      $ref: "#/$defs/Base",
+      allOf: [
+        { type: "object", properties: { extra: { type: "boolean" } } },
+      ],
+    };
+
+    expect(compactSchema(schema)).toBe(
+      "{ id: string } & { extra?: boolean }",
+    );
+  });
+
+  it("keeps a sibling enum, const, or items alongside allOf members", () => {
+    // These can't be dropped either. A union half is parenthesized so the
+    // rendering doesn't read as `"a" | ("b" & …)`.
+    expect(
+      compactSchema({
+        enum: ["a", "b"],
+        allOf: [{ type: "string" }],
+      }),
+    ).toBe('("a" | "b") & string');
+
+    expect(
+      compactSchema({
+        const: "emoji",
+        allOf: [{ type: "string" }],
+      }),
+    ).toBe('"emoji" & string');
+
+    expect(
+      compactSchema({
+        type: "array",
+        items: { type: "string" },
+        allOf: [{ type: "array" }],
+      }),
+    ).toBe("string[] & unknown[]");
+  });
+
+  it("only parenthesizes a union at the top level of a part", () => {
+    // A pipe inside a property description or a nested union is not a
+    // top-level separator and must not attract parentheses.
+    expect(
+      compactSchema({
+        type: "object",
+        properties: {
+          mode: { type: "string", description: "fast | slow" },
+        },
+        allOf: [{ type: "object", properties: { id: { type: "string" } } }],
+      }),
+    ).toBe(
+      "{ mode?: string // fast | slow } & { id?: string }",
+    );
+  });
+
   it("renders an empty allOf as unknown", () => {
     expect(compactSchema({ allOf: [] })).toBe("unknown");
+  });
+
+  it("renders an empty allOf beside properties as just the properties", () => {
+    expect(
+      compactSchema({
+        type: "object",
+        properties: { name: { type: "string" } },
+        required: ["name"],
+        allOf: [],
+      }),
+    ).toBe("{ name: string }");
   });
 });
 
