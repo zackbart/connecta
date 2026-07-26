@@ -236,3 +236,45 @@ describe("missing-verifyState CSRF warning", () => {
     expect(warnings(logger)).not.toContain("state/CSRF check");
   });
 });
+
+describe("unusable maxResultBytes warning", () => {
+  it("warns that a zero deployment cap fell back to the default", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      maxResultBytes: 0,
+    });
+    const text = warnings(logger);
+    expect(text).toContain("maxResultBytes 0");
+    expect(text).toContain("50000");
+  });
+
+  it("warns and names a connector whose override cannot be honoured", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [{ ...plainConnector, maxResultBytes: -1 }],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      maxResultBytes: 400,
+    });
+    expect(warnings(logger)).toContain(
+      'connector "plain" sets maxResultBytes -1',
+    );
+  });
+
+  it("does not warn for caps in range", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [{ ...plainConnector, maxResultBytes: 1 }],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      maxResultBytes: 10_000,
+    });
+    expect(warnings(logger)).not.toContain("maxResultBytes");
+  });
+});

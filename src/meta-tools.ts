@@ -13,7 +13,12 @@ import {
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
-import type { RegistryView } from "./registry.js";
+import {
+  isValidMaxResultBytes,
+  MIN_MAX_RESULT_BYTES,
+  resolveMaxResultBytes,
+  type RegistryView,
+} from "./registry.js";
 import {
   connectorGuide,
   connectorSkillName,
@@ -156,19 +161,28 @@ function isContinuationByte(b: number): boolean {
  * forward to the end of that codepoint instead so paging always advances.
  * Assumes `offset` is itself a codepoint boundary (offsets are the prior
  * `nextOffset`, which this function guarantees, and 0 is always a boundary).
+ *
+ * The return is always `> offset` while `offset < total`, whatever `end` is
+ * asked for. That is the belt-and-braces half of issue #32: cap validation
+ * keeps an empty window from arising in the first place, and this keeps an
+ * empty window from turning into a `nextOffset === offset` paging loop if one
+ * ever does. Exported for direct testing of that invariant.
  */
-function alignEndToCharBoundary(
+export function alignEndToCharBoundary(
   bytes: Uint8Array,
   offset: number,
   end: number,
   total: number,
 ): number {
   if (end >= total) return total;
-  let e = end;
+  // A window that reaches no further than `offset` yields no bytes and no
+  // progress; widen it to one byte and let the codepoint walk below finish it.
+  const wanted = Math.max(end, offset + 1);
+  let e = wanted;
   while (e > offset && isContinuationByte(bytes[e])) e--;
   if (e === offset) {
     // Window is narrower than the codepoint at `offset`; take the whole thing.
-    e = end;
+    e = wanted;
     while (e < total && isContinuationByte(bytes[e])) e++;
   }
   return e;
@@ -316,6 +330,7 @@ export interface CallArgs {
 export interface GetResultArgs {
   id: string;
   offset?: number;
+  /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
 }
 export interface BatchCall {
@@ -362,7 +377,10 @@ export function createMetaTools(
     activity?: ActivityRequestContext;
   } = {},
 ) {
-  const globalCap = opts.maxResultBytes ?? registry.maxResultBytes;
+  const globalCap = resolveMaxResultBytes(
+    opts.maxResultBytes,
+    registry.maxResultBytes,
+  );
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -452,8 +470,13 @@ export function createMetaTools(
     // Result-size cap for THIS call: the connector's own override wins, then
     // the deployment-wide value, then the built-in default (already folded
     // into `globalCap`). Resolved per call so one batch_call can mix a
-    // tight-capped connector with siblings on the global cap.
-    const cap = resolved.connector.maxResultBytes ?? globalCap;
+    // tight-capped connector with siblings on the global cap. An override the
+    // registry already warned about at startup is dropped here, so the
+    // connector simply inherits `globalCap`.
+    const cap = resolveMaxResultBytes(
+      resolved.connector.maxResultBytes,
+      globalCap,
+    );
     const fields = call.fields && call.fields.length > 0 ? call.fields : null;
     // An explicit per-call deadline always wins; the config default only fills
     // the gap, and stays off entirely when the deployment sets none.
@@ -951,6 +974,19 @@ export function createMetaTools(
     },
 
     async getResult(args: GetResultArgs): Promise<ToolResult> {
+      // Client-supplied page size: a normal input-validation error, not a
+      // clamp. The registered zod schema rejects the same shapes at the MCP
+      // boundary; this is the in-handler half, so the rule holds for every
+      // caller and the message says what a good value looks like.
+      if (
+        args.maxBytes !== undefined &&
+        !isValidMaxResultBytes(args.maxBytes)
+      ) {
+        return errorResult(
+          `Invalid maxBytes ${args.maxBytes}: must be a whole number of bytes ` +
+            `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
+        );
+      }
       const results = registry.resultsStorage();
       const stored = await results.get(`result:${args.id}`);
       if (stored === null || stored === undefined) {
@@ -961,6 +997,8 @@ export function createMetaTools(
       const offset = Math.max(0, Math.trunc(args.offset ?? 0));
       // Page size only: a stashed result carries no connector identity, so
       // get_result keeps the deployment-wide default when none is requested.
+      // Both sides are validated by now — the argument above, `globalCap` at
+      // intake — so `offset + maxBytes` always reaches past `offset`.
       const maxBytes = args.maxBytes ?? globalCap;
       // Align the slice end to a codepoint boundary so a multi-byte char is
       // never split across pages (which would emit U+FFFD on both sides).
@@ -1104,7 +1142,7 @@ const CALL_DESC =
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. Unknown/expired id is an error.";
+  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default). Unknown/expired id is an error.";
 const BATCH_DESC =
   "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call.";
 const AUTHORIZE_DESC =

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import {
+  alignEndToCharBoundary,
   createMetaTools,
   MAX_RETRY_BACKOFF_MS,
   retryBackoffMs,
@@ -1779,6 +1780,150 @@ describe("per-connector maxResultBytes override", () => {
     expect(truncated.data.truncated).toBe(true);
     expect(truncated.data.totalBytes).toBe(FULL.length);
     expect(inline.data).toBe(PAYLOAD);
+  });
+});
+
+describe("maxResultBytes validation", () => {
+  // Same 502-byte fixture as the override suite above, so the measured heads
+  // line up with the numbers in issue #32.
+  const PAYLOAD = "x".repeat(500);
+  const FULL = JSON.stringify(PAYLOAD, null, 2); // 502 bytes
+
+  /** Caps that are accepted today but silently do something wrong (issue #32). */
+  const BAD_CAPS = [0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
+
+  function capped(id: string, maxResultBytes?: number): Connector {
+    return {
+      id,
+      kind: "api",
+      description: "Capped",
+      maxResultBytes,
+      async listTools() {
+        return [
+          {
+            name: "big",
+            description: "Return a large blob",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return PAYLOAD;
+      },
+    };
+  }
+
+  /** Stash an oversized result and hand back its page id. */
+  async function stash(): Promise<{
+    mt: ReturnType<typeof createMetaTools>;
+    resultId: string;
+  }> {
+    const mt = createMetaTools(makeRegistry([capped("c")]), BASE, {
+      maxResultBytes: 100,
+    });
+    const call = await mt.callTool({ address: "c.big" });
+    const notice = JSON.parse(call.content[0].text.split("\n")[1]) as {
+      resultId: string;
+    };
+    return { mt, resultId: notice.resultId };
+  }
+
+  it("rejects a get_result maxBytes of 0 instead of never advancing", async () => {
+    // Pre-fix this returned { offset: 0, nextOffset: 0, text: "" } — a client
+    // paging on nextOffset loops forever.
+    const { mt, resultId } = await stash();
+    const result = await mt.getResult({ id: resultId, offset: 0, maxBytes: 0 });
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Invalid maxBytes 0");
+  });
+
+  it("rejects every get_result maxBytes that is not a whole positive byte count", async () => {
+    const { mt, resultId } = await stash();
+    for (const maxBytes of BAD_CAPS) {
+      const result = await mt.getResult({ id: resultId, maxBytes });
+      expect(result.isError, `maxBytes ${String(maxBytes)}`).toBe(true);
+      expect(result.content[0].text).toContain("Invalid maxBytes");
+    }
+  });
+
+  it("accepts the 1-byte floor and still pages to completion", async () => {
+    const { mt, resultId } = await stash();
+    let offset = 0;
+    let assembled = "";
+    for (let guard = 0; guard < FULL.length + 10; guard++) {
+      const page = textOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 1 }),
+      ) as { text: string; nextOffset?: number };
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      expect(page.nextOffset).toBeGreaterThan(offset);
+      offset = page.nextOffset;
+    }
+    expect(assembled).toBe(FULL);
+  });
+
+  it("always advances past the offset, whatever end is asked for", () => {
+    // Belt and braces behind the argument check: an empty or inverted window
+    // must still yield forward progress rather than nextOffset === offset.
+    const bytes = new TextEncoder().encode('"aa😀bb"');
+    for (const end of [-5, 0, 1, 2]) {
+      expect(
+        alignEndToCharBoundary(bytes, 1, end, bytes.length),
+        `end ${end}`,
+      ).toBeGreaterThan(1);
+    }
+    // At a multi-byte codepoint the widened window still lands on a boundary:
+    // byte 3 starts the 4-byte emoji, so the whole emoji comes along.
+    expect(alignEndToCharBoundary(bytes, 3, 3, bytes.length)).toBe(7);
+  });
+
+  it("ignores a deployment cap that would zero or invert the guard", async () => {
+    for (const maxResultBytes of BAD_CAPS) {
+      const mt = createMetaTools(makeRegistry([capped("c")]), BASE, {
+        maxResultBytes,
+      });
+      const result = await mt.callTool({ address: "c.big" });
+      // Falls back to the built-in 50_000, so 502 bytes stay inline whole —
+      // never an empty head (0/NaN) or an over-long one (negatives).
+      expect(result.content[0].text, `cap ${String(maxResultBytes)}`).toBe(FULL);
+    }
+  });
+
+  it("ignores a connector override that would zero or invert the guard", async () => {
+    for (const override of BAD_CAPS) {
+      const mt = createMetaTools(makeRegistry([capped("c", override)]), BASE, {
+        maxResultBytes: 400,
+      });
+      const result = await mt.callTool({ address: "c.big" });
+      const [head] = result.content[0].text.split("\n");
+      // Inherits the deployment-wide 400 exactly as an unset override would.
+      expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
+    }
+  });
+
+  it("leaves valid caps byte-identical at every level", async () => {
+    // The floor, a tiny cap, and a cap either side of the payload — all
+    // unchanged by validation.
+    for (const cap of [1, 4, 100, 400, 1_000]) {
+      const viaGlobal = await createMetaTools(
+        makeRegistry([capped("c")]),
+        BASE,
+        { maxResultBytes: cap },
+      ).callTool({ address: "c.big" });
+      const viaOverride = await createMetaTools(
+        makeRegistry([capped("c", cap)]),
+        BASE,
+        { maxResultBytes: 50_000 },
+      ).callTool({ address: "c.big" });
+      const expected = cap >= FULL.length ? FULL : FULL.slice(0, cap);
+      expect(viaGlobal.content[0].text.split("\n")[0], `global ${cap}`).toBe(
+        expected,
+      );
+      expect(
+        viaOverride.content[0].text.split("\n")[0],
+        `override ${cap}`,
+      ).toBe(expected);
+    }
   });
 });
 

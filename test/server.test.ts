@@ -502,6 +502,27 @@ describe("server /mcp end-to-end", () => {
     expect(payload.status).toBe("auth_required");
     expect(payload.authorizationUrl).toContain("auth.example");
   });
+
+  it("tools/call get_result rejects a page size that could not advance", async () => {
+    // Issue #32: a maxBytes of 0 slices an empty page whose nextOffset equals
+    // the offset it was given, so a client paging on nextOffset never
+    // terminates. It must be a validation error at the wire boundary.
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const res = await rpc(
+      c,
+      "tools/call",
+      { name: "get_result", arguments: { id: "any", maxBytes: 0 } },
+      { token: TOKEN },
+    );
+    const body = await readBody(res);
+    expect(body.result.isError).toBe(true);
+    expect(body.result.content[0].text).toContain("maxBytes");
+  });
 });
 
 describe("server open routes", () => {

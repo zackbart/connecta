@@ -95,6 +95,82 @@ describe("startup convention warnings", () => {
   });
 });
 
+describe("result-cap startup warnings", () => {
+  function spyLogger(): { logger: Logger; warnings: string[] } {
+    const warnings: string[] = [];
+    return {
+      warnings,
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+    };
+  }
+
+  /** Caps that are accepted today but silently do something wrong (issue #32). */
+  const BAD_CAPS = [0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
+
+  it("warns and falls back to the default for an unusable deployment cap", () => {
+    for (const maxResultBytes of BAD_CAPS) {
+      const { logger, warnings } = spyLogger();
+      const registry = new Registry([calcConnector], {
+        storage: memoryStorage(),
+        logger,
+        maxResultBytes,
+      });
+      expect(registry.maxResultBytes, `cap ${String(maxResultBytes)}`).toBe(
+        50_000,
+      );
+      expect(
+        warnings.some(
+          (w) =>
+            w.includes(`maxResultBytes ${maxResultBytes}`) &&
+            w.includes("50000"),
+        ),
+        `cap ${String(maxResultBytes)}`,
+      ).toBe(true);
+    }
+  });
+
+  it("warns and names the connector for an unusable per-connector override", () => {
+    const { logger, warnings } = spyLogger();
+    new Registry([{ ...calcConnector, maxResultBytes: 0 }], {
+      storage: memoryStorage(),
+      logger,
+      maxResultBytes: 400,
+    });
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes('connector "calc" sets maxResultBytes 0') &&
+          w.includes("400"),
+      ),
+    ).toBe(true);
+  });
+
+  it("stays silent for valid caps, including the 1-byte floor", () => {
+    for (const cap of [1, 4, 100, 50_000]) {
+      const { logger, warnings } = spyLogger();
+      const registry = new Registry(
+        [{ ...calcConnector, maxResultBytes: cap }],
+        { storage: memoryStorage(), logger, maxResultBytes: cap },
+      );
+      expect(registry.maxResultBytes).toBe(cap);
+      expect(warnings, `cap ${cap}`).toEqual([]);
+    }
+  });
+
+  it("keeps the built-in default when no cap is configured", () => {
+    const { logger, warnings } = spyLogger();
+    const registry = new Registry([calcConnector], {
+      storage: memoryStorage(),
+      logger,
+    });
+    expect(registry.maxResultBytes).toBe(50_000);
+    expect(warnings).toEqual([]);
+  });
+});
+
 describe("address resolution", () => {
   const registry = makeRegistry([calcConnector, remoteConnector]);
 

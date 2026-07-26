@@ -50,7 +50,7 @@ A tool **address** is `<connectorId>.<toolName>` (e.g. `notion.search`).
 | `call_tool` | `{ address, args?, fields?, resultMode?, timeoutMs?, maxRetries?, diagnostics? }` | invokes only tools explicitly annotated `readOnlyHint: true` |
 | `call_destructive_tool` | same as `call_tool` | invokes unannotated, write-capable, or destructive tools through a host-visible approval boundary |
 | `authorize_connector` | `{ connector, force? }` | starts (or with `force`, restarts) the downstream OAuth flow; returns the `authorizationUrl` to open |
-| `get_result` | `{ id, offset?, maxBytes? }` | a byte-slice page of a truncated result — `{ text, offset, nextOffset?, totalBytes }` |
+| `get_result` | `{ id, offset?, maxBytes? }` | a byte-slice page of a truncated result — `{ text, offset, nextOffset?, totalBytes }`; `maxBytes` is a whole number of bytes >= 1 |
 | `batch_call` | `{ calls, resultMode?, timeoutMs?, maxRetries? }` | 1–10 parallel calls sharing request-scoped clients, with attempts/timing/errors |
 | `execute_code` *(optional)* | `{ code }` | result + logs of bounded async JS orchestration over explicitly read-only tools; registered only when an `executor` is configured |
 

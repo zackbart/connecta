@@ -90,7 +90,9 @@ export interface ConnectaConfig {
   toolCatalogStaleSeconds?: number;
   /**
    * Max inline result size (bytes) before call_tool/batch_call truncate and
-   * stash the full text for get_result paging. Default 50_000.
+   * stash the full text for get_result paging. Must be a whole number of bytes
+   * >= 1; anything else (0, negative, fractional, NaN, Infinity) warns at
+   * startup and falls back to the default 50_000.
    */
   maxResultBytes?: number;
   /**
