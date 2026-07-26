@@ -545,6 +545,33 @@ describe("credential test-hook mismatch warning", () => {
     expect(text).toContain("`testCredential(value, ctx)` can test");
   });
 
+  it("stays quiet when a connector declares both hooks, on either shape", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [
+        {
+          ...fieldsWithSingleHook,
+          id: "bothfields",
+          async testCredentials() {
+            return { ok: true };
+          },
+        },
+        {
+          ...singleWithFieldsHook,
+          id: "bothsingle",
+          async testCredential() {
+            return { ok: true };
+          },
+        },
+      ],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("cannot test its credential");
+  });
+
   it("stays quiet for matched shapes and for a credential with no test hook", () => {
     const logger = spyLogger();
     createConnecta({

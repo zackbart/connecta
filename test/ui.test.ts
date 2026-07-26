@@ -251,6 +251,46 @@ function makeSingleWithFieldsHookConnecta() {
   return { connecta, testCredentials };
 }
 
+/**
+ * Both hooks declared on one shape — no mismatch, so nothing warns and the
+ * shape alone decides which one runs. Each hook reports what it received, so a
+ * test can tell them apart from the route's response.
+ */
+function makeBothHooksConnecta(shape: "single" | "multiple") {
+  const testCredential = vi.fn(async (value: string) => ({
+    ok: true,
+    message: `single:${value}`,
+  }));
+  const testCredentials = vi.fn(async (values: Record<string, string>) => ({
+    ok: true,
+    message: `named:${Object.keys(values).sort().join(",")}`,
+  }));
+  const connector = api("bothhooks", {
+    description: "Declares both test hooks",
+    credential:
+      shape === "multiple"
+        ? {
+            label: "Service credentials",
+            fields: [
+              { name: "email", label: "Account email" },
+              { name: "apiKey", label: "API key" },
+            ],
+          }
+        : { label: "API token" },
+    testCredential,
+    testCredentials,
+    tools: [],
+  });
+  const connecta = createConnecta({
+    connectors: [connector],
+    auth: [bearerToken(TOKEN), fakeClerk()],
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    credentialEncryptionKey: CREDENTIAL_KEY,
+  });
+  return { connecta, testCredential, testCredentials };
+}
+
 function credentialRequest(
   connecta: ReturnType<typeof createConnecta>,
   path: string,
@@ -972,6 +1012,79 @@ describe("status UI credential management", () => {
     );
     expect(remove.status).toBe(204);
     expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
+  });
+
+  it("runs testCredential for a single value that declares both hooks", async () => {
+    // The one deliberate behavior change for a connector declaring both: the
+    // route used to prefer `testCredentials` and hand it the reserved
+    // `{ value }` map. The shape picks the hook now, so the single-value hook
+    // runs against the string it was written to expect.
+    const { connecta, testCredential, testCredentials } =
+      makeBothHooksConnecta("single");
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "both-secret-9876" }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: true,
+      testable: true,
+    });
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks/test",
+      { method: "POST" },
+    );
+    await expect(test.json()).resolves.toEqual({
+      ok: true,
+      message: "single:both-secret-9876",
+    });
+    expect(testCredential).toHaveBeenCalledTimes(1);
+    expect(testCredentials).not.toHaveBeenCalled();
+  });
+
+  it("runs testCredentials for named fields that declare both hooks", async () => {
+    const { connecta, testCredential, testCredentials } =
+      makeBothHooksConnecta("multiple");
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          values: { email: "operator@example.com", apiKey: "api-key-1234" },
+        }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks/test",
+      { method: "POST" },
+    );
+    await expect(test.json()).resolves.toEqual({
+      ok: true,
+      message: "named:apiKey,email",
+    });
+    expect(testCredentials).toHaveBeenCalledTimes(1);
+    expect(testCredential).not.toHaveBeenCalled();
   });
 
   it("offers no Test action for named fields with only the single-value hook", async () => {
