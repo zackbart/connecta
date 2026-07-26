@@ -2,6 +2,175 @@
 
 All notable changes to this package are documented here.
 
+## 0.5.0 — 2026-07-26
+
+A feature release. Toolkits, per-connector usage guides, and per-connector
+result caps are the substance; a paging fix, a docs coherence pass, and a
+cleared audit advisory round it out. Nothing here is breaking, and a deployment
+that declares none of the new options keeps its 0.4.1 *runtime* behavior on
+every path that matters: an unscoped connection still sees the whole registry,
+a zero-guide catalog gains no discovery text, and an unset cap truncates where
+it always did. One narrow exception — a request carrying `?toolkit=` against a
+deployment that configures no toolkits is now a 404, where 0.4.1 never read the
+parameter and served the request; no 0.4.1 client had reason to send it. Three
+textual changes are unconditional and reach every deployment, so anything that
+snapshots them will diff: the `get_result` tool description now documents the
+accepted `maxBytes` range, its `maxBytes` JSON Schema tightens from
+`exclusiveMinimum: 0` to `minimum: 1`, and the matching validation error
+message is reworded. The next intentional breaking release stays reserved for
+issue #28.
+
+### Added
+
+- **Toolkits — named scoped views over one deployment's registry.** A connecta
+  deployment belongs to an org; a toolkit is the slice one team group sees.
+  Operators declare them in the new `ConnectaConfig.toolkits` (`{ support: {
+  connectors: [...], includeTools?, excludeTools? } }`, with per-tool address
+  grain; `ToolkitConfig` and `ToolkitDefinition` are exported), and a client
+  selects one with `?toolkit=<name>` on the MCP URL. The boundary is a single
+  enforcement point: a `ScopedRegistry` built once per HTTP request — the
+  transport is stateless, so there is no longer-lived connection to hang it on
+  — with every meta-tool and the `execute_code` sandbox bridge typed against a
+  narrow `RegistryView` rather than the full `Registry`, so reaching for an
+  unfiltered method is a compile error instead of a silent leak. All nine
+  meta-tools are scoped; an out-of-scope address fails byte-identically to a
+  nonexistent one; `get_result` stashes are namespaced per toolkit so a scoped
+  session cannot page out a sibling's results; and health observations are
+  per-toolkit so one scope's `lastError` never names another's tools. A
+  monotonic has-ever-succeeded flag is the one deployment-wide *observation* a
+  scoped view can read back, so scoped sessions don't misreport live remote
+  connectors as `unknown`. Plenty of other state is shared by design and is not
+  scoped at all — the tool-catalog cache, and, worth saying out loud, the
+  `conn:<id>:` storage namespace and the credential vault: **a downstream OAuth
+  token obtained under one toolkit is usable from another.** `/ui`, `/health`,
+  and the OAuth pages stay unscoped operator surfaces. **Selection is
+  self-service: any caller who can reach the endpoint may name any toolkit, or
+  omit the parameter and see the whole registry.** A toolkit scopes visibility,
+  not identity — binding a team member to a toolkit belongs in `auth`, and
+  enforcing that binding is a deliberate follow-up (issue #37). Until it lands,
+  treat toolkits as an ergonomics and context-budget feature rather than access
+  control; connecta warns at startup when toolkits are configured without
+  inbound `auth`. `InboundAuth.authorize` already receives the full request, so
+  an adapter can refuse a mismatched `?toolkit=` today.
+- **Per-connector usage guides, served by the existing `skills` meta-tool.** A
+  connector declaration can carry `usageGuide` — agent-facing markdown,
+  config-as-code, and a new pass-through option on both `ApiOptions` and
+  `RemoteMcpOptions`. `skills({})` then lists the built-in `usage` guide
+  alongside one summarized entry per guided connector, with `skills({ name:
+  "connector:<id>" })` returning the guide verbatim. Collision with a built-in
+  skill name is structurally impossible because the built-in names are bare
+  identifiers that never contain `:`, so no `connector:<id>` can ever match one
+  — not even when a connector's id is literally `usage`. The prefixed form is
+  also the only way to reach a guide: a bare connector id is never resolved,
+  and errors with a pointer to the prefixed name rather than shadowing
+  anything. Discovery is conditional: the extra `usage` section and the `guide`
+  hints on `search_tools`/`describe_tools`/`skills` appear only once some
+  connector declares a guide, so a zero-guide deployment's catalog is
+  byte-identical to before — with one exception: the `skills({ name })` error
+  wording for connector-shaped names. Those branches are gated on the name
+  matching a connector id, not on any guide existing, so asking for a bare
+  connector id now reports that the connector has no usage guide where 0.4.1
+  said `Unknown skill`, and `connector:<unknown>` reports an unknown connector.
+  Guides follow the connection's toolkit scope — a scoped session sees only
+  in-scope guides.
+- **Per-connector `maxResultBytes` override.** The inline-result byte cap now
+  resolves per call as connector value → global `ConnectaConfig.maxResultBytes`
+  → the built-in 50 000 default, so a connector that habitually returns large
+  payloads can be capped without shrinking everything else. It is a new
+  `maxResultBytes` field on the `Connector` interface with pass-through options
+  on both `ApiOptions` and `RemoteMcpOptions`. Resolution happens after address
+  resolution inside the call path, so `call_tool`, `call_destructive_tool`, and
+  each leg of a `batch_call` use their own connector's cap. `get_result`'s
+  default page size deliberately stays on the global cap — a stashed result
+  carries no connector identity — and `execute_code` host-call results never
+  flowed through this truncation path at all (they have a separate guard on the
+  final sandbox return), so they're unaffected. A toolkit can neither raise nor
+  lower a cap.
+- **`ToolCallActivityEvent.toolkitId`** — an optional field on the exported
+  activity event, set to the toolkit a call arrived through and absent on
+  unscoped calls. Every custom `ActivityStore` now receives it, so a sink that
+  persists into a typed or column-bound schema needs a migration to keep the
+  value rather than drop it on the floor; sinks that pass the event through
+  untouched need no change.
+
+### Fixed
+
+- **`maxResultBytes` is validated at all three intake points, and `get_result`
+  paging can never fail to advance** (issue #32). The cap is now a whole number
+  of bytes >= 1, enforced from one shared definition. An unusable operator
+  value (zero, negative, `NaN`, non-integer, `Infinity`) emits a startup
+  warning through the existing insensible-config channel — naming the connector
+  for a per-connector override, and quoting the exact value the runtime falls
+  back to — instead of silently misbehaving: previously `0`/`NaN` served a
+  0-byte head, and a *negative* cap served a **larger** head than the default
+  (`Uint8Array.slice` counts from the end) while still claiming truncation. A
+  bad `get_result` `maxBytes` argument is now an ordinary input-validation
+  error. On top of intake validation, `alignEndToCharBoundary` widens any
+  window that would yield no bytes, so a page inside the payload always
+  advances; the end of the payload is handled separately, by only reporting a
+  `nextOffset` while the window stops short of the total. Between them, paging
+  terminates whatever effective page size reaches it. Worth recording so the
+  issue isn't closed on a false premise: the *client*-triggerable hang the
+  issue suspected was confirmed never reachable — the wire schema already
+  rejected non-positive `maxBytes` before dispatch, verified empirically
+  against the previous release. The hang was real but operator-triggered only;
+  the in-handler check is defense in depth for in-process callers. Valid values
+  behave byte-identically to 0.4.1.
+- **Documentation coherence pass across README, `docs/`, and `examples/`.** The
+  changes above each documented themselves; nobody had reconciled the set.
+  Fixed: a TOC link to an anchor that never existed, a toolkits section that
+  opened by calling a toolkit "an access boundary" in direct contradiction of
+  the "what toolkits are *not*" text below it, a `ConnectaConfig` table missing
+  `toolkits` and `probeTimeoutMs`, design.md's silence on guides and toolkits,
+  and a `serveMcp` misattribution of where the scope is actually built.
+  **Operators running the worker example should note a schema migration**: its
+  `ActivityStore` dropped `toolkitId`, the field that shows which team's view a
+  call came through. The example now binds and reads back a `toolkit_id`
+  column, and its README carries an `ALTER TABLE` note for pre-existing D1
+  tables — without it, every insert fails with `no such column`, and because
+  activity writes are best-effort the failure is invisible to the caller (it
+  surfaces only as a warning per write in the operator log) while the activity
+  table stops filling.
+
+### Security
+
+- **`branding.favicon.href` is now scheme-gated**, completing the branding-URL
+  invariant begun in 0.4.1 (issue #29). All three branding URLs are validated
+  in one resolver shared by both HTML surfaces (`/ui` and the OAuth result
+  pages). A favicon href must be an absolute http(s) URL or a genuinely
+  root-relative path — enforced structurally, after stripping the tab/LF/CR
+  characters URL parsers ignore, with an origin comparison kept as defense in
+  depth. Root-relative only, because `/ui` and `/oauth/callback/<id>` sit at
+  different depths and a document-relative path would resolve differently on
+  each. A rejected value falls back silently to the default `/favicon.svg` and
+  is named in a startup warning — which also names a dropped `productUrl` or
+  `ownerUrl`, so a deployment that has been quietly carrying one of those since
+  0.4.1 will start seeing a warning line it did not see before.
+  `resolveBranding` also reads every field through a string guard, so malformed
+  branding from an untyped JavaScript caller degrades to defaults instead of
+  throwing at construction.
+- **GHSA-frvp-7c67-39w9 cleared, and `check:security` tightened from `high` to
+  `moderate`.** The advisory (a Windows-only path traversal in
+  `@hono/node-server`'s `serve-static`) is resolved by a root `overrides` entry
+  pinning `@hono/node-server@^2.0.12`. No *declared* dependency version changes
+  — the MCP SDK stays where it was — though the override does of course move
+  the resolved transitive package across a major, 1.19.14 to 2.0.12. The
+  planned SDK bump could not work: every SDK release from 1.25.0 onward pins a
+  `@hono/node-server@^1.19.x` range that can never resolve to the patched 2.x
+  line, and it is those same releases that pull the package in at all. This is
+  audit-noise remediation rather than live vulnerability remediation — a
+  module-graph trace from every SDK entrypoint connecta uses found no reachable
+  `@hono/node-server` import, and the vulnerable `serve-static` subpath is
+  imported by nothing in the tree — which is what makes the forced major safe.
+  The old `high` gate caught high and critical findings correctly, but by
+  construction could never surface this moderate one; `SECURITY.md` is updated
+  to match, having still recorded the advisory as an accepted open finding
+  under the old threshold. **Residual, stated plainly:** npm applies
+  `overrides` only at the root project, so consumers who install this package
+  still resolve the `1.19.x` range and will keep seeing the advisory in their
+  own audits until the SDK moves to `@hono/node-server@^2`. Tracked as issue
+  #40, which also retires the override.
+
 ## 0.4.1 — 2026-07-25
 
 A security-hardening release from a full audit of the codebase. Every change is
