@@ -5,12 +5,15 @@ import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
+  CONNECTA_FAVICON_SVG,
   filterUiConnectors,
   isSafeHttpUrl,
   isSafeIconHref,
+  isSafeScriptSrcUrl,
   renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
+import { CONNECTA_FAVICON_ICO } from "../src/favicon.js";
 import type {
   ActivityStore,
   ToolCallActivityEvent,
@@ -77,13 +80,20 @@ function makeConnecta(extra: Connector[] = []) {
   });
 }
 
-function fakeClerk(): InboundAuth {
+/** The `src` of every `<script>` tag on a page, in document order. */
+function scriptSrcs(body: string): string[] {
+  return (body.match(/<script[^>]*>/g) ?? [])
+    .map((tag) => /\bsrc="([^"]*)"/.exec(tag)?.[1])
+    .filter((src): src is string => src !== undefined);
+}
+
+function fakeClerk(frontendApiUrl = "https://clerk.example.com"): InboundAuth {
   return {
     kind: "clerk",
     uiAuth: {
       kind: "clerk",
       publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.com",
+      frontendApiUrl,
     },
     authorize(request) {
       if (request.headers.get("authorization") === "Bearer clerk-token") {
@@ -278,6 +288,27 @@ describe("status UI", () => {
     expect([...bytes.slice(0, 4)]).toEqual([0, 0, 1, 0]);
   });
 
+  it("serves both favicon routes inertly and byte-identically", async () => {
+    const c = makeConnecta();
+    const svg = await c.fetch(new Request(`${BASE}/favicon.svg`));
+    const csp = svg.headers.get("content-security-policy") ?? "";
+    expect(svg.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("sandbox");
+    // The default mark carries an inline <style> for the OS colour scheme, so
+    // styles stay allowed where script does not.
+    expect(csp).toContain("style-src 'unsafe-inline'");
+    expect(csp).not.toContain("script-src");
+    expect(await svg.text()).toBe(CONNECTA_FAVICON_SVG);
+
+    const ico = await c.fetch(new Request(`${BASE}/favicon.ico`));
+    expect(ico.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(ico.headers.get("content-security-policy")).toBe(csp);
+    expect(new Uint8Array(await ico.arrayBuffer())).toEqual(
+      CONNECTA_FAVICON_ICO,
+    );
+  });
+
   it("keeps OAuth result pages inside the shared Connecta shell", async () => {
     const c = makeConnecta();
     const res = await c.fetch(
@@ -396,6 +427,46 @@ describe("status UI", () => {
     }
     const clerkTag = scriptTags.find((tag) => tag.includes("data-clerk"));
     expect(clerkTag).toContain(`nonce="${nonce}"`);
+  });
+
+  it("/ui never fetches its sign-in loader from a non-https origin", async () => {
+    for (const frontendApiUrl of [
+      "javascript:alert(1)",
+      "data:text/javascript,alert(1)",
+      "http://clerk.example.com",
+      "//clerk.example.com",
+      "clerk.example.com",
+    ]) {
+      const c = createConnecta({
+        connectors: [calc()],
+        auth: [bearerToken(TOKEN), fakeClerk(frontendApiUrl)],
+        storage: memoryStorage(),
+        publicUrl: BASE,
+      });
+      const res = await c.fetch(new Request(`${BASE}/ui`));
+      const body = await res.text();
+      // The shell still renders — a rejected loader origin drops the loader, it
+      // does not fail the page.
+      expect(res.status).toBe(200);
+      expect(scriptSrcs(body)).toEqual([]);
+      expect(body).not.toContain("clerk.browser.js");
+      // Nor may it reach the page through the inline AUTH object.
+      expect(body).not.toContain(frontendApiUrl);
+    }
+  });
+
+  it("still emits the loader for an https frontendApiUrl", async () => {
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    expect(scriptSrcs(body)).toEqual([
+      "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
+    ]);
+    expect(body).toContain('"frontendApiUrl":"https://clerk.example.com"');
   });
 
   it("renderUiHtml emits no nonce attributes when no nonce is passed", () => {
@@ -856,6 +927,27 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("/relative/path")).toBe(false);
     expect(isSafeHttpUrl("")).toBe(false);
     expect(isSafeHttpUrl(undefined)).toBe(false);
+  });
+});
+
+describe("isSafeScriptSrcUrl", () => {
+  it("accepts only absolute https URLs", () => {
+    expect(isSafeScriptSrcUrl("https://clerk.x.test")).toBe(true);
+    expect(isSafeScriptSrcUrl("https://clerk.x.test/npm")).toBe(true);
+  });
+
+  // Stricter than the branding href gate on purpose: nothing types this value,
+  // so there is no dev-loopback or cleartext case to accommodate.
+  it("rejects http, other schemes, relative values, and non-strings", () => {
+    expect(isSafeScriptSrcUrl("http://clerk.x.test")).toBe(false);
+    expect(isSafeScriptSrcUrl("http://localhost:3000")).toBe(false);
+    expect(isSafeScriptSrcUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeScriptSrcUrl("data:text/javascript,alert(1)")).toBe(false);
+    expect(isSafeScriptSrcUrl("//clerk.x.test")).toBe(false);
+    expect(isSafeScriptSrcUrl("/npm/clerk.js")).toBe(false);
+    expect(isSafeScriptSrcUrl("")).toBe(false);
+    expect(isSafeScriptSrcUrl(undefined)).toBe(false);
+    expect(isSafeScriptSrcUrl(42)).toBe(false);
   });
 });
 

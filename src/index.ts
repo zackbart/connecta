@@ -1,7 +1,7 @@
 import { CredentialVault } from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
-import { droppedBrandingUrls } from "./ui.js";
+import { droppedBrandingUrls, droppedUiAuthUrls } from "./ui.js";
 import {
   resolveToolkits,
   type Toolkit,
@@ -243,6 +243,25 @@ function warnInsecureConfig(
       `[connecta] branding ${dropped.join(", ")} dropped: a branding URL is ` +
         "used as an href, so it must be an absolute http(s) URL (favicon.href " +
         "may also be a root-relative path). The default is rendered instead.",
+    );
+  }
+
+  // /ui renders exactly one provider's browser sign-in config — the first that
+  // offers one, which is the same `find` the /ui route performs — and that
+  // provider's frontendApiUrl becomes the loader's `<script src>`. Gate-or-drop
+  // like a branding href: rendering omits the loader for a rejected value and
+  // the dashboard then reports that Clerk could not load, a confusing symptom
+  // without this line naming the cause. Checking only the rendered provider
+  // keeps the claim true — a later provider's uiAuth never reaches the page, so
+  // there is nothing there to warn about.
+  const uiAuthProvider = inboundAuth.find((provider) => provider.uiAuth);
+  const droppedUiAuth = droppedUiAuthUrls(uiAuthProvider?.uiAuth);
+  if (uiAuthProvider && droppedUiAuth.length > 0) {
+    logger.warn(
+      `[connecta] inbound auth provider "${uiAuthProvider.kind}" had ` +
+        `${droppedUiAuth.join(", ")} dropped: the browser sign-in loader is ` +
+        "fetched from this origin, so it must be an absolute https URL. /ui " +
+        "renders without the loader and cannot start a sign-in.",
     );
   }
 

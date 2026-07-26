@@ -248,6 +248,18 @@ export type AuthResult =
 export type UiAuthConfig = {
   kind: "clerk";
   publishableKey: string;
+  /**
+   * Origin `/ui` fetches its browser sign-in loader from. **Must be an absolute
+   * `https:` URL** — the value lands in a `<script src>`, so the gate is
+   * stricter than the branding href gate: no `http:`, no loopback exemption, and
+   * no root-relative form (a relative path is rejected, not resolved). The
+   * shipped `clerkAuth` adapter derives this from the publishable key and
+   * Clerk's Frontend API is always https, so nothing legitimate needs a
+   * carve-out. A value that fails the gate reaches neither the loader tag nor
+   * the page's inline auth config: `/ui` renders without the loader and reports
+   * that Clerk could not load, and `createConnecta` names the drop in a startup
+   * warning.
+   */
   frontendApiUrl: string;
   signInUrl?: string;
   signUpUrl?: string;

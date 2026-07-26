@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createConnecta } from "../src/index.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import type { ToolkitConfig } from "../src/toolkits.js";
-import type { Connector, Logger } from "../src/types.js";
+import type { Connector, InboundAuth, Logger } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 const CREDENTIAL_KEY = Buffer.alloc(32, 7).toString("base64");
@@ -262,6 +262,59 @@ describe("dropped-branding-URL warning", () => {
       logger,
     });
     expect(warnings(logger)).not.toContain("branding");
+  });
+});
+
+describe("dropped uiAuth.frontendApiUrl warning", () => {
+  /** An inbound provider offering the browser sign-in config `/ui` renders. */
+  function uiAuthProvider(frontendApiUrl: string): InboundAuth {
+    return {
+      kind: "clerk",
+      uiAuth: {
+        kind: "clerk",
+        publishableKey: "pk_test_fake",
+        frontendApiUrl,
+      },
+      authorize() {
+        return { ok: true, userId: "user_123" };
+      },
+    };
+  }
+
+  it("names the provider whose sign-in loader origin was dropped", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("javascript:alert(1)"),
+      publicUrl: BASE,
+      logger,
+    });
+    const text = warnings(logger);
+    expect(text).toContain('provider "clerk"');
+    expect(text).toContain("uiAuth.frontendApiUrl dropped");
+    expect(text).toContain("absolute https URL");
+  });
+
+  it("does not warn for an https frontendApiUrl", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("https://clerk.example.com"),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("uiAuth");
+  });
+
+  it("does not warn for a provider that offers no browser sign-in", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("uiAuth");
   });
 });
 
