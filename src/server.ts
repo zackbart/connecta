@@ -523,6 +523,23 @@ interface McpScope {
 }
 
 /**
+ * Bounded, escaped form of a rejected toolkit name for the operator log. Goes
+ * through JSON.stringify so a caller-controlled newline or control character
+ * cannot forge a log line, plus a hand-rolled escape for U+2028/U+2029, which
+ * JSON.stringify leaves raw even though a log reader treats them as line
+ * terminators. Truncated to the same length the response body echoes at, so an
+ * oversized value cannot flood the log either.
+ */
+function loggableToolkitName(requested: string): string {
+  const bounded = requested.slice(0, MAX_ECHOED_TOOLKIT_NAME);
+  const escaped = JSON.stringify(bounded).replace(
+    /[\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
+  );
+  return escaped + (bounded.length < requested.length ? " (truncated)" : "");
+}
+
+/**
  * Resolve `?toolkit=<name>` into the registry view this connection may see.
  *
  * - absent → the full registry, byte-identical to a deployment with no toolkits
@@ -532,11 +549,18 @@ interface McpScope {
  *
  * The error deliberately does not enumerate the configured toolkits: the name
  * selects a scope, so a wrong guess gets a flat "unknown", not a directory.
+ *
+ * Because of that — and because SDK clients treat a 404 on the transport
+ * endpoint as a transport failure and discard the body — the rejection is also
+ * logged operator-side (issue #47), which is the channel that actually reaches
+ * a human. The log line may name the configured toolkits; the response still
+ * may not.
  */
 function resolveToolkitScope(
   url: URL,
   registry: Registry,
   toolkits: ReadonlyMap<string, Toolkit> | undefined,
+  logger: Logger,
 ):
   | { ok: true; scope: McpScope }
   | { ok: false; response: Response } {
@@ -552,6 +576,16 @@ function resolveToolkitScope(
       },
     };
   }
+  const configured = toolkits && toolkits.size > 0 ? [...toolkits.keys()] : [];
+  logger.warn(
+    "[connecta] rejected an /mcp connection asking for unknown toolkit " +
+      `${loggableToolkitName(requested)} with 404. ` +
+      (configured.length > 0
+        ? `Configured toolkits: ${configured.join(", ")}.`
+        : "This deployment configures no toolkits, so no ?toolkit= value is accepted.") +
+      " The client sees a transport-level failure and never the reason, so " +
+      "check the ?toolkit= value in its MCP endpoint URL.",
+  );
   const label =
     requested.length <= MAX_ECHOED_TOOLKIT_NAME &&
     TOOLKIT_NAME_RE.test(requested)
@@ -868,7 +902,12 @@ export function createFetchHandler(
         // must not be able to probe which toolkit names exist.
         const authz = await authorize(request, baseUrl, auth);
         if (!authz.ok) return withMcpCors(authz.response);
-        const selected = resolveToolkitScope(url, registry, opts.toolkits);
+        const selected = resolveToolkitScope(
+          url,
+          registry,
+          opts.toolkits,
+          opts.logger,
+        );
         if (!selected.ok) return withMcpCors(selected.response);
         return withMcpCors(
           await serveMcp(

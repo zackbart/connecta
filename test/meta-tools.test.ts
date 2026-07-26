@@ -382,6 +382,145 @@ describe("list_connectors", () => {
   });
 });
 
+interface ObservedConnector {
+  id: string;
+  status: string;
+  message?: string;
+  lastSuccessAt?: string;
+  consecutiveFailures: number;
+}
+
+/** The cheap health signal every operator and agent consults. */
+async function observe(
+  mt: ReturnType<typeof createMetaTools>,
+): Promise<Record<string, ObservedConnector>> {
+  const parsed = textOf(await mt.listConnectors({ probe: false })) as {
+    connectors: ObservedConnector[];
+  };
+  return Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
+}
+
+describe("catalog-lookup health accounting", () => {
+  /** listTools fails while `state.failing`; callTool always succeeds. */
+  function catalogFlaky(state: {
+    failing: boolean;
+    listCalls: number;
+  }): Connector {
+    return {
+      id: "catalog",
+      kind: "mcp",
+      async listTools() {
+        state.listCalls++;
+        if (state.failing) throw new Error("catalog unavailable");
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return { content: [{ type: "text", text: "read" }] };
+      },
+    };
+  }
+
+  it("counts a failing catalog like a failing execution, call for call", async () => {
+    const state = { failing: true, listCalls: 0 };
+    const executionBroken: Connector = {
+      id: "execution",
+      kind: "mcp",
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        throw new Error("downstream exploded");
+      },
+    };
+    const mt = createMetaTools(
+      makeRegistry([catalogFlaky(state), executionBroken]),
+      BASE,
+    );
+    for (let i = 0; i < 2; i++) {
+      await mt.callTool({ address: "catalog.read", resultMode: "value" });
+      await mt.callTool({ address: "execution.read", resultMode: "value" });
+    }
+    const observed = await observe(mt);
+    expect(observed.catalog.consecutiveFailures).toBe(
+      observed.execution.consecutiveFailures,
+    );
+    expect(observed.catalog.consecutiveFailures).toBe(2);
+    expect(observed.catalog.status).toBe("error");
+    expect(observed.catalog.message).toContain("catalog unavailable");
+  });
+
+  it("records a typed auth_required from the catalog without changing its code", async () => {
+    const expired: Connector = {
+      id: "expired",
+      kind: "mcp",
+      async listTools() {
+        throw new ConnectorCallError(
+          "auth_required",
+          'Connector "expired" requires authorization — call authorize_connector({ connector: "expired" }).',
+        );
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([expired]), BASE);
+    const parsed = textOf(
+      await mt.callTool({ address: "expired.read", resultMode: "value" }),
+    ) as { ok: boolean; error: { code: string; message: string } };
+    expect(parsed.ok).toBe(false);
+    expect(parsed.error.code).toBe("auth_required");
+    expect(parsed.error.message).toContain("authorize_connector");
+    const observed = await observe(mt);
+    expect(observed.expired.status).toBe("error");
+    expect(observed.expired.consecutiveFailures).toBe(1);
+  });
+
+  it("returns to healthy once the catalog answers again", async () => {
+    const state = { failing: true, listCalls: 0 };
+    const mt = createMetaTools(makeRegistry([catalogFlaky(state)]), BASE);
+    await mt.callTool({ address: "catalog.read", resultMode: "value" });
+    expect((await observe(mt)).catalog.status).toBe("error");
+
+    state.failing = false;
+    const parsed = textOf(
+      await mt.callTool({ address: "catalog.read", resultMode: "value" }),
+    ) as { ok: boolean };
+    expect(parsed.ok).toBe(true);
+    const recovered = (await observe(mt)).catalog;
+    expect(recovered.status).toBe("ok");
+    expect(recovered.consecutiveFailures).toBe(0);
+    expect(recovered.lastSuccessAt).toBeTruthy();
+  });
+
+  it("leaves health alone for static catalogs and warm-cache hits", async () => {
+    const state = { failing: false, listCalls: 0 };
+    const mt = createMetaTools(
+      makeRegistry([catalogFlaky(state), calcConnector]),
+      BASE,
+    );
+    await mt.callTool({ address: "catalog.read", resultMode: "value" });
+    // The cache is warm now, so a catalog that starts failing is never asked
+    // again — and a cache hit is neither a failure nor evidence of health.
+    state.failing = true;
+    const parsed = textOf(
+      await mt.callTool({ address: "catalog.read", resultMode: "value" }),
+    ) as { ok: boolean };
+    expect(parsed.ok).toBe(true);
+    expect(state.listCalls).toBe(1);
+
+    await mt.callTool({ address: "calc.add", args: { a: 1, b: 2 } });
+    const observed = await observe(mt);
+    expect(observed.catalog).toMatchObject({
+      status: "ok",
+      consecutiveFailures: 0,
+    });
+    expect(observed.calc).toMatchObject({
+      status: "ok",
+      consecutiveFailures: 0,
+    });
+  });
+});
+
 interface SearchGroup {
   id: string;
   description?: string;

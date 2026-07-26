@@ -132,6 +132,7 @@ export async function buildSandboxProviders(
     "__log",
   ]);
   const connectors = registry.listConnectors();
+  const catalogStarted = Date.now();
   const loaded = await Promise.allSettled(
     connectors.map((connector) =>
       registry.getTools(connector.id, baseUrl, requestScope),
@@ -249,8 +250,25 @@ export async function buildSandboxProviders(
     }
     const loadedTools = loaded[i];
     if (loadedTools.status === "rejected") {
+      // Same health accounting as the call_tool catalog catch: a connector whose
+      // catalog cannot be fetched is unusable, and dropping its namespace with
+      // only a warn would leave the cheap `list_connectors({ probe: false })`
+      // signal clean for a code-mode deployment whose downstream grant was
+      // revoked. Recorded through `registry` — this run's view — so a
+      // toolkit-scoped execute_code lands in that toolkit's log as well.
+      registry.recordFailure(
+        connector.id,
+        Date.now() - catalogStarted,
+        loadedTools.reason,
+      );
+      // classifyCallError so a typed auth_required thrown while listing tools
+      // keeps its code where an operator can see it; health stores the message.
+      const details = classifyCallError(
+        loadedTools.reason,
+        "catalog_lookup_failed",
+      );
       logger.warn(
-        `[connecta] execute_code: connector "${connector.id}" skipped: ${msg(loadedTools.reason)}`,
+        `[connecta] execute_code: connector "${connector.id}" skipped (${details.code}): ${msg(loadedTools.reason)}`,
       );
       continue;
     }

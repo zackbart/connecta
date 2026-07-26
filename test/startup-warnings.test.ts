@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { createConnecta } from "../src/index.js";
 import { bearerToken } from "../src/auth/bearer.js";
+import type { ToolkitConfig } from "../src/toolkits.js";
 import type { Connector, Logger } from "../src/types.js";
 
 const BASE = "https://connecta.test";
@@ -108,6 +109,59 @@ describe("open-mode credential-exposure warning", () => {
     const logger = spyLogger();
     createConnecta({ connectors: [plainConnector], logger });
     expect(warnings(logger)).not.toContain("no inbound authentication");
+  });
+});
+
+describe("toolkit-selection warning", () => {
+  it("warns when a selectable toolkit exists with no inbound auth", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      logger,
+    });
+    expect(warnings(logger)).toContain(
+      "toolkits are configured but there is no inbound",
+    );
+  });
+
+  it("stays quiet for `toolkits: {}`, where nothing is selectable", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: {},
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("toolkits are configured");
+  });
+
+  it("stays quiet when toolkits are paired with inbound auth", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      auth: bearerToken("secret"),
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("toolkits are configured");
+  });
+
+  it("still warns about the unauthenticated deployment itself, whatever `toolkits` holds", () => {
+    const shapes: Array<ToolkitConfig | undefined> = [
+      undefined,
+      {},
+      { support: { connectors: ["vaulted"] } },
+    ];
+    for (const toolkits of shapes) {
+      const logger = spyLogger();
+      createConnecta({
+        connectors: [credentialConnector],
+        credentialEncryptionKey: CREDENTIAL_KEY,
+        toolkits,
+        logger,
+      });
+      expect(warnings(logger)).toContain("no inbound authentication");
+    }
   });
 });
 

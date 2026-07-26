@@ -920,6 +920,46 @@ describe("toolkit scoping: connector health observations", () => {
     expect(unscoped.connectors[0].consecutiveFailures).toBe(1);
   });
 
+  it("records a catalog-lookup failure in the calling toolkit's own log", async () => {
+    // A connector whose catalog cannot be fetched at all: every call_tool
+    // against it fails, so the scope that made those calls must see it.
+    const connectors: Connector[] = [
+      {
+        id: "remote",
+        kind: "mcp",
+        description: "Remote — catalog down",
+        async listTools() {
+          throw new Error("catalog unavailable");
+        },
+        async callTool() {
+          return { content: [{ type: "text", text: "unreachable" }] };
+        },
+      },
+    ];
+    const registry = makeRegistry(connectors);
+    const toolkits = resolveToolkits(
+      { alpha: { connectors: ["remote"] }, beta: { connectors: ["remote"] } },
+      connectors,
+    )!;
+    const alpha = createMetaTools(
+      new ScopedRegistry(registry, toolkits.get("alpha")!),
+      BASE,
+    );
+    const beta = createMetaTools(
+      new ScopedRegistry(registry, toolkits.get("beta")!),
+      BASE,
+    );
+
+    await alpha.callTool({ address: "remote.anything" });
+    const alphaView = textOf(await alpha.listConnectors({ probe: false }));
+    expect(alphaView.connectors[0].status).toBe("error");
+    expect(alphaView.connectors[0].consecutiveFailures).toBe(1);
+    // Deployment-wide too, and still not in the sibling scope's own log.
+    expect(registry.healthFor("remote")?.consecutiveFailures).toBe(1);
+    const betaView = textOf(await beta.listConnectors({ probe: false }));
+    expect(betaView.connectors[0].consecutiveFailures).toBeUndefined();
+  });
+
   it("gives the same toolkit one long-lived log across connections", async () => {
     const connectors = [flaky()];
     const registry = makeRegistry(connectors);
@@ -1184,6 +1224,94 @@ describe("/mcp toolkit selection", () => {
     expect(body.error.message).toContain('Unknown toolkit "marketing"');
     expect(body.error.message).not.toContain("support");
     expect(body.error.message).not.toContain("exec");
+  });
+
+  // SDK clients treat a 404 on the transport endpoint as a transport failure
+  // and drop the body, so the operator log is the channel that actually
+  // surfaces a misspelled ?toolkit=. It may name the valid options; the
+  // response still may not.
+  it("logs the rejected name and the valid options operator-side", async () => {
+    const warn = vi.fn();
+    const c = deployment({ logger: { ...silentLogger, warn } });
+    const res = await rpc(
+      c,
+      "tools/list",
+      {},
+      { token: TOKEN, toolkit: "suport" },
+    );
+    expect(res.status).toBe(404);
+    const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).toContain('unknown toolkit "suport"');
+    expect(logged).toContain("Configured toolkits: support, exec");
+    expect(logged).toContain("?toolkit=");
+    const body = await readBody(res);
+    expect(body.error.message).not.toContain("support");
+    expect(body.error.message).not.toContain("exec");
+  });
+
+  it("logs that no toolkit is accepted when the deployment declares none", async () => {
+    const warn = vi.fn();
+    const c = createConnecta({
+      connectors: ORG_CONNECTORS(),
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { ...silentLogger, warn },
+    });
+    await rpc(c, "tools/list", {}, { token: TOKEN, toolkit: "support" });
+    expect(warn.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "configures no toolkits",
+    );
+  });
+
+  it("bounds and escapes the logged name so a caller cannot forge log lines", async () => {
+    const warn = vi.fn();
+    const c = deployment({ logger: { ...silentLogger, warn } });
+    // A newline and a U+2028 line separator — JSON escaping covers the first,
+    // and the second is escaped by hand because JSON.stringify leaves it raw.
+    const hostile = `x\n\u2028[connecta] forged line ${"y".repeat(200)}`;
+    const res = await rpc(
+      c,
+      "tools/list",
+      {},
+      { token: TOKEN, toolkit: encodeURIComponent(hostile) },
+    );
+    expect(res.status).toBe(404);
+    const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).not.toContain("\n[connecta] forged line");
+    expect(logged).toContain("\\n");
+    // U+2028 is a line terminator a log reader honours, and JSON.stringify
+    // leaves it raw — so it must not survive into the line either.
+    expect(logged).not.toContain("\u2028");
+    expect(logged).toContain("\\u2028");
+    expect(logged).toContain("(truncated)");
+    expect(logged.length).toBeLessThan(600);
+    // The response is unchanged: a value like that is not echoed at all.
+    const body = await readBody(res);
+    expect(body.error.message).toContain("Unknown toolkit requested.");
+  });
+
+  it("logs nothing for a known or an absent ?toolkit=", async () => {
+    const warn = vi.fn();
+    const c = deployment({ logger: { ...silentLogger, warn } });
+    const scoped = await rpc(
+      c,
+      "tools/list",
+      {},
+      { token: TOKEN, toolkit: "support" },
+    );
+    const unscoped = await rpc(c, "tools/list", {}, { token: TOKEN });
+    expect(scoped.status).toBe(200);
+    expect(unscoped.status).toBe(200);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("logs nothing for an unauthenticated caller, so the log is not a probe target", async () => {
+    const warn = vi.fn();
+    const c = deployment({ logger: { ...silentLogger, warn } });
+    const res = await rpc(c, "tools/list", {}, { toolkit: "marketing" });
+    expect(res.status).toBe(401);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it("rejects an empty ?toolkit= rather than silently serving everything", async () => {

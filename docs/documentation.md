@@ -203,6 +203,15 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 - **Output:** `{ connectors: [{ id, title?, description?, toolCount, status, checkedAt,
   latencyMs, probe, lastSuccessAt?, lastFailureAt?, lastLatencyMs?,
   consecutiveFailures?, lastError?, authorizationUrl?, message? }] }`.
+- **Observed health** (the `lastSuccessAt` / `lastFailureAt` /
+  `consecutiveFailures` / `lastError` fields, and the `error` state `probe:
+  false` derives from them) comes from real calls made through `call_tool`,
+  `call_destructive_tool`, and `batch_call`, plus the live checks a `probe: true`
+  call performs. A call that fails while fetching the connector's **tool
+  catalog** — a revoked downstream grant, an unreachable remote — counts as a
+  failure exactly as a failed execution does, so a connector nothing can be
+  called on never reads clean. A call served from the catalog cache records
+  nothing on its own: a cache hit is not evidence of health.
 
 ```json
 { "connectors": [
@@ -1072,7 +1081,7 @@ when the response returns. `ConnectaConfig`:
 | --- | --- | --- |
 | `connectors` | — (required) | the connector set |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array (§5) |
-| `toolkits?` | unset ⇒ every connection sees the full registry | named scoped views selected with `?toolkit=` ([§16](#16-toolkits-scoped-views)); structural mistakes throw at construction |
+| `toolkits?` | unset — or `{}`, which selects nothing — ⇒ every connection sees the full registry | named scoped views selected with `?toolkit=` ([§16](#16-toolkits-scoped-views)); structural mistakes throw at construction |
 | `storage?` | `memoryStorage()` | the one state seam (§7) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console` prefixed `[connecta]` | `{ debug, info, warn, error }` |
@@ -1272,20 +1281,20 @@ Test suites (`test/`) and what they cover:
 | Suite | Covers |
 | --- | --- |
 | `registry.test.ts` | id validation, duplicate rejection, address resolution (first-dot split), tool-cache TTL + `invalidate()`, broken-connector isolation |
-| `meta-tools.test.ts` | the registry-backed meta-tools: timed health status, ranked/paginated discovery, concise/full descriptions, compact + JSON schemas, MCP/value result modes, structured errors, OAuth flow, fields selection, truncation + paging, and batch parallelism/isolation |
+| `meta-tools.test.ts` | the registry-backed meta-tools: timed health status, ranked/paginated discovery, concise/full descriptions, compact + JSON schemas, MCP/value result modes, structured errors, OAuth flow, fields selection, truncation + paging, batch parallelism/isolation, and catalog-lookup health accounting (a failing catalog counts call-for-call with a failing execution, a typed `auth_required` keeps its code, recovery clears the count, cache hits record nothing) |
 | `api-connector.test.ts` | `api()` kind/description, tool defs, dispatch, default args, unknown-tool + handler-throw behaviour |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process MCP server via `_transportFactory` — listTools/callTool passthrough, downstream `isError`, Cloudflare-safe output-schema validation, ok status, and request-scoped client reuse |
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
-| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces |
+| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
 | `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the `authorizedParties` rejection of a sibling-origin token |
-| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), an OAuth callback with no `verifyState`, and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
+| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), an OAuth callback with no `verifyState`, the toolkit-selection warning keyed off the *resolved* toolkits (so `toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
 | `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
@@ -1679,6 +1688,30 @@ The unknown-toolkit error does not enumerate the configured toolkits, and it is
 returned **after** the auth gate — an unauthenticated caller gets the same 401
 for a real toolkit name as for an invented one, so `/mcp` is not a directory of
 your teams.
+
+**A misspelled `?toolkit=` looks like a connection failure — check the server
+log.** This is the predictable first-week failure mode of a hand-copied client
+config, and clients built on the MCP SDK treat a 404 on the transport endpoint
+as a transport-level error and discard the body, so the response's careful
+"Unknown toolkit …" message never reaches the person reading their client. Every
+rejected selection therefore also emits a `logger.warn`, which is the channel
+that actually surfaces:
+
+```
+[connecta] rejected an /mcp connection asking for unknown toolkit "suport" with
+404. Configured toolkits: support, exec. The client sees a transport-level
+failure and never the reason, so check the ?toolkit= value in its MCP endpoint
+URL.
+```
+
+The log line may name the configured toolkits because it is an operator surface;
+the response still may not. The rejected value is echoed into the log bounded to
+64 characters and escaped (JSON escaping plus U+2028/U+2029), so a caller cannot
+flood the log or forge a line in it, and the line is written only after the auth
+gate — so on a deployment with `auth` configured, a caller the gate rejects
+cannot make it log anything. In open mode the gate admits everyone, so any caller
+can, exactly as any caller can already reach every connector there (§5). A
+deployment that declares no toolkits at all logs that instead of a list.
 
 `/mcp` is stateless (§2), so the scope is resolved from the URL of **every**
 request rather than pinned at an `initialize` handshake. There is no scope
