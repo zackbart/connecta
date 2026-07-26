@@ -262,6 +262,63 @@ describe("server /mcp end-to-end", () => {
     );
   });
 
+  it("mentions per-connector guides only when the deployment has one", async () => {
+    async function skillsSurface(connectors: Connector[]) {
+      const c = createConnecta({
+        connectors,
+        auth: bearerToken(TOKEN),
+        storage: memoryStorage(),
+        publicUrl: BASE,
+      });
+      const listed = await readBody(
+        await rpc(c, "tools/list", {}, { token: TOKEN }),
+      );
+      const usage = await readBody(
+        await rpc(
+          c,
+          "tools/call",
+          { name: "skills", arguments: { name: "usage" } },
+          { token: TOKEN },
+        ),
+      );
+      const byName = Object.fromEntries(
+        listed.result.tools.map((tool: { name: string }) => [tool.name, tool]),
+      );
+      return {
+        description: byName.skills.description as string,
+        search: byName.search_tools.description as string,
+        describe: byName.describe_tools.description as string,
+        usage: usage.result.content[0].text as string,
+      };
+    }
+
+    const plain = await skillsSurface([calc()]);
+    expect(plain.description).not.toContain("connector:<connectorId>");
+    expect(plain.usage).not.toContain("## Per-connector guides");
+    expect(plain.search).not.toContain("`guide`");
+    expect(plain.describe).not.toContain("`guide`");
+
+    const guided = await skillsSurface([
+      api("notion", {
+        description: "Notion",
+        usageGuide: "# Notion usage\n\nSearch before listing.\n",
+        tools: [
+          {
+            name: "search",
+            description: "Search pages",
+            inputSchema: { type: "object" },
+            annotations: { readOnlyHint: true },
+            handler: () => [],
+          },
+        ],
+      }),
+    ]);
+    expect(guided.description).toContain("connector:<connectorId>");
+    expect(guided.usage).toContain("## Per-connector guides");
+    expect(guided.search).toContain("`guide`");
+    expect(guided.describe).toContain("`guide`");
+  });
+
   it("tools/call search_tools returns results grouped by connector", async () => {
     const c = makeConnecta();
     const res = await rpc(

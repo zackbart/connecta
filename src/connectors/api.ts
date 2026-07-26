@@ -35,6 +35,11 @@ export interface ApiOptions {
    * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
    */
   maxResultBytes?: number;
+  /**
+   * Optional agent-facing usage guide (markdown) served by the `skills`
+   * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
+   */
+  usageGuide?: string;
   /** Optional operator-managed credential exposed through ctx.credential and /ui. */
   credential?: ConnectorCredentialConfig;
   /** Optional validation behind /ui's Test action. */
@@ -104,6 +109,7 @@ export function api(id: string, opts: ApiOptions): Connector {
     kind: "api",
     description: opts.description,
     maxResultBytes: opts.maxResultBytes,
+    usageGuide: opts.usageGuide,
     credential: opts.credential,
     testCredential: opts.testCredential,
     testCredentials: opts.testCredentials,

@@ -44,7 +44,7 @@ A tool **address** is `<connectorId>.<toolName>` (e.g. `notion.search`).
 | Tool | Input | Returns |
 | --- | --- | --- |
 | `list_connectors` | `{ probe? }` | live (`probe: true`, default) or cached health, tool count, and recent real-call observations |
-| `skills` | `{ name? }` | lists or fetches the concise `usage` guide for choosing among the meta-tools |
+| `skills` | `{ name? }` | lists or fetches the concise `usage` guide for choosing among the meta-tools, plus any operator-authored per-connector guide (`connector:<connectorId>`) |
 | `search_tools` | `{ query?, connector?, limit?, offset?, fullDescriptions?, includeSchemas? }` | ranked, paginated matches; optionally includes compact/raw schemas to remove a round trip |
 | `describe_tools` | `{ addresses[], format?, fullDescriptions? }` | names, descriptions, input/output schemas, and behavior annotations |
 | `call_tool` | `{ address, args?, fields?, resultMode?, timeoutMs?, maxRetries?, diagnostics? }` | invokes only tools explicitly annotated `readOnlyHint: true` |

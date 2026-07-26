@@ -14,7 +14,13 @@ import {
   type CallErrorDetails,
 } from "./errors.js";
 import type { Registry } from "./registry.js";
-import { AVAILABLE_SKILLS } from "./skills.js";
+import {
+  connectorGuide,
+  connectorSkillName,
+  hasConnectorGuides,
+  listSkills,
+  resolveSkill,
+} from "./skills.js";
 import type { ConnectorStatus, KVStorage, ToolDef } from "./types.js";
 
 interface TextContent {
@@ -638,6 +644,7 @@ export function createMetaTools(
 
   return {
     async skills(args: SkillArgs = {}): Promise<ToolResult> {
+      const connectors = registry.listConnectors();
       if (!args.name) {
         return {
           content: [
@@ -645,19 +652,15 @@ export function createMetaTools(
               type: "text",
               text:
                 'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                AVAILABLE_SKILLS.map(
-                  (skill) => `- \`${skill.name}\` — ${skill.description}`,
-                ).join("\n"),
+                listSkills(connectors)
+                  .map((skill) => `- \`${skill.name}\` — ${skill.description}`)
+                  .join("\n"),
             },
           ],
         };
       }
-      const skill = AVAILABLE_SKILLS.find((item) => item.name === args.name);
-      if (!skill) {
-        return errorResult(
-          `Unknown skill "${args.name}". Available: ${AVAILABLE_SKILLS.map((item) => item.name).join(", ")}.`,
-        );
-      }
+      const skill = resolveSkill(args.name, connectors);
+      if (!skill.found) return errorResult(skill.message);
       return { content: [{ type: "text", text: skill.content }] };
     },
 
@@ -748,6 +751,7 @@ export function createMetaTools(
         connectorId: string;
         connectorTitle?: string;
         connectorDescription?: string;
+        connectorGuideSkill?: string;
         tool: ToolDef;
         score: number;
         order: number;
@@ -770,6 +774,9 @@ export function createMetaTools(
               connectorId: c.id,
               connectorTitle: c.title,
               connectorDescription: c.description,
+              ...(connectorGuide(c)
+                ? { connectorGuideSkill: connectorSkillName(c.id) }
+                : {}),
               tool: ranked.tool,
               score: ranked.score,
               order: orderBase + ranked.order,
@@ -784,6 +791,8 @@ export function createMetaTools(
         id: string;
         title?: string;
         description?: string;
+        /** Skill name of this connector's usage guide, when it has one. */
+        guide?: string;
         tools: Array<{
           name: string;
           address: string;
@@ -801,6 +810,9 @@ export function createMetaTools(
             id: match.connectorId,
             ...(match.connectorTitle ? { title: match.connectorTitle } : {}),
             description: match.connectorDescription,
+            ...(match.connectorGuideSkill
+              ? { guide: match.connectorGuideSkill }
+              : {}),
             tools: [],
           };
           byConnector.set(match.connectorId, group);
@@ -905,6 +917,9 @@ export function createMetaTools(
             tool.description,
             args.fullDescriptions === true,
           ),
+          ...(connectorGuide(resolved.connector)
+            ? { guide: connectorSkillName(resolved.connector.id) }
+            : {}),
           inputSchema: format === "json" ? schema : compactSchema(schema),
           ...(tool.outputSchema
             ? {
@@ -1093,6 +1108,33 @@ const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 
 /**
+ * Sentences appended to a meta-tool description only when this deployment
+ * actually has connector guides. Tool descriptions are always-loaded context,
+ * and the connector set is fixed at construction, so a deployment with no
+ * guides gets every base description unchanged rather than paying for text
+ * about a feature it does not use.
+ */
+const GUIDE_NOTES = {
+  skills:
+    ' skills({}) also lists this deployment\'s per-connector usage guides as "connector:<connectorId>"; fetch the guide for a connector before working with it for the first time.',
+  search:
+    " A connector group carrying `guide` has a usage guide; fetch it with skills({ name: <guide> }).",
+  describe:
+    " An entry carrying `guide` belongs to a connector with a usage guide; fetch it with skills({ name: <guide> }).",
+} as const;
+
+/** `base`, plus its guide note when any connector carries a usage guide. */
+function describedFor(
+  registry: Registry,
+  base: string,
+  note: keyof typeof GUIDE_NOTES,
+): string {
+  return hasConnectorGuides(registry.listConnectors())
+    ? base + GUIDE_NOTES[note]
+    : base;
+}
+
+/**
  * Connecta refuses downstream tools that are not explicitly annotated
  * read-only, so its own meta-tools must carry the same hints — otherwise a
  * host that gates on annotations prompts for every search, and a connecta
@@ -1134,7 +1176,7 @@ export function registerMetaTools(
   server.registerTool(
     "skills",
     {
-      description: SKILLS_DESC,
+      description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: { name: z.string().optional() },
       annotations: {
         readOnlyHint: true,
@@ -1159,7 +1201,7 @@ export function registerMetaTools(
   server.registerTool(
     "search_tools",
     {
-      description: SEARCH_DESC,
+      description: describedFor(registry, SEARCH_DESC, "search"),
       inputSchema: {
         query: z.string().optional(),
         connector: z.string().optional(),
@@ -1176,7 +1218,7 @@ export function registerMetaTools(
   server.registerTool(
     "describe_tools",
     {
-      description: DESCRIBE_DESC,
+      description: describedFor(registry, DESCRIBE_DESC, "describe"),
       inputSchema: {
         addresses: z.array(z.string()),
         format: z.enum(["compact", "json"]).optional(),

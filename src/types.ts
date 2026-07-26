@@ -142,6 +142,14 @@ export interface Connector {
    * omit to inherit it (which itself defaults to 50_000).
    */
   maxResultBytes?: number;
+  /**
+   * Optional agent-facing usage guide (markdown) for this connector — preferred
+   * tools, address quirks, pagination conventions, rate-limit etiquette, good
+   * query patterns. Listed by the `skills` meta-tool as `connector:<id>` and
+   * returned verbatim by `skills({ name: "connector:<id>" })`. Keep it concise
+   * and imperative; it is read by agents, not operators.
+   */
+  usageGuide?: string;
   /** Optional operator-managed credential slot rendered inside this connector's /ui card. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by /ui's Test action. */

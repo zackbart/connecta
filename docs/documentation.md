@@ -10,6 +10,7 @@ for the *why* behind the design see [`design.md`](./design.md).
 3. [Meta-tools reference](#3-meta-tools-reference)
 4. [Connectors](#4-connectors)
    - [Conventions](#conventions)
+   - [Per-connector usage guides](#per-connector-usage-guides)
 5. [Inbound auth](#5-inbound-auth)
 6. [Downstream OAuth](#6-downstream-oauth)
 7. [Storage](#7-storage)
@@ -135,7 +136,7 @@ connecta/
     server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth + credential routes
     meta-tools.ts         # the nine meta-tools over the registry
     execute.ts            # the optional execute_code meta-tool + sandbox host bridge
-    skills.ts             # initialize instructions + the on-demand usage skill
+    skills.ts             # initialize instructions + the usage skill and per-connector guide lookup
     registry.ts           # connector set, address resolution, in-memory + persisted tool caches
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
@@ -202,6 +203,16 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   The skill explains when to use direct calls, batches, code mode, destructive
   calls, authorization, and result paging. It is progressive guidance, not a
   prerequisite for every task.
+- **Per-connector guides:** a connector that declares `usageGuide` (see §4)
+  adds one listing entry named `connector:<connectorId>`, summarized by the
+  guide's first meaningful line so listing stays cheap with many connectors.
+  `{ "name": "connector:notion" }` returns that markdown **verbatim**. The
+  `connector:` prefix is the only way to reach a guide, so a connector can
+  never shadow (or be shadowed by) the built-in `usage` skill — even when its
+  id is literally `usage`. A name that resolves to nothing (unknown skill,
+  unknown connector, or a connector with no guide) is an `isError` result, not
+  a fallback to the generic guide. The `usage` guide only mentions the
+  mechanism when the deployment has at least one guide to point at.
 
 ### `search_tools`
 
@@ -212,9 +223,12 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
 - **Ranking:** exact and prefix tool-name matches rank above name substrings,
   which rank above description-only matches. Multi-word queries require every
   term to occur across the name and description.
-- **Output:** `{ connectors: [{ id, title?, description?, tools: [{ name, address,
-  description? }] }], total, offset, limit, hasMore, nextOffset? }`. `total` is
-  the full match count; the connector groups contain the current page. Tool
+- **Output:** `{ connectors: [{ id, title?, description?, guide?, tools: [{ name,
+  address, description? }] }], total, offset, limit, hasMore, nextOffset? }`.
+  `total` is
+  the full match count; the connector groups contain the current page. `guide`
+  appears only when that connector declares a `usageGuide`, and holds the
+  `skills` name that fetches it (§4). Tool
   descriptions are whitespace-compacted and capped at 240 characters unless
   `fullDescriptions: true`. `includeSchemas` adds input/output schemas and
   annotations to the search page, removing the usual `describe_tools` round trip.
@@ -238,10 +252,11 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
 
 - **Input:** `{ addresses: string[], format?: "compact" | "json",
   fullDescriptions?: boolean }` — `format` defaults to **`"compact"`**.
-- **Output:** `{ tools: [{ name, address, description?, inputSchema,
+- **Output:** `{ tools: [{ name, address, description?, guide?, inputSchema,
   outputSchema?, annotations? } |
   { address, error }] }`. Descriptions are concise unless
-  `fullDescriptions: true`.
+  `fullDescriptions: true`. `guide` appears only when the tool's connector
+  declares a `usageGuide`, and holds the `skills` name that fetches it (§4).
   With `format: "json"`, `inputSchema` is the full JSON Schema (defaults to
   `{ "type": "object" }` when the tool declares none). With the default
   `format: "compact"`, `inputSchema` is a **TypeScript-like shape string**
@@ -441,6 +456,74 @@ construction time.
 - **inputSchema** — always `{ type: "object" }`; **every** property carries a
   `description`, and `required` accurately lists the mandatory properties.
 
+### Per-connector usage guides
+
+Descriptions and schemas say *what* a connector's tools are. They don't say
+which tool to prefer, which id format an address quirk expects, how the
+service paginates, or how hard you may hammer it. Operators know those things;
+without somewhere to put them, every agent session rediscovers them.
+
+A connector may therefore carry an optional **`usageGuide`** — a markdown
+string, authored in config alongside the connector, like everything else:
+
+```ts
+export const notion = remoteMcp("notion", {
+  url: "https://mcp.notion.com/mcp",
+  description: "Notion — pages, databases, comments",
+  auth: { type: "oauth" },
+  usageGuide: `# Notion usage
+
+Search before listing: \`notion.search\` covers pages and databases in one call.
+
+- Page ids are dashed UUIDs. Strip the trailing slug from a pasted URL first.
+- Paginate with \`start_cursor\`; \`page_size\` is capped at 100.
+- Writes replace blocks wholesale — read the block, merge, then write.
+`,
+});
+```
+
+It works the same on `api()` and on a hand-written `Connector`; the field is on
+the interface, not on the factories.
+
+The guide is served by the [`skills`](#skills) meta-tool:
+
+- `skills({})` lists the built-in `usage` guide plus one entry per connector
+  that has a guide, named **`connector:<connectorId>`** and summarized by the
+  guide's first meaningful line (heading marks and bullets stripped, capped at
+  120 characters). A connector without a guide adds no entry, so listing stays
+  cheap with many connectors.
+- `skills({ name: "connector:notion" })` returns the markdown **verbatim**.
+- The `connector:` prefix is the *only* address for a guide. Built-in skill
+  names are bare identifiers, so a guide can never shadow or be shadowed by
+  `usage` — a connector whose id is literally `usage` is listed as
+  `connector:usage`, and `skills({ name: "usage" })` still returns the built-in
+  guide.
+- Every miss is an error result: an unknown skill name, an unknown connector,
+  or a connector that has no guide. Nothing silently falls back to the generic
+  guide.
+
+`search_tools` and `describe_tools` set a `guide` field on matches whose
+connector has one, holding the skill name to fetch — so an agent that never
+called `skills({})` still discovers the guide at the moment it matters.
+
+Discovery text is **conditional on the deployment actually having a guide**.
+The built-in `usage` skill gains a short "Per-connector guides" section, and
+the `skills`, `search_tools`, and `describe_tools` tool descriptions each gain
+one sentence, only when at least one connector declares a `usageGuide`. The
+connector set is fixed at construction, so this is stable per deployment — and
+a deployment with no guides serves every one of those strings exactly as it
+always has, paying no always-loaded context for a feature it does not use.
+
+**Style.** Write for the agent, not the operator — the built-in `usage` skill
+(`src/skills.ts`) is the model. Concise and imperative; lead with the decision
+("Search before listing"), not with background. Prefer short bullets over
+prose, name exact tool addresses and argument names, and state the constraint
+with its number (`page_size` is capped at 100). Cover what descriptions and
+schemas cannot: tool preference, id/address quirks, pagination conventions,
+rate-limit etiquette, query patterns that work. Skip anything the agent can
+read off the schema, and keep it short — it is fetched into a live context
+window.
+
 ### The `Connector` interface
 
 A connector implements the `Connector` interface (`src/types.ts`):
@@ -452,6 +535,7 @@ interface Connector {
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap (see below)
+  usageGuide?: string;           // agent-facing markdown served by `skills`
   credential?: {
     label: string;
     description?: string;
@@ -553,6 +637,7 @@ export interface RemoteMcpOptions {
   title?: string;
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap
+  usageGuide?: string;
   auth?:
     | { type: "headers"; headers: Record<string, string> }
     | { type: "oauth" };
@@ -587,6 +672,7 @@ export interface ApiOptions {
   title?: string;
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap
+  usageGuide?: string;
   /** Validate args against each tool's inputSchema before the handler runs. Default true. */
   validateArgs?: boolean;
   tools: ApiTool[];
