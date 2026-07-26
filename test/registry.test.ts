@@ -133,19 +133,23 @@ describe("result-cap startup warnings", () => {
   });
 
   it("warns and names the connector for an unusable per-connector override", () => {
-    const { logger, warnings } = spyLogger();
-    new Registry([{ ...calcConnector, maxResultBytes: 0 }], {
-      storage: memoryStorage(),
-      logger,
-      maxResultBytes: 400,
-    });
-    expect(
-      warnings.some(
-        (w) =>
-          w.includes('connector "calc" sets maxResultBytes 0') &&
-          w.includes("400"),
-      ),
-    ).toBe(true);
+    for (const maxResultBytes of BAD_CAPS) {
+      const { logger, warnings } = spyLogger();
+      new Registry([{ ...calcConnector, maxResultBytes }], {
+        storage: memoryStorage(),
+        logger,
+        maxResultBytes: 400,
+      });
+      expect(
+        warnings.some(
+          (w) =>
+            w.includes(
+              `connector "calc" sets maxResultBytes ${maxResultBytes}`,
+            ) && w.includes("400"),
+        ),
+        `override ${String(maxResultBytes)}`,
+      ).toBe(true);
+    }
   });
 
   it("stays silent for valid caps, including the 1-byte floor", () => {

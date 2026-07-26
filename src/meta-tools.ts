@@ -975,9 +975,10 @@ export function createMetaTools(
 
     async getResult(args: GetResultArgs): Promise<ToolResult> {
       // Client-supplied page size: a normal input-validation error, not a
-      // clamp. The registered zod schema rejects the same shapes at the MCP
-      // boundary; this is the in-handler half, so the rule holds for every
-      // caller and the message says what a good value looks like.
+      // clamp. Callers arriving over MCP are rejected earlier by the
+      // registered zod schema and never reach this branch, so it exists for
+      // in-process callers of createMetaTools — which have no schema in front
+      // of them — and to keep the rule true of the handler on its own terms.
       if (
         args.maxBytes !== undefined &&
         !isValidMaxResultBytes(args.maxBytes)
@@ -1344,7 +1345,10 @@ export function registerMetaTools(
       inputSchema: {
         id: z.string(),
         offset: z.number().int().nonnegative().optional(),
-        maxBytes: z.number().int().positive().optional(),
+        // Same rule as isValidMaxResultBytes, expressed for the wire: sharing
+        // the floor constant keeps the schema from drifting away from the
+        // in-handler check if MIN_MAX_RESULT_BYTES ever moves.
+        maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
       },
       annotations: READ_ONLY_LOCAL,
     },

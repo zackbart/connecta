@@ -265,11 +265,16 @@ export class Registry implements RegistryView {
         c.maxResultBytes !== undefined &&
         !isValidMaxResultBytes(c.maxResultBytes)
       ) {
+        // The number quoted here is `this.maxResultBytes` because that is
+        // literally what a call falls back to: meta-tools reads the inherited
+        // cap off `RegistryView.maxResultBytes`, so the warned value and the
+        // runtime value are the same field rather than two copies of it.
         logger.warn(
           `[connecta] connector "${c.id}" sets maxResultBytes ` +
             `${c.maxResultBytes}, which is not a whole number of bytes >= ` +
             `${MIN_MAX_RESULT_BYTES}. Ignoring the override — the connector ` +
-            `inherits the deployment-wide ${this.maxResultBytes}.`,
+            `inherits the deployment-wide cap calls fall back to ` +
+            `(${this.maxResultBytes}).`,
         );
       }
     }

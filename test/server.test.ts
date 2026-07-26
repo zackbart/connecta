@@ -504,9 +504,14 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("tools/call get_result rejects a page size that could not advance", async () => {
-    // Issue #32: a maxBytes of 0 slices an empty page whose nextOffset equals
-    // the offset it was given, so a client paging on nextOffset never
-    // terminates. It must be a validation error at the wire boundary.
+    // Characterization, not regression: the registered zod schema already
+    // rejected a maxBytes of 0 before issue #32, and this passes unchanged
+    // against that earlier code. It is here to pin that pre-existing wire
+    // behavior in place, because the handler behind it used to answer such a
+    // page size with an empty slice whose nextOffset equalled the offset it
+    // was given — a client paging on nextOffset would never terminate. The
+    // schema is the only thing that kept that off the wire, so it should not
+    // be loosened without noticing.
     const c = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),

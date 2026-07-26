@@ -7,7 +7,9 @@ import {
   MAX_RETRY_BACKOFF_MS,
   retryBackoffMs,
 } from "../src/meta-tools.js";
+import { Registry } from "../src/registry.js";
 import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
+import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import {
   authConnector,
@@ -15,6 +17,7 @@ import {
   calcConnector,
   makeRegistry,
   remoteConnector,
+  silentLogger,
 } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -1899,6 +1902,28 @@ describe("maxResultBytes validation", () => {
       // Inherits the deployment-wide 400 exactly as an unset override would.
       expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
     }
+  });
+
+  it("warns with the very cap a call then falls back to", async () => {
+    // The startup warning quotes a number; a call inheriting that fallback
+    // must truncate at exactly it, or the warning tells operators a fiction.
+    const warnings: string[] = [];
+    const registry = new Registry([capped("c", 0)], {
+      storage: memoryStorage(),
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+      maxResultBytes: 400,
+    });
+    const warning = warnings.find((w) => w.includes("Ignoring the override"));
+    const warned = Number(/\((\d+)\)\.$/.exec(warning ?? "")?.[1]);
+    expect(warned).toBe(400);
+
+    const result = await createMetaTools(registry, BASE).callTool({
+      address: "c.big",
+    });
+    expect(result.content[0].text.split("\n")[0]).toBe(FULL.slice(0, warned));
   });
 
   it("leaves valid caps byte-identical at every level", async () => {
