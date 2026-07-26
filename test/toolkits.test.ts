@@ -1267,7 +1267,9 @@ describe("/mcp toolkit selection", () => {
   it("bounds and escapes the logged name so a caller cannot forge log lines", async () => {
     const warn = vi.fn();
     const c = deployment({ logger: { ...silentLogger, warn } });
-    const hostile = `x\n[connecta] forged line ${"y".repeat(200)}`;
+    // A newline and a U+2028 line separator — JSON escaping covers the first,
+    // and the second is escaped by hand because JSON.stringify leaves it raw.
+    const hostile = `x\n\u2028[connecta] forged line ${"y".repeat(200)}`;
     const res = await rpc(
       c,
       "tools/list",
@@ -1278,6 +1280,10 @@ describe("/mcp toolkit selection", () => {
     const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
     expect(logged).not.toContain("\n[connecta] forged line");
     expect(logged).toContain("\\n");
+    // U+2028 is a line terminator a log reader honours, and JSON.stringify
+    // leaves it raw — so it must not survive into the line either.
+    expect(logged).not.toContain("\u2028");
+    expect(logged).toContain("\\u2028");
     expect(logged).toContain("(truncated)");
     expect(logged.length).toBeLessThan(600);
     // The response is unchanged: a value like that is not echoed at all.

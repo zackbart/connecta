@@ -6,6 +6,7 @@ import {
   sanitizeIdentifier,
   unwrapForSandbox,
 } from "../src/execute.js";
+import { ConnectorCallError } from "../src/errors.js";
 import type { Connector, Executor, ExecutorProvider } from "../src/types.js";
 import {
   brokenConnector,
@@ -113,6 +114,48 @@ describe("buildSandboxProviders", () => {
     await expect(connecta.fns.call("nope.add", {})).rejects.toThrow(
       'Unknown address "nope.add"',
     );
+  });
+
+  it("records a health failure for a connector whose catalog cannot load", async () => {
+    const registry = makeRegistry([calcConnector, brokenConnector]);
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
+    // The namespace is still dropped rather than fatal...
+    expect(providers.map((p) => p.name)).toEqual(["calc", "connecta"]);
+    // ...but the drop no longer hides from the cheap health signal an operator
+    // consults, the same as a failing call_tool catalog lookup.
+    expect(registry.healthFor("broken")).toMatchObject({
+      consecutiveFailures: 1,
+      lastError: "boom",
+    });
+    // A catalog that loaded is not a success signal of its own.
+    expect(registry.healthFor("calc")).toBeUndefined();
+  });
+
+  it("keeps a typed auth_required's code in the skip it logs and records", async () => {
+    const expired: Connector = {
+      id: "expired",
+      kind: "mcp",
+      async listTools() {
+        throw new ConnectorCallError(
+          "auth_required",
+          'Connector "expired" requires authorization',
+        );
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const warnings: string[] = [];
+    const logger = {
+      ...silentLogger,
+      warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
+    };
+    const registry = makeRegistry([expired]);
+    await buildSandboxProviders(registry, BASE, logger);
+    expect(warnings.join("\n")).toContain(
+      'skipped (auth_required): Connector "expired" requires authorization',
+    );
+    expect(registry.healthFor("expired")?.consecutiveFailures).toBe(1);
   });
 
   it("does not expose or execute tools annotated destructive", async () => {

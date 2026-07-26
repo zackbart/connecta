@@ -525,15 +525,18 @@ interface McpScope {
 /**
  * Bounded, escaped form of a rejected toolkit name for the operator log. Goes
  * through JSON.stringify so a caller-controlled newline or control character
- * cannot forge a log line, and is truncated to the same length the response
- * body echoes at, so an oversized value cannot flood the log either.
+ * cannot forge a log line, plus a hand-rolled escape for U+2028/U+2029, which
+ * JSON.stringify leaves raw even though a log reader treats them as line
+ * terminators. Truncated to the same length the response body echoes at, so an
+ * oversized value cannot flood the log either.
  */
 function loggableToolkitName(requested: string): string {
   const bounded = requested.slice(0, MAX_ECHOED_TOOLKIT_NAME);
-  return (
-    JSON.stringify(bounded) +
-    (bounded.length < requested.length ? " (truncated)" : "")
+  const escaped = JSON.stringify(bounded).replace(
+    /[\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
   );
+  return escaped + (bounded.length < requested.length ? " (truncated)" : "");
 }
 
 /**

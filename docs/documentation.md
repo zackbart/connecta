@@ -1706,10 +1706,12 @@ URL.
 
 The log line may name the configured toolkits because it is an operator surface;
 the response still may not. The rejected value is echoed into the log bounded to
-64 characters and JSON-escaped, so a caller cannot flood the log or forge a line
-in it, and the line is written only after the auth gate — an unauthenticated
-caller cannot make the deployment log anything. A deployment that declares no
-toolkits at all logs that instead of a list.
+64 characters and escaped (JSON escaping plus U+2028/U+2029), so a caller cannot
+flood the log or forge a line in it, and the line is written only after the auth
+gate — so on a deployment with `auth` configured, a caller the gate rejects
+cannot make it log anything. In open mode the gate admits everyone, so any caller
+can, exactly as any caller can already reach every connector there (§5). A
+deployment that declares no toolkits at all logs that instead of a list.
 
 `/mcp` is stateless (§2), so the scope is resolved from the URL of **every**
 request rather than pinned at an `initialize` handshake. There is no scope
