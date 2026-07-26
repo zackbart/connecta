@@ -2,9 +2,28 @@
 
 ![A monochrome clay Connecta hub joining many tools](./assets/connecta-clay-hero.png)
 
-One MCP to rule them all. A single MCP endpoint that aggregates many downstream
-connectors — remote MCP servers and plain HTTP APIs — and presents agents a fixed
-set of **nine meta-tools** instead of hundreds of individual tools.
+One MCP endpoint in front of all your connectors. Agents see nine tools instead
+of hundreds, and each client is configured once instead of once per integration.
+
+## The problem
+
+An agent connected to N MCP servers pays for all N before it does anything. Every
+server's tool list is injected into the context window at connect time — hundreds
+of definitions and their schemas, nearly all irrelevant to the task actually at
+hand. That budget is spent whether the model calls one of them or none, and it
+comes out of the same window the work needs.
+
+The second cost is configuration. Every client — Claude, Cursor, whatever comes
+next — has to be pointed at each server separately, with its own auth for each.
+Adding an integration means touching every client; rotating one token means
+finding every place it was pasted.
+
+## What connecta is
+
+One MCP endpoint you deploy — Cloudflare Worker, Node, or Docker — that
+aggregates your downstream connectors behind a fixed set of **nine meta-tools**.
+A connector is either a remote MCP server that connecta proxies, or a plain HTTP
+API with hand-written tool definitions and a fetch handler.
 
 ```
                                         ┌── remoteMcp("notion")   → mcp.notion.com
@@ -13,14 +32,96 @@ Claude / Cursor ── MCP ──▶  connecta ───┼── remoteMcp("lin
                                         └── api("internal")       → fetch(...)
 ```
 
-The agent always sees exactly nine tools; it searches when it needs something and
-describes only what it will call. Progressive disclosure is the point. Connectors
-are declared in TypeScript (config as code — adding one is a code change + deploy,
-no database of integrations), and the same fetch-based core runs on **Node** and
-**Cloudflare Workers**. Optionally, **code mode** adds a tenth tool that runs
-model-written orchestration code in a sandbox.
+Rather than receiving every tool up front, the agent discovers what it needs.
+`search_tools` returns ranked matches for a query and `describe_tools` returns
+schemas — compact by default, raw JSON Schema on request — for only the
+addresses it is about to call. `call_tool`,
+`batch_call`, and `call_destructive_tool` invoke them by address
+(`<connectorId>.<toolName>`). `list_connectors` reports what exists and whether
+it is reachable, `authorize_connector` starts a downstream OAuth flow,
+`get_result` pages through a result too large to return inline, and `skills`
+hands the model a short guide to choosing among the rest.
 
-## Installation
+That is the entire surface. The agent's context holds nine tool definitions
+whether ten tools sit behind them or a thousand — and the client holds one URL
+and one credential, no matter how many services that URL fans out to.
+
+An optional tenth meta-tool, `execute_code`, runs model-written async JavaScript
+in a sandbox with no network, filesystem, or environment access — only the
+explicitly read-only tools as callable globals — turning a loop, a join across
+connectors, or a filter over a large response into one round trip instead of a
+dozen. Configure no `executor` and connecta is exactly the nine-tool server.
+
+## Why it's shaped this way
+
+**Config as code, one deployment per tenant.** Connectors are declared in
+TypeScript. Adding one is a code change and a deploy — no database of
+integrations, no registration API, no runtime admin. A deployment is a small
+config file you can read in one sitting and review in a pull request, not a
+platform to administer.
+
+**Credentials stay server-side.** Downstream tokens live in an AES-GCM encrypted
+vault over the deployment's own storage, with the key held outside it. A
+connector reaches its own credential through `ctx.credential`; `/ui`, the
+meta-tools, and the code sandbox only ever see masked metadata. Rotating a token
+is an operator action rather than a redeploy — though writing to the vault is
+deliberately narrower than everything else, requiring a Clerk-authenticated
+operator on a same-origin request, so a bearer-only deployment cannot administer
+credentials from the browser. Which tools exist is still code either way.
+
+**Read-only is fail-closed.** Only tools explicitly annotated `readOnlyHint:
+true` are reachable through `call_tool`, `batch_call`, and the sandbox. Missing,
+false, or contradictory annotations do not get the benefit of the doubt: they
+require `call_destructive_tool`, which is itself annotated so the MCP host can
+put the question to a human. Connecta makes the boundary visible; approval is
+the host's job.
+
+**Toolkits scope what a team sees.** A deployment belongs to an org; a toolkit
+is a named view over its registry for one group inside that org — support sees
+Zendesk and Notion, exec also sees Gmail. A client selects one with
+`?toolkit=support` on the MCP URL, and a credential can be bound so it opens
+that view and nothing else. Inside a scoped session an out-of-scope address
+fails exactly as a nonexistent one does. Two teams, one deployment. Who gets in
+at all is the prior question: a static bearer token, or Clerk — where
+`allowedDomains: ["acme.com"]` admits anyone whose verified primary email is on
+your domain without enumerating users, and a `gate` hook handles what a domain
+rule cannot express. Both fail closed, and each one configured must pass.
+
+**Activity records the fact, not the payload.** The optional activity store logs
+which resolved tool ran, for whom, and how it went — never arguments, results,
+generated code, search text, or raw error messages. The exclusion is structural
+rather than a redaction pass: the event type has nowhere to put a payload, which
+is what keeps an operations log from becoming something worth stealing.
+
+**An operator dashboard that can only look.** `GET /ui` is a read-only status
+page with no build step: connector health, tool counts, downstream authorization
+links, credential controls, and an activity tab when a store is configured. It
+displays state and administers credentials; it cannot change what an agent is
+allowed to call. Credentials connecta stores are also probed for liveness
+proactively — using each connector's own test or status hook, never a downstream
+tool call — so a dead token surfaces as `auth_required` with the URL to open on
+`/ui` and in `list_connectors` before an agent's real call trips over it.
+
+## When not to use it
+
+Connecta is deliberately small, and declines several tempting shapes.
+It is **not multi-tenant** — one deployment is one tenant, with one registry and
+one credential store, and toolkits are scoped views rather than tenants. There
+is **no policy engine**, no approvals, and no pauses — access decisions are
+fixed ones connecta already knows how to answer (is this tool read-only, may
+this credential open this toolkit), not rules you author. There is **no runtime
+administration** — you cannot add a connector from a browser or an API. It
+aggregates **tools only**, not MCP resources or prompts, and it will not ingest
+a **GraphQL** schema, because generating hundreds of low-quality tool
+definitions is the problem the nine meta-tools exist to solve. OpenAPI is a
+softer no: not built in today, not refused either, and tracked as
+[issue #26](https://github.com/zackbart/connecta/issues/26). If you want a
+hosted multi-tenant integration platform with an approval workflow, this is the
+wrong shape; the
+[non-goals](https://github.com/zackbart/connecta/blob/main/docs/decisions.md#non-goals)
+say so at more length.
+
+## Getting started
 
 Node deployments require Node.js 20.9 or newer.
 
@@ -28,319 +129,68 @@ Node deployments require Node.js 20.9 or newer.
 npm install @zackbart/connecta
 ```
 
-Provider and runtime integrations remain consumer-owned. Install only the
-optional packages a deployment uses—for example:
-
-```sh
-npm install @clerk/backend          # optional Clerk auth adapter
-npm install quickjs-emscripten      # optional Node code-mode executor
-npm install @cloudflare/codemode    # optional Worker code-mode executor
-```
-
-## The nine meta-tools
-
-A tool **address** is `<connectorId>.<toolName>` (e.g. `notion.search`).
-
-| Tool | Input | Returns |
-| --- | --- | --- |
-| `list_connectors` | `{ probe? }` | live (`probe: true`, default) or cached health, tool count, recent real-call observations, and the last proactive credential check |
-| `skills` | `{ name? }` | lists or fetches the concise `usage` guide for choosing among the meta-tools, plus any operator-authored per-connector guide (`connector:<connectorId>`) |
-| `search_tools` | `{ query?, connector?, limit?, offset?, fullDescriptions?, includeSchemas? }` | ranked, paginated matches; optionally includes compact/raw schemas to remove a round trip |
-| `describe_tools` | `{ addresses[], format?, fullDescriptions? }` | names, descriptions, input/output schemas, and behavior annotations |
-| `call_tool` | `{ address, args?, fields?, resultMode?, timeoutMs?, maxRetries?, diagnostics? }` | invokes only tools explicitly annotated `readOnlyHint: true` |
-| `call_destructive_tool` | same as `call_tool` | invokes unannotated, write-capable, or destructive tools through a host-visible approval boundary |
-| `authorize_connector` | `{ connector, force? }` | starts (or with `force`, restarts) the downstream OAuth flow; returns the `authorizationUrl` to open |
-| `get_result` | `{ id, offset?, maxBytes? }` | a byte-slice page of a truncated result — `{ text, offset, nextOffset?, totalBytes }`; `maxBytes` is a whole number of bytes >= 1 and `offset` a whole number of bytes >= 0, aligned back to a character boundary and echoed as the `offset` served |
-| `batch_call` | `{ calls, resultMode?, timeoutMs?, maxRetries? }` | 1–10 parallel calls sharing request-scoped clients, with attempts/timing/errors |
-| `execute_code` *(optional)* | `{ code }` | result + logs of bounded async JS orchestration over explicitly read-only tools; registered only when an `executor` is configured |
-
-## Package vs. deployments
-
-This repository owns the reusable package. Each deployment should be a small,
-separate Worker project that pins an exact package version and owns only its
-connector configuration, auth policy, domain, bindings, migrations, and secrets.
-[`examples/worker/`](./examples/worker/) is the starting template.
-
-## Quickstart — Cloudflare Worker
-
-```ts
-import { DynamicWorkerExecutor } from "@cloudflare/codemode";
-import { bearerToken, createConnecta, remoteMcp } from "@zackbart/connecta";
-import { clerkAuth } from "@zackbart/connecta/auth/clerk";
-import { cloudflareKvStorage } from "./cloudflare-kv.js";
-
-const build = (env: Env) =>
-  createConnecta({
-    publicUrl: env.PUBLIC_URL,
-    storage: cloudflareKvStorage(env.CONNECTA_KV),
-    // Code mode (optional): needs a `worker_loaders` binding in wrangler.jsonc.
-    executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
-    auth: [
-      bearerToken(env.CONNECTA_TOKEN),
-      clerkAuth({
-        publishableKey: env.CLERK_PUBLISHABLE_KEY,
-        secretKey: env.CLERK_SECRET_KEY,
-        publicUrl: env.PUBLIC_URL,
-        // allowedDomains: ["acme.com"], // only your org's verified emails
-      }),
-    ],
-    connectors: [
-      remoteMcp("notion", {
-        url: "https://mcp.notion.com/mcp",
-        auth: { type: "headers", headers: { Authorization: `Bearer ${env.NOTION_TOKEN}` } },
-      }),
-    ],
-  });
-
-// Lazy per-isolate singleton: keeps only serializable tool/catalog data warm.
-let connecta: ReturnType<typeof build> | undefined;
-
-export default {
-  fetch(request: Request, env: Env): Promise<Response> {
-    connecta ??= build(env);
-    return connecta.fetch(request);
-  },
-};
-```
-
-Deployable example: [`examples/worker/`](./examples/worker/).
-Its Cloudflare KV and D1 implementations are deployment-owned examples over the
-generic `KVStorage` and `ActivityStore` contracts; they are not package exports.
-
-`clerkAuth` is an optional adapter. Install `@clerk/backend` and import it from
-`@zackbart/connecta/auth/clerk` only in deployments that use Clerk. Other
-identity providers can implement the exported `InboundAuth` interface.
-
-## Quickstart — Node
+A minimal server with one hand-written connector:
 
 ```ts
 import { api, bearerToken, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
-import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 
 const connecta = createConnecta({
   storage: fileStorage("./.connecta-state.json"), // or memoryStorage()
-  auth: bearerToken(process.env.CONNECTA_TOKEN!),
-  executor: quickJsExecutor(), // code mode (optional): QuickJS/WASM sandbox
+  auth: bearerToken(process.env.CONNECTA_TOKEN ?? "dev-token"),
   connectors: [
     api("time", {
-      description: "Time — clock utilities",
-      tools: [{
-        name: "get_now",
-        description: "Return the current ISO timestamp.",
-        inputSchema: { type: "object", properties: {} },
-        annotations: { readOnlyHint: true },
-        handler: async () => ({ now: new Date().toISOString() }),
-      }],
+      description: "Time — current timestamp",
+      tools: [
+        {
+          name: "get_now",
+          description: "Return the current time as an ISO 8601 timestamp.",
+          inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          handler: async () => ({ now: new Date().toISOString() }),
+        },
+      ],
     }),
   ],
 });
 
-listen(connecta, 8787); // http://localhost:8787/mcp
+listen(connecta, 8787); // MCP at http://localhost:8787/mcp, status at /ui
 ```
 
-Example: [`examples/node/`](./examples/node/). Docker (single-service compose
-stack): [`examples/docker/`](./examples/docker/).
+Point an MCP client at `http://localhost:8787/mcp` with an
+`Authorization: Bearer` header and it will see the nine meta-tools, with
+`time.get_now` discoverable through `search_tools`.
 
-## Toolkits — one deployment, many teams
-
-A deployment belongs to an org. Optional **toolkits** give each group of team
-members its own scoped view of the same registry — bound to that group's
-credential — so different teams no longer need separate deployments:
-
-```ts
-createConnecta({
-  connectors: [zendesk, notion, gmail],
-  auth: [
-    // Each team's credential is bound to that team's view.
-    bearerToken(env.SUPPORT_TOKEN, { subjectId: "support", toolkits: ["support"] }),
-    bearerToken(env.EXEC_TOKEN, { subjectId: "exec", toolkits: ["exec"] }),
-    // The operator's: every view, plus /ui — declared, not left unbound.
-    bearerToken(env.OPS_TOKEN, {
-      subjectId: "ops",
-      toolkits: ["support", "exec"],
-      unscoped: true,
-    }),
-  ],
-  toolkits: {
-    support: { connectors: ["zendesk", "notion"] },
-    exec: {
-      connectors: ["zendesk", "notion", "gmail"],
-      excludeTools: ["gmail.send_message"], // finer grain than a connector id
-    },
-  },
-});
-```
-
-A client picks one at connect time: `https://…/mcp?toolkit=support`. Inside a
-scoped session **every** meta-tool — search, describe, call, batch, skills,
-authorize, `get_result`, and `execute_code` host calls — behaves as if
-out-of-scope connectors and tools do not exist, and an out-of-scope address
-fails identically to a nonexistent one. No `?toolkit=` ⇒ the full registry, as
-before; an unknown name is an error, never a silent fallback.
-
-`toolkits: [...]` on an auth adapter **binds** a credential to its views: the
-support token cannot open `?toolkit=exec`, cannot connect unscoped (unless it also
-passes `unscoped: true`), and cannot read the deployment-wide operator surfaces.
-Refusal is a flat 403 at connect time, identical whether the toolkit is another
-team's or does not exist at all — a mapping, not a policy engine. Leave `toolkits`
-off and that credential keeps today's self-service selection. Details:
-[docs §16](./docs/documentation.md#16-toolkits-scoped-views).
-
-## Code mode
-
-With an `executor` configured, the model can write an async function instead of
-making one `call_tool` round trip per step — loops, joins across connectors,
-filtering big responses down in-sandbox before they hit the context window:
-
-```js
-async () => {
-  const pages = await notion.search({ query: "roadmap" });
-  return pages.results.map((p) => p.title);
-}
-```
-
-The sandbox has **no** network/filesystem/env — only explicitly read-only
-connector globals and
-`connecta.call`, `connecta.batch`, `connecta.search`, and `connecta.describe`;
-credentials stay host-side. A run may make at most 20 host calls, a
-`connecta.batch` may contain at most 10 calls, and every host call has a
-15-second deadline. Executors:
-`DynamicWorkerExecutor` (`@cloudflare/codemode`,
-Workers, Worker Loader binding — open beta) or `quickJsExecutor()`
-(`@zackbart/connecta/quickjs`, QuickJS-in-WASM, runs anywhere). Omit the `executor` and
-connecta is exactly the nine-tool server. Details:
-[docs §13](./docs/documentation.md#13-code-mode-execute_code).
-
-## Credentials in `/ui`
-
-API connectors can declare one operator-managed credential or a named set of
-credential fields. Connecta renders
-Add / Replace / Test / Remove controls inside that connector's `/ui` card,
-encrypts the values with AES-GCM, and stores only ciphertext in the deployment's
-existing `KVStorage`. Credentials are available only to the connector through
-`ctx.credential.get()`, `get(name)`, or `getAll()`; they are never returned by
-`/ui`, MCP tools, or code mode.
-
-```ts
-api("example", {
-  description: "Example — authenticated API",
-  credential: {
-    label: "API token",
-    description: "Token used for outbound Example API requests.",
-  },
-  tools: [{
-    name: "get_profile",
-    description: "Get the authenticated Example profile.",
-    inputSchema: { type: "object", properties: {} },
-    annotations: { readOnlyHint: true },
-    handler: async (_args, ctx) => {
-      const token = await ctx.credential?.get();
-      if (!token) throw new Error("Example API token is not configured.");
-      return fetch("https://api.example.com/profile", {
-        headers: { Authorization: `Bearer ${token}` },
-      }).then((response) => response.json());
-    },
-  }],
-})
-```
-
-Set `credentialEncryptionKey` on `createConnecta` to a base64-encoded 32-byte
-key held in the runtime's secret store (`openssl rand -base64 32`) — a connector
-that declares a credential without one fails at construction rather than booting
-with an unusable vault. Credential mutation routes require the configured Clerk
-provider and a same-origin browser request; the static inbound bearer cannot
-administer the vault.
-
-Connecta does not bundle service-specific HTTP API connectors. Package consumers
-define them with `api()` (or implement `Connector` directly), keeping endpoint,
-credential, and tool choices in the consuming project.
-
-## Credential health
-
-Stored credentials are checked for liveness *before* an agent's call trips over a
-dead one. Connecta asks each connector holding a credential it stores — a vault
-credential, or a downstream-OAuth grant — whether that credential still works,
-using the connector's own `testCredential(s)` or `status()` hook. No downstream
-tool is ever called. A check that finds the credential *rejected* flips the
-connector to `auth_required` in `list_connectors({ probe: false })` and on
-`/ui`, with the URL to open; a later success (or re-authorizing) flips it back
-with no restart. A check that merely failed to complete — a timeout, a 502 from
-the status endpoint — is reported but never decides the status: it learned
-nothing about the credential.
-
-Checks are triggered two ways and share one rate limit — at most one per
-connector per 15 minutes by default, four in flight, 30 s each:
-
-```ts
-// 1. Opportunistically, on authenticated traffic connecta already serves.
-//    On by default; nothing to wire. Disable with:
-createConnecta({ connectors, credentialHealth: { onRequest: false } });
-
-// 2. On a schedule you own — the core starts no timers, so this works the same
-//    on Workers (cron trigger) and Node.
-async scheduled(_c, env, ctx) { ctx.waitUntil(build(env).checkCredentials()); }
-setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
-```
-
-Details: [docs §17](./docs/documentation.md#17-credential-health-proactive-liveness-checks).
-
-## Payload-free tool activity
-
-Connecta can record which resolved downstream tools were actually invoked
-without storing their arguments, results, generated code, search text, or raw
-errors. Supply a vendor-neutral `activity` store:
-
-```ts
-const events: ToolCallActivityEvent[] = [];
-
-const connecta = createConnecta({
-  connectors,
-  activity: {
-    record(event) {
-      events.push(event);
-    },
-    async list({ limit }) {
-      return { events: events.slice(-limit).reverse() };
-    },
-  },
-});
-```
-
-One final event is emitted for each resolved connector call made through
-`call_tool`, `call_destructive_tool`, `batch_call`, or `execute_code`; retries
-remain one event with an `attempts` count. Implementing `list` enables the
-authenticated Activity tab in `/ui`; `activityReadGate` can narrow reads
-further. Writes are best-effort and never change a tool result. Clerk calls
-carry the Clerk user ID; shared bearer calls are honestly labeled as bearer
-unless `bearerToken(secret, { subjectId })` assigns that credential a stable
-subject. On Workers, pass `ctx` through to `connecta.fetch(request, env, ctx)`
-so async writes settle on `waitUntil`.
-[`examples/worker/src/d1-activity.ts`](./examples/worker/src/d1-activity.ts) is
-a complete D1 implementation with keyset paging and a retention pass.
-
-## Operator dashboard
-
-`GET /ui` is a read-only dashboard with no build step: connector health and the
-last credential check, tool
-counts and descriptions with a client-side filter, downstream authorization
-links, the credential controls above, and an Activity tab when an activity store
-is configured. The shell is open because it carries no data; everything it shows
-comes from `/ui/data`, behind the same auth gate as `/mcp`. With Clerk
-configured it signs operators in through Clerk's hosted portal; a bearer-only
-deployment falls back to a pasted token.
-
-Every deployment-facing label and mark on `/ui` and the OAuth result pages comes
-from `ConnectaConfig.branding` — `productName`, `ownerName`, their URLs,
-`description`, `pageTitle`, `themeColor`, and `favicon` — each falling back to a
-neutral Connecta default. Nothing about the operator is baked into the package.
+Runnable deployments live in
+[`examples/`](https://github.com/zackbart/connecta/tree/main/examples):
+[`worker/`](https://github.com/zackbart/connecta/tree/main/examples/worker) is a
+deployable Cloudflare Worker with KV and D1 adapters, and the template to copy
+for a real deployment;
+[`node/`](https://github.com/zackbart/connecta/tree/main/examples/node) adds
+toolkits and code mode to the server above;
+[`docker/`](https://github.com/zackbart/connecta/tree/main/examples/docker) is a
+single-service compose stack. Anything beyond the core is installed only by the
+deployments that use it: `@clerk/backend` and `quickjs-emscripten` are optional
+peer dependencies, reached through the `/auth/clerk` and `/quickjs` subpaths,
+and a Worker using code mode brings its own `@cloudflare/codemode`. Connecta
+ships no service-specific connectors:
+endpoint, credential, and tool choices stay in your project, declared with
+`remoteMcp()` and `api()`.
 
 ## Learn more
 
-- **[`docs/documentation.md`](./docs/documentation.md)** — how everything works: architecture,
-  the meta-tools, connectors and their usage guides, inbound auth, downstream
-  OAuth, storage, running it (Node / Workers / Docker), Clerk setup, testing,
-  troubleshooting, code mode, the status UI, activity history, and toolkits.
-- **[`docs/decisions.md`](./docs/decisions.md)** — why it's built this way: the
-  non-goals, the alternatives that lost, and the invariants a change must keep.
-- **[`CHANGELOG.md`](./CHANGELOG.md)** — what changed in each release.
+- **[Documentation](https://github.com/zackbart/connecta/blob/main/docs/documentation.md)**
+  — the reference manual: architecture, connectors, inbound auth and downstream
+  OAuth, storage, Clerk setup, testing, and troubleshooting. Start with the
+  [meta-tools reference](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#3-meta-tools-reference),
+  the [config options](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#8-running-it),
+  [code mode](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#13-code-mode-execute_code),
+  [toolkits](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#16-toolkits-scoped-views),
+  or [credential health](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#17-credential-health-proactive-liveness-checks).
+- **[Decisions](https://github.com/zackbart/connecta/blob/main/docs/decisions.md)**
+  — what connecta refuses to be, which alternatives lost and why, and the
+  invariants a change must preserve.
+- **[CHANGELOG](https://github.com/zackbart/connecta/blob/main/CHANGELOG.md)** —
+  what changed in each release.
+- **[SECURITY](https://github.com/zackbart/connecta/blob/main/SECURITY.md)** —
+  supported versions and how to report a vulnerability.
