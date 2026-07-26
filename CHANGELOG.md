@@ -2,6 +2,153 @@
 
 All notable changes to this package are documented here.
 
+## 0.6.1 — 2026-07-26
+
+A patch release: three bug fixes and a documentation overhaul. No new
+configuration, no new exported types, no change to the published API surface —
+`ConnectaConfig` and every type are byte-identical to 0.6.0. Nothing here is
+breaking. But two of the fixes *withdraw* behavior a deployment could have been
+relying on by accident, and in both cases withdrawing it is what the fix is, not
+a decision taken alongside it:
+
+- **A `uiAuth.signInUrl` or `signUpUrl` that is not an absolute `https:` URL is
+  now dropped** rather than handed to `Clerk.load` (issue #56). Relative paths,
+  `http:`, protocol-relative, `javascript:` and `data:` values all fall together,
+  under the same gate `frontendApiUrl` has always passed. A rejected value reaches no part of the rendered page: the key is
+  simply absent from `/ui`'s inline `AUTH` object, so Clerk falls back to its own
+  default exactly as it does for an unset field, and `/ui` still renders and
+  still signs operators in. Construction logs one warning naming each dropped
+  field. What belongs in these fields is a hosted Account Portal address
+  (`https://accounts.<domain>`, `https://<slug>.accounts.dev`), so a deployment
+  that noticed this at all was pointing operators at a sign-in page connecta does
+  not host.
+- **The declared credential shape now picks the credential test hook, on every
+  surface** (issue #55). Two of the four shape/hook combinations change behavior.
+  A **single-value `credential` declaring both hooks** now runs
+  `testCredential(value)` with the raw string, where the test route previously
+  preferred `testCredentials` and handed it the vault's reserved `{ value }` map
+  — the single-value hook now receives the string it was written to expect
+  instead of a one-entry map named after a storage detail. A **single-value
+  `credential` declaring only `testCredentials`** is no longer tested or probed
+  at all: /ui renders no Test button, a direct POST answers 400 naming the
+  mismatch, `createConnecta` warns at construction, and the liveness sweep added
+  in 0.6.0 reports it `not_checkable` instead of calling a hook with a shape its
+  connector never declared. Both of those are the fallback order that *was* the
+  bug, so there is no version of this fix that preserves them. Named `fields`
+  with `testCredentials`, or with both hooks, behave exactly as they did.
+
+One textual delta reaches every deployment and no configuration turns it off, so
+anything snapshotting agent-facing error text will diff: `resolveSkill`'s two
+`Available:` branches now say `Available skills:` like the other three (issue
+#50).
+
+The docs are substantially reorganized, and one of the changes ships to npm:
+readers of the package page get a completely different README. See Changed. The
+next intentional breaking release stays reserved for issue #28.
+
+### Changed
+
+- **The README is rewritten around the problem connecta solves** (345 lines to
+  196). It had become a condensed reference manual — roughly 60% code blocks and
+  option tables, every one of them duplicated in `docs/documentation.md` or
+  `examples/` — with a single paragraph explaining why connecta exists. npm
+  readers see only this file, so it was the worst place for the duplication and
+  the best place for the argument. It now runs as prose: the context-window and
+  per-client configuration costs of connecting an agent to N MCP servers, what
+  connecta does about them, why it is shaped the way it is (config as code, a
+  server-side credential vault with liveness checks, fail-closed read-only,
+  toolkits and who is admitted to them, payload-free activity, a read-only
+  operator dashboard), when *not* to use it, one minimal Node quickstart, and
+  links out. Removed from it and unchanged in `docs/` and `examples/`: the
+  nine-row signature-level meta-tool table (the nine names now appear in prose
+  with their purposes), the Worker quickstart, and the toolkits, code-mode,
+  credentials, activity and branding blocks with their option semantics.
+  **Links out of the README are now absolute GitHub URLs**, because `docs/` does
+  not ship in the package and relative links are dead on npmjs.com. This is the
+  only change in the release that reaches npm as content rather than code.
+- **`docs/design.md` is retired into a new `docs/decisions.md`.** design.md was
+  mostly a worse copy of documentation.md, and it had gone stale in at least one
+  load-bearing way: it claimed the Clerk adapter passes `authorizedParties:
+  [connectaOrigin]` to `authenticateRequest`. It does not, and must not — OAuth
+  access tokens may be JWTs with no `azp` claim, and Clerk rejects `azp ===
+  undefined` when that option is set, so passing it would reject every MCP
+  client; the `azp` pin is applied by hand after verification, for session tokens
+  only. decisions.md records that as a **rejected alternative** rather than
+  repeating the wrong version. It answers two questions documentation.md does
+  not: "may I build X?" (non-goals, rejected alternatives) and "must my change
+  preserve Y?" (invariants) — collecting the invariants documentation.md states
+  but never gathers as pointers rather than duplicated prose, alongside the four
+  that lived only in design.md: no runtime admin, nothing request-bound surviving
+  a request, single tenant, and fail-closed read-only. Two facts moved into
+  documentation.md §13 instead, next to the code they explain. Inbound references
+  in the README, documentation.md and the Docker example follow; **any external
+  link to `docs/design.md` is now dead**, and the 0.x CHANGELOG mentions of it
+  stay as historical record. The credential-test invariant added by issue #55
+  also gained the qualifier §17 already carried: a connector whose shape and hook
+  mismatch carries no verdict *from a credential hook*, but is still probed
+  through `status()` if it declares one, since that question never involves the
+  shape.
+- **CLAUDE.md is an agent brief rather than a policy stub.** It now states what
+  gates "done" (`npm run check`, and what that runs), the two-document map
+  (documentation.md as reference manual, decisions.md as non-goals and
+  invariants) with the warning that its section numbers are linked from source
+  comments, the two CI-enforced boundaries that are invisible from inside a
+  single file (import-graph purity, the published surface) as where-new-code-goes
+  guidance, the `WORKERS_SUITES` allowlist trap that silently skips a portable
+  suite left out of it, and the commit, CHANGELOG and release conventions. The
+  roadmap-lives-in-GitHub-issues policy is unchanged, verbatim.
+
+### Fixed
+
+- **One rule decides how a credential is tested, and three copies of it no
+  longer disagree** (issue #55). `/ui` offered a Test button from the mere
+  presence of a hook (`testCredential || testCredentials`); the test route made
+  its own different choice — prefer `testCredentials`, else `testCredential` on
+  the vault's reserved `value` field; and 0.6.0's credential-health prober added
+  a third copy of that same preference order. They disagreed in both mismatch
+  shapes, and the visible bug was the ugliest one: a connector declaring named
+  `credential.fields` with only `testCredential` answered **409 "configure the
+  credential before testing it" on a fully configured credential**, blaming the
+  operator for connecta's own hook selection. `credentialTestRule` in
+  `src/credentials.ts` is now the single source of truth — `buildUiData`'s
+  `testable` flag, the test route's hook selection, the credential-health
+  prober's `testHookFor`/`isCheckableConnector`, and a new construction-time
+  warning all read it, so they cannot drift apart again. **The declared shape
+  picks the hook and the other one is never substituted**: named fields are
+  tested by `testCredentials` with the whole set, a single value by
+  `testCredential` with the raw string. A connector implementing only the
+  mismatched hook is not testable rather than testable-by-accident — no button, a
+  400 sharing its wording with the boot warning, and `not_checkable` to the
+  prober, which carries no verdict rather than an invented one (handing
+  `testCredential` a `value` that named fields never wrote would test the empty
+  string and record a confident `auth_required` about a credential nothing
+  examined). `status()` is unaffected: a mismatched connector that implements it
+  is still probed through it. The two behavior deltas this produces are stated
+  above. Recorded as an invariant in `docs/decisions.md`, and stated in
+  documentation.md §4, §7, §14 and §17.
+- **`uiAuth.signInUrl` and `signUpUrl` are gated like every other URL that
+  reaches the browser** (issue #56). They were the residual — operator config
+  that arrives in the page as a *navigation target* rather than an attribute, so
+  no gate covered them and §14's URL-position invariant had to be read with an
+  exception beside it. Both are serialized into `/ui`'s inline `AUTH` object and
+  handed to `Clerk.load`, which navigates to them when an operator signs in. They
+  now pass the same gate `frontendApiUrl` does, so `isSafeScriptSrcUrl` — named
+  for the one position it used to guard — becomes `isSafeHttpsUrl`, one predicate
+  for all three `uiAuth` URLs. Absolute `https:` only, for the typed fields as
+  for the derived one: the loose carve-outs buy nothing real, since `http:` would
+  carry a sign-in over cleartext and a path relative to this origin is
+  meaningless because connecta hosts no sign-in page of its own. The drop warning
+  decides "did the operator mean to supply this?" through the same `isSetUrlValue`
+  helper `branding` uses, so a blank-string or falsy non-string value cannot warn
+  on one path and stay silent on the other. **§14 now states the invariant over
+  every URL position — attribute and navigation target — with no carve-out left.**
+- **`resolveSkill` enumerates its list under one label** (issue #50). Three
+  branches said `Available skills:` and two said `Available:`, so which one an
+  agent saw depended on the branch it hit rather than on any difference in
+  meaning. Agent-facing error text is interface, and two labels read as two
+  concepts where there is one. Both stragglers now say `Available skills:`, and a
+  test walks all five error branches so reverting any one of them fails.
+
 ## 0.6.0 — 2026-07-26
 
 A feature release that makes two of 0.5.0's mechanisms protective rather than

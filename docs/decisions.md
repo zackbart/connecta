@@ -267,8 +267,10 @@ construction-time mismatch warning, and the credential liveness probes
 (`src/credential-health.ts`). Three copies of this decision is how it drifted the
 first time (issue #55) — a button connecta offered led to a 409 blaming the
 operator's configuration. A connector whose only hook cannot test its shape is
-simply not testable: no button, a 400 naming the mismatch, no liveness verdict,
-and a warning at boot. [§7](./documentation.md#7-storage),
+simply not testable: no button, a 400 naming the mismatch, no liveness verdict
+from a credential hook — though a mismatched connector that declares `status()`
+is still probed through it, since that question never involves the shape — and a
+warning at boot. [§7](./documentation.md#7-storage),
 [§17](./documentation.md#17-credential-health-proactive-liveness-checks).
 
 ### Activity is payload-free by construction
