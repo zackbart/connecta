@@ -83,7 +83,10 @@ function grantConnector(id = "linear"): GrantConnector {
 
 type VaultConnector = Connector & { calls: Calls; valid: boolean };
 
-/** An operator-managed credential in the vault, checked via testCredentials. */
+/**
+ * An operator-managed single-value credential in the vault, checked via the hook
+ * that shape selects — `testCredential` (issue #55).
+ */
 function vaultConnector(id = "resend"): VaultConnector {
   const connector: VaultConnector = {
     id,
@@ -92,9 +95,9 @@ function vaultConnector(id = "resend"): VaultConnector {
     calls: { status: 0, listTools: 0, callTool: 0, test: 0 },
     valid: true,
     credential: { label: "API token" },
-    async testCredentials(values) {
+    async testCredential(value) {
       connector.calls.test++;
-      expect(values.value).toBe("token-abcdefghij");
+      expect(value).toBe("token-abcdefghij");
       return connector.valid
         ? { ok: true, message: "Token accepted." }
         : { ok: false, message: "Token was revoked." };
@@ -606,10 +609,160 @@ describe("credential liveness checks", () => {
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
     // Testing the empty string would record a confident auth_required about a
-    // credential nothing examined — the credential API refuses the same shape.
+    // credential nothing examined — the declared shape picks the hook here just
+    // as it does in /ui and the credential API (issue #55), and this shape
+    // cannot use the one hook implemented.
     expect(outcome).toEqual({ connectorId: "multi", skipped: "not_checkable" });
     expect(tested).toBe(0);
     expect(await registry.credentialHealthFor("multi")).toBeUndefined();
+  });
+
+  it("probes named fields with the named-set hook, and the whole set", async () => {
+    const seen: Record<string, string>[] = [];
+    const multi: Connector = {
+      id: "multi",
+      kind: "api",
+      description: "Multi-field API",
+      credential: {
+        label: "Service credentials",
+        fields: [
+          { name: "email", label: "Account email" },
+          { name: "apiKey", label: "API key" },
+        ],
+      },
+      async testCredentials(values) {
+        seen.push({ ...values });
+        return { ok: true, message: "Both fields accepted." };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, KEY);
+    const values = { email: "operator@example.com", apiKey: "api-key-1234" };
+    await vault.setAll("multi", values, "user_1");
+    const registry = makeRegistry([multi], { storage, credentialVault: vault });
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome.record).toMatchObject({
+      state: "ok",
+      message: "Both fields accepted.",
+    });
+    expect(seen).toEqual([values]);
+  });
+
+  it("skips a single-value credential the connector can only test as a set", async () => {
+    let tested = 0;
+    const single: Connector = {
+      id: "single",
+      kind: "api",
+      description: "Single-value API",
+      credential: { label: "API token" },
+      // Only the named-set hook. The sweep used to prefer it whenever it
+      // existed and hand it `{ value }` — the vault's reserved storage field,
+      // not a named set this connector ever declared.
+      async testCredentials() {
+        tested++;
+        return { ok: false, message: "should never run" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const { registry, vault } = vaultRegistry([single]);
+    await vault.set("single", "token-abcdefghij", "user_1");
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    // Symmetric with the named-field mismatch above: untestable per the one
+    // rule, so skipped rather than probed through a hook the shape cannot use.
+    expect(outcome).toEqual({ connectorId: "single", skipped: "not_checkable" });
+    expect(tested).toBe(0);
+    expect(await registry.credentialHealthFor("single")).toBeUndefined();
+  });
+
+  it("probes a single value that declares both hooks with the single-value one", async () => {
+    const seen: string[] = [];
+    let named = 0;
+    const both: Connector = {
+      id: "both",
+      kind: "api",
+      description: "Both hooks",
+      credential: { label: "API token" },
+      async testCredential(value) {
+        seen.push(value);
+        return { ok: true, message: "Token accepted." };
+      },
+      async testCredentials() {
+        named++;
+        return { ok: true };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const { registry, vault } = vaultRegistry([both]);
+    await vault.set("both", "token-abcdefghij", "user_1");
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome.record).toMatchObject({ state: "ok" });
+    expect(seen).toEqual(["token-abcdefghij"]);
+    expect(named).toBe(0);
+  });
+
+  it("still probes an untestable shape through status() when it has one", async () => {
+    let tested = 0;
+    const mismatch: Connector = {
+      id: "mismatch",
+      kind: "api",
+      description: "Named fields, single-value hook, plus status()",
+      credential: {
+        label: "Service credentials",
+        fields: [{ name: "email", label: "Account email" }],
+      },
+      async testCredential() {
+        tested++;
+        return { ok: true, message: "should never run" };
+      },
+      async status() {
+        return { state: "auth_required" as const, message: "Grant expired." };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, KEY);
+    await vault.setAll("mismatch", { email: "operator@example.com" }, "user_1");
+    const registry = makeRegistry([mismatch], {
+      storage,
+      credentialVault: vault,
+    });
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    // The unusable hook is skipped, not the connector: `status()` is a question
+    // the connector answers about itself, and never involves the shape mismatch.
+    expect(outcome.record).toMatchObject({
+      state: "auth_required",
+      message: "Grant expired.",
+    });
+    expect(tested).toBe(0);
   });
 
   it("clamps a verdict stamped in the future so it can age out", async () => {

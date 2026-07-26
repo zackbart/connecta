@@ -15,6 +15,7 @@
 // There is no background daemon and no long-lived timer, so Workers and Node run
 // the same code.
 
+import { credentialTestRule } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs, withTimeout } from "./timeout.js";
 import type {
@@ -48,8 +49,9 @@ export interface CredentialHealthRecord {
  *   through an explicit `ids` request, and reported rather than dropped so a
  *   typo in a scheduled check is visible instead of silent.
  * - `not_checkable` — it stores no credential connecta manages, or exposes no
- *   usable way to ask: neither `status()` nor a credential test hook that fits
- *   the stored value's shape.
+ *   usable way to ask: neither `status()` nor a credential test hook the
+ *   declared credential shape can use (`credentialTestRule`), against a value
+ *   actually stored under it.
  * - `no_credential` — checkable, but nothing is stored yet: there is no
  *   credential whose liveness could be in question, and probing would start an
  *   OAuth flow nobody asked for.
@@ -342,40 +344,54 @@ export interface CredentialCheckOptions {
  * to be asked about: an operator-managed `credential`, or a stored downstream
  * grant it reports via `hasStoredCredential`. A static-token connector stores
  * nothing here and is never probed on a timer.
+ *
+ * Whether a test hook counts is `credentialTestRule`'s call, not this function's
+ * — the same rule /ui's Test button and the credential API read (issue #55), so
+ * a credential the operator cannot test by hand is not one a sweep tests behind
+ * their back. A connector whose only hook cannot test its declared shape is
+ * checkable only if it also implements `status()`.
  */
 export function isCheckableConnector(connector: Connector): boolean {
   const hasCredentialStore = Boolean(
     connector.credential || connector.hasStoredCredential,
   );
   const canAsk = Boolean(
-    (connector.credential &&
-      (connector.testCredentials || connector.testCredential)) ||
-      connector.status,
+    credentialTestRule(connector).mode !== null || connector.status,
   );
   return hasCredentialStore && canAsk;
 }
 
 /**
- * The credential test that fits the STORED value's shape, or undefined.
+ * The credential test the connector's DECLARED shape selects, bound to what is
+ * actually stored — or undefined when there is no honest question to put.
  *
  * `isCheckableConnector` answers the static question ("could this connector be
- * asked at all"); this answers it against what is actually in the vault. The gap
- * that matters is a connector with named fields but only the single-value
- * `testCredential` hook: handing it `values.value` — the reserved single-value
- * field, absent here — would test the empty string and record a confident
- * `auth_required` about a credential nothing examined. The credential API
- * refuses that same shape with a 409 rather than testing it; here the connector
- * is skipped rather than given an invented verdict.
+ * asked at all"); this answers it against the vault. The hook itself is picked
+ * by `credentialTestRule` (src/credentials.ts, issue #55), the one rule /ui's
+ * `testable` flag and `POST /ui/credentials/<id>/test` also read: named
+ * `credential.fields` are tested as a set by `testCredentials`, a single-value
+ * `credential` by `testCredential` on the vault's reserved `value` field, and
+ * the other hook is never substituted. Substituting it is what a sweep must not
+ * do quietly — handing `testCredential` a `values.value` that named fields never
+ * wrote would test the empty string and record a confident `auth_required` about
+ * a credential nothing examined, and handing `testCredentials` the reserved
+ * `{ value }` map would call a hook with a shape its connector never declared.
+ * Either way the connector is skipped (`not_checkable`) rather than given an
+ * invented verdict, and `createConnecta` already warned about the mismatch at
+ * construction.
  */
 function testHookFor(
   connector: Connector,
   values: ConnectorCredentialValues | null,
 ): ((ctx: ConnectorContext) => Promise<CredentialTestResult>) | undefined {
   if (!values) return undefined;
-  if (connector.testCredentials) {
+  const { mode } = credentialTestRule(connector);
+  if (mode === "multiple") {
     return (ctx) => connector.testCredentials!(values, ctx);
   }
-  if (connector.testCredential && typeof values.value === "string") {
+  // A single-value shape with nothing under the reserved field is still nothing
+  // to test, so the stored value gets the last word even when the rule fits.
+  if (mode === "single" && typeof values.value === "string") {
     return (ctx) => connector.testCredential!(values.value, ctx);
   }
   return undefined;
@@ -639,9 +655,10 @@ export class CredentialHealthChecker {
   }
 
   /**
-   * `isCheckableConnector` re-asked against what is actually stored: a hook that
-   * fits the value's shape (see {@link testHookFor}), or a `status()` to fall
-   * back on. Neither ⇒ there is no honest question to put to this connector.
+   * `isCheckableConnector` re-asked against what is actually stored: the hook
+   * the declared shape selects, bound to a value that fits it (see
+   * {@link testHookFor}), or a `status()` to fall back on. Neither ⇒ there is no
+   * honest question to put to this connector.
    */
   private canAsk(
     connector: Connector,
