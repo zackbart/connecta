@@ -1,27 +1,42 @@
 /**
  * connecta on Node.
  *
- * One MCP endpoint aggregating an HTTP API connector behind the nine meta-tools
- * plus execute_code (code mode, QuickJS/WASM sandbox), guarded by a static
- * bearer token, with OAuth/cache state on disk.
+ * One MCP endpoint aggregating two in-code HTTP API connectors behind the nine
+ * meta-tools plus execute_code (code mode, QuickJS/WASM sandbox), guarded by
+ * static bearer tokens — one of them bound to a toolkit — with OAuth/cache state
+ * on disk.
  *
  * Run:
  *   CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
  *   # then point an MCP client at http://localhost:8787/mcp with
  *   #   Authorization: Bearer dev-token
+ *   # …or at http://localhost:8787/mcp?toolkit=clock with
+ *   #   Authorization: Bearer clock-dev-token
  */
 import { api, bearerToken, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 
 const token = process.env.CONNECTA_TOKEN ?? "dev-token";
+const clockToken = process.env.CLOCK_TOKEN ?? "clock-dev-token";
 const port = Number(process.env.PORT ?? 8787);
 
 const connecta = createConnecta({
   // fileStorage persists downstream-OAuth/cache state across restarts.
   // Swap for memoryStorage() if you don't need persistence.
   storage: fileStorage("./.connecta-state.json"),
-  auth: bearerToken(token),
+  auth: [
+    // Bound credential: this token may open ?toolkit=clock and nothing else —
+    // not the `text` connector, and not an unscoped session over the whole
+    // registry. Refused at connect time, before any scoped registry exists.
+    bearerToken(clockToken, { subjectId: "clock-agent", toolkits: ["clock"] }),
+    // Operator credential: unbound, so it sees every connector plus /ui.
+    bearerToken(token, { subjectId: "operator" }),
+  ],
+  // A named scoped view over the registry, selected with ?toolkit=clock.
+  toolkits: {
+    clock: { connectors: ["time"], description: "Read-only clock access" },
+  },
   // Code mode: execute_code runs model-written JS in a QuickJS/WASM sandbox.
   // Remove this line to serve the nine base meta-tools only.
   executor: quickJsExecutor(),
@@ -35,6 +50,24 @@ const connecta = createConnecta({
           inputSchema: { type: "object", properties: {} },
           annotations: { readOnlyHint: true },
           handler: async () => ({ now: new Date().toISOString() }),
+        },
+      ],
+    }),
+    api("text", {
+      description: "Text — string utilities",
+      tools: [
+        {
+          name: "upper",
+          description: "Uppercase the given text.",
+          inputSchema: {
+            type: "object",
+            properties: { text: { type: "string" } },
+            required: ["text"],
+          },
+          annotations: { readOnlyHint: true },
+          handler: async ({ text }: { text: string }) => ({
+            text: text.toUpperCase(),
+          }),
         },
       ],
     }),

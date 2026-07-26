@@ -135,11 +135,49 @@ describe("toolkit-selection warning", () => {
     expect(warnings(logger)).not.toContain("toolkits are configured");
   });
 
-  it("stays quiet when toolkits are paired with inbound auth", () => {
+  // The #22 warning covered "no auth at all". Binding (#37) adds a second
+  // organizes-but-does-not-protect shape: authenticated, but every credential
+  // may still open every view. Each shape gets its own line — the fix differs.
+  it("warns when authenticated toolkits bind no identity", () => {
     const logger = spyLogger();
     createConnecta({
       connectors: [plainConnector],
       toolkits: { support: { connectors: ["plain"] } },
+      auth: bearerToken("secret"),
+      logger,
+    });
+    const warned = warnings(logger);
+    expect(warned).toContain("no inbound identity is bound to one");
+    // Not the no-auth line: auth IS configured here, so binding is the fix.
+    expect(warned).not.toContain("there is no inbound authentication");
+  });
+
+  it("stays quiet once one credential is bound to a toolkit", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      auth: bearerToken("secret", { toolkits: ["support"] }),
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("toolkits are configured");
+  });
+
+  it("counts an unscoped-only binding as a binding", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      auth: bearerToken("secret", { toolkits: [], unscoped: true }),
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("toolkits are configured");
+  });
+
+  it("stays quiet about bindings when no toolkit is selectable", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
       auth: bearerToken("secret"),
       logger,
     });

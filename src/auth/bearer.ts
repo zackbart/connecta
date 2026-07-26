@@ -1,3 +1,7 @@
+import {
+  resolveToolkitBinding,
+  type ToolkitBindingOptions,
+} from "../toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
 const encoder = new TextEncoder();
@@ -15,18 +19,34 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
   return r === 0;
 }
 
+export interface BearerTokenOptions extends ToolkitBindingOptions {
+  /** Stable identity for this credential, used on activity events. */
+  subjectId?: string;
+}
+
 /**
  * Static bearer-token inbound auth. Constant-time compares the Bearer token
  * against `secret`. Checked BEFORE the Clerk gate in the server; a mismatch
  * falls through so a co-configured Clerk provider can still admit the request.
+ *
+ * `toolkits` binds the token to named toolkits (§16): one `bearerToken(...)` per
+ * team credential, each naming the view that team may open. Omit it and the
+ * token stays unbound — every declared toolkit plus the full registry.
  */
 export function bearerToken(
   secret: string,
-  options: { subjectId?: string } = {},
+  options: BearerTokenOptions = {},
 ): InboundAuth {
   const secretBytes = encoder.encode(secret);
+  const toolkitBinding = resolveToolkitBinding(
+    options.subjectId
+      ? `bearerToken (subjectId "${options.subjectId}")`
+      : "bearerToken",
+    options,
+  );
   return {
     kind: "bearer",
+    ...(toolkitBinding ? { toolkitBinding } : {}),
     authorize(request): AuthResult {
       const header = request.headers.get("authorization") ?? "";
       const match = /^Bearer\s+(.+)$/i.exec(header);

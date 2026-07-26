@@ -239,9 +239,42 @@ export interface Executor {
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
 }
 
+/**
+ * Which toolkits one inbound identity may open — the membership half of the
+ * deployment=org / toolkit=team framing (§16). A mapping, never a policy
+ * engine: one identity → the toolkit names it may select, plus whether it may
+ * connect with no `?toolkit=` at all.
+ *
+ * An identity with NO binding is unbound and keeps the pre-binding behavior:
+ * any declared toolkit, or the full registry. A binding is enforced at connect
+ * time, before any scoped registry is constructed.
+ */
+export interface ToolkitBinding {
+  /** Toolkit names this identity may select with `?toolkit=<name>`. */
+  readonly toolkits: readonly string[];
+  /**
+   * Whether this identity may also connect with no `?toolkit=` and see the full
+   * registry (and read the deployment-wide operator surfaces). Defaults to
+   * false: binding a credential to a toolkit means binding it.
+   */
+  readonly unscoped?: boolean;
+}
+
 /** Result of an inbound-auth check. */
 export type AuthResult =
-  | { ok: true; userId?: string; subjectId?: string }
+  | {
+      ok: true;
+      userId?: string;
+      subjectId?: string;
+      /**
+       * Toolkit binding resolved for THIS identity. Overrides the provider's
+       * own `toolkitBinding` when present; omit to inherit it. Only names
+       * declared statically on the provider are validated at startup, so a
+       * binding minted here is enforced but never checked against the
+       * configured toolkits.
+       */
+      toolkitBinding?: ToolkitBinding;
+    }
   | { ok: false; response: Response };
 
 /** Public browser-auth configuration exposed to connecta's status UI. */
@@ -312,6 +345,14 @@ export interface InboundAuth {
    * provider instead of asking the operator to paste a static bearer secret.
    */
   uiAuth?: UiAuthConfig;
+  /**
+   * Optional toolkit binding for every identity this provider admits (§16).
+   * Declared statically so `createConnecta` can validate the names against
+   * `ConnectaConfig.toolkits` and throw on a typo — a binding nobody wrote is
+   * not one an operator can reason about. An `authorize` result may narrow it
+   * per identity with its own `toolkitBinding`.
+   */
+  toolkitBinding?: ToolkitBinding;
   /** Serve/short-circuit .well-known + OPTIONS. Return null when not handled. */
   handleMetadata?(
     request: Request,

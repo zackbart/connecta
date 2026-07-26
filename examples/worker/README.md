@@ -33,7 +33,8 @@ npm install                                    # from the package root
 wrangler kv namespace create CONNECTA_KV       # paste the id into wrangler.jsonc
 
 cd examples/worker
-wrangler secret put CONNECTA_TOKEN
+wrangler secret put SUPPORT_TOKEN                # bound to the support toolkit
+wrangler secret put EXEC_TOKEN                   # bound to the exec toolkit
 wrangler secret put CLERK_SECRET_KEY
 wrangler secret put DOWNSTREAM_TOKEN
 wrangler deploy
@@ -49,21 +50,25 @@ the operator dashboard.
 
 ## Toolkits (multi-team)
 
-`src/index.ts` declares two scoped views over the same registry, so one
-deployment serves several teams in the org:
+`src/index.ts` declares two scoped views over the same registry and **binds each
+one to its own credential**, so one deployment serves several teams in the org
+without any team's token opening another team's view:
 
-| Team | MCP URL | Sees |
-| --- | --- | --- |
-| support | `<PUBLIC_URL>/mcp?toolkit=support` | `notion` |
-| exec | `<PUBLIC_URL>/mcp?toolkit=exec` | `notion`, `echo` minus `echo.shout` |
-| operators | `<PUBLIC_URL>/mcp` | everything |
+| Team | Credential | MCP URL | Sees |
+| --- | --- | --- | --- |
+| support | `SUPPORT_TOKEN` (bound to `support`) | `<PUBLIC_URL>/mcp?toolkit=support` | `notion` |
+| exec | `EXEC_TOKEN` (bound to `exec`) | `<PUBLIC_URL>/mcp?toolkit=exec` | `notion`, `echo` minus `echo.shout` |
+| operators | Clerk sign-in (unbound) | `<PUBLIC_URL>/mcp` | everything |
 
 Inside a scoped session every meta-tool behaves as if out-of-scope connectors
 and tools do not exist, and an out-of-scope address fails exactly like a
-nonexistent one. Toolkits scope **visibility**, not identity: any caller `auth`
-admits may select any declared toolkit — or omit the parameter and see
-everything — so the shared `CONNECTA_TOKEN` in this example does not separate
-the teams. `auth` stays the access check. Full reference:
+nonexistent one. The binding is checked at connect time, before any scoped
+registry exists: `SUPPORT_TOKEN` on `?toolkit=exec` — or with no `?toolkit=` at
+all — is refused with a 403 identical to the one a toolkit name that does not
+exist gets, so a team token is not a directory of the org's other teams. It also
+cannot read the deployment-wide operator surfaces (`/ui/data`, `/ui/activity`).
+Drop the `toolkits: [...]` option from a `bearerToken(...)` call and that
+credential goes back to selecting any view. Full reference:
 [documentation.md §16](../../docs/documentation.md#16-toolkits-scoped-views).
 
 ## Code mode

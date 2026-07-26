@@ -144,13 +144,18 @@ stack): [`examples/docker/`](./examples/docker/).
 ## Toolkits — one deployment, many teams
 
 A deployment belongs to an org. Optional **toolkits** give each group of team
-members its own scoped view of the same registry, so different teams no longer
-need separate deployments:
+members its own scoped view of the same registry — bound to that group's
+credential — so different teams no longer need separate deployments:
 
 ```ts
 createConnecta({
   connectors: [zendesk, notion, gmail],
-  auth: bearerToken(env.CONNECTA_TOKEN),
+  auth: [
+    // Each team's credential is bound to that team's view.
+    bearerToken(env.SUPPORT_TOKEN, { toolkits: ["support"] }),
+    bearerToken(env.EXEC_TOKEN, { toolkits: ["exec"] }),
+    bearerToken(env.OPS_TOKEN), // unbound: every view, plus /ui
+  ],
   toolkits: {
     support: { connectors: ["zendesk", "notion"] },
     exec: {
@@ -168,12 +173,12 @@ out-of-scope connectors and tools do not exist, and an out-of-scope address
 fails identically to a nonexistent one. No `?toolkit=` ⇒ the full registry, as
 before; an unknown name is an error, never a silent fallback.
 
-A toolkit scopes **visibility, not identity**: any authenticated client may
-select any toolkit, or omit the parameter and see everything, so a credential
-shared by two teams gives both teams every view. Binding a member to a toolkit
-belongs in `auth`, which stays the access check; enforcing that binding is a
-deliberate follow-up
-([issue #37](https://github.com/zackbart/connecta/issues/37)). Details:
+`toolkits: [...]` on an auth adapter **binds** a credential to its views: the
+support token cannot open `?toolkit=exec`, cannot connect unscoped (unless it also
+passes `unscoped: true`), and cannot read the deployment-wide operator surfaces.
+Refusal is a flat 403 at connect time, identical whether the toolkit is another
+team's or does not exist at all — a mapping, not a policy engine. Leave `toolkits`
+off and that credential keeps today's self-service selection. Details:
 [docs §16](./docs/documentation.md#16-toolkits-scoped-views).
 
 ## Code mode

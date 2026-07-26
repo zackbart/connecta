@@ -6,8 +6,8 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
-  // Plain vars. Secrets (CONNECTA_TOKEN, CLERK_SECRET_KEY, DOWNSTREAM_TOKEN)
-  // are set with `wrangler secret put <NAME>`, not here.
+  // Plain vars. Secrets (SUPPORT_TOKEN, EXEC_TOKEN, CLERK_SECRET_KEY,
+  // DOWNSTREAM_TOKEN) are set with `wrangler secret put <NAME>`, not here.
   "vars": {
     "PUBLIC_URL": "https://connecta.example.workers.dev",
     "CLERK_PUBLISHABLE_KEY": "pk_test_replace-me"

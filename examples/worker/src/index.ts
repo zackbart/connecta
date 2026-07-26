@@ -12,7 +12,8 @@
  *      package import and wrangler resolve.
  *   2. Create a KV namespace and put its id in wrangler.jsonc under `kv_namespaces`.
  *   3. Set secrets:
- *        wrangler secret put CONNECTA_TOKEN
+ *        wrangler secret put SUPPORT_TOKEN
+ *        wrangler secret put EXEC_TOKEN
  *        wrangler secret put CLERK_SECRET_KEY
  *        wrangler secret put DOWNSTREAM_TOKEN
  *      and CLERK_PUBLISHABLE_KEY + PUBLIC_URL as plain vars in wrangler.jsonc.
@@ -33,7 +34,10 @@ import { cloudflareKvStorage } from "./cloudflare-kv.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;
-  CONNECTA_TOKEN: string;
+  /** Bearer token for the support team, bound to the `support` toolkit. */
+  SUPPORT_TOKEN: string;
+  /** Bearer token for the exec team, bound to the `exec` toolkit. */
+  EXEC_TOKEN: string;
   CLERK_PUBLISHABLE_KEY: string;
   CLERK_SECRET_KEY: string;
   DOWNSTREAM_TOKEN: string;
@@ -56,7 +60,22 @@ function build(env: Env) {
       ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
       : {}),
     auth: [
-      bearerToken(env.CONNECTA_TOKEN),
+      // One credential per team, each BOUND to that team's toolkit: the support
+      // token can open ?toolkit=support and nothing else — not the exec view,
+      // and not an unscoped session over the whole registry. Enforced at connect
+      // time, before any scoped registry exists.
+      bearerToken(env.SUPPORT_TOKEN, {
+        subjectId: "support-team",
+        toolkits: ["support"],
+      }),
+      bearerToken(env.EXEC_TOKEN, {
+        subjectId: "exec-team",
+        toolkits: ["exec"],
+      }),
+      // The operator signs in with Clerk and stays unbound: every toolkit, the
+      // unscoped registry, /ui, and the deployment-wide activity log. Add
+      // `toolkits: [...]` here too (with `unscoped: true` to keep the dashboard)
+      // to bind Clerk users; one clerkAuth per team, each with its own `gate`.
       clerkAuth({
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
         secretKey: env.CLERK_SECRET_KEY,
@@ -65,22 +84,18 @@ function build(env: Env) {
     ],
     // Multi-team setup: one deployment for the org, one scoped view per group
     // of team members. A client picks its view at connect time with a query
-    // parameter on the MCP URL:
+    // parameter on the MCP URL — and its credential decides whether it may:
     //
-    //   support team → <PUBLIC_URL>/mcp?toolkit=support
-    //   exec team    → <PUBLIC_URL>/mcp?toolkit=exec
-    //   operators    → <PUBLIC_URL>/mcp            (no parameter ⇒ everything)
+    //   support team → <PUBLIC_URL>/mcp?toolkit=support   (SUPPORT_TOKEN)
+    //   exec team    → <PUBLIC_URL>/mcp?toolkit=exec      (EXEC_TOKEN)
+    //   operators    → <PUBLIC_URL>/mcp                   (Clerk ⇒ everything)
     //
     // Inside a scoped session the meta-tools behave as if out-of-scope
     // connectors and tools do not exist, and an out-of-scope address fails
     // exactly like a nonexistent one. Unknown toolkit names are rejected, never
-    // silently widened.
-    //
-    // Toolkits scope VISIBILITY, not identity: any caller admitted by `auth`
-    // above may select any toolkit — or omit the parameter and see everything —
-    // so the shared CONNECTA_TOKEN here does not separate the two teams. Bind a
-    // member to a view in `auth` (Clerk's `gate`, or an InboundAuth adapter
-    // that inspects the requested ?toolkit=). See docs/documentation.md §16.
+    // silently widened; a toolkit a credential is not bound to is refused with a
+    // 403 that looks exactly like the refusal for a name that does not exist.
+    // See docs/documentation.md §16.
     toolkits: {
       support: { connectors: ["notion"] },
       exec: {

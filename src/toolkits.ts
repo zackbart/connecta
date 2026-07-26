@@ -4,10 +4,16 @@
 // A connecta deployment belongs to an ORG; a toolkit is the view a GROUP OF
 // TEAM MEMBERS inside that org gets — a "support" toolkit seeing Zendesk and
 // Notion, an "exec" toolkit that also sees Gmail. This module only *defines and
-// validates* scopes. Enforcement lives in one place: `ScopedRegistry`
-// (src/registry.ts), which every meta-tool inherits through `RegistryView`.
+// validates* scopes and the identity bindings that gate them. Enforcement lives
+// in two places, each with one job:
+//
+//   - WHICH toolkit an identity may open: the connect-time binding check in
+//     `resolveToolkitScope` (src/server.ts), run after the auth gate and before
+//     any scoped registry exists.
+//   - WHAT a selected toolkit may see: `ScopedRegistry` (src/registry.ts),
+//     which every meta-tool inherits through `RegistryView`.
 
-import type { Connector } from "./types.js";
+import type { Connector, InboundAuth, ToolkitBinding } from "./types.js";
 
 /** Toolkit names share the connector-id grammar: URL-safe, no separators. */
 export const TOOLKIT_NAME_RE = /^[a-z0-9_-]+$/;
@@ -121,9 +127,9 @@ function toolFilter(
  *
  * Structural mistakes THROW at construction rather than warn: a typo'd id in
  * an allowlist is a scope the operator did not write, and a scope nobody wrote
- * is not one an operator can reason about. (A toolkit scopes visibility, not
- * identity — it is not itself an access check; see the module header and
- * documentation.md §16.) Tool names are checked only for connectors that expose
+ * is not one an operator can reason about. (A definition scopes visibility only;
+ * WHICH identity may select it is the separate binding below — see the module
+ * header and documentation.md §16.) Tool names are checked only for connectors that expose
  * `staticTools` (i.e. `api()`); a remote connector's catalog is fetched lazily
  * over the network and is unknown at construction time.
  */
@@ -212,4 +218,118 @@ export function resolveToolkits(
     resolved.set(name, resolveToolkit(name, definition, known, staticTools));
   }
   return resolved;
+}
+
+/**
+ * The binding half of an inbound-auth adapter's options — the shape every
+ * shipped adapter (`bearerToken`, `clerkAuth`) mixes into its own options so an
+ * operator writes one thing in one style, next to the credential it binds.
+ */
+export interface ToolkitBindingOptions {
+  /**
+   * Toolkit names this credential may select with `?toolkit=<name>`. Present ⇒
+   * the identity is BOUND: any other toolkit, and (unless `unscoped`) a
+   * connection with no `?toolkit=`, is refused at connect time. Absent ⇒
+   * unbound, exactly as before bindings existed.
+   */
+  toolkits?: readonly string[];
+  /**
+   * Also allow a connection with no `?toolkit=` (the full registry, and the
+   * deployment-wide operator surfaces). Only meaningful beside `toolkits`.
+   */
+  unscoped?: boolean;
+}
+
+/**
+ * Validate one adapter's binding options into a `ToolkitBinding`, or undefined
+ * when the adapter declares none. Structural mistakes THROW where the operator
+ * wrote them (adapter construction), for the same reason toolkit definitions do:
+ * a binding that does not say what its author meant is worse than none, because
+ * it is invisible until the day it denies — or admits — the wrong caller.
+ *
+ * Names are only checked against the *grammar* here; cross-checking them
+ * against the configured toolkits happens in `validateToolkitBindings`, which
+ * runs in `createConnecta` where both halves are finally in scope.
+ */
+export function resolveToolkitBinding(
+  source: string,
+  options: ToolkitBindingOptions,
+): ToolkitBinding | undefined {
+  const { toolkits, unscoped } = options;
+  if (toolkits === undefined) {
+    if (unscoped !== undefined) {
+      // `unscoped` alone reads like a permission but grants nothing an unbound
+      // identity does not already have, so it is almost certainly a half-written
+      // binding — the one shape here that would silently fail OPEN.
+      throw new Error(
+        `${source}: \`unscoped\` only means something beside \`toolkits\`. ` +
+          "List the toolkits this credential may open, or drop `unscoped` to " +
+          "leave the credential unbound.",
+      );
+    }
+    return undefined;
+  }
+  if (!Array.isArray(toolkits)) {
+    throw new Error(
+      `${source}: \`toolkits\` must be an array of toolkit names.`,
+    );
+  }
+  const names: string[] = [];
+  for (const name of toolkits) {
+    if (typeof name !== "string" || !TOOLKIT_NAME_RE.test(name)) {
+      // A name outside the grammar can never match a declared toolkit, so this
+      // would bind the credential to nothing selectable.
+      throw new Error(
+        `${source}: \`toolkits\` entry ${JSON.stringify(name)} is not a ` +
+          `toolkit name (must match ${TOOLKIT_NAME_RE.source}).`,
+      );
+    }
+    if (!names.includes(name)) names.push(name);
+  }
+  if (names.length === 0 && unscoped !== true) {
+    throw new Error(
+      `${source}: binds no toolkits and no unscoped access, so this credential ` +
+        "could authenticate but never connect. List at least one toolkit, or " +
+        "pass `unscoped: true` to bind it to the full registry only.",
+    );
+  }
+  return Object.freeze({
+    toolkits: Object.freeze(names) as readonly string[],
+    ...(unscoped === true ? { unscoped: true } : {}),
+  });
+}
+
+/**
+ * Cross-check every statically declared binding against the deployment's
+ * toolkits, in `createConnecta`. A name that no toolkit declares is a typo, and
+ * a typo here fails CLOSED — the credential would be refused every connection
+ * with a 403 the client reads as a transport failure — so it throws at
+ * construction rather than becoming a support ticket.
+ *
+ * Bindings a provider mints per-identity (`AuthResult.toolkitBinding`) are not
+ * visible here and are not validated; they are still enforced identically.
+ */
+export function validateToolkitBindings(
+  auth: readonly InboundAuth[],
+  toolkits: ReadonlyMap<string, Toolkit> | undefined,
+): void {
+  for (const provider of auth) {
+    const binding = provider.toolkitBinding;
+    if (!binding) continue;
+    if (!toolkits || toolkits.size === 0) {
+      throw new Error(
+        `Inbound auth provider "${provider.kind}" binds toolkits ` +
+          `(${binding.toolkits.join(", ")}) but this deployment configures no ` +
+          "toolkits. Declare them in `toolkits`, or drop the binding.",
+      );
+    }
+    for (const name of binding.toolkits) {
+      if (!toolkits.has(name)) {
+        throw new Error(
+          `Inbound auth provider "${provider.kind}" binds unknown toolkit ` +
+            `"${name}". Configured toolkits: ${[...toolkits.keys()].join(", ")}.`,
+        );
+      }
+    }
+  }
 }

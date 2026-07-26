@@ -53,7 +53,8 @@ no registration API.
 **toolkits** ([§16](#16-toolkits-scoped-views)) give each group of team members
 its own scoped view of the same registry — `?toolkit=support` on the MCP URL —
 without running a second deployment. Declared in the same config, enforced in
-one place.
+one place, and **bound to a credential** so a team's token opens that team's view
+and nothing else.
 
 It is inspired by [executor](https://github.com/UsefulSoftwareCo/executor) but
 radically simplified: **no** GraphQL, **no** Effect-TS, **no**
@@ -88,11 +89,13 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `GET /favicon.svg` / `GET /favicon.ico` → the branding mark, or connecta's
      default (§14).
    - `GET /ui` → the open status-page shell (no data).
-   - `/ui/data` → **auth gate**, then the dashboard JSON (§14).
-   - `/ui/activity` → **auth gate** + optional `activityReadGate`, then paged
-     activity events (§15). `GET` only; 404 when no `activity.list` is
-     configured.
-   - `/mcp` → **auth gate**, then `?toolkit=` resolution (§16), then MCP.
+   - `/ui/data` → **auth gate**, then the dashboard JSON (§14). A
+     toolkit-bound identity is refused (§16) — the payload is deployment-wide.
+   - `/ui/activity` → **auth gate** + the same toolkit-binding refusal +
+     optional `activityReadGate`, then paged activity events (§15). `GET` only;
+     404 when no `activity.list` is configured.
+   - `/mcp` → **auth gate**, then the caller's toolkit binding + `?toolkit=`
+     resolution (§16), then MCP.
    - a connector's `handleRequest` (open), in registration order — dispatched
      only after every built-in route misses, so a connector can add a route but
      never shadow one of connecta's. First non-null Response wins; a throw is a
@@ -147,12 +150,12 @@ connecta/
     types.ts              # Connector, ToolDef, KVStorage, InboundAuth, ...
     validate.ts           # validateToolInput() — shared by api() and custom connectors
     json-schema.ts        # Validator re-export ("@zackbart/connecta/json-schema")
-    server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth + credential routes
+    server.ts             # fetch handler: routing, auth gate, toolkit binding, MCP transport, OAuth + credential routes
     meta-tools.ts         # the nine meta-tools over the registry
     execute.ts            # the optional execute_code meta-tool + sandbox host bridge
     skills.ts             # initialize instructions + the usage skill and per-connector guide lookup
     registry.ts           # connector set, address resolution, tool caches, ScopedRegistry (the toolkit boundary)
-    toolkits.ts           # toolkit definitions + construction-time validation
+    toolkits.ts           # toolkit definitions + identity bindings + construction-time validation
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
     activity.ts           # payload-free activity contracts + best-effort recorder
@@ -165,7 +168,7 @@ connecta/
       remote-mcp.ts       # remoteMcp() — SDK client; headers or oauth
       api.ts              # api() — hand-written tool defs + handlers
     auth/
-      bearer.ts           # bearerToken()
+      bearer.ts           # bearerToken() — optionally bound to toolkits (§16)
       clerk.ts            # optional Clerk adapter ("@zackbart/connecta/auth/clerk")
       downstream-oauth.ts # KvOAuthProvider — OAuthClientProvider over KVStorage
     executors/
@@ -979,11 +982,24 @@ The scheme keyword is case-insensitive. On mismatch it returns a 401 with
 `WWW-Authenticate: Bearer` — but because it's checked first, a mismatch **falls
 through** to a co-configured Clerk provider rather than ending the request.
 
+```ts
+export interface BearerTokenOptions {
+  subjectId?: string;          // stable identity for activity events
+  toolkits?: readonly string[]; // toolkits this token may open (§16)
+  unscoped?: boolean;          // also allow a connection with no ?toolkit=
+}
+```
+
 `options.subjectId` assigns this credential a stable identity for activity
 events (§15). A shared token identifies no person, so events are otherwise
 labeled `{ kind: "bearer" }` with no `id`; pass `subjectId` when a token
 belongs to one known caller (`bearerToken(secret, { subjectId: "ci-runner" })`)
 and events carry that instead.
+
+`options.toolkits` **binds** the token to named toolkits — one `bearerToken(...)`
+per team credential — and `unscoped: true` additionally lets it connect with no
+`?toolkit=`. Both are part of toolkit binding and are documented with their
+enforcement in [§16](#16-toolkits-scoped-views).
 
 ### `clerkAuth(options)`
 
@@ -1004,6 +1020,8 @@ export interface ClerkAuthOptions {
   scopes?: string[];    // advertised scopes; default ["openid","profile","email"]
   signInUrl?: string;   // hosted Account Portal URL used by /ui
   signUpUrl?: string;   // hosted Account Portal URL used by /ui
+  toolkits?: readonly string[]; // toolkits every admitted user may open (§16)
+  unscoped?: boolean;   // also allow a connection with no ?toolkit=
 }
 ```
 
@@ -1052,8 +1070,16 @@ Use Clerk restrictions to control account creation; use `gate` as the
 application-level authorization check on every Connecta request.
 
 Both decide **whether** a caller is admitted. **Toolkits** (§16) decide **what**
-an admitted caller sees — a third, orthogonal layer. They are not an
-authentication check: any admitted caller may select any declared toolkit.
+an admitted caller sees — a third, orthogonal layer — and a toolkit **binding**
+(`toolkits: [...]` on an auth adapter) decides **which** of those views a given
+credential may select. Binding runs after admission, so the two stay separate:
+`gate` says who is a user of this deployment, the binding says which team's view
+their credential opens.
+
+A Clerk provider's `toolkits` binds every user it admits. To split users by team,
+configure one `clerkAuth(...)` per team — same keys, that team's `gate`, that
+team's `toolkits`. Providers are tried in order and the first that admits the
+user supplies the binding, so a user one gate rejects falls through to the next.
 
 ---
 
@@ -1171,8 +1197,10 @@ The key spaces do not overlap:
 The encryption key stays outside KV. `/ui` returns only `configured`, masked
 per-field metadata, and the update time. Mutation endpoints require a
 Clerk-authenticated, gate-approved operator, reject the static inbound bearer,
-require a same-origin request, disable wildcard CORS, and never return the
-credential after saving it.
+reject an identity bound to a toolkit ([§16](#16-toolkits-scoped-views)) — a
+credential is deployment-wide, so writing one reaches every view — require a
+same-origin request, disable wildcard CORS, and never return the credential after
+saving it.
 
 The routes `/ui` drives (all under the same rules above):
 
@@ -1200,7 +1228,7 @@ when the response returns. `ConnectaConfig`:
 | --- | --- | --- |
 | `connectors` | — (required) | the connector set |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array (§5) |
-| `toolkits?` | unset — or `{}`, which selects nothing — ⇒ every connection sees the full registry | named scoped views selected with `?toolkit=` ([§16](#16-toolkits-scoped-views)); structural mistakes throw at construction |
+| `toolkits?` | unset — or `{}`, which selects nothing — ⇒ every connection sees the full registry | named scoped views selected with `?toolkit=` ([§16](#16-toolkits-scoped-views)); bind one to a credential with `toolkits: [...]` on its auth adapter, or selection stays self-service (and warns at startup). Structural mistakes — in a definition or in a binding that names it — throw at construction |
 | `storage?` | `memoryStorage()` | the one state seam (§7) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console` prefixed `[connecta]` | `{ debug, info, warn, error }` |
@@ -1404,16 +1432,16 @@ Test suites (`test/`) and what they cover:
 | `api-connector.test.ts` | `api()` kind/description, tool defs, dispatch, default args, unknown-tool + handler-throw behaviour |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process MCP server via `_transportFactory` — listTools/callTool passthrough, downstream `isError`, Cloudflare-safe output-schema validation, ok status, and request-scoped client reuse |
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
-| `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges |
+| `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the toolkit binding a token declares (§16) — frozen, deduplicated, and throwing on every shape that would not mean what it says (`unscoped` alone, a binding that permits nothing, a name outside the grammar, a non-array) |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
-| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces |
+| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, a per-identity binding from `AuthResult` overriding the provider's, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37 |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
-| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed) |
-| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the toolkit-selection warning keyed off the *resolved* toolkits (so `toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
+| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), and the toolkit binding the provider declares for the users it admits |
+| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the two toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth and authenticated-but-unbound each get their own line; one declared binding — `unscoped: true` included — silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
 | `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
@@ -1573,7 +1601,9 @@ A minimal, read-only dashboard for operators with no build step. Two routes
   Clerk's hosted sign-in, and retrieves the active session's short-lived token.
   A bearer-only deployment retains the manual `localStorage` token prompt.
 - **`GET /ui/data`** — the JSON the page fetches, behind the **same auth gate as
-  `/mcp`** (static bearer, Clerk OAuth token, or Clerk session token admit).
+  `/mcp`** (static bearer, Clerk OAuth token, or Clerk session token admit), and
+  refused with 403 for an identity bound to a toolkit
+  ([§16](#16-toolkits-scoped-views)) — this payload is deployment-wide.
   Shape: `{ serverInfo, activityEnabled,
   connectors: [{ id, title?, description?, status, message?, authorizationUrl?,
   toolCount, tools: [{ name, address, description? }], credential? }] }`. Broken
@@ -1772,7 +1802,9 @@ Without it, a Worker may cancel the pending write when the response returns.
 ### Reading it
 
 Implementing `list` enables both `GET /ui/activity` and the Activity tab in
-`/ui`. The route sits behind the same auth gate as `/mcp`, plus the optional
+`/ui`. The route sits behind the same auth gate as `/mcp`, refuses an identity
+bound to a toolkit with 403 (the log is deployment-wide —
+[§16](#16-toolkits-scoped-views)), and then applies the optional
 `activityReadGate(actor)` for narrowing reads further (an admin allowlist, say):
 
 ```ts
@@ -1805,12 +1837,31 @@ org gets: a `support` toolkit that sees Zendesk and Notion, an `exec` toolkit
 that also sees Gmail. Before toolkits, the only way to give two teams different
 tool subsets was to run two deployments.
 
-A toolkit is **config as code**, like everything else:
+Two halves, and both are needed for the boundary to protect rather than merely
+organize: a toolkit **declares** a view, and a **binding** on an auth adapter
+says which credential may select it.
+
+A toolkit is **config as code**, like everything else — and each one is **bound
+to the credential** of the team it belongs to:
 
 ```ts
 createConnecta({
   connectors: [zendesk, notion, gmail],
-  auth: bearerToken(env.CONNECTA_TOKEN),
+  auth: [
+    // Two teams, two credentials, two views. The support token can open
+    // ?toolkit=support and nothing else.
+    bearerToken(env.SUPPORT_TOKEN, {
+      subjectId: "support-team",
+      toolkits: ["support", "triage"],
+    }),
+    bearerToken(env.EXEC_TOKEN, {
+      subjectId: "exec-team",
+      toolkits: ["exec"],
+    }),
+    // An operator credential: bound to nothing, so it keeps the full registry
+    // and the deployment-wide operator surfaces.
+    bearerToken(env.OPS_TOKEN, { subjectId: "ops" }),
+  ],
   toolkits: {
     support: { connectors: ["zendesk", "notion"] },
     exec: {
@@ -1832,7 +1883,14 @@ A client selects one at connect time with a query parameter on the MCP URL:
 https://connecta.example.com/mcp?toolkit=support
 ```
 
+Two independent questions, answered in this order on every request: **who is
+this** (the auth gate, §5), then **may this identity have that view** (the
+binding), then **what does that view contain** (`ScopedRegistry`).
+
 ### Selecting a scope
+
+For an **unbound** identity — no `toolkits` on the adapter that admitted it —
+selection is self-service, exactly as it was before bindings existed:
 
 | `?toolkit=` | Result |
 | --- | --- |
@@ -1844,6 +1902,23 @@ The unknown-toolkit error does not enumerate the configured toolkits, and it is
 returned **after** the auth gate — an unauthenticated caller gets the same 401
 for a real toolkit name as for an invented one, so `/mcp` is not a directory of
 your teams.
+
+For a **bound** identity, the binding is checked first and refusal is a flat
+**403**:
+
+| `?toolkit=` | Result |
+| --- | --- |
+| a name in the binding, declared by the deployment | A scoped session over that toolkit. |
+| absent, with `unscoped: true` | The full registry. |
+| absent, without `unscoped` | **403** — it must name a view it is bound to. |
+| a declared name outside the binding | **403**, identical to the line below. |
+| an undeclared or malformed name | **403**, identical to the line above. |
+
+Those three 403s are **byte-identical**, status and body: a team credential must
+not become a directory of the org's other teams, so "you may not have this" and
+"that does not exist" are indistinguishable. The body names no toolkit at all.
+The refusal happens before any `ScopedRegistry` is constructed and before the MCP
+transport runs, so a refused request never touches a connector.
 
 **A misspelled `?toolkit=` looks like a connection failure — check the server
 log.** This is the predictable first-week failure mode of a hand-copied client
@@ -1868,6 +1943,20 @@ gate — so on a deployment with `auth` configured, a caller the gate rejects
 cannot make it log anything. In open mode the gate admits everyone, so any caller
 can, exactly as any caller can already reach every connector there (§5). A
 deployment that declares no toolkits at all logs that instead of a list.
+
+A **binding** refusal is logged the same way, and this is where the three cases
+the response deliberately conflates are told apart — it is the operator surface,
+so it names the identity, the reason, and the binding:
+
+```
+[connecta] refused an /mcp connection from bearer "support-team" with 403: it
+asked for toolkit "exec", which its toolkit binding does not include. Bound
+toolkits: support. …
+
+[connecta] refused an unscoped /mcp connection from bearer "support-team" with
+403: its toolkit binding does not allow the full registry. Bound toolkits:
+support. …
+```
 
 `/mcp` is stateless (§2), so the scope is resolved from the URL of **every**
 request rather than pinned at an `initialize` handshake. There is no scope
@@ -1922,6 +2011,11 @@ against `RegistryView`, so a meta-tool cannot reach past the boundary — and a
 new one inherits it without writing a check. Reviewing the scope means reading
 one class, not nine handlers.
 
+Binding has its own single point, one step earlier in the same function: whether
+a `ScopedRegistry` is built at all, and for which toolkit, is decided from the
+caller's `ToolkitBinding` before any view exists. The two never overlap — the
+binding cannot narrow a view, and a view cannot admit an identity.
+
 ### Decisions worth knowing
 
 - **Tool descriptions follow the scope.** Meta-tools are registered per
@@ -1931,12 +2025,19 @@ one class, not nine handlers.
   **scoped** connector set. A scoped session whose connectors carry no guides
   sees the base text and never learns from a description that guides exist out
   of scope.
-- **Operator surfaces are deliberately unscoped.** `/ui`, `/ui/data`,
-  `/ui/activity`, `/health`, `/oauth/callback/<id>`, the credential API, and
-  connector-owned `handleRequest` routes ignore `?toolkit=` entirely. They are
-  for the operator running the deployment, not for a team's agent, and they keep
-  their own gates (§5, §7, §14). Authorizing a connector's downstream OAuth is
-  an operator act with deployment-wide effect.
+- **Operator surfaces are deliberately unscoped — and closed to bound
+  identities.** `/ui`, `/ui/data`, `/ui/activity`, `/health`,
+  `/oauth/callback/<id>`, the credential API, and connector-owned
+  `handleRequest` routes ignore `?toolkit=` entirely: they are for the operator
+  running the deployment, not for a team's agent, and they keep their own gates
+  (§5, §7, §14). Because their payloads are deployment-wide, the three that read
+  or write deployment state behind the auth gate — `/ui/data`, `/ui/activity`,
+  and the credential API — **refuse a toolkit-bound identity with 403**. A
+  restricted credential cannot answer with connector health for the whole org
+  through the back door, and cannot overwrite a credential every toolkit shares.
+  A binding that carries `unscoped: true` is not restricted and keeps them, which
+  is what an operator credential should look like. `/health` (a count, no names)
+  and the open routes are unchanged.
 - **Scoping filters views, never state.** The tool cache and the persisted
   catalog (§4) are shared and stay whole: a scoped read delegates to the
   registry and filters the array it gets back. Two toolkits over the same
@@ -1972,34 +2073,76 @@ one class, not nine handlers.
   as unscoped calls, plus `toolkitId` on the event (§15) so an operator can see
   which team's view a call came through.
 
-### What toolkits are *not*
+### Binding a toolkit to an identity
 
-A toolkit scopes **visibility**, not **identity**. Any *authenticated* client can
-select any declared toolkit — or omit `?toolkit=` and get the full registry.
-Nothing yet binds a team member to a toolkit, so **a shared credential handed to
-two teams gives both teams every toolkit**: today a toolkit shapes what a
-connection *sees*, and the auth gate (§5) remains the only thing deciding who
-gets in. With no `auth` at all, connecta warns at construction, because then
-anyone can pick any view.
+A toolkit on its own scopes **visibility**. A **binding** is what makes it also a
+membership boundary: which credential may select which view. It lives on the auth
+adapter that mints the identity, next to the secret it applies to, rather than in
+a separate table keyed by an id you could typo — a typo in such a key would
+silently mean *unbound*, which fails open.
 
-For the same reason, an admitted caller *can* tell a real toolkit name from an
-invented one (404 vs. 200) — which is inherent to letting a client select its
-own scope. The property that holds is the one that matters: once a scope is
-selected, nothing inside it reveals or reaches what is outside it.
+```ts
+bearerToken(env.SUPPORT_TOKEN, {
+  subjectId: "support-team",
+  toolkits: ["support", "triage"], // the only views this token may open
+  // unscoped: true,               // ...and also the full registry
+});
+```
 
-Binding a specific member or credential to a specific toolkit is a deliberate
-follow-up, tracked as
-[issue #37](https://github.com/zackbart/connecta/issues/37) — nothing in this
-section anticipates it, and until it lands, a toolkit organizes the surface
-rather than protecting it. The seam already exists: an `InboundAuth` adapter
-sees the full request, `?toolkit=` included, so it can refuse a request whose
-toolkit does not match the caller before the scope is ever built.
+The same two options exist on `clerkAuth` (§5), where they bind every user that
+provider admits; one `clerkAuth` per team, each with its own `gate`, splits users
+by team. Both adapters build the same `ToolkitBinding`, which is the only shape
+the server enforces:
+
+```ts
+interface ToolkitBinding {
+  readonly toolkits: readonly string[]; // names this identity may select
+  readonly unscoped?: boolean;          // may also connect with no ?toolkit=
+}
+```
+
+**It is a mapping, not a policy engine** — deliberately. One identity → the
+toolkits it may open. No roles, no hierarchies, no expressions, no per-request
+conditions. That is the whole feature; anything more belongs outside connecta.
+
+Semantics:
+
+- **Unbound is unchanged.** An identity whose adapter declares no `toolkits` gets
+  exactly the pre-binding behavior: any declared toolkit, the full registry, and
+  a 404 for an unknown name. Bindings are per *identity*, not per deployment, so
+  a legacy token beside two bound ones keeps working exactly as it did.
+- **Bound means bound.** `unscoped` defaults to false: binding a credential to
+  the `support` view also stops it from connecting with no `?toolkit=` and
+  reading the whole registry (including the deployment-wide connector health
+  `list_connectors` returns). Pass `unscoped: true` for a credential that should
+  keep both — an operator's, typically.
+- **Refusal is authentication-shaped and uniform.** 403 at connect time, never a
+  fallback to another scope, with the same body for "not yours", "does not
+  exist", and "you may not go unscoped" (see the table above).
+- **Deployment-wide operator surfaces are closed to a restricted identity**
+  (`/ui/data`, `/ui/activity`, the credential API) — see *Decisions worth
+  knowing* above.
+- **A provider may resolve a binding per identity.** An `InboundAuth.authorize`
+  result can return its own `toolkitBinding`, which overrides the provider's
+  declaration for that identity — the seam for an adapter that maps its own users
+  to views. Only the *declared* bindings are validated at startup, since a
+  per-identity one does not exist until a request arrives.
+
+Startup warnings track the two shapes where the boundary organizes but does not
+protect (each fires at most once, and never changes behavior):
+
+| Deployment shape | Warning |
+| --- | --- |
+| toolkits, no `auth` at all | there is no identity to bind, so binding is not the fix — configure `auth` first |
+| toolkits + `auth`, but no provider declares a binding | every credential can select every view; bind them |
+| toolkits + at least one binding | silent |
 
 ### Validation
 
-Toolkit definitions are validated when `createConnecta` runs, and structural
-mistakes **throw** rather than warn — a typo'd id is a scope you did not write,
-and a scope nobody wrote is not one an operator can reason about:
+Toolkit definitions **and** the bindings that name them are validated when
+`createConnecta` runs, and structural mistakes **throw** rather than warn — a
+typo'd id is a scope you did not write, and a scope nobody wrote is not one an
+operator can reason about:
 
 - an unknown toolkit name grammar (names are `[a-z0-9_-]+`, like connector ids),
 - a toolkit selecting no connectors,
@@ -2012,6 +2155,24 @@ and a scope nobody wrote is not one an operator can reason about:
 - a present-but-empty `includeTools`. It reads as "only these tools" and would
   behave as "all of them" — the one shape here that fails *open*. An empty
   `excludeTools` is an honest no-op and is allowed.
+
+A binding is checked twice, in the two places that can see the mistake. The
+adapter itself (`bearerToken(...)`, `clerkAuth(...)`) throws on a binding that
+does not say what it means:
+
+- a name outside the toolkit name grammar, which could never match a declaration,
+- `unscoped` with no `toolkits` — it reads like a permission but grants nothing an
+  unbound identity does not already have, so it is a half-written binding,
+- `toolkits: []` with no `unscoped` — a credential that could authenticate but
+  never connect. (`toolkits: []` *with* `unscoped: true` is a real
+  configuration: full registry only, no toolkit selection.)
+
+Then `createConnecta` cross-checks the names against `toolkits`, and throws on a
+binding that names a toolkit this deployment does not declare, or any binding at
+all on a deployment that declares none. A typo there fails *closed* — that
+credential would be refused every connection, with a 403 its client reports as a
+transport failure — which is exactly the kind of mistake that should never reach
+production.
 
 Tool names on **remote** connectors cannot be validated at construction: their
 catalogs are fetched lazily over the network and are unknown until first use. An

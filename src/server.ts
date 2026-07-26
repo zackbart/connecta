@@ -20,6 +20,7 @@ import type {
   Executor,
   InboundAuth,
   Logger,
+  ToolkitBinding,
 } from "./types.js";
 import { CONNECTA_FAVICON_ICO } from "./favicon.js";
 import {
@@ -200,6 +201,8 @@ async function authorize(
       actor: ActivityActor;
       providerKind?: string;
       userId?: string;
+      /** The admitting identity's toolkit binding, if it has one (§16). */
+      toolkitBinding?: ToolkitBinding;
     }
   | { ok: false; response: Response }
 > {
@@ -211,6 +214,9 @@ async function authorize(
     const result = await provider.authorize(request, baseUrl);
     if (result.ok) {
       const subjectId = result.subjectId ?? result.userId;
+      // The identity's own binding wins over the provider-wide declaration, so
+      // an adapter can resolve one per user; the declaration is the default.
+      const toolkitBinding = result.toolkitBinding ?? provider.toolkitBinding;
       return {
         ok: true,
         actor: {
@@ -219,6 +225,7 @@ async function authorize(
         },
         providerKind: provider.kind,
         ...(result.userId ? { userId: result.userId } : {}),
+        ...(toolkitBinding ? { toolkitBinding } : {}),
       };
     }
     lastResponse = result.response;
@@ -319,6 +326,11 @@ async function authorizeUiAdmin(
         { status: 403 },
       ),
     };
+  }
+  // A toolkit-bound identity is a team's credential, not a vault admin key:
+  // credentials are deployment-wide, so writing one reaches every toolkit.
+  if (isToolkitRestricted(result.toolkitBinding ?? provider.toolkitBinding)) {
+    return { ok: false, response: restrictedOperatorSurface() };
   }
   return { ok: true, userId: result.userId };
 }
@@ -552,14 +564,15 @@ interface McpScope {
 }
 
 /**
- * Bounded, escaped form of a rejected toolkit name for the operator log. Goes
- * through JSON.stringify so a caller-controlled newline or control character
- * cannot forge a log line, plus a hand-rolled escape for U+2028/U+2029, which
- * JSON.stringify leaves raw even though a log reader treats them as line
- * terminators. Truncated to the same length the response body echoes at, so an
- * oversized value cannot flood the log either.
+ * Bounded, escaped form of a caller-influenced value (a rejected toolkit name,
+ * an identity id) for the operator log. Goes through JSON.stringify so a
+ * caller-controlled newline or control character cannot forge a log line, plus a
+ * hand-rolled escape for U+2028/U+2029, which JSON.stringify leaves raw even
+ * though a log reader treats them as line terminators. Truncated to the same
+ * length the response body echoes at, so an oversized value cannot flood the log
+ * either.
  */
-function loggableToolkitName(requested: string): string {
+function loggableValue(requested: string): string {
   const bounded = requested.slice(0, MAX_ECHOED_TOOLKIT_NAME);
   const escaped = JSON.stringify(bounded).replace(
     /[\u2028\u2029]/g,
@@ -568,47 +581,127 @@ function loggableToolkitName(requested: string): string {
   return escaped + (bounded.length < requested.length ? " (truncated)" : "");
 }
 
+/** The one refusal a bound identity ever sees. Constant on purpose — see below. */
+const TOOLKIT_FORBIDDEN_BODY = JSON.stringify({
+  jsonrpc: "2.0",
+  id: null,
+  error: {
+    code: -32600,
+    message:
+      "Not permitted to use the requested toolkit. This credential is bound " +
+      "to a specific toolkit — check the ?toolkit= value in this deployment's " +
+      "MCP endpoint URL with the operator.",
+  },
+});
+
 /**
- * Resolve `?toolkit=<name>` into the registry view this connection may see.
+ * 403 for every binding refusal, with a body that does not depend on WHY.
+ *
+ * A bound identity asking for a toolkit it may not open, for a toolkit that does
+ * not exist, or for no toolkit at all gets byte-identical responses, so a team
+ * credential cannot be used to enumerate the org's other teams — the boundary
+ * would leak the very structure it exists to hide. The operator log below is
+ * where the three cases are told apart.
+ */
+function toolkitForbidden(): Response {
+  return new Response(TOOLKIT_FORBIDDEN_BODY, {
+    status: 403,
+    headers: {
+      "Content-Type": "application/json",
+      "Cache-Control": "no-store",
+    },
+  });
+}
+
+/** How a rejected connection is named in the operator log. */
+function identityLabel(actor: ActivityActor): string {
+  return actor.id ? `${actor.kind} ${loggableValue(actor.id)}` : actor.kind;
+}
+
+/**
+ * Resolve `?toolkit=<name>` into the registry view this connection may see,
+ * enforcing the caller's toolkit binding (§16) on the way.
+ *
+ * For an UNBOUND identity (no binding configured — the pre-#37 shape):
  *
  * - absent → the full registry, byte-identical to a deployment with no toolkits
- * - known → a `ScopedRegistry` over that toolkit (the one enforcement point)
+ * - known → a `ScopedRegistry` over that toolkit (the one visibility boundary)
  * - anything else, including `?toolkit=` with an empty value → an explicit
- *   error. Never a silent fallback to the full registry.
+ *   404. Never a silent fallback to the full registry.
  *
- * The error deliberately does not enumerate the configured toolkits: the name
- * selects a scope, so a wrong guess gets a flat "unknown", not a directory.
+ * For a BOUND identity, membership is checked FIRST and refusal is a flat 403:
+ * a toolkit outside the binding, an unknown name, and (without `unscoped`) an
+ * omitted `?toolkit=` are all refused before any `ScopedRegistry` is built, and
+ * all three produce the same response.
  *
- * Because of that — and because SDK clients treat a 404 on the transport
- * endpoint as a transport failure and discard the body — the rejection is also
- * logged operator-side (issue #47), which is the channel that actually reaches
- * a human. The log line may name the configured toolkits; the response still
- * may not.
+ * Neither error enumerates the configured toolkits: the name selects a scope, so
+ * a wrong guess gets a flat refusal, not a directory.
+ *
+ * Because of that — and because SDK clients treat a 404/403 on the transport
+ * endpoint as a transport failure and discard the body — every rejection is also
+ * logged operator-side (issue #47), which is the channel that actually reaches a
+ * human. The log line may name the configured or bound toolkits; the response
+ * still may not.
  */
 function resolveToolkitScope(
   url: URL,
   registry: Registry,
   toolkits: ReadonlyMap<string, Toolkit> | undefined,
   logger: Logger,
+  identity: { actor: ActivityActor; binding?: ToolkitBinding },
 ):
   | { ok: true; scope: McpScope }
   | { ok: false; response: Response } {
   const requested = url.searchParams.get("toolkit");
+  const binding = identity.binding;
+  const scopeFor = (toolkit: Toolkit) => ({
+    ok: true as const,
+    scope: {
+      registry: new ScopedRegistry(registry, toolkit),
+      toolkitId: toolkit.name,
+    },
+  });
+
+  if (binding) {
+    const who = identityLabel(identity.actor);
+    const bound = `Bound toolkits: ${binding.toolkits.join(", ") || "(none)"}${
+      binding.unscoped ? ", plus unscoped access" : ""
+    }.`;
+    if (requested === null) {
+      if (binding.unscoped) return { ok: true, scope: { registry } };
+      logger.warn(
+        `[connecta] refused an unscoped /mcp connection from ${who} with 403: ` +
+          "its toolkit binding does not allow the full registry. " +
+          bound +
+          " The client sees a transport-level failure and never the reason, so " +
+          "give it an MCP endpoint URL with a ?toolkit= value it is bound to.",
+      );
+      return { ok: false, response: toolkitForbidden() };
+    }
+    const permitted = binding.toolkits.includes(requested);
+    const toolkit = permitted ? toolkits?.get(requested) : undefined;
+    if (toolkit) return scopeFor(toolkit);
+    logger.warn(
+      `[connecta] refused an /mcp connection from ${who} with 403: it asked ` +
+        `for toolkit ${loggableValue(requested)}, which ` +
+        (permitted
+          ? "its binding allows but this deployment does not configure"
+          : "its toolkit binding does not include") +
+        ". " +
+        bound +
+        " The client sees a transport-level failure and never the reason, so " +
+        "check the ?toolkit= value in its MCP endpoint URL.",
+    );
+    return { ok: false, response: toolkitForbidden() };
+  }
+
   if (requested === null) return { ok: true, scope: { registry } };
   const toolkit = toolkits?.get(requested);
-  if (toolkit) {
-    return {
-      ok: true,
-      scope: {
-        registry: new ScopedRegistry(registry, toolkit),
-        toolkitId: toolkit.name,
-      },
-    };
-  }
+  if (toolkit) return scopeFor(toolkit);
   const configured = toolkits && toolkits.size > 0 ? [...toolkits.keys()] : [];
   logger.warn(
     "[connecta] rejected an /mcp connection asking for unknown toolkit " +
-      `${loggableToolkitName(requested)} with 404. ` +
+      `${loggableValue(requested)} with 404. ` +
       (configured.length > 0
         ? `Configured toolkits: ${configured.join(", ")}.`
         : "This deployment configures no toolkits, so no ?toolkit= value is accepted.") +
@@ -642,6 +735,29 @@ function resolveToolkitScope(
       },
     ),
   };
+}
+
+/**
+ * True when this identity is confined to one or more toolkits — bound, without
+ * `unscoped`. Such a credential belongs to a team's agent, not to the operator
+ * running the deployment, so the deployment-wide operator surfaces (`/ui/data`,
+ * `/ui/activity`, the credential API) refuse it: their payloads describe every
+ * connector in the org, which is exactly what the binding exists to withhold.
+ */
+function isToolkitRestricted(binding: ToolkitBinding | undefined): boolean {
+  return Boolean(binding && !binding.unscoped);
+}
+
+/** The refusal the deployment-wide operator surfaces give a bound identity. */
+function restrictedOperatorSurface(): Response {
+  return privateJson(
+    {
+      error:
+        "this credential is bound to a toolkit and may not read " +
+        "deployment-wide operator data",
+    },
+    { status: 403 },
+  );
 }
 
 async function serveMcp(
@@ -874,6 +990,9 @@ export function createFetchHandler(
       if (path === "/ui/data") {
         const authz = await authorize(request, baseUrl, auth);
         if (!authz.ok) return authz.response;
+        if (isToolkitRestricted(authz.toolkitBinding)) {
+          return restrictedOperatorSurface();
+        }
         const data = await buildUiData(
           registry,
           baseUrl,
@@ -894,6 +1013,9 @@ export function createFetchHandler(
         }
         const authz = await authorize(request, baseUrl, auth);
         if (!authz.ok) return authz.response;
+        if (isToolkitRestricted(authz.toolkitBinding)) {
+          return restrictedOperatorSurface();
+        }
         if (
           opts.activityReadGate &&
           !(await opts.activityReadGate(authz.actor))
@@ -938,6 +1060,12 @@ export function createFetchHandler(
           registry,
           opts.toolkits,
           opts.logger,
+          {
+            actor: authz.actor,
+            ...(authz.toolkitBinding
+              ? { binding: authz.toolkitBinding }
+              : {}),
+          },
         );
         if (!selected.ok) return withMcpCors(selected.response);
         return withMcpCors(

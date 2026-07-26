@@ -16,6 +16,7 @@ import type {
   Connector,
   Executor,
   ExecutorProvider,
+  InboundAuth,
   Logger,
 } from "../src/types.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
@@ -1080,6 +1081,21 @@ function deployment(
   });
 }
 
+/**
+ * A deployment plus a warn spy that starts empty. Construction itself warns that
+ * these toolkits bind no identity (#37); the request-time log assertions below
+ * are about what a *connection* writes, so the construction line is cleared
+ * first rather than filtered out of every expectation.
+ */
+function deploymentWithWarnSpy(
+  extra: Partial<Parameters<typeof createConnecta>[0]> = {},
+) {
+  const warn = vi.fn();
+  const c = deployment({ logger: { ...silentLogger, warn }, ...extra });
+  warn.mockClear();
+  return { c, warn };
+}
+
 describe("/mcp toolkit selection", () => {
   it("serves the full registry when no ?toolkit= is given", async () => {
     const withToolkits = deployment();
@@ -1225,8 +1241,7 @@ describe("/mcp toolkit selection", () => {
   // surfaces a misspelled ?toolkit=. It may name the valid options; the
   // response still may not.
   it("logs the rejected name and the valid options operator-side", async () => {
-    const warn = vi.fn();
-    const c = deployment({ logger: { ...silentLogger, warn } });
+    const { c, warn } = deploymentWithWarnSpy();
     const res = await rpc(
       c,
       "tools/list",
@@ -1259,8 +1274,7 @@ describe("/mcp toolkit selection", () => {
   });
 
   it("bounds and escapes the logged name so a caller cannot forge log lines", async () => {
-    const warn = vi.fn();
-    const c = deployment({ logger: { ...silentLogger, warn } });
+    const { c, warn } = deploymentWithWarnSpy();
     // A newline and a U+2028 line separator — JSON escaping covers the first,
     // and the second is escaped by hand because JSON.stringify leaves it raw.
     const hostile = `x\n\u2028[connecta] forged line ${"y".repeat(200)}`;
@@ -1286,8 +1300,7 @@ describe("/mcp toolkit selection", () => {
   });
 
   it("logs nothing for a known or an absent ?toolkit=", async () => {
-    const warn = vi.fn();
-    const c = deployment({ logger: { ...silentLogger, warn } });
+    const { c, warn } = deploymentWithWarnSpy();
     const scoped = await rpc(
       c,
       "tools/list",
@@ -1301,8 +1314,7 @@ describe("/mcp toolkit selection", () => {
   });
 
   it("logs nothing for an unauthenticated caller, so the log is not a probe target", async () => {
-    const warn = vi.fn();
-    const c = deployment({ logger: { ...silentLogger, warn } });
+    const { c, warn } = deploymentWithWarnSpy();
     const res = await rpc(c, "tools/list", {}, { toolkit: "marketing" });
     expect(res.status).toBe(401);
     expect(warn).not.toHaveBeenCalled();
@@ -1443,6 +1455,396 @@ describe("/mcp toolkit selection", () => {
   });
 });
 
+// --- toolkit <-> identity binding (issue #37) -------------------------------
+//
+// The org's two teams get their own credential, each bound to its own view; the
+// operator credential is bound to both plus unscoped access. Selection stops
+// being self-service: the binding decides, at connect time, before any scoped
+// registry exists.
+
+const SUPPORT_TOKEN = "support-token-aaa";
+const EXEC_TOKEN = "exec-token-bbb";
+const OPERATOR_TOKEN = "operator-token-ccc";
+
+function boundDeployment(
+  extra: Partial<Parameters<typeof createConnecta>[0]> = {},
+) {
+  return createConnecta({
+    connectors: ORG_CONNECTORS(),
+    toolkits: TOOLKITS,
+    auth: [
+      bearerToken(SUPPORT_TOKEN, {
+        subjectId: "support-team",
+        toolkits: ["support"],
+      }),
+      bearerToken(EXEC_TOKEN, { subjectId: "exec-team", toolkits: ["exec"] }),
+      bearerToken(OPERATOR_TOKEN, {
+        subjectId: "operators",
+        toolkits: ["support", "exec"],
+        unscoped: true,
+      }),
+    ],
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    logger: silentLogger,
+    ...extra,
+  });
+}
+
+const connectorIds = (body: any): string[] =>
+  callPayload(body).connectors.map((c: { id: string }) => c.id);
+
+const listConnectors = (
+  c: { fetch: (r: Request) => Promise<Response> },
+  opts: { token?: string; toolkit?: string },
+) =>
+  rpc(
+    c,
+    "tools/call",
+    { name: "list_connectors", arguments: { probe: false } },
+    opts,
+  );
+
+describe("/mcp toolkit binding", () => {
+  it("opens the toolkit a token is bound to", async () => {
+    const c = boundDeployment();
+    const res = await listConnectors(c, {
+      token: SUPPORT_TOKEN,
+      toolkit: "support",
+    });
+    expect(res.status).toBe(200);
+    expect(connectorIds(await readBody(res))).toEqual(["zendesk", "notion"]);
+  });
+
+  it("refuses a toolkit outside the binding, before any scope is built", async () => {
+    const c = boundDeployment();
+    const res = await rpc(
+      c,
+      "tools/call",
+      { name: "list_connectors", arguments: { probe: false } },
+      { token: SUPPORT_TOKEN, toolkit: "exec" },
+    );
+    expect(res.status).toBe(403);
+    const body = await readBody(res);
+    // The transport never ran: no result, and the error is the connect-time
+    // refusal (id null) rather than a reply to this request's id.
+    expect(body.result).toBeUndefined();
+    expect(body.id).toBeNull();
+    expect(body.error.message).toContain("Not permitted to use the requested");
+  });
+
+  it("refuses an unscoped connection from a bound token", async () => {
+    const c = boundDeployment();
+    const res = await listConnectors(c, { token: SUPPORT_TOKEN });
+    expect(res.status).toBe(403);
+    expect((await readBody(res)).result).toBeUndefined();
+  });
+
+  it("admits both scopes a binding allows, unscoped included", async () => {
+    const c = boundDeployment();
+    const unscoped = await listConnectors(c, { token: OPERATOR_TOKEN });
+    const scoped = await listConnectors(c, {
+      token: OPERATOR_TOKEN,
+      toolkit: "exec",
+    });
+    expect(unscoped.status).toBe(200);
+    expect(connectorIds(await readBody(unscoped))).toEqual([
+      "zendesk",
+      "notion",
+      "gmail",
+    ]);
+    expect(scoped.status).toBe(200);
+    expect(connectorIds(await readBody(scoped))).toEqual(["gmail"]);
+  });
+
+  it("gives two bound tokens disjoint views of the same deployment", async () => {
+    const c = boundDeployment();
+    const support = await listConnectors(c, {
+      token: SUPPORT_TOKEN,
+      toolkit: "support",
+    });
+    const exec = await listConnectors(c, {
+      token: EXEC_TOKEN,
+      toolkit: "exec",
+    });
+    expect(connectorIds(await readBody(support))).toEqual([
+      "zendesk",
+      "notion",
+    ]);
+    expect(connectorIds(await readBody(exec))).toEqual(["gmail"]);
+    // Neither may cross into the other's view.
+    expect(
+      (await listConnectors(c, { token: SUPPORT_TOKEN, toolkit: "exec" }))
+        .status,
+    ).toBe(403);
+    expect(
+      (await listConnectors(c, { token: EXEC_TOKEN, toolkit: "support" }))
+        .status,
+    ).toBe(403);
+  });
+
+  // A team credential must not become a directory of the org's other teams: a
+  // toolkit that exists but is off-limits has to be indistinguishable from one
+  // that was never declared.
+  it("does not reveal whether a refused toolkit exists", async () => {
+    const c = boundDeployment();
+    const refusals = await Promise.all(
+      [
+        { toolkit: "exec" }, // declared, not bound to this token
+        { toolkit: "marketing" }, // never declared
+        { toolkit: "" }, // empty value
+        {}, // unscoped
+      ].map((where) =>
+        listConnectors(c, { token: SUPPORT_TOKEN, ...where }),
+      ),
+    );
+    const shapes = await Promise.all(
+      refusals.map(async (res) => `${res.status} ${await res.text()}`),
+    );
+    expect(shapes[0]).toContain("403");
+    expect(new Set(shapes).size).toBe(1);
+  });
+
+  it("keeps the deployment-wide surfaces away from a bound token", async () => {
+    const c = boundDeployment({
+      activity: { record: () => {}, list: async () => ({ events: [] }) },
+    });
+    const get = (path: string, token: string) =>
+      c.fetch(
+        new Request(`${BASE}${path}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      );
+    for (const path of ["/ui/data", "/ui/activity"]) {
+      const restricted = await get(path, SUPPORT_TOKEN);
+      expect(restricted.status).toBe(403);
+      expect((await restricted.json()) as { error: string }).toEqual({
+        error:
+          "this credential is bound to a toolkit and may not read " +
+          "deployment-wide operator data",
+      });
+      // The operator credential carries unscoped access, so it still reads them.
+      expect((await get(path, OPERATOR_TOKEN)).status).toBe(200);
+    }
+    // …and the scoped session's own view is still only its two connectors.
+    const scoped = await listConnectors(c, {
+      token: SUPPORT_TOKEN,
+      toolkit: "support",
+    });
+    expect(connectorIds(await readBody(scoped))).toEqual(["zendesk", "notion"]);
+  });
+
+  it("refuses credential administration from a bound identity", async () => {
+    // Credential writes are already Clerk-only; a bound identity is refused for
+    // the binding reason rather than admitted to a deployment-wide vault.
+    const clerkish: InboundAuth = {
+      kind: "clerk",
+      uiAuth: {
+        kind: "clerk",
+        publishableKey: "pk_test_x",
+        frontendApiUrl: "https://clerk.example.com",
+      },
+      toolkitBinding: { toolkits: ["support"] },
+      authorize: () => ({ ok: true, userId: "user_support" }),
+    };
+    const c = createConnecta({
+      connectors: ORG_CONNECTORS(),
+      toolkits: TOOLKITS,
+      auth: clerkish,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
+      credentialEncryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+    });
+    const res = await c.fetch(
+      new Request(`${BASE}/ui/credentials/zendesk`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: BASE,
+          Authorization: "Bearer whatever",
+        },
+        body: JSON.stringify({ value: "secret" }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      "bound to a toolkit",
+    );
+  });
+
+  it("enforces the binding after the auth gate, so it leaks nothing", async () => {
+    const warn = vi.fn();
+    const c = boundDeployment({ logger: { ...silentLogger, warn } });
+    const bound = await listConnectors(c, { toolkit: "support" });
+    const invented = await listConnectors(c, { toolkit: "marketing" });
+    const none = await listConnectors(c, {});
+    expect([bound.status, invented.status, none.status]).toEqual([
+      401, 401, 401,
+    ]);
+    expect(await bound.text()).toBe(await invented.text());
+    // Nothing about the bindings — or about which names exist — is written for
+    // a caller the gate never admitted.
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("names the identity and the reason in the operator log", async () => {
+    const lines = async (opts: { token: string; toolkit?: string }) => {
+      const warn = vi.fn();
+      const c = boundDeployment({ logger: { ...silentLogger, warn } });
+      await listConnectors(c, opts);
+      return warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    };
+    const disallowed = await lines({
+      token: SUPPORT_TOKEN,
+      toolkit: "exec",
+    });
+    expect(disallowed).toContain('bearer "support-team"');
+    expect(disallowed).toContain('toolkit "exec"');
+    expect(disallowed).toContain("does not include");
+    expect(disallowed).toContain("Bound toolkits: support.");
+
+    const unknown = await lines({ token: SUPPORT_TOKEN, toolkit: "marketing" });
+    expect(unknown).toContain('toolkit "marketing"');
+    expect(unknown).toContain("does not include");
+
+    const unscoped = await lines({ token: SUPPORT_TOKEN });
+    expect(unscoped).toContain("refused an unscoped /mcp connection");
+    expect(unscoped).toContain('bearer "support-team"');
+    expect(unscoped).toContain("does not allow the full registry");
+  });
+
+  it("bounds and escapes a rejected name in a binding refusal too", async () => {
+    const warn = vi.fn();
+    const c = boundDeployment({ logger: { ...silentLogger, warn } });
+    const hostile = `x\n\u2028[connecta] forged line ${"y".repeat(200)}`;
+    const res = await listConnectors(c, {
+      token: SUPPORT_TOKEN,
+      toolkit: encodeURIComponent(hostile),
+    });
+    expect(res.status).toBe(403);
+    const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
+    expect(logged).not.toContain("\n[connecta] forged line");
+    expect(logged).not.toContain("\u2028");
+    expect(logged).toContain("\\u2028");
+    expect(logged).toContain("(truncated)");
+  });
+
+  it("still records activity, tagged with the toolkit the binding allowed", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const c = boundDeployment({
+      activity: {
+        record: (event) => {
+          events.push(event);
+        },
+      },
+    });
+    await rpc(
+      c,
+      "tools/call",
+      { name: "call_tool", arguments: { address: "zendesk.search_tickets" } },
+      { token: SUPPORT_TOKEN, toolkit: "support" },
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0].toolkitId).toBe("support");
+    expect(events[0].actor).toEqual({ kind: "bearer", id: "support-team" });
+  });
+
+  it("leaves an unbound identity in the same deployment self-service", async () => {
+    // Bindings are per identity, not per deployment: a legacy token beside two
+    // bound ones keeps exactly the behavior it had before #37.
+    const c = createConnecta({
+      connectors: ORG_CONNECTORS(),
+      toolkits: TOOLKITS,
+      auth: [
+        bearerToken(SUPPORT_TOKEN, {
+          subjectId: "support-team",
+          toolkits: ["support"],
+        }),
+        bearerToken(TOKEN),
+      ],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    for (const toolkit of ["support", "exec"]) {
+      expect((await listConnectors(c, { token: TOKEN, toolkit })).status).toBe(
+        200,
+      );
+    }
+    expect((await listConnectors(c, { token: TOKEN })).status).toBe(200);
+    // An unknown name still 404s for it — the unbound path is untouched, and a
+    // 404 there is what tells an operator the name is wrong.
+    expect(
+      (await listConnectors(c, { token: TOKEN, toolkit: "marketing" })).status,
+    ).toBe(404);
+  });
+
+  it("keeps an unbound deployment byte-identical to the pre-binding shape", async () => {
+    const c = deployment();
+    expect((await listConnectors(c, { token: TOKEN })).status).toBe(200);
+    expect(
+      (await listConnectors(c, { token: TOKEN, toolkit: "support" })).status,
+    ).toBe(200);
+    const unknown = await listConnectors(c, {
+      token: TOKEN,
+      toolkit: "marketing",
+    });
+    expect(unknown.status).toBe(404);
+    expect((await readBody(unknown)).error.message).toContain(
+      'Unknown toolkit "marketing"',
+    );
+  });
+
+  it("enforces a binding an adapter resolves per identity", async () => {
+    // The documented seam for an adapter that maps its own users to toolkits:
+    // AuthResult.toolkitBinding overrides the provider-wide declaration.
+    const perUser: InboundAuth = {
+      kind: "custom",
+      toolkitBinding: { toolkits: ["exec"] },
+      authorize(request) {
+        const user = (request.headers.get("authorization") ?? "").replace(
+          /^Bearer\s+/i,
+          "",
+        );
+        if (user === "alice") {
+          return {
+            ok: true,
+            subjectId: "alice",
+            toolkitBinding: { toolkits: ["support"] },
+          };
+        }
+        if (user === "bob") return { ok: true, subjectId: "bob" };
+        return {
+          ok: false,
+          response: new Response(null, { status: 401 }),
+        };
+      },
+    };
+    const c = createConnecta({
+      connectors: ORG_CONNECTORS(),
+      toolkits: TOOLKITS,
+      auth: perUser,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: silentLogger,
+    });
+    expect(
+      (await listConnectors(c, { token: "alice", toolkit: "support" })).status,
+    ).toBe(200);
+    expect(
+      (await listConnectors(c, { token: "alice", toolkit: "exec" })).status,
+    ).toBe(403);
+    // bob inherits the provider-wide declaration instead.
+    expect(
+      (await listConnectors(c, { token: "bob", toolkit: "exec" })).status,
+    ).toBe(200);
+    expect(
+      (await listConnectors(c, { token: "bob", toolkit: "support" })).status,
+    ).toBe(403);
+  });
+});
+
 describe("toolkit startup validation through createConnecta", () => {
   it("throws at construction on a toolkit with an unknown connector", () => {
     expect(() =>
@@ -1474,7 +1876,9 @@ describe("toolkit startup validation through createConnecta", () => {
     expect(warned).toContain("toolkits are configured but there is no inbound");
   });
 
-  it("stays silent about toolkits when inbound auth is configured", () => {
+  // Authenticated but unbound is the shape #37 exists to close, so it warns too
+  // — with the line that names the actual fix (a binding, not `auth`).
+  it("warns when authenticated toolkits bind no identity", () => {
     const logger: Logger = {
       debug: vi.fn(),
       info: vi.fn(),
@@ -1491,6 +1895,59 @@ describe("toolkit startup validation through createConnecta", () => {
     const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
       .map((call) => call.join(" "))
       .join("\n");
+    expect(warned).toContain("no inbound identity is bound to one");
+    expect(warned).not.toContain("there is no inbound authentication");
+  });
+
+  it("stays silent about toolkits once a credential is bound", () => {
+    const logger: Logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    createConnecta({
+      connectors: ORG_CONNECTORS(),
+      toolkits: TOOLKITS,
+      auth: [
+        bearerToken(SUPPORT_TOKEN, { toolkits: ["support"] }),
+        bearerToken(EXEC_TOKEN, { toolkits: ["exec"] }),
+      ],
+      storage: memoryStorage(),
+      logger,
+    });
+    const warned = (logger.warn as ReturnType<typeof vi.fn>).mock.calls
+      .map((call) => call.join(" "))
+      .join("\n");
     expect(warned).not.toContain("toolkits are configured");
+  });
+
+  it("throws when a binding names a toolkit this deployment does not declare", () => {
+    expect(() =>
+      createConnecta({
+        connectors: ORG_CONNECTORS(),
+        toolkits: TOOLKITS,
+        auth: bearerToken(TOKEN, { toolkits: ["marketing"] }),
+        storage: memoryStorage(),
+        logger: silentLogger,
+      }),
+    ).toThrow(
+      'Inbound auth provider "bearer" binds unknown toolkit "marketing". ' +
+        "Configured toolkits: support, exec.",
+    );
+  });
+
+  it("throws when a binding exists but no toolkit is selectable", () => {
+    for (const toolkits of [undefined, {}]) {
+      expect(() =>
+        createConnecta({
+          connectors: ORG_CONNECTORS(),
+          toolkits,
+          auth: bearerToken(TOKEN, { toolkits: ["support"] }),
+          storage: memoryStorage(),
+          logger: silentLogger,
+        }),
+      ).toThrow("this deployment configures no toolkits");
+    }
   });
 });
