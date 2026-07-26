@@ -11,7 +11,8 @@ import type {
 } from "./activity.js";
 import { InvalidActivityCursorError } from "./activity.js";
 import type { CredentialVault } from "./credentials.js";
-import type { Registry } from "./registry.js";
+import { ScopedRegistry, type Registry, type RegistryView } from "./registry.js";
+import { TOOLKIT_NAME_RE, type Toolkit } from "./toolkits.js";
 import type {
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
@@ -57,6 +58,11 @@ export interface ServerOptions {
   credentialVault?: CredentialVault;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding;
+  /**
+   * Validated named scopes, selected per connection with `?toolkit=<name>` on
+   * `/mcp`. Omit (or leave empty) and every connection sees the full registry.
+   */
+  toolkits?: ReadonlyMap<string, Toolkit>;
 }
 
 function msg(err: unknown): string {
@@ -506,11 +512,81 @@ async function handleCredentialRequest(
   return privateJson({ error: "method not allowed" }, { status: 405 });
 }
 
+/** Length beyond which a rejected toolkit name is not echoed back. */
+const MAX_ECHOED_TOOLKIT_NAME = 64;
+
+/** What one MCP connection may see: the full registry, or one toolkit's view. */
+interface McpScope {
+  registry: RegistryView;
+  /** Set only under `?toolkit=`; recorded on activity events. */
+  toolkitId?: string;
+}
+
+/**
+ * Resolve `?toolkit=<name>` into the registry view this connection may see.
+ *
+ * - absent → the full registry, byte-identical to a deployment with no toolkits
+ * - known → a `ScopedRegistry` over that toolkit (the one enforcement point)
+ * - anything else, including `?toolkit=` with an empty value → an explicit
+ *   error. Never a silent fallback to the full registry.
+ *
+ * The error deliberately does not enumerate the configured toolkits: the name
+ * selects a scope, so a wrong guess gets a flat "unknown", not a directory.
+ */
+function resolveToolkitScope(
+  url: URL,
+  registry: Registry,
+  toolkits: ReadonlyMap<string, Toolkit> | undefined,
+):
+  | { ok: true; scope: McpScope }
+  | { ok: false; response: Response } {
+  const requested = url.searchParams.get("toolkit");
+  if (requested === null) return { ok: true, scope: { registry } };
+  const toolkit = toolkits?.get(requested);
+  if (toolkit) {
+    return {
+      ok: true,
+      scope: {
+        registry: new ScopedRegistry(registry, toolkit),
+        toolkitId: toolkit.name,
+      },
+    };
+  }
+  const label =
+    requested.length <= MAX_ECHOED_TOOLKIT_NAME &&
+    TOOLKIT_NAME_RE.test(requested)
+      ? `"${requested}"`
+      : "requested";
+  return {
+    ok: false,
+    response: new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: {
+          code: -32600,
+          message:
+            `Unknown toolkit ${label}. Check the ?toolkit= value in this ` +
+            "deployment's MCP endpoint URL with the operator.",
+        },
+      }),
+      {
+        status: 404,
+        headers: {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        },
+      },
+    ),
+  };
+}
+
 async function serveMcp(
   request: Request,
   opts: ServerOptions,
   baseUrl: string,
   actor: ActivityActor,
+  scope: McpScope,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
   // Fresh McpServer + transport per request (SDK ≥1.26 requirement), stateless.
@@ -526,20 +602,24 @@ async function serveMcp(
         ...(opts.activityDeploymentId
           ? { deploymentId: opts.activityDeploymentId }
           : {}),
+        ...(scope.toolkitId ? { toolkitId: scope.toolkitId } : {}),
         ...(runtimeContext?.waitUntil
           ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
           : {}),
         logger: opts.logger,
       }
     : undefined;
-  registerMetaTools(server, opts.registry, {
+  // `scope.registry` is the connection's VIEW — the full registry, or one
+  // toolkit's ScopedRegistry. Nothing below may reach for `opts.registry`.
+  const registry = scope.registry;
+  registerMetaTools(server, registry, {
     baseUrl,
     activity,
     defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
     probeTimeoutMs: opts.probeTimeoutMs,
   });
   if (opts.executor) {
-    registerExecuteTool(server, opts.registry, {
+    registerExecuteTool(server, registry, {
       baseUrl,
       executor: opts.executor,
       logger: opts.logger,
@@ -784,11 +864,22 @@ export function createFetchHandler(
       }
 
       if (path === "/mcp") {
+        // Authenticate BEFORE resolving ?toolkit=: an unauthenticated caller
+        // must not be able to probe which toolkit names exist.
         const authz = await authorize(request, baseUrl, auth);
-        const response = authz.ok
-          ? await serveMcp(request, opts, baseUrl, authz.actor, runtimeContext)
-          : authz.response;
-        return withMcpCors(response);
+        if (!authz.ok) return withMcpCors(authz.response);
+        const selected = resolveToolkitScope(url, registry, opts.toolkits);
+        if (!selected.ok) return withMcpCors(selected.response);
+        return withMcpCors(
+          await serveMcp(
+            request,
+            opts,
+            baseUrl,
+            authz.actor,
+            selected.scope,
+            runtimeContext,
+          ),
+        );
       }
 
       // Connector-owned public routes, dispatched last: a connector can add a

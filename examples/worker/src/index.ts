@@ -63,6 +63,32 @@ function build(env: Env) {
         publicUrl: env.PUBLIC_URL,
       }),
     ],
+    // Multi-team setup: one deployment for the org, one scoped view per group
+    // of team members. A client picks its view at connect time with a query
+    // parameter on the MCP URL:
+    //
+    //   support team → <PUBLIC_URL>/mcp?toolkit=support
+    //   exec team    → <PUBLIC_URL>/mcp?toolkit=exec
+    //   operators    → <PUBLIC_URL>/mcp            (no parameter ⇒ everything)
+    //
+    // Inside a scoped session the meta-tools behave as if out-of-scope
+    // connectors and tools do not exist, and an out-of-scope address fails
+    // exactly like a nonexistent one. Unknown toolkit names are rejected, never
+    // silently widened.
+    //
+    // Toolkits scope VISIBILITY, not identity: any caller admitted by `auth`
+    // above may select any toolkit — or omit the parameter and see everything —
+    // so the shared CONNECTA_TOKEN here does not separate the two teams. Bind a
+    // member to a view in `auth` (Clerk's `gate`, or an InboundAuth adapter
+    // that inspects the requested ?toolkit=). See docs/documentation.md §16.
+    toolkits: {
+      support: { connectors: ["notion"] },
+      exec: {
+        connectors: ["notion", "echo"],
+        // Finer grain than a connector id — hide one address from this view.
+        excludeTools: ["echo.shout"],
+      },
+    },
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",

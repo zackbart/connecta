@@ -2,6 +2,7 @@ import { CredentialVault } from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls } from "./ui.js";
+import { resolveToolkits, type ToolkitConfig } from "./toolkits.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
@@ -16,6 +17,36 @@ import type {
 
 export interface ConnectaConfig {
   connectors: Connector[];
+  /**
+   * Named scoped views over `connectors`, selected per client connection with
+   * `?toolkit=<name>` on the `/mcp` URL. One deployment belongs to one org;
+   * a toolkit is the slice of it a group of team members sees.
+   *
+   * ```ts
+   * toolkits: {
+   *   support: { connectors: ["zendesk", "notion"] },
+   *   exec: {
+   *     connectors: ["zendesk", "notion", "gmail"],
+   *     excludeTools: ["gmail.send_message"],
+   *   },
+   * }
+   * ```
+   *
+   * Inside a toolkit-scoped session every meta-tool behaves as if out-of-scope
+   * connectors and tools do not exist, and an out-of-scope address fails
+   * exactly as a nonexistent one does. No `?toolkit=` ⇒ the full registry, so
+   * adding toolkits changes nothing for connections that don't ask for one; an
+   * unknown name is an error, never a silent fallback.
+   *
+   * Toolkits scope VISIBILITY, not identity: they do not decide *which* team
+   * member may select which toolkit. Gate that in `auth` (per-member binding is
+   * a follow-up).
+   *
+   * Definitions are validated at construction: an unknown connector id, an
+   * empty connector selection, an empty `includeTools`, a malformed tool
+   * address, or an address naming no tool on an in-code connector all throw.
+   */
+  toolkits?: ToolkitConfig;
   /**
    * Privacy-minimal downstream tool activity storage. Writes are best-effort
    * and never change tool results. Implement `list` to enable the Activity UI.
@@ -177,6 +208,19 @@ function warnInsecureConfig(
     );
   }
 
+  // Toolkits with no inbound auth: a toolkit is a scoped VIEW selected by the
+  // caller, not an authentication boundary. With nothing gating /mcp, any
+  // caller picks any toolkit — or omits the parameter and sees everything.
+  if (inboundAuth.length === 0 && config.toolkits) {
+    logger.warn(
+      "[connecta] toolkits are configured but there is no inbound " +
+        "authentication: a toolkit is a scoped view a client selects with " +
+        "?toolkit=, not an access check, so any caller can choose any toolkit " +
+        "or omit the parameter and see every connector. Configure `auth` " +
+        "(for example bearerToken(...) or Clerk).",
+    );
+  }
+
   // Branding URLs that failed their scheme gate. Rendering silently falls back
   // (a bad URL must not take the page down), so this warning is the only way an
   // operator learns their value never reached the page.
@@ -224,6 +268,10 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     toolCatalogStaleSeconds: config.toolCatalogStaleSeconds,
     maxResultBytes: config.maxResultBytes,
   });
+  // Throws on every structural mistake it can see (see resolveToolkits): a
+  // toolkit is an access boundary, so a typo must not become a scope the
+  // operator never wrote.
+  const toolkits = resolveToolkits(config.toolkits, config.connectors);
   const inboundAuth = normalizeAuth(config.auth);
   warnInsecureConfig(config, inboundAuth, logger);
   const handler = createFetchHandler({
@@ -245,6 +293,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     credentialVault,
     deploymentInfo: config.deploymentInfo,
     branding: config.branding,
+    ...(toolkits ? { toolkits } : {}),
   });
   return {
     fetch: (request, _env, ctx) =>
@@ -274,6 +323,9 @@ export { CONNECTA_VERSION } from "./version.js";
 // the class itself, the credential vault, and the meta-tool/sandbox factories
 // are internal factoring and are deliberately not part of the API surface.
 export type { Registry } from "./registry.js";
+// Config-as-code shapes for `ConnectaConfig.toolkits`. The resolved `Toolkit`
+// and the `ScopedRegistry` that enforces it are internal factoring.
+export type { ToolkitConfig, ToolkitDefinition } from "./toolkits.js";
 
 export type { RemoteMcpOptions, RemoteMcpAuth } from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";

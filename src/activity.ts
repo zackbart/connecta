@@ -42,6 +42,12 @@ export interface ToolCallActivityEvent {
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
+  /**
+   * Name of the toolkit this connection selected with `?toolkit=`, when it
+   * selected one. Calls are recorded the same way with or without it; this only
+   * says which scoped view the call came through.
+   */
+  toolkitId?: string;
 }
 
 export interface ActivityPage {
@@ -83,6 +89,8 @@ export interface ActivityRequestContext {
   requestId: string;
   serverInfo: { name: string; version: string };
   deploymentId?: string;
+  /** Toolkit this connection is scoped to, when `?toolkit=` selected one. */
+  toolkitId?: string;
   defer?: (promise: Promise<unknown>) => void;
   logger: Logger;
 }
@@ -128,6 +136,7 @@ export function recordToolActivity(
     ...(context.deploymentId
       ? { deploymentId: context.deploymentId }
       : {}),
+    ...(context.toolkitId ? { toolkitId: context.toolkitId } : {}),
   };
   try {
     const result = context.sink.record(event);

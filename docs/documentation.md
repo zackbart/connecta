@@ -22,6 +22,7 @@ for the *why* behind the design see [`design.md`](./design.md).
 13. [Code mode (`execute_code`)](#13-code-mode-execute_code)
 14. [Status UI](#14-status-ui)
 15. [Activity history](#15-activity-history)
+16. [Toolkits (scoped views)](#16-toolkits-scoped-views)
 
 ---
 
@@ -42,6 +43,12 @@ paging keeping even large responses out of the context window.
 **Config as code.** Connectors are declared in TypeScript. Adding one is a code
 change plus a deploy — there is no database of integrations, no runtime admin UI,
 no registration API.
+
+**One deployment, many teams.** A deployment belongs to an org, and optional
+**toolkits** ([§16](#16-toolkits-scoped-views)) give each group of team members
+its own scoped view of the same registry — `?toolkit=support` on the MCP URL —
+without running a second deployment. Declared in the same config, enforced in
+one place.
 
 It is inspired by [executor](https://github.com/UsefulSoftwareCo/executor) but
 radically simplified: **no** GraphQL, **no** Effect-TS, **no**
@@ -80,7 +87,7 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/ui/activity` → **auth gate** + optional `activityReadGate`, then paged
      activity events (§15). `GET` only; 404 when no `activity.list` is
      configured.
-   - `/mcp` → **auth gate**, then MCP.
+   - `/mcp` → **auth gate**, then `?toolkit=` resolution (§16), then MCP.
    - a connector's `handleRequest` (open), in registration order — dispatched
      only after every built-in route misses, so a connector can add a route but
      never shadow one of connecta's. First non-null Response wins; a throw is a
@@ -96,8 +103,10 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
 3. **Fresh stateless `McpServer` per request** (`serveMcp`): a new `McpServer` +
    `WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true })` are
    created for **every** request (an SDK ≥1.26 security requirement), the nine
-   meta-tools are registered on it (plus `execute_code` when an `executor` is
-   configured), and `transport.handleRequest(request)` returns the response.
+   meta-tools are registered on it against **this connection's registry view** —
+   the full registry, or one toolkit's `ScopedRegistry` (§16) — plus
+   `execute_code` when an `executor` is configured, and
+   `transport.handleRequest(request)` returns the response.
    No `sessionIdGenerator` ⇒ stateless: no sessions, no server-push SSE, no
    resumability — fine for nine request/response tools.
 4. **Meta-tools → registry → connector**: the meta-tool handlers
@@ -137,7 +146,8 @@ connecta/
     meta-tools.ts         # the nine meta-tools over the registry
     execute.ts            # the optional execute_code meta-tool + sandbox host bridge
     skills.ts             # initialize instructions + the usage skill and per-connector guide lookup
-    registry.ts           # connector set, address resolution, in-memory + persisted tool caches
+    registry.ts           # connector set, address resolution, tool caches, ScopedRegistry (the toolkit boundary)
+    toolkits.ts           # toolkit definitions + construction-time validation
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
     activity.ts           # payload-free activity contracts + best-effort recorder
@@ -175,6 +185,10 @@ object payloads are also returned as MCP `structuredContent`.
 A **tool address** is `<connectorId>.<toolName>` (e.g. `notion.search`,
 `resend.send_email`). The address is split on the **first** dot — connector ids
 are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
+
+Every meta-tool below describes the **full registry**. A connection made with
+`?toolkit=<name>` (§16) sees the same nine tools over a narrowed connector and
+tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 
 ### `list_connectors`
 
@@ -868,6 +882,10 @@ These are independent — know which knob you're turning:
 Use Clerk restrictions to control account creation; use `gate` as the
 application-level authorization check on every Connecta request.
 
+Both decide **whether** a caller is admitted. **Toolkits** (§16) decide **what**
+an admitted caller sees — a third, orthogonal layer. They are not an
+authentication check: any admitted caller may select any declared toolkit.
+
 ---
 
 ## 6. Downstream OAuth
@@ -1217,6 +1235,7 @@ Test suites (`test/`) and what they cover:
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
+| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
@@ -1513,6 +1532,7 @@ interface ToolCallActivityEvent {
   serverName: string;
   serverVersion: string;
   deploymentId?: string;      // from activityDeploymentId
+  toolkitId?: string;         // the ?toolkit= this connection selected (§16)
 }
 ```
 
@@ -1564,3 +1584,190 @@ a complete deployment-owned implementation over Cloudflare D1 — keyset paging 
 `(occurred_at_ms, id)` plus a batched `pruneActivity(db, retentionDays)`
 retention pass. It lives in the example, not the package: storage backends are
 deployment-owned, exactly like `KVStorage`.
+
+---
+
+## 16. Toolkits (scoped views)
+
+A connecta deployment belongs to one **org**. A **toolkit** is the scoped view
+over that deployment's registry that one **group of team members** inside the
+org gets: a `support` toolkit that sees Zendesk and Notion, an `exec` toolkit
+that also sees Gmail. Before toolkits, the only way to give two teams different
+tool subsets was to run two deployments.
+
+A toolkit is **config as code**, like everything else:
+
+```ts
+createConnecta({
+  connectors: [zendesk, notion, gmail],
+  auth: bearerToken(env.CONNECTA_TOKEN),
+  toolkits: {
+    support: { connectors: ["zendesk", "notion"] },
+    exec: {
+      connectors: ["zendesk", "notion", "gmail"],
+      // Finer grain: full tool addresses, not just connector ids.
+      excludeTools: ["gmail.send_message"],
+    },
+    triage: {
+      connectors: ["zendesk"],
+      includeTools: ["zendesk.search_tickets", "zendesk.get_ticket"],
+    },
+  },
+});
+```
+
+A client selects one at connect time with a query parameter on the MCP URL:
+
+```
+https://connecta.example.com/mcp?toolkit=support
+```
+
+### Selecting a scope
+
+| `?toolkit=` | Result |
+| --- | --- |
+| absent | The **full registry** — byte-identical to a deployment that declares no toolkits. |
+| a declared name | A scoped session over that toolkit. |
+| anything else (including `?toolkit=` with an empty value) | **404** with a JSON-RPC error. Never a silent fallback to everything. |
+
+The unknown-toolkit error does not enumerate the configured toolkits, and it is
+returned **after** the auth gate — an unauthenticated caller gets the same 401
+for a real toolkit name as for an invented one, so `/mcp` is not a directory of
+your teams.
+
+`/mcp` is stateless (§2), so the scope is resolved from the URL of **every**
+request rather than pinned at an `initialize` handshake. There is no scope
+state on the server to go stale, and a client cannot widen its view mid-session
+— each request carries its own `?toolkit=` and gets exactly that scope.
+
+### What a toolkit selects
+
+- **`connectors`** (required, at least one) — the connector ids this toolkit may
+  see.
+- **`includeTools`** (optional) — full tool addresses. Naming *any* address of a
+  connector narrows that connector to exactly the addresses named. Connectors
+  with no entry keep their whole tool list.
+- **`excludeTools`** (optional) — tool addresses to hide, applied after
+  `includeTools`.
+- **`description`** (optional) — an operator note. It is never sent to clients.
+
+### The boundary holds across the whole meta-tool surface
+
+Scoping is not a display filter. Inside a toolkit-scoped session every
+meta-tool behaves as if out-of-scope connectors and tools **do not exist**:
+
+- `list_connectors` lists only in-scope connectors, with tool counts that
+  reflect the scoped catalog.
+- `search_tools` searches only in-scope catalogs; a `connector` filter naming an
+  out-of-scope connector returns the same empty page an unknown id returns.
+- `describe_tools`, `call_tool`, `call_destructive_tool`, and `batch_call` fail
+  out-of-scope addresses **identically to nonexistent ones** — same error class,
+  same message: an out-of-scope *connector* yields `Unknown address "<a>"`
+  (`unknown_address`), an out-of-scope *tool* on an in-scope connector yields
+  `Unknown tool "<t>" on connector "<c>"` (`unknown_tool`), which is exactly
+  what a misspelled tool name already produced. There is no distinguishable
+  "exists but hidden" response.
+- `authorize_connector` reports `Unknown connector "<id>"`, the same as for an
+  id that was never configured.
+- `skills` lists only in-scope connector guides, and
+  `skills({ name: "connector:<id>" })` for an out-of-scope connector returns the
+  same error as for an unknown connector.
+- `execute_code` builds sandbox globals only for in-scope connectors, and
+  `connecta.call` / `connecta.batch` / `connecta.search` / `connecta.describe`
+  raise the same unknown-address and unknown-tool errors as above.
+- `get_result` pages only results stashed **by that toolkit**. A result id from
+  another scope reads back as `Unknown or expired result id "<id>"` — a scoped
+  session cannot page out a result it could not have produced.
+
+**One enforcement point.** All of that lives in `ScopedRegistry`
+(`src/registry.ts`): a filtered *view* of the one long-lived `Registry`.
+`serveMcp` builds it once per scoped connection and every meta-tool is typed
+against `RegistryView`, so a meta-tool cannot reach past the boundary — and a
+new one inherits it without writing a check. Reviewing the scope means reading
+one class, not nine handlers.
+
+### Decisions worth knowing
+
+- **Tool descriptions follow the scope.** Meta-tools are registered per
+  connection against that connection's view, so the conditional
+  "per-connector guides" sentences (§4) — in the `skills`, `search_tools`, and
+  `describe_tools` descriptions and in the built-in `usage` skill — reflect the
+  **scoped** connector set. A scoped session whose connectors carry no guides
+  sees the base text and never learns from a description that guides exist out
+  of scope.
+- **Operator surfaces are deliberately unscoped.** `/ui`, `/ui/data`,
+  `/ui/activity`, `/health`, `/oauth/callback/<id>`, the credential API, and
+  connector-owned `handleRequest` routes ignore `?toolkit=` entirely. They are
+  for the operator running the deployment, not for a team's agent, and they keep
+  their own gates (§5, §7, §14). Authorizing a connector's downstream OAuth is
+  an operator act with deployment-wide effect.
+- **Scoping filters views, never state.** The tool cache and the persisted
+  catalog (§4) are shared and stay whole: a scoped read delegates to the
+  registry and filters the array it gets back. Two toolkits over the same
+  connector share one cached catalog and one downstream connection budget;
+  neither can poison the other's view.
+- **Connector health details are per view.** `list_connectors` returns recent
+  real-call observations, and a failure's `lastError` is a downstream string
+  that routinely names the tool that failed. Each toolkit therefore accumulates
+  its **own** observations, and the returned details — `lastError`,
+  `consecutiveFailures`, timings, and the `error` state derived from them —
+  come only from the calls that toolkit made. A sibling toolkit's failure never
+  shows up as this toolkit's connector health, and never names a tool out of
+  scope. Every call is *also* recorded in a deployment-wide log, which the
+  unscoped `list_connectors` reads so an operator sees the whole deployment.
+  (Two things are deliberately not isolated, because they are facts about the
+  connector rather than about a team's traffic: the `ok` vs. `unknown`
+  classification leans on whether *any* view has ever had a successful call —
+  a bare boolean, no details — and `toolCount` reads the shared catalog cache
+  below, so a scoped view can tell that some scope warmed a remote catalog.)
+- **`authorize_connector` stays deployment-wide.** Downstream OAuth state
+  belongs to the connector, not to a view, so an in-scope
+  `authorize_connector({ force: true })` re-consents that connector for *every*
+  toolkit that can see it. This is not new — before toolkits, any authenticated
+  client could do it to any connector — but a toolkit narrows *which* connectors
+  a session can do it to, not the blast radius on the ones it can.
+- **Activity records normally.** Calls through a toolkit produce the same events
+  as unscoped calls, plus `toolkitId` on the event (§15) so an operator can see
+  which team's view a call came through.
+
+### What toolkits are *not*
+
+A toolkit scopes **visibility**, not **identity**. Any *authenticated* client can
+select any declared toolkit — or omit `?toolkit=` and get the full registry.
+Nothing yet binds a team member to a toolkit, so **a shared credential handed to
+two teams gives both teams every toolkit**: today a toolkit shapes what a
+connection *sees*, and the auth gate (§5) remains the only thing deciding who
+gets in. With no `auth` at all, connecta warns at construction, because then
+anyone can pick any view.
+
+For the same reason, an admitted caller *can* tell a real toolkit name from an
+invented one (404 vs. 200) — which is inherent to letting a client select its
+own scope. The property that holds is the one that matters: once a scope is
+selected, nothing inside it reveals or reaches what is outside it.
+
+Binding a specific member or credential to a specific toolkit is a deliberate
+follow-up. The seam already exists: an `InboundAuth` adapter sees the full
+request, `?toolkit=` included, so it can refuse a request whose toolkit does not
+match the caller before the scope is ever built.
+
+### Validation
+
+Toolkit definitions are validated when `createConnecta` runs, and structural
+mistakes **throw** rather than warn — a toolkit is an access boundary, and a
+typo'd id is a scope you did not write:
+
+- an unknown toolkit name grammar (names are `[a-z0-9_-]+`, like connector ids),
+- a toolkit selecting no connectors,
+- an unknown connector id,
+- an `includeTools`/`excludeTools` entry that is not a `<connectorId>.<toolName>`
+  address, or that names a connector outside that toolkit's own list,
+- an entry naming a tool that an **in-code** connector (`api()`, which declares
+  `staticTools`) does not have — an `excludeTools` typo that would silently
+  exclude nothing,
+- a present-but-empty `includeTools`. It reads as "only these tools" and would
+  behave as "all of them" — the one shape here that fails *open*. An empty
+  `excludeTools` is an honest no-op and is allowed.
+
+Tool names on **remote** connectors cannot be validated at construction: their
+catalogs are fetched lazily over the network and are unknown until first use. An
+entry for a tool a remote connector does not have simply matches nothing.
