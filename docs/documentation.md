@@ -286,7 +286,8 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   `{ ok: false, error: { code, message, retryable, retryAfterMs? }, durationMs,
   attempts }` (`retryAfterMs` only when the connector reported a wait window).
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
-  (a `createConnecta` option, default **50 000**), the full text is stashed in
+  (a `createConnecta` option, default **50 000**, overridable per connector —
+  see [§4](#the-connector-interface)), the full text is stashed in
   storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
   a namespace kept separate from every connector's `conn:<id>:`) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
@@ -305,7 +306,9 @@ through `call_tool`, `batch_call`, and `execute_code`.
 ### `get_result`
 
 - **Input:** `{ id: string, offset?: number, maxBytes?: number }` (`offset`
-  defaults to 0; `maxBytes` defaults to `maxResultBytes`).
+  defaults to 0; `maxBytes` defaults to the deployment-wide `maxResultBytes` —
+  a stashed result carries no connector identity, so a per-connector override
+  changes where truncation happens, never how the pages are sized).
 - **Output:** `{ text, offset, nextOffset?, totalBytes }` — a byte-slice of the
   stashed result. `nextOffset` is present while more bytes remain; loop until it
   is absent to reassemble the whole payload. An unknown or expired `id` is an
@@ -448,6 +451,7 @@ interface Connector {
   title?: string;                // display name; `id` stays the address prefix
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
+  maxResultBytes?: number;       // per-connector inline result cap (see below)
   credential?: {
     label: string;
     description?: string;
@@ -504,6 +508,28 @@ connecta applies no auth gate to them, so a connector serving data here must
 authenticate the request itself (for example with a signed capability token in
 the URL).
 
+`maxResultBytes` is an *optional* per-connector inline result cap, in bytes.
+Connectors have very different result profiles, so the deployment-wide
+`ConnectaConfig.maxResultBytes` ([§8](#8-running-it)) is only a starting point:
+set a tighter value on a chatty search connector, or a looser one on a
+document-fetch connector whose payloads are legitimately large. Precedence is
+**per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per call.
+Everything else about truncation is unchanged — same
+`{ truncated, resultId, totalBytes, hint }` notice, same `get_result` paging
+(whose default page size stays on the deployment-wide value, since a stashed
+result carries no connector identity). Both factories accept it, and so does any
+custom connector, since it is a plain field on the interface.
+
+Two consequences are worth stating outright. First, one `batch_call` may mix a
+connector on its own cap with siblings on the global one, so a batch's total
+inline size is the **sum of the participating connectors' caps** rather than the
+`10 × ConnectaConfig.maxResultBytes` it was before — widen a connector's cap
+knowing it also widens every batch that connector takes part in. Second,
+`execute_code` host-call results are **not** bounded by `maxResultBytes` at all,
+global or per-connector: the sandbox hands tool results to the guest as plain
+unwrapped values and guards only the program's final return, with its own
+~24k-char limit ([§13](#behavior-details)).
+
 **Result wrapping** (in `call_tool`): `kind: "mcp"` passes the returned
 `{ content, isError }` through as-is; anything else (the `api()` default)
 JSON-wraps the return value into a single text content block.
@@ -526,6 +552,7 @@ export interface RemoteMcpOptions {
   url: string;
   title?: string;
   description?: string;
+  maxResultBytes?: number;       // per-connector inline result cap
   auth?:
     | { type: "headers"; headers: Record<string, string> }
     | { type: "oauth" };
@@ -559,6 +586,7 @@ export interface ApiTool {
 export interface ApiOptions {
   title?: string;
   description?: string;
+  maxResultBytes?: number;       // per-connector inline result cap
   /** Validate args against each tool's inputSchema before the handler runs. Default true. */
   validateArgs?: boolean;
   tools: ApiTool[];
@@ -910,7 +938,7 @@ when the response returns. `ConnectaConfig`:
 | `toolCacheTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `persistToolCatalog?` | true | also persist serializable catalogs in storage |
 | `toolCatalogStaleSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
-| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging |
+| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging; a connector may override it with its own `maxResultBytes` (§4) |
 | `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |

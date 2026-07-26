@@ -97,6 +97,15 @@ describe("remoteMcp() connector", () => {
     expect(tools.find((tool) => tool.name === "echo")?.outputSchema).toBeTruthy();
   });
 
+  it("passes maxResultBytes through, and leaves it unset by default", async () => {
+    expect((await makeConnector()).maxResultBytes).toBeUndefined();
+    const capped = remoteMcp("search", {
+      url: "https://unused.example/mcp",
+      maxResultBytes: 5_000,
+    });
+    expect(capped.maxResultBytes).toBe(5_000);
+  });
+
   it("callTool proxies args and returns the content array as-is", async () => {
     const c = await makeConnector();
     const result = (await c.callTool("echo", { text: "hi" }, ctx())) as {

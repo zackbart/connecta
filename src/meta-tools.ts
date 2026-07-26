@@ -339,7 +339,8 @@ export interface SkillArgs {
 /**
  * The nine meta-tool handlers over a registry. Exported for direct testing;
  * registerMetaTools() wires them onto an McpServer. `opts.maxResultBytes`
- * overrides the registry's default result-size cap; `opts.defaultToolTimeoutMs`
+ * overrides the registry's default result-size cap (a connector's own
+ * `maxResultBytes` overrides it in turn); `opts.defaultToolTimeoutMs`
  * supplies a deadline for calls that don't carry one. (execute_code, the
  * optional tenth tool, is registered separately by registerExecuteTool.)
  */
@@ -355,7 +356,7 @@ export function createMetaTools(
     activity?: ActivityRequestContext;
   } = {},
 ) {
-  const cap = opts.maxResultBytes ?? registry.maxResultBytes;
+  const globalCap = opts.maxResultBytes ?? registry.maxResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -442,6 +443,11 @@ export function createMetaTools(
       );
     }
     const results = registry.resultsStorage();
+    // Result-size cap for THIS call: the connector's own override wins, then
+    // the deployment-wide value, then the built-in default (already folded
+    // into `globalCap`). Resolved per call so one batch_call can mix a
+    // tight-capped connector with siblings on the global cap.
+    const cap = resolved.connector.maxResultBytes ?? globalCap;
     const fields = call.fields && call.fields.length > 0 ? call.fields : null;
     // An explicit per-call deadline always wins; the config default only fills
     // the gap, and stays off entirely when the deployment sets none.
@@ -933,7 +939,9 @@ export function createMetaTools(
       const bytes = enc.encode(stored);
       const total = bytes.length;
       const offset = Math.max(0, Math.trunc(args.offset ?? 0));
-      const maxBytes = args.maxBytes ?? cap;
+      // Page size only: a stashed result carries no connector identity, so
+      // get_result keeps the deployment-wide default when none is requested.
+      const maxBytes = args.maxBytes ?? globalCap;
       // Align the slice end to a codepoint boundary so a multi-byte char is
       // never split across pages (which would emit U+FFFD on both sides).
       // `nextOffset` is this aligned end, so it is a valid boundary for the

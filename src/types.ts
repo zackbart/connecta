@@ -135,6 +135,13 @@ export interface Connector {
   /** How call_tool wraps results. "mcp" passes the content array through; anything else is JSON-wrapped. */
   kind?: "mcp" | "api";
   description?: string;
+  /**
+   * Max inline result size (bytes) for this connector's tools before
+   * call_tool/batch_call truncate and stash the full text for get_result
+   * paging. Overrides the deployment-wide `ConnectaConfig.maxResultBytes`;
+   * omit to inherit it (which itself defaults to 50_000).
+   */
+  maxResultBytes?: number;
   /** Optional operator-managed credential slot rendered inside this connector's /ui card. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by /ui's Test action. */

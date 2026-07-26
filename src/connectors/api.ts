@@ -29,6 +29,12 @@ export interface ApiOptions {
   /** Human-readable display name; the connector id remains the address prefix. */
   title?: string;
   description?: string;
+  /**
+   * Max inline result size (bytes) for this connector's tools before
+   * call_tool/batch_call truncate and stash the full text for get_result
+   * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
+   */
+  maxResultBytes?: number;
   /** Optional operator-managed credential exposed through ctx.credential and /ui. */
   credential?: ConnectorCredentialConfig;
   /** Optional validation behind /ui's Test action. */
@@ -97,6 +103,7 @@ export function api(id: string, opts: ApiOptions): Connector {
     title: opts.title,
     kind: "api",
     description: opts.description,
+    maxResultBytes: opts.maxResultBytes,
     credential: opts.credential,
     testCredential: opts.testCredential,
     testCredentials: opts.testCredentials,
