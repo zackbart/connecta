@@ -29,6 +29,7 @@ export interface RemoteMcpOptions {
    * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
    */
   maxResultBytes?: number;
+  /**
    * Optional agent-facing usage guide (markdown) served by the `skills`
    * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
    */

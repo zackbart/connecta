@@ -142,6 +142,7 @@ export interface Connector {
    * omit to inherit it (which itself defaults to 50_000).
    */
   maxResultBytes?: number;
+  /**
    * Optional agent-facing usage guide (markdown) for this connector — preferred
    * tools, address quirks, pagination conventions, rate-limit etiquette, good
    * query patterns. Listed by the `skills` meta-tool as `connector:<id>` and
