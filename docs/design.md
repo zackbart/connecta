@@ -57,7 +57,9 @@ Tool **address** = `<connectorId>.<toolName>` (e.g. `notion.search`,
 (single tenant, one connection per connector).
 
 Progressive disclosure is the point: the agent sees 9 tools, searches when it
-needs something, describes only what it will call.
+needs something, describes only what it will call. A connection made with
+`?toolkit=<name>` sees the same 9 tools over a narrowed connector and tool set
+(see "Toolkits" below).
 
 ## Core model
 
@@ -88,8 +90,10 @@ interface Connector {
   callTool(name: string, args: unknown, ctx: ConnectorContext): Promise<unknown>;
   /** Optional: connector-level health/auth status for list_connectors. */
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;
-  // Plus optional opt-ins: title, kind, credential + testCredential(s),
-  // staticTools, startAuth/verifyState/finishAuth, handleRequest.
+  // Plus optional opt-ins: title, kind, maxResultBytes (per-connector inline
+  // result cap), usageGuide (agent-facing markdown served by `skills`),
+  // credential + testCredential(s), staticTools,
+  // startAuth/verifyState/finishAuth, handleRequest.
   // Full interface in documentation.md §4.
 }
 ```
@@ -251,7 +255,10 @@ connecta/
     server.ts             # fetch handler: MCP transport + routes + inbound auth
     meta-tools.ts         # the 9 meta-tools over the connector registry
     execute.ts            # the optional 10th meta-tool + sandbox host bridge
-    registry.ts           # connector registry, tool cache, address resolution
+    skills.ts             # the built-in `usage` skill + per-connector guides
+    registry.ts           # connector registry, tool cache, address resolution,
+                          #   ScopedRegistry (the one toolkit enforcement point)
+    toolkits.ts           # toolkit definitions + construction-time validation
     catalog.ts            # search ranking + compact schema rendering
     credentials.ts        # AES-GCM vault for operator-managed connector credentials
     activity.ts           # payload-free activity contracts
@@ -339,9 +346,49 @@ policy, or alter what an agent can call. Connectors remain config as code.
   them. Storage itself stays deployment-owned behind a vendor-neutral seam, like
   `KVStorage`.
 
+## Toolkits (added after v1)
+
+A deployment belongs to one **org**, and one org has several teams that want
+different slices of the same registry. Before toolkits the only answer was a
+second deployment — a second domain, second KV namespace, second set of
+downstream credentials — to express "support should not see Gmail". That is a
+lot of infrastructure for what is really a view.
+
+So `ConnectaConfig.toolkits` declares named scoped views, config as code like
+everything else, and a client selects one at connect time with `?toolkit=<name>`
+on `/mcp`. A toolkit names connector ids, optionally narrowed to specific tool
+addresses. Reference: documentation.md §16.
+
+- **One enforcement point.** Scoping is not a display filter applied in nine
+  handlers: `ScopedRegistry` (`registry.ts`) is a filtered *view* of the one
+  long-lived registry, built by `resolveToolkitScope` in the fetch handler
+  (after the auth gate) and handed to `serveMcp`, and every meta-tool is typed
+  against `RegistryView`. A new meta-tool inherits the
+  boundary without writing a check, and out-of-scope addresses fail
+  *identically* to nonexistent ones — there is no "exists but hidden" reply.
+- **Not multi-tenancy** (still a non-goal below). There is one registry, one
+  connector set, one downstream credential store, and one operator surface;
+  `/ui`, `/health`, the credential API, and the OAuth callback ignore
+  `?toolkit=` entirely. A toolkit is a view over a single tenant's registry, not
+  a tenant.
+- **The transport is stateless**, so scope is resolved from the URL of every
+  request rather than pinned at `initialize`. No server-side scope state can go
+  stale, and a client cannot widen its view mid-session.
+- **Structural mistakes throw at construction** rather than warning — a
+  toolkit naming a connector that does not exist is a scope nobody wrote.
+- **Deliberately deferred: binding an identity to a toolkit**
+  ([issue #37](https://github.com/zackbart/connecta/issues/37)). Selection is
+  self-service today: any caller `auth` admits may pick any toolkit, or omit the
+  parameter and get everything, so a credential shared by two teams gives both
+  teams every view. A toolkit therefore *organizes* the surface; `auth` remains
+  the only thing deciding who gets in, and connecta warns at construction when
+  toolkits are configured with no inbound auth at all. The seam is already
+  there — an `InboundAuth` adapter sees the request including `?toolkit=`.
+
 ## Non-goals (v1)
 
-OpenAPI/GraphQL ingestion, multi-tenancy, policies/approvals, runtime connector
+OpenAPI/GraphQL ingestion, multi-tenancy (toolkits above are scoped views over
+one registry, not tenants), policies/approvals, runtime connector
 registration, a runtime admin UI (the read-only dashboard above is the limit),
 elicitation passthrough, MCP resources/prompts aggregation (tools only),
 sessions/server-push (stateless transport if viable), code-mode

@@ -171,7 +171,9 @@ before; an unknown name is an error, never a silent fallback.
 A toolkit scopes **visibility, not identity**: any authenticated client may
 select any toolkit, or omit the parameter and see everything, so a credential
 shared by two teams gives both teams every view. Binding a member to a toolkit
-belongs in `auth`, which stays the access check. Details:
+belongs in `auth`, which stays the access check; enforcing that binding is a
+deliberate follow-up
+([issue #37](https://github.com/zackbart/connecta/issues/37)). Details:
 [docs §16](./docs/documentation.md#16-toolkits-scoped-views).
 
 ## Code mode
@@ -295,8 +297,8 @@ neutral Connecta default. Nothing about the operator is baked into the package.
 ## Learn more
 
 - **[`docs/documentation.md`](./docs/documentation.md)** — how everything works: architecture,
-  the meta-tools, connectors, inbound auth, downstream OAuth, storage, running it
-  (Node / Workers / Docker), Clerk setup, testing, troubleshooting, code mode,
-  the status UI, and activity history.
+  the meta-tools, connectors and their usage guides, inbound auth, downstream
+  OAuth, storage, running it (Node / Workers / Docker), Clerk setup, testing,
+  troubleshooting, code mode, the status UI, activity history, and toolkits.
 - **[`docs/design.md`](./docs/design.md)** — why it's built this way, and the non-goals.
 - **[`CHANGELOG.md`](./CHANGELOG.md)** — what changed in each release.

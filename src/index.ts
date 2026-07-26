@@ -271,8 +271,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxResultBytes: config.maxResultBytes,
   });
   // Throws on every structural mistake it can see (see resolveToolkits): a
-  // toolkit is an access boundary, so a typo must not become a scope the
-  // operator never wrote.
+  // typo must not become a scope the operator never wrote. Note this is about
+  // the scope being *intended*, not about it being an access check — a toolkit
+  // scopes visibility, and `auth` remains the thing deciding who gets in.
   const toolkits = resolveToolkits(config.toolkits, config.connectors);
   const inboundAuth = normalizeAuth(config.auth);
   warnInsecureConfig(config, inboundAuth, logger);

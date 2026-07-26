@@ -21,6 +21,7 @@ interface ActivityRow {
   server_name: string;
   server_version: string;
   deployment_id: string | null;
+  toolkit_id: string | null;
 }
 
 interface Cursor {
@@ -76,6 +77,8 @@ function toEvent(row: ActivityRow): ToolCallActivityEvent {
     ...(row.deployment_id
       ? { deploymentId: row.deployment_id }
       : {}),
+    // Which toolkit-scoped view the call came through, when one was selected.
+    ...(row.toolkit_id ? { toolkitId: row.toolkit_id } : {}),
   };
 }
 
@@ -88,8 +91,8 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
           `INSERT INTO tool_call_activity (
             id, occurred_at_ms, request_id, actor_kind, actor_id,
             connector_id, tool_name, source, outcome, duration_ms, attempts,
-            error_code, server_name, server_version, deployment_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            error_code, server_name, server_version, deployment_id, toolkit_id
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
           event.id,
@@ -107,6 +110,7 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
           event.serverName,
           event.serverVersion,
           event.deploymentId ?? null,
+          event.toolkitId ?? null,
         )
         .run();
     },

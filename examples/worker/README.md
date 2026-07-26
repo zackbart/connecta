@@ -110,12 +110,28 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
      error_code     TEXT,
      server_name    TEXT NOT NULL,
      server_version TEXT NOT NULL,
-     deployment_id  TEXT
+     deployment_id  TEXT,
+     toolkit_id     TEXT
    );
 
    CREATE INDEX IF NOT EXISTS tool_call_activity_recent
      ON tool_call_activity (occurred_at_ms DESC, id DESC);
    ```
+
+   **Already have this table?** `toolkit_id` is new (it arrived with
+   toolkits), and `CREATE TABLE IF NOT EXISTS` will not add it to a table
+   that already exists. Add it as its own migration:
+
+   ```sql
+   ALTER TABLE tool_call_activity ADD COLUMN toolkit_id TEXT;
+   ```
+
+   Do this **before** deploying the updated `d1-activity.ts`: its `INSERT`
+   names `toolkit_id`, so against an un-migrated table every write fails with
+   `no such column: toolkit_id`. Activity writes are best-effort by design —
+   connecta logs the failure and returns the tool result unharmed — so the
+   symptom is not an error your agent sees, it is an activity log that
+   quietly stops recording.
 
 3. Pass the store to `createConnecta`:
 
@@ -130,7 +146,9 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
    ```
 
 Events carry no arguments, results, generated code, or raw error messages — see
-[documentation.md §15](../../docs/documentation.md#15-activity-history). The
+[documentation.md §15](../../docs/documentation.md#15-activity-history).
+`toolkit_id` records which of the scoped views above a call came through, so an
+operator can tell the support team's traffic from the exec team's. The
 Worker entrypoint already forwards `ctx` to `connecta.fetch`, which is what lets
 async activity writes settle on `waitUntil`.
 
