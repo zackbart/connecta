@@ -7,6 +7,13 @@ import type {
   ToolDef,
 } from "./types.js";
 import type { CredentialVault } from "./credentials.js";
+import {
+  CredentialHealthChecker,
+  type CredentialCheckOptions,
+  type CredentialCheckResult,
+  type CredentialHealthConfig,
+  type CredentialHealthRecord,
+} from "./credential-health.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
@@ -131,6 +138,8 @@ export interface RegistryOptions {
    * to the default 50_000.
    */
   maxResultBytes?: number;
+  /** Tuning for the credential liveness checks (issue #24). */
+  credentialHealth?: CredentialHealthConfig;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -187,6 +196,13 @@ export interface RegistryView {
   recordFailure(id: string, latencyMs: number, error: unknown): void;
   healthFor(id: string): HealthObservation | undefined;
   hasObservedSuccess(id: string): boolean;
+  /** Last credential-liveness verdict for `id`. Cached; no downstream I/O. */
+  credentialHealthFor(id: string): Promise<CredentialHealthRecord | undefined>;
+  /** Store a liveness verdict a live status check just produced. */
+  recordCredentialHealth(
+    id: string,
+    record: CredentialHealthRecord,
+  ): Promise<void>;
   statusFor(
     id: string,
     baseUrl: string,
@@ -211,6 +227,8 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  /** Proactive liveness checks over stored downstream credentials (issue #24). */
+  private readonly credentialHealth: CredentialHealthChecker;
 
   constructor(
     connectors: Connector[],
@@ -238,6 +256,18 @@ export class Registry implements RegistryView {
     }
     this.checkConventions(opts.logger);
     this.checkResultCaps(opts.logger, opts.maxResultBytes);
+    this.credentialHealth = new CredentialHealthChecker(
+      {
+        listConnectors: () => this.listConnectors(),
+        getConnector: (id) => this.getConnector(id),
+        contextFor: (id, baseUrl, requestScope) =>
+          this.contextFor(id, baseUrl, requestScope),
+        storage: opts.storage,
+        logger: opts.logger,
+        credentialVault: opts.credentialVault,
+      },
+      opts.credentialHealth,
+    );
   }
 
   /**
@@ -524,6 +554,60 @@ export class Registry implements RegistryView {
     return this.health.get(id)?.lastSuccessAt !== undefined;
   }
 
+  /**
+   * The last credential-liveness verdict for `id` — the layer that lets a cached
+   * status read report `auth_required` before a real call discovers it. Read
+   * from storage (mirrored in memory for a few seconds) rather than held in
+   * memory alone, because on Workers the isolate that ran the check is usually
+   * not the isolate answering this read.
+   */
+  credentialHealthFor(id: string): Promise<CredentialHealthRecord | undefined> {
+    return this.credentialHealth.healthFor(id);
+  }
+
+  recordCredentialHealth(
+    id: string,
+    record: CredentialHealthRecord,
+  ): Promise<void> {
+    return this.credentialHealth.record(id, record);
+  }
+
+  /**
+   * Check stored downstream credentials now and return one outcome per
+   * connector considered. THE operator-facing entry point behind
+   * `Connecta.checkCredentials()`: wire it to a Worker cron trigger or a Node
+   * interval. Never rejects; connectors checked recently are reported as
+   * `fresh` unless `force` is set.
+   */
+  checkCredentialHealth(
+    baseUrl: string,
+    opts?: CredentialCheckOptions,
+  ): Promise<CredentialCheckResult[]> {
+    return this.credentialHealth.check(baseUrl, opts);
+  }
+
+  /**
+   * The traffic-triggered sweep: a promise for the caller to defer (Workers:
+   * `ctx.waitUntil`), or `undefined` when nothing is due — which is the common
+   * case and costs no I/O. Called by the server after an authenticated request;
+   * the checker owns the rate limiting.
+   */
+  sweepCredentialHealthIfDue(
+    baseUrl: string,
+  ): Promise<CredentialCheckResult[]> | undefined {
+    return this.credentialHealth.sweepIfDue(baseUrl);
+  }
+
+  /**
+   * Drop a connector's liveness verdict, because its credential just changed
+   * under us (OAuth callback completed, credential stored or removed in /ui). A
+   * stale `auth_required` must not outlive the re-authorization that fixed it —
+   * that is the difference between recovery working and needing a restart.
+   */
+  clearCredentialHealth(id: string): Promise<void> {
+    return this.credentialHealth.clear(id);
+  }
+
   /** Best-effort connector status for list_connectors. */
   async statusFor(
     id: string,
@@ -766,6 +850,29 @@ export class ScopedRegistry implements RegistryView {
    */
   hasObservedSuccess(id: string): boolean {
     return this.visible(id) ? this.base.hasObservedSuccess(id) : false;
+  }
+
+  /**
+   * Also deliberately NOT per view, for the same reason as
+   * `hasObservedSuccess`: whether the credential connecta stores for a connector
+   * still works is a fact about the deployment's credential, not about a team's
+   * traffic. Withholding it would leave a scoped session unable to see that the
+   * connector it shares needs re-authorization. The verdict carries the
+   * connector's own connector-level reason — never a tool name — so the per-view
+   * isolation of `lastError` above is unchanged.
+   */
+  credentialHealthFor(id: string): Promise<CredentialHealthRecord | undefined> {
+    return this.visible(id)
+      ? this.base.credentialHealthFor(id)
+      : Promise.resolve(undefined);
+  }
+
+  async recordCredentialHealth(
+    id: string,
+    record: CredentialHealthRecord,
+  ): Promise<void> {
+    if (!this.visible(id)) return;
+    await this.base.recordCredentialHealth(id, record);
   }
 
   async statusFor(

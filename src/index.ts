@@ -12,6 +12,10 @@ import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
+  CredentialCheckResult,
+  CredentialHealthConfig,
+} from "./credential-health.js";
+import type {
   Connector,
   ConnectaBranding,
   Executor,
@@ -134,6 +138,19 @@ export interface ConnectaConfig {
    * real cancellation of the downstream request is a deferred follow-up.
    */
   probeTimeoutMs?: number;
+  /**
+   * Tuning for the proactive credential liveness checks (issue #24) that let a
+   * connector's status flip to `auth_required` *before* an agent's call fails.
+   * Defaults are safe to leave alone: at most one check per connector per 15
+   * minutes, four in flight, 30 s each, triggered opportunistically by inbound
+   * authenticated traffic. Only connectors holding a credential connecta stores
+   * — an operator-managed `credential`, or a downstream-OAuth grant — are ever
+   * checked, and a check never calls a downstream tool.
+   *
+   * `Connecta.checkCredentials()` is the same check on demand, for a Worker cron
+   * trigger or a Node interval.
+   */
+  credentialHealth?: CredentialHealthConfig;
   serverInfo?: {
     name?: string;
     version?: string;
@@ -159,6 +176,29 @@ export interface Connecta {
   /** Web-standard fetch handler. Usable as `export default { fetch: connecta.fetch }`. */
   fetch: (request: Request, env?: unknown, ctx?: unknown) => Promise<Response>;
   registry: Registry;
+  /**
+   * Check the stored downstream credentials now — the scheduler-facing half of
+   * credential health (issue #24). Wire it to whatever timer the runtime has:
+   *
+   * ```ts
+   * // Cloudflare Workers (wrangler.jsonc: "triggers": { "crons": ["*\/15 * * * *"] })
+   * async scheduled(_c, env, ctx) { ctx.waitUntil(build(env).checkCredentials()); }
+   * // Node
+   * setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
+   * ```
+   *
+   * Returns one outcome per connector considered, including why a connector was
+   * skipped (`fresh` is the rate limit: a connector checked less than
+   * `credentialHealth.intervalSeconds` ago is not re-checked unless `force`).
+   * Never rejects on a connector failure — a broken connector becomes an `error`
+   * verdict. Needs a base URL for connector contexts: `publicUrl` supplies it,
+   * or pass one.
+   */
+  checkCredentials: (opts?: {
+    baseUrl?: string;
+    force?: boolean;
+    ids?: string[];
+  }) => Promise<CredentialCheckResult[]>;
 }
 
 function defaultLogger(): Logger {
@@ -341,6 +381,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     persistToolCatalog: config.persistToolCatalog,
     toolCatalogStaleSeconds: config.toolCatalogStaleSeconds,
     maxResultBytes: config.maxResultBytes,
+    credentialHealth: config.credentialHealth,
   });
   // Throws on every structural mistake it can see (see resolveToolkits): a
   // typo must not become a scope the operator never wrote. Note this is about
@@ -383,6 +424,23 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           : undefined,
       ),
     registry,
+    checkCredentials: (opts = {}) => {
+      // A scheduled check has no inbound request to derive an origin from, and
+      // a connector context without one would mint OAuth redirect URIs against
+      // a guess. Say so instead: the fix is one config line.
+      const baseUrl = opts.baseUrl ?? config.publicUrl;
+      if (!baseUrl) {
+        throw new Error(
+          "checkCredentials() needs a base URL: set `publicUrl` on the config " +
+            "(recommended — it is also what downstream OAuth callbacks use) or " +
+            "pass checkCredentials({ baseUrl }).",
+        );
+      }
+      return registry.checkCredentialHealth(baseUrl, {
+        ...(opts.force !== undefined ? { force: opts.force } : {}),
+        ...(opts.ids ? { ids: opts.ids } : {}),
+      });
+    },
   };
 }
 
@@ -411,6 +469,15 @@ export type {
   ToolkitConfig,
   ToolkitDefinition,
 } from "./toolkits.js";
+// Credential health: the config shape, and the result shape a scheduled
+// `checkCredentials()` returns. The checker itself is internal factoring.
+export type {
+  CredentialCheckResult,
+  CredentialCheckSkip,
+  CredentialCheckState,
+  CredentialHealthConfig,
+  CredentialHealthRecord,
+} from "./credential-health.js";
 
 export type { RemoteMcpOptions, RemoteMcpAuth } from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";

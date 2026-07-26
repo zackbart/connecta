@@ -43,7 +43,7 @@ A tool **address** is `<connectorId>.<toolName>` (e.g. `notion.search`).
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `list_connectors` | `{ probe? }` | live (`probe: true`, default) or cached health, tool count, and recent real-call observations |
+| `list_connectors` | `{ probe? }` | live (`probe: true`, default) or cached health, tool count, recent real-call observations, and the last proactive credential check |
 | `skills` | `{ name? }` | lists or fetches the concise `usage` guide for choosing among the meta-tools, plus any operator-authored per-connector guide (`connector:<connectorId>`) |
 | `search_tools` | `{ query?, connector?, limit?, offset?, fullDescriptions?, includeSchemas? }` | ranked, paginated matches; optionally includes compact/raw schemas to remove a round trip |
 | `describe_tools` | `{ addresses[], format?, fullDescriptions? }` | names, descriptions, input/output schemas, and behavior annotations |
@@ -255,6 +255,32 @@ Connecta does not bundle service-specific HTTP API connectors. Package consumers
 define them with `api()` (or implement `Connector` directly), keeping endpoint,
 credential, and tool choices in the consuming project.
 
+## Credential health
+
+Stored credentials are checked for liveness *before* an agent's call trips over a
+dead one. Connecta asks each connector holding a credential it stores — a vault
+credential, or a downstream-OAuth grant — whether that credential still works,
+using the connector's own `testCredential(s)` or `status()` hook. No downstream
+tool is ever called. A failed check flips the connector to `auth_required` in
+`list_connectors({ probe: false })` and on `/ui`, with the URL to open; a later
+success (or re-authorizing) flips it back with no restart.
+
+Checks are triggered two ways and share one rate limit — at most one per
+connector per 15 minutes by default, four in flight, 30 s each:
+
+```ts
+// 1. Opportunistically, on authenticated traffic connecta already serves.
+//    On by default; nothing to wire. Disable with:
+createConnecta({ connectors, credentialHealth: { onRequest: false } });
+
+// 2. On a schedule you own — the core starts no timers, so this works the same
+//    on Workers (cron trigger) and Node.
+async scheduled(_c, env, ctx) { ctx.waitUntil(build(env).checkCredentials()); }
+setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
+```
+
+Details: [docs §17](./docs/documentation.md#17-credential-health-proactive-liveness-checks).
+
 ## Payload-free tool activity
 
 Connecta can record which resolved downstream tools were actually invoked
@@ -291,7 +317,8 @@ a complete D1 implementation with keyset paging and a retention pass.
 
 ## Operator dashboard
 
-`GET /ui` is a read-only dashboard with no build step: connector health, tool
+`GET /ui` is a read-only dashboard with no build step: connector health and the
+last credential check, tool
 counts and descriptions with a client-side filter, downstream authorization
 links, the credential controls above, and an Activity tab when an activity store
 is configured. The shell is open because it carries no data; everything it shows

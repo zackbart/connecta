@@ -211,6 +211,17 @@ export interface UiConnector {
   authorizationUrl?: string;
   toolCount: number;
   tools: UiTool[];
+  /**
+   * Verdict of the last proactive credential liveness check (issue #24), for the
+   * connectors that hold a credential connecta stores. Shown beside the live
+   * status so an operator can tell "checked just now" from "last verified an
+   * hour ago", and see a dead credential the page's own probe may not reach.
+   */
+  credentialCheck?: {
+    state: "ok" | "auth_required" | "error";
+    checkedAt: string;
+    message?: string;
+  };
   credential?: {
     label: string;
     description?: string;
@@ -295,6 +306,7 @@ export async function buildUiData(
   const connectors = await Promise.all(
     registry.listConnectors().map(async (c): Promise<UiConnector> => {
       const status = await registry.statusFor(c.id, baseUrl, requestScope);
+      const credentialCheck = await registry.credentialHealthFor(c.id);
       let tools: UiTool[] = [];
       // `status()` on an unauthenticated remote connector starts OAuth and
       // stores its state + PKCE verifier. Probing listTools immediately
@@ -393,6 +405,17 @@ export async function buildUiData(
           : {}),
         toolCount: tools.length,
         tools,
+        ...(credentialCheck
+          ? {
+              credentialCheck: {
+                state: credentialCheck.state,
+                checkedAt: credentialCheck.checkedAt,
+                ...(credentialCheck.message
+                  ? { message: credentialCheck.message }
+                  : {}),
+              },
+            }
+          : {}),
         ...(credential ? { credential } : {}),
       };
     }),
@@ -1049,6 +1072,19 @@ function render() {
       '<br><span class="mono">' + esc(c.id) + "</span></div></div>";
     if (c.message) {
       head += '<p class="connector-message msg">' + esc(c.message) + "</p>";
+    }
+    if (c.credentialCheck) {
+      const check = c.credentialCheck;
+      const verdict = check.state === "ok"
+        ? "credential verified"
+        : check.state === "auth_required"
+          ? "credential needs authorization"
+          : "credential check failed";
+      head += '<p class="connector-check meta">Credential check: ' +
+        esc(verdict) + " · " + esc(formatDate(check.checkedAt)) +
+        (check.message && check.message !== c.message
+          ? " — " + esc(check.message)
+          : "") + "</p>";
     }
     if (c.authorizationUrl) {
       const safe = safeHttp(c.authorizationUrl);

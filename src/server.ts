@@ -574,6 +574,13 @@ async function handleCredentialRequest(
         }
         result = await connector.testCredential!(value, ctx);
       }
+      // The operator just ran the very check the liveness sweep runs; record it
+      // so the cached status surfaces agree with what /ui just showed them.
+      await opts.registry.recordCredentialHealth(connectorId, {
+        state: result.ok ? "ok" : "auth_required",
+        checkedAt: new Date().toISOString(),
+        ...(result.message ? { message: result.message } : {}),
+      });
       return privateJson(result);
     } catch (err) {
       return privateJson({ ok: false, message: msg(err) });
@@ -601,6 +608,9 @@ async function handleCredentialRequest(
               admin.userId,
             );
       opts.registry.invalidate(connectorId);
+      // The credential the last verdict judged is gone; judging its replacement
+      // is the next check's job, not this one's.
+      await opts.registry.clearCredentialHealth(connectorId);
       return privateJson({ credential: metadata });
     } catch (err) {
       return privateJson({ error: msg(err) }, { status: 400 });
@@ -610,6 +620,7 @@ async function handleCredentialRequest(
   if (request.method === "DELETE") {
     await opts.credentialVault.delete(connectorId);
     opts.registry.invalidate(connectorId);
+    await opts.registry.clearCredentialHealth(connectorId);
     return new Response(null, {
       status: 204,
       headers: {
@@ -914,6 +925,10 @@ async function handleOAuthCallback(
   try {
     await connector.finishAuth(code, context);
     await registry.invalidateStored(id);
+    // Recovery, without a restart: the grant this connector was reported dead
+    // for has just been replaced, so drop the verdict rather than let a stale
+    // `auth_required` survive until the next scheduled check.
+    await registry.clearCredentialHealth(id);
     return html(
       `Connected "${id}". You can close this window.`,
       200,
@@ -939,6 +954,27 @@ export function createFetchHandler(
     const url = new URL(request.url);
     const baseUrl = publicUrl ?? url.origin;
     const path = url.pathname;
+
+    /**
+     * Piggyback a DUE credential liveness sweep on traffic that has already been
+     * authenticated (issue #24). Started beside the request and never awaited by
+     * it: it must not add latency or change a result, so it is handed to
+     * `ctx.waitUntil` where the runtime has one (Workers, and the Node adapter's
+     * shim) to settle after the response. The registry answers `undefined`
+     * unless a sweep is actually due, so the ordinary request pays nothing.
+     */
+    const sweepCredentials = (): void => {
+      const sweep = registry.sweepCredentialHealthIfDue(baseUrl);
+      if (!sweep) return;
+      const settled = sweep.then(
+        () => {},
+        (err) => {
+          opts.logger.warn("[connecta] credential health sweep failed", err);
+        },
+      );
+      if (runtimeContext?.waitUntil) runtimeContext.waitUntil(settled);
+      else void settled;
+    };
     // Container and orchestrator probes reach /health over plain HTTP on
     // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to
     // the public origin would make an internal liveness check depend on
@@ -1062,6 +1098,9 @@ export function createFetchHandler(
         if (isToolkitRestricted(authz.toolkitBinding)) {
           return restrictedOperatorSurface();
         }
+        // After the restriction check, not before: an identity that may not
+        // read this surface should not get to trigger background work from it.
+        sweepCredentials();
         const data = await buildUiData(
           registry,
           baseUrl,
@@ -1137,6 +1176,7 @@ export function createFetchHandler(
           },
         );
         if (!selected.ok) return withMcpCors(selected.response);
+        sweepCredentials();
         return withMcpCors(
           await serveMcp(
             request,

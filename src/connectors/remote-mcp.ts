@@ -345,6 +345,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   if (opts.auth?.type === "oauth") {
+    // The credential liveness checks (issue #24) probe only connectors that
+    // actually hold a stored grant: with no tokens there is nothing whose
+    // liveness could have lapsed, and a `status()` probe would kick off DCR +
+    // consent on a timer for a connector nobody has authorized yet.
+    connector.hasStoredCredential = async (ctx) => {
+      const state = stateFor(ctx);
+      return (await getProvider(ctx, state).tokens()) !== undefined;
+    };
+
     connector.verifyState = async (oauthState, ctx) => {
       const state = stateFor(ctx);
       return getProvider(ctx, state).verifyState(oauthState);

@@ -28,6 +28,7 @@ for the *why* behind the design see [`design.md`](./design.md).
 14. [Status UI](#14-status-ui)
 15. [Activity history](#15-activity-history)
 16. [Toolkits (scoped views)](#16-toolkits-scoped-views)
+17. [Credential health (proactive liveness checks)](#17-credential-health-proactive-liveness-checks)
 
 ---
 
@@ -158,6 +159,8 @@ connecta/
     toolkits.ts           # toolkit definitions + identity bindings + construction-time validation
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
+    credential-health.ts  # proactive liveness checks over stored credentials (§17)
+    timeout.ts            # the shared probe deadline vocabulary (withTimeout, 30 s default)
     activity.ts           # payload-free activity contracts + best-effort recorder
     errors.ts             # ConnectorCallError + error classification
     mcp-result.ts         # result wrapping, fields selection, truncation/paging
@@ -205,7 +208,15 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   downstream I/O and returns cached/recently observed state.
 - **Output:** `{ connectors: [{ id, title?, description?, toolCount, status, checkedAt,
   latencyMs, probe, lastSuccessAt?, lastFailureAt?, lastLatencyMs?,
-  consecutiveFailures?, lastError?, authorizationUrl?, message? }] }`.
+  consecutiveFailures?, lastError?, credentialCheck?, authorizationUrl?, message? }] }`.
+- **Credential liveness** (`credentialCheck: { state, checkedAt, message?,
+  authorizationUrl? }`) is the verdict of the last proactive check of a stored
+  downstream credential ([§17](#17-credential-health-proactive-liveness-checks)),
+  present only for connectors that hold one. A failed verdict *sets* the `probe:
+  false` status — this is how `auth_required` reaches an agent before a real call
+  fails on the dead credential — for as long as it is the freshest evidence; a
+  successful real call recorded after `checkedAt` retires it. A successful verdict
+  upgrades `unknown` to `ok`, and never downgrades an observed failure.
 - **Observed health** (the `lastSuccessAt` / `lastFailureAt` /
   `consecutiveFailures` / `lastError` fields, and the `error` state `probe:
   false` derives from them) comes from real calls made through `call_tool`,
@@ -640,6 +651,8 @@ interface Connector {
     ctx: ConnectorContext): Promise<{ ok: boolean; message?: string }>;
   testCredentials?(values: Record<string, string>,
     ctx: ConnectorContext): Promise<{ ok: boolean; message?: string }>;
+  hasStoredCredential?(                                           // holds a stored grant?
+    ctx: ConnectorContext): Promise<boolean>;                     //   (see §17)
   staticTools?: ToolDef[];       // known at construction time (api() sets it)
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;
   callTool(name: string, args: unknown, ctx: ConnectorContext): Promise<unknown>;
@@ -668,7 +681,14 @@ decrypted single value, `get(name)` returns one named field, and `getAll()`
 returns the complete named set. Credential access is read-only from connector
 code: operators add, replace, test, and remove values through `/ui`.
 `testCredential` and `testCredentials` optionally power the card's Test button
-without exposing values to the browser.
+without exposing values to the browser — and, because they answer "does this
+stored value still work" without touching downstream state, they are also what
+the credential liveness checks call ([§17](#17-credential-health-proactive-liveness-checks)).
+`hasStoredCredential` is for connectors that store a credential themselves
+rather than in connecta's vault (`remoteMcp` implements it for
+`auth: { type: "oauth" }`): the liveness checks probe a connector only when it
+answers `true`, so a connector nobody has authorized yet is never put through a
+consent flow on a timer.
 
 `staticTools` is what the startup convention check reads; remote catalogs are
 fetched lazily and have nothing to check at construction time, which is why
@@ -1186,6 +1206,9 @@ Or implement the three methods over anything you like.
 
 **What actually needs persistence:** **downstream OAuth tokens /
 registrations / pending flows** (§6), serializable tool catalogs, result pages,
+**credential-liveness verdicts** (`credhealth:<connectorId>`, so a scheduled check
+in one isolate is visible to the isolates answering status reads —
+[§17](#17-credential-health-proactive-liveness-checks)),
 and any **connector-private state** a custom connector chooses to store. If you
 use no OAuth connectors and no custom
 persisted state, `memoryStorage()` is fine.
@@ -1256,6 +1279,7 @@ when the response returns. `ConnectaConfig`:
 | `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging, as a whole number of bytes >= 1 (out-of-range values warn at startup and fall back to the default); the **only** deployment-wide place the cap is set, and a connector may override it with its own `maxResultBytes` (§4) |
 | `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
 | `probeTimeoutMs?` | 30 000 | how long the discovery meta-tools (`list_connectors` probes, and the catalog fan-out behind `search_tools`/`describe_tools`) wait on one connector before giving up on it. Bounds the caller-facing wait only; it does not apply to `call_tool`/`batch_call`, which use `defaultToolTimeoutMs` |
+| `credentialHealth?` | `{ intervalSeconds: 900, concurrency: 4, timeoutMs: 30 000, onRequest: true }` | proactive credential liveness checks ([§17](#17-credential-health-proactive-liveness-checks)): how often one connector's stored credential may be re-checked, how many checks run at once, the per-check deadline, and whether inbound authenticated traffic may trigger a due check in the background. Out-of-range values fall back to the default rather than being coerced — a zero interval would switch the rate limit off |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
 | `executor?` | unset ⇒ nine tools | code-mode sandbox ([§13](#13-code-mode-execute_code)) |
@@ -1444,14 +1468,15 @@ Test suites (`test/`) and what they cover:
 | `meta-tools.test.ts` | the registry-backed meta-tools: timed health status, ranked/paginated discovery, concise/full descriptions, compact + JSON schemas, MCP/value result modes, structured errors, OAuth flow, fields selection, truncation + paging (including what the cap measures for non-text content, and `get_result`'s offset validation and character-boundary alignment), schema-valid results for returns JSON cannot represent, batch parallelism/isolation, and catalog-lookup health accounting (a failing catalog counts call-for-call with a failing execution, a typed `auth_required` keeps its code, recovery clears the count, cache hits record nothing) |
 | `api-connector.test.ts` | `api()` kind/description, tool defs, dispatch, default args, unknown-tool + handler-throw behaviour |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process MCP server via `_transportFactory` — listTools/callTool passthrough, downstream `isError`, Cloudflare-safe output-schema validation, ok status, and request-scoped client reuse |
-| `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
+| `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, `hasStoredCredential` (present only for oauth, tracking stored tokens), the `/oauth/callback/<id>` route incl. HTML escaping and the credential-liveness verdict it clears |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the toolkit binding a token declares (§16) — frozen, deduplicated, throwing on every shape that would not mean what it says (`unscoped` alone, a binding that permits nothing, a name outside the grammar, a non-array), and the `console.warn` a bound token with no `subjectId` earns |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
 | `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
+| `credential-health.test.ts` | proactive credential liveness ([§17](#17-credential-health-proactive-liveness-checks)) — healthy→revoked→recovered transitions reaching `list_connectors({ probe: false })` with no tool call or catalog fetch, the vault path via `testCredentials` (including an undecryptable value), rate limiting (`fresh` skips, repeated reads probing nothing, a fresh check once the interval passes), connectors with nothing stored or nothing to ask never probed, per-check deadline and thrown-check verdicts, the `concurrency` fan-out bound, precedence against real-call evidence in both directions, `probe: true` and `authorize_connector` recording verdicts, scoped visibility of a shared connector's verdict, and the traffic-triggered sweep end-to-end (once per burst, never unauthenticated, `onRequest: false`, `/ui/data` payload, and the base-URL error) |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
-| `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
+| `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection and the liveness verdict its Test action records (and its PUT/DELETE clear), `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
 | `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), and the toolkit binding the provider declares for the users it admits |
 | `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the three toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth, authenticated-but-unbound, and partially-bound each get their own line, the last naming the unbound providers; declaring the exemption with `unscoped: true` silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
@@ -1619,7 +1644,8 @@ A minimal, read-only dashboard for operators with no build step. Two routes
   ([§16](#16-toolkits-scoped-views)) — this payload is deployment-wide.
   Shape: `{ serverInfo, activityEnabled,
   connectors: [{ id, title?, description?, status, message?, authorizationUrl?,
-  toolCount, tools: [{ name, address, description? }], credential? }] }`. Broken
+  toolCount, tools: [{ name, address, description? }], credentialCheck?,
+  credential? }] }`. Broken
   connectors are isolated — they surface `status: "error"` with `tools: []`
   rather than failing the whole payload. Tools are listed only for a connector
   whose `status` is `ok`: probing `listTools` on an unauthorized remote
@@ -1640,8 +1666,11 @@ masked metadata only, never a value.
 
 The page renders the instance name/version, one card per connector (display title
 when configured, stable id, description, a status dot — green `ok` / amber `auth_required` / red `error`,
-tool count, any status message, and a clickable authorization link when
-`auth_required`), a collapsible `<details>` list of each connector's tools
+tool count, any status message, a clickable authorization link when
+`auth_required`, and — for a connector holding a stored credential — a
+"Credential check" line with the last liveness verdict, when it was taken, and
+why ([§17](#17-credential-health-proactive-liveness-checks))), a collapsible
+`<details>` list of each connector's tools
 (address in a `<code>` tag + description), and a client-side text filter over
 tool names/descriptions. A connector that declares a credential also renders
 Add / Replace / Test / Remove controls in its card for a Clerk operator (§7),
@@ -2230,3 +2259,137 @@ with two bound tokens an operator cannot tell which credential was refused.
 Tool names on **remote** connectors cannot be validated at construction: their
 catalogs are fetched lazily over the network and are unknown until first use. An
 entry for a tool a remote connector does not have simply matches nothing.
+
+---
+
+## 17. Credential health (proactive liveness checks)
+
+A stored downstream credential can die quietly. Before this existed, a
+connector's status only flipped when something **observed** a failure — an
+agent's real call erroring `auth_required`, or an operator running
+`list_connectors({ probe: true })` — so a revoked grant surfaced at the worst
+possible moment: mid-task, as a failed call.
+
+Credential health closes that gap. Connecta periodically asks each connector
+whether the credential **connecta itself stores** for it still works, records the
+verdict, and serves it from the cheap status surfaces. An agent calling
+`list_connectors({ probe: false })` sees `auth_required` — with the URL to open —
+*before* it tries a call, and can run `authorize_connector` up front instead of
+discovering the problem halfway through a task.
+
+### What gets checked, and how
+
+Only connectors holding a credential connecta manages, asked only through the
+hooks that exist to answer this question:
+
+| Credential | Checked with | A failure reads as |
+| --- | --- | --- |
+| Operator-managed (`credential`, in the vault — [§7](#7-storage)) | `testCredentials(values)` / `testCredential(value)` — the same call /ui's Test button makes | `auth_required` with the connector's message; replace the value in `/ui` |
+| Downstream OAuth (`remoteMcp({ auth: { type: "oauth" } })`, [§6](#6-downstream-oauth)) | `status(ctx)`, which refreshes the grant — that *is* the liveness question for a token | `auth_required` with the consent `authorizationUrl` |
+
+Everything else is skipped, by design:
+
+- **A check never calls a downstream tool** and never fetches a catalog. It
+  cannot mutate downstream state, and no destructive tool is reachable from it.
+- **A connector with nothing stored is not probed.** `hasStoredCredential`
+  ([§4](#the-connector-interface)) answers for OAuth connectors and the vault
+  answers for credential connectors; with nothing stored there is no credential
+  whose liveness is in question, and a `status()` probe would kick off DCR +
+  consent for a connector nobody has authorized yet.
+- **A static-token connector stores nothing here** (`auth: { type: "headers" }`),
+  so it is never put on a timer.
+- A connector exposing neither `status()` nor a credential test hook has no way
+  to be asked, and is reported as `not_checkable`.
+
+### When checks run
+
+Nothing in the core schedules itself: connecta has to run unchanged on
+Cloudflare Workers, where there are no long-lived timers and no background
+daemon. There are two triggers instead, and they share one budget.
+
+**1. Opportunistically, on traffic connecta already serves.** After an
+authenticated `/mcp` or `/ui/data` request is admitted, connecta hands a *due*
+sweep to `ctx.waitUntil` (the Node adapter shims one) and returns the response
+immediately. It never adds latency to the request and never changes its result.
+Unauthenticated requests trigger nothing. Turn it off with
+`credentialHealth: { onRequest: false }`.
+
+**2. On a schedule you own** — `Connecta.checkCredentials()`, an ordinary
+awaited call that returns one outcome per connector:
+
+```ts
+// Cloudflare Workers — wrangler.jsonc: "triggers": { "crons": ["*/15 * * * *"] }
+export default {
+  async fetch(request, env, ctx) { return build(env).fetch(request, env, ctx); },
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(build(env).checkCredentials());
+  },
+};
+
+// Node
+setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
+```
+
+Both examples ship this wiring (`examples/worker/src/index.ts` +
+`examples/worker/wrangler.jsonc`, `examples/node/src/index.ts`,
+`examples/docker/server.ts`). `checkCredentials()` needs a base URL for connector
+contexts: `publicUrl` supplies it — the value downstream OAuth callbacks already
+require — or pass `{ baseUrl }`. It takes `{ force }` to ignore the freshness
+budget and `{ ids }` to check named connectors, and never rejects on a connector
+failure.
+
+The two triggers are complements, not alternatives: opportunistic checks make a
+*busy* deployment self-maintaining with no setup, and a scheduler covers an
+*idle* one, where nothing arrives to piggyback on.
+
+### Bounded cost
+
+A status surface an agent may poll must never become a way to hammer a
+downstream auth endpoint, so the cost is bounded four ways:
+
+1. **Eligibility** — only connectors holding a credential of ours, only when
+   something is actually stored.
+2. **Freshness, across isolates** — a verdict younger than `intervalSeconds`
+   (default 900) short-circuits the check and is reported as `skipped: "fresh"`.
+   Verdicts are persisted, so a Worker cron isolate and every request isolate
+   share one budget. **Repeated status reads never each trigger a check** — a
+   read reads the verdict, it does not produce one.
+3. **Sweep gate, per isolate** — one traffic-triggered sweep per interval per
+   isolate, never two at once: a burst of requests costs one sweep.
+4. **Deadline and fan-out** — `timeoutMs` per check (default 30 000, the probe
+   default) with at most `concurrency` (default 4) in flight, the same shape as
+   the `probeTimeoutMs` bound on the discovery fan-out.
+
+A `list_connectors({ probe: true })` and /ui's credential **Test** button record
+their verdicts too — they are the same check, run by hand — which also means an
+operator who just probed live is not swept again moments later.
+
+### Where the verdict shows up, and how it clears
+
+| Surface | What it shows |
+| --- | --- |
+| `list_connectors({ probe: false })` | `credentialCheck`, and the `status` it sets ([§3](#list_connectors)) |
+| `list_connectors({ probe: true })` | live status as always, plus `credentialCheck` refreshed by that probe |
+| `/ui` | a "Credential check" line on the connector card: verdict, when, and why |
+
+Verdicts live in the deployment's own storage under `credhealth:<connectorId>`,
+alongside the `conn:<id>:*` and `catalog:<id>` keys ([§7](#7-storage)). They are
+read through a few-second in-memory mirror, so a burst of status reads costs one
+storage read rather than one per read.
+
+Recovery does not wait for the next check. A verdict is **dropped** the moment
+the credential it judged is replaced — a completed `/oauth/callback/<id>`, a
+`PUT`/`DELETE` on the credential API — and `authorize_connector`'s own answer
+overwrites it, so a connector that reports `ok` again is `ok` again immediately,
+with no restart.
+
+Two deliberate limits. A failed verdict governs the cached status only while it
+is the freshest evidence: a successful real call recorded *after* `checkedAt`
+retires it, because real traffic beats a background probe. And a verdict never
+downgrades an observed failure — a failing real call is the stronger signal, so
+`error` from this view's own calls stands.
+
+Automatic re-authorization is **out of scope**: refresh-token rotation is already
+the OAuth flow's job ([§6](#6-downstream-oauth)), and interactive re-consent
+stays manual through `authorize_connector`. This feature makes the need visible
+early; it does not act on it.

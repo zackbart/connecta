@@ -805,6 +805,38 @@ describe("status UI credential management", () => {
     await expect(test.json()).resolves.toEqual({ ok: true });
   });
 
+  it("feeds the credential Test action into the liveness verdict, and resets it on change", async () => {
+    const { connecta } = makeCredentialConnecta();
+    await credentialRequest(connecta, "/ui/credentials/vaulted", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value: "valid-secret-9876" }),
+    });
+    // A PUT replaces the credential a verdict would have judged, so it starts
+    // from no verdict rather than carrying the previous one forward.
+    expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/vaulted/test",
+      { method: "POST" },
+    );
+    await expect(test.json()).resolves.toMatchObject({ ok: true });
+    // The operator just ran the same check the sweep runs — record it once, so
+    // the cached status surfaces agree with what /ui showed.
+    expect(await connecta.registry.credentialHealthFor("vaulted")).toMatchObject(
+      { state: "ok", message: "Credential is valid." },
+    );
+
+    const remove = await credentialRequest(
+      connecta,
+      "/ui/credentials/vaulted",
+      { method: "DELETE" },
+    );
+    expect(remove.status).toBe(204);
+    expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
+  });
+
   it("keeps named fields and removal available when a stored credential is unreadable", async () => {
     const { connecta, storage } = makeMultiCredentialConnecta();
     await storage.set("conn:multi:credential:v1", "corrupt-ciphertext");
