@@ -1,6 +1,6 @@
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
-// Single tenant, no tenant-tag requirement, optional gate() with ~60s identity
-// caching.
+// Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
+// ~60s identity caching.
 
 import { createClerkClient } from "@clerk/backend";
 import {
@@ -16,6 +16,15 @@ export interface ClerkAuthOptions extends ToolkitBindingOptions {
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
   publicUrl?: string;
+  /**
+   * Email domains this deployment admits, e.g. `["acme.com"]`. An
+   * authenticated user whose verified primary email is not on one of them is
+   * rejected exactly like a `gate` rejection. Matching is exact on the whole
+   * domain and case-insensitive: `acme.com` admits neither `evil-acme.com` nor
+   * `mail.acme.com` — spell a subdomain out to allow it. Absent ⇒ every
+   * authenticated user passes this check, as before the option existed.
+   */
+  allowedDomains?: readonly string[];
   /** Optional allow-list hook. Return false to reject an authenticated user. */
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   /** Advertised scopes in protected-resource metadata. */
@@ -54,7 +63,97 @@ const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
 
 /**
+ * One label of an `allowedDomains` entry: ASCII letters/digits, interior
+ * hyphens only, 63 characters at most. ASCII-only is deliberate — an
+ * internationalized domain must be written in its punycode (`xn--…`) form, so
+ * a Unicode confusable can never be typed into the allowlist and silently
+ * admit a domain the operator cannot tell apart from theirs by eye.
+ */
+const DOMAIN_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+
+/**
+ * Validate and lowercase `allowedDomains` at construction. Everything here
+ * throws rather than dropping the entry: an allowlist that does not say what
+ * its author meant is invisible until the day it admits the wrong caller.
+ */
+function normalizeAllowedDomains(
+  value: readonly string[] | undefined,
+): ReadonlySet<string> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("clerkAuth: `allowedDomains` must be an array of domains.");
+  }
+  if (value.length === 0) {
+    // Fail-closed, an empty list admits nobody and the deployment is dead on
+    // arrival; read as "no restriction", it is the one shape here that fails
+    // OPEN. Neither is what anyone meant to write.
+    throw new Error(
+      "clerkAuth: `allowedDomains` is empty. List at least one domain, or " +
+        "drop the option to admit every authenticated user.",
+    );
+  }
+  const domains = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a string.`,
+      );
+    }
+    const domain = entry.trim().toLowerCase();
+    const hint = domain.includes("@")
+      ? " Write the domain alone, with no `@` and no local part."
+      : "";
+    if (
+      domain.length === 0 ||
+      domain.length > 253 ||
+      !domain.includes(".") ||
+      domain.split(".").some((label) => !DOMAIN_LABEL_RE.test(label))
+    ) {
+      throw new Error(
+        `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a ` +
+          `domain (expected something like "acme.com").${hint}`,
+      );
+    }
+    domains.add(domain);
+  }
+  return domains;
+}
+
+/**
+ * Bounded, escaped form of the denied domain for the operator log — the same
+ * treatment `src/server.ts` gives a rejected toolkit name. An email domain is
+ * caller-influenced (anyone who controls a mailbox controls its domain), so it
+ * goes through JSON.stringify, which neutralizes a newline or control character
+ * that could otherwise forge a log line, plus a hand-rolled escape for
+ * U+2028/U+2029 that JSON.stringify leaves raw.
+ */
+function loggableDomain(domain: string): string {
+  const bounded = domain.slice(0, 100);
+  const escaped = JSON.stringify(bounded).replace(
+    /[\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
+  );
+  return escaped + (bounded.length < domain.length ? " (truncated)" : "");
+}
+
+/**
+ * The domain of an email address, lowercased, or null when there isn't one.
+ *
+ * Split on the LAST `@`, which is what a mail system routes on: it is the only
+ * split where `"a@acme.com"@evil.com` resolves to `evil.com` rather than to the
+ * allowed domain hiding in the local part.
+ */
+function emailDomain(email: string): string | null {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at === email.length - 1) return null;
+  return email.slice(at + 1).trim().toLowerCase();
+}
+
+/**
  * Clerk inbound auth.
+ *
+ * `allowedDomains` and `gate` decide WHO is admitted (both must pass);
+ * `toolkits` decides WHICH view the admitted user gets.
  *
  * `toolkits` binds every user this provider admits to those toolkits (§16). For
  * a per-team split, configure one `clerkAuth(...)` per team — the same keys, a
@@ -68,6 +167,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     publishableKey: opts.publishableKey,
   });
   const toolkitBinding = resolveToolkitBinding("clerkAuth", opts);
+  const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
 
@@ -94,13 +194,65 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       { status: 403, headers: { "Content-Type": "application/json" } },
     );
 
+  /**
+   * The domain half of admission. Fails CLOSED on every uncertainty — no
+   * primary email, an unverified one, a malformed address, or the lookup
+   * itself failing — because "we could not tell" and "they belong here" must
+   * not be the same answer for a membership rule.
+   */
+  const checkDomain = async (userId: string): Promise<boolean> => {
+    if (!allowedDomains) return true;
+    let email: string | undefined;
+    try {
+      const user = await clerk.users.getUser(userId);
+      const primary = user.emailAddresses?.find(
+        (address) => address.id === user.primaryEmailAddressId,
+      );
+      if (primary?.verification?.status === "verified") {
+        email = primary.emailAddress;
+      }
+    } catch (error) {
+      console.warn(
+        `[connecta] clerk email lookup failed for ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        } — denying`,
+      );
+      return false;
+    }
+    const domain = email ? emailDomain(email) : null;
+    if (!domain) {
+      console.warn(
+        `[connecta] clerk user ${userId} has no verified primary email — denying`,
+      );
+      return false;
+    }
+    if (!allowedDomains.has(domain)) {
+      // The domain, never the address: this is an operator log, not a place to
+      // spill the local part of someone's email on every denied request.
+      console.warn(
+        `[connecta] clerk user ${userId} denied: email domain ` +
+          `${loggableDomain(domain)} is not on allowedDomains`,
+      );
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * Is this authenticated user admitted? The domain allowlist and `gate` both
+   * have to say yes, and the allowlist runs first so an outsider never reaches
+   * operator gate code. One cached verdict covers both, so composing them costs
+   * no more Clerk calls than `gate` alone did.
+   */
   const checkGate = async (userId: string): Promise<boolean> => {
-    if (!opts.gate) return true;
+    if (!opts.gate && !allowedDomains) return true;
     const hit = gateCache.get(userId);
     if (hit && Date.now() < hit.exp) return hit.allowed;
     let allowed = false;
     try {
-      allowed = await opts.gate(userId, clerk);
+      allowed =
+        (await checkDomain(userId)) &&
+        (opts.gate ? await opts.gate(userId, clerk) : true);
     } catch {
       allowed = false;
     }

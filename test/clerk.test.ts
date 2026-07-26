@@ -137,6 +137,228 @@ describe("clerkAuth inbound auth", () => {
     if (!result.ok) expect(result.response.status).toBe(401);
   });
 
+  // allowedDomains decides WHO is admitted to the org (§5); a toolkit binding
+  // decides WHICH view they get once admitted (§16).
+  describe("allowedDomains", () => {
+    /** A Clerk user with one primary email, verified unless told otherwise. */
+    const userWithEmail = (
+      emailAddress: string,
+      status: string | null = "verified",
+    ) => ({
+      primaryEmailAddressId: "idn_primary",
+      emailAddresses: [
+        {
+          id: "idn_primary",
+          emailAddress,
+          verification: status === null ? null : { status },
+        },
+      ],
+    });
+
+    const authorize = async (
+      options: Partial<Parameters<typeof clerkAuth>[0]>,
+    ) => {
+      mocks.authenticateRequest.mockResolvedValue({
+        toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
+      });
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        ...options,
+      });
+      return auth.authorize(
+        new Request(`${BASE}/mcp`, {
+          method: "POST",
+          headers: { Authorization: "Bearer oauth-token" },
+        }),
+        BASE,
+      );
+    };
+
+    it("rejects a garbage allowlist at construction", () => {
+      const build = (allowedDomains: unknown) =>
+        clerkAuth({
+          publishableKey,
+          secretKey: "sk_test_fake",
+          allowedDomains: allowedDomains as string[],
+        });
+      // An empty list is fail-closed if honored and fail-open if read as "no
+      // restriction" — neither is what anyone meant to write.
+      expect(() => build([])).toThrow("`allowedDomains` is empty");
+      expect(() => build("acme.com")).toThrow("must be an array");
+      expect(() => build([""])).toThrow("is not a domain");
+      expect(() => build(["acme"])).toThrow("is not a domain");
+      expect(() => build(["acme .com"])).toThrow("is not a domain");
+      expect(() => build(["-acme.com"])).toThrow("is not a domain");
+      expect(() => build(["acme.com."])).toThrow("is not a domain");
+      expect(() => build(["https://acme.com"])).toThrow("is not a domain");
+      // A Unicode lookalike must be spelled in punycode, so the allowlist can
+      // never contain a domain the operator cannot tell from theirs by eye.
+      expect(() => build(["acmé.com"])).toThrow("is not a domain");
+      expect(() => build([42])).toThrow("is not a string");
+      expect(() => build(["me@acme.com"])).toThrow(
+        "Write the domain alone, with no `@`",
+      );
+      expect(() => build(["ACME.com", " acme.co.uk "])).not.toThrow();
+    });
+
+    it("admits a user whose verified primary email is on an allowed domain", async () => {
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
+      await expect(authorize({ allowedDomains: ["acme.com"] })).resolves.toEqual(
+        { ok: true, userId: "user_123" },
+      );
+    });
+
+    it("matches the domain case-insensitively on both sides", async () => {
+      mocks.getUser.mockResolvedValue(userWithEmail("Dev@ACME.Com"));
+      await expect(
+        authorize({ allowedDomains: [" Acme.COM "] }),
+      ).resolves.toEqual({ ok: true, userId: "user_123" });
+    });
+
+    it("rejects a user on a domain nobody listed, with the gate's 403", async () => {
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@other.com"));
+      const result = await authorize({ allowedDomains: ["acme.com"] });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        expect(result.response.status).toBe(403);
+        // No hint about WHY — the caller learns only that they are not welcome.
+        await expect(result.response.json()).resolves.toEqual({
+          error: "forbidden",
+        });
+      }
+    });
+
+    it("rejects lookalikes, subdomains and substrings of an allowed domain", async () => {
+      for (const email of [
+        "dev@evil-acme.com", // substring on the left
+        "dev@acme.com.evil.com", // substring on the right
+        "dev@mail.acme.com", // subdomain, not spelled
+        "dev@acme.co", // prefix of the label
+        "dev@xacme.com",
+        "dev@acme.com.", // trailing root dot
+        '"dev@acme.com"@evil.com', // allowed domain hidden in the local part
+      ]) {
+        mocks.getUser.mockResolvedValue(userWithEmail(email));
+        const result = await authorize({ allowedDomains: ["acme.com"] });
+        expect(result.ok, email).toBe(false);
+      }
+    });
+
+    it("admits a subdomain only when it is spelled out", async () => {
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@mail.acme.com"));
+      await expect(
+        authorize({ allowedDomains: ["mail.acme.com"] }),
+      ).resolves.toEqual({ ok: true, userId: "user_123" });
+    });
+
+    it("fails closed when the email is missing, unverified or malformed", async () => {
+      const cases = [
+        { primaryEmailAddressId: null, emailAddresses: [] },
+        { primaryEmailAddressId: "idn_primary", emailAddresses: [] },
+        userWithEmail("dev@acme.com", "unverified"),
+        userWithEmail("dev@acme.com", null),
+        userWithEmail("not-an-email"),
+        userWithEmail("@acme.com"),
+      ];
+      for (const user of cases) {
+        mocks.getUser.mockResolvedValue(user);
+        const result = await authorize({ allowedDomains: ["acme.com"] });
+        expect(result.ok, JSON.stringify(user)).toBe(false);
+        if (!result.ok) expect(result.response.status).toBe(403);
+      }
+    });
+
+    it("fails closed when the Clerk lookup itself fails", async () => {
+      mocks.getUser.mockRejectedValue(new Error("clerk 500"));
+      const result = await authorize({ allowedDomains: ["acme.com"] });
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.response.status).toBe(403);
+    });
+
+    it("composes with `gate` — either one can deny", async () => {
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
+      await expect(
+        authorize({ allowedDomains: ["acme.com"], gate: () => true }),
+      ).resolves.toEqual({ ok: true, userId: "user_123" });
+
+      // The gate denies a user the domain admits.
+      expect(
+        (await authorize({ allowedDomains: ["acme.com"], gate: () => false }))
+          .ok,
+      ).toBe(false);
+
+      // The domain denies a user the gate admits — and the allowlist runs
+      // first, so an outsider never reaches operator gate code.
+      const gate = vi.fn(() => true);
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@other.com"));
+      expect((await authorize({ allowedDomains: ["acme.com"], gate })).ok).toBe(
+        false,
+      );
+      expect(gate).not.toHaveBeenCalled();
+    });
+
+    it("logs the denied domain bounded and escaped, and never the address", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mocks.getUser.mockResolvedValue(
+        userWithEmail(`secret-person@evil.com\n[connecta] forged`),
+      );
+      await authorize({ allowedDomains: ["acme.com"] });
+      const line = warn.mock.calls.map(String).join("\n");
+      expect(line).toContain("user_123");
+      // Escaped, so a caller-controlled newline cannot forge a second log line.
+      expect(line).toContain("\\n");
+      expect(line).not.toContain("secret-person");
+      warn.mockRestore();
+    });
+
+    it("caches the combined verdict, so composing costs no extra Clerk calls", async () => {
+      mocks.authenticateRequest.mockResolvedValue({
+        toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
+      });
+      mocks.getUser.mockResolvedValue(userWithEmail("dev@acme.com"));
+      const gate = vi.fn(() => true);
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        allowedDomains: ["acme.com"],
+        gate,
+      });
+      const request = () =>
+        auth.authorize(
+          new Request(`${BASE}/mcp`, {
+            method: "POST",
+            headers: { Authorization: "Bearer oauth-token" },
+          }),
+          BASE,
+        );
+
+      await expect(request()).resolves.toEqual({ ok: true, userId: "user_123" });
+      await expect(request()).resolves.toEqual({ ok: true, userId: "user_123" });
+      expect(mocks.getUser).toHaveBeenCalledTimes(1);
+      expect(gate).toHaveBeenCalledTimes(1);
+    });
+
+    it("changes nothing when the option is unset", async () => {
+      await expect(authorize({})).resolves.toEqual({
+        ok: true,
+        userId: "user_123",
+      });
+      // No allowlist ⇒ no user lookup at all, exactly as before.
+      expect(mocks.getUser).not.toHaveBeenCalled();
+
+      const gate = vi.fn(() => true);
+      await expect(authorize({ gate })).resolves.toEqual({
+        ok: true,
+        userId: "user_123",
+      });
+      expect(gate).toHaveBeenCalledWith("user_123", expect.anything());
+      expect(mocks.getUser).not.toHaveBeenCalled();
+    });
+  });
+
   it("accepts a session token whose azp matches this deployment", async () => {
     mocks.authenticateRequest.mockResolvedValue({
       toAuth: () => ({

@@ -81,6 +81,7 @@ const build = (env: Env) =>
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
         secretKey: env.CLERK_SECRET_KEY,
         publicUrl: env.PUBLIC_URL,
+        // allowedDomains: ["acme.com"], // only your org's verified emails
       }),
     ],
     connectors: [
