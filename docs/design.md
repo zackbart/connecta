@@ -29,7 +29,8 @@ as an optional seam — see "Code mode" below — the platform around it stayed 
 1. `list_connectors` — `{ probe? }` → live or cached connector status, tool
    count, and health observed from real calls.
 2. `skills` — `{ name? }` → list or fetch the concise `usage` guide for
-   choosing among discovery, direct, batch, destructive, and code-mode tools.
+   choosing among discovery, direct, batch, destructive, and code-mode tools,
+   plus any operator-authored per-connector guide (`connector:<connectorId>`).
 3. `search_tools` — `{ query?, connector?, limit?, offset?,
    fullDescriptions?, includeSchemas? }` → ranked, paginated results grouped
    by connector, optionally with schemas in the same round trip.

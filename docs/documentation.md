@@ -136,7 +136,7 @@ connecta/
     server.ts             # fetch handler: routing, auth gate, MCP transport, OAuth + credential routes
     meta-tools.ts         # the nine meta-tools over the registry
     execute.ts            # the optional execute_code meta-tool + sandbox host bridge
-    skills.ts             # initialize instructions + the on-demand usage skill
+    skills.ts             # initialize instructions + the usage skill and per-connector guide lookup
     registry.ts           # connector set, address resolution, in-memory + persisted tool caches
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
     credentials.ts        # AES-GCM connector credential vault over KVStorage
@@ -211,7 +211,8 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   never shadow (or be shadowed by) the built-in `usage` skill — even when its
   id is literally `usage`. A name that resolves to nothing (unknown skill,
   unknown connector, or a connector with no guide) is an `isError` result, not
-  a fallback to the generic guide.
+  a fallback to the generic guide. The `usage` guide only mentions the
+  mechanism when the deployment has at least one guide to point at.
 
 ### `search_tools`
 
@@ -504,6 +505,14 @@ The guide is served by the [`skills`](#skills) meta-tool:
 `search_tools` and `describe_tools` set a `guide` field on matches whose
 connector has one, holding the skill name to fetch — so an agent that never
 called `skills({})` still discovers the guide at the moment it matters.
+
+Discovery text is **conditional on the deployment actually having a guide**.
+The built-in `usage` skill gains a short "Per-connector guides" section, and
+the `skills`, `search_tools`, and `describe_tools` tool descriptions each gain
+one sentence, only when at least one connector declares a `usageGuide`. The
+connector set is fixed at construction, so this is stable per deployment — and
+a deployment with no guides serves every one of those strings exactly as it
+always has, paying no always-loaded context for a feature it does not use.
 
 **Style.** Write for the agent, not the operator — the built-in `usage` skill
 (`src/skills.ts`) is the model. Concise and imperative; lead with the decision

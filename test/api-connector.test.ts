@@ -65,6 +65,17 @@ describe("api() connector", () => {
     expect(capped.maxResultBytes).toBe(200_000);
   });
 
+  it("passes usageGuide through, and leaves it unset by default", () => {
+    expect(makeApi().usageGuide).toBeUndefined();
+    const guide = "# Resend usage\n\nAlways set a verified `from`.\n";
+    const guided = api("resend", {
+      description: "Send email via Resend",
+      usageGuide: guide,
+      tools: [{ name: "noop", handler: () => null }],
+    });
+    expect(guided.usageGuide).toBe(guide);
+  });
+
   it("listTools returns the declared tool defs (name/description/schema)", async () => {
     const c = makeApi();
     const tools = await c.listTools(ctx());

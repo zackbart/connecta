@@ -65,6 +65,19 @@ async function makeConnector() {
 }
 
 describe("remoteMcp() connector", () => {
+  it("passes usageGuide through, and leaves it unset by default", () => {
+    expect(
+      remoteMcp("plain", { url: "https://downstream.test/mcp" }).usageGuide,
+    ).toBeUndefined();
+    const guide = "# Downstream usage\n\nPaginate with `cursor`.\n";
+    expect(
+      remoteMcp("guided", {
+        url: "https://downstream.test/mcp",
+        usageGuide: guide,
+      }).usageGuide,
+    ).toBe(guide);
+  });
+
   it("listTools reflects the downstream server's tools", async () => {
     const c = await makeConnector();
     const tools = await c.listTools(ctx());

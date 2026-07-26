@@ -6,7 +6,7 @@ import {
   MAX_RETRY_BACKOFF_MS,
   retryBackoffMs,
 } from "../src/meta-tools.js";
-import { USAGE_SKILL } from "../src/skills.js";
+import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
 import type { Connector } from "../src/types.js";
 import {
   authConnector,
@@ -80,6 +80,53 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
+  it("skips opening markup when picking the summary line", async () => {
+    const cases: Array<[string, string, string]> = [
+      ["fence", "```json\n{ \"a\": 1 }\n```\n\nUse `x.search`.\n", "Use `x.search`."],
+      ["frontmatter", "---\ntitle: ignored\n---\n\n# Real heading\n", "Real heading"],
+      ["bare-hash", "#\n\nUse the search tool.\n", "Use the search tool."],
+      ["bare-hashes", "###\n\nUse the search tool.\n", "Use the search tool."],
+      ["unspaced-heading", "#Heading text\n", "Heading text"],
+      ["html-comment", "<!-- generated -->\n\n# Real heading\n", "Real heading"],
+      ["table", "| a | b |\n| - | - |\n\n# Real heading\n", "Real heading"],
+      ["rule", "---\n\n", "svc connector"],
+    ];
+    for (const [label, guide, expected] of cases) {
+      const mt = createMetaTools(makeRegistry([guided("svc", guide)]), BASE);
+      expect(textFrom(await mt.skills({})), label).toContain(
+        `\`connector:svc\` — ${expected}`,
+      );
+    }
+  });
+
+  it("falls back to the connector description when a guide is all markup", async () => {
+    const mt = createMetaTools(makeRegistry([guided("svc", "# \n")]), BASE);
+    expect(textFrom(await mt.skills({}))).toContain(
+      "`connector:svc` — svc connector",
+    );
+  });
+
+  it("truncates a summary line only past 120 characters", async () => {
+    const exact = "a".repeat(120);
+    const over = "b".repeat(121);
+    const mt = createMetaTools(
+      makeRegistry([guided("exact", exact), guided("over", over)]),
+      BASE,
+    );
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain(`\`connector:exact\` — ${exact}`);
+    expect(listed).toContain(`\`connector:over\` — ${"b".repeat(119)}…`);
+    expect(listed).not.toContain("b".repeat(120));
+  });
+
+  it("treats a whitespace-only guide as no guide at all", async () => {
+    const mt = createMetaTools(makeRegistry([guided("blank", "  \n\t\n")]), BASE);
+    expect(textFrom(await mt.skills({}))).not.toContain("connector:blank");
+    const fetched = await mt.skills({ name: "connector:blank" });
+    expect(fetched.isError).toBe(true);
+    expect(textFrom(fetched)).toContain('Connector "blank" has no usage guide');
+  });
+
   it("returns a connector guide verbatim", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("notion", NOTION_GUIDE)]),
@@ -90,6 +137,15 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toBe(NOTION_GUIDE);
   });
 
+  it("returns a guide with surrounding whitespace verbatim, padding included", async () => {
+    const padded = "\n\n  # Padded\n\nBody.\n   ";
+    const mt = createMetaTools(makeRegistry([guided("pad", padded)]), BASE);
+    expect(textFrom(await mt.skills({ name: "connector:pad" }))).toBe(padded);
+    expect(textFrom(await mt.skills({}))).toContain(
+      "`connector:pad` — Padded",
+    );
+  });
+
   it("keeps the built-in usage guide unchanged as the default experience", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("notion", NOTION_GUIDE)]),
@@ -97,11 +153,25 @@ Prefer \`notion.search\` over listing databases.
     );
     const fetched = await mt.skills({ name: "usage" });
     expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toBe(USAGE_SKILL);
+    expect(textFrom(fetched)).toBe(USAGE_SKILL + CONNECTOR_GUIDES_SECTION);
     expect(textFrom(fetched)).toContain("# Connecta usage");
     expect(textFrom(fetched)).toContain(
       'skills({ name: "connector:<connectorId>" })',
     );
+  });
+
+  it("serves the base usage guide byte-identically when no connector has one", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("plain"), guided("other")]),
+      BASE,
+    );
+    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(USAGE_SKILL);
+    expect(textFrom(await mt.skills({ name: "usage" }))).not.toContain(
+      "Per-connector guides",
+    );
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).not.toContain("connector:");
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
@@ -150,7 +220,9 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).toContain("`usage` — How to choose among Connecta");
     expect(listed).toContain("`connector:usage` — Usage-service quirks");
 
-    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(USAGE_SKILL);
+    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(
+      USAGE_SKILL + CONNECTOR_GUIDES_SECTION,
+    );
     expect(textFrom(await mt.skills({ name: "connector:usage" }))).toBe(guide);
   });
 

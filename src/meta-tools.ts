@@ -17,6 +17,7 @@ import type { Registry } from "./registry.js";
 import {
   connectorGuide,
   connectorSkillName,
+  hasConnectorGuides,
   listSkills,
   resolveSkill,
 } from "./skills.js";
@@ -1104,7 +1105,34 @@ const BATCH_DESC =
 const AUTHORIZE_DESC =
   "Use after a connector reports auth_required. Starts downstream OAuth and returns an authorizationUrl for the operator to open. force=true wipes stored credentials first and restarts consent.";
 const SKILLS_DESC =
-  'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task. skills({}) also lists operator-authored per-connector guides as `connector:<connectorId>`; fetch one before working with that connector for the first time.';
+  'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
+
+/**
+ * Sentences appended to a meta-tool description only when this deployment
+ * actually has connector guides. Tool descriptions are always-loaded context,
+ * and the connector set is fixed at construction, so a deployment with no
+ * guides gets every base description unchanged rather than paying for text
+ * about a feature it does not use.
+ */
+const GUIDE_NOTES = {
+  skills:
+    ' skills({}) also lists this deployment\'s per-connector usage guides as "connector:<connectorId>"; fetch the guide for a connector before working with it for the first time.',
+  search:
+    " A connector group carrying `guide` has a usage guide; fetch it with skills({ name: <guide> }).",
+  describe:
+    " An entry carrying `guide` belongs to a connector with a usage guide; fetch it with skills({ name: <guide> }).",
+} as const;
+
+/** `base`, plus its guide note when any connector carries a usage guide. */
+function describedFor(
+  registry: Registry,
+  base: string,
+  note: keyof typeof GUIDE_NOTES,
+): string {
+  return hasConnectorGuides(registry.listConnectors())
+    ? base + GUIDE_NOTES[note]
+    : base;
+}
 
 /**
  * Connecta refuses downstream tools that are not explicitly annotated
@@ -1148,7 +1176,7 @@ export function registerMetaTools(
   server.registerTool(
     "skills",
     {
-      description: SKILLS_DESC,
+      description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: { name: z.string().optional() },
       annotations: {
         readOnlyHint: true,
@@ -1173,7 +1201,7 @@ export function registerMetaTools(
   server.registerTool(
     "search_tools",
     {
-      description: SEARCH_DESC,
+      description: describedFor(registry, SEARCH_DESC, "search"),
       inputSchema: {
         query: z.string().optional(),
         connector: z.string().optional(),
@@ -1190,7 +1218,7 @@ export function registerMetaTools(
   server.registerTool(
     "describe_tools",
     {
-      description: DESCRIBE_DESC,
+      description: describedFor(registry, DESCRIBE_DESC, "describe"),
       inputSchema: {
         addresses: z.array(z.string()),
         format: z.enum(["compact", "json"]).optional(),

@@ -18,10 +18,6 @@ export const USAGE_SKILL = `# Connecta usage
 
 Use \`list_connectors({ probe: false })\` for a fast inventory. Use \`probe: true\` only when diagnosing live health or authorization.
 
-## Per-connector guides
-
-Operators may attach a usage guide to a connector — preferred tools, address quirks, pagination conventions, rate-limit etiquette, query patterns. \`skills({})\` lists each one as \`connector:<connectorId>\`; fetch it with \`skills({ name: "connector:<connectorId>" })\`. \`search_tools\` and \`describe_tools\` set \`guide\` on matches whose connector has one. Read a connector's guide before working with it for the first time in a task.
-
 ## Code mode
 
 Use code mode when a later call depends on an earlier result, when joining across connectors, or when filtering or aggregating data in the sandbox will substantially shrink the response. Use \`Promise.all\` or \`connecta.batch\` for independent calls inside one execution.
@@ -59,12 +55,38 @@ async () => {
 \`\`\`
 `;
 
+/**
+ * Appended to USAGE_SKILL only when the deployment actually has at least one
+ * connector guide. A deployment with none — every deployment that has not
+ * adopted the feature — keeps the base guide byte-for-byte, rather than paying
+ * context for an instruction to fetch guides that do not exist.
+ */
+export const CONNECTOR_GUIDES_SECTION = `
+## Per-connector guides
+
+Some connectors here ship their own usage guide — preferred tools, address quirks, pagination conventions, rate-limit etiquette, query patterns. \`skills({})\` lists each one as \`connector:<connectorId>\`; fetch it with \`skills({ name: "connector:<connectorId>" })\`. \`search_tools\` and \`describe_tools\` set \`guide\` on matches whose connector has one. Read a connector's guide before working with it for the first time in a task.
+`;
+
+/** True when at least one of `connectors` carries a usage guide. */
+export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
+  return connectors.some(
+    (connector) => connectorGuide(connector) !== undefined,
+  );
+}
+
+/** The built-in usage guide, plus the guides section when there is one to point at. */
+export function usageSkill(connectors: readonly Connector[]): string {
+  return hasConnectorGuides(connectors)
+    ? USAGE_SKILL + CONNECTOR_GUIDES_SECTION
+    : USAGE_SKILL;
+}
+
 export const AVAILABLE_SKILLS = [
   {
     name: "usage",
     description:
       "How to choose among Connecta discovery, direct, batch, destructive, and code-mode tools.",
-    content: USAGE_SKILL,
+    content: usageSkill,
   },
 ] as const;
 
@@ -90,15 +112,47 @@ export function connectorGuide(connector: Connector): string | undefined {
 
 const SUMMARY_LENGTH = 120;
 
+/** A `---`/`***`/`___` rule, which also opens and closes YAML frontmatter. */
+const RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+
+/** A fenced code block's delimiter. */
+const FENCE_RE = /^\s*(?:```|~~~)/;
+
+/**
+ * Markup that carries no summary text of its own: horizontal rules, HTML
+ * comments, and table rows. Skipped so a guide that opens with one is
+ * summarized by its first real line instead of by punctuation.
+ */
+const NOT_SUMMARY_RE = /^\s*(?:<!--|\|)|^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+
+/** Drop a leading YAML frontmatter block — metadata, not summary text. */
+function withoutFrontmatter(lines: string[]): string[] {
+  let start = 0;
+  while (start < lines.length && lines[start].trim() === "") start++;
+  if (start >= lines.length || !RULE_RE.test(lines[start])) return lines;
+  const close = lines.findIndex((line, i) => i > start && RULE_RE.test(line));
+  return close === -1 ? lines : lines.slice(close + 1);
+}
+
 /**
  * One line describing a guide, for the cheap list view: the guide's first
  * meaningful line (heading marks and list bullets stripped), falling back to
- * the connector's own description.
+ * the connector's own description when the guide opens with nothing but
+ * markup.
  */
 function summarizeGuide(connector: Connector, guide: string): string {
-  for (const raw of guide.split("\n")) {
+  let inFence = false;
+  for (const raw of withoutFrontmatter(guide.split("\n"))) {
+    if (FENCE_RE.test(raw)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    if (raw.trim() === "" || NOT_SUMMARY_RE.test(raw)) continue;
     const line = raw
-      .replace(/^\s*#{1,6}\s+/, "")
+      // `\s*` (not `\s+`) so a bare `#` strips to nothing and is skipped, and
+      // an unspaced `#Heading` is still read as a heading.
+      .replace(/^\s*#{1,6}\s*/, "")
       .replace(/^\s*[-*+]\s+/, "")
       .replace(/\s+/g, " ")
       .trim();
@@ -151,7 +205,7 @@ export function resolveSkill(
   connectors: readonly Connector[],
 ): SkillLookup {
   const builtIn = AVAILABLE_SKILLS.find((skill) => skill.name === name);
-  if (builtIn) return { found: true, content: builtIn.content };
+  if (builtIn) return { found: true, content: builtIn.content(connectors) };
   const available = () =>
     listSkills(connectors)
       .map((skill) => skill.name)
