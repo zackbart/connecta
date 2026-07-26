@@ -7,6 +7,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import {
   filterUiConnectors,
   isSafeHttpUrl,
+  isSafeIconHref,
   renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
@@ -855,5 +856,35 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("/relative/path")).toBe(false);
     expect(isSafeHttpUrl("")).toBe(false);
     expect(isSafeHttpUrl(undefined)).toBe(false);
+  });
+});
+
+describe("isSafeIconHref", () => {
+  it("accepts absolute http/https URLs", () => {
+    expect(isSafeIconHref("https://cdn.x.test/icon.svg")).toBe(true);
+    expect(isSafeIconHref("http://cdn.x.test/icon.svg")).toBe(true);
+  });
+
+  it("accepts root-relative paths on this origin", () => {
+    expect(isSafeIconHref("/favicon.svg")).toBe(true);
+    expect(isSafeIconHref("/assets/icon.svg?v=2")).toBe(true);
+  });
+
+  it("rejects non-http(s) schemes", () => {
+    expect(isSafeIconHref("javascript:alert(1)")).toBe(false);
+    expect(isSafeIconHref("data:image/svg+xml,<svg/>")).toBe(false);
+    expect(isSafeIconHref("vbscript:msgbox(1)")).toBe(false);
+  });
+
+  it("rejects relative-looking values that resolve to another origin", () => {
+    expect(isSafeIconHref("//evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("/\\evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("/\t/evil.test/icon.svg")).toBe(false);
+  });
+
+  it("rejects document-relative paths and non-strings", () => {
+    expect(isSafeIconHref("favicon.svg")).toBe(false);
+    expect(isSafeIconHref("")).toBe(false);
+    expect(isSafeIconHref(undefined)).toBe(false);
   });
 });

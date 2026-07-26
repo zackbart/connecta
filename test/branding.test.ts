@@ -70,6 +70,29 @@ describe("branding defaults", () => {
     expect(safe.productUrl).toBe("https://acme.example/docs");
     expect(safe.ownerUrl).toBe("https://acme.example");
   });
+
+  it("falls back to the default mark for an unsafe favicon href", () => {
+    for (const href of [
+      "javascript:alert(1)",
+      "data:image/svg+xml,<svg/>",
+      "//evil.example/icon.svg",
+      "icon.svg",
+    ]) {
+      expect(resolveBranding({ favicon: { href } }).faviconHref).toBe(
+        "/favicon.svg",
+      );
+    }
+  });
+
+  it("keeps absolute http(s) and root-relative favicon hrefs", () => {
+    expect(
+      resolveBranding({ favicon: { href: "https://cdn.acme.example/icon.svg" } })
+        .faviconHref,
+    ).toBe("https://cdn.acme.example/icon.svg");
+    expect(
+      resolveBranding({ favicon: { href: "/assets/acme.svg" } }).faviconHref,
+    ).toBe("/assets/acme.svg");
+  });
 });
 
 describe("branding in served pages", () => {
@@ -142,6 +165,32 @@ describe("branding is not an injection vector", () => {
     ).text();
     expect(body).not.toContain("</script><img");
     expect(body).toContain("<\\/script>");
+  });
+
+  it("never renders a javascript: favicon href on either page", async () => {
+    const c = make({
+      productName: "Acme MCP",
+      favicon: { href: "javascript:alert(1)" },
+    });
+    for (const path of ["/ui", "/oauth/callback/unknown-connector"]) {
+      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
+      expect(body).not.toContain('href="javascript:');
+      expect(body).toContain('<link rel="icon" href="/favicon.svg"');
+    }
+  });
+
+  it("never renders a javascript: product or owner link", async () => {
+    const c = make({
+      productName: "Acme MCP",
+      productUrl: "javascript:alert(1)",
+      ownerName: "Acme Inc",
+      ownerUrl: "javascript:alert(2)",
+    });
+    for (const path of ["/ui", "/oauth/callback/unknown-connector"]) {
+      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
+      expect(body).not.toContain('href="javascript:');
+      expect(body).toContain('<span class="brand">Acme Inc</span>');
+    }
   });
 
   it("escapes branding in HTML attribute and text positions", async () => {

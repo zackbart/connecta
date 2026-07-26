@@ -24,6 +24,8 @@ interface ResolvedBranding {
   themeColor: string;
 }
 
+export const DEFAULT_FAVICON_HREF = "/favicon.svg";
+
 export function resolveBranding(
   branding?: ConnectaBranding,
 ): ResolvedBranding {
@@ -34,6 +36,7 @@ export function resolveBranding(
   // callers already render a <span> instead of an <a> when it is absent.
   const productUrl = branding?.productUrl?.trim();
   const ownerUrl = branding?.ownerUrl?.trim();
+  const faviconHref = branding?.favicon?.href?.trim();
   return {
     productName,
     ...(productUrl && isSafeHttpUrl(productUrl) ? { productUrl } : {}),
@@ -45,7 +48,10 @@ export function resolveBranding(
     pageTitle:
       branding?.pageTitle?.trim() ||
       (ownerName ? `${productName} — ${ownerName}` : productName),
-    faviconHref: branding?.favicon?.href?.trim() || "/favicon.svg",
+    faviconHref:
+      faviconHref && isSafeIconHref(faviconHref)
+        ? faviconHref
+        : DEFAULT_FAVICON_HREF,
     themeColor: branding?.themeColor?.trim() || "#ffffff",
   };
 }
@@ -69,6 +75,31 @@ export function isSafeHttpUrl(url: unknown): boolean {
   try {
     const scheme = new URL(url).protocol;
     return scheme === "http:" || scheme === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/** Any origin; only whether a root-relative href stays on it matters. */
+const SAME_ORIGIN_PROBE = "https://connecta.invalid";
+
+/**
+ * True for values allowed in the page's `<link rel="icon" href>`: an absolute
+ * `http(s)` URL (an icon the operator hosts elsewhere) or a root-relative path
+ * on this origin. The relative carve-out is deliberate rather than accidental —
+ * the default href is the relative `/favicon.svg`, which `isSafeHttpUrl` alone
+ * would reject — and it is kept narrow on both ends. Root-relative only, because
+ * `/ui` and `/oauth/callback/<id>` sit at different depths and a document-
+ * relative path would resolve differently on each. And resolved rather than
+ * prefix-matched, because `//evil.test` (protocol-relative), `/\evil.test`, and
+ * tab-obfuscated variants all start with `/` yet land on another origin.
+ */
+export function isSafeIconHref(href: unknown): boolean {
+  if (typeof href !== "string") return false;
+  if (isSafeHttpUrl(href)) return true;
+  if (!href.startsWith("/")) return false;
+  try {
+    return new URL(href, SAME_ORIGIN_PROBE).origin === SAME_ORIGIN_PROBE;
   } catch {
     return false;
   }
