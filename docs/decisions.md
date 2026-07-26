@@ -42,11 +42,19 @@ deployment is a small config-as-code file, not a platform.
   and a credential write reaches every view. `/health` (a count) and the OAuth
   callback are unchanged. That is a per-identity refusal, not a per-tenant
   partition; there is still exactly one of everything underneath.
-- **A general policy engine, approvals, or pauses.** The only access decision
-  connecta makes is the read-only one (see the fail-closed invariant below).
-  Anything else crosses `call_destructive_tool`, which is annotated so the MCP
-  *host* can ask the human. Approval is the host's job; connecta just makes the
-  question visible.
+- **A general policy engine, approvals, or pauses.** Who is admitted at all is
+  the auth adapter's business (`gate`, `allowedDomains`, a bearer secret).
+  *Past* that gate, connecta makes exactly two access decisions, and both are
+  lookups rather than evaluations: whether a tool is explicitly read-only,
+  checked on every `call_tool` / `batch_call` / `execute_code` call (the
+  fail-closed invariant below), and which toolkit an identity may open, checked
+  once at connect time and refused with a flat 403 (#59). Neither consults a
+  rule. There is no expression language, no
+  per-identity × per-tool permission matrix — an identity maps to toolkit names,
+  and a toolkit is a view declared in config — and nothing that pauses a call to
+  wait for a human: anything not explicitly read-only crosses
+  `call_destructive_tool`, which is annotated so the MCP *host* can ask.
+  Approval is the host's job; connecta just makes the question visible.
 - **Runtime connector registration.** Adding a connector is a code change and a
   deploy. There is no database of integrations and no endpoint that creates one.
 - **A runtime admin UI.** The read-only dashboard is the limit — see the
