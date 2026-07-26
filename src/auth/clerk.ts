@@ -3,11 +3,15 @@
 // caching.
 
 import { createClerkClient } from "@clerk/backend";
+import {
+  resolveToolkitBinding,
+  type ToolkitBindingOptions,
+} from "../toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
 type ClerkClient = ReturnType<typeof createClerkClient>;
 
-export interface ClerkAuthOptions {
+export interface ClerkAuthOptions extends ToolkitBindingOptions {
   publishableKey: string;
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
@@ -49,11 +53,21 @@ function fapiUrl(publishableKey: string): string {
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
 
+/**
+ * Clerk inbound auth.
+ *
+ * `toolkits` binds every user this provider admits to those toolkits (§16). For
+ * a per-team split, configure one `clerkAuth(...)` per team — the same keys, a
+ * `gate` naming that team's users, and that team's `toolkits`. The server tries
+ * providers in order and the first that admits the user supplies the binding, so
+ * a user one gate rejects falls through to the next.
+ */
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const clerk = createClerkClient({
     secretKey: opts.secretKey,
     publishableKey: opts.publishableKey,
   });
+  const toolkitBinding = resolveToolkitBinding("clerkAuth", opts);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
 
@@ -101,6 +115,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
   return {
     kind: "clerk",
+    ...(toolkitBinding ? { toolkitBinding } : {}),
     uiAuth: {
       kind: "clerk",
       publishableKey: opts.publishableKey,

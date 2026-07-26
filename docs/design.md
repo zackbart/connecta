@@ -376,14 +376,17 @@ addresses. Reference: documentation.md §16.
   stale, and a client cannot widen its view mid-session.
 - **Structural mistakes throw at construction** rather than warning — a
   toolkit naming a connector that does not exist is a scope nobody wrote.
-- **Deliberately deferred: binding an identity to a toolkit**
-  ([issue #37](https://github.com/zackbart/connecta/issues/37)). Selection is
-  self-service today: any caller `auth` admits may pick any toolkit, or omit the
-  parameter and get everything, so a credential shared by two teams gives both
-  teams every view. A toolkit therefore *organizes* the surface; `auth` remains
-  the only thing deciding who gets in, and connecta warns at construction when
-  toolkits are configured with no inbound auth at all. The seam is already
-  there — an `InboundAuth` adapter sees the request including `?toolkit=`.
+- **Membership is a binding on the credential, not a policy engine.** Passing
+  `toolkits: ["support"]` to an auth adapter binds every identity it admits to
+  that view: any other toolkit — and, without `unscoped: true`, an unscoped
+  connection — is refused with a flat 403 at connect time, before a
+  `ScopedRegistry` exists. One identity → the toolkits it may open, and nothing
+  else: no roles, no hierarchies, no expressions. It lives on the adapter rather
+  than in a table keyed by identity id because a typo in such a key would
+  silently mean *unbound*, and that fails open; a typo in a toolkit *name* throws
+  at construction. Selection stays self-service for an unbound identity (the
+  pre-binding behavior, unchanged), and connecta warns at construction when
+  toolkits are configured with no auth, or with auth but no binding.
 
 ## Non-goals (v1)
 

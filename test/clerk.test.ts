@@ -43,6 +43,28 @@ describe("clerkAuth inbound auth", () => {
     });
   });
 
+  // One clerkAuth per team — same keys, that team's `gate`, that team's
+  // toolkits — is how a Clerk deployment binds users to views (§16).
+  it("declares the toolkit binding for the users it admits", () => {
+    const bound = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+      gate: (userId) => userId === "user_support",
+      toolkits: ["support"],
+    });
+    expect(bound.toolkitBinding).toEqual({ toolkits: ["support"] });
+    expect(
+      clerkAuth({ publishableKey, secretKey: "sk_test_fake" }).toolkitBinding,
+    ).toBeUndefined();
+    expect(() =>
+      clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        unscoped: true,
+      }),
+    ).toThrow("clerkAuth: `unscoped` only means something beside `toolkits`");
+  });
+
   it("accepts Clerk OAuth and browser session tokens for the connecta origin", async () => {
     mocks.authenticateRequest.mockResolvedValue({
       toAuth: () => ({ isAuthenticated: true, userId: "user_123" }),
