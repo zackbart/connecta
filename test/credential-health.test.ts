@@ -683,17 +683,22 @@ describe("liveness verdicts and the live probe", () => {
 
   it("stamps a probe verdict at observation time, so a success during it still wins", async () => {
     const linear = grantConnector();
+    // Timestamp the observation itself rather than measuring the sleep from
+    // the outside: setTimeout may fire a hair early, so `start + 10` can
+    // overshoot the real observation time by a millisecond.
+    let observedAt = 0;
     linear.status = async () => {
       await sleep(10);
+      observedAt = Date.now();
       return { state: "auth_required", authorizationUrl: "https://auth.example/a" };
     };
     const registry = makeRegistry([linear]);
-    const before = Date.now();
 
     await createMetaTools(registry, BASE).listConnectors({});
 
     const record = await registry.credentialHealthFor("linear");
-    expect(Date.parse(record!.checkedAt)).toBeGreaterThanOrEqual(before + 10);
+    expect(observedAt).toBeGreaterThan(0);
+    expect(Date.parse(record!.checkedAt)).toBeGreaterThanOrEqual(observedAt);
   });
 
   it("keeps a probe of a connector with no stored credential out of the verdicts", async () => {
