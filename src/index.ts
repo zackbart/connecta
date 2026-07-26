@@ -2,7 +2,11 @@ import { CredentialVault } from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls } from "./ui.js";
-import { resolveToolkits, type ToolkitConfig } from "./toolkits.js";
+import {
+  resolveToolkits,
+  type Toolkit,
+  type ToolkitConfig,
+} from "./toolkits.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
@@ -180,6 +184,7 @@ function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
 function warnInsecureConfig(
   config: ConnectaConfig,
   inboundAuth: InboundAuth[],
+  toolkits: ReadonlyMap<string, Toolkit> | undefined,
   logger: Logger,
 ): void {
   const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
@@ -213,7 +218,13 @@ function warnInsecureConfig(
   // Toolkits with no inbound auth: a toolkit is a scoped VIEW selected by the
   // caller, not an authentication boundary. With nothing gating /mcp, any
   // caller picks any toolkit — or omits the parameter and sees everything.
-  if (inboundAuth.length === 0 && config.toolkits) {
+  //
+  // Keyed off the RESOLVED toolkits, which is the same map `?toolkit=` resolves
+  // against, rather than the presence of the config key: `toolkits: {}` is a
+  // truthy object that resolves to nothing selectable, so warning about a
+  // choice no caller can make would name a risk that does not exist. The
+  // open-mode warning above still covers the deployment being unauthenticated.
+  if (inboundAuth.length === 0 && toolkits) {
     logger.warn(
       "[connecta] toolkits are configured but there is no inbound " +
         "authentication: a toolkit is a scoped view a client selects with " +
@@ -276,7 +287,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   // scopes visibility, and `auth` remains the thing deciding who gets in.
   const toolkits = resolveToolkits(config.toolkits, config.connectors);
   const inboundAuth = normalizeAuth(config.auth);
-  warnInsecureConfig(config, inboundAuth, logger);
+  warnInsecureConfig(config, inboundAuth, toolkits, logger);
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,

@@ -493,6 +493,20 @@ export function createMetaTools(
       ).find((tool) => tool.name === resolved.toolName);
     } catch (err) {
       catalogMs += Date.now() - catalogStarted;
+      // A connector whose catalog cannot be fetched is as unusable as one whose
+      // execution fails, so it feeds health accounting the same way the
+      // execution catch below does — otherwise a connector every call_tool
+      // fails against (a revoked downstream grant, say) still reads clean from
+      // the cheap `list_connectors({ probe: false })` signal.
+      //
+      // Recorded HERE rather than inside the registry's catalog fetch on
+      // purpose: `registry` is this connection's VIEW, so a toolkit-scoped
+      // session records into its own log as well as the deployment-wide one,
+      // which `Registry.refreshTools` could not reach. A cache hit that avoids
+      // a live listTools call therefore records nothing either way — it is not
+      // evidence of health, and success stays what it has always been: an
+      // actual downstream call that returned.
+      registry.recordFailure(resolved.connector.id, Date.now() - started, err);
       // classifyCallError so a typed auth_required thrown while listing tools
       // (e.g. a revoked downstream OAuth grant) keeps its code.
       return failed(classifyCallError(err, "catalog_lookup_failed"));
