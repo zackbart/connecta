@@ -316,7 +316,18 @@ export type UiAuthConfig = {
    * warning.
    */
   frontendApiUrl: string;
+  /**
+   * Hosted Account Portal sign-in address, handed to `Clerk.load`. **Must be an
+   * absolute `https:` URL** — the same gate `frontendApiUrl` passes, because
+   * this value is where Clerk *navigates* the operator's browser. An Account
+   * Portal address is always https, so the stricter gate costs nothing real: a
+   * value that fails it (a `javascript:`/`data:` payload, a cleartext `http:`
+   * address, a relative path) reaches no part of the page, `/ui` signs in
+   * through Clerk's default instead, and `createConnecta` names the drop in a
+   * startup warning.
+   */
   signInUrl?: string;
+  /** Hosted Account Portal sign-up address. Gated exactly like `signInUrl`. */
   signUpUrl?: string;
 };
 

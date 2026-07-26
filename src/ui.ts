@@ -159,20 +159,26 @@ export function isSafeIconHref(href: unknown): boolean {
 }
 
 /**
- * True only for an absolute `https:` URL — the gate for `uiAuth.frontendApiUrl`,
- * the last operator-config value that lands in a URL-valued HTML position (the
- * `<script src>` of `/ui`'s sign-in loader). `javascript:` in a `src` does not
- * execute, so this closes a hole in the *invariant* rather than a live vector:
- * every operator value reaching an `href`/`src` is validated, with no exception
- * left to remember.
+ * True only for an absolute `https:` URL — the gate every `uiAuth` URL passes:
+ * `frontendApiUrl`, which becomes the `<script src>` of `/ui`'s sign-in loader,
+ * and `signInUrl`/`signUpUrl`, which ClerkJS uses as *navigation targets* when
+ * the operator signs in. With those three gated, no operator-config value
+ * reaches the browser in a URL position — attribute or navigation — without
+ * validation, and there is no exception left to remember.
  *
- * Stricter than `isSafeHttpUrl` on purpose. There is no `http:` carve-out and no
- * loopback carve-out, because nobody types this value: the shipped Clerk adapter
- * derives it from the publishable key and Clerk's Frontend API is always https.
- * A cleartext script source on the dashboard would be a downgrade even where a
- * browser's mixed-content rules had not already blocked it.
+ * Stricter than `isSafeHttpUrl` on purpose: no `http:` carve-out, no loopback
+ * carve-out, and no relative form. Nobody types `frontendApiUrl` — the shipped
+ * Clerk adapter derives it from the publishable key, and Clerk's Frontend API is
+ * always https — and a cleartext script source on the dashboard would be a
+ * downgrade even where a browser's mixed-content rules had not already blocked
+ * it. `signInUrl`/`signUpUrl` *are* typed by the operator, but what belongs
+ * there is a hosted Account Portal address (`https://accounts.<domain>` or
+ * `https://<slug>.accounts.dev`), which is https as well; `http:` would carry a
+ * sign-in over cleartext, and a path relative to this origin is meaningless
+ * because this server hosts no sign-in page of its own. So the looser gate would
+ * buy nothing real, and the same strictness holds for all three.
  */
-export function isSafeScriptSrcUrl(url: unknown): boolean {
+export function isSafeHttpsUrl(url: unknown): boolean {
   if (typeof url !== "string") return false;
   try {
     return new URL(url).protocol === "https:";
@@ -186,14 +192,25 @@ export function isSafeScriptSrcUrl(url: unknown): boolean {
  * gate. Lives beside the gate for the same reason `droppedBrandingUrls` does: the
  * startup warning cannot then drift from what rendering actually drops. Every
  * field is read defensively rather than trusted, because a custom `InboundAuth`
- * is untyped at a JS call site — `isSafeScriptSrcUrl` takes `unknown`, and a
+ * is untyped at a JS call site — `isSafeHttpsUrl` takes `unknown`, and a
  * `uiAuth` that is not the clerk shape is reported as nothing to warn about.
+ *
+ * `frontendApiUrl` is required, so anything that fails is a drop. `signInUrl`
+ * and `signUpUrl` are optional, and an unset one is nothing to report: "set"
+ * means exactly what rendering treats as set (truthy), so a blank string is
+ * silently unset while a non-string is a value the operator meant to supply.
  */
 export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   if (!uiAuth || uiAuth.kind !== "clerk") return [];
-  return isSafeScriptSrcUrl(uiAuth.frontendApiUrl)
-    ? []
-    : ["uiAuth.frontendApiUrl"];
+  return [
+    ...(isSafeHttpsUrl(uiAuth.frontendApiUrl) ? [] : ["uiAuth.frontendApiUrl"]),
+    ...(uiAuth.signInUrl && !isSafeHttpsUrl(uiAuth.signInUrl)
+      ? ["uiAuth.signInUrl"]
+      : []),
+    ...(uiAuth.signUpUrl && !isSafeHttpsUrl(uiAuth.signUpUrl)
+      ? ["uiAuth.signUpUrl"]
+      : []),
+  ];
 }
 
 export interface UiTool {
@@ -457,19 +474,26 @@ export function renderUiHtml(
   // the same fallback-and-warn posture the branding URLs take, with the drop
   // named in a startup warning (see `droppedUiAuthUrls`).
   const clerkScriptOrigin =
-    clerk && isSafeScriptSrcUrl(clerk.frontendApiUrl)
+    clerk && isSafeHttpsUrl(clerk.frontendApiUrl)
       ? clerk.frontendApiUrl
       : undefined;
   // Enumerated field by field, because this object is serialized into the page's
   // inline script: a rejected frontendApiUrl must not reach the document through
-  // `AUTH` after being kept out of the `<script src>`.
+  // `AUTH` after being kept out of the `<script src>`, and a rejected
+  // signInUrl/signUpUrl — which `AUTH` is the only path into the page for — must
+  // not reach it at all. Dropping one leaves the key absent, so `Clerk.load`
+  // falls back to its own default the same way it does for an unset value.
   const auth = clerk
     ? {
         kind: clerk.kind,
         publishableKey: clerk.publishableKey,
         ...(clerkScriptOrigin ? { frontendApiUrl: clerkScriptOrigin } : {}),
-        ...(clerk.signInUrl ? { signInUrl: clerk.signInUrl } : {}),
-        ...(clerk.signUpUrl ? { signUpUrl: clerk.signUpUrl } : {}),
+        ...(isSafeHttpsUrl(clerk.signInUrl)
+          ? { signInUrl: clerk.signInUrl }
+          : {}),
+        ...(isSafeHttpsUrl(clerk.signUpUrl)
+          ? { signUpUrl: clerk.signUpUrl }
+          : {}),
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);

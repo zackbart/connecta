@@ -9,7 +9,7 @@ import {
   filterUiConnectors,
   isSafeHttpUrl,
   isSafeIconHref,
-  isSafeScriptSrcUrl,
+  isSafeHttpsUrl,
   renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
@@ -87,13 +87,17 @@ function scriptSrcs(body: string): string[] {
     .filter((src): src is string => src !== undefined);
 }
 
-function fakeClerk(frontendApiUrl = "https://clerk.example.com"): InboundAuth {
+function fakeClerk(
+  frontendApiUrl = "https://clerk.example.com",
+  portal: { signInUrl?: string; signUpUrl?: string } = {},
+): InboundAuth {
   return {
     kind: "clerk",
     uiAuth: {
       kind: "clerk",
       publishableKey: "pk_test_fake",
       frontendApiUrl,
+      ...portal,
     },
     authorize(request) {
       if (request.headers.get("authorization") === "Bearer clerk-token") {
@@ -467,6 +471,80 @@ describe("status UI", () => {
       "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
     ]);
     expect(body).toContain('"frontendApiUrl":"https://clerk.example.com"');
+  });
+
+  it("/ui never hands Clerk a non-https signInUrl/signUpUrl", async () => {
+    for (const url of [
+      "javascript:alert(1)",
+      "data:text/plain,alert(1)",
+      "http://accounts.example.com/sign-in",
+      "//accounts.example.com/sign-in",
+      "/sign-in",
+    ]) {
+      const c = createConnecta({
+        connectors: [calc()],
+        auth: [
+          bearerToken(TOKEN),
+          fakeClerk(undefined, { signInUrl: url, signUpUrl: url }),
+        ],
+        storage: memoryStorage(),
+        publicUrl: BASE,
+      });
+      const res = await c.fetch(new Request(`${BASE}/ui`));
+      const body = await res.text();
+      // Only the navigation targets drop: the page and its loader still render,
+      // and Clerk.load falls back to its own sign-in defaults.
+      expect(res.status).toBe(200);
+      expect(body).toContain("clerk.browser.js");
+      // The inline AUTH object is the only path into the page for these two, so
+      // an absent key is the whole check — plus the raw value nowhere at all.
+      expect(body).not.toContain('"signInUrl"');
+      expect(body).not.toContain('"signUpUrl"');
+      expect(body).not.toContain(url);
+    }
+  });
+
+  it("passes a hosted Account Portal signInUrl/signUpUrl through unchanged", async () => {
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: [
+        bearerToken(TOKEN),
+        fakeClerk(undefined, {
+          signInUrl: "https://accounts.example.com/sign-in",
+          signUpUrl: "https://accounts.example.com/sign-up",
+        }),
+      ],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    expect(body).toContain(
+      '"signInUrl":"https://accounts.example.com/sign-in"',
+    );
+    expect(body).toContain(
+      '"signUpUrl":"https://accounts.example.com/sign-up"',
+    );
+  });
+
+  it("drops only the sign-in URL that failed, keeping the valid sibling", async () => {
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: [
+        bearerToken(TOKEN),
+        fakeClerk(undefined, {
+          signInUrl: "javascript:alert(1)",
+          signUpUrl: "https://accounts.example.com/sign-up",
+        }),
+      ],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    expect(body).not.toContain('"signInUrl"');
+    expect(body).not.toContain("alert(1)");
+    expect(body).toContain(
+      '"signUpUrl":"https://accounts.example.com/sign-up"',
+    );
   });
 
   it("renderUiHtml emits no nonce attributes when no nonce is passed", () => {
@@ -962,24 +1040,26 @@ describe("isSafeHttpUrl", () => {
   });
 });
 
-describe("isSafeScriptSrcUrl", () => {
+describe("isSafeHttpsUrl", () => {
   it("accepts only absolute https URLs", () => {
-    expect(isSafeScriptSrcUrl("https://clerk.x.test")).toBe(true);
-    expect(isSafeScriptSrcUrl("https://clerk.x.test/npm")).toBe(true);
+    expect(isSafeHttpsUrl("https://clerk.x.test")).toBe(true);
+    expect(isSafeHttpsUrl("https://clerk.x.test/npm")).toBe(true);
   });
 
-  // Stricter than the branding href gate on purpose: nothing types this value,
-  // so there is no dev-loopback or cleartext case to accommodate.
+  // Stricter than the branding href gate on purpose: the loader origin is
+  // derived rather than typed, and the sign-in/sign-up targets are hosted
+  // Account Portal addresses, which are https too — so there is no dev-loopback
+  // or cleartext case to accommodate for any of the three.
   it("rejects http, other schemes, relative values, and non-strings", () => {
-    expect(isSafeScriptSrcUrl("http://clerk.x.test")).toBe(false);
-    expect(isSafeScriptSrcUrl("http://localhost:3000")).toBe(false);
-    expect(isSafeScriptSrcUrl("javascript:alert(1)")).toBe(false);
-    expect(isSafeScriptSrcUrl("data:text/javascript,alert(1)")).toBe(false);
-    expect(isSafeScriptSrcUrl("//clerk.x.test")).toBe(false);
-    expect(isSafeScriptSrcUrl("/npm/clerk.js")).toBe(false);
-    expect(isSafeScriptSrcUrl("")).toBe(false);
-    expect(isSafeScriptSrcUrl(undefined)).toBe(false);
-    expect(isSafeScriptSrcUrl(42)).toBe(false);
+    expect(isSafeHttpsUrl("http://clerk.x.test")).toBe(false);
+    expect(isSafeHttpsUrl("http://localhost:3000")).toBe(false);
+    expect(isSafeHttpsUrl("javascript:alert(1)")).toBe(false);
+    expect(isSafeHttpsUrl("data:text/javascript,alert(1)")).toBe(false);
+    expect(isSafeHttpsUrl("//clerk.x.test")).toBe(false);
+    expect(isSafeHttpsUrl("/npm/clerk.js")).toBe(false);
+    expect(isSafeHttpsUrl("")).toBe(false);
+    expect(isSafeHttpsUrl(undefined)).toBe(false);
+    expect(isSafeHttpsUrl(42)).toBe(false);
   });
 });
 

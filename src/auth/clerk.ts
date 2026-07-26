@@ -32,9 +32,9 @@ export interface ClerkAuthOptions extends ToolkitBindingOptions {
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   /** Advertised scopes in protected-resource metadata. */
   scopes?: string[];
-  /** Optional hosted Account Portal sign-in URL for `/ui`. */
+  /** Optional hosted Account Portal sign-in URL for `/ui`. Absolute https only. */
   signInUrl?: string;
-  /** Optional hosted Account Portal sign-up URL for `/ui`. */
+  /** Optional hosted Account Portal sign-up URL for `/ui`. Absolute https only. */
   signUpUrl?: string;
 }
 
