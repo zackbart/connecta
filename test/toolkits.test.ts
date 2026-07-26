@@ -109,14 +109,14 @@ function scopedMetaTools(
   opts: { maxResultBytes?: number } = {},
   connectors: Connector[] = ORG_CONNECTORS(),
 ) {
-  const registry = makeRegistry(connectors);
+  const registry = makeRegistry(connectors, opts);
   const toolkit = resolveToolkits({ [name]: definition }, connectors)!.get(
     name,
   )!;
   return {
     registry,
     view: new ScopedRegistry(registry, toolkit),
-    mt: createMetaTools(new ScopedRegistry(registry, toolkit), BASE, opts),
+    mt: createMetaTools(new ScopedRegistry(registry, toolkit), BASE),
   };
 }
 
@@ -612,7 +612,7 @@ describe("toolkit scoping: get_result", () => {
 
   it("cannot page a result produced by another toolkit", async () => {
     const connectors = [bulky()];
-    const registry = makeRegistry(connectors);
+    const registry = makeRegistry(connectors, { maxResultBytes: 100 });
     const toolkits = resolveToolkits(
       { ops: { connectors: ["bulk"] }, audit: { connectors: ["bulk"] } },
       connectors,
@@ -620,12 +620,10 @@ describe("toolkit scoping: get_result", () => {
     const ops = createMetaTools(
       new ScopedRegistry(registry, toolkits.get("ops")!),
       BASE,
-      { maxResultBytes: 100 },
     );
     const audit = createMetaTools(
       new ScopedRegistry(registry, toolkits.get("audit")!),
       BASE,
-      { maxResultBytes: 100 },
     );
     const id = await stash(ops);
     const stolen = await audit.getResult({ id });
@@ -639,15 +637,11 @@ describe("toolkit scoping: get_result", () => {
 
   it("cannot page an unscoped session's result, or be paged by one", async () => {
     const connectors = [bulky()];
-    const registry = makeRegistry(connectors);
+    const registry = makeRegistry(connectors, { maxResultBytes: 100 });
     const toolkit = resolveToolkits({ ops: { connectors: ["bulk"] } }, connectors)!
       .get("ops")!;
-    const full = createMetaTools(registry, BASE, { maxResultBytes: 100 });
-    const scoped = createMetaTools(
-      new ScopedRegistry(registry, toolkit),
-      BASE,
-      { maxResultBytes: 100 },
-    );
+    const full = createMetaTools(registry, BASE);
+    const scoped = createMetaTools(new ScopedRegistry(registry, toolkit), BASE);
     const fullId = await stash(full);
     const scopedId = await stash(scoped);
     expect((await scoped.getResult({ id: fullId })).isError).toBe(true);

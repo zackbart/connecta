@@ -153,6 +153,48 @@ function isContinuationByte(b: number): boolean {
   return (b & 0xc0) === 0x80;
 }
 
+/** Smallest accepted `get_result` byte offset. */
+export const MIN_RESULT_OFFSET = 0;
+
+/**
+ * The one definition of a usable `get_result` offset: a whole number of bytes
+ * at or past {@link MIN_RESULT_OFFSET}. Shared by the registered zod schema and
+ * the handler's own check, the way `isValidMaxResultBytes` is shared across the
+ * cap's intake points (issue #32) — so a value valid at the wire is valid in
+ * process, and the two cannot drift.
+ *
+ * Everything else is rejected rather than coerced, because coercion is how an
+ * out-of-domain offset used to void a result silently: `Math.max(0, NaN)` is
+ * `NaN`, which slices to nothing, serializes as `"offset": null`, and reports
+ * no `nextOffset` — a caller sees a successful, empty result instead of an
+ * error. An offset past the end of the payload stays legal: it is a whole
+ * number of bytes, and it answers with an empty final page.
+ */
+export function isValidResultOffset(value: number): boolean {
+  return Number.isInteger(value) && value >= MIN_RESULT_OFFSET;
+}
+
+/**
+ * Move a byte `offset` back to the nearest UTF-8 codepoint boundary in
+ * `[0, offset]`, so decoding from it never starts mid-character (which emits
+ * U+FFFD for the severed tail).
+ *
+ * Backwards, never forwards: re-serving a few bytes the caller already has is
+ * recoverable, silently skipping the rest of a character is not. Offsets the
+ * server itself produced (`nextOffset`) are already boundaries and come back
+ * unchanged, so this only moves an offset a client computed on its own
+ * (issue #38). An offset at or past `bytes.length` is left alone — there is no
+ * character there to split.
+ */
+export function alignStartToCharBoundary(
+  bytes: Uint8Array,
+  offset: number,
+): number {
+  let o = offset;
+  while (o > 0 && isContinuationByte(bytes[o])) o--;
+  return o;
+}
+
 /**
  * Move a byte `end` back to the nearest UTF-8 codepoint boundary in
  * `(offset, total]`, so decoding `bytes[offset, end)` never splits a codepoint
@@ -240,39 +282,88 @@ function applyFieldsToContent(
 
 // --- result-size guard + get_result (feature 1) ---------------------------
 
-function contentBytes(content: TextContent[]): number {
-  let n = 0;
-  for (const b of content)
-    if (b.type === "text") n += enc.encode(b.text).length;
-  return n;
+/**
+ * The one serialization every result guard measures, stashes, and pages: JSON
+ * text for whatever JSON can represent, and `String(value)` for the returns
+ * JSON renders as `undefined` — a handler that returns nothing, a function, or
+ * a Symbol. `JSON.stringify` is *typed* as returning `string` while actually
+ * returning `undefined` for those, which is how a handler returning `undefined`
+ * reached clients as a `{"type":"text"}` block carrying no `text` at all: the
+ * size guard measured `enc.encode(undefined)` — the empty string, per the
+ * WebIDL default — and emitted the non-string unchanged (issue #42). `null`
+ * needs no special case; JSON renders it as `"null"`.
+ *
+ * Shared by `guardText`, `guardValue`, and execute_code's `guardResultValue` so
+ * the three give one answer to the same question. A value JSON cannot serialize
+ * at all (a BigInt) still throws, as before, and is reported as a failure.
+ */
+export function serializeResultText(value: unknown): string {
+  const serialized = JSON.stringify(value, null, 2);
+  return serialized === undefined ? String(value) : serialized;
+}
+
+/**
+ * Stash `text` under `result:<uuid>` (ttl 900s) and describe it as the
+ * truncation notice every over-cap path hands back.
+ */
+async function stashResult(
+  text: string,
+  results: KVStorage,
+  totalBytes: number,
+): Promise<{
+  truncated: true;
+  resultId: string;
+  totalBytes: number;
+  hint: string;
+}> {
+  const id = crypto.randomUUID();
+  await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
+  return {
+    truncated: true,
+    resultId: id,
+    totalBytes,
+    hint: "use get_result {id, offset} to page, or re-call with fields to select less",
+  };
 }
 
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
- * full text under `result:<uuid>` (ttl 900s) and return the first `cap` bytes
- * followed by a JSON truncation notice pointing at get_result.
+ * full text and return the first `cap` bytes followed by a JSON truncation
+ * notice pointing at get_result. `bytes` is `text` already encoded, so a caller
+ * that had to measure it to make this decision doesn't encode it twice.
  */
+async function guardEncoded(
+  text: string,
+  bytes: Uint8Array,
+  results: KVStorage,
+  cap: number,
+): Promise<ToolResult> {
+  if (bytes.length <= cap) {
+    return { content: [{ type: "text", text }] };
+  }
+  const notice = await stashResult(text, results, bytes.length);
+  const head = dec.decode(
+    bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
+  );
+  return {
+    content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
+  };
+}
+
+/** {@link guardEncoded} over a string that has not been measured yet. */
 async function guardText(
   text: string,
   results: KVStorage,
   cap: number,
 ): Promise<ToolResult> {
-  const bytes = enc.encode(text);
-  if (bytes.length <= cap) {
-    return { content: [{ type: "text", text }] };
-  }
-  const id = crypto.randomUUID();
-  await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
-  const head = dec.decode(
-    bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
-  );
-  const notice = JSON.stringify({
-    truncated: true,
-    resultId: id,
-    totalBytes: bytes.length,
-    hint: "use get_result {id, offset} to page, or re-call with fields to select less",
-  });
-  return { content: [{ type: "text", text: `${head}\n${notice}` }] };
+  // `JSON.stringify`'s type says `string` where its behavior says `string |
+  // undefined`, so TypeScript alone does not keep a non-string out of here.
+  // Normalizing at the door means the size check below always measures exactly
+  // the text that is emitted, and no future caller can launder a non-string
+  // through it the way issue #42 describes.
+  const body: string =
+    typeof text === "string" ? text : serializeResultText(text);
+  return guardEncoded(body, enc.encode(body), results, cap);
 }
 
 /** Store an oversized JSON value and replace it with a page handle. */
@@ -281,17 +372,54 @@ async function guardValue(
   results: KVStorage,
   cap: number,
 ): Promise<unknown> {
-  const text = JSON.stringify(value, null, 2) ?? String(value);
+  const text = serializeResultText(value);
   const bytes = enc.encode(text);
   if (bytes.length <= cap) return value;
-  const id = crypto.randomUUID();
-  await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
-  return {
-    truncated: true,
-    resultId: id,
-    totalBytes: bytes.length,
-    hint: "use get_result {id, offset} to page, or re-call with fields to select less",
-  };
+  return stashResult(text, results, bytes.length);
+}
+
+/**
+ * Bound a downstream MCP `content` array by `cap`, measuring the serialized
+ * envelope — the same string that gets stashed and paged, and the one that
+ * counts every block rather than only the text ones.
+ *
+ * Both halves matter (issue #43). Measuring only text blocks meant an oversized
+ * all-image result scored zero bytes and was returned inline unbounded, with no
+ * `resultId` to page from; and measuring one string while truncating another
+ * left `totalBytes` and the served head describing something the cap was never
+ * compared against.
+ *
+ * Over the cap, what a client gets depends on whether a prefix is usable. An
+ * all-text envelope keeps the historical head + notice — a JSON prefix is still
+ * readable. An envelope carrying non-text blocks is replaced by the notice
+ * alone: the head of a half-written base64 image is of no use to anyone, and
+ * cutting one leaves unparseable block structure behind. Either way the full
+ * envelope is stashed and pages through `get_result`.
+ */
+async function guardContent(
+  content: TextContent[],
+  results: KVStorage,
+  cap: number,
+): Promise<ToolResult> {
+  let text: string;
+  try {
+    text = JSON.stringify(content, null, 2);
+  } catch {
+    // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
+    // be measured, stashed, or paged either — there is nothing this guard could
+    // do with it. Pass it through as the old text-only measure did, rather than
+    // turning a call that used to succeed into result_processing_failed.
+    return { content };
+  }
+  const bytes = enc.encode(text);
+  // Under the cap the downstream blocks pass through untouched, non-text ones
+  // included, in their original order.
+  if (bytes.length <= cap) return { content };
+  if (content.every((b) => b.type === "text")) {
+    return guardEncoded(text, bytes, results, cap);
+  }
+  const notice = await stashResult(text, results, bytes.length);
+  return { content: [{ type: "text", text: JSON.stringify(notice) }] };
 }
 
 // --- compact schema rendering (feature 3a) --------------------------------
@@ -329,6 +457,10 @@ export interface CallArgs {
 }
 export interface GetResultArgs {
   id: string;
+  /**
+   * Byte offset to page from; a whole number >= 0, aligned back to the nearest
+   * character boundary and reported as the response's `offset`. Defaults to 0.
+   */
   offset?: number;
   /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
@@ -359,17 +491,19 @@ export interface SkillArgs {
 
 /**
  * The nine meta-tool handlers over a registry. Exported for direct testing;
- * registerMetaTools() wires them onto an McpServer. `opts.maxResultBytes`
- * overrides the registry's default result-size cap (a connector's own
- * `maxResultBytes` overrides it in turn); `opts.defaultToolTimeoutMs`
+ * registerMetaTools() wires them onto an McpServer. `opts.defaultToolTimeoutMs`
  * supplies a deadline for calls that don't carry one. (execute_code, the
  * optional tenth tool, is registered separately by registerExecuteTool.)
+ *
+ * The deployment-wide result-size cap is read off the registry view rather than
+ * passed in: `ConnectaConfig.maxResultBytes` and the per-connector override are
+ * the only places a cap is set, so there is one answer to where a deployment
+ * sets it (issue #44).
  */
 export function createMetaTools(
   registry: RegistryView,
   baseUrl: string,
   opts: {
-    maxResultBytes?: number;
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number;
     /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
@@ -377,10 +511,8 @@ export function createMetaTools(
     activity?: ActivityRequestContext;
   } = {},
 ) {
-  const globalCap = resolveMaxResultBytes(
-    opts.maxResultBytes,
-    registry.maxResultBytes,
-  );
+  // Already normalized and warned about at registry construction.
+  const globalCap = registry.maxResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -639,16 +771,7 @@ export function createMetaTools(
       if (resolved.connector.kind === "mcp") {
         let content = mr?.content ?? [];
         if (fields) content = applyFieldsToContent(content, fields);
-        let toolResult: ToolResult;
-        if (contentBytes(content) > cap) {
-          toolResult = await guardText(
-            JSON.stringify(content, null, 2),
-            results,
-            cap,
-          );
-        } else {
-          toolResult = { content };
-        }
+        const toolResult = await guardContent(content, results, cap);
         resultProcessingMs += Date.now() - processingStarted;
         record("success");
         return {
@@ -660,7 +783,7 @@ export function createMetaTools(
       }
       const value = fields ? applyFields(result, fields) : result;
       const toolResult = await guardText(
-        JSON.stringify(value, null, 2),
+        serializeResultText(value),
         results,
         cap,
       );
@@ -988,11 +1111,11 @@ export function createMetaTools(
     },
 
     async getResult(args: GetResultArgs): Promise<ToolResult> {
-      // Client-supplied page size: a normal input-validation error, not a
-      // clamp. Callers arriving over MCP are rejected earlier by the
-      // registered zod schema and never reach this branch, so it exists for
+      // Client-supplied page size and offset: normal input-validation errors,
+      // not clamps. Callers arriving over MCP are rejected earlier by the
+      // registered zod schema and never reach these branches, so they exist for
       // in-process callers of createMetaTools — which have no schema in front
-      // of them — and to keep the rule true of the handler on its own terms.
+      // of them — and to keep the rules true of the handler on its own terms.
       if (
         args.maxBytes !== undefined &&
         !isValidMaxResultBytes(args.maxBytes)
@@ -1002,6 +1125,12 @@ export function createMetaTools(
             `>= ${MIN_MAX_RESULT_BYTES}. Omit it to use the deployment default.`,
         );
       }
+      if (args.offset !== undefined && !isValidResultOffset(args.offset)) {
+        return errorResult(
+          `Invalid offset ${args.offset}: must be a whole number of bytes ` +
+            `>= ${MIN_RESULT_OFFSET}. Omit it to start at the beginning.`,
+        );
+      }
       const results = registry.resultsStorage();
       const stored = await results.get(`result:${args.id}`);
       if (stored === null || stored === undefined) {
@@ -1009,7 +1138,12 @@ export function createMetaTools(
       }
       const bytes = enc.encode(stored);
       const total = bytes.length;
-      const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+      // Validated above, so no coercion is needed here — only alignment. A
+      // client that computes its own offsets can land inside a multi-byte
+      // character, which would decode as U+FFFD; the offset actually served is
+      // the boundary at or before it, and it is what the response reports back
+      // as `offset` (issue #38).
+      const offset = alignStartToCharBoundary(bytes, args.offset ?? 0);
       // Page size only: a stashed result carries no connector identity, so
       // get_result keeps the deployment-wide default when none is requested.
       // Both sides are validated by now — the argument above, `globalCap` at
@@ -1157,7 +1291,7 @@ const CALL_DESC =
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default). Unknown/expired id is an error.";
+  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 const BATCH_DESC =
   "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call.";
 const AUTHORIZE_DESC =
@@ -1222,14 +1356,12 @@ export function registerMetaTools(
   registry: RegistryView,
   ctx: {
     baseUrl: string;
-    maxResultBytes?: number;
     defaultToolTimeoutMs?: number;
     probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
-    maxResultBytes: ctx.maxResultBytes,
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     activity: ctx.activity,
@@ -1358,10 +1490,11 @@ export function registerMetaTools(
       description: GET_RESULT_DESC,
       inputSchema: {
         id: z.string(),
-        offset: z.number().int().nonnegative().optional(),
-        // Same rule as isValidMaxResultBytes, expressed for the wire: sharing
-        // the floor constant keeps the schema from drifting away from the
-        // in-handler check if MIN_MAX_RESULT_BYTES ever moves.
+        // Both bounds are the shared rules (isValidResultOffset,
+        // isValidMaxResultBytes) expressed for the wire: spelling them against
+        // the same constants keeps the schema from drifting away from the
+        // in-handler checks if either floor ever moves.
+        offset: z.number().int().min(MIN_RESULT_OFFSET).optional(),
         maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
       },
       annotations: READ_ONLY_LOCAL,

@@ -484,6 +484,32 @@ describe("execute_code handler", () => {
     expect(out.content[0].text).toContain("computed");
   });
 
+  it("keeps a program that returns nothing well-formed", async () => {
+    // The third guard path over the same question as issue #42: `undefined`
+    // (and the other returns JSON renders as `undefined`) is serialized for
+    // measurement, and the envelope simply carries no `result` key, since JSON
+    // has no undefined. `null` is carried as null.
+    const registry = makeRegistry([calcConnector]);
+    const handler = createExecuteTool(
+      registry,
+      BASE,
+      fakeExecutor({}),
+      silentLogger,
+    );
+    const out = await handler({ code: "async () => {}" });
+    expect(out.isError).toBeUndefined();
+    const parsed = JSON.parse(out.content[0].text) as Record<string, unknown>;
+    expect("result" in parsed).toBe(false);
+
+    const nulled = await createExecuteTool(
+      registry,
+      BASE,
+      fakeExecutor({ result: null }),
+      silentLogger,
+    )({ code: "async () => null" });
+    expect(JSON.parse(nulled.content[0].text)).toEqual({ result: null });
+  });
+
   it("truncates oversized results", async () => {
     const registry = makeRegistry([calcConnector]);
     const executor = fakeExecutor({ result: "x".repeat(100_000) });

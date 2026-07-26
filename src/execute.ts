@@ -2,7 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
 import { recordToolActivity, type ActivityRequestContext } from "./activity.js";
-import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
+import {
+  errorResult,
+  jsonResult,
+  serializeResultText,
+  type ToolResult,
+} from "./meta-tools.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import type { RegistryView } from "./registry.js";
@@ -464,8 +469,9 @@ function truncate(text: string, max: number): string {
 }
 
 function guardResultValue(value: unknown): unknown {
-  const serialized = JSON.stringify(value, null, 2);
-  const text = serialized === undefined ? String(value) : serialized;
+  // Same serialization the call_tool guards measure, so a program returning
+  // nothing is rendered one way across every result path (issue #42).
+  const text = serializeResultText(value);
   if (text.length <= MAX_RESULT_CHARS) return value;
   return {
     truncated: true,
