@@ -1340,11 +1340,15 @@ Every branding value that becomes an `href` is scheme-gated before it reaches
 the page. `productUrl` and `ownerUrl` must be absolute `http(s)` URLs — anything
 else (a `javascript:` or `data:` payload) is dropped and the label renders as
 plain text. `favicon.href` accepts an absolute `http(s)` URL **or** a
-root-relative path such as the default `/favicon.svg`; a document-relative path
-is rejected because `/ui` and `/oauth/callback/<id>` sit at different depths, as
-is anything that resolves to another origin (`//host`, `/\host`). A rejected
-value falls back to the default rather than failing the page, and construction
-logs one warning naming each field that was dropped.
+root-relative path such as the default `/favicon.svg`. "Root-relative" means
+exactly one leading `/` followed by neither `/` nor `\`: a document-relative
+path is rejected because `/ui` and `/oauth/callback/<id>` sit at different
+depths, and anything carrying an authority (`//host`, `/\host`, or a
+tab-obfuscated variant) is rejected because it points at an origin this server
+does not control. A rejected value falls back to the default rather than failing
+the page, and construction logs one warning naming each field that was dropped.
+Malformed branding never fails construction: a non-string where a string belongs
+is read as unset, so it takes the same fallback-and-warn path.
 
 ---
 

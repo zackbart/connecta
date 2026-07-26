@@ -876,15 +876,29 @@ describe("isSafeIconHref", () => {
     expect(isSafeIconHref("vbscript:msgbox(1)")).toBe(false);
   });
 
-  it("rejects relative-looking values that resolve to another origin", () => {
+  it("rejects relative-looking values that carry an authority", () => {
     expect(isSafeIconHref("//evil.test/icon.svg")).toBe(false);
     expect(isSafeIconHref("/\\evil.test/icon.svg")).toBe(false);
     expect(isSafeIconHref("/\t/evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("\\\\evil.test/icon.svg")).toBe(false);
+  });
+
+  // The origin comparison resolves against a fixed probe host, so a value whose
+  // own authority is that host would pass it. The structural single-slash check
+  // is what rejects these; without it the gate is only as good as the constant.
+  it("rejects an authority that collides with the probe origin", () => {
+    expect(isSafeIconHref("//connecta.invalid/x.svg")).toBe(false);
+    expect(isSafeIconHref("//CONNECTA.INVALID/x")).toBe(false);
+    expect(isSafeIconHref("/\\connecta.invalid/x")).toBe(false);
+    expect(isSafeIconHref("//connecta.invalid:443/x")).toBe(false);
+    expect(isSafeIconHref("//user@connecta.invalid/x")).toBe(false);
   });
 
   it("rejects document-relative paths and non-strings", () => {
     expect(isSafeIconHref("favicon.svg")).toBe(false);
     expect(isSafeIconHref("")).toBe(false);
     expect(isSafeIconHref(undefined)).toBe(false);
+    expect(isSafeIconHref(42)).toBe(false);
+    expect(isSafeIconHref({ toString: () => "/favicon.svg" })).toBe(false);
   });
 });

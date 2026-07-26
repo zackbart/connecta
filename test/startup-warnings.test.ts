@@ -179,6 +179,26 @@ describe("dropped-branding-URL warning", () => {
     expect(warnings(logger)).not.toContain("branding");
   });
 
+  it("reports non-string branding URLs without throwing", () => {
+    const logger = spyLogger();
+    expect(() =>
+      createConnecta({
+        connectors: [plainConnector],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        logger,
+        branding: {
+          productUrl: 1 as unknown as string,
+          ownerUrl: {} as unknown as string,
+          favicon: { href: 42 as unknown as string },
+        },
+      }),
+    ).not.toThrow();
+    expect(warnings(logger)).toContain(
+      "branding productUrl, ownerUrl, favicon.href",
+    );
+  });
+
   it("does not warn when no branding is configured", () => {
     const logger = spyLogger();
     createConnecta({
