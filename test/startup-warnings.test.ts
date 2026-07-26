@@ -144,6 +144,73 @@ describe("publicUrl-unset OAuth warning", () => {
   });
 });
 
+describe("dropped-branding-URL warning", () => {
+  it("names every branding URL that failed the scheme gate", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      branding: {
+        productUrl: "javascript:alert(1)",
+        ownerUrl: "javascript:alert(2)",
+        favicon: { href: "javascript:alert(3)" },
+      },
+    });
+    const text = warnings(logger);
+    expect(text).toContain("branding productUrl, ownerUrl, favicon.href");
+    expect(text).toContain("The default is rendered instead.");
+  });
+
+  it("does not warn for accepted branding URLs", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      branding: {
+        productUrl: "https://acme.example",
+        ownerUrl: "https://acme.example/about",
+        favicon: { href: "/assets/acme.svg" },
+      },
+    });
+    expect(warnings(logger)).not.toContain("branding");
+  });
+
+  it("reports non-string branding URLs without throwing", () => {
+    const logger = spyLogger();
+    expect(() =>
+      createConnecta({
+        connectors: [plainConnector],
+        auth: bearerToken("secret"),
+        publicUrl: BASE,
+        logger,
+        branding: {
+          productUrl: 1 as unknown as string,
+          ownerUrl: {} as unknown as string,
+          favicon: { href: 42 as unknown as string },
+        },
+      }),
+    ).not.toThrow();
+    expect(warnings(logger)).toContain(
+      "branding productUrl, ownerUrl, favicon.href",
+    );
+  });
+
+  it("does not warn when no branding is configured", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("branding");
+  });
+});
+
 describe("missing-verifyState CSRF warning", () => {
   it("warns and names a connector whose OAuth callback has no state check", () => {
     const logger = spyLogger();

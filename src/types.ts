@@ -269,7 +269,9 @@ export interface ConnectaBranding {
    * `/favicon.svg`, `ico` at `/favicon.ico`; omit either to keep the default
    * for that format. Use `href` instead to point the page at an icon you host
    * elsewhere (it replaces the `/favicon.svg` link in the page head; the
-   * `/favicon.*` routes still serve whatever `svg`/`ico` provide).
+   * `/favicon.*` routes still serve whatever `svg`/`ico` provide). `href` must
+   * be an absolute `http(s)` URL or a root-relative path; anything else falls
+   * back to the default mark.
    */
   favicon?: {
     svg?: string;

@@ -1,6 +1,7 @@
 import { CredentialVault } from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
+import { droppedBrandingUrls } from "./ui.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
@@ -173,6 +174,18 @@ function warnInsecureConfig(
         "inbound Host header, so an attacker who controls that header can point " +
         "it at their own host and capture the authorization code. Set " +
         "`publicUrl` to a fixed https origin.",
+    );
+  }
+
+  // Branding URLs that failed their scheme gate. Rendering silently falls back
+  // (a bad URL must not take the page down), so this warning is the only way an
+  // operator learns their value never reached the page.
+  const dropped = droppedBrandingUrls(config.branding);
+  if (dropped.length > 0) {
+    logger.warn(
+      `[connecta] branding ${dropped.join(", ")} dropped: a branding URL is ` +
+        "used as an href, so it must be an absolute http(s) URL (favicon.href " +
+        "may also be a root-relative path). The default is rendered instead.",
     );
   }
 

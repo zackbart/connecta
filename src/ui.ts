@@ -24,30 +24,72 @@ interface ResolvedBranding {
   themeColor: string;
 }
 
+export const DEFAULT_FAVICON_HREF = "/favicon.svg";
+
+/**
+ * Branding arrives from operator config, which is untyped at a JS call site, so
+ * every field is treated as `unknown`: a non-string is read as unset rather than
+ * throwing on `.trim()`. Rendering must degrade to defaults for a malformed
+ * value, never fail — `createConnecta` calls this during construction.
+ */
+function trimmedString(value: unknown): string | undefined {
+  return typeof value === "string" ? value.trim() || undefined : undefined;
+}
+
 export function resolveBranding(
   branding?: ConnectaBranding,
 ): ResolvedBranding {
-  const productName = branding?.productName?.trim() || "Connecta";
-  const ownerName = branding?.ownerName?.trim();
+  const productName = trimmedString(branding?.productName) ?? "Connecta";
+  const ownerName = trimmedString(branding?.ownerName);
   // Operator branding URLs become masthead/callback hrefs, so a non-http(s)
   // scheme (javascript:, data:) is dropped the same as an unset URL — the
   // callers already render a <span> instead of an <a> when it is absent.
-  const productUrl = branding?.productUrl?.trim();
-  const ownerUrl = branding?.ownerUrl?.trim();
+  const productUrl = trimmedString(branding?.productUrl);
+  const ownerUrl = trimmedString(branding?.ownerUrl);
+  const faviconHref = trimmedString(branding?.favicon?.href);
   return {
     productName,
     ...(productUrl && isSafeHttpUrl(productUrl) ? { productUrl } : {}),
     ...(ownerName ? { ownerName } : {}),
     ...(ownerUrl && isSafeHttpUrl(ownerUrl) ? { ownerUrl } : {}),
     description:
-      branding?.description?.trim() ||
+      trimmedString(branding?.description) ??
       `Manage the services this ${productName} instance makes available to agents.`,
     pageTitle:
-      branding?.pageTitle?.trim() ||
+      trimmedString(branding?.pageTitle) ??
       (ownerName ? `${productName} — ${ownerName}` : productName),
-    faviconHref: branding?.favicon?.href?.trim() || "/favicon.svg",
-    themeColor: branding?.themeColor?.trim() || "#ffffff",
+    faviconHref:
+      faviconHref && isSafeIconHref(faviconHref)
+        ? faviconHref
+        : DEFAULT_FAVICON_HREF,
+    themeColor: trimmedString(branding?.themeColor) ?? "#ffffff",
   };
+}
+
+/**
+ * Names of the branding URLs the operator set that failed their gate and were
+ * replaced by a default. Lives beside the gates so the startup warning cannot
+ * drift from them, and takes `unknown` fields for the same reason
+ * `resolveBranding` does — a warning helper must never throw.
+ */
+export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
+  if (!branding) return [];
+  const resolved = resolveBranding(branding);
+  // A non-string still counts as "set": the operator meant to supply a URL, and
+  // that intent is exactly what the warning reports on. A blank string does not.
+  const isSet = (value: unknown) =>
+    typeof value === "string"
+      ? trimmedString(value) !== undefined
+      : value !== undefined && value !== null;
+  const faviconHref = branding.favicon?.href;
+  return [
+    ...(isSet(branding.productUrl) && !resolved.productUrl ? ["productUrl"] : []),
+    ...(isSet(branding.ownerUrl) && !resolved.ownerUrl ? ["ownerUrl"] : []),
+    ...(isSet(faviconHref) &&
+    trimmedString(faviconHref) !== resolved.faviconHref
+      ? ["favicon.href"]
+      : []),
+  ];
 }
 
 /**
@@ -69,6 +111,48 @@ export function isSafeHttpUrl(url: unknown): boolean {
   try {
     const scheme = new URL(url).protocol;
     return scheme === "http:" || scheme === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Only the second check's base; any origin works because the check is whether
+ * the href stays on whatever origin it is resolved against. It is deliberately
+ * never the sole gate: a value whose own authority equals this host (say
+ * `//connecta.invalid/x`) would resolve to this exact origin and pass, so the
+ * structural check below runs first and is what actually rejects `//host`.
+ */
+const SAME_ORIGIN_PROBE = "https://connecta.invalid";
+
+/** Removed anywhere in a URL by the parser, so a gate must ignore them too. */
+const URL_STRIPPED_CHARS = /[\t\n\r]/g;
+
+/**
+ * True for values allowed in the page's `<link rel="icon" href>`: an absolute
+ * `http(s)` URL (an icon the operator hosts elsewhere) or a path rooted at this
+ * origin. The relative carve-out is deliberate rather than accidental — the
+ * default href is the relative `/favicon.svg`, which `isSafeHttpUrl` alone would
+ * reject — and it is kept narrow on both ends.
+ *
+ * Root-relative only, because `/ui` and `/oauth/callback/<id>` sit at different
+ * depths and a document-relative path would resolve differently on each.
+ *
+ * "Root-relative" is enforced structurally: exactly one leading `/` followed by
+ * a character that is neither `/` nor `\`. Both of those would make the value an
+ * authority (`//host`, and `/\host` because the URL parser folds `\` to `/` in
+ * special schemes), pointing at an origin this server does not control. The test
+ * runs on a copy with tab/newline/CR removed, since the parser strips those
+ * anywhere and `/\t/host` would otherwise slip through as single-slash. The
+ * origin comparison that follows is defense in depth, not the authority check —
+ * on its own it would accept an authority that happened to equal the probe host.
+ */
+export function isSafeIconHref(href: unknown): boolean {
+  if (typeof href !== "string") return false;
+  if (isSafeHttpUrl(href)) return true;
+  if (!/^\/(?![/\\])/.test(href.replace(URL_STRIPPED_CHARS, ""))) return false;
+  try {
+    return new URL(href, SAME_ORIGIN_PROBE).origin === SAME_ORIGIN_PROBE;
   } catch {
     return false;
   }

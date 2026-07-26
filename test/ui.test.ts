@@ -7,6 +7,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import {
   filterUiConnectors,
   isSafeHttpUrl,
+  isSafeIconHref,
   renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
@@ -855,5 +856,49 @@ describe("isSafeHttpUrl", () => {
     expect(isSafeHttpUrl("/relative/path")).toBe(false);
     expect(isSafeHttpUrl("")).toBe(false);
     expect(isSafeHttpUrl(undefined)).toBe(false);
+  });
+});
+
+describe("isSafeIconHref", () => {
+  it("accepts absolute http/https URLs", () => {
+    expect(isSafeIconHref("https://cdn.x.test/icon.svg")).toBe(true);
+    expect(isSafeIconHref("http://cdn.x.test/icon.svg")).toBe(true);
+  });
+
+  it("accepts root-relative paths on this origin", () => {
+    expect(isSafeIconHref("/favicon.svg")).toBe(true);
+    expect(isSafeIconHref("/assets/icon.svg?v=2")).toBe(true);
+  });
+
+  it("rejects non-http(s) schemes", () => {
+    expect(isSafeIconHref("javascript:alert(1)")).toBe(false);
+    expect(isSafeIconHref("data:image/svg+xml,<svg/>")).toBe(false);
+    expect(isSafeIconHref("vbscript:msgbox(1)")).toBe(false);
+  });
+
+  it("rejects relative-looking values that carry an authority", () => {
+    expect(isSafeIconHref("//evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("/\\evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("/\t/evil.test/icon.svg")).toBe(false);
+    expect(isSafeIconHref("\\\\evil.test/icon.svg")).toBe(false);
+  });
+
+  // The origin comparison resolves against a fixed probe host, so a value whose
+  // own authority is that host would pass it. The structural single-slash check
+  // is what rejects these; without it the gate is only as good as the constant.
+  it("rejects an authority that collides with the probe origin", () => {
+    expect(isSafeIconHref("//connecta.invalid/x.svg")).toBe(false);
+    expect(isSafeIconHref("//CONNECTA.INVALID/x")).toBe(false);
+    expect(isSafeIconHref("/\\connecta.invalid/x")).toBe(false);
+    expect(isSafeIconHref("//connecta.invalid:443/x")).toBe(false);
+    expect(isSafeIconHref("//user@connecta.invalid/x")).toBe(false);
+  });
+
+  it("rejects document-relative paths and non-strings", () => {
+    expect(isSafeIconHref("favicon.svg")).toBe(false);
+    expect(isSafeIconHref("")).toBe(false);
+    expect(isSafeIconHref(undefined)).toBe(false);
+    expect(isSafeIconHref(42)).toBe(false);
+    expect(isSafeIconHref({ toString: () => "/favicon.svg" })).toBe(false);
   });
 });
