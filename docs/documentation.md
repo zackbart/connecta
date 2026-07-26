@@ -1,7 +1,8 @@
 # connecta — documentation
 
 How connecta works, end to end. For a short intro see [`README.md`](../README.md);
-for the *why* behind the design see [`design.md`](./design.md).
+for the *why* — non-goals, rejected alternatives, and the invariants a change
+must preserve — see [`decisions.md`](./decisions.md).
 
 ## Contents
 
@@ -144,7 +145,7 @@ connecta/
   tsconfig.json
   README.md               # short intro
   docs/
-    design.md             # rationale / non-goals
+    decisions.md          # non-goals, rejected alternatives, invariants
     documentation.md      # this file
   src/
     index.ts              # createConnecta + public re-exports (Workers-clean entry)
@@ -1583,7 +1584,9 @@ connectors, filtering a large downstream response down to three fields before
 it ever reaches the model's context. The idea comes from Cloudflare's
 [Code Mode](https://blog.cloudflare.com/code-mode/); connecta adopts the
 sandbox, not the platform (no in-sandbox approvals, no durable execution log, no
-snippets — see `design.md`).
+saved snippets, and no Durable-Object runtime — see
+[`decisions.md`](./decisions.md#from-executor-and-cloudflares-code-mode-runtime)
+for why each was declined).
 
 It is **off by default**. Configure an `executor` and connecta registers a
 tenth meta-tool, `execute_code`; omit it and nothing changes.
@@ -1645,7 +1648,17 @@ Two known implementations:
   compiled to WebAssembly. WASM is
   memory-safe with no ambient authority, so the guest genuinely cannot reach
   the network or filesystem; options cap memory (default 64 MiB), stack
-  (1 MiB), and wall-clock time (30 s, host tool calls included). The 30 s
+  (1 MiB), and wall-clock time (30 s, host tool calls included).
+
+  Guest `await` is driven from the host, not by suspending the interpreter: a
+  tool call hands the guest a QuickJS deferred promise and the host pumps
+  `executePendingJobs` to advance continuations as calls settle. The obvious
+  alternative — asyncify, which suspends and resumes the WASM stack — was tried
+  and abandoned as too flaky to trust with hostile code. The pending-jobs loop
+  is why the executor can notice a promise that can never settle and fail fast
+  with "execution stalled" instead of burning the whole timeout.
+
+  The 30 s
   default is intentionally tighter than codemode's 60 s: sandbox code is
   tool-call glue, not compute, so a shorter leash surfaces hung downstreams
   sooner. Both executors forward provider-function arguments verbatim and

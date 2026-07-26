@@ -341,5 +341,6 @@ neutral Connecta default. Nothing about the operator is baked into the package.
   the meta-tools, connectors and their usage guides, inbound auth, downstream
   OAuth, storage, running it (Node / Workers / Docker), Clerk setup, testing,
   troubleshooting, code mode, the status UI, activity history, and toolkits.
-- **[`docs/design.md`](./docs/design.md)** — why it's built this way, and the non-goals.
+- **[`docs/decisions.md`](./docs/decisions.md)** — why it's built this way: the
+  non-goals, the alternatives that lost, and the invariants a change must keep.
 - **[`CHANGELOG.md`](./CHANGELOG.md)** — what changed in each release.
