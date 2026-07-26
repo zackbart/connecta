@@ -361,8 +361,9 @@ addresses. Reference: documentation.md §16.
 
 - **One enforcement point.** Scoping is not a display filter applied in nine
   handlers: `ScopedRegistry` (`registry.ts`) is a filtered *view* of the one
-  long-lived registry, `serveMcp` builds it once per scoped connection, and
-  every meta-tool is typed against `RegistryView`. A new meta-tool inherits the
+  long-lived registry, built by `resolveToolkitScope` in the fetch handler
+  (after the auth gate) and handed to `serveMcp`, and every meta-tool is typed
+  against `RegistryView`. A new meta-tool inherits the
   boundary without writing a check, and out-of-scope addresses fail
   *identically* to nonexistent ones — there is no "exists but hidden" reply.
 - **Not multi-tenancy** (still a non-goal below). There is one registry, one

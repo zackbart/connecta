@@ -118,6 +118,21 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
      ON tool_call_activity (occurred_at_ms DESC, id DESC);
    ```
 
+   **Already have this table?** `toolkit_id` is new (it arrived with
+   toolkits), and `CREATE TABLE IF NOT EXISTS` will not add it to a table
+   that already exists. Add it as its own migration:
+
+   ```sql
+   ALTER TABLE tool_call_activity ADD COLUMN toolkit_id TEXT;
+   ```
+
+   Do this **before** deploying the updated `d1-activity.ts`: its `INSERT`
+   names `toolkit_id`, so against an un-migrated table every write fails with
+   `no such column: toolkit_id`. Activity writes are best-effort by design —
+   connecta logs the failure and returns the tool result unharmed — so the
+   symptom is not an error your agent sees, it is an activity log that
+   quietly stops recording.
+
 3. Pass the store to `createConnecta`:
 
    ```ts

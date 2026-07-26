@@ -325,7 +325,9 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
   a namespace kept separate from every connector's `conn:<id>:`; a
   toolkit-scoped session stashes under `results:toolkit:<name>:` instead, so it
-  can only page results it produced — [§16](#16-toolkits-scoped-views)) and only
+  cannot page a result it *could not have* produced — that namespace is per
+  toolkit, not per session, so two clients on the same toolkit share one
+  — [§16](#16-toolkits-scoped-views)) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
   `{ "truncated": true, "resultId", "totalBytes", "hint" }`. Page the rest with
   `get_result`, or re-call with `fields` to select less. A cap is a whole number
@@ -1283,10 +1285,12 @@ Test suites (`test/`) and what they cover:
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
 | `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the `authorizedParties` rejection of a sibling-origin token |
+| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), an OAuth callback with no `verifyState`, and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
 | `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
 | `quickjs-executor.test.ts` | the QuickJS/WASM sandbox — code normalization, host-call bridging incl. `Promise.all`, no ambient capabilities, heap/wall-clock caps, hung-host-call timeout and drain, stalled-promise detection (Node project only) |
+| `quickjs-log-limits.test.ts` | sandbox `console.*` capture stays bounded — a single huge entry is cut to the per-entry cap, cumulative output stops at the total budget, and small logs pass through byte-for-byte (Node project only) |
 | `codemode-compat.test.ts` | the `Executor` seam stays structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor` (enforced by `tsc`) |
 | `file-storage.test.ts` | `fileStorage()` round-trips across instances, TTL, and quarantining a corrupt state file instead of overwriting it (Node project only) |
 | `package-surface.test.ts` | the published boundary — only generic connector factories ship, platform storage stays in examples, Clerk/QuickJS stay behind optional subpaths, `validateToolInput` and the JSON Schema subpath resolve |
@@ -1722,7 +1726,9 @@ meta-tool behaves as if out-of-scope connectors and tools **do not exist**:
 
 **One enforcement point.** All of that lives in `ScopedRegistry`
 (`src/registry.ts`): a filtered *view* of the one long-lived `Registry`.
-`serveMcp` builds it once per scoped connection and every meta-tool is typed
+`resolveToolkitScope` builds it in the fetch handler — after the auth gate, on
+every request — and `serveMcp` then registers the meta-tools against whatever
+view it was handed. Every meta-tool is typed
 against `RegistryView`, so a meta-tool cannot reach past the boundary — and a
 new one inherits it without writing a check. Reviewing the scope means reading
 one class, not nine handlers.

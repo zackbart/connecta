@@ -119,9 +119,11 @@ function toolFilter(
 /**
  * Validate one toolkit definition against the deployment's connectors.
  *
- * Structural mistakes THROW at construction rather than warn: a toolkit is an
- * access boundary, and a typo'd id in an allowlist is a scope the operator did
- * not write. Tool names are checked only for connectors that expose
+ * Structural mistakes THROW at construction rather than warn: a typo'd id in
+ * an allowlist is a scope the operator did not write, and a scope nobody wrote
+ * is not one an operator can reason about. (A toolkit scopes visibility, not
+ * identity — it is not itself an access check; see the module header and
+ * documentation.md §16.) Tool names are checked only for connectors that expose
  * `staticTools` (i.e. `api()`); a remote connector's catalog is fetched lazily
  * over the network and is unknown at construction time.
  */
