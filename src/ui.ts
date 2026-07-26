@@ -183,9 +183,11 @@ export function isSafeScriptSrcUrl(url: unknown): boolean {
 
 /**
  * Names of the `uiAuth` URLs an inbound-auth provider supplied that failed their
- * gate. Lives beside the gate for the same reason `droppedBrandingUrls` does, and
- * takes `unknown`-shaped input because a custom `InboundAuth` is untyped at a JS
- * call site.
+ * gate. Lives beside the gate for the same reason `droppedBrandingUrls` does: the
+ * startup warning cannot then drift from what rendering actually drops. Every
+ * field is read defensively rather than trusted, because a custom `InboundAuth`
+ * is untyped at a JS call site — `isSafeScriptSrcUrl` takes `unknown`, and a
+ * `uiAuth` that is not the clerk shape is reported as nothing to warn about.
  */
 export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   if (!uiAuth || uiAuth.kind !== "clerk") return [];

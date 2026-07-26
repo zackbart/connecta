@@ -443,7 +443,11 @@ describe("status UI", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
       });
-      const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+      const res = await c.fetch(new Request(`${BASE}/ui`));
+      const body = await res.text();
+      // The shell still renders — a rejected loader origin drops the loader, it
+      // does not fail the page.
+      expect(res.status).toBe(200);
       expect(scriptSrcs(body)).toEqual([]);
       expect(body).not.toContain("clerk.browser.js");
       // Nor may it reach the page through the inline AUTH object.

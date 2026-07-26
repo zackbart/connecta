@@ -784,8 +784,14 @@ same-named fields on the `Connector` interface above — declare a credential he
 and the connector's `/ui` card grows Add / Replace / Test / Remove controls,
 while `ctx.credential` gives handlers read-only access to the decrypted value
 ([§7](#operator-managed-connector-credentials)). Use `testCredential` for a
-single value and `testCredentials` for a named field set; `/ui` shows the Test
-button only when the matching one is present.
+single value and `testCredentials` for a named field set. Be aware that the two
+are not currently matched against the credential shape: `/ui` offers the Test
+button whenever a configured credential exists and the connector declares
+*either* hook, and the route prefers `testCredentials` when both are present,
+falling back to `testCredential` on the reserved single `value` field. Declaring
+the hook that does not match your `credential` shape therefore produces a Test
+button that cannot succeed — tracked as
+[issue #55](https://github.com/zackbart/connecta/issues/55).
 
 Worked example — an HTTP API connector that calls out with `fetch` and uses
 `ctx`:
@@ -851,8 +857,10 @@ those calls fail instead, with the same non-retryable `invalid_args`
 never silently admits unvalidated input. It is only consulted when `validateArgs`
 is not `false` (nothing is validated at all in that case), and it does not touch
 the happy path: a schema that compiles and validates behaves identically either
-way. `api()` also compiles every `inputSchema` at construction, so the warning
-about an unusable schema arrives at startup rather than on a live call. The same
+way. `api()` also compiles every `inputSchema` at construction — when
+`validateArgs` is not `false`, since nothing needs compiling otherwise — so the
+warning about an unusable schema arrives at startup rather than on a live call.
+The same
 switch is available to hand-written connectors as `failClosed` on
 `validateToolInput` (below).
 
@@ -1360,8 +1368,8 @@ Test suites (`test/`) and what they cover:
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
-| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the `authorizedParties` rejection of a sibling-origin token |
-| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), an OAuth callback with no `verifyState`, the toolkit-selection warning keyed off the *resolved* toolkits (so `toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
+| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, and the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed) |
+| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the toolkit-selection warning keyed off the *resolved* toolkits (so `toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
 | `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
@@ -1630,6 +1638,16 @@ naming, because both are closed the same way.
   position (the `<script src>` or the inline `AUTH` object); `/ui` renders without
   the loader, reports that Clerk could not load, and construction logs a warning
   naming the provider — the same fallback-and-warn shape the branding gates use.
+  Only the provider `/ui` actually renders is checked, since a later provider's
+  `uiAuth` never reaches the page.
+
+One residual is worth stating rather than leaving to be rediscovered:
+`uiAuth.signInUrl` and `uiAuth.signUpUrl` are operator config that ClerkJS uses
+as **navigation targets**, not as rendered attributes, so neither the sentence
+above nor any gate currently covers them. `/ui`'s nonce CSP blocks a
+`javascript:` navigation in browsers that honour it; the `'unsafe-inline'` legacy
+fallback does not. Bringing them under the same invariant is
+[issue #56](https://github.com/zackbart/connecta/issues/56).
 
 ---
 

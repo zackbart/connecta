@@ -246,21 +246,23 @@ function warnInsecureConfig(
     );
   }
 
-  // A provider's uiAuth.frontendApiUrl becomes the `<script src>` of /ui's
-  // sign-in loader, so it takes the same gate-or-drop treatment as a branding
-  // href. Rendering omits the loader entirely for a rejected value — the
-  // dashboard then reports that Clerk could not load — which is a confusing
-  // symptom without this line naming the cause.
-  for (const provider of inboundAuth) {
-    const droppedUiAuth = droppedUiAuthUrls(provider.uiAuth);
-    if (droppedUiAuth.length > 0) {
-      logger.warn(
-        `[connecta] inbound auth provider "${provider.kind}" had ` +
-          `${droppedUiAuth.join(", ")} dropped: the browser sign-in loader is ` +
-          "fetched from this origin, so it must be an absolute https URL. /ui " +
-          "renders without the loader and cannot start a sign-in.",
-      );
-    }
+  // /ui renders exactly one provider's browser sign-in config — the first that
+  // offers one, which is the same `find` the /ui route performs — and that
+  // provider's frontendApiUrl becomes the loader's `<script src>`. Gate-or-drop
+  // like a branding href: rendering omits the loader for a rejected value and
+  // the dashboard then reports that Clerk could not load, a confusing symptom
+  // without this line naming the cause. Checking only the rendered provider
+  // keeps the claim true — a later provider's uiAuth never reaches the page, so
+  // there is nothing there to warn about.
+  const uiAuthProvider = inboundAuth.find((provider) => provider.uiAuth);
+  const droppedUiAuth = droppedUiAuthUrls(uiAuthProvider?.uiAuth);
+  if (uiAuthProvider && droppedUiAuth.length > 0) {
+    logger.warn(
+      `[connecta] inbound auth provider "${uiAuthProvider.kind}" had ` +
+        `${droppedUiAuth.join(", ")} dropped: the browser sign-in loader is ` +
+        "fetched from this origin, so it must be an absolute https URL. /ui " +
+        "renders without the loader and cannot start a sign-in.",
+    );
   }
 
   // OAuth connectors whose callback performs no state/CSRF check: the public
