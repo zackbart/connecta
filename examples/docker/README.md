@@ -76,4 +76,4 @@ activity history (`activity`), scoped views for several teams in the org
 and `branding` — are ordinary `createConnecta` config; add them there. See the
 package [README](../../README.md) and
 [documentation.md](../../docs/documentation.md) for the full reference, or
-[design.md](../../docs/design.md) for the rationale.
+[decisions.md](../../docs/decisions.md) for the rationale.
