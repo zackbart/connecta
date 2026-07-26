@@ -67,6 +67,20 @@ export function resolveBranding(
 }
 
 /**
+ * Whether the operator meant to supply a value here — the question every
+ * dropped-URL warning asks before naming a field, and one definition so the
+ * branding and `uiAuth` warnings cannot answer it differently. A non-string
+ * counts as set: the intent was there and is exactly what the warning reports
+ * on. A blank or whitespace-only string does not; that is indistinguishable
+ * from leaving the field alone, and both take the default silently.
+ */
+function isSetUrlValue(value: unknown): boolean {
+  return typeof value === "string"
+    ? trimmedString(value) !== undefined
+    : value !== undefined && value !== null;
+}
+
+/**
  * Names of the branding URLs the operator set that failed their gate and were
  * replaced by a default. Lives beside the gates so the startup warning cannot
  * drift from them, and takes `unknown` fields for the same reason
@@ -75,17 +89,15 @@ export function resolveBranding(
 export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
   if (!branding) return [];
   const resolved = resolveBranding(branding);
-  // A non-string still counts as "set": the operator meant to supply a URL, and
-  // that intent is exactly what the warning reports on. A blank string does not.
-  const isSet = (value: unknown) =>
-    typeof value === "string"
-      ? trimmedString(value) !== undefined
-      : value !== undefined && value !== null;
   const faviconHref = branding.favicon?.href;
   return [
-    ...(isSet(branding.productUrl) && !resolved.productUrl ? ["productUrl"] : []),
-    ...(isSet(branding.ownerUrl) && !resolved.ownerUrl ? ["ownerUrl"] : []),
-    ...(isSet(faviconHref) &&
+    ...(isSetUrlValue(branding.productUrl) && !resolved.productUrl
+      ? ["productUrl"]
+      : []),
+    ...(isSetUrlValue(branding.ownerUrl) && !resolved.ownerUrl
+      ? ["ownerUrl"]
+      : []),
+    ...(isSetUrlValue(faviconHref) &&
     trimmedString(faviconHref) !== resolved.faviconHref
       ? ["favicon.href"]
       : []),
@@ -195,19 +207,25 @@ export function isSafeHttpsUrl(url: unknown): boolean {
  * is untyped at a JS call site — `isSafeHttpsUrl` takes `unknown`, and a
  * `uiAuth` that is not the clerk shape is reported as nothing to warn about.
  *
- * `frontendApiUrl` is required, so anything that fails is a drop. `signInUrl`
- * and `signUpUrl` are optional, and an unset one is nothing to report: "set"
- * means exactly what rendering treats as set (truthy), so a blank string is
- * silently unset while a non-string is a value the operator meant to supply.
+ * `frontendApiUrl` is required, so anything that fails its gate is a drop.
+ * `signInUrl` and `signUpUrl` are optional, so only a value the operator
+ * *supplied* and the gate then rejected is worth a warning — an unset field
+ * took no default away from anyone. `isSetUrlValue` decides that, the same way
+ * and for the same reasons it decides it for the branding URLs: a warning that
+ * fires for one and not the other would be reporting on the field rather than
+ * on the operator's intent. Rendering is not consulted for this: it drops on
+ * the gate alone, and a blank string fails that gate too — it is simply not
+ * *reported*, because a blank is indistinguishable from leaving the field
+ * alone.
  */
 export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   if (!uiAuth || uiAuth.kind !== "clerk") return [];
   return [
     ...(isSafeHttpsUrl(uiAuth.frontendApiUrl) ? [] : ["uiAuth.frontendApiUrl"]),
-    ...(uiAuth.signInUrl && !isSafeHttpsUrl(uiAuth.signInUrl)
+    ...(isSetUrlValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl)
       ? ["uiAuth.signInUrl"]
       : []),
-    ...(uiAuth.signUpUrl && !isSafeHttpsUrl(uiAuth.signUpUrl)
+    ...(isSetUrlValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl)
       ? ["uiAuth.signUpUrl"]
       : []),
   ];

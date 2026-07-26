@@ -1813,8 +1813,10 @@ closed the same way.
   Clerk could not load; without `signInUrl`/`signUpUrl` it signs operators in
   through Clerk's own defaults. Construction logs one warning naming the provider
   and each dropped field — the same fallback-and-warn shape the branding gates
-  use. `signInUrl`/`signUpUrl` are optional, so an unset one is not a drop and is
-  never warned about. Only the provider `/ui` actually renders is checked, since
+  use. `signInUrl`/`signUpUrl` are optional, so a field the operator never set —
+  absent, or blank, which reads the same way a branding URL's blank does — is not
+  a drop and is never warned about; a value that *was* supplied and then rejected
+  always is, non-strings included. Only the provider `/ui` actually renders is checked, since
   a later provider's `uiAuth` never reaches the page.
 
 Gating the two navigation targets closes the invariant rather than a live vector:
