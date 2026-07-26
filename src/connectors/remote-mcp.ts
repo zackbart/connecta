@@ -23,6 +23,12 @@ export interface RemoteMcpOptions {
   /** Human-readable display name; the connector id remains the address prefix. */
   title?: string;
   description?: string;
+  /**
+   * Max inline result size (bytes) for this connector's tools before
+   * call_tool/batch_call truncate and stash the full text for get_result
+   * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
+   */
+  maxResultBytes?: number;
   auth?: RemoteMcpAuth;
   /**
    * Refuse to connect to a non-`https://` `url` at construction (default
@@ -252,6 +258,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     title: opts.title,
     kind: "mcp",
     description: opts.description,
+    maxResultBytes: opts.maxResultBytes,
 
     async listTools(ctx) {
       const state = stateFor(ctx);

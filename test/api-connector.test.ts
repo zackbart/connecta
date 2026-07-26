@@ -55,6 +55,16 @@ describe("api() connector", () => {
     expect(c.description).toBe("Send email via Resend");
   });
 
+  it("passes maxResultBytes through, and leaves it unset by default", () => {
+    expect(makeApi().maxResultBytes).toBeUndefined();
+    const capped = api("docs", {
+      description: "Docs",
+      maxResultBytes: 200_000,
+      tools: [{ name: "fetch", handler: () => null }],
+    });
+    expect(capped.maxResultBytes).toBe(200_000);
+  });
+
   it("listTools returns the declared tool defs (name/description/schema)", async () => {
     const c = makeApi();
     const tools = await c.listTools(ctx());

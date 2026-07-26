@@ -1387,6 +1387,152 @@ describe("call_tool size guard + get_result", () => {
   });
 });
 
+describe("per-connector maxResultBytes override", () => {
+  // ASCII, so byte length == char length, and it JSON-encodes to one line —
+  // the truncation notice is therefore always exactly the second line.
+  const PAYLOAD = "x".repeat(500);
+  const FULL = JSON.stringify(PAYLOAD, null, 2); // 502 bytes
+
+  /** An api connector returning PAYLOAD, optionally under its own byte cap. */
+  function capped(id: string, maxResultBytes?: number): Connector {
+    return {
+      id,
+      kind: "api",
+      description: "Capped",
+      maxResultBytes,
+      async listTools() {
+        return [
+          {
+            name: "big",
+            description: "Return a large blob",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return PAYLOAD;
+      },
+    };
+  }
+
+  interface Notice {
+    truncated: boolean;
+    resultId: string;
+    totalBytes: number;
+  }
+
+  /** Split a guarded text result into its head and its truncation notice. */
+  function truncation(result: { content: { text: string }[] }): {
+    head: string;
+    notice: Notice;
+  } {
+    const [head, notice] = result.content[0].text.split("\n");
+    return { head, notice: JSON.parse(notice) as Notice };
+  }
+
+  it("truncates at a connector cap lower than the global one", async () => {
+    const mt = createMetaTools(makeRegistry([capped("tight", 100)]), BASE, {
+      maxResultBytes: 400,
+    });
+    const { head, notice } = truncation(
+      await mt.callTool({ address: "tight.big" }),
+    );
+    expect(head).toBe(FULL.slice(0, 100));
+    expect(notice.truncated).toBe(true);
+    expect(notice.totalBytes).toBe(FULL.length);
+  });
+
+  it("keeps a result inline under a connector cap higher than the global one", async () => {
+    const mt = createMetaTools(makeRegistry([capped("wide", 1_000)]), BASE, {
+      maxResultBytes: 100,
+    });
+    const result = await mt.callTool({ address: "wide.big" });
+    expect(result.content[0].text).toBe(FULL);
+  });
+
+  it("falls back to the global cap when a connector declares no override", async () => {
+    const mt = createMetaTools(makeRegistry([capped("plain")]), BASE, {
+      maxResultBytes: 300,
+    });
+    const { head, notice } = truncation(
+      await mt.callTool({ address: "plain.big" }),
+    );
+    expect(head).toBe(FULL.slice(0, 300));
+    expect(notice.totalBytes).toBe(FULL.length);
+  });
+
+  it("falls back to the registry default when nothing is configured", async () => {
+    // 502 bytes is far below the built-in 50_000, so nothing truncates.
+    const mt = createMetaTools(makeRegistry([capped("plain")]), BASE);
+    const result = await mt.callTool({ address: "plain.big" });
+    expect(result.content[0].text).toBe(FULL);
+  });
+
+  it("applies each connector's own cap within one batch_call", async () => {
+    const mt = createMetaTools(
+      makeRegistry([
+        capped("tight", 100),
+        capped("plain"),
+        capped("wide", 1_000),
+      ]),
+      BASE,
+      { maxResultBytes: 300 },
+    );
+    const parsed = textOf(
+      await mt.batchCall({
+        calls: [
+          { address: "tight.big" },
+          { address: "plain.big" },
+          { address: "wide.big" },
+        ],
+      }),
+    ) as { results: Array<{ address: string; result: { text: string }[] }> };
+    const [tight, plain, wide] = parsed.results.map((r) => r.result[0].text);
+
+    expect(tight.split("\n")[0]).toBe(FULL.slice(0, 100));
+    expect(plain.split("\n")[0]).toBe(FULL.slice(0, 300));
+    expect(wide).toBe(FULL);
+  });
+
+  it("pages a result truncated under an override through get_result", async () => {
+    const mt = createMetaTools(makeRegistry([capped("tight", 100)]), BASE, {
+      maxResultBytes: 400,
+    });
+    const { notice } = truncation(await mt.callTool({ address: "tight.big" }));
+
+    let offset = 0;
+    let assembled = "";
+    for (;;) {
+      const page = textOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 64 }),
+      ) as { text: string; nextOffset?: number; totalBytes: number };
+      expect(page.totalBytes).toBe(FULL.length);
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+    expect(assembled).toBe(FULL);
+  });
+
+  it("value mode honours the override too", async () => {
+    const mt = createMetaTools(
+      makeRegistry([capped("tight", 100), capped("wide", 1_000)]),
+      BASE,
+      { maxResultBytes: 400 },
+    );
+    const truncated = textOf(
+      await mt.callTool({ address: "tight.big", resultMode: "value" }),
+    ) as { data: { truncated?: boolean; totalBytes?: number } };
+    const inline = textOf(
+      await mt.callTool({ address: "wide.big", resultMode: "value" }),
+    ) as { data: unknown };
+
+    expect(truncated.data.truncated).toBe(true);
+    expect(truncated.data.totalBytes).toBe(FULL.length);
+    expect(inline.data).toBe(PAYLOAD);
+  });
+});
+
 describe("batch_call", () => {
   it("runs calls in parallel, isolates failures, and applies per-call fields", async () => {
     const mt = createMetaTools(
