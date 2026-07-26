@@ -30,8 +30,15 @@ const connecta = createConnecta({
     // not the `text` connector, and not an unscoped session over the whole
     // registry. Refused at connect time, before any scoped registry exists.
     bearerToken(clockToken, { subjectId: "clock-agent", toolkits: ["clock"] }),
-    // Operator credential: unbound, so it sees every connector plus /ui.
-    bearerToken(token, { subjectId: "operator" }),
+    // Operator credential: `unscoped: true` keeps every connector plus /ui, and
+    // saying so explicitly marks the exemption as deliberate — an adapter left
+    // unbound beside a bound one warns at startup, because that is usually a
+    // forgotten token rather than a decision.
+    bearerToken(token, {
+      subjectId: "operator",
+      toolkits: ["clock"],
+      unscoped: true,
+    }),
   ],
   // A named scoped view over the registry, selected with ?toolkit=clock.
   toolkits: {

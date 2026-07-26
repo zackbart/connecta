@@ -72,14 +72,19 @@ function build(env: Env) {
         subjectId: "exec-team",
         toolkits: ["exec"],
       }),
-      // The operator signs in with Clerk and stays unbound: every toolkit, the
-      // unscoped registry, /ui, and the deployment-wide activity log. Add
-      // `toolkits: [...]` here too (with `unscoped: true` to keep the dashboard)
-      // to bind Clerk users; one clerkAuth per team, each with its own `gate`.
+      // The operator signs in with Clerk. `unscoped: true` keeps the full
+      // registry, /ui, and the deployment-wide activity log — and saying so
+      // explicitly (rather than leaving the provider unbound) is what tells
+      // connecta the exemption is deliberate, so it stops warning that one
+      // credential still opens every view. Restrict WHO may sign in with
+      // `gate`; for per-team Clerk users, add one clerkAuth per team, each with
+      // its own `gate` and its own `toolkits`.
       clerkAuth({
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
         secretKey: env.CLERK_SECRET_KEY,
         publicUrl: env.PUBLIC_URL,
+        toolkits: ["support", "exec"],
+        unscoped: true,
       }),
     ],
     // Multi-team setup: one deployment for the org, one scoped view per group

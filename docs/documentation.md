@@ -1078,8 +1078,21 @@ their credential opens.
 
 A Clerk provider's `toolkits` binds every user it admits. To split users by team,
 configure one `clerkAuth(...)` per team — same keys, that team's `gate`, that
-team's `toolkits`. Providers are tried in order and the first that admits the
-user supplies the binding, so a user one gate rejects falls through to the next.
+team's `toolkits`. The first provider that admits the user supplies the binding,
+so a user one gate rejects falls through to the next. **Order matters, and it is
+not exactly the array you wrote:** `createConnecta` hoists every `bearer` provider
+ahead of the rest (a bearer mismatch is cheap and falls through), and keeps the
+relative order of the others. So the Clerk providers are tried in your order,
+after all bearer providers. Two consequences worth planning for:
+
+- A gate-less provider admits everyone it can authenticate, so putting one first
+  makes the narrower providers behind it unreachable — every user gets the
+  gate-less provider's binding. Give each per-team provider a `gate`, and put the
+  broadest one last.
+- The credential API (§7) is Clerk-only and tries **every** Clerk provider in
+  that same order, so an operator provider listed after a team-bound one still
+  admits: a refusal (failed gate, or a toolkit-bound identity) falls through
+  rather than ending the request.
 
 ---
 
@@ -1432,16 +1445,16 @@ Test suites (`test/`) and what they cover:
 | `api-connector.test.ts` | `api()` kind/description, tool defs, dispatch, default args, unknown-tool + handler-throw behaviour |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process MCP server via `_transportFactory` — listTools/callTool passthrough, downstream `isError`, Cloudflare-safe output-schema validation, ok status, and request-scoped client reuse |
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, the `/oauth/callback/<id>` route incl. HTML escaping |
-| `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the toolkit binding a token declares (§16) — frozen, deduplicated, and throwing on every shape that would not mean what it says (`unscoped` alone, a binding that permits nothing, a name outside the grammar, a non-array) |
+| `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the toolkit binding a token declares (§16) — frozen, deduplicated, throwing on every shape that would not mean what it says (`unscoped` alone, a binding that permits nothing, a name outside the grammar, a non-array), and the `console.warn` a bound token with no `subjectId` earns |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
-| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, a per-identity binding from `AuthResult` overriding the provider's, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37 |
+| `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
 | `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), and the toolkit binding the provider declares for the users it admits |
-| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the two toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth and authenticated-but-unbound each get their own line; one declared binding — `unscoped: true` included — silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
+| `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the three toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth, authenticated-but-unbound, and partially-bound each get their own line, the last naming the unbound providers; declaring the exemption with `unscoped: true` silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
 | `execute.test.ts` | code-mode host bridge: provider construction per connector, fail-closed filtering of destructive/unannotated tools, identifier sanitization, MCP-result unwrapping |
@@ -1858,9 +1871,13 @@ createConnecta({
       subjectId: "exec-team",
       toolkits: ["exec"],
     }),
-    // An operator credential: bound to nothing, so it keeps the full registry
-    // and the deployment-wide operator surfaces.
-    bearerToken(env.OPS_TOKEN, { subjectId: "ops" }),
+    // The operator credential: every view plus the deployment-wide surfaces,
+    // declared rather than left unbound so the exemption is deliberate.
+    bearerToken(env.OPS_TOKEN, {
+      subjectId: "ops",
+      toolkits: ["support", "exec", "triage"],
+      unscoped: true,
+    }),
   ],
   toolkits: {
     support: { connectors: ["zendesk", "notion"] },
@@ -2122,20 +2139,45 @@ Semantics:
 - **Deployment-wide operator surfaces are closed to a restricted identity**
   (`/ui/data`, `/ui/activity`, the credential API) — see *Decisions worth
   knowing* above.
-- **A provider may resolve a binding per identity.** An `InboundAuth.authorize`
-  result can return its own `toolkitBinding`, which overrides the provider's
-  declaration for that identity — the seam for an adapter that maps its own users
-  to views. Only the *declared* bindings are validated at startup, since a
-  per-identity one does not exist until a request arrives.
+- **A provider may resolve a binding per identity, but only downward.** An
+  `InboundAuth.authorize` result can return its own `toolkitBinding` — the seam
+  for an adapter that maps its own users (or an IdP claim) to views. When the
+  provider *also* declares one, the declaration is a **ceiling**: connecta
+  intersects the two, and grants `unscoped` only if both do. A per-identity
+  binding can narrow the credential's view, never widen it, so an adapter reading
+  a user-writable claim cannot let the user name their own toolkits. When the
+  provider declares nothing, the per-identity binding is used as given — that
+  provider is asserting it owns membership. Only *declared* bindings are checked
+  against the configured toolkits at startup; a per-identity one does not exist
+  until a request arrives.
+- **A binding that does not type-check refuses the request.** Both halves are
+  re-validated on every request rather than trusted from the TypeScript type,
+  because `InboundAuth` is an open interface: `unscoped` must be a real boolean
+  (a truthy `"false"` string must not grant the registry), `toolkits` must be a
+  real array (a bare string would reach `String.prototype.includes`, where
+  `?toolkit=sup` "matches" `support`), and every name must fit the grammar. A
+  malformed binding is a **403**, logged operator-side — never silently dropped,
+  which would read as "unbound" and hand over everything.
 
-Startup warnings track the two shapes where the boundary organizes but does not
+Startup warnings track the three shapes where the boundary organizes but does not
 protect (each fires at most once, and never changes behavior):
 
 | Deployment shape | Warning |
 | --- | --- |
 | toolkits, no `auth` at all | there is no identity to bind, so binding is not the fix — configure `auth` first |
 | toolkits + `auth`, but no provider declares a binding | every credential can select every view; bind them |
-| toolkits + at least one binding | silent |
+| toolkits + *some* providers bound | names the unbound ones — this is the shape where an operator believes the deployment is separated while one forgotten credential still opens every view |
+| toolkits + every provider bound | silent |
+
+An intentionally unrestricted credential should therefore **say so** —
+`toolkits: [...], unscoped: true` — rather than being left unbound: same access,
+but the exemption is now a decision in the config instead of an omission, and the
+warning stops. Note the warnings read the *declared* bindings only: a deployment
+that binds purely through `AuthResult.toolkitBinding` looks unbound at
+construction and will see the middle warning. That is a deliberate limit rather
+than a bug to suppress — connecta cannot know at startup what an adapter will
+return per request, so the honest report is "nothing here is declared". Read it
+as a prompt to check that adapter, not as a claim that nothing is enforced.
 
 ### Validation
 
@@ -2156,9 +2198,9 @@ operator can reason about:
   behave as "all of them" — the one shape here that fails *open*. An empty
   `excludeTools` is an honest no-op and is allowed.
 
-A binding is checked twice, in the two places that can see the mistake. The
-adapter itself (`bearerToken(...)`, `clerkAuth(...)`) throws on a binding that
-does not say what it means:
+A binding is checked in three places, each seeing a mistake the others cannot.
+The adapter itself (`bearerToken(...)`, `clerkAuth(...)`) throws on a binding
+that does not say what it means:
 
 - a name outside the toolkit name grammar, which could never match a declaration,
 - `unscoped` with no `toolkits` — it reads like a permission but grants nothing an
@@ -2168,11 +2210,22 @@ does not say what it means:
   configuration: full registry only, no toolkit selection.)
 
 Then `createConnecta` cross-checks the names against `toolkits`, and throws on a
-binding that names a toolkit this deployment does not declare, or any binding at
-all on a deployment that declares none. A typo there fails *closed* — that
-credential would be refused every connection, with a 403 its client reports as a
-transport failure — which is exactly the kind of mistake that should never reach
-production.
+binding that names a toolkit this deployment does not declare, on any binding at
+all when the deployment declares none, and on a structurally malformed
+declaration (only reachable from a hand-written `InboundAuth`, which skips the
+adapter check above). A typo there fails *closed* — that credential would be
+refused every connection, with a 403 its client reports as a transport failure —
+which is exactly the kind of mistake that should never reach production.
+
+Finally, **every request re-validates the binding it is about to enforce**, both
+the declaration and anything `authorize` returned, and refuses with 403 if either
+is malformed. The static checks cannot cover a per-identity binding (it does not
+exist yet) or a provider object mutated after construction, and a binding is the
+one place where "assume the type is honest" fails open.
+
+`bearerToken` additionally emits a `console.warn` when a **bound** token has no
+`subjectId`: the refusal log and activity events can then only say `bearer`, so
+with two bound tokens an operator cannot tell which credential was refused.
 
 Tool names on **remote** connectors cannot be validated at construction: their
 catalogs are fetched lazily over the network and are unknown until first use. An

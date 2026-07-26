@@ -152,9 +152,14 @@ createConnecta({
   connectors: [zendesk, notion, gmail],
   auth: [
     // Each team's credential is bound to that team's view.
-    bearerToken(env.SUPPORT_TOKEN, { toolkits: ["support"] }),
-    bearerToken(env.EXEC_TOKEN, { toolkits: ["exec"] }),
-    bearerToken(env.OPS_TOKEN), // unbound: every view, plus /ui
+    bearerToken(env.SUPPORT_TOKEN, { subjectId: "support", toolkits: ["support"] }),
+    bearerToken(env.EXEC_TOKEN, { subjectId: "exec", toolkits: ["exec"] }),
+    // The operator's: every view, plus /ui — declared, not left unbound.
+    bearerToken(env.OPS_TOKEN, {
+      subjectId: "ops",
+      toolkits: ["support", "exec"],
+      unscoped: true,
+    }),
   ],
   toolkits: {
     support: { connectors: ["zendesk", "notion"] },

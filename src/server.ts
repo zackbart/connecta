@@ -12,7 +12,11 @@ import type {
 import { InvalidActivityCursorError } from "./activity.js";
 import type { CredentialVault } from "./credentials.js";
 import { ScopedRegistry, type Registry, type RegistryView } from "./registry.js";
-import { TOOLKIT_NAME_RE, type Toolkit } from "./toolkits.js";
+import {
+  resolveIdentityBinding,
+  TOOLKIT_NAME_RE,
+  type Toolkit,
+} from "./toolkits.js";
 import type {
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
@@ -191,10 +195,21 @@ function html(
   );
 }
 
+/**
+ * Refusal for an identity whose toolkit binding cannot be trusted — a malformed
+ * declaration, or a malformed per-identity binding out of `authorize`. The
+ * caller is authenticated, so this is a 403, and it is deliberately opaque: the
+ * cause is an operator bug, and the operator reads it in the log, not the client.
+ */
+function unusableBinding(): Response {
+  return privateJson({ error: "forbidden" }, { status: 403 });
+}
+
 async function authorize(
   request: Request,
   baseUrl: string,
   auth: InboundAuth[],
+  logger: Logger,
 ): Promise<
   | {
       ok: true;
@@ -214,9 +229,24 @@ async function authorize(
     const result = await provider.authorize(request, baseUrl);
     if (result.ok) {
       const subjectId = result.subjectId ?? result.userId;
-      // The identity's own binding wins over the provider-wide declaration, so
-      // an adapter can resolve one per user; the declaration is the default.
-      const toolkitBinding = result.toolkitBinding ?? provider.toolkitBinding;
+      // Re-validate both halves and cap the per-identity one by the provider's
+      // declaration (see resolveIdentityBinding). A binding that does not
+      // type-check at runtime refuses the request rather than evaporating:
+      // dropping it would hand the caller the full registry, which is the one
+      // outcome a binding exists to prevent.
+      const binding = resolveIdentityBinding(
+        provider.toolkitBinding,
+        result.toolkitBinding,
+      );
+      if (!binding.ok) {
+        logger.warn(
+          `[connecta] refused a request admitted by inbound auth provider ` +
+            `"${provider.kind}" with 403: ${binding.reason}. Until it is fixed ` +
+            "this provider cannot admit anyone, because connecta cannot tell " +
+            "which toolkits the identity may use.",
+        );
+        return { ok: false, response: unusableBinding() };
+      }
       return {
         ok: true,
         actor: {
@@ -225,7 +255,7 @@ async function authorize(
         },
         providerKind: provider.kind,
         ...(result.userId ? { userId: result.userId } : {}),
-        ...(toolkitBinding ? { toolkitBinding } : {}),
+        ...(binding.binding ? { toolkitBinding: binding.binding } : {}),
       };
     }
     lastResponse = result.response;
@@ -302,12 +332,23 @@ async function authorizeUiAdmin(
   request: Request,
   baseUrl: string,
   auth: InboundAuth[],
+  logger: Logger,
 ): Promise<{ ok: true; userId: string } | { ok: false; response: Response }> {
-  // Credential mutation is intentionally narrower than /mcp and /ui/data:
-  // only the interactive Clerk provider may admit it. A static bearer token is
-  // useful for headless tool calls but must not become a vault-admin key.
-  const provider = auth.find((candidate) => candidate.uiAuth?.kind === "clerk");
-  if (!provider) {
+  // Credential mutation is intentionally narrower than /mcp and /ui/data: only
+  // an interactive Clerk provider may admit it. A static bearer token is useful
+  // for headless tool calls but must not become a vault-admin key.
+  //
+  // EVERY Clerk provider gets a turn, the way the /mcp gate does, because the
+  // documented per-team pattern is several `clerkAuth(...)`s that differ only in
+  // `gate` and `toolkits` (§16). Stopping at the first would make admission
+  // depend on config order: the team-bound provider listed first would refuse
+  // the operator outright, and a refusal here — a failed gate, a missing user, a
+  // toolkit-bound identity — is exactly the case where a later provider is the
+  // one meant to admit. The last refusal is returned if none do.
+  const providers = auth.filter(
+    (candidate) => candidate.uiAuth?.kind === "clerk",
+  );
+  if (providers.length === 0) {
     return {
       ok: false,
       response: privateJson(
@@ -316,23 +357,46 @@ async function authorizeUiAdmin(
       ),
     };
   }
-  const result = await provider.authorize(request, baseUrl);
-  if (!result.ok) return result;
-  if (!result.userId) {
-    return {
-      ok: false,
-      response: privateJson(
+  let lastResponse: Response | null = null;
+  for (const provider of providers) {
+    const result = await provider.authorize(request, baseUrl);
+    if (!result.ok) {
+      lastResponse = result.response;
+      continue;
+    }
+    if (!result.userId) {
+      lastResponse = privateJson(
         { error: "authenticated user required" },
         { status: 403 },
-      ),
-    };
+      );
+      continue;
+    }
+    const binding = resolveIdentityBinding(
+      provider.toolkitBinding,
+      result.toolkitBinding,
+    );
+    if (!binding.ok) {
+      logger.warn(
+        `[connecta] refused a credential-API request admitted by inbound auth ` +
+          `provider "${provider.kind}" with 403: ${binding.reason}.`,
+      );
+      lastResponse = unusableBinding();
+      continue;
+    }
+    // A toolkit-bound identity is a team's credential, not a vault admin key:
+    // credentials are deployment-wide, so writing one reaches every toolkit.
+    if (isToolkitRestricted(binding.binding)) {
+      lastResponse = restrictedOperatorSurface();
+      continue;
+    }
+    return { ok: true, userId: result.userId };
   }
-  // A toolkit-bound identity is a team's credential, not a vault admin key:
-  // credentials are deployment-wide, so writing one reaches every toolkit.
-  if (isToolkitRestricted(result.toolkitBinding ?? provider.toolkitBinding)) {
-    return { ok: false, response: restrictedOperatorSurface() };
-  }
-  return { ok: true, userId: result.userId };
+  return {
+    ok: false,
+    response:
+      lastResponse ??
+      privateJson({ error: "forbidden" }, { status: 403 }),
+  };
 }
 
 function isSameOrigin(request: Request, baseUrl: string): boolean {
@@ -465,7 +529,12 @@ async function handleCredentialRequest(
       { status: 403 },
     );
   }
-  const admin = await authorizeUiAdmin(request, baseUrl, opts.auth);
+  const admin = await authorizeUiAdmin(
+    request,
+    baseUrl,
+    opts.auth,
+    opts.logger,
+  );
   if (!admin.ok) return admin.response;
 
   const connector = opts.registry.getConnector(connectorId);
@@ -988,7 +1057,7 @@ export function createFetchHandler(
       }
 
       if (path === "/ui/data") {
-        const authz = await authorize(request, baseUrl, auth);
+        const authz = await authorize(request, baseUrl, auth, opts.logger);
         if (!authz.ok) return authz.response;
         if (isToolkitRestricted(authz.toolkitBinding)) {
           return restrictedOperatorSurface();
@@ -1011,7 +1080,7 @@ export function createFetchHandler(
         if (request.method !== "GET") {
           return privateJson({ error: "method not allowed" }, { status: 405 });
         }
-        const authz = await authorize(request, baseUrl, auth);
+        const authz = await authorize(request, baseUrl, auth, opts.logger);
         if (!authz.ok) return authz.response;
         if (isToolkitRestricted(authz.toolkitBinding)) {
           return restrictedOperatorSurface();
@@ -1053,7 +1122,7 @@ export function createFetchHandler(
       if (path === "/mcp") {
         // Authenticate BEFORE resolving ?toolkit=: an unauthenticated caller
         // must not be able to probe which toolkit names exist.
-        const authz = await authorize(request, baseUrl, auth);
+        const authz = await authorize(request, baseUrl, auth, opts.logger);
         if (!authz.ok) return withMcpCors(authz.response);
         const selected = resolveToolkitScope(
           url,

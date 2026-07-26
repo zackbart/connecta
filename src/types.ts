@@ -267,11 +267,20 @@ export type AuthResult =
       userId?: string;
       subjectId?: string;
       /**
-       * Toolkit binding resolved for THIS identity. Overrides the provider's
-       * own `toolkitBinding` when present; omit to inherit it. Only names
-       * declared statically on the provider are validated at startup, so a
-       * binding minted here is enforced but never checked against the
-       * configured toolkits.
+       * Toolkit binding resolved for THIS identity — the seam for an adapter
+       * that maps its own users (or an IdP claim) to views. Omit to inherit the
+       * provider's `toolkitBinding`.
+       *
+       * When the provider also declares one, the declaration is a **CEILING**,
+       * not a default: connecta intersects the two, and grants `unscoped` only
+       * if both do. A per-identity binding can therefore narrow the credential's
+       * view but never widen it — otherwise an adapter reading a user-writable
+       * claim would let the user name their own toolkits. When the provider
+       * declares nothing, this binding is used as given.
+       *
+       * Validated on arrival (a malformed one refuses the request with 403
+       * rather than being ignored), but never checked against the configured
+       * toolkits, which is only possible for the static declaration at startup.
        */
       toolkitBinding?: ToolkitBinding;
     }

@@ -219,15 +219,16 @@ function warnInsecureConfig(
   }
 
   // Toolkits that nothing binds to an identity: selection is then self-service,
-  // and the boundary organizes the surface rather than protecting it. Two
-  // distinct shapes, so two distinct warnings — an operator can only act on the
-  // one they are actually in.
+  // and the boundary organizes the surface rather than protecting it. Three
+  // distinct shapes, so three distinct warnings — an operator can only act on
+  // the one they are actually in.
   //
-  // Both are keyed off the RESOLVED toolkits, which is the same map `?toolkit=`
+  // All are keyed off the RESOLVED toolkits, which is the same map `?toolkit=`
   // resolves against, rather than the presence of the config key: `toolkits: {}`
   // is a truthy object that resolves to nothing selectable, so warning about a
   // choice no caller can make would name a risk that does not exist.
   if (toolkits) {
+    const unbound = inboundAuth.filter((provider) => !provider.toolkitBinding);
     if (inboundAuth.length === 0) {
       // No auth at all ⇒ no identity exists to bind, so binding is not even the
       // fix here. The open-mode warning above covers the wider exposure.
@@ -238,7 +239,7 @@ function warnInsecureConfig(
           "Configure `auth` (for example bearerToken(...) or Clerk), then bind " +
           "each credential with `toolkits: [...]`.",
       );
-    } else if (!inboundAuth.some((provider) => provider.toolkitBinding)) {
+    } else if (unbound.length === inboundAuth.length) {
       // Authenticated, but every credential may still select every view. This is
       // the shape issue #37 exists to close, and it is invisible without a line
       // saying so: nothing fails, the teams are simply not separated.
@@ -249,6 +250,28 @@ function warnInsecureConfig(
           "one team also opens the others' views. Bind each credential with " +
           "`toolkits: [...]` on its auth adapter (add `unscoped: true` for an " +
           "operator credential that should still see everything).",
+      );
+    } else if (unbound.length > 0) {
+      // The dangerous middle: SOME credentials are bound, which is exactly when
+      // an operator believes the deployment is separated — while one forgotten
+      // provider still opens every view and the whole deployment-wide surface.
+      // Naming the unbound providers is the point; an intentionally unrestricted
+      // credential says so with `unscoped: true` and stops appearing here.
+      const counted = new Map<string, number>();
+      for (const provider of unbound) {
+        counted.set(provider.kind, (counted.get(provider.kind) ?? 0) + 1);
+      }
+      const named = [...counted]
+        .map(([kind, count]) => (count > 1 ? `${kind} x${count}` : kind))
+        .join(", ");
+      logger.warn(
+        `[connecta] toolkits are bound on some inbound auth providers but not ` +
+          `all: ${named} ${unbound.length === 1 ? "declares" : "declare"} no ` +
+          "binding, so a caller that provider admits can still select any " +
+          "toolkit, connect unscoped, and read the deployment-wide operator " +
+          "surfaces — whatever the bound credentials beside it allow. Bind it " +
+          "too, or declare the exemption with `toolkits: [...], unscoped: true` " +
+          "if it is meant to be an operator credential.",
       );
     }
   }

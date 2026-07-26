@@ -44,6 +44,20 @@ export function bearerToken(
       : "bearerToken",
     options,
   );
+  if (toolkitBinding && !options.subjectId) {
+    // A bound token stands for one team, and both surfaces that report on it —
+    // the 403 refusal log (§16) and activity events (§15) — can only say
+    // "bearer" without a subjectId. With several bound tokens that makes an
+    // operator unable to tell which credential was refused, or whose call
+    // succeeded. console.warn (as the Clerk adapter does) because an adapter is
+    // constructed before `createConnecta` has a logger to hand it.
+    console.warn(
+      "[connecta] bearerToken is bound to toolkits " +
+        `(${toolkitBinding.toolkits.join(", ") || "unscoped only"}) but has no ` +
+        "subjectId: refusal logs and activity events cannot say which " +
+        "credential they came from. Pass { subjectId: \"<team>\" }.",
+    );
+  }
   return {
     kind: "bearer",
     ...(toolkitBinding ? { toolkitBinding } : {}),

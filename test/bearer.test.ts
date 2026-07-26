@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 
 function req(auth?: string): Request {
@@ -111,5 +111,29 @@ describe("bearerToken toolkit binding", () => {
     const binding = bearerToken("s", { toolkits: ["support"] }).toolkitBinding!;
     expect(Object.isFrozen(binding)).toBe(true);
     expect(Object.isFrozen(binding.toolkits)).toBe(true);
+  });
+});
+
+// A bound token stands for one team, and both surfaces that report on it — the
+// refusal log and activity events — can only say "bearer" without a subjectId.
+describe("bearerToken subjectId nudge", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("warns when a bound token has no subjectId", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    bearerToken("s", { toolkits: ["support"] });
+    expect(warn.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "bound to toolkits (support) but has no subjectId",
+    );
+  });
+
+  it("stays quiet for a named bound token, and for an unbound one", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    bearerToken("s", { subjectId: "support-team", toolkits: ["support"] });
+    bearerToken("s");
+    bearerToken("s", { subjectId: "ci-runner" });
+    expect(warn).not.toHaveBeenCalled();
   });
 });

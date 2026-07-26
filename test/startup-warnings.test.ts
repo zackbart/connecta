@@ -174,6 +174,46 @@ describe("toolkit-selection warning", () => {
     expect(warnings(logger)).not.toContain("toolkits are configured");
   });
 
+  // The dangerous middle: some credentials bound is exactly when an operator
+  // believes the deployment is separated, while one forgotten token still opens
+  // every view.
+  it("warns when some providers are bound and others are not, naming them", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      auth: [
+        bearerToken("team", { subjectId: "team", toolkits: ["support"] }),
+        bearerToken("legacy-a", { subjectId: "legacy-a" }),
+        bearerToken("legacy-b", { subjectId: "legacy-b" }),
+      ],
+      logger,
+    });
+    const warned = warnings(logger);
+    expect(warned).toContain("bound on some inbound auth providers but not all");
+    expect(warned).toContain("bearer x2");
+    // Not the all-unbound line — that names a different situation.
+    expect(warned).not.toContain("no inbound identity is bound to one");
+  });
+
+  it("stays quiet when the unrestricted credential declares itself unscoped", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      toolkits: { support: { connectors: ["plain"] } },
+      auth: [
+        bearerToken("team", { subjectId: "team", toolkits: ["support"] }),
+        bearerToken("ops", {
+          subjectId: "ops",
+          toolkits: ["support"],
+          unscoped: true,
+        }),
+      ],
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("toolkits are");
+  });
+
   it("stays quiet about bindings when no toolkit is selectable", () => {
     const logger = spyLogger();
     createConnecta({

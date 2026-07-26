@@ -1491,6 +1491,68 @@ function boundDeployment(
   });
 }
 
+/** The same org deployment, with `auth` swapped for the provider under test. */
+function deploymentWith(
+  auth: InboundAuth | InboundAuth[],
+  extra: Partial<Parameters<typeof createConnecta>[0]> = {},
+) {
+  return createConnecta({
+    connectors: ORG_CONNECTORS(),
+    toolkits: TOOLKITS,
+    auth,
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    logger: silentLogger,
+    ...extra,
+  });
+}
+
+/**
+ * A custom adapter that admits `Bearer <user>` for each key and hands back that
+ * user's binding — the `AuthResult.toolkitBinding` seam, including the shapes a
+ * careless (or hostile) adapter might return. `undefined` ⇒ the identity
+ * inherits whatever the provider declares.
+ */
+function perUserAuth(users: Record<string, unknown>): InboundAuth {
+  return {
+    kind: "custom",
+    authorize(request) {
+      const user = (request.headers.get("authorization") ?? "").replace(
+        /^Bearer\s+/i,
+        "",
+      );
+      if (!(user in users)) {
+        return { ok: false, response: new Response(null, { status: 401 }) };
+      }
+      const binding = users[user];
+      return {
+        ok: true,
+        subjectId: user,
+        ...(binding === undefined
+          ? {}
+          : { toolkitBinding: binding as never }),
+      };
+    },
+  };
+}
+
+/** A Clerk-shaped provider (it carries `uiAuth`), optionally toolkit-bound. */
+function clerkProvider(
+  userId: string,
+  binding?: { toolkits: string[]; unscoped?: boolean },
+): InboundAuth {
+  return {
+    kind: "clerk",
+    uiAuth: {
+      kind: "clerk",
+      publishableKey: "pk_test_x",
+      frontendApiUrl: "https://clerk.example.com",
+    },
+    ...(binding ? { toolkitBinding: binding } : {}),
+    authorize: () => ({ ok: true, userId }),
+  };
+}
+
 const connectorIds = (body: any): string[] =>
   callPayload(body).connectors.map((c: { id: string }) => c.id);
 
@@ -1673,6 +1735,48 @@ describe("/mcp toolkit binding", () => {
     );
   });
 
+  // The documented per-team Clerk pattern is several clerkAuth(...)s differing
+  // only in `gate` and `toolkits`. The credential API must therefore try them
+  // all: stopping at the first would make vault admin depend on config order.
+  it("lets a later Clerk provider admit the credential API, in either order", async () => {
+    const vaulted: Connector = {
+      id: "vaulted",
+      kind: "api",
+      credential: { label: "API token" },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {};
+      },
+    };
+    const teamBound = clerkProvider("user_support", {
+      toolkits: ["support"],
+    });
+    const operator = clerkProvider("user_ops");
+    const write = async (auth: InboundAuth[]) => {
+      const c = deploymentWith(auth, {
+        connectors: [...ORG_CONNECTORS(), vaulted],
+        credentialEncryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+      });
+      return c.fetch(
+        new Request(`${BASE}/ui/credentials/vaulted`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: BASE,
+            Authorization: "Bearer whatever",
+          },
+          body: JSON.stringify({ value: "secret" }),
+        }),
+      );
+    };
+    expect((await write([teamBound, operator])).status).toBe(200);
+    expect((await write([operator, teamBound])).status).toBe(200);
+    // With every Clerk provider bound, there is no operator to fall through to.
+    expect((await write([teamBound])).status).toBe(403);
+  });
+
   it("enforces the binding after the auth gate, so it leaks nothing", async () => {
     const warn = vi.fn();
     const c = boundDeployment({ logger: { ...silentLogger, warn } });
@@ -1797,51 +1901,146 @@ describe("/mcp toolkit binding", () => {
   });
 
   it("enforces a binding an adapter resolves per identity", async () => {
-    // The documented seam for an adapter that maps its own users to toolkits:
-    // AuthResult.toolkitBinding overrides the provider-wide declaration.
-    const perUser: InboundAuth = {
-      kind: "custom",
-      toolkitBinding: { toolkits: ["exec"] },
-      authorize(request) {
-        const user = (request.headers.get("authorization") ?? "").replace(
-          /^Bearer\s+/i,
-          "",
-        );
-        if (user === "alice") {
-          return {
-            ok: true,
-            subjectId: "alice",
-            toolkitBinding: { toolkits: ["support"] },
-          };
-        }
-        if (user === "bob") return { ok: true, subjectId: "bob" };
-        return {
-          ok: false,
-          response: new Response(null, { status: 401 }),
-        };
-      },
-    };
-    const c = createConnecta({
-      connectors: ORG_CONNECTORS(),
-      toolkits: TOOLKITS,
-      auth: perUser,
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: silentLogger,
-    });
+    // The custom-adapter seam: a provider that declares NO static binding is
+    // asserting it resolves membership itself, so its per-identity binding is
+    // used as given.
+    const c = deploymentWith(
+      perUserAuth({
+        alice: { toolkits: ["support"] },
+        bob: { toolkits: ["exec"], unscoped: true },
+        carol: undefined, // unbound
+      }),
+    );
     expect(
       (await listConnectors(c, { token: "alice", toolkit: "support" })).status,
     ).toBe(200);
     expect(
       (await listConnectors(c, { token: "alice", toolkit: "exec" })).status,
     ).toBe(403);
-    // bob inherits the provider-wide declaration instead.
+    expect((await listConnectors(c, { token: "alice" })).status).toBe(403);
+    expect((await listConnectors(c, { token: "bob" })).status).toBe(200);
+    expect((await listConnectors(c, { token: "carol" })).status).toBe(200);
+  });
+
+  // A per-identity binding may narrow the provider's declaration but never
+  // widen it. Without the ceiling, an adapter that maps a user-writable IdP
+  // claim to toolkits would let the user name their own — the whole boundary
+  // then rests on a string the caller can influence.
+  it("caps a per-identity binding by the provider's declared one", async () => {
+    const c = deploymentWith({
+      ...perUserAuth({
+        // Tries to escape its team's view, and to add unscoped access.
+        greedy: { toolkits: ["support", "exec"], unscoped: true },
+        // Narrowing within the declaration is allowed.
+        narrow: { toolkits: ["support"] },
+        // Nothing in common with the declaration ⇒ bound to nothing.
+        alien: { toolkits: ["exec"] },
+      }),
+      toolkitBinding: { toolkits: ["support"] },
+    });
     expect(
-      (await listConnectors(c, { token: "bob", toolkit: "exec" })).status,
+      (await listConnectors(c, { token: "greedy", toolkit: "support" })).status,
     ).toBe(200);
     expect(
-      (await listConnectors(c, { token: "bob", toolkit: "support" })).status,
+      (await listConnectors(c, { token: "greedy", toolkit: "exec" })).status,
     ).toBe(403);
+    expect((await listConnectors(c, { token: "greedy" })).status).toBe(403);
+    expect(
+      (await listConnectors(c, { token: "narrow", toolkit: "support" })).status,
+    ).toBe(200);
+    expect(
+      (await listConnectors(c, { token: "alien", toolkit: "exec" })).status,
+    ).toBe(403);
+    expect(
+      (await listConnectors(c, { token: "alien", toolkit: "support" })).status,
+    ).toBe(403);
+  });
+
+  it("keeps `unscoped` off unless both the declaration and the identity grant it", async () => {
+    const declaredUnscoped = deploymentWith({
+      ...perUserAuth({
+        asks: { toolkits: ["support"], unscoped: true },
+        quiet: { toolkits: ["support"] },
+      }),
+      toolkitBinding: { toolkits: ["support"], unscoped: true },
+    });
+    expect(
+      (await listConnectors(declaredUnscoped, { token: "asks" })).status,
+    ).toBe(200);
+    // The identity did not ask for it, so it does not get it.
+    expect(
+      (await listConnectors(declaredUnscoped, { token: "quiet" })).status,
+    ).toBe(403);
+  });
+
+  // Every field of a binding that arrives at request time is re-checked, because
+  // each way of being wrong fails OPEN if it is merely believed.
+  it("refuses an identity whose binding is malformed, rather than unbinding it", async () => {
+    const shapes: Record<string, unknown> = {
+      // A bare string would reach String.prototype.includes, where a substring
+      // of a real toolkit name would "match".
+      stringToolkits: { toolkits: "support" },
+      // Truthy but not `true` — e.g. an env var that arrived as text.
+      stringUnscoped: { toolkits: ["support"], unscoped: "false" },
+      // No `toolkits` at all: an empty object is not an empty binding.
+      empty: {},
+      nullish: null,
+      arrayish: ["support"],
+      badName: { toolkits: ["Support Team"] },
+      nested: { toolkits: [["support"]] },
+    };
+    const warn = vi.fn();
+    const c = deploymentWith(perUserAuth(shapes), {
+      logger: { ...silentLogger, warn },
+    });
+    for (const user of Object.keys(shapes)) {
+      // Not a scope, not a crash, and above all not the full registry.
+      expect(
+        (await listConnectors(c, { token: user })).status,
+        `${user} unscoped`,
+      ).toBe(403);
+      expect(
+        (await listConnectors(c, { token: user, toolkit: "support" })).status,
+        `${user} scoped`,
+      ).toBe(403);
+    }
+    expect(warn.mock.calls.map((call) => call.join(" ")).join("\n")).toContain(
+      "malformed",
+    );
+  });
+
+  it("refuses when the provider's own declared binding is malformed", async () => {
+    // Only reachable from a hand-written InboundAuth that skips createConnecta's
+    // validation — but the request path must not trust the type either.
+    const provider: InboundAuth = {
+      kind: "custom",
+      authorize: () => ({ ok: true, subjectId: "x" }),
+    };
+    const c = deploymentWith(provider);
+    // Mutated after construction, the one way past the startup check.
+    (provider as { toolkitBinding?: unknown }).toolkitBinding = {
+      toolkits: "support",
+    };
+    expect((await listConnectors(c, { token: "x" })).status).toBe(403);
+    expect(
+      (await listConnectors(c, { token: "x", toolkit: "support" })).status,
+    ).toBe(403);
+  });
+
+  it("throws at construction on a malformed declared binding", () => {
+    expect(() =>
+      createConnecta({
+        connectors: ORG_CONNECTORS(),
+        toolkits: TOOLKITS,
+        auth: {
+          kind: "custom",
+          toolkitBinding: { toolkits: "support" } as never,
+          authorize: () => ({ ok: true }),
+        },
+        storage: memoryStorage(),
+        logger: silentLogger,
+      }),
+    ).toThrow('Inbound auth provider "custom" declares a malformed toolkitBinding');
   });
 });
 
