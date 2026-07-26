@@ -1246,7 +1246,7 @@ npm scripts (`package.json`):
   under both the Node and Worker tsconfigs, so a broken example fails locally
   rather than in someone's deployment.
 - `npm run check` — typecheck + test + build + examples. Also the `prepack` hook.
-- `npm run check:security` — `npm audit --omit=dev --audit-level=high`
+- `npm run check:security` — `npm audit --omit=dev --audit-level=moderate`
   (the `prepublishOnly` hook; see [`SECURITY.md`](../SECURITY.md)).
 - `npm run check:package` — `scripts/check-package.mjs`: `npm pack`s the
   tarball into a temp dir, asserts the required files are in it (README, LICENSE,
