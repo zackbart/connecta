@@ -261,6 +261,10 @@ connecta/
     toolkits.ts           # toolkit definitions + construction-time validation
     catalog.ts            # search ranking + compact schema rendering
     credentials.ts        # AES-GCM vault for operator-managed connector credentials
+    credential-health.ts  # proactive liveness checks over stored credentials;
+                          #   runtime-agnostic (no timers) — traffic-triggered or
+                          #   driven by the host's own scheduler
+    timeout.ts            # shared probe deadline helpers
     activity.ts           # payload-free activity contracts
     ui.ts / favicon.ts    # read-only operator dashboard and default mark
     connectors/

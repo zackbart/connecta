@@ -18,6 +18,14 @@
     { "binding": "CONNECTA_KV", "id": "replace-with-kv-namespace-id" }
   ],
 
+  // Credential health (issue #24): a cron trigger runs the liveness checks over
+  // stored downstream credentials, so a revoked token shows up as auth_required
+  // before an agent's call hits it. Every 15 minutes matches the default
+  // per-connector interval; the checks are rate-limited either way, so a tighter
+  // cron does not multiply downstream requests. Delete this block to rely only
+  // on the opportunistic checks inbound traffic already triggers.
+  "triggers": { "crons": ["*/15 * * * *"] },
+
   // Sandbox for the execute_code meta-tool (code mode). Dynamic Workers is in
   // open beta on paid plans — delete this block (and the executor line in
   // src/index.ts) to run with the nine base meta-tools only.

@@ -26,6 +26,12 @@ import {
   listSkills,
   resolveSkill,
 } from "./skills.js";
+import {
+  DEFAULT_PROBE_TIMEOUT_MS,
+  normalizeTimeoutMs,
+  withTimeout,
+} from "./timeout.js";
+import { credentialVerdictApplies } from "./credential-health.js";
 import type { ConnectorStatus, KVStorage, ToolDef } from "./types.js";
 
 interface TextContent {
@@ -74,50 +80,6 @@ type ErrorDetails = CallErrorDetails;
  * decides when to re-issue.
  */
 export const MAX_RETRY_BACKOFF_MS = 10_000;
-
-/** A finite, positive integer number of milliseconds, or undefined. */
-function normalizeTimeoutMs(value: number | undefined): number | undefined {
-  if (value === undefined || !Number.isFinite(value) || !(value > 0)) {
-    return undefined;
-  }
-  return Math.max(1, Math.trunc(value));
-}
-
-/**
- * Generous default bound for a single downstream probe/catalog call in the
- * list/search/describe fan-out. High enough to trip only on a pathological
- * hang, not a realistically slow probe.
- */
-const DEFAULT_PROBE_TIMEOUT_MS = 30_000;
-
-/**
- * Reject `promise` after `ms` if it has not settled, so one hung downstream
- * cannot stall a whole fan-out. NOTE: this bounds only the caller-facing wait —
- * the registry probe methods take no AbortSignal, so the underlying fetch is
- * NOT cancelled and keeps running in the background. Real cancellation
- * (AbortSignal plumbed through the registry) is a deferred follow-up.
- */
-function withTimeout<T>(
-  promise: Promise<T>,
-  ms: number,
-  label: string,
-): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`${label} timed out after ${ms}ms`));
-    }, ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (err) => {
-        clearTimeout(timer);
-        reject(err);
-      },
-    );
-  });
-}
 
 /**
  * How long to wait before the next attempt, or `undefined` for "don't retry".
@@ -828,9 +790,9 @@ export function createMetaTools(
       const probe = args.probe ?? true;
       const out = await Promise.all(
         registry.listConnectors().map(async (c) => {
-          const checkedAt = new Date().toISOString();
           const statusStarted = Date.now();
           const observed = registry.healthFor(c.id);
+          const verdict = await registry.credentialHealthFor(c.id);
           let status:
             | ConnectorStatus
             | { state: "ok" | "error" | "unknown"; message?: string };
@@ -847,22 +809,75 @@ export function createMetaTools(
               // hanging the whole list_connectors call.
               status = { state: "error", message: msg(err) };
             }
+          } else if (
+            verdict &&
+            // Deployment-wide, deliberately, like `hasObservedSuccess` beside
+            // it: a sibling toolkit's successful call proves the shared
+            // credential works, and a verdict retired for one view but not
+            // another would make the same connector read differently per scope
+            // for a reason that has nothing to do with scope.
+            credentialVerdictApplies(verdict, registry.observedSuccessAt(c.id))
+          ) {
+            // The proactive layer (issue #24): a liveness check already found
+            // the stored credential dead, so say so on the cheap path instead of
+            // waiting for an agent's real call to discover it. Only while it is
+            // the freshest evidence — a successful call since then retires it.
+            status = {
+              state: verdict.state,
+              ...(verdict.message ? { message: verdict.message } : {}),
+              ...(verdict.authorizationUrl
+                ? { authorizationUrl: verdict.authorizationUrl }
+                : {}),
+            };
           } else {
             // "error" comes from THIS view's own observations — a sibling
             // toolkit's failure is not this session's experience — while
             // ok/unknown may lean on the deployment-wide success signal, since
             // "the connector answers at all" is a fact about the connector.
             // Unscoped, the two are the same log, so this is unchanged there.
+            const derived =
+              observed?.consecutiveFailures && observed.consecutiveFailures > 0
+                ? ("error" as const)
+                : registry.hasObservedSuccess(c.id) || c.kind === "api"
+                  ? ("ok" as const)
+                  : ("unknown" as const);
             status = {
+              // A successful liveness check upgrades "unknown" — nothing has
+              // been called yet, but the credential was verified, which is how
+              // re-authorization shows up here as ok rather than as an absence
+              // of evidence. It never DOWNgrades an observed failure: a real
+              // call that failed is stronger evidence than a background check.
               state:
-                observed?.consecutiveFailures &&
-                observed.consecutiveFailures > 0
-                  ? ("error" as const)
-                  : registry.hasObservedSuccess(c.id) || c.kind === "api"
-                    ? ("ok" as const)
-                    : ("unknown" as const),
+                derived === "unknown" && verdict?.state === "ok"
+                  ? ("ok" as const)
+                  : derived,
               ...(observed?.lastError ? { message: observed.lastError } : {}),
             };
+          }
+          // Stamped where the observation actually happened — after the status
+          // probe, not before it. A 30-second probe stamped at its start would
+          // report a verdict older than it is, and would lose the race against a
+          // real call that succeeded WHILE it ran (that success must retire the
+          // verdict, and only an honest timestamp says so).
+          const checkedAt = new Date().toISOString();
+          // A live status probe IS a liveness observation of the stored
+          // credential, so it updates the same verdict a background check
+          // writes: the cached read afterwards agrees with what the operator
+          // just saw, and they are not swept again moments later. Recorded from
+          // the STATUS phase only, and only when the connector actually answered
+          // — a catalog refresh below is not a credential check (the sweep never
+          // fetches one), it is already counted in the health log, and letting
+          // its failure land here would spend the freshness budget on it. The
+          // registry ignores this for connectors storing no credential of ours.
+          if (probe && (status.state === "ok" || status.state === "auth_required")) {
+            await registry.recordCredentialHealth(c.id, {
+              state: status.state,
+              checkedAt,
+              ...(status.message ? { message: status.message } : {}),
+              ...("authorizationUrl" in status && status.authorizationUrl
+                ? { authorizationUrl: status.authorizationUrl }
+                : {}),
+            });
           }
           let tools = registry.peekTools(c.id);
           // An auth_required status may have just started OAuth. A second
@@ -883,6 +898,9 @@ export function createMetaTools(
           }
           const latencyMs = Date.now() - statusStarted;
           const latestObserved = registry.healthFor(c.id);
+          const credentialCheck = probe
+            ? await registry.credentialHealthFor(c.id)
+            : verdict;
           return {
             id: c.id,
             ...(c.title ? { title: c.title } : {}),
@@ -893,6 +911,7 @@ export function createMetaTools(
             latencyMs,
             probe,
             ...(latestObserved ?? observed ?? {}),
+            ...(credentialCheck ? { credentialCheck } : {}),
             ...("authorizationUrl" in status && status.authorizationUrl
               ? { authorizationUrl: status.authorizationUrl }
               : {}),
@@ -1251,6 +1270,17 @@ export function createMetaTools(
       const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
       try {
         const status = await connector.startAuth(ctx, { force: args.force });
+        // startAuth just spoke to the downstream about this exact credential, so
+        // its answer replaces any older liveness verdict — including the stale
+        // `auth_required` that sent the agent here, once it reports ok.
+        await registry.recordCredentialHealth(connector.id, {
+          state: status.state,
+          checkedAt: new Date().toISOString(),
+          ...(status.message ? { message: status.message } : {}),
+          ...(status.authorizationUrl
+            ? { authorizationUrl: status.authorizationUrl }
+            : {}),
+        });
         if (status.state === "auth_required" && !status.authorizationUrl) {
           // auth_required with nothing to open is a dead end for the operator.
           return errorResult(

@@ -158,4 +158,23 @@ export default {
     connecta ??= build(env);
     return connecta.fetch(request, env, ctx);
   },
+
+  // Credential health (wrangler.jsonc `triggers.crons`): probe the stored
+  // downstream credentials on a schedule so a revoked or expired token flips the
+  // connector to auth_required *before* an agent's call fails on it. Workers
+  // have no long-lived timers, so the cron trigger IS the scheduler; connecta
+  // exposes the check as a plain awaited call and does no background work of its
+  // own. The verdicts are persisted in KV, which is what makes them visible to
+  // the fetch isolates — this handler runs in a different one.
+  //
+  // Checks are rate-limited per connector (default: at most one every 15
+  // minutes, however many triggers fire), so this is safe to schedule tightly.
+  async scheduled(
+    _controller: ScheduledController,
+    env: Env,
+    ctx: ExecutionContext,
+  ): Promise<void> {
+    connecta ??= build(env);
+    ctx.waitUntil(connecta.checkCredentials());
+  },
 };

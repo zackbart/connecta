@@ -44,6 +44,10 @@ const connecta = createConnecta({
   toolkits: {
     clock: { connectors: ["time"], description: "Read-only clock access" },
   },
+  // Credential liveness checks need a base URL for connector contexts (it is
+  // also what downstream OAuth callbacks use), so set it explicitly for the
+  // scheduled check below.
+  publicUrl: `http://localhost:${port}`,
   // Code mode: execute_code runs model-written JS in a QuickJS/WASM sandbox.
   // Remove this line to serve the nine base meta-tools only.
   executor: quickJsExecutor(),
@@ -82,4 +86,20 @@ const connecta = createConnecta({
 });
 
 listen(connecta, port);
+
+// Credential health: Node's scheduler is a timer, so wire the same check the
+// Worker example runs from a cron trigger. Connecta starts no timer itself — the
+// core has to run unchanged on Workers, where none exists — and inbound
+// authenticated traffic already triggers a due check opportunistically, so this
+// is what keeps a long-idle deployment's credentials verified. Checks are
+// rate-limited per connector (default: at most one every 15 minutes), so a
+// tighter interval does not multiply downstream requests.
+const credentialCheck = setInterval(() => {
+  void connecta.checkCredentials().catch((err) => {
+    console.error("[connecta] credential check failed", err);
+  });
+}, 15 * 60_000);
+// Don't hold the process open on this alone.
+credentialCheck.unref();
+
 console.log(`connecta listening on http://localhost:${port}/mcp`);

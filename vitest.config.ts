@@ -13,6 +13,7 @@ const WORKERS_SUITES = [
   "test/branding.test.ts",
   "test/catalog.test.ts",
   "test/codemode-compat.test.ts",
+  "test/credential-health.test.ts",
   "test/credentials.test.ts",
   "test/downstream-oauth.test.ts",
   "test/errors.test.ts",

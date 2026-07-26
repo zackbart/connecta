@@ -1,6 +1,8 @@
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, Logger } from "../src/types.js";
+import type { CredentialHealthConfig } from "../src/credential-health.js";
+import type { CredentialVault } from "../src/credentials.js";
+import type { Connector, KVStorage, Logger } from "../src/types.js";
 
 export const silentLogger: Logger = {
   debug: () => {},
@@ -17,12 +19,20 @@ export const silentLogger: Logger = {
  */
 export function makeRegistry(
   connectors: Connector[],
-  opts: { toolCacheTtlSeconds?: number; maxResultBytes?: number } = {},
+  opts: {
+    toolCacheTtlSeconds?: number;
+    maxResultBytes?: number;
+    credentialHealth?: CredentialHealthConfig;
+    /** Share one store between a registry and a vault (credential-health tests). */
+    storage?: KVStorage;
+    credentialVault?: CredentialVault;
+  } = {},
 ): Registry {
+  const { storage = memoryStorage(), ...rest } = opts;
   return new Registry(connectors, {
-    storage: memoryStorage(),
+    storage,
     logger: silentLogger,
-    ...opts,
+    ...rest,
   });
 }
 
