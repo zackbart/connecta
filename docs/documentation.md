@@ -97,7 +97,9 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
      optional `activityReadGate`, then paged activity events (§15). `GET` only;
      404 when no `activity.list` is configured.
    - `/mcp` → **auth gate**, then the caller's toolkit binding + `?toolkit=`
-     resolution (§16), then MCP.
+     resolution (§16), then MCP. `POST` carries every meta-tool call; `GET` and
+     `DELETE` are not special-cased here and fall through to the transport's
+     own defaults, which under stateless mode have no session to resume or end.
    - a connector's `handleRequest` (open), in registration order — dispatched
      only after every built-in route misses, so a connector can add a route but
      never shadow one of connecta's. First non-null Response wins; a throw is a
@@ -1658,9 +1660,8 @@ Two known implementations:
   is why the executor can notice a promise that can never settle and fail fast
   with "execution stalled" instead of burning the whole timeout.
 
-  The 30 s
-  default is intentionally tighter than codemode's 60 s: sandbox code is
-  tool-call glue, not compute, so a shorter leash surfaces hung downstreams
+  The 30 s default is intentionally tighter than codemode's 60 s: sandbox code
+  is tool-call glue, not compute, so a shorter leash surfaces hung downstreams
   sooner. Both executors forward provider-function arguments verbatim and
   positionally, so identical sandbox code behaves the same on either.
 

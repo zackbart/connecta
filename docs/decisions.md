@@ -22,15 +22,26 @@ Not "not yet" unless it says so. These are shapes connecta declines because
 taking them on would make it a different product — the whole premise is that a
 deployment is a small config-as-code file, not a platform.
 
-- **OpenAPI / GraphQL ingestion.** Connector kinds are `remoteMcp` (proxy a
-  downstream MCP server) and `api` (hand-written tool defs + fetch handler).
-  Generating tool defs from a spec produces hundreds of low-quality tools —
-  exactly the problem the nine meta-tools exist to solve.
+- **GraphQL ingestion.** Connector kinds are `remoteMcp` (proxy a downstream MCP
+  server) and `api` (hand-written tool defs + fetch handler). Generating tool
+  defs from a schema produces hundreds of low-quality tools — exactly the
+  problem the nine meta-tools exist to solve. *OpenAPI* is a different case: it
+  is not built in today, but it is not refused either — an `openApi(id, opts)`
+  factory is tracked as
+  [issue #26](https://github.com/zackbart/connecta/issues/26), where the hard
+  part is conservative safety annotations (GET → `readOnlyHint`, everything else
+  routed to `call_destructive_tool`) rather than the mapping.
 - **Multi-tenancy.** One deployment is one tenant: one registry, one connector
   set, one downstream credential store, one operator surface. Toolkits
   ([documentation.md §16](./documentation.md#16-toolkits-scoped-views)) are
-  *scoped views* over that single registry, not tenants — `/ui`, `/health`, the
-  credential API, and the OAuth callback ignore `?toolkit=` entirely.
+  *scoped views* over that single registry, not tenants. No route reads
+  `?toolkit=` except `/mcp` — but "ignores the parameter" is not the same as
+  "open to everyone": `/ui/data`, `/ui/activity`, and the credential API refuse
+  a toolkit-restricted identity outright with 403 (`isToolkitRestricted`,
+  `src/server.ts`), because their payloads describe every connector in the org
+  and a credential write reaches every view. `/health` (a count) and the OAuth
+  callback are unchanged. That is a per-identity refusal, not a per-tenant
+  partition; there is still exactly one of everything underneath.
 - **A general policy engine, approvals, or pauses.** The only access decision
   connecta makes is the read-only one (see the fail-closed invariant below).
   Anything else crosses `call_destructive_tool`, which is annotated so the MCP
@@ -51,11 +62,11 @@ deployment is a small config-as-code file, not a platform.
   than pinned at `initialize`.
 - **Code-mode approvals, audit log, and saved snippets.** Connecta adopts the
   sandbox, not the platform — see below.
-- **Binding an identity to a toolkit** — the one genuine *deferred*, tracked as
-  [issue #37](https://github.com/zackbart/connecta/issues/37). Toolkit selection
-  is self-service today: any caller `auth` admits may pick any toolkit or omit
-  the parameter and get everything. A toolkit *organizes* the surface; `auth`
-  remains the only thing deciding who gets in.
+- **Roles, hierarchies, or expressions over toolkit membership.** Binding an
+  identity to a toolkit shipped (#37) as a *mapping* — one identity → the
+  toolkits it may open — and deliberately stops there. `ToolkitBinding` is two
+  fields (`toolkits`, `unscoped?`). Anything that evaluates a rule to decide
+  membership is the policy engine above, wearing a smaller hat.
 
 ## Rejected alternatives
 
@@ -79,6 +90,31 @@ takes the sandbox and leaves the platform. Deliberately not adopted:
 
 The `Executor` seam is one method for exactly this reason: whatever the platform
 grows, connecta's side of it stays `execute(code, providers)`.
+
+### A deployment-level `identities: {…}` table for toolkit membership
+
+Toolkit membership could have been declared centrally, keyed by identity id:
+
+```ts
+// rejected
+identities: { "support-team": { toolkits: ["support"] } }
+```
+
+It lost on failure direction. A typo in such a key — `"suport-team"` — matches
+no identity, so that identity reads as *unbound*, and unbound means **the whole
+registry**. The mistake fails open, silently, and looks exactly like a working
+config. Declaring the binding on the auth adapter instead
+(`bearerToken(env.SUPPORT_TOKEN, { subjectId: "support-team", toolkits:
+["support"] })`) means the binding travels with the credential and there is no
+key to mistype; a typo in a toolkit *name* is caught by `createConnecta` and
+throws at construction. Fails closed, loudly.
+
+The same instinct governs the per-identity seam: when a provider declares a
+binding and `AuthResult` also returns one, the provider's is a **ceiling**, not
+a default — connecta intersects them and grants `unscoped` only if both do. An
+adapter reading a user-writable claim can therefore narrow a view but never
+widen it. See `src/types.ts` (`ToolkitBinding`, `AuthResult.toolkitBinding`) and
+[documentation.md §16 → Binding a toolkit to an identity](./documentation.md#binding-a-toolkit-to-an-identity).
 
 ### `@clerk/mcp-tools`
 
@@ -204,15 +240,44 @@ exclusion is structural, not a redaction pass: the event type has nowhere to put
 a payload.** Keep it that way; a field that could hold one turns an operational
 log into an exfiltration target. [§15](./documentation.md#15-activity-history).
 
-### One enforcement point for scope
+### Two enforcement points for scope, each with one job
 
-Toolkit scoping is not a display filter applied in nine handlers. `ScopedRegistry`
-(`src/registry.ts`) is a filtered view of the one registry, built once per
-request by `resolveToolkitScope` after the auth gate, and every meta-tool is
-typed against `RegistryView` rather than `Registry` — so reaching for an
-unfiltered method is a compile error and a new meta-tool inherits the boundary
-without writing a check. Out-of-scope addresses must fail *identically* to
-nonexistent ones: there is no "exists but hidden" reply.
+Toolkit enforcement is split, and the split is the invariant — **neither half may
+do the other's job** (`src/toolkits.ts` header comment states the same rule):
+
+- **WHICH toolkit an identity may open** — the connect-time binding check in
+  `resolveToolkitScope` (`src/server.ts`), run after the auth gate and *before
+  any `ScopedRegistry` exists*. Membership decisions belong here and only here.
+- **WHAT a selected toolkit may see** — `ScopedRegistry` (`src/registry.ts`), a
+  filtered view of the one registry, which every meta-tool inherits through
+  `RegistryView`. Visibility decisions belong here and only here.
+
+Do not put a membership check in `ScopedRegistry`: by the time one exists, the
+question has already been answered, and a second answer is a place for the two
+to disagree. Scoping is also not a display filter applied in nine handlers —
+meta-tools are typed against `RegistryView` rather than `Registry`, so reaching
+for an unfiltered method is a compile error and a new meta-tool inherits the
+boundary without writing a check. Within a selected view, out-of-scope addresses
+must fail *identically* to nonexistent ones: there is no "exists but hidden"
+reply. [§16](./documentation.md#16-toolkits-scoped-views).
+
+### A refusal never enumerates toolkits
+
+For a bound identity, all three refusals — a toolkit outside the binding, a name
+the deployment does not configure, and (without `unscoped`) an omitted
+`?toolkit=` — return a **byte-identical 403**, status and body, from the shared
+`TOOLKIT_FORBIDDEN_BODY` constant, and the body names no toolkit. "Not yours"
+and "does not exist" must stay indistinguishable: a team credential must not
+become a directory of the org's other teams. Refusal happens before any
+`ScopedRegistry` is built and before the MCP transport runs. An unauthenticated
+caller's `?toolkit=` refusal is likewise a 401 identical for real and invented
+names.
+
+The operator log is the channel that tells the three reasons apart — it may name
+the identity, the reason, and the bound toolkits; the response may not. That
+asymmetry is deliberate (SDK clients discard the body of a transport-level
+403/404 anyway), so when adding a refusal path, put the diagnosis in the log and
+keep the response flat.
 [§16](./documentation.md#16-toolkits-scoped-views).
 
 ### Structural mistakes throw at construction
@@ -221,3 +286,20 @@ A toolkit naming a connector that does not exist is a scope nobody wrote, so
 `createConnecta` throws rather than warning. Config errors that can be caught at
 construction should be, loudly — a deployment that boots into a wrong shape is
 worse than one that does not boot.
+
+Toolkit bindings are validated in three places that each catch what the others
+cannot, and all three matter: the **adapter** throws on a binding that does not
+mean what it says (`unscoped` with no `toolkits`, `toolkits: []` without
+`unscoped`, a name outside the toolkit grammar); **`createConnecta`** cross-checks
+binding names against the declared `toolkits` and throws on an unknown one, or
+on any binding when no toolkits are declared (`validateToolkitBindings`); and
+**every request** re-validates the binding it is about to enforce, because a
+per-identity binding from `AuthResult` arrives too late for startup validation —
+a malformed one refuses the request with 403 rather than being ignored. Keep
+that last one: "ignored because malformed" is how a binding fails open.
+
+Startup *warnings* follow the same fail-loud instinct where a throw would be too
+strong — toolkits with no `auth`, toolkits with `auth` but no binding declared
+anywhere, and the partially-bound shape that names the unbound providers (the
+case where an operator believes the deployment is separated while one forgotten
+credential still opens every view).
