@@ -1088,12 +1088,23 @@ lookup happens at all.
 - **Exact, case-insensitive, whole-domain match.** `["acme.com"]` admits
   `dev@ACME.com` and rejects `evil-acme.com`, `acme.com.evil.com`, `acme.co`
   and `mail.acme.com` — list a subdomain explicitly to allow it. Entries are
-  validated at construction: a non-domain, an `@`, an empty list, or an
-  internationalized domain not written in punycode **throws** where you wrote it.
-- **Fail closed.** No primary email, an unverified one, or a Clerk lookup that
-  fails ⇒ **rejected**, with the reason in the deployment's logs (the domain
-  only, never the address) and a bare `forbidden` to the caller. "We could not
-  tell" is not "they belong here".
+  validated at construction: a non-domain, an `@`, or an empty list **throws**
+  where you wrote it.
+- **Fail closed, and nothing is repaired into a match.** No primary email, an
+  unverified one, an address with no well-formed domain (a stray space, a
+  newline, a trailing root dot), or a Clerk lookup that fails ⇒ **rejected**.
+  Both sides are checked against the same domain grammar *before* case folding,
+  so a malformed address is a denial rather than a value normalized until it
+  matches. Denials carry the reason to the deployment's logs (the domain only,
+  bounded, never the address) and a bare `forbidden` to the caller. "We could
+  not tell" is not "they belong here".
+- **ASCII/punycode only.** Both the allowlist and the address are read as ASCII
+  domains: an internationalized domain must be written in its punycode
+  (`xn--…`) form, and an allowlist entry that is not throws at construction. If
+  Clerk stores a user's IDN email in its Unicode form, that address will **not**
+  match a punycode entry — it fails closed, so such a deployment needs a `gate`
+  instead. This is deliberate: a Unicode confusable must never pass for a domain
+  an operator cannot tell from theirs by eye.
 
 All three decide **whether** a caller is admitted. **Toolkits** (§16) decide
 **what** an admitted caller sees — a fourth, orthogonal layer — and a toolkit
@@ -1112,8 +1123,12 @@ through to the next. **Order matters, and it is
 not exactly the array you wrote:** `createConnecta` hoists every `bearer` provider
 ahead of the rest (a bearer mismatch is cheap and falls through), and keeps the
 relative order of the others. So the Clerk providers are tried in your order,
-after all bearer providers. Two consequences worth planning for:
+after all bearer providers. Three consequences worth planning for:
 
+- **`allowedDomains` governs Clerk sign-in only.** A co-configured
+  `bearerToken(...)` is checked first and, on a match, admits the request with
+  **no domain check** — a shared secret has no email to read. The allowlist
+  bounds who may sign in with Clerk; it does not bound who holds your tokens.
 - A provider with neither `allowedDomains` nor `gate` admits everyone it can
   authenticate, so putting one first makes the narrower providers behind it
   unreachable — every user gets that provider's binding. Give each per-team
@@ -1406,7 +1421,7 @@ Notes:
   `you+clerk_test@yourdomain`), which accepts the fixed OTP **424242** — no real
   inbox needed.
 - Steps 3–4 are the **Clerk-side** half of "only our people". The connecta-side
-  half is `allowedDomains: ["yourdomain"]` on `clerkAuth` (§5), which is checked
+  half is `allowedDomains: ["yourdomain.com"]` on `clerkAuth` (§5), checked
   on every request rather than only at sign-up.
 - `.dev.vars` holds the keys and is **gitignored**; never commit it.
 - **Production instances are separate** — DCR and the allowlist/restrictions must
@@ -1485,7 +1500,7 @@ Test suites (`test/`) and what they cover:
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection, `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
-| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), the toolkit binding the provider declares for the users it admits, and the `allowedDomains` allowlist (§5): construction-time rejection of every non-domain shape (empty list, non-array, `@`, trailing dot, Unicode lookalike), an admitted verified email, case-insensitivity on both sides, the lookalike/subdomain/substring non-matches (including an allowed domain hidden in a quoted local part), fail-closed on missing/unverified/malformed email and on a failing lookup, composition with `gate` (either denies, and the allowlist runs first so an outsider never reaches gate code), one cached verdict covering both, a denial logged with the domain bounded and escaped but never the address, and no lookup at all when the option is unset |
+| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), the toolkit binding the provider declares for the users it admits, and the `allowedDomains` allowlist (§5): construction-time rejection of every non-domain shape (empty list, non-array, `@`, trailing dot, Unicode lookalike), an admitted verified email, case-insensitivity on both sides, the lookalike/subdomain/substring non-matches (including an allowed domain hidden in a quoted local part), fail-closed on missing/unverified/malformed email and on a failing lookup, the malformed addresses that must not be *repaired* into a match (interior space, tab, newline, ideographic space, trailing root dot, a U+212A KELVIN SIGN `toLowerCase` would fold to ASCII), composition with `gate` (either denies, and the allowlist runs first so an outsider never reaches gate code), one cached verdict covering both, a denial logged with the domain bounded but never the address, and no lookup at all when the option is unset |
 | `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the three toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth, authenticated-but-unbound, and partially-bound each get their own line, the last naming the unbound providers; declaring the exemption with `unscoped: true` silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |

@@ -21,8 +21,11 @@ export interface ClerkAuthOptions extends ToolkitBindingOptions {
    * authenticated user whose verified primary email is not on one of them is
    * rejected exactly like a `gate` rejection. Matching is exact on the whole
    * domain and case-insensitive: `acme.com` admits neither `evil-acme.com` nor
-   * `mail.acme.com` — spell a subdomain out to allow it. Absent ⇒ every
-   * authenticated user passes this check, as before the option existed.
+   * `mail.acme.com` — spell a subdomain out to allow it. Entries must be ASCII
+   * (punycode for an internationalized domain) and are validated at
+   * construction. Absent ⇒ every authenticated user passes this check, as
+   * before the option existed. Governs Clerk sign-in only: a co-configured
+   * `bearerToken` has no email to read and is admitted without a domain check.
    */
   allowedDomains?: readonly string[];
   /** Optional allow-list hook. Return false to reject an authenticated user. */
@@ -63,13 +66,31 @@ const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
 
 /**
- * One label of an `allowedDomains` entry: ASCII letters/digits, interior
- * hyphens only, 63 characters at most. ASCII-only is deliberate — an
- * internationalized domain must be written in its punycode (`xn--…`) form, so
- * a Unicode confusable can never be typed into the allowlist and silently
- * admit a domain the operator cannot tell apart from theirs by eye.
+ * One label of a domain: ASCII letters/digits, interior hyphens only, 63
+ * characters at most. ASCII-only is deliberate — an internationalized domain
+ * must be in its punycode (`xn--…`) form, so a Unicode confusable can neither be
+ * typed into the allowlist nor arrive in an email address and pass for a domain
+ * the operator cannot tell from theirs by eye.
  */
-const DOMAIN_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const DOMAIN_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+/**
+ * Is this string a domain, before any case folding? Both sides of the
+ * comparison — the operator's allowlist entries and the domain read off a
+ * user's email — are checked against this one grammar, so neither side can be
+ * *repaired* into a match by the normalization that follows: `"acme.com\n"` and
+ * `" acme.com"` are malformed, not `acme.com`, and an `akme.com` spelled with a
+ * U+212A KELVIN SIGN is rejected here rather than folded to plain ASCII `k` by
+ * `toLowerCase`.
+ */
+function isDomain(domain: string): boolean {
+  return (
+    domain.length > 0 &&
+    domain.length <= 253 &&
+    domain.includes(".") &&
+    domain.split(".").every((label) => DOMAIN_LABEL_RE.test(label))
+  );
+}
 
 /**
  * Validate and lowercase `allowedDomains` at construction. Everything here
@@ -99,22 +120,20 @@ function normalizeAllowedDomains(
         `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a string.`,
       );
     }
-    const domain = entry.trim().toLowerCase();
-    const hint = domain.includes("@")
-      ? " Write the domain alone, with no `@` and no local part."
-      : "";
-    if (
-      domain.length === 0 ||
-      domain.length > 253 ||
-      !domain.includes(".") ||
-      domain.split(".").some((label) => !DOMAIN_LABEL_RE.test(label))
-    ) {
+    // Surrounding whitespace is the one thing forgiven, and only here: this is
+    // operator config read at construction, where a stray space is a typo the
+    // operator can see in the throw. Nothing is forgiven on the email side.
+    const domain = entry.trim();
+    if (!isDomain(domain)) {
+      const hint = domain.includes("@")
+        ? " Write the domain alone, with no `@` and no local part."
+        : "";
       throw new Error(
         `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a ` +
           `domain (expected something like "acme.com").${hint}`,
       );
     }
-    domains.add(domain);
+    domains.add(domain.toLowerCase());
   }
   return domains;
 }
@@ -122,10 +141,10 @@ function normalizeAllowedDomains(
 /**
  * Bounded, escaped form of the denied domain for the operator log — the same
  * treatment `src/server.ts` gives a rejected toolkit name. An email domain is
- * caller-influenced (anyone who controls a mailbox controls its domain), so it
- * goes through JSON.stringify, which neutralizes a newline or control character
- * that could otherwise forge a log line, plus a hand-rolled escape for
- * U+2028/U+2029 that JSON.stringify leaves raw.
+ * caller-influenced (anyone who controls a mailbox controls its domain): the
+ * bound is what a 253-byte domain needs, and the escaping — JSON.stringify plus
+ * the hand-rolled U+2028/U+2029 pass it leaves raw — is defense in depth behind
+ * `isDomain`, which has already ruled out the newline that would forge a line.
  */
 function loggableDomain(domain: string): string {
   const bounded = domain.slice(0, 100);
@@ -137,16 +156,22 @@ function loggableDomain(domain: string): string {
 }
 
 /**
- * The domain of an email address, lowercased, or null when there isn't one.
+ * The domain of an email address, lowercased for comparison, or null when the
+ * address does not have exactly one well-formed domain to read.
  *
- * Split on the LAST `@`, which is what a mail system routes on: it is the only
- * split where `"a@acme.com"@evil.com` resolves to `evil.com` rather than to the
- * allowed domain hiding in the local part.
+ * Nothing here repairs the input. The domain is validated as it arrived and
+ * only then lowercased, so `dev@ acme.com`, `dev@acme.com\n` and `dev@acme.com.`
+ * are malformed addresses that DENY, rather than whitespace-trimmed or
+ * dot-stripped into a match for `acme.com`. The split is on the last `@`, the
+ * part a mail system routes on, so this reads the same domain that would
+ * receive the mail. (Under exact set matching a first-`@` split could not fail
+ * open either — it would just read a domain nobody delivers to.)
  */
 function emailDomain(email: string): string | null {
   const at = email.lastIndexOf("@");
   if (at <= 0 || at === email.length - 1) return null;
-  return email.slice(at + 1).trim().toLowerCase();
+  const domain = email.slice(at + 1);
+  return isDomain(domain) ? domain.toLowerCase() : null;
 }
 
 /**
@@ -221,8 +246,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     }
     const domain = email ? emailDomain(email) : null;
     if (!domain) {
+      // One line for three cases (no primary email, unverified, or an address
+      // with no readable domain) because the caller must not be able to tell
+      // them apart — but it must not claim the email is missing when it is
+      // there and malformed.
       console.warn(
-        `[connecta] clerk user ${userId} has no verified primary email — denying`,
+        `[connecta] clerk user ${userId} has no verified primary email with a ` +
+          "well-formed domain — denying",
       );
       return false;
     }

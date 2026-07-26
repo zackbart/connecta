@@ -237,7 +237,6 @@ describe("clerkAuth inbound auth", () => {
         "dev@mail.acme.com", // subdomain, not spelled
         "dev@acme.co", // prefix of the label
         "dev@xacme.com",
-        "dev@acme.com.", // trailing root dot
         '"dev@acme.com"@evil.com', // allowed domain hidden in the local part
       ]) {
         mocks.getUser.mockResolvedValue(userWithEmail(email));
@@ -270,6 +269,39 @@ describe("clerkAuth inbound auth", () => {
       }
     });
 
+    // A malformed address must never be *repaired* into a match: trimming,
+    // stripping the root dot, or case-folding a Unicode lookalike would each
+    // turn one of these into `acme.com`. They deny instead — the last two are
+    // deliberate fail-closed false negatives, not matches we merely lost.
+    it("denies a malformed address rather than normalizing it into a match", async () => {
+      for (const email of [
+        "dev@ acme.com", // leading space inside the domain
+        "dev@acme.com ", // trailing space
+        "dev@\tacme.com", // tab
+        "dev@acme.com\n", // newline
+        "dev@acme.com　", // ideographic space
+        "dev@acme.com.", // trailing root dot — equivalent to a mail system
+        "dev@aKme.com", // KELVIN SIGN, which toLowerCase folds to "k"
+      ]) {
+        mocks.getUser.mockResolvedValue(userWithEmail(email));
+        // `akme.com` is listed too, so the KELVIN SIGN case is denied by the
+        // grammar running first, not by the fold landing outside the list.
+        const result = await authorize({
+          allowedDomains: ["acme.com", "akme.com"],
+        });
+        expect(result.ok, JSON.stringify(email)).toBe(false);
+      }
+      // The same fold on the allowlist side is a construction error, not a
+      // silently ASCII-ified entry.
+      expect(() =>
+        clerkAuth({
+          publishableKey,
+          secretKey: "sk_test_fake",
+          allowedDomains: ["aKme.com"],
+        }),
+      ).toThrow("is not a domain");
+    });
+
     it("fails closed when the Clerk lookup itself fails", async () => {
       mocks.getUser.mockRejectedValue(new Error("clerk 500"));
       const result = await authorize({ allowedDomains: ["acme.com"] });
@@ -299,17 +331,33 @@ describe("clerkAuth inbound auth", () => {
       expect(gate).not.toHaveBeenCalled();
     });
 
-    it("logs the denied domain bounded and escaped, and never the address", async () => {
+    it("logs the denied domain bounded, and never the address", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      // A denial names the domain for the operator — bounded, so a 253-byte
+      // domain cannot flood the log — and never the local part.
       mocks.getUser.mockResolvedValue(
-        userWithEmail(`secret-person@evil.com\n[connecta] forged`),
+        userWithEmail(
+          `secret-person@${"a".repeat(60)}.${"b".repeat(60)}.example.com`,
+        ),
       );
       await authorize({ allowedDomains: ["acme.com"] });
-      const line = warn.mock.calls.map(String).join("\n");
-      expect(line).toContain("user_123");
-      // Escaped, so a caller-controlled newline cannot forge a second log line.
-      expect(line).toContain("\\n");
-      expect(line).not.toContain("secret-person");
+      const denied = warn.mock.calls.map(String).join("\n");
+      expect(denied).toContain("user_123");
+      expect(denied).toContain("(truncated)");
+      expect(denied.length).toBeLessThan(250);
+      expect(denied).not.toContain("secret-person");
+
+      // A malformed address never reaches that line at all, so a
+      // caller-controlled newline has nothing to forge a log line with.
+      warn.mockClear();
+      mocks.getUser.mockResolvedValue(
+        userWithEmail("secret-person@evil.com\n[connecta] forged"),
+      );
+      await authorize({ allowedDomains: ["acme.com"] });
+      const malformed = warn.mock.calls.map(String).join("\n");
+      expect(malformed).toContain("no verified primary email");
+      expect(malformed).not.toContain("secret-person");
+      expect(malformed).not.toContain("forged");
       warn.mockRestore();
     });
 
