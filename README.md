@@ -34,7 +34,8 @@ Claude / Cursor ── MCP ──▶  connecta ───┼── remoteMcp("lin
 
 Rather than receiving every tool up front, the agent discovers what it needs.
 `search_tools` returns ranked matches for a query and `describe_tools` returns
-full schemas for only the addresses it is about to call. `call_tool`,
+schemas — compact by default, raw JSON Schema on request — for only the
+addresses it is about to call. `call_tool`,
 `batch_call`, and `call_destructive_tool` invoke them by address
 (`<connectorId>.<toolName>`). `list_connectors` reports what exists and whether
 it is reachable, `authorize_connector` starts a downstream OAuth flow,
@@ -63,8 +64,10 @@ platform to administer.
 vault over the deployment's own storage, with the key held outside it. A
 connector reaches its own credential through `ctx.credential`; `/ui`, the
 meta-tools, and the code sandbox only ever see masked metadata. Rotating a token
-is an operator action in the dashboard, not a redeploy — but which tools exist
-is still code.
+is an operator action rather than a redeploy — though writing to the vault is
+deliberately narrower than everything else, requiring a Clerk-authenticated
+operator on a same-origin request, so a bearer-only deployment cannot administer
+credentials from the browser. Which tools exist is still code either way.
 
 **Read-only is fail-closed.** Only tools explicitly annotated `readOnlyHint:
 true` are reachable through `call_tool`, `batch_call`, and the sandbox. Missing,
@@ -90,20 +93,27 @@ is what keeps an operations log from becoming something worth stealing.
 page with no build step: connector health, tool counts, downstream authorization
 links, credential controls, and an activity tab when a store is configured. It
 displays state and administers credentials; it cannot change what an agent is
-allowed to call.
+allowed to call. Credentials connecta stores are also probed for liveness
+proactively — using each connector's own test or status hook, never a downstream
+tool call — so a dead token surfaces as `auth_required` with the URL to open on
+`/ui` and in `list_connectors` before an agent's real call trips over it.
 
 ## When not to use it
 
-Connecta is deliberately small, and several tempting shapes are refused outright.
+Connecta is deliberately small, and declines several tempting shapes.
 It is **not multi-tenant** — one deployment is one tenant, with one registry and
 one credential store, and toolkits are scoped views rather than tenants. There
-is **no policy engine**, no approvals, and no pauses: the only access decision
-connecta makes is the read-only one. There is **no runtime administration** —
-you cannot add a connector from a browser or an API. It aggregates **tools
-only**, not MCP resources or prompts, and it will not ingest an OpenAPI or
-GraphQL spec, because generating hundreds of low-quality tool definitions is the
-problem the nine meta-tools exist to solve. If you want a hosted multi-tenant
-integration platform with an approval workflow, this is the wrong shape; the
+is **no policy engine**, no approvals, and no pauses — access decisions are
+fixed ones connecta already knows how to answer (is this tool read-only, may
+this credential open this toolkit), not rules you author. There is **no runtime
+administration** — you cannot add a connector from a browser or an API. It
+aggregates **tools only**, not MCP resources or prompts, and it will not ingest
+a **GraphQL** schema, because generating hundreds of low-quality tool
+definitions is the problem the nine meta-tools exist to solve. OpenAPI is a
+softer no: not built in today, not refused either, and tracked as
+[issue #26](https://github.com/zackbart/connecta/issues/26). If you want a
+hosted multi-tenant integration platform with an approval workflow, this is the
+wrong shape; the
 [non-goals](https://github.com/zackbart/connecta/blob/main/docs/decisions.md#non-goals)
 say so at more length.
 
@@ -155,9 +165,11 @@ for a real deployment;
 [`node/`](https://github.com/zackbart/connecta/tree/main/examples/node) adds
 toolkits and code mode to the server above;
 [`docker/`](https://github.com/zackbart/connecta/tree/main/examples/docker) is a
-single-service compose stack. Optional peers — `@clerk/backend` for Clerk auth,
-`quickjs-emscripten` or `@cloudflare/codemode` for code mode — are installed only
-by deployments that use them. Connecta ships no service-specific connectors:
+single-service compose stack. Anything beyond the core is installed only by the
+deployments that use it: `@clerk/backend` and `quickjs-emscripten` are optional
+peer dependencies, reached through the `/auth/clerk` and `/quickjs` subpaths,
+and a Worker using code mode brings its own `@cloudflare/codemode`. Connecta
+ships no service-specific connectors:
 endpoint, credential, and tool choices stay in your project, declared with
 `remoteMcp()` and `api()`.
 
@@ -169,7 +181,8 @@ endpoint, credential, and tool choices stay in your project, declared with
   [meta-tools reference](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#3-meta-tools-reference),
   the [config options](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#8-running-it),
   [code mode](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#13-code-mode-execute_code),
-  or [toolkits](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#16-toolkits-scoped-views).
+  [toolkits](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#16-toolkits-scoped-views),
+  or [credential health](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#17-credential-health-proactive-liveness-checks).
 - **[Decisions](https://github.com/zackbart/connecta/blob/main/docs/decisions.md)**
   — what connecta refuses to be, which alternatives lost and why, and the
   invariants a change must preserve.
