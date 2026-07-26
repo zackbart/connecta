@@ -33,6 +33,8 @@ export interface ApiOptions {
    * Max inline result size (bytes) for this connector's tools before
    * call_tool/batch_call truncate and stash the full text for get_result
    * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
+   * Must be a whole number of bytes >= 1; anything else warns at startup and
+   * is ignored.
    */
   maxResultBytes?: number;
   /**

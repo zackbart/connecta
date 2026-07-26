@@ -321,7 +321,9 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   a namespace kept separate from every connector's `conn:<id>:`) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
   `{ "truncated": true, "resultId", "totalBytes", "hint" }`. Page the rest with
-  `get_result`, or re-call with `fields` to select less.
+  `get_result`, or re-call with `fields` to select less. A cap is a whole number
+  of bytes **>= 1**; see [§4](#the-connector-interface) for what happens to a
+  value outside that range.
 
 ### `call_destructive_tool`
 
@@ -337,7 +339,11 @@ through `call_tool`, `batch_call`, and `execute_code`.
 - **Input:** `{ id: string, offset?: number, maxBytes?: number }` (`offset`
   defaults to 0; `maxBytes` defaults to the deployment-wide `maxResultBytes` —
   a stashed result carries no connector identity, so a per-connector override
-  changes where truncation happens, never how the pages are sized).
+  changes where truncation happens, never how the pages are sized). `maxBytes`
+  must be a whole number of bytes **>= 1**; anything else (0, negative,
+  fractional, `NaN`, `Infinity`) is an input-validation error rather than a
+  silently empty or oversized page. `nextOffset` always advances past `offset`,
+  so paging a result always terminates.
 - **Output:** `{ text, offset, nextOffset?, totalBytes }` — a byte-slice of the
   stashed result. `nextOffset` is present while more bytes remain; loop until it
   is absent to reassemble the whole payload. An unknown or expired `id` is an
@@ -612,6 +618,17 @@ Connectors have very different result profiles, so the deployment-wide
 set a tighter value on a chatty search connector, or a looser one on a
 document-fetch connector whose payloads are legitimately large. Precedence is
 **per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per call.
+
+A cap — global or per-connector — must be a **whole number of bytes >= 1**.
+Anything else logs a startup warning and is dropped in favour of the next value
+in that precedence chain, because every out-of-range shape does something worse
+than the default rather than something stricter: `0` and `NaN` serve an *empty*
+head and used to leave `get_result` paging unable to advance, a negative cap
+serves a *larger* head than the default (a negative slice end counts from the
+end of the buffer) while still claiming truncation, and `Infinity` disables the
+guard with no truncation notice at all. Operator config warns and falls back;
+`get_result`'s client-supplied `maxBytes` is a validation error instead
+([§3](#3-the-meta-tools)), matching how other meta-tool arguments are checked.
 Everything else about truncation is unchanged — same
 `{ truncated, resultId, totalBytes, hint }` notice, same `get_result` paging
 (whose default page size stays on the deployment-wide value, since a stashed
@@ -1042,7 +1059,7 @@ when the response returns. `ConnectaConfig`:
 | `toolCacheTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `persistToolCatalog?` | true | also persist serializable catalogs in storage |
 | `toolCatalogStaleSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
-| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging; a connector may override it with its own `maxResultBytes` (§4) |
+| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging, as a whole number of bytes >= 1 (out-of-range values warn at startup and fall back to the default); a connector may override it with its own `maxResultBytes` (§4) |
 | `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |

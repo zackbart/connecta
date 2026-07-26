@@ -12,7 +12,48 @@ import { splitAddress, type Toolkit } from "./toolkits.js";
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
-const DEFAULT_MAX_RESULT_BYTES = 50_000;
+export const DEFAULT_MAX_RESULT_BYTES = 50_000;
+
+/**
+ * Smallest accepted inline-result cap. One byte is pathological but harmless:
+ * `alignEndToCharBoundary` widens a window narrower than the codepoint at the
+ * offset, so even a 1-byte cap still truncates sanely and still pages. Caps
+ * that small already ship in the test suite (4 and 5), so the floor is placed
+ * where it excludes only values that are *broken* rather than merely tiny.
+ */
+export const MIN_MAX_RESULT_BYTES = 1;
+
+/**
+ * The one definition of a usable `maxResultBytes`: a finite whole number of at
+ * least {@link MIN_MAX_RESULT_BYTES} bytes. Shared by all three intake points
+ * — deployment config, the per-connector override, and `get_result`'s
+ * `maxBytes` argument — so a value that is valid at one is valid at all.
+ *
+ * Everything else is rejected rather than coerced, because each rejected shape
+ * silently does something *worse* than the default: `0`/`NaN` serve an empty
+ * head (`slice(0, 0)`) and make paging fail to advance, negatives serve a
+ * LARGER head than asked for (`slice(0, -1)` counts from the end) while still
+ * claiming truncation, and `Infinity` disables the guard with no notice.
+ */
+export function isValidMaxResultBytes(value: number): boolean {
+  return Number.isInteger(value) && value >= MIN_MAX_RESULT_BYTES;
+}
+
+/**
+ * Resolve a configured cap against the value it inherits, dropping anything
+ * `isValidMaxResultBytes` rejects. Operator-facing surfaces pair this with a
+ * startup warning (see `Registry.checkResultCaps`) so the fallback is never
+ * silent; the resolution itself stays total so no call site has to cope with
+ * a broken cap.
+ */
+export function resolveMaxResultBytes(
+  value: number | undefined,
+  inherited: number,
+): number {
+  return value !== undefined && isValidMaxResultBytes(value)
+    ? value
+    : inherited;
+}
 
 interface CacheEntry {
   tools: ToolDef[];
@@ -84,7 +125,11 @@ export interface RegistryOptions {
   toolCacheTtlSeconds?: number;
   persistToolCatalog?: boolean;
   toolCatalogStaleSeconds?: number;
-  /** Cap on inline result size before truncation + get_result paging. Default 50_000. */
+  /**
+   * Cap on inline result size before truncation + get_result paging. Must be a
+   * whole number of bytes >= 1; anything else warns at startup and falls back
+   * to the default 50_000.
+   */
   maxResultBytes?: number;
 }
 
@@ -176,7 +221,10 @@ export class Registry implements RegistryView {
     this.staleMs =
       (opts.toolCatalogStaleSeconds ?? DEFAULT_STALE_SECONDS) * 1000;
     this.persistToolCatalog = opts.persistToolCatalog ?? true;
-    this.maxResultBytes = opts.maxResultBytes ?? DEFAULT_MAX_RESULT_BYTES;
+    this.maxResultBytes = resolveMaxResultBytes(
+      opts.maxResultBytes,
+      DEFAULT_MAX_RESULT_BYTES,
+    );
     for (const c of connectors) {
       if (!ID_RE.test(c.id)) {
         throw new Error(
@@ -189,6 +237,47 @@ export class Registry implements RegistryView {
       this.connectors.set(c.id, c);
     }
     this.checkConventions(opts.logger);
+    this.checkResultCaps(opts.logger, opts.maxResultBytes);
+  }
+
+  /**
+   * Warn once per unusable result cap, at construction time — the same
+   * "runs fine but is surely unintended" channel as the insecure-config
+   * warnings in `createConnecta`. A rejected cap can't be honoured, and
+   * honouring it *approximately* is exactly the inversion issue #32 is about,
+   * so the value is dropped in favour of what it inherits and the operator is
+   * told which one is actually in force.
+   */
+  private checkResultCaps(
+    logger: Logger,
+    configured: number | undefined,
+  ): void {
+    if (configured !== undefined && !isValidMaxResultBytes(configured)) {
+      logger.warn(
+        `[connecta] maxResultBytes ${configured} is not a whole number of ` +
+          `bytes >= ${MIN_MAX_RESULT_BYTES}: it would serve an empty, ` +
+          "oversized, or unguarded result instead of truncating. Using the " +
+          `default ${DEFAULT_MAX_RESULT_BYTES} instead.`,
+      );
+    }
+    for (const c of this.connectors.values()) {
+      if (
+        c.maxResultBytes !== undefined &&
+        !isValidMaxResultBytes(c.maxResultBytes)
+      ) {
+        // The number quoted here is `this.maxResultBytes` because that is
+        // literally what a call falls back to: meta-tools reads the inherited
+        // cap off `RegistryView.maxResultBytes`, so the warned value and the
+        // runtime value are the same field rather than two copies of it.
+        logger.warn(
+          `[connecta] connector "${c.id}" sets maxResultBytes ` +
+            `${c.maxResultBytes}, which is not a whole number of bytes >= ` +
+            `${MIN_MAX_RESULT_BYTES}. Ignoring the override — the connector ` +
+            `inherits the deployment-wide cap calls fall back to ` +
+            `(${this.maxResultBytes}).`,
+        );
+      }
+    }
   }
 
   /**
