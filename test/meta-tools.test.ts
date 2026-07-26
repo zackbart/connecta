@@ -6,6 +6,7 @@ import {
   MAX_RETRY_BACKOFF_MS,
   retryBackoffMs,
 } from "../src/meta-tools.js";
+import { USAGE_SKILL } from "../src/skills.js";
 import type { Connector } from "../src/types.js";
 import {
   authConnector,
@@ -29,6 +30,149 @@ function registry() {
     authConnector,
   ]);
 }
+
+describe("skills", () => {
+  const NOTION_GUIDE = `# Notion usage
+
+Prefer \`notion.search\` over listing databases.
+
+- Page results with \`start_cursor\`; never fetch more than 100 at a time.
+`;
+
+  function guided(id: string, guide?: string): Connector {
+    return api(id, {
+      description: `${id} connector`,
+      ...(guide === undefined ? {} : { usageGuide: guide }),
+      tools: [
+        {
+          name: "search",
+          description: "Search records",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          handler: () => ({ results: [] }),
+        },
+      ],
+    });
+  }
+
+  function textFrom(result: { content: { text: string }[] }): string {
+    return result.content[0].text;
+  }
+
+  it("lists the built-in usage guide plus one entry per guided connector", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]),
+      BASE,
+    );
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).toContain("`connector:notion` — Notion usage");
+    expect(listed).not.toContain("connector:plain");
+  });
+
+  it("summarizes a guide with no heading from its first meaningful line", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("linear", "- Use `linear.search_issues` first.\n")]),
+      BASE,
+    );
+    expect(textFrom(await mt.skills({}))).toContain(
+      "`connector:linear` — Use `linear.search_issues` first.",
+    );
+  });
+
+  it("returns a connector guide verbatim", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE)]),
+      BASE,
+    );
+    const fetched = await mt.skills({ name: "connector:notion" });
+    expect(fetched.isError).toBeFalsy();
+    expect(textFrom(fetched)).toBe(NOTION_GUIDE);
+  });
+
+  it("keeps the built-in usage guide unchanged as the default experience", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE)]),
+      BASE,
+    );
+    const fetched = await mt.skills({ name: "usage" });
+    expect(fetched.isError).toBeFalsy();
+    expect(textFrom(fetched)).toBe(USAGE_SKILL);
+    expect(textFrom(fetched)).toContain("# Connecta usage");
+    expect(textFrom(fetched)).toContain(
+      'skills({ name: "connector:<connectorId>" })',
+    );
+  });
+
+  it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
+    const mt = createMetaTools(makeRegistry([guided("plain")]), BASE);
+    const fetched = await mt.skills({ name: "connector:plain" });
+    expect(fetched.isError).toBe(true);
+    expect(textFrom(fetched)).toContain(
+      'Connector "plain" has no usage guide',
+    );
+    expect(textFrom(fetched)).not.toContain("# Connecta usage");
+  });
+
+  it("errors for an unknown connector guide and an unknown skill name", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE)]),
+      BASE,
+    );
+    const unknownConnector = await mt.skills({ name: "connector:ghost" });
+    expect(unknownConnector.isError).toBe(true);
+    expect(textFrom(unknownConnector)).toContain('Unknown connector "ghost"');
+    expect(textFrom(unknownConnector)).toContain("connector:notion");
+
+    const unknownSkill = await mt.skills({ name: "missing" });
+    expect(unknownSkill.isError).toBe(true);
+    expect(textFrom(unknownSkill)).toContain('Unknown skill "missing"');
+    expect(textFrom(unknownSkill)).not.toContain("# Connecta usage");
+  });
+
+  it("points a bare connector id at its prefixed skill name", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE)]),
+      BASE,
+    );
+    const fetched = await mt.skills({ name: "notion" });
+    expect(fetched.isError).toBe(true);
+    expect(textFrom(fetched)).toContain(
+      'Connector guides are fetched as "connector:notion"',
+    );
+  });
+
+  it('a connector whose id is "usage" neither shadows nor is shadowed', async () => {
+    const guide = "# Usage-service quirks\n\nRate limit: 10 rpm.\n";
+    const mt = createMetaTools(makeRegistry([guided("usage", guide)]), BASE);
+
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).toContain("`connector:usage` — Usage-service quirks");
+
+    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(USAGE_SKILL);
+    expect(textFrom(await mt.skills({ name: "connector:usage" }))).toBe(guide);
+  });
+
+  it("names the guide in search_tools and describe_tools output", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]),
+      BASE,
+    );
+    const searched = textOf(await mt.searchTools({ query: "search" })) as {
+      connectors: Array<{ id: string; guide?: string }>;
+    };
+    const byId = Object.fromEntries(searched.connectors.map((c) => [c.id, c]));
+    expect(byId.notion.guide).toBe("connector:notion");
+    expect(byId.plain).not.toHaveProperty("guide");
+
+    const described = textOf(
+      await mt.describeTools({ addresses: ["notion.search", "plain.search"] }),
+    ) as { tools: Array<{ address: string; guide?: string }> };
+    expect(described.tools[0].guide).toBe("connector:notion");
+    expect(described.tools[1]).not.toHaveProperty("guide");
+  });
+});
 
 describe("list_connectors", () => {
   it("reports tool counts and per-connector status", async () => {

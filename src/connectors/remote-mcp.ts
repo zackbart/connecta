@@ -29,6 +29,10 @@ export interface RemoteMcpOptions {
    * paging. Overrides the deployment's `maxResultBytes`; omit to inherit it.
    */
   maxResultBytes?: number;
+   * Optional agent-facing usage guide (markdown) served by the `skills`
+   * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
+   */
+  usageGuide?: string;
   auth?: RemoteMcpAuth;
   /**
    * Refuse to connect to a non-`https://` `url` at construction (default
@@ -259,6 +263,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     kind: "mcp",
     description: opts.description,
     maxResultBytes: opts.maxResultBytes,
+    usageGuide: opts.usageGuide,
 
     async listTools(ctx) {
       const state = stateFor(ctx);
