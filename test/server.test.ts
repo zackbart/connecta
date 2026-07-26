@@ -528,6 +528,88 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.isError).toBe(true);
     expect(body.result.content[0].text).toContain("maxBytes");
   });
+
+  it("tools/call get_result rejects an offset outside its domain", async () => {
+    // The wire half of issue #38: the registered schema and the handler now
+    // spell one rule (MIN_RESULT_OFFSET), so a negative or fractional offset is
+    // refused here as well as in process. The schema already carried
+    // `nonnegative().int()`, so this pins pre-existing wire behavior in place
+    // rather than changing it.
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    for (const offset of [-1, 1.5]) {
+      const res = await rpc(
+        c,
+        "tools/call",
+        { name: "get_result", arguments: { id: "any", offset } },
+        { token: TOKEN },
+      );
+      const body = await readBody(res);
+      expect(body.result.isError, `offset ${offset}`).toBe(true);
+      expect(body.result.content[0].text).toContain("offset");
+    }
+  });
+
+  it("honors the deployment-wide maxResultBytes end to end", async () => {
+    // `ConnectaConfig.maxResultBytes` is the only place a deployment sets the
+    // cap — `createMetaTools` takes no override (issue #44) — so this pins that
+    // the configured value reaches call_tool through serve() and stashes a
+    // pageable result.
+    const c = createConnecta({
+      connectors: [
+        api("blob", {
+          description: "Blobs",
+          tools: [
+            {
+              name: "big",
+              description: "Return a large blob",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+              handler: () => "x".repeat(500),
+            },
+          ],
+        }),
+      ],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      maxResultBytes: 100,
+    });
+    const res = await rpc(
+      c,
+      "tools/call",
+      { name: "call_tool", arguments: { address: "blob.big" } },
+      { token: TOKEN },
+    );
+    const body = await readBody(res);
+    const lines = (body.result.content[0].text as string).split("\n");
+    const notice = JSON.parse(lines[lines.length - 1]) as {
+      truncated: boolean;
+      resultId: string;
+      totalBytes: number;
+    };
+    expect(notice.truncated).toBe(true);
+    expect(notice.totalBytes).toBe(502);
+    expect(lines.slice(0, -1).join("\n")).toHaveLength(100);
+
+    const paged = await rpc(
+      c,
+      "tools/call",
+      {
+        name: "get_result",
+        arguments: { id: notice.resultId, maxBytes: 1_000 },
+      },
+      { token: TOKEN },
+    );
+    const page = JSON.parse(
+      (await readBody(paged)).result.content[0].text,
+    ) as { text: string };
+    expect(JSON.parse(page.text)).toBe("x".repeat(500));
+  });
 });
 
 describe("server open routes", () => {

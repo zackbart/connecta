@@ -328,6 +328,14 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   `{ ok: true, data, durationMs, attempts }`; failures return
   `{ ok: false, error: { code, message, retryable, retryAfterMs? }, durationMs,
   attempts }` (`retryAfterMs` only when the connector reported a wait window).
+  A handler that returns something JSON cannot represent — nothing at all, a
+  function, a Symbol — is rendered as the text `undefined` under
+  `resultMode: "mcp"`, and simply carries no `data` key under
+  `resultMode: "value"`, since JSON has no `undefined`; `execute_code` treats a
+  program returning nothing the same way (no `result` key). `null` is `null`
+  everywhere. Every result path measures and stashes that one serialization, so
+  no handler return can produce a content block that is invalid against the MCP
+  schema.
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
   (a `createConnecta` option, default **50 000**, overridable per connector —
   see [§4](#the-connector-interface)), the full text is stashed in
@@ -342,6 +350,17 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   `get_result`, or re-call with `fields` to select less. A cap is a whole number
   of bytes **>= 1**; see [§4](#the-connector-interface) for what happens to a
   value outside that range.
+- **What the cap measures.** Exactly the string that gets stashed and paged, so
+  `maxResultBytes`, `totalBytes`, and the length of the head served are all in
+  one unit. For an API connector that is the JSON rendering of the result; for a
+  `kind: "mcp"` connector it is the **whole content envelope** — every block,
+  not only the text ones — so an oversized result made of `image`, `audio`, or
+  `resource` blocks is bounded like any other. What comes back over the cap
+  depends on whether a prefix is usable: an all-text result keeps the head +
+  notice above, while a result containing any non-text block is replaced by the
+  notice **alone**, because the head of a half-written base64 image helps no
+  one. Either way the full envelope is stashed and pages through `get_result`.
+  Under the cap, downstream blocks pass through untouched and in order.
 
 ### `call_destructive_tool`
 
@@ -360,12 +379,22 @@ through `call_tool`, `batch_call`, and `execute_code`.
   changes where truncation happens, never how the pages are sized). `maxBytes`
   must be a whole number of bytes **>= 1**; anything else (0, negative,
   fractional, `NaN`, `Infinity`) is an input-validation error rather than a
-  silently empty or oversized page. `nextOffset` always advances past `offset`,
-  so paging a result always terminates.
+  silently empty or oversized page. `offset` must be a whole number of bytes
+  **>= 0**, on the same terms — a negative, fractional, `NaN`, or non-finite
+  offset is an error, never a silently empty result. An offset past the end of
+  the payload is legal and answers with an empty final page.
+- **Character boundaries.** An `offset` that lands *inside* a multi-byte
+  character is moved **back** to that character's first byte, and the offset
+  actually served is what the response reports as `offset` — a page is never
+  broken UTF-8, and a client that computes its own offsets can only re-read
+  bytes, never skip them. Offsets the server produced (`nextOffset`) are already
+  boundaries and are served exactly as given. `nextOffset` always advances past
+  the served `offset`, so paging a result always terminates.
 - **Output:** `{ text, offset, nextOffset?, totalBytes }` — a byte-slice of the
-  stashed result. `nextOffset` is present while more bytes remain; loop until it
-  is absent to reassemble the whole payload. An unknown or expired `id` is an
-  `isError` result.
+  stashed result, where `offset` is the (possibly aligned) offset served.
+  `nextOffset` is present while more bytes remain; loop until it is absent to
+  reassemble the whole payload. An unknown or expired `id` is an `isError`
+  result.
 
 ### `batch_call`
 
@@ -645,6 +674,10 @@ Connectors have very different result profiles, so the deployment-wide
 set a tighter value on a chatty search connector, or a looser one on a
 document-fetch connector whose payloads are legitimately large. Precedence is
 **per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per call.
+Those two are the only places a cap is set: there is no server-level knob and no
+meta-tool parameter behind them. What a cap counts is the serialization that
+would be stashed — for a `kind: "mcp"` connector the whole content envelope,
+non-text blocks included ([§3](#3-meta-tools-reference)).
 
 A cap — global or per-connector — must be a **whole number of bytes >= 1**.
 Anything else logs a startup warning and is dropped in favour of the next value
@@ -1168,7 +1201,7 @@ when the response returns. `ConnectaConfig`:
 | `toolCacheTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `persistToolCatalog?` | true | also persist serializable catalogs in storage |
 | `toolCatalogStaleSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
-| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging, as a whole number of bytes >= 1 (out-of-range values warn at startup and fall back to the default); a connector may override it with its own `maxResultBytes` (§4) |
+| `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging, as a whole number of bytes >= 1 (out-of-range values warn at startup and fall back to the default); the **only** deployment-wide place the cap is set, and a connector may override it with its own `maxResultBytes` (§4) |
 | `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
 | `probeTimeoutMs?` | 30 000 | how long the discovery meta-tools (`list_connectors` probes, and the catalog fan-out behind `search_tools`/`describe_tools`) wait on one connector before giving up on it. Bounds the caller-facing wait only; it does not apply to `call_tool`/`batch_call`, which use `defaultToolTimeoutMs` |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |

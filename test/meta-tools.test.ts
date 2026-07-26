@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import {
   alignEndToCharBoundary,
+  alignStartToCharBoundary,
   createMetaTools,
   MAX_RETRY_BACKOFF_MS,
   retryBackoffMs,
@@ -1615,8 +1617,10 @@ describe("call_tool fields selection", () => {
 
 describe("call_tool size guard + get_result", () => {
   it("truncates oversized results and pages the rest via get_result", async () => {
-    const registryWithData = makeRegistry([dataConnector]);
-    const mt = createMetaTools(registryWithData, BASE, { maxResultBytes: 100 });
+    const registryWithData = makeRegistry([dataConnector], {
+      maxResultBytes: 100,
+    });
+    const mt = createMetaTools(registryWithData, BASE);
     const result = await mt.callTool({ address: "data.big" });
     const lines = result.content[0].text.split("\n");
     const notice = JSON.parse(lines[lines.length - 1]) as {
@@ -1649,9 +1653,10 @@ describe("call_tool size guard + get_result", () => {
   });
 
   it("replaces oversized value-mode data with a page handle", async () => {
-    const mt = createMetaTools(makeRegistry([dataConnector]), BASE, {
-      maxResultBytes: 100,
-    });
+    const mt = createMetaTools(
+      makeRegistry([dataConnector], { maxResultBytes: 100 }),
+      BASE,
+    );
     const parsed = textOf(
       await mt.callTool({
         address: "data.big",
@@ -1693,9 +1698,10 @@ describe("call_tool size guard + get_result", () => {
       },
     };
     // cap of 4 forces truncation and 4-byte pages that split codepoints.
-    const mt = createMetaTools(makeRegistry([conn]), BASE, {
-      maxResultBytes: 4,
-    });
+    const mt = createMetaTools(
+      makeRegistry([conn], { maxResultBytes: 4 }),
+      BASE,
+    );
     const call = await mt.callTool({ address: "mb.get" });
     const lines = call.content[0].text.split("\n");
     const notice = JSON.parse(lines[lines.length - 1]) as { resultId: string };
@@ -1734,9 +1740,10 @@ describe("call_tool size guard + get_result", () => {
         return "abc😀defghijklmnop";
       },
     };
-    const mt = createMetaTools(makeRegistry([conn]), BASE, {
-      maxResultBytes: 5,
-    });
+    const mt = createMetaTools(
+      makeRegistry([conn], { maxResultBytes: 5 }),
+      BASE,
+    );
     const call = await mt.callTool({ address: "mb2.get" });
     const head = call.content[0].text.split("\n")[0];
     expect(head).not.toContain("�");
@@ -1790,9 +1797,10 @@ describe("per-connector maxResultBytes override", () => {
   }
 
   it("truncates at a connector cap lower than the global one", async () => {
-    const mt = createMetaTools(makeRegistry([capped("tight", 100)]), BASE, {
-      maxResultBytes: 400,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }),
+      BASE,
+    );
     const { head, notice } = truncation(
       await mt.callTool({ address: "tight.big" }),
     );
@@ -1802,17 +1810,19 @@ describe("per-connector maxResultBytes override", () => {
   });
 
   it("keeps a result inline under a connector cap higher than the global one", async () => {
-    const mt = createMetaTools(makeRegistry([capped("wide", 1_000)]), BASE, {
-      maxResultBytes: 100,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("wide", 1_000)], { maxResultBytes: 100 }),
+      BASE,
+    );
     const result = await mt.callTool({ address: "wide.big" });
     expect(result.content[0].text).toBe(FULL);
   });
 
   it("falls back to the global cap when a connector declares no override", async () => {
-    const mt = createMetaTools(makeRegistry([capped("plain")]), BASE, {
-      maxResultBytes: 300,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("plain")], { maxResultBytes: 300 }),
+      BASE,
+    );
     const { head, notice } = truncation(
       await mt.callTool({ address: "plain.big" }),
     );
@@ -1829,13 +1839,11 @@ describe("per-connector maxResultBytes override", () => {
 
   it("applies each connector's own cap within one batch_call", async () => {
     const mt = createMetaTools(
-      makeRegistry([
-        capped("tight", 100),
-        capped("plain"),
-        capped("wide", 1_000),
-      ]),
+      makeRegistry(
+        [capped("tight", 100), capped("plain"), capped("wide", 1_000)],
+        { maxResultBytes: 300 },
+      ),
       BASE,
-      { maxResultBytes: 300 },
     );
     const parsed = textOf(
       await mt.batchCall({
@@ -1854,9 +1862,10 @@ describe("per-connector maxResultBytes override", () => {
   });
 
   it("pages a result truncated under an override through get_result", async () => {
-    const mt = createMetaTools(makeRegistry([capped("tight", 100)]), BASE, {
-      maxResultBytes: 400,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }),
+      BASE,
+    );
     const { notice } = truncation(await mt.callTool({ address: "tight.big" }));
 
     let offset = 0;
@@ -1878,9 +1887,10 @@ describe("per-connector maxResultBytes override", () => {
     // the connector's 300 while get_result, given no maxBytes, falls back to
     // the deployment-wide 100 — so this covers both the larger-than-global
     // truncation and get_result's default page size in one round trip.
-    const mt = createMetaTools(makeRegistry([capped("wide", 300)]), BASE, {
-      maxResultBytes: 100,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("wide", 300)], { maxResultBytes: 100 }),
+      BASE,
+    );
     const { head, notice } = truncation(
       await mt.callTool({ address: "wide.big" }),
     );
@@ -1908,9 +1918,10 @@ describe("per-connector maxResultBytes override", () => {
 
   it("value mode honours the override too", async () => {
     const mt = createMetaTools(
-      makeRegistry([capped("tight", 100), capped("wide", 1_000)]),
+      makeRegistry([capped("tight", 100), capped("wide", 1_000)], {
+        maxResultBytes: 400,
+      }),
       BASE,
-      { maxResultBytes: 400 },
     );
     const truncated = textOf(
       await mt.callTool({ address: "tight.big", resultMode: "value" }),
@@ -1960,9 +1971,10 @@ describe("maxResultBytes validation", () => {
     mt: ReturnType<typeof createMetaTools>;
     resultId: string;
   }> {
-    const mt = createMetaTools(makeRegistry([capped("c")]), BASE, {
-      maxResultBytes: 100,
-    });
+    const mt = createMetaTools(
+      makeRegistry([capped("c")], { maxResultBytes: 100 }),
+      BASE,
+    );
     const call = await mt.callTool({ address: "c.big" });
     const notice = JSON.parse(call.content[0].text.split("\n")[1]) as {
       resultId: string;
@@ -2021,9 +2033,10 @@ describe("maxResultBytes validation", () => {
 
   it("ignores a deployment cap that would zero or invert the guard", async () => {
     for (const maxResultBytes of BAD_CAPS) {
-      const mt = createMetaTools(makeRegistry([capped("c")]), BASE, {
-        maxResultBytes,
-      });
+      const mt = createMetaTools(
+        makeRegistry([capped("c")], { maxResultBytes }),
+        BASE,
+      );
       const result = await mt.callTool({ address: "c.big" });
       // Falls back to the built-in 50_000, so 502 bytes stay inline whole —
       // never an empty head (0/NaN) or an over-long one (negatives).
@@ -2033,9 +2046,10 @@ describe("maxResultBytes validation", () => {
 
   it("ignores a connector override that would zero or invert the guard", async () => {
     for (const override of BAD_CAPS) {
-      const mt = createMetaTools(makeRegistry([capped("c", override)]), BASE, {
-        maxResultBytes: 400,
-      });
+      const mt = createMetaTools(
+        makeRegistry([capped("c", override)], { maxResultBytes: 400 }),
+        BASE,
+      );
       const result = await mt.callTool({ address: "c.big" });
       const [head] = result.content[0].text.split("\n");
       // Inherits the deployment-wide 400 exactly as an unset override would.
@@ -2070,14 +2084,12 @@ describe("maxResultBytes validation", () => {
     // unchanged by validation.
     for (const cap of [1, 4, 100, 400, 1_000]) {
       const viaGlobal = await createMetaTools(
-        makeRegistry([capped("c")]),
+        makeRegistry([capped("c")], { maxResultBytes: cap }),
         BASE,
-        { maxResultBytes: cap },
       ).callTool({ address: "c.big" });
       const viaOverride = await createMetaTools(
-        makeRegistry([capped("c", cap)]),
+        makeRegistry([capped("c", cap)], { maxResultBytes: 50_000 }),
         BASE,
-        { maxResultBytes: 50_000 },
       ).callTool({ address: "c.big" });
       const expected = cap >= FULL.length ? FULL : FULL.slice(0, cap);
       expect(viaGlobal.content[0].text.split("\n")[0], `global ${cap}`).toBe(
@@ -2088,6 +2100,372 @@ describe("maxResultBytes validation", () => {
         `override ${cap}`,
       ).toBe(expected);
     }
+  });
+});
+
+/** UTF-8 byte length, the unit every cap and offset in these suites is in. */
+function byteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
+}
+
+/** Assert a result is valid against the MCP schema as a client receives it. */
+function overTheWire(result: unknown): {
+  content: { type: string; text?: string }[];
+} {
+  const serialized = JSON.parse(JSON.stringify(result));
+  const parsed = CallToolResultSchema.safeParse(serialized);
+  expect(parsed.success, JSON.stringify(serialized)).toBe(true);
+  return serialized;
+}
+
+describe("handler returns JSON cannot represent", () => {
+  /** An api connector whose one read-only tool returns `value`. */
+  function returning(value: unknown): Connector {
+    return api("ret", {
+      description: "Returns a canned value",
+      tools: [
+        {
+          name: "get",
+          description: "Return the canned value",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          handler: () => value,
+        },
+      ],
+    });
+  }
+
+  function callFor(value: unknown) {
+    return createMetaTools(makeRegistry([returning(value)]), BASE).callTool({
+      address: "ret.get",
+    });
+  }
+
+  it("renders an undefined return as text instead of a block with no text", async () => {
+    // Pre-fix this emitted `{"type":"text"}` — schema-invalid, because
+    // JSON.stringify(undefined) is undefined and the size guard measured the
+    // empty string the TextEncoder substituted for it (issue #42).
+    const result = await callFor(undefined);
+    expect(overTheWire(result).content).toEqual([
+      { type: "text", text: "undefined" },
+    ]);
+  });
+
+  it("renders the other returns JSON drops the same way", async () => {
+    // A function and a Symbol also serialize as `undefined`.
+    const fn = () => 1;
+    const sym = Symbol("marker");
+    for (const value of [fn, sym]) {
+      const result = await callFor(value);
+      expect(overTheWire(result).content).toEqual([
+        { type: "text", text: String(value) },
+      ]);
+    }
+  });
+
+  it("renders null as JSON null on both result paths", async () => {
+    // `null` was never the hole — JSON renders it as "null" — so this pins it.
+    const mcp = await callFor(null);
+    expect(overTheWire(mcp).content).toEqual([{ type: "text", text: "null" }]);
+
+    const value = await createMetaTools(
+      makeRegistry([returning(null)]),
+      BASE,
+    ).callTool({ address: "ret.get", resultMode: "value" });
+    expect(overTheWire(value)).toBeTruthy();
+    expect(textOf(value)).toMatchObject({ ok: true, data: null });
+  });
+
+  it("carries no data for an undefined return in value mode", async () => {
+    // JSON has no `undefined`, so the envelope simply omits the key — a
+    // well-formed answer, unlike the block the mcp path used to emit.
+    const result = await createMetaTools(
+      makeRegistry([returning(undefined)]),
+      BASE,
+    ).callTool({ address: "ret.get", resultMode: "value" });
+    const parsed = textOf(result) as Record<string, unknown>;
+    expect(overTheWire(result)).toBeTruthy();
+    expect(parsed.ok).toBe(true);
+    expect("data" in parsed).toBe(false);
+  });
+
+  it("leaves a serializable return byte-identical", async () => {
+    const value = { user: { name: "Ada" }, ids: [1, 2, 3] };
+    const result = await callFor(value);
+    expect(result.content[0].text).toBe(JSON.stringify(value, null, 2));
+  });
+
+  it("stashes an oversized undefined-adjacent return under the same text", async () => {
+    // The guard measures and stashes one string on every path, so what pages
+    // back is what was measured — even for a return JSON cannot represent.
+    const long = "y".repeat(500);
+    const mt = createMetaTools(
+      makeRegistry([returning(long)], { maxResultBytes: 100 }),
+      BASE,
+    );
+    const call = await mt.callTool({ address: "ret.get" });
+    const notice = JSON.parse(call.content[0].text.split("\n")[1]) as {
+      resultId: string;
+      totalBytes: number;
+    };
+    const full = JSON.stringify(long, null, 2);
+    expect(notice.totalBytes).toBe(byteLength(full));
+    const page = textOf(
+      await mt.getResult({ id: notice.resultId, maxBytes: 10_000 }),
+    ) as { text: string };
+    expect(page.text).toBe(full);
+  });
+});
+
+describe("mcp-mode content size guard", () => {
+  /** A kind:"mcp" connector whose one tool returns `content` verbatim. */
+  function downstream(content: unknown[]): Connector {
+    return {
+      id: "down",
+      kind: "mcp",
+      description: "Downstream MCP",
+      async listTools() {
+        return [
+          {
+            name: "fetch",
+            description: "Return canned content",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return { content };
+      },
+    };
+  }
+
+  function metaTools(content: unknown[], maxResultBytes?: number) {
+    return createMetaTools(
+      makeRegistry([downstream(content)], { maxResultBytes }),
+      BASE,
+    );
+  }
+
+  /** What `call_tool` stashes and pages for an oversized mcp result. */
+  function envelope(content: unknown[]): string {
+    return JSON.stringify(content, null, 2);
+  }
+
+  interface Notice {
+    truncated: boolean;
+    resultId: string;
+    totalBytes: number;
+  }
+
+  it("measures the envelope it truncates, not just the text inside it", async () => {
+    // 12 blocks of 20 characters: 240 bytes of text, but a 700+ byte envelope
+    // once block wrappers, keys, quoting and indentation are counted. Pre-fix
+    // the decision used the 240 while the head and totalBytes were cut from
+    // the envelope, so a cap between the two returned everything inline and a
+    // cap under both described a string it never compared against (issue #43).
+    const content = Array.from({ length: 12 }, (_, i) => ({
+      type: "text",
+      text: `block-${i}`.padEnd(20, "x"),
+    }));
+    const full = envelope(content);
+    const textOnly = content.reduce((n, b) => n + byteLength(b.text), 0);
+    const cap = 300;
+    expect(textOnly).toBeLessThan(cap);
+    expect(byteLength(full)).toBeGreaterThan(cap);
+
+    const result = await metaTools(content, cap).callTool({
+      address: "down.fetch",
+    });
+    const lines = result.content[0].text.split("\n");
+    const notice = JSON.parse(lines[lines.length - 1]) as Notice;
+    const head = lines.slice(0, -1).join("\n");
+    expect(notice.truncated).toBe(true);
+    // One unit for all three: the cap, the head served, and totalBytes.
+    expect(notice.totalBytes).toBe(byteLength(full));
+    expect(head).toBe(full.slice(0, cap));
+    expect(byteLength(head)).toBeLessThanOrEqual(cap);
+  });
+
+  it("bounds an all-image result and hands back a page handle", async () => {
+    // Pre-fix contentBytes([image]) was 0, so `0 > cap` was false and the whole
+    // 50 KB envelope came back inline with no resultId to page from — the one
+    // guarantee maxResultBytes exists to give, missing entirely.
+    const content = [
+      { type: "image", data: "A".repeat(50_000), mimeType: "image/png" },
+    ];
+    const full = envelope(content);
+    const cap = 1_000;
+    const mt = metaTools(content, cap);
+    const result = await mt.callTool({ address: "down.fetch" });
+
+    expect(overTheWire(result).content).toHaveLength(1);
+    const notice = JSON.parse(result.content[0].text) as Notice;
+    expect(notice.truncated).toBe(true);
+    expect(notice.totalBytes).toBe(byteLength(full));
+    expect(byteLength(result.content[0].text)).toBeLessThan(cap);
+    // The notice alone — no prefix of a base64 image, which no client could use.
+    expect(result.content[0].text).not.toContain("AAAA");
+
+    let offset = 0;
+    let assembled = "";
+    for (;;) {
+      const page = textOf(
+        await mt.getResult({ id: notice.resultId, offset, maxBytes: 10_000 }),
+      ) as { text: string; nextOffset?: number; totalBytes: number };
+      expect(page.totalBytes).toBe(byteLength(full));
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+    expect(assembled).toBe(full);
+    expect(JSON.parse(assembled)).toEqual(content);
+  });
+
+  it("counts text and non-text blocks together", async () => {
+    const content = [
+      { type: "text", text: "a caption" },
+      {
+        type: "resource",
+        resource: { uri: "file:///big", text: "z".repeat(5_000) },
+      },
+    ];
+    const result = await metaTools(content, 1_000).callTool({
+      address: "down.fetch",
+    });
+    const notice = JSON.parse(result.content[0].text) as Notice;
+    expect(notice.truncated).toBe(true);
+    expect(notice.totalBytes).toBe(byteLength(envelope(content)));
+  });
+
+  it("passes an under-cap result through untouched, blocks and order intact", async () => {
+    const content = [
+      { type: "text", text: "first" },
+      { type: "image", data: "AAA", mimeType: "image/png" },
+      { type: "text", text: "last" },
+    ];
+    const result = await metaTools(content).callTool({ address: "down.fetch" });
+    expect(result.content).toEqual(content);
+    expect(overTheWire(result).content).toEqual(content);
+  });
+});
+
+describe("get_result offset validation and alignment", () => {
+  // Stored as `"aa😀bb"` — byte 3 starts the 4-byte emoji, so bytes 4, 5 and 6
+  // are inside a character and byte 3 is the boundary they belong to.
+  const PAYLOAD = "aa😀bb";
+  const FULL = JSON.stringify(PAYLOAD, null, 2);
+  const EMOJI_START = 3;
+
+  async function stash(): Promise<{
+    mt: ReturnType<typeof createMetaTools>;
+    resultId: string;
+  }> {
+    const conn = api("mb", {
+      description: "Multibyte",
+      tools: [
+        {
+          name: "get",
+          description: "unicode",
+          inputSchema: { type: "object" },
+          annotations: { readOnlyHint: true },
+          handler: () => PAYLOAD,
+        },
+      ],
+    });
+    // A cap of 1 stashes the payload whole while keeping the inline head tiny.
+    const mt = createMetaTools(
+      makeRegistry([conn], { maxResultBytes: 1 }),
+      BASE,
+    );
+    const call = await mt.callTool({ address: "mb.get" });
+    const lines = call.content[0].text.split("\n");
+    const notice = JSON.parse(lines[lines.length - 1]) as { resultId: string };
+    return { mt, resultId: notice.resultId };
+  }
+
+  it("rejects an in-process offset that is not a whole byte count", async () => {
+    // The tier #32 chose to defend for maxBytes: MCP callers are stopped by the
+    // registered schema, in-process callers of createMetaTools are not. Pre-fix
+    // `offset: NaN` answered with `"offset": null`, empty text and no
+    // nextOffset — the result silently vanished instead of erroring (issue #38).
+    const { mt, resultId } = await stash();
+    for (const offset of [
+      -1,
+      -50,
+      1.5,
+      Number.NaN,
+      Number.POSITIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+    ]) {
+      const result = await mt.getResult({ id: resultId, offset });
+      expect(result.isError, `offset ${String(offset)}`).toBe(true);
+      expect(result.content[0].text).toContain("Invalid offset");
+    }
+  });
+
+  it("aligns an offset landing inside a character and reports the one served", async () => {
+    // Pre-fix these decoded the severed bytes as U+FFFD.
+    const { mt, resultId } = await stash();
+    for (const requested of [4, 5, 6]) {
+      const page = textOf(
+        await mt.getResult({ id: resultId, offset: requested, maxBytes: 100 }),
+      ) as { text: string; offset: number; totalBytes: number };
+      expect(page.text, `offset ${requested}`).not.toContain("�");
+      expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
+      expect(page.text).toBe("😀bb\"");
+      expect(page.totalBytes).toBe(byteLength(FULL));
+    }
+  });
+
+  it("leaves a boundary-aligned offset byte-identical", async () => {
+    const { mt, resultId } = await stash();
+    // Every boundary in the payload, including the ones paging produces.
+    for (const offset of [0, 1, 2, EMOJI_START, 7, 8]) {
+      const page = textOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 100 }),
+      ) as { text: string; offset: number };
+      expect(page.offset, `offset ${offset}`).toBe(offset);
+      expect(page.text).not.toContain("�");
+    }
+    // And a full paging loop still reassembles the stashed text exactly.
+    let offset = 0;
+    let assembled = "";
+    for (;;) {
+      const page = textOf(
+        await mt.getResult({ id: resultId, offset, maxBytes: 3 }),
+      ) as { text: string; nextOffset?: number };
+      expect(page.text).not.toContain("�");
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+    expect(assembled).toBe(FULL);
+  });
+
+  it("answers an offset past the end with an empty final page", async () => {
+    // Still a whole number of bytes, so still legal: an empty last page rather
+    // than an error, and nothing to align.
+    const { mt, resultId } = await stash();
+    const page = textOf(
+      await mt.getResult({ id: resultId, offset: byteLength(FULL) + 5 }),
+    ) as { text: string; offset: number; nextOffset?: number };
+    expect(page.text).toBe("");
+    expect(page.offset).toBe(byteLength(FULL) + 5);
+    expect(page.nextOffset).toBeUndefined();
+  });
+
+  it("moves a start offset back to the character it lands inside", () => {
+    const bytes = new TextEncoder().encode(FULL);
+    expect([4, 5, 6].map((o) => alignStartToCharBoundary(bytes, o))).toEqual([
+      3, 3, 3,
+    ]);
+    for (const o of [0, 1, 2, 3, 7, 8, 9]) {
+      expect(alignStartToCharBoundary(bytes, o), `offset ${o}`).toBe(o);
+    }
+    // Past the end there is no character to split.
+    expect(alignStartToCharBoundary(bytes, bytes.length + 5)).toBe(
+      bytes.length + 5,
+    );
   });
 });
 
