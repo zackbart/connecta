@@ -47,6 +47,25 @@ DCR) so Claude/Cursor can self-register — full walkthrough in
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/ui` for
 the operator dashboard.
 
+## Toolkits (multi-team)
+
+`src/index.ts` declares two scoped views over the same registry, so one
+deployment serves several teams in the org:
+
+| Team | MCP URL | Sees |
+| --- | --- | --- |
+| support | `<PUBLIC_URL>/mcp?toolkit=support` | `notion` |
+| exec | `<PUBLIC_URL>/mcp?toolkit=exec` | `notion`, `echo` minus `echo.shout` |
+| operators | `<PUBLIC_URL>/mcp` | everything |
+
+Inside a scoped session every meta-tool behaves as if out-of-scope connectors
+and tools do not exist, and an out-of-scope address fails exactly like a
+nonexistent one. Toolkits scope **visibility**, not identity: any caller `auth`
+admits may select any declared toolkit — or omit the parameter and see
+everything — so the shared `CONNECTA_TOKEN` in this example does not separate
+the teams. `auth` stays the access check. Full reference:
+[documentation.md §16](../../docs/documentation.md#16-toolkits-scoped-views).
+
 ## Code mode
 
 `worker_loaders` in `wrangler.jsonc` binds the Dynamic Worker sandbox behind

@@ -141,6 +141,39 @@ listen(connecta, 8787); // http://localhost:8787/mcp
 Example: [`examples/node/`](./examples/node/). Docker (single-service compose
 stack): [`examples/docker/`](./examples/docker/).
 
+## Toolkits — one deployment, many teams
+
+A deployment belongs to an org. Optional **toolkits** give each group of team
+members its own scoped view of the same registry, so different teams no longer
+need separate deployments:
+
+```ts
+createConnecta({
+  connectors: [zendesk, notion, gmail],
+  auth: bearerToken(env.CONNECTA_TOKEN),
+  toolkits: {
+    support: { connectors: ["zendesk", "notion"] },
+    exec: {
+      connectors: ["zendesk", "notion", "gmail"],
+      excludeTools: ["gmail.send_message"], // finer grain than a connector id
+    },
+  },
+});
+```
+
+A client picks one at connect time: `https://…/mcp?toolkit=support`. Inside a
+scoped session **every** meta-tool — search, describe, call, batch, skills,
+authorize, `get_result`, and `execute_code` host calls — behaves as if
+out-of-scope connectors and tools do not exist, and an out-of-scope address
+fails identically to a nonexistent one. No `?toolkit=` ⇒ the full registry, as
+before; an unknown name is an error, never a silent fallback.
+
+A toolkit scopes **visibility, not identity**: any authenticated client may
+select any toolkit, or omit the parameter and see everything, so a credential
+shared by two teams gives both teams every view. Binding a member to a toolkit
+belongs in `auth`, which stays the access check. Details:
+[docs §16](./docs/documentation.md#16-toolkits-scoped-views).
+
 ## Code mode
 
 With an `executor` configured, the model can write an async function instead of

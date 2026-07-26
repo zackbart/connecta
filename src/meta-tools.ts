@@ -13,7 +13,7 @@ import {
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
-import type { Registry } from "./registry.js";
+import type { RegistryView } from "./registry.js";
 import {
   connectorGuide,
   connectorSkillName,
@@ -351,7 +351,7 @@ export interface SkillArgs {
  * optional tenth tool, is registered separately by registerExecuteTool.)
  */
 export function createMetaTools(
-  registry: Registry,
+  registry: RegistryView,
   baseUrl: string,
   opts: {
     maxResultBytes?: number;
@@ -688,12 +688,17 @@ export function createMetaTools(
               status = { state: "error", message: msg(err) };
             }
           } else {
+            // "error" comes from THIS view's own observations — a sibling
+            // toolkit's failure is not this session's experience — while
+            // ok/unknown may lean on the deployment-wide success signal, since
+            // "the connector answers at all" is a fact about the connector.
+            // Unscoped, the two are the same log, so this is unchanged there.
             status = {
               state:
                 observed?.consecutiveFailures &&
                 observed.consecutiveFailures > 0
                   ? ("error" as const)
-                  : observed?.lastSuccessAt || c.kind === "api"
+                  : registry.hasObservedSuccess(c.id) || c.kind === "api"
                     ? ("ok" as const)
                     : ("unknown" as const),
               ...(observed?.lastError ? { message: observed.lastError } : {}),
@@ -1108,11 +1113,15 @@ const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 
 /**
- * Sentences appended to a meta-tool description only when this deployment
+ * Sentences appended to a meta-tool description only when this connection
  * actually has connector guides. Tool descriptions are always-loaded context,
- * and the connector set is fixed at construction, so a deployment with no
- * guides gets every base description unchanged rather than paying for text
- * about a feature it does not use.
+ * so a deployment with no guides gets every base description unchanged rather
+ * than paying for text about a feature it does not use.
+ *
+ * Registration is per connection and reads the connection's own registry view,
+ * so under a toolkit these sentences reflect the SCOPED connector set: a scoped
+ * session whose connectors carry no guides sees the base descriptions, and
+ * never learns from a tool description that guides exist out of scope.
  */
 const GUIDE_NOTES = {
   skills:
@@ -1123,9 +1132,9 @@ const GUIDE_NOTES = {
     " An entry carrying `guide` belongs to a connector with a usage guide; fetch it with skills({ name: <guide> }).",
 } as const;
 
-/** `base`, plus its guide note when any connector carries a usage guide. */
+/** `base`, plus its guide note when any VISIBLE connector carries a guide. */
 function describedFor(
-  registry: Registry,
+  registry: RegistryView,
   base: string,
   note: keyof typeof GUIDE_NOTES,
 ): string {
@@ -1157,7 +1166,7 @@ const READ_ONLY_LOCAL = {
 /** Register the nine meta-tools onto an McpServer instance. */
 export function registerMetaTools(
   server: McpServer,
-  registry: Registry,
+  registry: RegistryView,
   ctx: {
     baseUrl: string;
     maxResultBytes?: number;

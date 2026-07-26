@@ -5,7 +5,7 @@ import { recordToolActivity, type ActivityRequestContext } from "./activity.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
-import type { Registry } from "./registry.js";
+import type { RegistryView } from "./registry.js";
 import type {
   Connector,
   Executor,
@@ -98,7 +98,7 @@ export function unwrapForSandbox(
  * the raw-address escape hatch. Broken connectors are skipped, not fatal.
  */
 export async function buildSandboxProviders(
-  registry: Registry,
+  registry: RegistryView,
   baseUrl: string,
   logger: Logger,
   activity?: ActivityRequestContext,
@@ -459,7 +459,7 @@ function guardResultValue(value: unknown): unknown {
 
 /** The execute_code handler. Exported for direct testing. */
 export function createExecuteTool(
-  registry: Registry,
+  registry: RegistryView,
   baseUrl: string,
   executor: Executor,
   logger: Logger,
@@ -527,7 +527,7 @@ Example: async () => { const r = await crm.search({ query: "roadmap" }); return 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(
   server: McpServer,
-  registry: Registry,
+  registry: RegistryView,
   ctx: {
     baseUrl: string;
     executor: Executor;
