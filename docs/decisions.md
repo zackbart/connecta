@@ -183,6 +183,21 @@ and a cache that holds one is a bug that only appears in production. What may be
 cached is plain serializable data: tool definitions, output schemas,
 annotations. See [§4 → `remoteMcp`](./documentation.md#remotemcpid-opts).
 
+Read "promise" strictly: the prohibition is on a promise a **later request could
+await**, or one closing over request-bound state (a transport, a stream, an abort
+signal, a request scope). A fire-and-forget handle held purely to deduplicate
+background work is fine, and there are two —
+`CredentialHealthChecker.sweeping` and its per-connector `inFlight` map
+(`src/credential-health.ts`). Neither is ever handed to or awaited by a later
+request: `sweepIfDue` returns `undefined` while a sweep is in flight rather than
+sharing the existing one, a per-connector check already running is *reported*
+(`skipped: "in_flight"`) rather than joined, and both clear themselves when they
+settle. The sweep also closes over nothing request-bound — it is started with
+`check(baseUrl)` and no `requestScope` — while the promise itself goes to the
+`ctx.waitUntil` of the request that happened to trigger it. A new cache holding
+a promise needs the same two properties: nobody else awaits it, and it captures
+nothing from the request that created it.
+
 Corollary: a fresh `McpServer` + transport is constructed for **every** request
 (an SDK ≥1.26 security requirement), never pooled —
 [§2, request lifecycle](./documentation.md#2-architecture).
