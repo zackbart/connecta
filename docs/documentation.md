@@ -161,7 +161,7 @@ connecta/
     registry.ts           # connector set, address resolution, tool caches, ScopedRegistry (the toolkit boundary)
     toolkits.ts           # toolkit definitions + identity bindings + construction-time validation
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
-    credentials.ts        # AES-GCM connector credential vault over KVStorage
+    credentials.ts        # AES-GCM connector credential vault over KVStorage + the credential-test rule
     credential-health.ts  # proactive liveness checks over stored credentials (§17)
     timeout.ts            # the shared probe deadline vocabulary (withTimeout, 30 s default)
     activity.ts           # payload-free activity contracts + best-effort recorder
@@ -689,6 +689,11 @@ code: operators add, replace, test, and remove values through `/ui`.
 without exposing values to the browser — and, because they answer "does this
 stored value still work" without touching downstream state, they are also what
 the credential liveness checks call ([§17](#17-credential-health-proactive-liveness-checks)).
+The declared credential **shape picks the hook**, in /ui, in the credential API,
+and in those liveness checks alike: named `credential.fields` are tested by
+`testCredentials`, a single-value `credential` by `testCredential`. Implement the
+one that matches — declaring only the other leaves the credential untestable, and
+warns at construction ([§7](#operator-managed-connector-credentials)).
 `hasStoredCredential` is for connectors that store a credential themselves
 rather than in connecta's vault (`remoteMcp` implements it for
 `auth: { type: "oauth" }`): the liveness checks probe a connector only when it
@@ -855,15 +860,20 @@ export interface ApiOptions {
 same-named fields on the `Connector` interface above — declare a credential here
 and the connector's `/ui` card grows Add / Replace / Test / Remove controls,
 while `ctx.credential` gives handlers read-only access to the decrypted value
-([§7](#operator-managed-connector-credentials)). Use `testCredential` for a
-single value and `testCredentials` for a named field set. Be aware that the two
-are not currently matched against the credential shape: `/ui` offers the Test
-button whenever a configured credential exists and the connector declares
-*either* hook, and the route prefers `testCredentials` when both are present,
-falling back to `testCredential` on the reserved single `value` field. Declaring
-the hook that does not match your `credential` shape therefore produces a Test
-button that cannot succeed — tracked as
-[issue #55](https://github.com/zackbart/connecta/issues/55).
+([§7](#operator-managed-connector-credentials)). The credential **shape picks
+the hook**, and connecta never substitutes the other one:
+
+| `credential` declares | Test hook that runs | Receives |
+| --- | --- | --- |
+| no `fields` (single value) | `testCredential` | the decrypted `value` string |
+| `fields: [...]` (named set) | `testCredentials` | the whole decrypted named set |
+
+Declare both and each is used for the shape it fits; declare only the hook that
+does *not* fit the shape and the credential is simply **not testable** — `/ui`
+renders no Test button, `POST /ui/credentials/<id>/test` answers 400 naming the
+mismatch, and `createConnecta` warns at construction so the mistake surfaces on
+the way in rather than under an operator's click
+([§7](#operator-managed-connector-credentials)).
 
 Worked example — an HTTP API connector that calls out with `fetch` and uses
 `ctx`:
@@ -1293,12 +1303,31 @@ The routes `/ui` drives (all under the same rules above):
 | --- | --- |
 | `PUT /ui/credentials/<connectorId>` | store or replace the credential set |
 | `DELETE /ui/credentials/<connectorId>` | remove it (works even when the stored ciphertext can no longer be decrypted, e.g. after an encryption-key rotation) |
-| `POST /ui/credentials/<connectorId>/test` | run the connector's `testCredential`/`testCredentials` server-side and return only `{ ok, message? }` |
+| `POST /ui/credentials/<connectorId>/test` | run the hook the credential shape selects server-side and return only `{ ok, message? }` |
 | `OPTIONS /ui/credentials/*` | 405 — these routes never take part in CORS preflight |
+
+**Testing a credential.** The declared shape picks the hook — named
+`credential.fields` are tested as a set by `testCredentials`, a single-value
+`credential` by `testCredential` on the vault's reserved `value` field — and the
+other hook is never substituted, because it would be handed a shape the
+connector never declared. That one rule (`credentialTestRule`,
+`src/credentials.ts`) is what `/ui/data`'s `testable` flag, the test route's hook
+selection, and the credential liveness checks
+([§17](#17-credential-health-proactive-liveness-checks)) all read, so the button,
+the route, and the background sweep cannot disagree: a connector implementing
+only the mismatched hook is not testable, `/ui` renders no Test action, a direct
+`POST` to the route answers **400** naming the mismatch — never a 409 telling an
+operator to configure a credential they already configured — and a liveness sweep
+reports it `not_checkable` rather than probing it through a hook its shape cannot
+use.
 
 `createConnecta` **throws at construction** when any connector declares
 `credential` and no `credentialEncryptionKey` is configured, naming the
 connectors involved — a deployment cannot silently boot with an unusable vault.
+It **warns at construction** — the same warning-only channel as the other
+insensible-config checks — for each connector whose only test hook cannot test
+its declared credential shape, so the gap is visible at boot rather than
+discovered by clicking.
 
 ---
 
@@ -1525,7 +1554,7 @@ Test suites (`test/`) and what they cover:
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
 | `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
-| `credential-health.test.ts` | proactive credential liveness ([§17](#17-credential-health-proactive-liveness-checks)) — healthy→revoked→recovered transitions reaching `list_connectors({ probe: false })` with no tool call or catalog fetch, the vault path via `testCredentials` (including an undecryptable value), rate limiting (`fresh` skips, repeated reads probing nothing, a fresh check once the interval passes, and no storage read at all for a connector that cannot have a verdict), connectors with nothing stored / nothing that fits their hook / no id at all never probed, per-check deadline and thrown-check verdicts, the `concurrency` fan-out bound, what a verdict may decide (`auth_required` over a newer real-call failure, `error` deciding nothing over either a prior success or no evidence, a future stamp clamped so it can age out), the generation fence against a clear landing mid-check, `probe: true` recording the status phase but never a failing catalog refresh and stamping at observation time, `authorize_connector` recording verdicts, scoped visibility of a shared connector's verdict, and the traffic-triggered sweep end-to-end (once per burst, never unauthenticated, never awaited by the request, a throwing sweep still serving 200, `onRequest: false`, `/ui/data` payload, and the rejected base-URL promise) |
+| `credential-health.test.ts` | proactive credential liveness ([§17](#17-credential-health-proactive-liveness-checks)) — healthy→revoked→recovered transitions reaching `list_connectors({ probe: false })` with no tool call or catalog fetch, the vault path through the hook the declared shape selects (a single value via `testCredential` including an undecryptable value, named fields via `testCredentials` receiving the whole set, and `testCredential` winning on a single value that declares both), the two mismatched shapes skipped `not_checkable` with neither hook invoked and one of them still probed through its `status()`, rate limiting (`fresh` skips, repeated reads probing nothing, a fresh check once the interval passes, and no storage read at all for a connector that cannot have a verdict), connectors with nothing stored / no id at all never probed, per-check deadline and thrown-check verdicts, the `concurrency` fan-out bound, what a verdict may decide (`auth_required` over a newer real-call failure, `error` deciding nothing over either a prior success or no evidence, a future stamp clamped so it can age out), the generation fence against a clear landing mid-check, `probe: true` recording the status phase but never a failing catalog refresh and stamping at observation time, `authorize_connector` recording verdicts, scoped visibility of a shared connector's verdict, and the traffic-triggered sweep end-to-end (once per burst, never unauthenticated, never awaited by the request, a throwing sweep still serving 200, `onRequest: false`, `/ui/data` payload, and the rejected base-URL promise) |
 | `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in incl. the absolute-https gate every `uiAuth` URL passes, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection and the liveness verdict its Test action records (and its PUT/DELETE clear), `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
@@ -1725,7 +1754,9 @@ into a `javascript:` or `data:` payload. `credential` is present only for a
 connector that declares one **and** only for a Clerk-authenticated operator; the
 static bearer may read connector health but never credential metadata. It carries `{ label, description?, placeholder?,
 fields?, configured, removable?, lastFour?, updatedAt?, testable, error? }` —
-masked metadata only, never a value.
+masked metadata only, never a value. `testable` is true only when the connector
+implements the test hook its declared credential shape selects (§7), so the card
+never offers a Test button whose click cannot succeed.
 
 The page renders the instance name/version, one card per connector (display title
 when configured, stable id, description, a status dot — green `ok` / amber `auth_required` / red `error`,
@@ -2359,7 +2390,7 @@ hooks that exist to answer this question:
 
 | Credential | Checked with | A failure reads as |
 | --- | --- | --- |
-| Operator-managed (`credential`, in the vault — [§7](#7-storage)) | `testCredentials(values)` / `testCredential(value)` — the same call /ui's Test button makes | `auth_required` with the connector's message; replace the value in `/ui` |
+| Operator-managed (`credential`, in the vault — [§7](#7-storage)) | the hook the **declared credential shape** selects — `testCredentials(values)` for named `fields`, `testCredential(value)` for a single value — literally the same call /ui's Test button makes ([§7](#operator-managed-connector-credentials)) | `auth_required` with the connector's message; replace the value in `/ui` |
 | Downstream OAuth (`remoteMcp({ auth: { type: "oauth" } })`, [§6](#6-downstream-oauth)) | `status(ctx)`, which refreshes the grant — that *is* the liveness question for a token | `auth_required` with the consent `authorizationUrl` |
 
 Everything else is skipped, by design:
@@ -2380,11 +2411,19 @@ Everything else is skipped, by design:
 - **A static-token connector stores nothing here** (`auth: { type: "headers" }`),
   so it is never put on a timer.
 - A connector exposing neither `status()` nor a credential test hook has no way
-  to be asked, and is reported as `not_checkable`. So is one whose stored value
-  does not fit the hook it has — named fields with only the single-value
-  `testCredential` — because handing that hook the absent `value` field would
-  test the empty string and record a confident `auth_required` about a credential
-  nothing examined. The credential API refuses the same shape with a 409.
+  to be asked, and is reported as `not_checkable`. So is one whose **declared
+  credential shape cannot use the hook it implements** — named `fields` with only
+  `testCredential`, or a single value with only `testCredentials`. The check
+  selects the hook through the same rule /ui and the credential API read
+  ([§7](#operator-managed-connector-credentials)), and never substitutes the
+  other one: handing `testCredential` a `value` field named fields never wrote
+  would test the empty string and record a confident `auth_required` about a
+  credential nothing examined, and handing `testCredentials` the vault's reserved
+  `{ value }` map would call a hook with a shape its connector never declared. A
+  credential no operator can test by hand is not one a sweep tests behind their
+  back — `createConnecta` warns about the mismatch at construction, and until it
+  is fixed the connector carries no verdict at all. It still gets probed through
+  `status()` if it has one: that question never involves the mismatch.
 
 ### When checks run
 

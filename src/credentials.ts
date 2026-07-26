@@ -1,4 +1,8 @@
-import type { ConnectorCredentialValues, KVStorage } from "./types.js";
+import type {
+  Connector,
+  ConnectorCredentialValues,
+  KVStorage,
+} from "./types.js";
 
 const KEY_BYTES = 32;
 const IV_BYTES = 12;
@@ -33,6 +37,72 @@ export interface CredentialMetadata {
   updatedAt: string;
   /** Per-field masked metadata for named multi-value credentials. */
   fields?: Record<string, CredentialFieldMetadata>;
+}
+
+/** Which hook a testable credential is checked with. */
+export type CredentialTestMode = "single" | "multiple";
+
+/** A declared credential shape whose only test hook cannot test it. */
+export interface CredentialTestMismatch {
+  /** The shape the connector declared. */
+  shape: CredentialTestMode;
+  /** The hook it implements, which that shape cannot use. */
+  hook: "testCredential" | "testCredentials";
+}
+
+export interface CredentialTestRule {
+  /** The hook to call, or null when this credential cannot be tested at all. */
+  mode: CredentialTestMode | null;
+  /** Set only when the sole implemented hook is the one the shape cannot use. */
+  mismatch?: CredentialTestMismatch;
+}
+
+/**
+ * The one rule deciding whether a connector's credential can be tested — read
+ * by /ui's `testable` flag, by the `POST /ui/credentials/<id>/test` route when
+ * it picks a hook, and by the construction-time mismatch warning, so those
+ * three cannot drift apart.
+ *
+ * The declared credential *shape* selects the hook: named `credential.fields`
+ * are tested as a set by `testCredentials`, a single-value `credential` by
+ * `testCredential` on the vault's reserved `value` field. The other hook is
+ * never substituted — it would be handed a shape the connector never declared —
+ * so a connector implementing only the mismatched hook is not testable, and
+ * says so at construction rather than under an operator's click.
+ */
+export function credentialTestRule(
+  connector: Pick<
+    Connector,
+    "credential" | "testCredential" | "testCredentials"
+  >,
+): CredentialTestRule {
+  if (!connector.credential) return { mode: null };
+  if (connector.credential.fields?.length) {
+    if (connector.testCredentials) return { mode: "multiple" };
+    return connector.testCredential
+      ? { mode: null, mismatch: { shape: "multiple", hook: "testCredential" } }
+      : { mode: null };
+  }
+  if (connector.testCredential) return { mode: "single" };
+  return connector.testCredentials
+    ? { mode: null, mismatch: { shape: "single", hook: "testCredentials" } }
+    : { mode: null };
+}
+
+/**
+ * One clause naming a mismatch, shared by the startup warning and the test
+ * route's 400 so an operator reads the same explanation in both places.
+ */
+export function describeCredentialTestMismatch(
+  mismatch: CredentialTestMismatch,
+): string {
+  return mismatch.shape === "multiple"
+    ? "it declares named credential fields, which only " +
+        "`testCredentials(values, ctx)` can test, but implements " +
+        "`testCredential`"
+    : "it declares a single-value credential, which only " +
+        "`testCredential(value, ctx)` can test, but implements " +
+        "`testCredentials`";
 }
 
 function storageKey(connectorId: string): string {

@@ -255,6 +255,22 @@ a sequence of explicitly read-only `call_tool` calls could not.
 [§7](./documentation.md#7-storage), [§13](./documentation.md#13-code-mode-execute_code),
 [§14](./documentation.md#14-status-ui).
 
+### One rule decides how a credential is tested
+
+The declared credential shape picks the test hook — named `credential.fields` are
+tested as a set by `testCredentials`, a single-value `credential` by
+`testCredential` — and the other hook is **never substituted**, because it would
+be handed a shape the connector never declared. That rule lives once, in
+`credentialTestRule` (`src/credentials.ts`), and every consumer reads it rather
+than re-deciding: `/ui`'s `testable` flag, `POST /ui/credentials/<id>/test`, the
+construction-time mismatch warning, and the credential liveness probes
+(`src/credential-health.ts`). Three copies of this decision is how it drifted the
+first time (issue #55) — a button connecta offered led to a 409 blaming the
+operator's configuration. A connector whose only hook cannot test its shape is
+simply not testable: no button, a 400 naming the mismatch, no liveness verdict,
+and a warning at boot. [§7](./documentation.md#7-storage),
+[§17](./documentation.md#17-credential-health-proactive-liveness-checks).
+
 ### Activity is payload-free by construction
 
 Activity records which resolved tool ran, for whom, and how it went — never

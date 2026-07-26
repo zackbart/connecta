@@ -490,6 +490,119 @@ describe("missing-verifyState CSRF warning", () => {
   });
 });
 
+describe("credential test-hook mismatch warning", () => {
+  /** Named fields tested by the single-value hook. */
+  const fieldsWithSingleHook: Connector = {
+    ...credentialConnector,
+    id: "fieldsonly",
+    credential: {
+      label: "Service credentials",
+      fields: [
+        { name: "email", label: "Account email" },
+        { name: "apiKey", label: "API key" },
+      ],
+    },
+    async testCredential() {
+      return { ok: true };
+    },
+  };
+
+  /** A single value tested by the named-set hook. */
+  const singleWithFieldsHook: Connector = {
+    ...credentialConnector,
+    id: "singleonly",
+    async testCredentials() {
+      return { ok: true };
+    },
+  };
+
+  it("warns when named fields are paired with only testCredential", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [fieldsWithSingleHook],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      logger,
+    });
+    const text = warnings(logger);
+    expect(text).toContain('connector "fieldsonly" cannot test its credential');
+    expect(text).toContain("`testCredentials(values, ctx)` can test");
+    expect(text).toContain("POST /ui/credentials/fieldsonly/test answers 400");
+  });
+
+  it("warns when a single-value credential is paired with only testCredentials", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [singleWithFieldsHook],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      logger,
+    });
+    const text = warnings(logger);
+    expect(text).toContain('connector "singleonly" cannot test its credential');
+    expect(text).toContain("`testCredential(value, ctx)` can test");
+  });
+
+  it("stays quiet when a connector declares both hooks, on either shape", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [
+        {
+          ...fieldsWithSingleHook,
+          id: "bothfields",
+          async testCredentials() {
+            return { ok: true };
+          },
+        },
+        {
+          ...singleWithFieldsHook,
+          id: "bothsingle",
+          async testCredential() {
+            return { ok: true };
+          },
+        },
+      ],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("cannot test its credential");
+  });
+
+  it("stays quiet for matched shapes and for a credential with no test hook", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [
+        credentialConnector,
+        {
+          ...fieldsWithSingleHook,
+          id: "matchedfields",
+          testCredential: undefined,
+          async testCredentials() {
+            return { ok: true };
+          },
+        },
+        {
+          ...singleWithFieldsHook,
+          id: "matchedsingle",
+          testCredentials: undefined,
+          async testCredential() {
+            return { ok: true };
+          },
+        },
+      ],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("cannot test its credential");
+  });
+});
+
 describe("unusable maxResultBytes warning", () => {
   it("warns that a zero deployment cap fell back to the default", () => {
     const logger = spyLogger();

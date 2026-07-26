@@ -1,3 +1,4 @@
+import { credentialTestRule } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import type { Registry } from "./registry.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
@@ -363,6 +364,10 @@ export async function buildUiData(
       }
       let credential: UiConnector["credential"];
       if (c.credential && credentialVault) {
+        // One rule, shared with the test route: only the hook matching the
+        // declared credential shape can run, so the button is offered only
+        // where a click can succeed (src/credentials.ts).
+        const testable = credentialTestRule(c).mode !== null;
         const credentialFields = (
           metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
         ) =>
@@ -409,7 +414,7 @@ export async function buildUiData(
                   updatedAt: metadata.updatedAt,
                 }
               : {}),
-            testable: Boolean(c.testCredential || c.testCredentials),
+            testable,
           };
         } catch {
           const fields = credentialFields();
@@ -424,7 +429,7 @@ export async function buildUiData(
             ...(fields?.length ? { fields } : {}),
             configured: false,
             removable: true,
-            testable: Boolean(c.testCredential || c.testCredentials),
+            testable,
             error: "Stored credential could not be read.",
           };
         }

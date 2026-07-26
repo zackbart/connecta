@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createConnecta } from "../src/index.js";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
@@ -19,7 +19,7 @@ import type {
   ToolCallActivityEvent,
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, InboundAuth, Logger } from "../src/types.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -190,6 +190,105 @@ function makeMultiCredentialConnecta() {
     credentialEncryptionKey: CREDENTIAL_KEY,
   });
   return { connecta, storage };
+}
+
+/** Swallows the construction-time mismatch warning these fixtures provoke. */
+function silentLogger(): Logger {
+  return { debug() {}, info() {}, warn() {}, error() {} };
+}
+
+/**
+ * Mismatch shape one: named `credential.fields` with only the single-value
+ * `testCredential` hook, which reads the vault's reserved `value` field the
+ * named set never writes.
+ */
+function makeFieldsWithSingleHookConnecta() {
+  const testCredential = vi.fn(async () => ({ ok: true }));
+  const connector = api("fieldsonly", {
+    description: "Named fields, single-value hook",
+    credential: {
+      label: "Service credentials",
+      fields: [
+        { name: "email", label: "Account email", inputType: "email" as const },
+        { name: "apiKey", label: "API key" },
+      ],
+    },
+    testCredential,
+    tools: [],
+  });
+  const connecta = createConnecta({
+    connectors: [connector],
+    auth: [bearerToken(TOKEN), fakeClerk()],
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    credentialEncryptionKey: CREDENTIAL_KEY,
+    logger: silentLogger(),
+  });
+  return { connecta, testCredential };
+}
+
+/**
+ * Mismatch shape two: a single-value `credential` with only the named-set
+ * `testCredentials` hook, which used to be handed the reserved `{ value }` map
+ * by accident of the fallback order.
+ */
+function makeSingleWithFieldsHookConnecta() {
+  const testCredentials = vi.fn(async () => ({ ok: true }));
+  const connector = api("singleonly", {
+    description: "Single value, named-set hook",
+    credential: { label: "API token" },
+    testCredentials,
+    tools: [],
+  });
+  const connecta = createConnecta({
+    connectors: [connector],
+    auth: [bearerToken(TOKEN), fakeClerk()],
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    credentialEncryptionKey: CREDENTIAL_KEY,
+    logger: silentLogger(),
+  });
+  return { connecta, testCredentials };
+}
+
+/**
+ * Both hooks declared on one shape — no mismatch, so nothing warns and the
+ * shape alone decides which one runs. Each hook reports what it received, so a
+ * test can tell them apart from the route's response.
+ */
+function makeBothHooksConnecta(shape: "single" | "multiple") {
+  const testCredential = vi.fn(async (value: string) => ({
+    ok: true,
+    message: `single:${value}`,
+  }));
+  const testCredentials = vi.fn(async (values: Record<string, string>) => ({
+    ok: true,
+    message: `named:${Object.keys(values).sort().join(",")}`,
+  }));
+  const connector = api("bothhooks", {
+    description: "Declares both test hooks",
+    credential:
+      shape === "multiple"
+        ? {
+            label: "Service credentials",
+            fields: [
+              { name: "email", label: "Account email" },
+              { name: "apiKey", label: "API key" },
+            ],
+          }
+        : { label: "API token" },
+    testCredential,
+    testCredentials,
+    tools: [],
+  });
+  const connecta = createConnecta({
+    connectors: [connector],
+    auth: [bearerToken(TOKEN), fakeClerk()],
+    storage: memoryStorage(),
+    publicUrl: BASE,
+    credentialEncryptionKey: CREDENTIAL_KEY,
+  });
+  return { connecta, testCredential, testCredentials };
 }
 
 function credentialRequest(
@@ -913,6 +1012,164 @@ describe("status UI credential management", () => {
     );
     expect(remove.status).toBe(204);
     expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
+  });
+
+  it("runs testCredential for a single value that declares both hooks", async () => {
+    // The one deliberate behavior change for a connector declaring both: the
+    // route used to prefer `testCredentials` and hand it the reserved
+    // `{ value }` map. The shape picks the hook now, so the single-value hook
+    // runs against the string it was written to expect.
+    const { connecta, testCredential, testCredentials } =
+      makeBothHooksConnecta("single");
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "both-secret-9876" }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: true,
+      testable: true,
+    });
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks/test",
+      { method: "POST" },
+    );
+    await expect(test.json()).resolves.toEqual({
+      ok: true,
+      message: "single:both-secret-9876",
+    });
+    // The route ran it, and so did the liveness sweep the /ui/data request
+    // triggered (§17) — both through the one rule, so every call is the
+    // single-value hook against the raw stored string.
+    expect(testCredential).toHaveBeenCalled();
+    for (const [value] of testCredential.mock.calls) {
+      expect(value).toBe("both-secret-9876");
+    }
+    expect(testCredentials).not.toHaveBeenCalled();
+  });
+
+  it("runs testCredentials for named fields that declare both hooks", async () => {
+    const { connecta, testCredential, testCredentials } =
+      makeBothHooksConnecta("multiple");
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          values: { email: "operator@example.com", apiKey: "api-key-1234" },
+        }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/bothhooks/test",
+      { method: "POST" },
+    );
+    await expect(test.json()).resolves.toEqual({
+      ok: true,
+      message: "named:apiKey,email",
+    });
+    expect(testCredentials).toHaveBeenCalledTimes(1);
+    expect(testCredential).not.toHaveBeenCalled();
+  });
+
+  it("offers no Test action for named fields with only the single-value hook", async () => {
+    const { connecta, testCredential } = makeFieldsWithSingleHookConnecta();
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/fieldsonly",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          values: { email: "operator@example.com", apiKey: "api-key-1234" },
+        }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: true,
+      testable: false,
+    });
+
+    // The old behavior: a shown button whose click answered 409 "configure the
+    // credential before testing it" on a fully configured credential.
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/fieldsonly/test",
+      { method: "POST" },
+    );
+    expect(test.status).toBe(400);
+    expect((await test.json()) as any).toMatchObject({
+      error: expect.stringContaining("testCredentials(values, ctx)"),
+    });
+    expect(testCredential).not.toHaveBeenCalled();
+  });
+
+  it("offers no Test action for a single value with only the named-set hook", async () => {
+    const { connecta, testCredentials } = makeSingleWithFieldsHookConnecta();
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/singleonly",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "single-secret-9876" }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: true,
+      testable: false,
+    });
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/singleonly/test",
+      { method: "POST" },
+    );
+    expect(test.status).toBe(400);
+    expect((await test.json()) as any).toMatchObject({
+      error: expect.stringContaining("testCredential(value, ctx)"),
+    });
+    // Never handed the reserved `{ value }` map it did not ask for.
+    expect(testCredentials).not.toHaveBeenCalled();
   });
 
   it("keeps named fields and removal available when a stored credential is unreadable", async () => {
