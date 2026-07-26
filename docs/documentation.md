@@ -328,14 +328,20 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   `{ ok: true, data, durationMs, attempts }`; failures return
   `{ ok: false, error: { code, message, retryable, retryAfterMs? }, durationMs,
   attempts }` (`retryAfterMs` only when the connector reported a wait window).
-  A handler that returns something JSON cannot represent — nothing at all, a
-  function, a Symbol — is rendered as the text `undefined` under
-  `resultMode: "mcp"`, and simply carries no `data` key under
-  `resultMode: "value"`, since JSON has no `undefined`; `execute_code` treats a
-  program returning nothing the same way (no `result` key). `null` is `null`
-  everywhere. Every result path measures and stashes that one serialization, so
-  no handler return can produce a content block that is invalid against the MCP
-  schema.
+  A handler that returns something JSON cannot represent falls back to
+  `String(value)` under `resultMode: "mcp"`: nothing at all becomes the text
+  `undefined`, a Symbol becomes `Symbol(label)`, and a function becomes its
+  **source text** — so a handler that accidentally returns a closure instead of
+  calling it puts that function's source in front of the model. Under
+  `resultMode: "value"` such a return simply carries no `data` key, since JSON
+  has no `undefined`, and `execute_code` treats a program returning nothing the
+  same way (no `result` key). `null` is `null` everywhere. Every path that
+  *serializes* a result — API connectors, `resultMode: "value"`, and
+  `execute_code` — measures and stashes that one string, so no handler return
+  can make them emit a content block that is invalid against the MCP schema.
+  Blocks a `kind: "mcp"` connector builds itself are a different matter: under
+  the cap they pass through exactly as the downstream produced them, so a
+  connector that emits a malformed block emits it verbatim.
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
   (a `createConnecta` option, default **50 000**, overridable per connector —
   see [§4](#the-connector-interface)), the full text is stashed in
@@ -360,7 +366,12 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   notice above, while a result containing any non-text block is replaced by the
   notice **alone**, because the head of a half-written base64 image helps no
   one. Either way the full envelope is stashed and pages through `get_result`.
-  Under the cap, downstream blocks pass through untouched and in order.
+  The notice itself (~170 bytes) sits *outside* the cap, on this path as on the
+  truncated-head one, so what a client receives is bounded by the cap plus that
+  fixed overhead. Under the cap, downstream blocks pass through untouched and in
+  order — including a block carrying a value JSON cannot serialize (a BigInt, a
+  cycle), which the guard cannot measure and passes through rather than failing
+  the call, since it could never be stashed or paged either.
 
 ### `call_destructive_tool`
 

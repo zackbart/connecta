@@ -2337,6 +2337,34 @@ describe("mcp-mode content size guard", () => {
     expect(notice.totalBytes).toBe(byteLength(envelope(content)));
   });
 
+  it("passes an unserializable under-cap result through instead of failing", async () => {
+    // The guard has to serialize the envelope to measure it, but a block
+    // carrying a BigInt or a cycle cannot be serialized — and could not be
+    // stashed or paged either, so the cap has nothing to offer it. Such a result
+    // came back inline under the old text-only measure; failing it with
+    // result_processing_failed would be a regression, not a fix.
+    const withBigInt = [{ type: "text", text: "small", size: 1n }];
+    const circular: Record<string, unknown>[] = [
+      { type: "text", text: "small" },
+    ];
+    circular[0].self = circular[0];
+    for (const content of [withBigInt, circular]) {
+      const result = await metaTools(content).callTool({
+        address: "down.fetch",
+      });
+      expect(result.isError).toBeUndefined();
+      expect(result.content).toHaveLength(1);
+      expect(result.content[0].text).toBe("small");
+    }
+    // The block reaches the client exactly as the downstream produced it.
+    const result = await metaTools(withBigInt).callTool({
+      address: "down.fetch",
+    });
+    expect((result.content[0] as unknown as Record<string, unknown>).size).toBe(
+      1n,
+    );
+  });
+
   it("passes an under-cap result through untouched, blocks and order intact", async () => {
     const content = [
       { type: "text", text: "first" },

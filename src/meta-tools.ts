@@ -329,8 +329,28 @@ async function stashResult(
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return the first `cap` bytes followed by a JSON truncation
- * notice pointing at get_result.
+ * notice pointing at get_result. `bytes` is `text` already encoded, so a caller
+ * that had to measure it to make this decision doesn't encode it twice.
  */
+async function guardEncoded(
+  text: string,
+  bytes: Uint8Array,
+  results: KVStorage,
+  cap: number,
+): Promise<ToolResult> {
+  if (bytes.length <= cap) {
+    return { content: [{ type: "text", text }] };
+  }
+  const notice = await stashResult(text, results, bytes.length);
+  const head = dec.decode(
+    bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
+  );
+  return {
+    content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
+  };
+}
+
+/** {@link guardEncoded} over a string that has not been measured yet. */
 async function guardText(
   text: string,
   results: KVStorage,
@@ -343,17 +363,7 @@ async function guardText(
   // through it the way issue #42 describes.
   const body: string =
     typeof text === "string" ? text : serializeResultText(text);
-  const bytes = enc.encode(body);
-  if (bytes.length <= cap) {
-    return { content: [{ type: "text", text: body }] };
-  }
-  const notice = await stashResult(body, results, bytes.length);
-  const head = dec.decode(
-    bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
-  );
-  return {
-    content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
-  };
+  return guardEncoded(body, enc.encode(body), results, cap);
 }
 
 /** Store an oversized JSON value and replace it with a page handle. */
@@ -391,13 +401,22 @@ async function guardContent(
   results: KVStorage,
   cap: number,
 ): Promise<ToolResult> {
-  const text = JSON.stringify(content, null, 2);
+  let text: string;
+  try {
+    text = JSON.stringify(content, null, 2);
+  } catch {
+    // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
+    // be measured, stashed, or paged either — there is nothing this guard could
+    // do with it. Pass it through as the old text-only measure did, rather than
+    // turning a call that used to succeed into result_processing_failed.
+    return { content };
+  }
   const bytes = enc.encode(text);
   // Under the cap the downstream blocks pass through untouched, non-text ones
   // included, in their original order.
   if (bytes.length <= cap) return { content };
   if (content.every((b) => b.type === "text")) {
-    return guardText(text, results, cap);
+    return guardEncoded(text, bytes, results, cap);
   }
   const notice = await stashResult(text, results, bytes.length);
   return { content: [{ type: "text", text: JSON.stringify(notice) }] };
