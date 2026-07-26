@@ -1,4 +1,8 @@
-import { CredentialVault } from "./credentials.js";
+import {
+  CredentialVault,
+  credentialTestRule,
+  describeCredentialTestMismatch,
+} from "./credentials.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedUiAuthUrls } from "./ui.js";
@@ -222,7 +226,8 @@ function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
 /**
  * One-time construction warnings for deployment shapes that run fine but are
  * usually unintended. Warning-only — never throws and never changes behavior;
- * each condition emits at most one `logger.warn`. Iterates connectors once.
+ * each deployment-wide condition emits at most one `logger.warn`, and each
+ * per-connector condition at most one per connector it names.
  */
 function warnInsecureConfig(
   config: ConnectaConfig,
@@ -349,6 +354,22 @@ function warnInsecureConfig(
         "value reaches no part of the page: without frontendApiUrl /ui renders " +
         "no loader and cannot start a sign-in, and without signInUrl/signUpUrl " +
         "it signs in through Clerk's defaults.",
+    );
+  }
+
+  // A credential test hook that cannot test the declared credential shape.
+  // The shape picks the hook (see `credentialTestRule`) and the other one is
+  // never substituted, so the connector is simply not testable: /ui offers no
+  // Test action and the route answers 400. Without this line the only way to
+  // discover the mistake is to click a button that isn't there.
+  for (const connector of config.connectors) {
+    const { mismatch } = credentialTestRule(connector);
+    if (!mismatch) continue;
+    logger.warn(
+      `[connecta] connector "${connector.id}" cannot test its credential: ` +
+        `${describeCredentialTestMismatch(mismatch)}. /ui offers no Test ` +
+        `action and POST /ui/credentials/${connector.id}/test answers 400 ` +
+        "until the matching hook is implemented.",
     );
   }
 

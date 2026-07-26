@@ -161,7 +161,7 @@ connecta/
     registry.ts           # connector set, address resolution, tool caches, ScopedRegistry (the toolkit boundary)
     toolkits.ts           # toolkit definitions + identity bindings + construction-time validation
     catalog.ts            # search ranking, description summarizing, compactSchema rendering
-    credentials.ts        # AES-GCM connector credential vault over KVStorage
+    credentials.ts        # AES-GCM connector credential vault over KVStorage + the credential-test rule
     credential-health.ts  # proactive liveness checks over stored credentials (§17)
     timeout.ts            # the shared probe deadline vocabulary (withTimeout, 30 s default)
     activity.ts           # payload-free activity contracts + best-effort recorder
@@ -689,6 +689,11 @@ code: operators add, replace, test, and remove values through `/ui`.
 without exposing values to the browser — and, because they answer "does this
 stored value still work" without touching downstream state, they are also what
 the credential liveness checks call ([§17](#17-credential-health-proactive-liveness-checks)).
+The declared credential **shape picks the hook**, in /ui, in the credential API,
+and in those liveness checks alike: named `credential.fields` are tested by
+`testCredentials`, a single-value `credential` by `testCredential`. Implement the
+one that matches — declaring only the other leaves the credential untestable, and
+warns at construction ([§7](#operator-managed-connector-credentials)).
 `hasStoredCredential` is for connectors that store a credential themselves
 rather than in connecta's vault (`remoteMcp` implements it for
 `auth: { type: "oauth" }`): the liveness checks probe a connector only when it
@@ -855,15 +860,20 @@ export interface ApiOptions {
 same-named fields on the `Connector` interface above — declare a credential here
 and the connector's `/ui` card grows Add / Replace / Test / Remove controls,
 while `ctx.credential` gives handlers read-only access to the decrypted value
-([§7](#operator-managed-connector-credentials)). Use `testCredential` for a
-single value and `testCredentials` for a named field set. Be aware that the two
-are not currently matched against the credential shape: `/ui` offers the Test
-button whenever a configured credential exists and the connector declares
-*either* hook, and the route prefers `testCredentials` when both are present,
-falling back to `testCredential` on the reserved single `value` field. Declaring
-the hook that does not match your `credential` shape therefore produces a Test
-button that cannot succeed — tracked as
-[issue #55](https://github.com/zackbart/connecta/issues/55).
+([§7](#operator-managed-connector-credentials)). The credential **shape picks
+the hook**, and connecta never substitutes the other one:
+
+| `credential` declares | Test hook that runs | Receives |
+| --- | --- | --- |
+| no `fields` (single value) | `testCredential` | the decrypted `value` string |
+| `fields: [...]` (named set) | `testCredentials` | the whole decrypted named set |
+
+Declare both and each is used for the shape it fits; declare only the hook that
+does *not* fit the shape and the credential is simply **not testable** — `/ui`
+renders no Test button, `POST /ui/credentials/<id>/test` answers 400 naming the
+mismatch, and `createConnecta` warns at construction so the mistake surfaces on
+the way in rather than under an operator's click
+([§7](#operator-managed-connector-credentials)).
 
 Worked example — an HTTP API connector that calls out with `fetch` and uses
 `ctx`:
@@ -1293,12 +1303,28 @@ The routes `/ui` drives (all under the same rules above):
 | --- | --- |
 | `PUT /ui/credentials/<connectorId>` | store or replace the credential set |
 | `DELETE /ui/credentials/<connectorId>` | remove it (works even when the stored ciphertext can no longer be decrypted, e.g. after an encryption-key rotation) |
-| `POST /ui/credentials/<connectorId>/test` | run the connector's `testCredential`/`testCredentials` server-side and return only `{ ok, message? }` |
+| `POST /ui/credentials/<connectorId>/test` | run the hook the credential shape selects server-side and return only `{ ok, message? }` |
 | `OPTIONS /ui/credentials/*` | 405 — these routes never take part in CORS preflight |
+
+**Testing a credential.** The declared shape picks the hook — named
+`credential.fields` are tested as a set by `testCredentials`, a single-value
+`credential` by `testCredential` on the vault's reserved `value` field — and the
+other hook is never substituted, because it would be handed a shape the
+connector never declared. That one rule (`credentialTestRule`,
+`src/credentials.ts`) is what `/ui/data`'s `testable` flag and the test route's
+hook selection both read, so the button and the route cannot disagree: a
+connector implementing only the mismatched hook is not testable, `/ui` renders
+no Test action, and a direct `POST` to the route answers **400** naming the
+mismatch — never a 409 telling an operator to configure a credential they
+already configured.
 
 `createConnecta` **throws at construction** when any connector declares
 `credential` and no `credentialEncryptionKey` is configured, naming the
 connectors involved — a deployment cannot silently boot with an unusable vault.
+It **warns at construction** — the same warning-only channel as the other
+insensible-config checks — for each connector whose only test hook cannot test
+its declared credential shape, so the gap is visible at boot rather than
+discovered by clicking.
 
 ---
 
@@ -1725,7 +1751,9 @@ into a `javascript:` or `data:` payload. `credential` is present only for a
 connector that declares one **and** only for a Clerk-authenticated operator; the
 static bearer may read connector health but never credential metadata. It carries `{ label, description?, placeholder?,
 fields?, configured, removable?, lastFour?, updatedAt?, testable, error? }` —
-masked metadata only, never a value.
+masked metadata only, never a value. `testable` is true only when the connector
+implements the test hook its declared credential shape selects (§7), so the card
+never offers a Test button whose click cannot succeed.
 
 The page renders the instance name/version, one card per connector (display title
 when configured, stable id, description, a status dot — green `ok` / amber `auth_required` / red `error`,

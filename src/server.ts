@@ -10,6 +10,10 @@ import type {
   ActivityStore,
 } from "./activity.js";
 import { InvalidActivityCursorError } from "./activity.js";
+import {
+  credentialTestRule,
+  describeCredentialTestMismatch,
+} from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import { ScopedRegistry, type Registry, type RegistryView } from "./registry.js";
 import {
@@ -546,16 +550,25 @@ async function handleCredentialRequest(
     if (request.method !== "POST") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
-    if (!connector.testCredential && !connector.testCredentials) {
+    // The declared credential shape picks the hook — the same single rule /ui
+    // asks for its Test affordance, so a shown button always reaches a hook
+    // that reads the shape the credential was stored in.
+    const rule = credentialTestRule(connector);
+    if (!rule.mode) {
       return privateJson(
-        { error: "this connector does not support credential testing" },
+        {
+          error: rule.mismatch
+            ? "this connector cannot test its credential: " +
+              describeCredentialTestMismatch(rule.mismatch)
+            : "this connector does not support credential testing",
+        },
         { status: 400 },
       );
     }
     try {
       const ctx = opts.registry.contextFor(connectorId, baseUrl);
       let result;
-      if (connector.testCredentials) {
+      if (rule.mode === "multiple") {
         const values = await opts.credentialVault.getAll(connectorId);
         if (!values) {
           return privateJson(
@@ -563,7 +576,7 @@ async function handleCredentialRequest(
             { status: 409 },
           );
         }
-        result = await connector.testCredentials(values, ctx);
+        result = await connector.testCredentials!(values, ctx);
       } else {
         const value = await opts.credentialVault.get(connectorId);
         if (!value) {
