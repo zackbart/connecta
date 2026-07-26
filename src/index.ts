@@ -330,20 +330,25 @@ function warnInsecureConfig(
 
   // /ui renders exactly one provider's browser sign-in config — the first that
   // offers one, which is the same `find` the /ui route performs — and that
-  // provider's frontendApiUrl becomes the loader's `<script src>`. Gate-or-drop
-  // like a branding href: rendering omits the loader for a rejected value and
-  // the dashboard then reports that Clerk could not load, a confusing symptom
-  // without this line naming the cause. Checking only the rendered provider
-  // keeps the claim true — a later provider's uiAuth never reaches the page, so
-  // there is nothing there to warn about.
+  // provider's URLs reach the browser: frontendApiUrl as the loader's
+  // `<script src>`, signInUrl/signUpUrl as the addresses ClerkJS navigates to.
+  // Gate-or-drop like a branding href: rendering drops a rejected value and the
+  // dashboard then either reports that Clerk could not load or quietly signs in
+  // through Clerk's defaults — both confusing symptoms without this line naming
+  // the cause. Checking only the rendered provider keeps the claim true — a
+  // later provider's uiAuth never reaches the page, so there is nothing there
+  // to warn about.
   const uiAuthProvider = inboundAuth.find((provider) => provider.uiAuth);
   const droppedUiAuth = droppedUiAuthUrls(uiAuthProvider?.uiAuth);
   if (uiAuthProvider && droppedUiAuth.length > 0) {
     logger.warn(
       `[connecta] inbound auth provider "${uiAuthProvider.kind}" had ` +
-        `${droppedUiAuth.join(", ")} dropped: the browser sign-in loader is ` +
-        "fetched from this origin, so it must be an absolute https URL. /ui " +
-        "renders without the loader and cannot start a sign-in.",
+        `${droppedUiAuth.join(", ")} dropped: every uiAuth URL reaches the ` +
+        "browser — as the sign-in loader's source, or as a place Clerk sends " +
+        "the operator — so each must be an absolute https URL. A dropped " +
+        "value reaches no part of the page: without frontendApiUrl /ui renders " +
+        "no loader and cannot start a sign-in, and without signInUrl/signUpUrl " +
+        "it signs in through Clerk's defaults.",
     );
   }
 

@@ -206,6 +206,29 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(unknownSkill)).not.toContain("# Connecta usage");
   });
 
+  it("labels the available-skills list identically on every error branch", async () => {
+    const mt = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]),
+      BASE,
+    );
+    // One enumeration, one label — which branch an agent hits must not change
+    // what the list is called. `Available skills:` is the label; a bare
+    // `Available:` is the drift this pins against, and "Available skills:"
+    // does not contain it.
+    for (const name of [
+      "connector:ghost", // unknown connector
+      "connector:plain", // known connector, no usage guide
+      "notion", // bare id whose guide is reachable under the prefix
+      "plain", // bare id with no guide at all
+      "missing", // unknown skill name
+    ]) {
+      const failed = await mt.skills({ name });
+      expect(failed.isError, name).toBe(true);
+      expect(textFrom(failed), name).toContain("Available skills:");
+      expect(textFrom(failed), name).not.toContain("Available:");
+    }
+  });
+
   it("points a bare connector id at its prefixed skill name", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("notion", NOTION_GUIDE)]),

@@ -235,12 +235,12 @@ export function resolveSkill(
     return {
       found: false,
       message: connectorGuide(bare)
-        ? `Unknown skill "${name}". Connector guides are fetched as "${connectorSkillName(name)}". Available: ${available()}.`
+        ? `Unknown skill "${name}". Connector guides are fetched as "${connectorSkillName(name)}". Available skills: ${available()}.`
         : `Connector "${name}" has no usage guide. Available skills: ${available()}.`,
     };
   }
   return {
     found: false,
-    message: `Unknown skill "${name}". Available: ${available()}.`,
+    message: `Unknown skill "${name}". Available skills: ${available()}.`,
   };
 }

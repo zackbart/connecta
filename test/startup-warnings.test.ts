@@ -343,15 +343,19 @@ describe("dropped-branding-URL warning", () => {
   });
 });
 
-describe("dropped uiAuth.frontendApiUrl warning", () => {
+describe("dropped uiAuth URL warnings", () => {
   /** An inbound provider offering the browser sign-in config `/ui` renders. */
-  function uiAuthProvider(frontendApiUrl: string): InboundAuth {
+  function uiAuthProvider(
+    frontendApiUrl: string,
+    portal: { signInUrl?: string; signUpUrl?: string } = {},
+  ): InboundAuth {
     return {
       kind: "clerk",
       uiAuth: {
         kind: "clerk",
         publishableKey: "pk_test_fake",
         frontendApiUrl,
+        ...portal,
       },
       authorize() {
         return { ok: true, userId: "user_123" };
@@ -373,7 +377,40 @@ describe("dropped uiAuth.frontendApiUrl warning", () => {
     expect(text).toContain("absolute https URL");
   });
 
-  it("does not warn for an https frontendApiUrl", () => {
+  it("names each dropped sign-in/sign-up navigation target", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("https://clerk.example.com", {
+        signInUrl: "javascript:alert(1)",
+        signUpUrl: "http://accounts.example.com/sign-up",
+      }),
+      publicUrl: BASE,
+      logger,
+    });
+    const text = warnings(logger);
+    expect(text).toContain('provider "clerk"');
+    expect(text).toContain("uiAuth.signInUrl, uiAuth.signUpUrl dropped");
+    expect(text).toContain("absolute https URL");
+    // The loader origin passed its gate, so it is not named.
+    expect(text).not.toContain("uiAuth.frontendApiUrl");
+  });
+
+  it("does not warn for https URLs in every uiAuth position", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("https://clerk.example.com", {
+        signInUrl: "https://accounts.example.com/sign-in",
+        signUpUrl: "https://accounts.example.com/sign-up",
+      }),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("uiAuth");
+  });
+
+  it("does not warn for unset sign-in/sign-up URLs", () => {
     const logger = spyLogger();
     createConnecta({
       connectors: [plainConnector],
@@ -382,6 +419,37 @@ describe("dropped uiAuth.frontendApiUrl warning", () => {
       logger,
     });
     expect(warnings(logger)).not.toContain("uiAuth");
+  });
+
+  // "Set" means the same thing here as it does for a branding URL, so the two
+  // warning paths cannot disagree about which values an operator meant to
+  // supply. A blank is indistinguishable from leaving the field alone.
+  it("treats a blank sign-in URL as unset rather than as a drop", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("https://clerk.example.com", {
+        signInUrl: "   ",
+      }),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).not.toContain("uiAuth");
+  });
+
+  it("warns for a non-string sign-in URL rather than dropping it silently", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: uiAuthProvider("https://clerk.example.com", {
+        // A custom InboundAuth is untyped at a JS call site; 0 is falsy, so
+        // raw truthiness would have skipped it while the page still dropped it.
+        signInUrl: 0 as unknown as string,
+      }),
+      publicUrl: BASE,
+      logger,
+    });
+    expect(warnings(logger)).toContain("uiAuth.signInUrl dropped");
   });
 
   it("does not warn for a provider that offers no browser sign-in", () => {
