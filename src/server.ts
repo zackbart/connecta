@@ -36,6 +36,35 @@ const CORS_HEADERS = {
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id",
 };
 
+/**
+ * Headers that make an operator-supplied favicon body inert on this origin.
+ * The SVG route is the sharp one: `image/svg+xml` is an *active* content type,
+ * so a `<script>` inside a branding SVG would run on the deployment origin the
+ * moment anyone navigated straight to `/favicon.svg` — strictly more powerful
+ * than the `favicon.href` vector the branding gates close, because the payload
+ * is same-origin. Neutralizing the response rather than inspecting the body
+ * keeps every valid static SVG (the built-in mark included) byte-identical:
+ *
+ * - `sandbox` (no tokens ⇒ every restriction) drops the document into an opaque
+ *   origin with scripting off, so even a script that ran would have nothing to
+ *   reach.
+ * - `default-src 'none'` denies script, network, and framing outright.
+ * - `style-src 'unsafe-inline'` is the single allowance: the default mark styles
+ *   itself inline to follow the OS colour scheme, and CSS cannot script.
+ * - `nosniff` keeps the declared type authoritative in both directions — an SVG
+ *   can never be re-read as HTML, and `.ico` bytes can never be re-read as SVG.
+ *
+ * `.ico` bodies are deliberately in scope: they are inert bytes rather than
+ * active content, so they are still served verbatim, but they carry the same
+ * headers so the invariant is "every favicon route is neutralized" rather than
+ * "whichever route got attention".
+ */
+const INERT_ICON_HEADERS = {
+  "Content-Security-Policy":
+    "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+  "X-Content-Type-Options": "nosniff",
+};
+
 export interface ServerOptions {
   registry: Registry;
   auth: InboundAuth[];
@@ -804,6 +833,7 @@ export function createFetchHandler(
           headers: {
             "Content-Type": "image/svg+xml",
             "Cache-Control": "public, max-age=86400",
+            ...INERT_ICON_HEADERS,
           },
         });
       }
@@ -813,6 +843,7 @@ export function createFetchHandler(
           headers: {
             "Content-Type": "image/x-icon",
             "Cache-Control": "public, max-age=86400",
+            ...INERT_ICON_HEADERS,
           },
         });
       }

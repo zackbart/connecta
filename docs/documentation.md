@@ -588,6 +588,8 @@ interface Connector {
     fields?: Array<{
       name: string;
       label: string;
+      description?: string;        // guidance shown in /ui; never the secret itself
+      placeholder?: string;
       inputType?: "email" | "password" | "text";
     }>;
   };
@@ -705,6 +707,8 @@ export interface RemoteMcpOptions {
   auth?:
     | { type: "headers"; headers: Record<string, string> }
     | { type: "oauth" };
+  requireHttps?: boolean;        // refuse a cleartext url outright; default false
+  logger?: Logger;               // destination for the construction warning; default console
   // _transportFactory?: internal testing seam — see §11.
 }
 ```
@@ -717,6 +721,31 @@ export interface RemoteMcpOptions {
 
 Auth failures degrade the connector to `auth_required` (a real
 `UnauthorizedError`) or `error` (any other failure, e.g. network) — never a crash.
+
+**`requireHttps` — the cleartext-credential guard.** The threat is
+`{ type: "headers" }` plus an `http://` `url`: the transport attaches those
+static headers to *every* request, so an API key or bearer token crosses the
+network in the clear, readable and replayable by anything on the path. connecta
+checks the destination scheme **once at construction** and, with
+`requireHttps: true`, **throws** — the deployment fails to boot rather than
+leaking on its first call. Loopback hosts (`localhost`, `127.0.0.1`, `[::1]`,
+`::1`) are always exempt, so local development against an `http://localhost`
+MCP server needs no carve-out.
+
+**Default `false`**, and the default is not silent: a cleartext `url` carrying
+static `headers` logs one warning at construction and then connects. That
+posture is deliberate — a package-level hard failure would break working
+deployments proxying an internal `http://` MCP on a trusted network — but
+`requireHttps: true` is the right setting for anything reachable from outside
+one, and it is the only way to make the misconfiguration impossible rather than
+merely noisy. Note what the check does **not** cover: `fetch` follows redirects
+transparently, so the scheme guard applies to the first hop only (see the note
+in `src/connectors/remote-mcp.ts`).
+
+**`logger`** is where that construction warning goes, defaulting to `console`.
+It exists because the warning fires inside `remoteMcp()`, before
+`createConnecta` has a `ConnectaConfig.logger` to route it through — pass the
+same logger to both when a deployment collects its logs somewhere specific.
 
 ### `api(id, opts)`
 
@@ -737,11 +766,26 @@ export interface ApiOptions {
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap
   usageGuide?: string;
+  credential?: ConnectorCredentialConfig;   // operator-managed secret, rendered in /ui (§7)
+  testCredential?: (value: string,
+    ctx: ConnectorContext) => Promise<CredentialTestResult>;
+  testCredentials?: (values: Record<string, string>,
+    ctx: ConnectorContext) => Promise<CredentialTestResult>;
   /** Validate args against each tool's inputSchema before the handler runs. Default true. */
   validateArgs?: boolean;
+  /** Reject calls whose inputSchema the validator cannot evaluate. Default false. */
+  strictValidation?: boolean;
   tools: ApiTool[];
 }
 ```
+
+`credential`, `testCredential`, and `testCredentials` are pass-throughs to the
+same-named fields on the `Connector` interface above — declare a credential here
+and the connector's `/ui` card grows Add / Replace / Test / Remove controls,
+while `ctx.credential` gives handlers read-only access to the decrypted value
+([§7](#operator-managed-connector-credentials)). Use `testCredential` for a
+single value and `testCredentials` for a named field set; `/ui` shows the Test
+button only when the matching one is present.
 
 Worked example — an HTTP API connector that calls out with `fetch` and uses
 `ctx`:
@@ -795,6 +839,23 @@ instead of whatever a handler typed `any` would have done with bad input. Set
 schema the validator cannot use (e.g. an unresolvable `$ref`) logs one warning
 and passes args through rather than breaking a working tool.
 
+**`strictValidation` — what happens when the schema itself is the problem.**
+That last sentence is the fail-*open* case, and it is the one `strictValidation`
+closes. The threat is a tool that looks validated but is not: a schema that
+cannot be compiled (or that only fails on first use, like an unresolvable
+`$ref`) is warned about once, and every call after that reaches a handler typed
+`any` with whatever the model sent. **Default `false`**, because a broken schema
+should not break an otherwise working tool. Set `strictValidation: true` and
+those calls fail instead, with the same non-retryable `invalid_args`
+`ConnectorCallError` a mismatch produces — so a schema that cannot be enforced
+never silently admits unvalidated input. It is only consulted when `validateArgs`
+is not `false` (nothing is validated at all in that case), and it does not touch
+the happy path: a schema that compiles and validates behaves identically either
+way. `api()` also compiles every `inputSchema` at construction, so the warning
+about an unusable schema arrives at startup rather than on a live call. The same
+switch is available to hand-written connectors as `failClosed` on
+`validateToolInput` (below).
+
 This is deliberately asymmetric with `remoteMcp()`, which stays pass-through:
 the downstream server is authoritative for its own schemas, and re-validating
 with our draft/format semantics could reject calls the downstream would have
@@ -816,7 +877,8 @@ import { validateToolInput } from "@zackbart/connecta";
 
 const invalid = validateToolInput(tool.inputSchema, args, {
   address: `${id}.${name}`,
-  logger: ctx.logger, // default console; receives the one-time schema warning
+  logger: ctx.logger,   // default console; receives the one-time schema warning
+  failClosed: true,     // default false; `api()`'s strictValidation sets this
 });
 if (invalid) throw invalid;
 ```
@@ -826,8 +888,9 @@ throwing, so the connector decides: throw it as-is, rewrite the message in its
 own prose, or strip connector-wide convention arguments a tool schema doesn't
 declare (a `confirm` flag on writes, say) and re-check before rejecting. The
 compiled validator is cached per schema object, and a schema the validator
-cannot use is warned about once and then passed through — same as inside
-`api()`, because it *is* inside `api()`.
+cannot use is warned about once and then passed through unless `failClosed: true`
+says to reject the call instead — same as inside `api()`, because it *is* inside
+`api()`.
 
 The cache is keyed on **object identity**, so pass a stable schema — hold the
 parsed manifest and hand the same object back on every call. A schema rebuilt
@@ -906,10 +969,14 @@ export interface ClerkAuthOptions {
   `Content-Type, Authorization, mcp-protocol-version`.
 - Verifies tokens with `@clerk/backend`
   `createClerkClient(...).authenticateRequest(req, { acceptsToken:
-  ["oauth_token", "session_token"], authorizedParties: [connectaOrigin] })` →
-  `toAuth().userId`. MCP clients use OAuth access tokens; `/ui` uses the
-  signed-in operator's short-lived Clerk session token. `authorizedParties`
-  prevents a session token minted for a sibling origin from being replayed.
+  ["oauth_token", "session_token"] })` → `toAuth().userId`. MCP clients use OAuth
+  access tokens; `/ui` uses the signed-in operator's short-lived Clerk session
+  token. The SDK's `authorizedParties` option is deliberately **not** passed —
+  an OAuth access token may be a JWT with no `azp` claim, and Clerk rejects
+  `azp=undefined` whenever that option is set. The pin it would provide is
+  applied by hand instead, and only to tokens that carry the claim: a
+  `session_token` whose `azp` names an origin other than this deployment's is
+  rejected, so a sibling subdomain's session token cannot be replayed here.
 - **401s follow RFC 6750**: a bare `Bearer` challenge when no token is present,
   `error="invalid_token"` when a token is bad, and a `resource_metadata="…"`
   pointer in both cases. A gate rejection is a **403** with no challenge.
@@ -1536,6 +1603,33 @@ does not control. A rejected value falls back to the default rather than failing
 the page, and construction logs one warning naming each field that was dropped.
 Malformed branding never fails construction: a non-string where a string belongs
 is read as unset, so it takes the same fallback-and-warn path.
+
+**The completed invariant: every operator-config value that lands in a
+URL-valued attribute is validated, and every one served as an active content type
+is neutralized.** Two positions sit outside the branding hrefs and are worth
+naming, because both are closed the same way.
+
+- **`favicon.svg` bodies** are served at `/favicon.svg` as `image/svg+xml` — an
+  *active* content type, so a `<script>` inside an operator-supplied SVG would
+  run **on the deployment origin** the moment anyone navigated straight to that
+  URL. The route therefore answers with `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+  sandbox`: `sandbox` puts the document in an opaque origin with scripting off,
+  `default-src 'none'` denies script, network, and framing, and inline **styles**
+  stay allowed because the default mark uses one to follow the OS colour scheme
+  (CSS cannot script). The body is not inspected or rewritten, so every valid
+  static SVG — the built-in mark included — is served byte-identically.
+  `favicon.ico` bodies are inert bytes rather than active content, but they are
+  deliberately in scope of the same headers, so the rule is "every favicon route
+  is neutralized" rather than "whichever route got attention".
+- **`uiAuth.frontendApiUrl`**, the origin `/ui` fetches its browser sign-in
+  loader from, must be an absolute **`https:`** URL. This gate is stricter than
+  the branding ones — no `http:` and no loopback carve-out — because nobody types
+  the value: `clerkAuth` derives it from the publishable key, and Clerk's
+  Frontend API is always https. A rejected value never reaches the page in either
+  position (the `<script src>` or the inline `AUTH` object); `/ui` renders without
+  the loader, reports that Clerk could not load, and construction logs a warning
+  naming the provider — the same fallback-and-warn shape the branding gates use.
 
 ---
 

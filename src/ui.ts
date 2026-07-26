@@ -158,6 +158,42 @@ export function isSafeIconHref(href: unknown): boolean {
   }
 }
 
+/**
+ * True only for an absolute `https:` URL — the gate for `uiAuth.frontendApiUrl`,
+ * the last operator-config value that lands in a URL-valued HTML position (the
+ * `<script src>` of `/ui`'s sign-in loader). `javascript:` in a `src` does not
+ * execute, so this closes a hole in the *invariant* rather than a live vector:
+ * every operator value reaching an `href`/`src` is validated, with no exception
+ * left to remember.
+ *
+ * Stricter than `isSafeHttpUrl` on purpose. There is no `http:` carve-out and no
+ * loopback carve-out, because nobody types this value: the shipped Clerk adapter
+ * derives it from the publishable key and Clerk's Frontend API is always https.
+ * A cleartext script source on the dashboard would be a downgrade even where a
+ * browser's mixed-content rules had not already blocked it.
+ */
+export function isSafeScriptSrcUrl(url: unknown): boolean {
+  if (typeof url !== "string") return false;
+  try {
+    return new URL(url).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Names of the `uiAuth` URLs an inbound-auth provider supplied that failed their
+ * gate. Lives beside the gate for the same reason `droppedBrandingUrls` does, and
+ * takes `unknown`-shaped input because a custom `InboundAuth` is untyped at a JS
+ * call site.
+ */
+export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
+  if (!uiAuth || uiAuth.kind !== "clerk") return [];
+  return isSafeScriptSrcUrl(uiAuth.frontendApiUrl)
+    ? []
+    : ["uiAuth.frontendApiUrl"];
+}
+
 export interface UiTool {
   name: string;
   address: string;
@@ -389,7 +425,28 @@ export function renderUiHtml(
   branding?: ConnectaBranding,
   nonce?: string,
 ): string {
-  const auth = uiAuth ?? { kind: "bearer" as const };
+  const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
+  // The Clerk loader's origin. A value that fails the gate is dropped rather
+  // than escaped into the page: the loader tag is simply not emitted, the gate
+  // reports that Clerk could not load, and the rest of the shell still renders —
+  // the same fallback-and-warn posture the branding URLs take, with the drop
+  // named in a startup warning (see `droppedUiAuthUrls`).
+  const clerkScriptOrigin =
+    clerk && isSafeScriptSrcUrl(clerk.frontendApiUrl)
+      ? clerk.frontendApiUrl
+      : undefined;
+  // Enumerated field by field, because this object is serialized into the page's
+  // inline script: a rejected frontendApiUrl must not reach the document through
+  // `AUTH` after being kept out of the `<script src>`.
+  const auth = clerk
+    ? {
+        kind: clerk.kind,
+        publishableKey: clerk.publishableKey,
+        ...(clerkScriptOrigin ? { frontendApiUrl: clerkScriptOrigin } : {}),
+        ...(clerk.signInUrl ? { signInUrl: clerk.signInUrl } : {}),
+        ...(clerk.signUpUrl ? { signUpUrl: clerk.signUpUrl } : {}),
+      }
+    : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);
   const title = brand.pageTitle;
   // When the /ui response ships a nonce-based CSP, every <script> it emits must
@@ -411,8 +468,8 @@ export function renderUiHtml(
       : `<span class="product">${escapeHtmlAttr(brand.productName)}</span>`
     : "";
   const clerkScript =
-    uiAuth?.kind === "clerk"
-      ? `<script${nonceAttr} defer crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(uiAuth.publishableKey)}" src="${escapeHtmlAttr(uiAuth.frontendApiUrl)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
+    clerk && clerkScriptOrigin
+      ? `<script${nonceAttr} defer crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(clerk.publishableKey)}" src="${escapeHtmlAttr(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
       : "";
 
   return `<!doctype html>

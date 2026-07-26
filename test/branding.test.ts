@@ -266,6 +266,29 @@ describe("branding is not an injection vector", () => {
     expect(warnings(logger)).toContain("branding favicon.href dropped");
   });
 
+  it("serves an active-content favicon SVG inertly instead of rejecting it", async () => {
+    const hostile =
+      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">' +
+      "<script>alert(1)</script>" +
+      '<foreignObject><iframe src="https://evil.example"></iframe></foreignObject>' +
+      "</svg>";
+    const res = await make({ favicon: { svg: hostile } }).fetch(
+      new Request(`${BASE}/favicon.svg`),
+    );
+    const csp = res.headers.get("content-security-policy") ?? "";
+
+    // Neutralized by the response, not by inspecting the body: `sandbox` puts
+    // the document in an opaque origin with scripting off and `default-src
+    // 'none'` denies script and the framed subresource, so navigating straight
+    // to /favicon.svg cannot run this on the deployment origin.
+    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(csp).toContain("default-src 'none'");
+    expect(csp).toContain("sandbox");
+    expect(res.headers.get("content-type")).toContain("image/svg+xml");
+    // The body itself is untouched, which is what keeps valid SVGs byte-exact.
+    expect(await res.text()).toBe(hostile);
+  });
+
   it("escapes branding in HTML attribute and text positions", async () => {
     const body = await (
       await make({
