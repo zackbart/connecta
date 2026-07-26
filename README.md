@@ -81,7 +81,11 @@ is a named view over its registry for one group inside that org — support sees
 Zendesk and Notion, exec also sees Gmail. A client selects one with
 `?toolkit=support` on the MCP URL, and a credential can be bound so it opens
 that view and nothing else. Inside a scoped session an out-of-scope address
-fails exactly as a nonexistent one does. Two teams, one deployment.
+fails exactly as a nonexistent one does. Two teams, one deployment. Who gets in
+at all is the prior question: a static bearer token, or Clerk — where
+`allowedDomains: ["acme.com"]` admits anyone whose verified primary email is on
+your domain without enumerating users, and a `gate` hook handles what a domain
+rule cannot express. Both fail closed, and each one configured must pass.
 
 **Activity records the fact, not the payload.** The optional activity store logs
 which resolved tool ran, for whom, and how it went — never arguments, results,
