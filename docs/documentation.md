@@ -1038,6 +1038,7 @@ export interface ClerkAuthOptions {
   publishableKey: string;
   secretKey: string;
   publicUrl?: string;   // defaults to the request origin
+  allowedDomains?: readonly string[]; // e.g. ["acme.com"] — who may sign in
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   scopes?: string[];    // advertised scopes; default ["openid","profile","email"]
   signInUrl?: string;   // hosted Account Portal URL used by /ui
@@ -1071,11 +1072,12 @@ export interface ClerkAuthOptions {
   rejected, so a sibling subdomain's session token cannot be replayed here.
 - **401s follow RFC 6750**: a bare `Bearer` challenge when no token is present,
   `error="invalid_token"` when a token is bad, and a `resource_metadata="…"`
-  pointer in both cases. A gate rejection is a **403** with no challenge.
+  pointer in both cases. An admission rejection (`allowedDomains` or `gate`) is
+  a **403** with no challenge and no reason.
 - Requires **Dynamic Client Registration** enabled on the Clerk instance so
   Claude/Cursor can self-register (see §9).
 
-### Two access-control layers
+### Three access-control layers
 
 These are independent — know which knob you're turning:
 
@@ -1083,34 +1085,76 @@ These are independent — know which knob you're turning:
   limits onboarding to invitations or manually created users. Allowlist and
   blocklist rules can further constrain identifiers; current Clerk instances
   apply them to sign-up unless sign-in enforcement is explicitly enabled.
+- **`allowedDomains` (a CONNECTA setting).** The common case — "anyone
+  @acme.com, nobody else" — as one option instead of a hand-written `gate`:
+  `allowedDomains: ["acme.com"]`. After a token verifies, connecta reads the
+  user's **verified primary email** from Clerk and admits them only when its
+  domain is on the list.
 - **The `gate` hook (a CONNECTA setting).** An optional
   `gate(userId, clerk) => boolean` runs **after** a token verifies, to reject
-  otherwise-valid users. Results are cached per user (~60 s if allowed, ~30 s if
-  forbidden). Default: any authenticated user is allowed.
+  otherwise-valid users — anything the domain rule cannot express (org
+  membership, a role claim, a feature flag). Default: any authenticated user is
+  allowed.
 
-Use Clerk restrictions to control account creation; use `gate` as the
-application-level authorization check on every Connecta request.
+Use Clerk restrictions to control account creation; use `allowedDomains` and
+`gate` as the application-level authorization check on every Connecta request.
 
-Both decide **whether** a caller is admitted. **Toolkits** (§16) decide **what**
-an admitted caller sees — a third, orthogonal layer — and a toolkit **binding**
-(`toolkits: [...]` on an auth adapter) decides **which** of those views a given
-credential may select. Binding runs after admission, so the two stay separate:
-`gate` says who is a user of this deployment, the binding says which team's view
-their credential opens.
+**How `allowedDomains` decides.** Both connecta-side layers compose — **each
+configured one must pass**, and `allowedDomains` is evaluated first, so a caller
+outside your domains never reaches your `gate` code. One verdict per user is
+cached for both (~60 s if allowed, ~30 s if forbidden), so adding the allowlist
+costs no more Clerk calls than `gate` alone did. Configuring neither preserves
+the original behavior exactly: any authenticated user is admitted, and no user
+lookup happens at all.
+
+- **Exact, case-insensitive, whole-domain match.** `["acme.com"]` admits
+  `dev@ACME.com` and rejects `evil-acme.com`, `acme.com.evil.com`, `acme.co`
+  and `mail.acme.com` — list a subdomain explicitly to allow it. Entries are
+  validated at construction: a non-domain, an `@`, or an empty list **throws**
+  where you wrote it.
+- **Fail closed, and nothing is repaired into a match.** No primary email, an
+  unverified one, an address with no well-formed domain (a stray space, a
+  newline, a trailing root dot), or a Clerk lookup that fails ⇒ **rejected**.
+  Both sides are checked against the same domain grammar *before* case folding,
+  so a malformed address is a denial rather than a value normalized until it
+  matches. Denials carry the reason to the deployment's logs (the domain only,
+  bounded, never the address) and a bare `forbidden` to the caller. "We could
+  not tell" is not "they belong here".
+- **ASCII/punycode only.** Both the allowlist and the address are read as ASCII
+  domains: an internationalized domain must be written in its punycode
+  (`xn--…`) form, and an allowlist entry that is not throws at construction. If
+  Clerk stores a user's IDN email in its Unicode form, that address will **not**
+  match a punycode entry — it fails closed, so such a deployment needs a `gate`
+  instead. This is deliberate: a Unicode confusable must never pass for a domain
+  an operator cannot tell from theirs by eye.
+
+All three decide **whether** a caller is admitted. **Toolkits** (§16) decide
+**what** an admitted caller sees — a fourth, orthogonal layer — and a toolkit
+**binding** (`toolkits: [...]` on an auth adapter) decides **which** of those
+views a given credential may select. Binding runs after admission, so the two
+stay separate, and that split is the whole mental model:
+
+> `allowedDomains`/`gate` say **who gets into the org**; the toolkit binding says
+> **what they see** once they are in.
 
 A Clerk provider's `toolkits` binds every user it admits. To split users by team,
-configure one `clerkAuth(...)` per team — same keys, that team's `gate`, that
-team's `toolkits`. The first provider that admits the user supplies the binding,
-so a user one gate rejects falls through to the next. **Order matters, and it is
+configure one `clerkAuth(...)` per team — same keys, that team's admission rule
+(`allowedDomains`, a `gate`, or both), that team's `toolkits`. The first provider
+that admits the user supplies the binding, so a user one provider rejects falls
+through to the next. **Order matters, and it is
 not exactly the array you wrote:** `createConnecta` hoists every `bearer` provider
 ahead of the rest (a bearer mismatch is cheap and falls through), and keeps the
 relative order of the others. So the Clerk providers are tried in your order,
-after all bearer providers. Two consequences worth planning for:
+after all bearer providers. Three consequences worth planning for:
 
-- A gate-less provider admits everyone it can authenticate, so putting one first
-  makes the narrower providers behind it unreachable — every user gets the
-  gate-less provider's binding. Give each per-team provider a `gate`, and put the
-  broadest one last.
+- **`allowedDomains` governs Clerk sign-in only.** A co-configured
+  `bearerToken(...)` is checked first and, on a match, admits the request with
+  **no domain check** — a shared secret has no email to read. The allowlist
+  bounds who may sign in with Clerk; it does not bound who holds your tokens.
+- A provider with neither `allowedDomains` nor `gate` admits everyone it can
+  authenticate, so putting one first makes the narrower providers behind it
+  unreachable — every user gets that provider's binding. Give each per-team
+  provider an admission rule, and put the broadest one last.
 - The credential API (§7) is Clerk-only and tries **every** Clerk provider in
   that same order, so an operator provider listed after a team-bound one still
   admits: a refusal (failed gate, or a toolkit-bound identity) falls through
@@ -1402,6 +1446,9 @@ Notes:
 - **Test users on a dev instance** use the `+clerk_test` email convention (e.g.
   `you+clerk_test@yourdomain`), which accepts the fixed OTP **424242** — no real
   inbox needed.
+- Steps 3–4 are the **Clerk-side** half of "only our people". The connecta-side
+  half is `allowedDomains: ["yourdomain.com"]` on `clerkAuth` (§5), checked
+  on every request rather than only at sign-up.
 - `.dev.vars` holds the keys and is **gitignored**; never commit it.
 - **Production instances are separate** — DCR and the allowlist/restrictions must
   be **re-applied** to the production instance; they do not carry over from dev.
@@ -1480,7 +1527,7 @@ Test suites (`test/`) and what they cover:
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
 | `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in, MCP URL derivation), gated `/ui/data` with broken-connector isolation, the credential API incl. same-origin/bearer rejection and the liveness verdict its Test action records (and its PUT/DELETE clear), `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
-| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), and the toolkit binding the provider declares for the users it admits |
+| `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), the toolkit binding the provider declares for the users it admits, and the `allowedDomains` allowlist (§5): construction-time rejection of every non-domain shape (empty list, non-array, `@`, trailing dot, Unicode lookalike), an admitted verified email, case-insensitivity on both sides, the lookalike/subdomain/substring non-matches (including an allowed domain hidden in a quoted local part), fail-closed on missing/unverified/malformed email and on a failing lookup, the malformed addresses that must not be *repaired* into a match (interior space, tab, newline, ideographic space, trailing root dot, a U+212A KELVIN SIGN `toLowerCase` would fold to ASCII), composition with `gate` (either denies, and the allowlist runs first so an outsider never reaches gate code), one cached verdict covering both, a denial logged with the domain bounded but never the address, and no lookup at all when the option is unset |
 | `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth.frontendApiUrl` dropped for not being absolute https (§14), an OAuth callback with no `verifyState`, the three toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth, authenticated-but-unbound, and partially-bound each get their own line, the last naming the unbound providers; declaring the exemption with `unscoped: true` silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout |
 | `validate.test.ts` | `validateToolInput()` — returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema-object validator caching, unusable-schema pass-through warned once |
@@ -2138,9 +2185,11 @@ bearerToken(env.SUPPORT_TOKEN, {
 ```
 
 The same two options exist on `clerkAuth` (§5), where they bind every user that
-provider admits; one `clerkAuth` per team, each with its own `gate`, splits users
-by team. Both adapters build the same `ToolkitBinding`, which is the only shape
-the server enforces:
+provider admits; one `clerkAuth` per team, each with its own admission rule
+(`allowedDomains` and/or `gate`), splits users by team. Admission and binding
+answer different questions — who gets into the org, versus what they see once
+they are in. Both adapters build the same `ToolkitBinding`, which is the only
+shape the server enforces:
 
 ```ts
 interface ToolkitBinding {

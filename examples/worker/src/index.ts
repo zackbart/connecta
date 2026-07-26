@@ -77,12 +77,14 @@ function build(env: Env) {
       // explicitly (rather than leaving the provider unbound) is what tells
       // connecta the exemption is deliberate, so it stops warning that one
       // credential still opens every view. Restrict WHO may sign in with
-      // `gate`; for per-team Clerk users, add one clerkAuth per team, each with
-      // its own `gate` and its own `toolkits`.
+      // `allowedDomains` (or a `gate`, for anything a domain cannot express);
+      // for per-team Clerk users, add one clerkAuth per team, each with its own
+      // admission rule and its own `toolkits`.
       clerkAuth({
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
         secretKey: env.CLERK_SECRET_KEY,
         publicUrl: env.PUBLIC_URL,
+        // allowedDomains: ["acme.com"],
         toolkits: ["support", "exec"],
         unscoped: true,
       }),

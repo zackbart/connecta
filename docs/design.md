@@ -209,7 +209,8 @@ keys `conn:<id>:oauth:client` etc.):
 Connecta's optional Clerk adapter uses a raw-fetch resource-server
 implementation on Workers:
 
-- `clerkAuth({ publishableKey, secretKey, publicUrl, gate? })`, imported from
+- `clerkAuth({ publishableKey, secretKey, publicUrl, allowedDomains?, gate? })`,
+  imported from
   `@zackbart/connecta/auth/clerk` — connecta is an
   OAuth 2.1 **resource server**; Clerk is the authorization server:
   - Serve `/.well-known/oauth-protected-resource` AND
@@ -229,8 +230,11 @@ implementation on Workers:
     stops a session token minted for a sibling origin being replayed here.
   - 401s follow RFC 6750: bare challenge when no token, `error="invalid_token"`
     when bad token, `resource_metadata` pointer always; no challenge on 403.
-  - Optional `gate(userId, clerkClient) => boolean` hook for restricting which
-    Clerk users are allowed (cached ~60s). Default: any authenticated user.
+  - Optional `allowedDomains: ["acme.com"]` (exact, case-insensitive match on
+    the verified primary email's domain; fails closed when it cannot be read)
+    and an optional `gate(userId, clerkClient) => boolean` hook for restricting
+    which Clerk users are allowed. Each configured one must pass, and one
+    verdict per user is cached (~60s). Default: any authenticated user.
   - Requires Dynamic Client Registration enabled in the Clerk dashboard
     (OAuth Applications → DCR toggle) so Claude/Cursor can self-register.
 - `bearerToken(secret)`: constant-time compare on `Authorization: Bearer` —

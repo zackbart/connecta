@@ -1,6 +1,6 @@
 // Clerk as the OAuth 2.1 authorization server; connecta is the resource server.
-// Single tenant, no tenant-tag requirement, optional gate() with ~60s identity
-// caching.
+// Single tenant, no tenant-tag requirement, optional allowedDomains/gate() with
+// ~60s identity caching.
 
 import { createClerkClient } from "@clerk/backend";
 import {
@@ -16,6 +16,18 @@ export interface ClerkAuthOptions extends ToolkitBindingOptions {
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
   publicUrl?: string;
+  /**
+   * Email domains this deployment admits, e.g. `["acme.com"]`. An
+   * authenticated user whose verified primary email is not on one of them is
+   * rejected exactly like a `gate` rejection. Matching is exact on the whole
+   * domain and case-insensitive: `acme.com` admits neither `evil-acme.com` nor
+   * `mail.acme.com` — spell a subdomain out to allow it. Entries must be ASCII
+   * (punycode for an internationalized domain) and are validated at
+   * construction. Absent ⇒ every authenticated user passes this check, as
+   * before the option existed. Governs Clerk sign-in only: a co-configured
+   * `bearerToken` has no email to read and is admitted without a domain check.
+   */
+  allowedDomains?: readonly string[];
   /** Optional allow-list hook. Return false to reject an authenticated user. */
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   /** Advertised scopes in protected-resource metadata. */
@@ -54,7 +66,119 @@ const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
 
 /**
+ * One label of a domain: ASCII letters/digits, interior hyphens only, 63
+ * characters at most. ASCII-only is deliberate — an internationalized domain
+ * must be in its punycode (`xn--…`) form, so a Unicode confusable can neither be
+ * typed into the allowlist nor arrive in an email address and pass for a domain
+ * the operator cannot tell from theirs by eye.
+ */
+const DOMAIN_LABEL_RE = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i;
+
+/**
+ * Is this string a domain, before any case folding? Both sides of the
+ * comparison — the operator's allowlist entries and the domain read off a
+ * user's email — are checked against this one grammar, so neither side can be
+ * *repaired* into a match by the normalization that follows: `"acme.com\n"` and
+ * `" acme.com"` are malformed, not `acme.com`, and an `akme.com` spelled with a
+ * U+212A KELVIN SIGN is rejected here rather than folded to plain ASCII `k` by
+ * `toLowerCase`.
+ */
+function isDomain(domain: string): boolean {
+  return (
+    domain.length > 0 &&
+    domain.length <= 253 &&
+    domain.includes(".") &&
+    domain.split(".").every((label) => DOMAIN_LABEL_RE.test(label))
+  );
+}
+
+/**
+ * Validate and lowercase `allowedDomains` at construction. Everything here
+ * throws rather than dropping the entry: an allowlist that does not say what
+ * its author meant is invisible until the day it admits the wrong caller.
+ */
+function normalizeAllowedDomains(
+  value: readonly string[] | undefined,
+): ReadonlySet<string> | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error("clerkAuth: `allowedDomains` must be an array of domains.");
+  }
+  if (value.length === 0) {
+    // Fail-closed, an empty list admits nobody and the deployment is dead on
+    // arrival; read as "no restriction", it is the one shape here that fails
+    // OPEN. Neither is what anyone meant to write.
+    throw new Error(
+      "clerkAuth: `allowedDomains` is empty. List at least one domain, or " +
+        "drop the option to admit every authenticated user.",
+    );
+  }
+  const domains = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a string.`,
+      );
+    }
+    // Surrounding whitespace is the one thing forgiven, and only here: this is
+    // operator config read at construction, where a stray space is a typo the
+    // operator can see in the throw. Nothing is forgiven on the email side.
+    const domain = entry.trim();
+    if (!isDomain(domain)) {
+      const hint = domain.includes("@")
+        ? " Write the domain alone, with no `@` and no local part."
+        : "";
+      throw new Error(
+        `clerkAuth: \`allowedDomains\` entry ${JSON.stringify(entry)} is not a ` +
+          `domain (expected something like "acme.com").${hint}`,
+      );
+    }
+    domains.add(domain.toLowerCase());
+  }
+  return domains;
+}
+
+/**
+ * Bounded, escaped form of the denied domain for the operator log — the same
+ * treatment `src/server.ts` gives a rejected toolkit name. An email domain is
+ * caller-influenced (anyone who controls a mailbox controls its domain): the
+ * bound is what a 253-byte domain needs, and the escaping — JSON.stringify plus
+ * the hand-rolled U+2028/U+2029 pass it leaves raw — is defense in depth behind
+ * `isDomain`, which has already ruled out the newline that would forge a line.
+ */
+function loggableDomain(domain: string): string {
+  const bounded = domain.slice(0, 100);
+  const escaped = JSON.stringify(bounded).replace(
+    /[\u2028\u2029]/g,
+    (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
+  );
+  return escaped + (bounded.length < domain.length ? " (truncated)" : "");
+}
+
+/**
+ * The domain of an email address, lowercased for comparison, or null when the
+ * address does not have exactly one well-formed domain to read.
+ *
+ * Nothing here repairs the input. The domain is validated as it arrived and
+ * only then lowercased, so `dev@ acme.com`, `dev@acme.com\n` and `dev@acme.com.`
+ * are malformed addresses that DENY, rather than whitespace-trimmed or
+ * dot-stripped into a match for `acme.com`. The split is on the last `@`, the
+ * part a mail system routes on, so this reads the same domain that would
+ * receive the mail. (Under exact set matching a first-`@` split could not fail
+ * open either — it would just read a domain nobody delivers to.)
+ */
+function emailDomain(email: string): string | null {
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at === email.length - 1) return null;
+  const domain = email.slice(at + 1);
+  return isDomain(domain) ? domain.toLowerCase() : null;
+}
+
+/**
  * Clerk inbound auth.
+ *
+ * `allowedDomains` and `gate` decide WHO is admitted (both must pass);
+ * `toolkits` decides WHICH view the admitted user gets.
  *
  * `toolkits` binds every user this provider admits to those toolkits (§16). For
  * a per-team split, configure one `clerkAuth(...)` per team — the same keys, a
@@ -68,6 +192,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     publishableKey: opts.publishableKey,
   });
   const toolkitBinding = resolveToolkitBinding("clerkAuth", opts);
+  const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
 
@@ -94,13 +219,70 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       { status: 403, headers: { "Content-Type": "application/json" } },
     );
 
+  /**
+   * The domain half of admission. Fails CLOSED on every uncertainty — no
+   * primary email, an unverified one, a malformed address, or the lookup
+   * itself failing — because "we could not tell" and "they belong here" must
+   * not be the same answer for a membership rule.
+   */
+  const checkDomain = async (userId: string): Promise<boolean> => {
+    if (!allowedDomains) return true;
+    let email: string | undefined;
+    try {
+      const user = await clerk.users.getUser(userId);
+      const primary = user.emailAddresses?.find(
+        (address) => address.id === user.primaryEmailAddressId,
+      );
+      if (primary?.verification?.status === "verified") {
+        email = primary.emailAddress;
+      }
+    } catch (error) {
+      console.warn(
+        `[connecta] clerk email lookup failed for ${userId}: ${
+          error instanceof Error ? error.message : String(error)
+        } — denying`,
+      );
+      return false;
+    }
+    const domain = email ? emailDomain(email) : null;
+    if (!domain) {
+      // One line for three cases (no primary email, unverified, or an address
+      // with no readable domain) because the caller must not be able to tell
+      // them apart — but it must not claim the email is missing when it is
+      // there and malformed.
+      console.warn(
+        `[connecta] clerk user ${userId} has no verified primary email with a ` +
+          "well-formed domain — denying",
+      );
+      return false;
+    }
+    if (!allowedDomains.has(domain)) {
+      // The domain, never the address: this is an operator log, not a place to
+      // spill the local part of someone's email on every denied request.
+      console.warn(
+        `[connecta] clerk user ${userId} denied: email domain ` +
+          `${loggableDomain(domain)} is not on allowedDomains`,
+      );
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * Is this authenticated user admitted? The domain allowlist and `gate` both
+   * have to say yes, and the allowlist runs first so an outsider never reaches
+   * operator gate code. One cached verdict covers both, so composing them costs
+   * no more Clerk calls than `gate` alone did.
+   */
   const checkGate = async (userId: string): Promise<boolean> => {
-    if (!opts.gate) return true;
+    if (!opts.gate && !allowedDomains) return true;
     const hit = gateCache.get(userId);
     if (hit && Date.now() < hit.exp) return hit.allowed;
     let allowed = false;
     try {
-      allowed = await opts.gate(userId, clerk);
+      allowed =
+        (await checkDomain(userId)) &&
+        (opts.gate ? await opts.gate(userId, clerk) : true);
     } catch {
       allowed = false;
     }
