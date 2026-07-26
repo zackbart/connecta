@@ -2,6 +2,364 @@
 
 All notable changes to this package are documented here.
 
+## 0.6.0 — 2026-07-26
+
+A feature release that makes two of 0.5.0's mechanisms protective rather than
+merely organizational. Toolkits gain an identity binding, so a credential opens
+the view its team was given and nothing else; connector status gains a proactive
+credential liveness layer, so an expired downstream token shows up as
+`auth_required` before an agent's call trips over it; and `clerkAuth` gains an
+email-domain allowlist. Eight fixes on the result path and the diagnostic
+surfaces sit underneath them. Nothing here is breaking — every new config key is
+optional and every new type is additive — but this release is *not* runtime-inert
+for a deployment that declares none of them, and the deltas are worth reading
+before upgrading:
+
+- **MCP-mode truncation now measures what it truncates.** A `kind: "mcp"`
+  connector's result whose size falls between the old text-only measure and the
+  serialized envelope came back inline in 0.5.0 and now truncates, pages, and
+  reports `totalBytes` in envelope bytes (issue #43, below). It is deliberate,
+  and it is the one change on the result path that a deployment can notice
+  without changing any configuration.
+- **A handler returning `undefined` renders as the text `undefined`** under
+  `resultMode: "mcp"`, where 0.5.0 emitted a `TextContent` block with no `text`
+  at all (issue #42). Every serializable return is byte-identical.
+- **The cheap status path reports more failures.** `list_connectors({ probe:
+  false })` now reads `error` for a connector whose *catalog* load keeps failing
+  (issue #46) and `auth_required` when a background liveness check found the
+  stored credential dead (issue #24). Both are the fix; both mean a connector
+  that read clean in 0.5.0 while being broken now reads broken.
+- **Credential liveness checks are on by default.** A deployment holding an
+  operator-managed `credential` or a downstream OAuth grant begins making
+  liveness calls — its own `testCredential(s)` hook, or the OAuth
+  `status(ctx)` refresh — piggybacked on authenticated `/mcp` and `/ui/data`
+  traffic, at most one per connector per 15 minutes. No downstream *tool* is
+  ever called and no catalog is fetched. Setting `credentialHealth.onRequest`
+  to `false` turns that trigger off; the explicit `checkCredentials()` call
+  stays available.
+- **Three textual deltas that no configuration turns off**, so anything
+  snapshotting them will diff: `get_result`'s tool description now documents the
+  `offset` domain and the codepoint realignment, reaching every deployment (its
+  JSON Schema is unchanged, `minimum: 0` either way); both favicon routes now
+  carry `X-Content-Type-Options` and a `Content-Security-Policy` header, with
+  the bodies byte-identical; and any deployment declaring toolkits gets a
+  rewritten startup warning, now split into three.
+
+The next intentional breaking release stays reserved for issue #28.
+
+### Added
+
+- **Toolkit ↔ identity binding — a credential opens the view its team was
+  given** (issue #37). Toolkits shipped in 0.5.0 with self-service selection:
+  any authenticated caller could name any toolkit, or omit `?toolkit=` and get
+  the whole registry. The binding closes that. It is declared **on the auth
+  adapter**, not in a deployment-level table keyed by identity id —
+  `bearerToken(secret, { subjectId: "support-team", toolkits: ["support"] })`,
+  and the same two options on `clerkAuth` — because a typo in such a key means
+  *unbound*, which fails open and hands over everything, while a typo in a
+  toolkit *name* throws at construction. `InboundAuth.toolkitBinding` is the
+  provider-wide declaration and `AuthResult.toolkitBinding` overrides it per
+  identity, the documented seam for an adapter mapping its own users to views;
+  the declaration is a **ceiling**, not a default — connecta intersects the two
+  and grants `unscoped` only if both do, so an adapter reading a user-writable
+  IdP claim cannot let a user widen their own binding. Enforcement is one point
+  (`resolveToolkitScope`, after the auth gate and before any `ScopedRegistry`
+  exists) deciding *whether* a scope is built; what a built scope contains stays
+  entirely in `ScopedRegistry`. For a bound identity, a toolkit outside the
+  binding, an undeclared or malformed name, and — without `unscoped: true` — a
+  connection with no `?toolkit=` are all **403, byte-identical in status and
+  body**, and the body names no toolkit: a team credential must not become a
+  directory of the org's other teams. The operator log is where the three
+  reasons are told apart, naming the identity, the reason and the binding, with
+  the same 64-character bounding and U+2028/U+2029 escaping the toolkit
+  rejection uses. A bound-but-not-`unscoped` identity is also refused the
+  deployment-wide operator surfaces — `/ui/data`, `/ui/activity`, and the
+  credential API — because those payloads describe every connector in the org
+  and a credential write reaches every view; `/health` and the open routes are
+  unchanged. **An unbound identity behaves exactly as 0.5.0 shipped**, and
+  bindings are per identity, so a legacy token beside two bound ones keeps
+  working. Bindings are validated in three places that each catch what the
+  others cannot: the adapter throws on a declaration that does not mean what it
+  says (`unscoped` with no `toolkits`, an empty `toolkits` without it, a name
+  outside the grammar, a non-array); `createConnecta` cross-checks every name
+  against the declared toolkits and throws on an unknown one; and **every
+  request re-validates the binding it is about to enforce**, because
+  `InboundAuth` is an open interface and neither half can be trusted from the
+  type — a binding that fails validation is a 403 with a log line, never a
+  silent drop, since dropping it would read as "unbound". `ToolkitBinding`,
+  `ToolkitBindingOptions` and `BearerTokenOptions` are exported. The startup
+  warning story changes with it (see Fixed).
+- **Proactive credential liveness checks, so a dead credential surfaces before
+  a call fails** (issue #24). A connector's auth status previously flipped only
+  when something *observed* a failure — an agent's real call erroring
+  `auth_required`, or an operator running `list_connectors({ probe: true })` —
+  so a revoked token surfaced mid-task. Connecta now checks the credentials it
+  stores and serves the verdict from the cheap surfaces. Only two credential
+  shapes are eligible, each asked through the hook that exists to answer exactly
+  this question: an operator-managed `credential` via `testCredentials(values)`
+  / `testCredential(value)` (the same call /ui's Test button makes), and a
+  downstream OAuth grant via `status(ctx)`, whose refresh *is* the liveness
+  question for a token. **A check never calls a downstream tool and never
+  fetches a catalog**, so it cannot mutate downstream state and no destructive
+  tool is reachable from it, and **a connector with nothing stored is never
+  probed** — a new optional `Connector.hasStoredCredential` answers for
+  connectors holding their own credential (`remoteMcp` implements it for
+  oauth) and the vault answers for the rest, so a timer never starts DCR and
+  consent for a connector nobody has authorized. The core starts **no timers**,
+  because it has to run unchanged on Workers: instead there are two triggers
+  sharing one budget — an authenticated `/mcp` or `/ui/data` request hands a
+  *due* sweep to `ctx.waitUntil` (never awaited by the request, never triggered
+  by an unauthenticated or refused one), and the new
+  `Connecta.checkCredentials({ baseUrl?, force?, ids? })` is an ordinary awaited
+  call for the host's own scheduler — wired to a cron trigger in the Worker
+  example and a `setInterval(...).unref()` in the Node and Docker ones —
+  returning one `CredentialCheckResult` per connector considered, and never
+  rejecting on a connector failure.
+  Cost is bounded four ways: eligibility, a persisted freshness window
+  (`intervalSeconds`, default 900, shared across isolates so repeated status
+  reads never each produce a check), one traffic-triggered sweep per interval
+  per isolate, and a per-check deadline (`timeoutMs`, default 30 000) with at
+  most `concurrency` (default 4) in flight. Verdicts are persisted under
+  `credhealth:<connectorId>` rather than held in memory, because on Workers the
+  cron isolate is not the isolate answering status reads. `list_connectors`
+  gains `credentialCheck: { state, checkedAt, message?, authorizationUrl? }`,
+  present only for connectors holding a stored credential, and /ui's connector
+  card renders it. What a verdict may *decide* is deliberately narrow and lives
+  in one function: only `auth_required` ever sets the `probe: false` status, and
+  only while nothing better has happened since — a real call that succeeded
+  after `checkedAt` retires it, read deployment-wide so a sibling toolkit's
+  success counts. An `error` verdict is **reported and decides nothing**: a
+  check that timed out or got a 502 failed to *complete* and learned nothing
+  about the credential, so letting it set the status would flip a working
+  connector to `error` for a whole interval on a DNS blip. An `ok` verdict
+  upgrades `unknown` to `ok` and never downgrades an observed failure, while
+  `auth_required` outranks even a newer real-call failure — both say something
+  is wrong, only one carries the URL that fixes it, and the failure stays
+  visible as `lastError`. Recovery needs no restart and is fenced against a
+  check in flight: a completed `/oauth/callback/<id>` and a credential `PUT` or
+  `DELETE` drop the verdict and advance a per-connector generation counter
+  (`credhealth:gen:<id>`) that a check captures at its start and re-reads before
+  writing, so a check that began before consent finished cannot resurrect the
+  stale `auth_required` and its stale consent URL. `credentialHealth` on
+  `ConnectaConfig` tunes all of it; `CredentialHealthConfig`,
+  `CredentialCheckResult`, `CredentialCheckSkip`, `CredentialCheckState` and
+  `CredentialHealthRecord` are exported. Automatic re-authorization is out of
+  scope — refresh rotation is already the OAuth flow's job and interactive
+  re-consent stays manual through `authorize_connector`. **Known gap, filed not
+  fixed:** a probe leaves a downstream MCP session open, because
+  `remoteMcp().status()` connects a client that nothing closes. That has been
+  true of `list_connectors({ probe: true })` and `/ui/data` since long before
+  this release; the sweep makes it periodic rather than operator-triggered.
+  Closing it needs a teardown seam on the `Connector` contract, so it is issue
+  #66 and is named in the docs beside the feature.
+- **`clerkAuth({ allowedDomains })` — "anyone @acme.com, nobody else" as one
+  option** (issue #58). The policy was expressible with `gate` already, but only
+  by hand-writing fetch-user / read-primary-email / compare-domain /
+  handle-the-lookup-failing in every deployment, a security-relevant idiom with
+  four ways to get subtly wrong. Matching is exact, case-insensitive and on the
+  whole domain: `acme.com` admits `dev@ACME.com` and rejects `evil-acme.com`,
+  `acme.com.evil.com`, `acme.co` and `mail.acme.com` — a subdomain must be
+  spelled out — and the address is split on its **last** `@`, so
+  `"dev@acme.com"@evil.com` resolves to `evil.com`. It **fails closed** on every
+  uncertainty (no primary email, an unverified one, a malformed address, a Clerk
+  lookup that throws), returning the same bare `403 {"error":"forbidden"}` a
+  `gate` rejection returns with no hint why, while the operator gets the reason
+  in the log with the domain bounded and escaped and never the local part of
+  anyone's address. The list is validated at construction — a non-domain, an
+  `@`, an empty list, a non-array, or a Unicode lookalike (internationalized
+  domains must be written in punycode) throws where the operator wrote it rather
+  than silently binding nothing. It composes with `gate`: each configured one
+  must pass, the allowlist is evaluated first so a caller outside the org never
+  reaches operator gate code, and one verdict per user covers both and rides the
+  existing identity cache, so it costs no more Clerk calls than `gate` alone. It
+  governs Clerk sign-in only — a co-configured `bearerToken` has no email to
+  read. Unset, no user lookup happens at all and any authenticated user is
+  admitted, exactly as before. Where this sits relative to the toolkit binding
+  is now documented explicitly: `allowedDomains`/`gate` decide **who gets into
+  the org**, the binding decides **what they see** once in. **Residual:** the
+  identity cache is a `Map` that never evicts, and an allowlist beside open
+  Clerk sign-up is the first configuration in which a stranger can populate it —
+  each denied user id costs a permanent entry for the life of the isolate. The
+  denial itself is correct and TTL'd; the footprint is issue #70.
+
+### Fixed
+
+- **MCP-mode truncation measured text blocks but truncated the envelope, and
+  never fired on non-text content at all** (issue #43). The quantity that
+  *decided* truncation was the text blocks' byte length; what was truncated,
+  stashed and reported as `totalBytes` was `JSON.stringify(content, null, 2)`,
+  the strictly larger envelope. So the head and `totalBytes` described a string
+  the cap was never compared against (pinned by a test where 240 bytes of text
+  sit in a 700-plus-byte envelope under a 300-byte cap — it came back inline
+  before and truncates now), and an all-non-text result scored zero text bytes,
+  so a single 50 KB base64 `image` block was returned inline, unbounded, with no
+  `resultId` to page from. One `guardContent` now measures the same string it
+  stashes and counts every block. What truncation *means* differs by content: an
+  all-text envelope keeps the historical head plus notice, since a JSON prefix
+  is still readable, while an envelope carrying any non-text block is replaced
+  by the `{ truncated, resultId, totalBytes, hint }` notice **alone**, because
+  the head of a half-written base64 image is useless and leaves unparseable
+  block structure. Either way the full envelope is stashed and pages back whole
+  through `get_result`, and the ~170-byte notice sits outside the cap as it
+  always has on the truncated-head path. Under the cap, blocks pass through
+  untouched and in order — including a result whose measurement itself is
+  impossible: a `BigInt` or a cycle makes the envelope stringify throw, which is
+  caught and falls back to returning the content untouched rather than failing a
+  call that used to pass. **The one thing an existing `kind: "mcp"` deployment
+  will notice** is stated above: results between the two measures now truncate.
+- **A handler returning `undefined` emitted a `TextContent` block with no
+  `text`** (issue #42). `JSON.stringify(undefined, null, 2)` *is* `undefined`,
+  not a string; `guardText` then measured `enc.encode(undefined)` — the empty
+  string, per the WebIDL default — took the under-cap early return, and emitted
+  the non-string unchanged, so clients received `{"content":[{"type":"text"}]}`,
+  which `TextContent` does not permit. The three guards that answer this same
+  question each defended differently, so they now share one
+  `serializeResultText`: JSON text for whatever JSON can represent, `String(
+  value)` for what JSON renders as `undefined`, and `guardText` normalizes at
+  the door so its size logic is unreachable with a non-string. A value JSON
+  cannot serialize at all still throws and is reported as a failure. The
+  semantics are now written down where `resultMode` is documented, including the
+  sharp edge that only a bare `undefined` renders as `undefined` — a function
+  renders as its **source text** and a Symbol as `Symbol(label)`, so a handler
+  mistakenly returning a closure puts the function's source in front of the
+  model.
+- **`get_result`'s `offset` had none of the defense issue #32 gave `maxBytes`**
+  (issue #38). An in-handler `offset: NaN` propagated through `Math.max(0,
+  Math.trunc(...))`, sliced to nothing, and serialized as `"offset": null` with
+  empty text and no `nextOffset` — the result vanished silently instead of
+  erroring. Validity is now one shared rule spelled once for the wire schema and
+  once in the handler, exactly as #32 did for the cap, and an out-of-domain
+  value is an ordinary input-validation error; an offset past the end of the
+  payload stays legal and answers with an empty final page. Separately, a legal
+  in-range offset landing mid-codepoint emitted U+FFFD; it is now aligned
+  **back** to that character's first byte — re-reading a few bytes is
+  recoverable, silently skipping the rest of a character is not — and the offset
+  actually served is what the response reports. Server-produced `nextOffset`
+  values are already boundaries and are served exactly as given, so paging is
+  byte-identical.
+- **A failing catalog lookup never recorded a connector health failure** (issue
+  #46). `call_tool`'s catalog-lookup catch returned a failure to the caller but,
+  unlike the execution catch a hundred lines below, never called
+  `recordFailure`, and neither `getTools` nor `refreshTools` compensated. A
+  connector whose `listTools` fails persistently — a revoked downstream grant,
+  the scenario the comment at that catch already named — therefore accumulated
+  no `consecutiveFailures` and read **clean** from `list_connectors({ probe:
+  false })` while every single call against it failed, which is precisely the
+  cheap signal an operator or agent consults to find a broken connector. Both
+  catalog-load sites now record: the shared `runCall` catch behind `call_tool`,
+  `call_destructive_tool` and `batch_call`, and the `execute_code` path's
+  provider build, which previously dropped a connector's whole sandbox namespace
+  with nothing but a `logger.warn`. The accounting deliberately stays at the
+  call sites rather than inside `Registry`: `registry` there is the connection's
+  *view*, so a toolkit-scoped session records into its own health log as well as
+  the deployment-wide one, and registry-level accounting would leave scoped
+  sessions blind while double-counting against the probe path that already
+  records. A warm-cache hit still records nothing in either direction — a hit is
+  not evidence of health.
+- **The toolkits startup warning fired for a configuration that cannot have the
+  risk it named** (issue #45), and now tells three different stories. The check
+  tested `config.toolkits` for truthiness; `{}` is truthy but resolves to no
+  selectable toolkit at all, so a deployment configured that way was told that
+  "any caller can choose any toolkit" — the kind of warning that teaches
+  operators to skim past the ones that matter. All warnings are now keyed off
+  the **resolved** toolkit map, the same one `?toolkit=` resolves against, so
+  they cannot drift from what is actually selectable. With the binding feature
+  the single warning splits into three, because the fix differs in each: toolkits
+  with no `auth` at all (no identity exists to bind — configure `auth` first);
+  toolkits with `auth` but no declared binding anywhere (the shape that
+  organizes without protecting); and the dangerous middle, toolkits with *some*
+  providers bound, which names the unbound ones — the shape where an operator
+  believes the deployment is separated while one forgotten credential opens every
+  view
+  and every deployment-wide surface. Declaring `toolkits: [...], unscoped: true`
+  is how an operator credential says so and stops appearing. The open-mode "no
+  inbound authentication" warning remains independent of the `toolkits` value.
+- **An unknown `?toolkit=` was undiagnosable from both ends** (issue #47). The
+  404 is correct and its body is well worded, but mainstream MCP clients treat a
+  404 on the transport endpoint as a transport failure and discard the body, and
+  nothing was logged — so a one-character typo in a hand-copied MCP URL gave the
+  user "failed to connect" and the operator nothing at all. A rejected selection
+  now emits an operator `logger.warn` naming the rejected value and the
+  configured toolkits, while the **response is byte-for-byte unchanged**: still
+  no enumeration, still the same bounded echo. The new channel is bounded and
+  unforgeable — the value is truncated to the same 64 characters the body echoes
+  at and escaped with `JSON.stringify` plus a hand-rolled escape for U+2028 and
+  U+2029, which `JSON.stringify` leaves raw — and the line is written **after**
+  the auth gate, so on a deployment with `auth` configured a caller the gate
+  rejects cannot make it log anything.
+- **The dead `maxResultBytes` parameter on the meta-tool constructors is gone**
+  (issue #44). Removed rather than exposed: `ConnectaConfig.maxResultBytes` and
+  the per-connector override are already the documented answer to where a
+  deployment sets the cap, a third global knob would need a precedence rule
+  nobody asked for, and `ServerOptions` never carried the field, so nothing
+  production could reach it — the constructors are internal factoring and are
+  not part of the exported API. Cap tests now configure the deployment cap the
+  way `createConnecta` does, so they also pick up its normalization, plus a new
+  end-to-end test that a `createConnecta({ maxResultBytes })` value truncates
+  and pages over the wire. The effective cap for a deployment that sets nothing
+  is unchanged.
+- **The documented `ApiOptions` and `RemoteMcpOptions` now match the source
+  field for field** (issue #41). Both were presented as verbatim `export
+  interface` listings while silently dropping real fields, which is worse than
+  no listing: `ApiOptions` lacked `credential`, `testCredential`,
+  `testCredentials` and `strictValidation` — putting the docs in direct
+  contradiction with the README quick start, which uses `credential` — and
+  `RemoteMcpOptions` lacked `requireHttps` and `logger`. Two of the omissions
+  are security controls, so `strictValidation` and `requireHttps` now carry
+  behavior, default and threat model verified against the implementation. Same
+  sweep: the credential field sub-shape had dropped `description`/`placeholder`,
+  the `validateToolInput` example omitted `failClosed`, and the `clerkAuth`
+  bullet claimed `authorizedParties: [connectaOrigin]` is passed to
+  `authenticateRequest` when the source deliberately does not — an OAuth access
+  token may carry no `azp` — and pins `azp` by hand for session tokens instead.
+  The remaining listings were checked against source and were accurate as
+  written. **Residual, filed not fixed:** the review that produced this pass
+  also found that `/ui` offers its credential Test button from the mere presence
+  of a test hook, without checking it matches the credential *shape* configured,
+  so a fully configured named-fields credential can answer "configure the
+  credential before testing it" (issue #55).
+
+### Security
+
+- **Favicon bodies are served inertly, completing the URL-position invariant**
+  (issue #31). `/favicon.svg` returned an operator-supplied SVG verbatim as
+  `image/svg+xml` with no `X-Content-Type-Options` and no CSP, so a `<script>`
+  inside a branding SVG executed **on the deployment origin** the moment anyone
+  navigated straight to the URL — strictly more powerful than the
+  `favicon.href` vector 0.5.0 closed, because the payload is same-origin. Both
+  favicon routes now answer with `X-Content-Type-Options: nosniff` and
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline';
+  sandbox`. Neutralizing the *response* rather than inspecting the body is what
+  keeps every valid static SVG byte-identical, the built-in mark included, and
+  inline styles stay allowed because the default mark uses one to follow the OS
+  colour scheme while CSS cannot script. `.ico` bodies are inert bytes and are
+  still served verbatim, but deliberately in scope of the same headers, so the
+  rule reads "every favicon route is neutralized" rather than "whichever route
+  happened to get attention".
+- **`uiAuth.frontendApiUrl` is scheme-gated.** It was the last operator-config
+  value reaching a URL-valued HTML position — the `<script src>` of `/ui`'s
+  sign-in loader — without one. It now requires an absolute `https:` URL,
+  deliberately stricter than the branding gates with no `http:` and no loopback
+  carve-out, because nobody types this value: `clerkAuth` derives it from the
+  publishable key and Clerk's Frontend API is always https. A rejected value
+  reaches neither position on the page — the loader tag is not emitted, and the
+  serialized `AUTH` object is enumerated field by field so the bad URL cannot
+  slip in through the inline script. `/ui` still renders, reports that Clerk
+  could not load, and `createConnecta` logs a warning naming the provider, the
+  same fallback-and-warn posture the branding drops established. **Residual:**
+  `uiAuth.signInUrl` and `signUpUrl` are operator config that reaches the
+  browser as a *navigation target* rather than as a rendered attribute, so the
+  invariant as written does not cover them and neither does any gate; the
+  exposure is narrow (`/ui`'s nonce CSP blocks a `javascript:` navigation on a
+  CSP3 browser, the `'unsafe-inline'` legacy fallback would not) but the
+  exception is the cost. Issue #56.
+- **`/oauth/callback/<id>` still distinguishes a real connector id from an
+  invented one** to an unauthenticated caller — 404 for unknown, 400 for a real
+  connector with a bad `state`. Nothing is authorized and `verifyState` still
+  holds, but the connector inventory leaks, which softens the same "not a
+  directory" property the toolkit binding above is built to provide.
+  Pre-existing, found while reviewing that binding, filed as issue #62.
+
 ## 0.5.0 — 2026-07-26
 
 A feature release. Toolkits, per-connector usage guides, and per-connector
