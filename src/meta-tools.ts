@@ -790,7 +790,6 @@ export function createMetaTools(
       const probe = args.probe ?? true;
       const out = await Promise.all(
         registry.listConnectors().map(async (c) => {
-          const checkedAt = new Date().toISOString();
           const statusStarted = Date.now();
           const observed = registry.healthFor(c.id);
           const verdict = await registry.credentialHealthFor(c.id);
@@ -812,7 +811,12 @@ export function createMetaTools(
             }
           } else if (
             verdict &&
-            credentialVerdictApplies(verdict, observed?.lastSuccessAt)
+            // Deployment-wide, deliberately, like `hasObservedSuccess` beside
+            // it: a sibling toolkit's successful call proves the shared
+            // credential works, and a verdict retired for one view but not
+            // another would make the same connector read differently per scope
+            // for a reason that has nothing to do with scope.
+            credentialVerdictApplies(verdict, registry.observedSuccessAt(c.id))
           ) {
             // The proactive layer (issue #24): a liveness check already found
             // the stored credential dead, so say so on the cheap path instead of
@@ -850,6 +854,31 @@ export function createMetaTools(
               ...(observed?.lastError ? { message: observed.lastError } : {}),
             };
           }
+          // Stamped where the observation actually happened — after the status
+          // probe, not before it. A 30-second probe stamped at its start would
+          // report a verdict older than it is, and would lose the race against a
+          // real call that succeeded WHILE it ran (that success must retire the
+          // verdict, and only an honest timestamp says so).
+          const checkedAt = new Date().toISOString();
+          // A live status probe IS a liveness observation of the stored
+          // credential, so it updates the same verdict a background check
+          // writes: the cached read afterwards agrees with what the operator
+          // just saw, and they are not swept again moments later. Recorded from
+          // the STATUS phase only, and only when the connector actually answered
+          // — a catalog refresh below is not a credential check (the sweep never
+          // fetches one), it is already counted in the health log, and letting
+          // its failure land here would spend the freshness budget on it. The
+          // registry ignores this for connectors storing no credential of ours.
+          if (probe && (status.state === "ok" || status.state === "auth_required")) {
+            await registry.recordCredentialHealth(c.id, {
+              state: status.state,
+              checkedAt,
+              ...(status.message ? { message: status.message } : {}),
+              ...("authorizationUrl" in status && status.authorizationUrl
+                ? { authorizationUrl: status.authorizationUrl }
+                : {}),
+            });
+          }
           let tools = registry.peekTools(c.id);
           // An auth_required status may have just started OAuth. A second
           // listTools probe would overwrite its state/verifier while returning
@@ -869,21 +898,6 @@ export function createMetaTools(
           }
           const latencyMs = Date.now() - statusStarted;
           const latestObserved = registry.healthFor(c.id);
-          // A live probe IS a liveness observation of the connector's stored
-          // credential, so it updates the same verdict a background check
-          // writes: an operator who just probed gets a consistent cached read
-          // afterwards, and does not get swept again moments later. The registry
-          // ignores this for connectors that store no credential of ours.
-          if (probe && status.state !== "unknown") {
-            await registry.recordCredentialHealth(c.id, {
-              state: status.state,
-              checkedAt,
-              ...(status.message ? { message: status.message } : {}),
-              ...("authorizationUrl" in status && status.authorizationUrl
-                ? { authorizationUrl: status.authorizationUrl }
-                : {}),
-            });
-          }
           const credentialCheck = probe
             ? await registry.credentialHealthFor(c.id)
             : verdict;

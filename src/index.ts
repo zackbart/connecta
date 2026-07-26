@@ -430,10 +430,16 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       // a guess. Say so instead: the fix is one config line.
       const baseUrl = opts.baseUrl ?? config.publicUrl;
       if (!baseUrl) {
-        throw new Error(
-          "checkCredentials() needs a base URL: set `publicUrl` on the config " +
-            "(recommended — it is also what downstream OAuth callbacks use) or " +
-            "pass checkCredentials({ baseUrl }).",
+        // Rejected, not thrown: the callers this is written for are
+        // `ctx.waitUntil(...)` and `.catch(...)` on the returned promise, and a
+        // synchronous throw escapes both — it would take down a scheduled
+        // handler instead of being reported by it.
+        return Promise.reject(
+          new Error(
+            "checkCredentials() needs a base URL: set `publicUrl` on the " +
+              "config (recommended — it is also what downstream OAuth " +
+              "callbacks use) or pass checkCredentials({ baseUrl }).",
+          ),
         );
       }
       return registry.checkCredentialHealth(baseUrl, {

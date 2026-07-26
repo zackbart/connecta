@@ -261,9 +261,12 @@ Stored credentials are checked for liveness *before* an agent's call trips over 
 dead one. Connecta asks each connector holding a credential it stores — a vault
 credential, or a downstream-OAuth grant — whether that credential still works,
 using the connector's own `testCredential(s)` or `status()` hook. No downstream
-tool is ever called. A failed check flips the connector to `auth_required` in
-`list_connectors({ probe: false })` and on `/ui`, with the URL to open; a later
-success (or re-authorizing) flips it back with no restart.
+tool is ever called. A check that finds the credential *rejected* flips the
+connector to `auth_required` in `list_connectors({ probe: false })` and on
+`/ui`, with the URL to open; a later success (or re-authorizing) flips it back
+with no restart. A check that merely failed to complete — a timeout, a 502 from
+the status endpoint — is reported but never decides the status: it learned
+nothing about the credential.
 
 Checks are triggered two ways and share one rate limit — at most one per
 connector per 15 minutes by default, four in flight, 30 s each:

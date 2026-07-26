@@ -444,16 +444,195 @@ describe("credential liveness checks", () => {
     expect(entry.credentialCheck).toMatchObject({ state: "auth_required" });
   });
 
-  it("a failed verdict does not mask this view's own real-call failures", async () => {
+  it("an auth_required verdict outranks even a newer real-call failure", async () => {
     const linear = grantConnector();
+    linear.state = "auth_required";
     const registry = makeRegistry([linear]);
     await registry.checkCredentialHealth(BASE);
+    // A real call failed AFTER the verdict. Both say something is wrong; only
+    // the verdict carries the URL that fixes it, so it stays the reported state
+    // and the call failure remains visible as lastError.
+    await sleep(2);
     registry.recordFailure("linear", 5, new Error("linear.search failed"));
 
     const entry = await cachedStatus(registry, "linear");
 
-    expect(entry.status).toBe("error");
-    expect(entry.message).toBe("linear.search failed");
+    expect(entry.status).toBe("auth_required");
+    expect(entry.authorizationUrl).toBe("https://auth.example/authorize?x=1");
+    expect(entry.lastError).toBe("linear.search failed");
+    expect(entry.consecutiveFailures).toBe(1);
+  });
+
+  it("an error verdict is reported but never decides the status", async () => {
+    const slow = grantConnector("slow");
+    const registry = makeRegistry([slow], {
+      credentialHealth: { timeoutMs: 10 },
+    });
+    // A real call succeeded, so this connector demonstrably works...
+    registry.recordSuccess("slow", 5);
+    // ...and then a check timed out. That is "the check did not complete", not
+    // evidence about the credential: a DNS blip or a slow status endpoint must
+    // not flip a working connector to error for a whole interval.
+    slow.status = () => new Promise<ConnectorStatus>(() => {});
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+    expect(outcome.record).toMatchObject({ state: "error" });
+
+    const entry = await cachedStatus(registry, "slow");
+
+    expect(entry.status).toBe("ok");
+    // Still visible to an operator: checks are failing, even if calls are not.
+    expect(entry.credentialCheck).toMatchObject({ state: "error" });
+  });
+
+  it("an error verdict does not invent evidence where there was none", async () => {
+    const boom = grantConnector("boom");
+    boom.status = async () => {
+      throw new Error("kaboom");
+    };
+    const registry = makeRegistry([boom]);
+    await registry.checkCredentialHealth(BASE);
+
+    const entry = await cachedStatus(registry, "boom");
+
+    expect(entry.status).toBe("unknown");
+    expect(entry.credentialCheck).toMatchObject({
+      state: "error",
+      message: "kaboom",
+    });
+  });
+
+  it("keeps a verdict cleared mid-check from resurrecting", async () => {
+    let entered!: () => void;
+    const arrived = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const linear = grantConnector();
+    linear.status = async () => {
+      entered();
+      await gate;
+      return {
+        state: "auth_required",
+        authorizationUrl: "https://auth.example/authorize?x=1",
+      };
+    };
+    const registry = makeRegistry([linear]);
+
+    const check = registry.checkCredentialHealth(BASE);
+    await arrived;
+    // The operator finishes consent while the check is still in flight — this is
+    // what /oauth/callback and the credential API do.
+    await registry.clearCredentialHealth("linear");
+    release();
+    const [outcome] = await check;
+
+    // The verdict it formed is about a credential that no longer exists, so it
+    // is reported to the caller but never stored: no stale auth_required, and
+    // no stale consent URL, surviving the re-authorization that fixed it.
+    expect(outcome.discarded).toBe(true);
+    expect(outcome.record).toMatchObject({ state: "auth_required" });
+    expect(await registry.credentialHealthFor("linear")).toBeUndefined();
+    expect((await cachedStatus(registry, "linear")).status).toBe("unknown");
+  });
+
+  it("stores the verdict when nothing cleared it mid-check", async () => {
+    const linear = grantConnector();
+    linear.state = "auth_required";
+    const registry = makeRegistry([linear]);
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome.discarded).toBeUndefined();
+    expect(await registry.credentialHealthFor("linear")).toMatchObject({
+      state: "auth_required",
+    });
+  });
+
+  it("reports an id that names no connector instead of silently checking nothing", async () => {
+    const linear = grantConnector();
+    const registry = makeRegistry([linear]);
+
+    const results = await registry.checkCredentialHealth(BASE, {
+      ids: ["linear", "typo"],
+    });
+
+    expect(results).toEqual([
+      {
+        connectorId: "linear",
+        record: { state: "ok", checkedAt: expect.any(String) },
+        latencyMs: expect.any(Number),
+      },
+      { connectorId: "typo", skipped: "not_found" },
+    ]);
+  });
+
+  it("skips a named-field credential the connector can only test as a single value", async () => {
+    let tested = 0;
+    const multi: Connector = {
+      id: "multi",
+      kind: "api",
+      description: "Multi-field API",
+      credential: {
+        label: "Service credentials",
+        fields: [
+          { name: "email", label: "Account email" },
+          { name: "apiKey", label: "API key" },
+        ],
+      },
+      // Only the single-value hook: there is no `value` field to hand it.
+      async testCredential() {
+        tested++;
+        return { ok: false, message: "should never run" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, KEY);
+    await vault.setAll(
+      "multi",
+      { email: "operator@example.com", apiKey: "api-key-1234" },
+      "user_1",
+    );
+    const registry = makeRegistry([multi], { storage, credentialVault: vault });
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    // Testing the empty string would record a confident auth_required about a
+    // credential nothing examined — the credential API refuses the same shape.
+    expect(outcome).toEqual({ connectorId: "multi", skipped: "not_checkable" });
+    expect(tested).toBe(0);
+    expect(await registry.credentialHealthFor("multi")).toBeUndefined();
+  });
+
+  it("clamps a verdict stamped in the future so it can age out", async () => {
+    const linear = grantConnector();
+    const storage = memoryStorage();
+    const registry = makeRegistry([linear], { storage });
+    // A clock-skewed isolate wrote this. Left alone it would be permanently
+    // fresh and permanently newer than any real-call success.
+    await storage.set(
+      "credhealth:linear",
+      JSON.stringify({
+        state: "auth_required",
+        checkedAt: new Date(Date.now() + 60 * 60_000).toISOString(),
+      }),
+    );
+
+    const record = await registry.credentialHealthFor("linear");
+
+    expect(Date.parse(record!.checkedAt)).toBeLessThanOrEqual(Date.now());
+    // ...and a success recorded now retires it, which the unclamped stamp would
+    // have made impossible.
+    registry.recordSuccess("linear", 5);
+    expect((await cachedStatus(registry, "linear")).status).toBe("ok");
   });
 });
 
@@ -475,6 +654,46 @@ describe("liveness verdicts and the live probe", () => {
     const [swept] = await registry.checkCredentialHealth(BASE);
     expect(swept).toMatchObject({ skipped: "fresh" });
     expect(linear.calls.status).toBe(1);
+  });
+
+  it("records the status observation, never a failing catalog refresh", async () => {
+    const linear = grantConnector();
+    // The credential is fine — status() says so — but the catalog fetch fails.
+    linear.listTools = async () => {
+      linear.calls.listTools++;
+      throw new Error("linear.search catalog fetch failed");
+    };
+    const registry = makeRegistry([linear]);
+
+    const probed = cachedEntry(
+      textOf(await createMetaTools(registry, BASE).listConnectors({})),
+      "linear",
+    );
+
+    // The connector is reported unhealthy, from the health log as before...
+    expect(probed.status).toBe("error");
+    expect(probed.consecutiveFailures).toBe(1);
+    // ...but a catalog fetch is not a credential check (the sweep never fetches
+    // one), so the verdict records what status() actually observed.
+    expect(probed.credentialCheck).toMatchObject({ state: "ok" });
+    expect(await registry.credentialHealthFor("linear")).toMatchObject({
+      state: "ok",
+    });
+  });
+
+  it("stamps a probe verdict at observation time, so a success during it still wins", async () => {
+    const linear = grantConnector();
+    linear.status = async () => {
+      await sleep(10);
+      return { state: "auth_required", authorizationUrl: "https://auth.example/a" };
+    };
+    const registry = makeRegistry([linear]);
+    const before = Date.now();
+
+    await createMetaTools(registry, BASE).listConnectors({});
+
+    const record = await registry.credentialHealthFor("linear");
+    expect(Date.parse(record!.checkedAt)).toBeGreaterThanOrEqual(before + 10);
   });
 
   it("keeps a probe of a connector with no stored credential out of the verdicts", async () => {
@@ -698,9 +917,55 @@ describe("the traffic-triggered sweep", () => {
       logger: silentLogger,
     });
 
-    expect(() => connecta.checkCredentials()).toThrow(/publicUrl/);
+    // Rejects rather than throws: `ctx.waitUntil(...)` and `.catch(...)` — the
+    // two ways this is called — cannot see a synchronous throw.
+    await expect(connecta.checkCredentials()).rejects.toThrow(/publicUrl/);
     await expect(
       connecta.checkCredentials({ baseUrl: BASE }),
     ).resolves.toHaveLength(1);
+  });
+
+  it("never makes the request wait for the sweep", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const linear = grantConnector();
+    linear.status = async () => {
+      linear.calls.status++;
+      await gate;
+      return { state: "ok" };
+    };
+    const connecta = deployment(linear);
+    const ctx = ctxWith();
+
+    const res = await mcpRequest(connecta, ctx);
+
+    // Response served while the sweep is still blocked on the downstream.
+    expect(res.status).toBe(200);
+    const settled = ctx.settled();
+    await expect(
+      Promise.race([settled.then(() => "settled"), Promise.resolve("pending")]),
+    ).resolves.toBe("pending");
+    release();
+    await settled;
+    expect(linear.calls.status).toBe(1);
+  });
+
+  it("serves the request normally when the sweep itself throws", async () => {
+    const linear = grantConnector();
+    const connecta = deployment(linear);
+    const warnings: unknown[] = [];
+    // A synchronous throw from the trigger — the half a rejected promise does
+    // not cover. It must not reach the response.
+    connecta.registry.sweepCredentialHealthIfDue = () => {
+      warnings.push("called");
+      throw new Error("sweep exploded");
+    };
+
+    const res = await mcpRequest(connecta, ctxWith());
+
+    expect(res.status).toBe(200);
+    expect(warnings).toEqual(["called"]);
   });
 });

@@ -964,16 +964,24 @@ export function createFetchHandler(
      * unless a sweep is actually due, so the ordinary request pays nothing.
      */
     const sweepCredentials = (): void => {
-      const sweep = registry.sweepCredentialHealthIfDue(baseUrl);
-      if (!sweep) return;
-      const settled = sweep.then(
-        () => {},
-        (err) => {
-          opts.logger.warn("[connecta] credential health sweep failed", err);
-        },
-      );
-      if (runtimeContext?.waitUntil) runtimeContext.waitUntil(settled);
-      else void settled;
+      // Belt and braces: a rejected sweep is already absorbed below, and this
+      // catches the synchronous half — arming the gate, or a connector list that
+      // throws while deciding whether anything is due. Nothing about a
+      // background health check may turn a served request into a 500.
+      try {
+        const sweep = registry.sweepCredentialHealthIfDue(baseUrl);
+        if (!sweep) return;
+        const settled = sweep.then(
+          () => {},
+          (err) => {
+            opts.logger.warn("[connecta] credential health sweep failed", err);
+          },
+        );
+        if (runtimeContext?.waitUntil) runtimeContext.waitUntil(settled);
+        else void settled;
+      } catch (err) {
+        opts.logger.warn("[connecta] credential health sweep failed", err);
+      }
     };
     // Container and orchestrator probes reach /health over plain HTTP on
     // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to

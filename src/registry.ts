@@ -196,6 +196,8 @@ export interface RegistryView {
   recordFailure(id: string, latencyMs: number, error: unknown): void;
   healthFor(id: string): HealthObservation | undefined;
   hasObservedSuccess(id: string): boolean;
+  /** When ANY view last saw a successful call to `id`, deployment-wide. */
+  observedSuccessAt(id: string): string | undefined;
   /** Last credential-liveness verdict for `id`. Cached; no downstream I/O. */
   credentialHealthFor(id: string): Promise<CredentialHealthRecord | undefined>;
   /** Store a liveness verdict a live status check just produced. */
@@ -551,7 +553,17 @@ export class Registry implements RegistryView {
    * failed — stays strictly per view.
    */
   hasObservedSuccess(id: string): boolean {
-    return this.health.get(id)?.lastSuccessAt !== undefined;
+    return this.observedSuccessAt(id) !== undefined;
+  }
+
+  /**
+   * The timestamp behind `hasObservedSuccess`, on the same deployment-wide
+   * terms and for the same reason: it says only *when* the connector last
+   * answered, never what was called or what failed. Credential health reads it
+   * to decide whether a failed verdict has been overtaken by real traffic.
+   */
+  observedSuccessAt(id: string): string | undefined {
+    return this.health.get(id)?.lastSuccessAt;
   }
 
   /**
@@ -850,6 +862,11 @@ export class ScopedRegistry implements RegistryView {
    */
   hasObservedSuccess(id: string): boolean {
     return this.visible(id) ? this.base.hasObservedSuccess(id) : false;
+  }
+
+  /** Deployment-wide for the same reason as `hasObservedSuccess` above. */
+  observedSuccessAt(id: string): string | undefined {
+    return this.visible(id) ? this.base.observedSuccessAt(id) : undefined;
   }
 
   /**

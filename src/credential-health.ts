@@ -22,6 +22,7 @@ import type {
   ConnectorContext,
   ConnectorCredentialValues,
   ConnectorStatusState,
+  CredentialTestResult,
   KVStorage,
   Logger,
 } from "./types.js";
@@ -43,8 +44,12 @@ export interface CredentialHealthRecord {
 /**
  * Why a connector was not checked.
  *
- * - `not_checkable` — it stores no credential connecta manages, or exposes
- *   neither `status()` nor a credential test hook to ask.
+ * - `not_found` — no connector with that id is registered. Only reachable
+ *   through an explicit `ids` request, and reported rather than dropped so a
+ *   typo in a scheduled check is visible instead of silent.
+ * - `not_checkable` — it stores no credential connecta manages, or exposes no
+ *   usable way to ask: neither `status()` nor a credential test hook that fits
+ *   the stored value's shape.
  * - `no_credential` — checkable, but nothing is stored yet: there is no
  *   credential whose liveness could be in question, and probing would start an
  *   OAuth flow nobody asked for.
@@ -53,6 +58,7 @@ export interface CredentialHealthRecord {
  * - `in_flight` — another check of this connector is already running.
  */
 export type CredentialCheckSkip =
+  | "not_found"
   | "not_checkable"
   | "no_credential"
   | "fresh"
@@ -68,6 +74,12 @@ export interface CredentialCheckResult {
   record?: CredentialHealthRecord;
   /** Set when no check ran; `record` is then whatever was already stored. */
   skipped?: CredentialCheckSkip;
+  /**
+   * The check ran, but its verdict was thrown away: the credential it judged
+   * was replaced or removed while it was in flight (see `clear`). `record` is
+   * what the check saw, not what is stored — nothing is.
+   */
+  discarded?: true;
   /** How long the check took, when one ran. */
   latencyMs?: number;
 }
@@ -122,6 +134,15 @@ function storageKey(connectorId: string): string {
   return `credhealth:${connectorId}`;
 }
 
+/**
+ * Generation counter key. Connector ids are `[a-z0-9_-]+`, so the extra colon
+ * puts this outside the space `storageKey` can produce — no id can collide with
+ * another id's counter.
+ */
+function generationKey(connectorId: string): string {
+  return `credhealth:gen:${connectorId}`;
+}
+
 function validRecord(raw: string | null): CredentialHealthRecord | null {
   if (!raw) return null;
   try {
@@ -135,9 +156,15 @@ function validRecord(raw: string | null): CredentialHealthRecord | null {
     ) {
       return null;
     }
+    const stamped = Date.parse(value.checkedAt);
+    const now = Date.now();
     return {
       state: value.state,
-      checkedAt: value.checkedAt,
+      // A verdict from the future is a clock-skewed isolate, and left alone it
+      // would be permanently fresh (never re-checked) AND permanently newer than
+      // any real-call success (never retired) — a wrong answer that cannot age
+      // out. Clamping to now costs at most one early re-check.
+      checkedAt: stamped > now ? new Date(now).toISOString() : value.checkedAt,
       ...(typeof value.message === "string" ? { message: value.message } : {}),
       ...(typeof value.authorizationUrl === "string"
         ? { authorizationUrl: value.authorizationUrl }
@@ -190,10 +217,50 @@ class CredentialHealthStore {
     return record ?? undefined;
   }
 
+  /**
+   * Monotonic per-connector counter, advanced by {@link clear}. Read straight
+   * from storage, never from the mirror: its whole job is to notice a change
+   * another isolate made, which a read cache would hide.
+   *
+   * A read failure answers 0. Paired with the fence in `put`, that fails
+   * *closed* — a mismatched generation drops the verdict — because losing one
+   * verdict costs a re-check, while resurrecting one costs an operator a
+   * connector that reports dead after they just fixed it.
+   */
+  async generation(connectorId: string): Promise<number> {
+    try {
+      const raw = await this.storage.get(generationKey(connectorId));
+      const value = raw ? Number(raw) : 0;
+      return Number.isFinite(value) ? value : 0;
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
+   * Write a verdict. `expectedGeneration` fences the write against a `clear`
+   * that landed while the check was in flight: pass the generation captured
+   * before the check started, and the write is dropped if it has since advanced.
+   * Omit it for a verdict observed synchronously (a live probe, an operator's
+   * Test), where there is no window to race.
+   *
+   * Returns whether the verdict was actually stored.
+   */
   async put(
     connectorId: string,
     record: CredentialHealthRecord,
-  ): Promise<void> {
+    expectedGeneration?: number,
+  ): Promise<boolean> {
+    if (
+      expectedGeneration !== undefined &&
+      (await this.generation(connectorId)) !== expectedGeneration
+    ) {
+      // The credential this verdict judged was replaced or removed mid-check.
+      // Drop the mirror too: this isolate's idea of the verdict is as stale as
+      // the write it just declined to make.
+      this.mirror.delete(connectorId);
+      return false;
+    }
     const current = await this.get(connectorId);
     const unchanged =
       current !== undefined &&
@@ -205,7 +272,7 @@ class CredentialHealthStore {
       Date.parse(record.checkedAt) - Date.parse(current.checkedAt) <
         MIN_WRITE_GAP_MS
     ) {
-      return;
+      return true;
     }
     this.mirror.set(connectorId, { record, readAt: Date.now() });
     try {
@@ -215,11 +282,22 @@ class CredentialHealthStore {
         `[connecta] connector "${connectorId}" credential-health persistence failed: ${msg(err)}`,
       );
     }
+    return true;
   }
 
+  /**
+   * Forget a connector's verdict, and advance its generation so a check already
+   * in flight — in this isolate or any other — cannot write the verdict it
+   * formed about the credential that was just replaced.
+   *
+   * Bump BEFORE the delete, the same ordering the OAuth force path uses: a
+   * racing writer must see the advance rather than land between the two writes.
+   */
   async clear(connectorId: string): Promise<void> {
     this.mirror.delete(connectorId);
     try {
+      const next = (await this.generation(connectorId)) + 1;
+      await this.storage.set(generationKey(connectorId), String(next));
       await this.storage.delete(storageKey(connectorId));
     } catch (err) {
       this.logger.warn(
@@ -275,6 +353,32 @@ export function isCheckableConnector(connector: Connector): boolean {
       connector.status,
   );
   return hasCredentialStore && canAsk;
+}
+
+/**
+ * The credential test that fits the STORED value's shape, or undefined.
+ *
+ * `isCheckableConnector` answers the static question ("could this connector be
+ * asked at all"); this answers it against what is actually in the vault. The gap
+ * that matters is a connector with named fields but only the single-value
+ * `testCredential` hook: handing it `values.value` — the reserved single-value
+ * field, absent here — would test the empty string and record a confident
+ * `auth_required` about a credential nothing examined. The credential API
+ * refuses that same shape with a 409 rather than testing it; here the connector
+ * is skipped rather than given an invented verdict.
+ */
+function testHookFor(
+  connector: Connector,
+  values: ConnectorCredentialValues | null,
+): ((ctx: ConnectorContext) => Promise<CredentialTestResult>) | undefined {
+  if (!values) return undefined;
+  if (connector.testCredentials) {
+    return (ctx) => connector.testCredentials!(values, ctx);
+  }
+  if (connector.testCredential && typeof values.value === "string") {
+    return (ctx) => connector.testCredential!(values.value, ctx);
+  }
+  return undefined;
 }
 
 /** Run `fn` over `items` with at most `limit` in flight, preserving order. */
@@ -403,13 +507,16 @@ export class CredentialHealthChecker {
     baseUrl: string,
     opts: CredentialCheckOptions = {},
   ): Promise<CredentialCheckResult[]> {
-    const targets = opts.ids
-      ? opts.ids
-          .map((id) => this.deps.getConnector(id))
-          .filter((c): c is Connector => c !== undefined)
+    // An id naming no connector is reported, not dropped: a typo in a scheduled
+    // check would otherwise return an empty list that looks exactly like a
+    // deployment with nothing to check.
+    const targets: Array<Connector | string> = opts.ids
+      ? opts.ids.map((id) => this.deps.getConnector(id) ?? id)
       : this.deps.listConnectors();
-    return mapWithConcurrency(targets, this.concurrency, (connector) =>
-      this.checkOne(connector, baseUrl, opts),
+    return mapWithConcurrency(targets, this.concurrency, (target) =>
+      typeof target === "string"
+        ? Promise.resolve({ connectorId: target, skipped: "not_found" as const })
+        : this.checkOne(target, baseUrl, opts),
     );
   }
 
@@ -482,6 +589,10 @@ export class CredentialHealthChecker {
   ): Promise<CredentialCheckResult> {
     const connectorId = connector.id;
     const started = Date.now();
+    // Captured BEFORE anything downstream happens: everything after this point
+    // is a window in which the operator may replace the very credential being
+    // judged, and `settle` fences the write against exactly that.
+    const generation = await this.store.generation(connectorId);
     const ctx = this.deps.contextFor(connectorId, baseUrl, requestScope);
     let values: ConnectorCredentialValues | null = null;
     if (connector.credential && this.deps.credentialVault) {
@@ -491,7 +602,7 @@ export class CredentialHealthChecker {
         // A stored credential that cannot be decrypted (rotated key, corrupt
         // envelope) is exactly the kind of dead credential this feature exists
         // to surface early, so it is a verdict rather than a skip.
-        return this.settle(connectorId, started, {
+        return this.settle(connectorId, started, generation, {
           state: "auth_required",
           checkedAt: new Date().toISOString(),
           message: msg(err),
@@ -504,6 +615,9 @@ export class CredentialHealthChecker {
           .catch(() => values !== null)
       : values !== null;
     if (!stored) return { connectorId, skipped: "no_credential" };
+    if (!this.canAsk(connector, values)) {
+      return { connectorId, skipped: "not_checkable" };
+    }
 
     try {
       const verdict = await withTimeout(
@@ -511,12 +625,12 @@ export class CredentialHealthChecker {
         this.timeoutMs,
         `credential check of "${connectorId}"`,
       );
-      return await this.settle(connectorId, started, {
+      return await this.settle(connectorId, started, generation, {
         ...verdict,
         checkedAt: new Date().toISOString(),
       });
     } catch (err) {
-      return await this.settle(connectorId, started, {
+      return await this.settle(connectorId, started, generation, {
         state: "error",
         checkedAt: new Date().toISOString(),
         message: msg(err),
@@ -525,8 +639,20 @@ export class CredentialHealthChecker {
   }
 
   /**
+   * `isCheckableConnector` re-asked against what is actually stored: a hook that
+   * fits the value's shape (see {@link testHookFor}), or a `status()` to fall
+   * back on. Neither ⇒ there is no honest question to put to this connector.
+   */
+  private canAsk(
+    connector: Connector,
+    values: ConnectorCredentialValues | null,
+  ): boolean {
+    return Boolean(testHookFor(connector, values) || connector.status);
+  }
+
+  /**
    * Ask the connector whether the credential it holds still works — with no
-   * downstream mutation and no tool call. `testCredential(s)` is preferred for a
+   * downstream mutation and no tool call. A credential test is preferred for a
    * vault credential because it validates the stored value itself; `status()` is
    * the downstream-OAuth answer (it refreshes the grant, which is the liveness
    * question for a token).
@@ -536,10 +662,9 @@ export class CredentialHealthChecker {
     ctx: ConnectorContext,
     values: ConnectorCredentialValues | null,
   ): Promise<Omit<CredentialHealthRecord, "checkedAt">> {
-    if (values && (connector.testCredentials || connector.testCredential)) {
-      const result = connector.testCredentials
-        ? await connector.testCredentials(values, ctx)
-        : await connector.testCredential!(values.value ?? "", ctx);
+    const test = testHookFor(connector, values);
+    if (test) {
+      const result = await test(ctx);
       if (result.ok) {
         return { state: "ok", ...(result.message ? { message: result.message } : {}) };
       }
@@ -566,28 +691,45 @@ export class CredentialHealthChecker {
   private async settle(
     connectorId: string,
     started: number,
+    generation: number,
     record: CredentialHealthRecord,
   ): Promise<CredentialCheckResult> {
-    await this.store.put(connectorId, record);
-    return { connectorId, record, latencyMs: Date.now() - started };
+    const stored = await this.store.put(connectorId, record, generation);
+    return {
+      connectorId,
+      record,
+      ...(stored ? {} : { discarded: true as const }),
+      latencyMs: Date.now() - started,
+    };
   }
 }
 
 /**
- * Whether a liveness verdict is still the freshest thing known about a
- * connector, or has been overtaken by a successful real call.
+ * Whether a liveness verdict may DECIDE a connector's cached status.
  *
- * A failed check governs the cached status only while nothing better has
- * happened since: real traffic is stronger evidence than a background probe, so
- * a `lastSuccessAt` at or after `checkedAt` retires the verdict rather than
- * leaving `list_connectors({ probe: false })` insisting on `auth_required` a
- * working connector has already disproved. The next check re-decides.
+ * Only `auth_required` ever does, and only while nothing better has happened
+ * since. Two separate judgements:
+ *
+ * 1. **`error` is not credential evidence.** A check that timed out, threw, or
+ *    got a 502 from the provider's status endpoint failed to *complete* — it
+ *    learned nothing about the credential. Letting it set the status would flip
+ *    a connector whose calls are fine to `error` for a whole interval on a DNS
+ *    blip. Error verdicts stay visible in `credentialCheck` (an operator wants
+ *    to know checks are failing) but the status keeps coming from observed real
+ *    calls, which is evidence.
+ * 2. **A successful real call retires the verdict.** Traffic beats a background
+ *    probe, so a `lastSuccessAt` at or after `checkedAt` means the credential
+ *    demonstrably works whatever the check concluded. The next check re-decides.
+ *
+ * `auth_required` deliberately outranks an observed real-call *failure*: both
+ * say something is wrong, and only one of them carries the URL that fixes it.
+ * The failure stays visible as `lastError`.
  */
 export function credentialVerdictApplies(
   record: CredentialHealthRecord | undefined,
   lastSuccessAt: string | undefined,
 ): boolean {
-  if (!record || record.state === "ok") return false;
+  if (!record || record.state !== "auth_required") return false;
   if (!lastSuccessAt) return true;
   const success = Date.parse(lastSuccessAt);
   return Number.isNaN(success) || success < Date.parse(record.checkedAt);
