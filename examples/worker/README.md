@@ -110,7 +110,8 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
      error_code     TEXT,
      server_name    TEXT NOT NULL,
      server_version TEXT NOT NULL,
-     deployment_id  TEXT
+     deployment_id  TEXT,
+     toolkit_id     TEXT
    );
 
    CREATE INDEX IF NOT EXISTS tool_call_activity_recent
@@ -130,7 +131,9 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
    ```
 
 Events carry no arguments, results, generated code, or raw error messages — see
-[documentation.md §15](../../docs/documentation.md#15-activity-history). The
+[documentation.md §15](../../docs/documentation.md#15-activity-history).
+`toolkit_id` records which of the scoped views above a call came through, so an
+operator can tell the support team's traffic from the exec team's. The
 Worker entrypoint already forwards `ctx` to `connecta.fetch`, which is what lets
 async activity writes settle on `waitUntil`.
 

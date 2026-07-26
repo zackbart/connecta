@@ -11,6 +11,11 @@ for the *why* behind the design see [`design.md`](./design.md).
 4. [Connectors](#4-connectors)
    - [Conventions](#conventions)
    - [Per-connector usage guides](#per-connector-usage-guides)
+   - [The `Connector` interface](#the-connector-interface)
+   - [`remoteMcp(id, opts)`](#remotemcpid-opts)
+   - [`api(id, opts)`](#apiid-opts)
+   - [Writing a custom connector](#writing-a-custom-connector)
+   - [Tool-list caching](#tool-list-caching)
 5. [Inbound auth](#5-inbound-auth)
 6. [Downstream OAuth](#6-downstream-oauth)
 7. [Storage](#7-storage)
@@ -318,7 +323,9 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   (a `createConnecta` option, default **50 000**, overridable per connector —
   see [§4](#the-connector-interface)), the full text is stashed in
   storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
-  a namespace kept separate from every connector's `conn:<id>:`) and only
+  a namespace kept separate from every connector's `conn:<id>:`; a
+  toolkit-scoped session stashes under `results:toolkit:<name>:` instead, so it
+  can only page results it produced — [§16](#16-toolkits-scoped-views)) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
   `{ "truncated": true, "resultId", "totalBytes", "hint" }`. Page the rest with
   `get_result`, or re-call with `fields` to select less. A cap is a whole number
@@ -534,6 +541,13 @@ connector set is fixed at construction, so this is stable per deployment — and
 a deployment with no guides serves every one of those strings exactly as it
 always has, paying no always-loaded context for a feature it does not use.
 
+Guides follow the connection's scope. In a toolkit-scoped session
+([§16](#16-toolkits-scoped-views)) `skills({})` lists only in-scope connectors'
+guides, `skills({ name: "connector:<id>" })` for an out-of-scope connector
+returns the same error as an unknown connector, and the conditional discovery
+text above is computed from the **scoped** connector set — so a scoped session
+never learns from a tool description that guides exist outside its view.
+
 **Style.** Write for the agent, not the operator — the built-in `usage` skill
 (`src/skills.ts`) is the model. Concise and imperative; lead with the decision
 ("Search before listing"), not with background. Prefer short bullets over
@@ -628,7 +642,8 @@ serves a *larger* head than the default (a negative slice end counts from the
 end of the buffer) while still claiming truncation, and `Infinity` disables the
 guard with no truncation notice at all. Operator config warns and falls back;
 `get_result`'s client-supplied `maxBytes` is a validation error instead
-([§3](#3-the-meta-tools)), matching how other meta-tool arguments are checked.
+([§3](#3-meta-tools-reference)), matching how other meta-tool arguments are
+checked.
 Everything else about truncation is unchanged — same
 `{ truncated, resultId, totalBytes, hint }` notice, same `get_result` paging
 (whose default page size stays on the deployment-wide value, since a stashed
@@ -644,6 +659,13 @@ knowing it also widens every batch that connector takes part in. Second,
 global or per-connector: the sandbox hands tool results to the guest as plain
 unwrapped values and guards only the program's final return, with its own
 ~24k-char limit ([§13](#behavior-details)).
+
+A cap is a property of the **connector**, not of a view. A toolkit-scoped
+session ([§16](#16-toolkits-scoped-views)) resolves exactly the same
+per-connector → deployment-wide → default chain, so a connector truncates at
+the same size in every scope, and `get_result`'s default page size stays on the
+deployment-wide value in every scope too. What a toolkit changes is only
+*which* stashed results a session may page back.
 
 **Result wrapping** (in `call_tool`): `kind: "mcp"` passes the returned
 `{ content, isError }` through as-is; anything else (the `api()` default)
@@ -1048,6 +1070,7 @@ when the response returns. `ConnectaConfig`:
 | --- | --- | --- |
 | `connectors` | — (required) | the connector set |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array (§5) |
+| `toolkits?` | unset ⇒ every connection sees the full registry | named scoped views selected with `?toolkit=` ([§16](#16-toolkits-scoped-views)); structural mistakes throw at construction |
 | `storage?` | `memoryStorage()` | the one state seam (§7) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console` prefixed `[connecta]` | `{ debug, info, warn, error }` |
@@ -1061,6 +1084,7 @@ when the response returns. `ConnectaConfig`:
 | `toolCatalogStaleSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
 | `maxResultBytes?` | 50 000 | inline result cap before truncation + `get_result` paging, as a whole number of bytes >= 1 (out-of-range values warn at startup and fall back to the default); a connector may override it with its own `maxResultBytes` (§4) |
 | `defaultToolTimeoutMs?` | **unset (opt-in)** | deadline for `call_tool`/`batch_call` calls that pass no `timeoutMs`; an explicit per-call value always wins. Unset by default because switching it on globally would put a deadline on every call in an existing deployment. Bounds one *attempt*, so a call with `maxRetries` can run to roughly `(maxRetries + 1)` times that value plus backoff |
+| `probeTimeoutMs?` | 30 000 | how long the discovery meta-tools (`list_connectors` probes, and the catalog fan-out behind `search_tools`/`describe_tools`) wait on one connector before giving up on it. Bounds the caller-facing wait only; it does not apply to `call_tool`/`batch_call`, which use `defaultToolTimeoutMs` |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
 | `executor?` | unset ⇒ nine tools | code-mode sandbox ([§13](#13-code-mode-execute_code)) |
@@ -1723,6 +1747,12 @@ one class, not nine handlers.
   registry and filters the array it gets back. Two toolkits over the same
   connector share one cached catalog and one downstream connection budget;
   neither can poison the other's view.
+- **Result caps are a property of the connector, not of the view.** The
+  per-connector → deployment-wide → default chain behind `maxResultBytes`
+  ([§4](#the-connector-interface)) resolves identically in every scope, and
+  `get_result`'s default page size stays on the deployment-wide value
+  everywhere. A toolkit narrows *which* stashed results a session may page,
+  never how large a page or an inline result is.
 - **Connector health details are per view.** `list_connectors` returns recent
   real-call observations, and a failure's `lastError` is a downstream string
   that routinely names the tool that failed. Each toolkit therefore accumulates
@@ -1763,15 +1793,18 @@ own scope. The property that holds is the one that matters: once a scope is
 selected, nothing inside it reveals or reaches what is outside it.
 
 Binding a specific member or credential to a specific toolkit is a deliberate
-follow-up. The seam already exists: an `InboundAuth` adapter sees the full
-request, `?toolkit=` included, so it can refuse a request whose toolkit does not
-match the caller before the scope is ever built.
+follow-up, tracked as
+[issue #37](https://github.com/zackbart/connecta/issues/37) — nothing in this
+section anticipates it, and until it lands, a toolkit organizes the surface
+rather than protecting it. The seam already exists: an `InboundAuth` adapter
+sees the full request, `?toolkit=` included, so it can refuse a request whose
+toolkit does not match the caller before the scope is ever built.
 
 ### Validation
 
 Toolkit definitions are validated when `createConnecta` runs, and structural
-mistakes **throw** rather than warn — a toolkit is an access boundary, and a
-typo'd id is a scope you did not write:
+mistakes **throw** rather than warn — a typo'd id is a scope you did not write,
+and a scope nobody wrote is not one an operator can reason about:
 
 - an unknown toolkit name grammar (names are `[a-z0-9_-]+`, like connector ids),
 - a toolkit selecting no connectors,
