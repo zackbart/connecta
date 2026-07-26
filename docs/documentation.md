@@ -287,7 +287,7 @@ are `[a-z0-9_-]+` (no dots), so a downstream tool name may itself contain dots.
   attempts }` (`retryAfterMs` only when the connector reported a wait window).
 - **Result-size guard.** If the result text exceeds `maxResultBytes`
   (a `createConnecta` option, default **50 000**, overridable per connector —
-  see [§4](#conventions)), the full text is stashed in
+  see [§4](#the-connector-interface)), the full text is stashed in
   storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
   a namespace kept separate from every connector's `conn:<id>:`) and only
   the first `maxResultBytes` bytes are returned, followed by a JSON notice line
@@ -440,17 +440,6 @@ construction time.
   constraints. E.g. `Send an email via Resend; html body required.`
 - **inputSchema** — always `{ type: "object" }`; **every** property carries a
   `description`, and `required` accurately lists the mandatory properties.
-- **`maxResultBytes?`** — *optional* per-connector inline result cap, in bytes.
-  Connectors have very different result profiles, so the deployment-wide
-  `ConnectaConfig.maxResultBytes` (§8) is only a starting point: set a tighter
-  value on a chatty search connector, or a looser one on a document-fetch
-  connector whose payloads are legitimately large. Precedence is
-  **per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per
-  call, so one `batch_call` may mix a connector on its own cap with siblings on
-  the global one. Everything else about truncation is unchanged — same
-  `{ truncated, resultId, totalBytes, hint }` notice, same `get_result` paging.
-  It is a field on the `Connector` interface, so `remoteMcp()`, `api()`, and
-  custom connectors all accept it.
 
 ### The `Connector` interface
 
@@ -462,7 +451,7 @@ interface Connector {
   title?: string;                // display name; `id` stays the address prefix
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
-  maxResultBytes?: number;       // per-connector inline result cap (see above)
+  maxResultBytes?: number;       // per-connector inline result cap (see below)
   credential?: {
     label: string;
     description?: string;
@@ -518,6 +507,28 @@ and the first connector returning a Response wins. These routes are **public**:
 connecta applies no auth gate to them, so a connector serving data here must
 authenticate the request itself (for example with a signed capability token in
 the URL).
+
+`maxResultBytes` is an *optional* per-connector inline result cap, in bytes.
+Connectors have very different result profiles, so the deployment-wide
+`ConnectaConfig.maxResultBytes` ([§8](#8-running-it)) is only a starting point:
+set a tighter value on a chatty search connector, or a looser one on a
+document-fetch connector whose payloads are legitimately large. Precedence is
+**per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per call.
+Everything else about truncation is unchanged — same
+`{ truncated, resultId, totalBytes, hint }` notice, same `get_result` paging
+(whose default page size stays on the deployment-wide value, since a stashed
+result carries no connector identity). Both factories accept it, and so does any
+custom connector, since it is a plain field on the interface.
+
+Two consequences are worth stating outright. First, one `batch_call` may mix a
+connector on its own cap with siblings on the global one, so a batch's total
+inline size is the **sum of the participating connectors' caps** rather than the
+`10 × ConnectaConfig.maxResultBytes` it was before — widen a connector's cap
+knowing it also widens every batch that connector takes part in. Second,
+`execute_code` host-call results are **not** bounded by `maxResultBytes` at all,
+global or per-connector: the sandbox hands tool results to the guest as plain
+unwrapped values and guards only the program's final return, with its own
+~24k-char limit ([§13](#behavior-details)).
 
 **Result wrapping** (in `call_tool`): `kind: "mcp"` passes the returned
 `{ content, isError }` through as-is; anything else (the `api()` default)

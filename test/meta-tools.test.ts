@@ -1514,6 +1514,39 @@ describe("per-connector maxResultBytes override", () => {
     expect(assembled).toBe(FULL);
   });
 
+  it("pages an override-truncated result with get_result's default page size", async () => {
+    // Cap above the global one but below the payload: truncation happens at
+    // the connector's 300 while get_result, given no maxBytes, falls back to
+    // the deployment-wide 100 — so this covers both the larger-than-global
+    // truncation and get_result's default page size in one round trip.
+    const mt = createMetaTools(makeRegistry([capped("wide", 300)]), BASE, {
+      maxResultBytes: 100,
+    });
+    const { head, notice } = truncation(
+      await mt.callTool({ address: "wide.big" }),
+    );
+    expect(head).toBe(FULL.slice(0, 300));
+
+    let offset = 0;
+    let assembled = "";
+    let pages = 0;
+    for (;;) {
+      const page = textOf(
+        await mt.getResult({ id: notice.resultId, offset }),
+      ) as { text: string; nextOffset?: number; totalBytes: number };
+      pages++;
+      expect(page.totalBytes).toBe(FULL.length);
+      expect(page.text.length).toBeLessThanOrEqual(100);
+      assembled += page.text;
+      if (page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+    // 502 bytes in 100-byte default pages — the global cap, not the 300 the
+    // connector truncated at.
+    expect(pages).toBe(6);
+    expect(assembled).toBe(FULL);
+  });
+
   it("value mode honours the override too", async () => {
     const mt = createMetaTools(
       makeRegistry([capped("tight", 100), capped("wide", 1_000)]),
