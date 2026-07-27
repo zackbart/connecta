@@ -268,6 +268,10 @@ binding cannot narrow a view, and a view cannot admit an identity.
   toolkit that can see it. This is not new — before toolkits, any authenticated
   client could do it to any connector — but a toolkit narrows *which* connectors
   a session can do it to, not the blast radius on the ones it can.
+- **Operator OAuth changes stay deployment-wide.** The Connections page's
+  Disconnect/Reconnect actions are refused to toolkit-restricted identities,
+  just like vault mutation: replacing a connector's grant affects every view
+  that includes it.
 - **Activity records normally.** Calls through a toolkit produce the same events
   as unscoped calls, plus `toolkitId` on the event ([activity history](./operator-ui.md#activity-history)) so an operator can see
   which team's view a call came through.

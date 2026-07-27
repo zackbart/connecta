@@ -451,6 +451,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       { cause },
     );
 
+  class OperatorDisconnectedError extends ConnectorCallError {
+    constructor() {
+      super(
+        "auth_required",
+        `Connector "${id}" was disconnected by an operator — explicitly start authorization to reconnect it.`,
+      );
+    }
+  }
+  const operatorDisconnectedError = () => new OperatorDisconnectedError();
+
   const scopeEndedError = () =>
     new Error(`Connector "${id}" scope ended during connection.`);
 
@@ -571,13 +581,35 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         new UnauthorizedError("Downstream authorization is no longer valid."),
       );
     }
+    // Read the OAuth epoch before trusting either a cached client or starting a
+    // transport. A disconnected epoch is a durable operator instruction, not
+    // merely the absence of credentials: passive status/tool probes must not
+    // turn it back into a pending consent flow.
+    let oauthGeneration: string | undefined;
+    if (isOauth && (state.client || state.connecting)) {
+      const provider = getProvider(ctx, state);
+      oauthGeneration = await provider.generation();
+      if (provider.isOperatorDisconnectedGeneration(oauthGeneration)) {
+        const connecting = state.connecting;
+        const client = state.client;
+        const transport = state.transport;
+        reset(state);
+        void connecting?.catch(() => {});
+        try {
+          if (client) await client.close();
+          else await transport?.close();
+        } catch {
+          // The disconnected epoch is authoritative even if local close fails.
+        }
+        throw operatorDisconnectedError();
+      }
+    }
     // Cross-isolate force re-auth: another isolate bumped the KV generation and
     // wiped credentials. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
-    if (state.client && isOauth && state.connectedGeneration !== null) {
-      const generation = await getProvider(ctx, state).generation();
+    if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
       if (state.closed) throw scopeEndedError();
-      if (generation !== state.connectedGeneration) {
+      if (oauthGeneration !== state.connectedGeneration) {
         reset(state);
       }
     }
@@ -606,6 +638,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const provider = isOauth ? newProvider(ctx) : null;
         const genAtStart = provider ? await provider.generation() : "";
         if (!ownsAttempt()) throw scopeEndedError();
+        if (provider?.isOperatorDisconnectedGeneration(genAtStart)) {
+          throw operatorDisconnectedError();
+        }
         provider?.captureGeneration(genAtStart);
         // The SDK defaults to AJV, which compiles every advertised outputSchema
         // with `new Function`. Cloudflare Workers prohibit dynamic code
@@ -670,6 +705,36 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.connecting = attempt;
     }
     return state.connecting;
+  };
+
+  const disconnectAuthorization = async (
+    ctx: ConnectorContext,
+    state: ConnectionState,
+    operatorDisconnected = false,
+  ): Promise<void> => {
+    const provider = getProvider(ctx, state);
+    // Publish the replacement epoch before waiting on or closing any
+    // request-local transport. A hung connect therefore cannot delay the
+    // fence, and every late OAuth write stays in the older namespace.
+    const connecting = state.connecting;
+    try {
+      await provider.resetAuthorization(operatorDisconnected);
+    } finally {
+      // Consume the abandoned connect and close whichever half of the
+      // client/transport exists. Reset is unconditional because KV may already
+      // be fenced behind a newer epoch after a cleanup error.
+      void connecting?.catch(() => {});
+      try {
+        if (state.client) {
+          await state.client.close();
+        } else {
+          await state.transport?.close();
+        }
+      } catch {
+        // best-effort; the state is discarded either way
+      }
+      reset(state);
+    }
   };
 
   const connector: Connector = {
@@ -877,6 +942,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             message: "Authorization required — open the URL to connect.",
           };
         }
+        if (err instanceof OperatorDisconnectedError) {
+          return { state: "auth_required", message: err.message };
+        }
         return { state: "error", message: msg(err) };
       }
     },
@@ -911,32 +979,15 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       return getProvider(ctx, state).verifyState(oauthState);
     };
 
+    connector.disconnectAuth = async (ctx) => {
+      await disconnectAuthorization(ctx, stateFor(ctx), true);
+    };
+
     connector.startAuth = async (ctx, startOpts) => {
       const state = stateFor(ctx);
       const p = getProvider(ctx, state);
-      if (startOpts?.force) {
-        // Publish the replacement epoch before waiting on or closing any
-        // request-local transport. A hung connect therefore cannot delay the
-        // fence, and every late OAuth write stays in the older namespace.
-        const connecting = state.connecting;
-        try {
-          await p.resetAuthorization();
-        } finally {
-          // Consume the abandoned connect and close whichever half of the
-          // client/transport exists. Reset is unconditional because KV may be
-          // already be fenced behind a newer epoch after a cleanup error.
-          void connecting?.catch(() => {});
-          try {
-            if (state.client) {
-              await state.client.close();
-            } else {
-              await state.transport?.close();
-            }
-          } catch {
-            // best-effort; the state is discarded either way
-          }
-          reset(state);
-        }
+      if (startOpts?.force || (await p.operatorDisconnected())) {
+        await disconnectAuthorization(ctx, state);
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
         // the SDK flow, which would overwrite the PKCE verifier and invalidate

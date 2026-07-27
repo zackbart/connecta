@@ -139,6 +139,7 @@ interface Connector {
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;       // optional health
   startAuth?(ctx: ConnectorContext,                               // optional OAuth kick
     opts?: { force?: boolean }): Promise<ConnectorStatus>;        //   (authorize_connector)
+  disconnectAuth?(ctx: ConnectorContext): Promise<void>;          // optional operator disconnect
   verifyState?(state: string | null,                              // required with finishAuth
     ctx: ConnectorContext): Promise<boolean>;                     //   (OAuth CSRF check; Downstream OAuth below)
   finishAuth?(code: string, ctx: ConnectorContext): Promise<void>; // optional OAuth finish
@@ -651,6 +652,9 @@ token_endpoint_auth_method: "none" }`.
    refreshes automatically. Persistent auth failure degrades the connector back
    to `auth_required` — it never crashes the server or hides other connectors.
 
+An eligible unrestricted Clerk operator can Disconnect or Reconnect this grant from
+Connections. Disconnect publishes a durable epoch and clears OAuth state/caches, so passive probes cannot restart consent; Reconnect replaces it and starts a fresh flow.
+
 **What the refusal hides, and what it doesn't.** Matching bodies buy nothing if
 the clock still sorts ids. `verifyState` reads `conn:<id>:oauth:generation` and
 then the active epoch's `oauth:state` key, while an id naming nothing used to
@@ -687,13 +691,9 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 | `conn:<id>:oauth:verifier:epoch:<generation>` | one-shot PKCE code verifier |
 | `conn:<id>:oauth:state:epoch:<generation>` | one-shot `state` value checked by `verifyState` |
 | `conn:<id>:oauth:pending:epoch:<generation>` | stored authorization URL while a flow is open |
-| `conn:<id>:oauth:generation` | unique active epoch selecting the readable namespace |
+| `conn:<id>:oauth:generation` | unique active or operator-disconnected epoch selecting the readable namespace |
 | `conn:<id>:oauth:cleanup:<encoded-generation>` | bounded immutable lineage of retired namespaces the next force must retry |
-Before the first force reset, legacy and old numeric generations retain the historical
-unsuffixed keys and encodings for rolling-deploy and rollback safety. Force publishes
-one active epoch before cleanup; its physical namespace and full observed lineage stop
-stale mutation and let a later force retry late-write or transient-failure residue.
-The three-method `KVStorage` interface has no list or compare-and-swap, so the lineage
-cannot promise lossless cleanup for sibling resets or a crash around an unrecorded
-late write. Those bytes remain unreadable but may need operator prefix deletion.
-Immediate fencing also requires strongly consistent [storage](./storage-and-credentials.md#storage).
+Legacy and old numeric generations retain unsuffixed keys/encodings until the first
+force. Modern physical namespaces and immutable observed lineage stop stale mutation
+and retry ordinary residue. Without list/CAS, sibling resets or a crash can leave
+unreadable bytes needing prefix deletion; immediate fencing also needs strongly consistent [storage](./storage-and-credentials.md#storage).

@@ -1006,6 +1006,7 @@ describe("status UI", () => {
       serverInfo: { name: id, version: "host-build-1" },
       connectaVersion: "package-7.8.9",
       credentialManagement: "available",
+      oauthManagement: true,
       activityEnabled: true,
       connectors: [
         {
@@ -1014,6 +1015,7 @@ describe("status UI", () => {
           status: "ok",
           toolCount: 0,
           tools: [],
+          oauth: true,
         },
       ],
       toolkits: [
@@ -1064,6 +1066,15 @@ describe("status UI", () => {
     await windowListeners.get("load")?.();
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(element("list").children[0]?.innerHTML).toContain("identity-a");
+    expect(element("list").children[0]?.innerHTML).toContain(
+      'data-oauth-action="disconnect"',
+    );
+    expect(element("list").children[0]?.innerHTML).toContain(
+      'data-oauth-action="reconnect"',
+    );
+    expect(element("list").children[0]?.innerHTML).toContain(
+      'aria-label="Disconnect OAuth for identity-a"',
+    );
     expect(element("serverInfo").textContent).toBe(
       "identity-a vpackage-7.8.9",
     );
@@ -1113,13 +1124,200 @@ describe("status UI", () => {
     expect(element("activityNav").classList.contains("hidden")).toBe(true);
     expect(fetch).toHaveBeenCalledTimes(2);
 
-    resolveSecond?.(Response.json(payload("identity-b")));
+    const secondPayload = payload("identity-b");
+    secondPayload.connectors[0].status = "error";
+    resolveSecond?.(Response.json(secondPayload));
     await vi.waitFor(() => {
       expect(element("list").children[0]?.innerHTML).toContain("identity-b");
+      expect(element("list").children[0]?.innerHTML).toContain(
+        'aria-label="Disconnect OAuth for identity-b"',
+      );
+      expect(element("list").children[0]?.innerHTML).toContain(
+        "Restart authorization",
+      );
       expect(element("toolkitList").children[0]?.innerHTML).toContain(
         "view-identity-b",
       );
     });
+  });
+
+  it("runs OAuth controls through confirm, Clerk auth, reload, and error recovery", async () => {
+    const html = renderUiHtml({
+      kind: "clerk",
+      publishableKey: "pk_test_fake",
+      frontendApiUrl: "https://clerk.example.com",
+    });
+    const elements = new Map<string, TestElement>();
+    const element = (id: string) => {
+      let value = elements.get(id);
+      if (!value) {
+        value = new TestElement();
+        elements.set(id, value);
+      }
+      return value;
+    };
+    const documentListeners = new Map<string, (...args: any[]) => unknown>();
+    const windowListeners = new Map<string, (...args: any[]) => unknown>();
+    let renderedButtons: Array<{
+      dataset: { connector: string; oauthAction: string };
+      disabled: boolean;
+    }> = [];
+    const document = {
+      title: "",
+      getElementById: element,
+      createElement: () => new TestElement(),
+      querySelector: () => null,
+      querySelectorAll: () => renderedButtons,
+      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
+        documentListeners.set(name, listener),
+    };
+    let confirms = true;
+    const window = {
+      location: new URL(`${BASE}/`),
+      confirm: vi.fn(() => confirms),
+      setTimeout,
+      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
+        windowListeners.set(name, listener),
+      Clerk: undefined as unknown,
+    };
+    const Clerk = {
+      user: { id: "user_a" },
+      session: {
+        id: "sess_a",
+        getToken: async () => "operator-token",
+      },
+      load: async () => {},
+      addListener: () => {},
+      redirectToSignIn: () => {},
+      signOut: async () => {},
+    };
+    window.Clerk = Clerk;
+    const payload = (status: "ok" | "auth_required" | "error") => ({
+      serverInfo: { name: "connecta", version: "host-build" },
+      connectaVersion: "package-1.2.3",
+      credentialManagement: "no_slots",
+      oauthManagement: true,
+      activityEnabled: false,
+      connectors: [
+        {
+          id: "oauth",
+          title: "CRM",
+          status,
+          message:
+            status === "auth_required" ? "OAuth disconnected." : undefined,
+          toolCount: status === "ok" ? 1 : 0,
+          tools:
+            status === "ok"
+              ? [{ name: "read", address: "oauth.read" }]
+              : [],
+          oauth: true,
+        },
+      ],
+      toolkits: [],
+    });
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(payload("ok")))
+      .mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(Response.json(payload("auth_required")))
+      .mockResolvedValueOnce(
+        Response.json(
+          { error: "downstream unavailable" },
+          { status: 502 },
+        ),
+      )
+      .mockResolvedValueOnce(Response.json(payload("error")));
+    const run = new Function(
+      "window",
+      "document",
+      "history",
+      "localStorage",
+      "fetch",
+      "Clerk",
+      "navigator",
+      "CSS",
+      "URL",
+      "URLSearchParams",
+      inlineScript(html),
+    );
+    run(
+      window,
+      document,
+      { pushState: () => {} },
+      { getItem: () => null, setItem: () => {}, removeItem: () => {} },
+      fetch,
+      Clerk,
+      { clipboard: { writeText: async () => {} } },
+      { escape: (value: string) => value },
+      URL,
+      URLSearchParams,
+    );
+    await windowListeners.get("load")?.();
+
+    const click = (button: (typeof renderedButtons)[number]) =>
+      (element("list") as any).onclick({
+        target: { closest: () => button },
+      });
+    const disconnect = {
+      dataset: { connector: "oauth", oauthAction: "disconnect" },
+      disabled: false,
+    };
+    renderedButtons = [disconnect];
+
+    confirms = false;
+    await click(disconnect);
+    expect(fetch).toHaveBeenCalledTimes(1);
+
+    confirms = true;
+    await click(disconnect);
+    expect(fetch).toHaveBeenNthCalledWith(
+      2,
+      "/ui/oauth/oauth",
+      expect.objectContaining({
+        method: "DELETE",
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+    expect(fetch).toHaveBeenNthCalledWith(
+      3,
+      "/ui/data",
+      expect.objectContaining({
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+    expect(element("oauthNotice").textContent).toContain(
+      "OAuth disconnected",
+    );
+    expect(disconnect.disabled).toBe(false);
+    expect(element("list").children[0]?.innerHTML).toContain(
+      'aria-label="Disconnect OAuth for CRM"',
+    );
+    expect(element("list").children[0]?.innerHTML).toContain(
+      "Restart authorization",
+    );
+
+    const reconnect = {
+      dataset: { connector: "oauth", oauthAction: "reconnect" },
+      disabled: false,
+    };
+    renderedButtons = [reconnect];
+    await click(reconnect);
+    expect(fetch).toHaveBeenNthCalledWith(
+      4,
+      "/ui/oauth/oauth",
+      expect.objectContaining({
+        method: "POST",
+        headers: { Authorization: "Bearer operator-token" },
+      }),
+    );
+    expect(fetch).toHaveBeenCalledTimes(5);
+    expect(element("oauthNotice").textContent).toBe(
+      "downstream unavailable",
+    );
+    expect(
+      element("oauthNotice").classList.contains("error-notice"),
+    ).toBe(true);
+    expect(reconnect.disabled).toBe(false);
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -1249,6 +1447,255 @@ describe("status UI", () => {
       )
     ).json()) as any;
     expect(noSlots.credentialManagement).toBe("no_slots");
+  });
+
+  it("exposes OAuth controls only to eligible Clerk operators", async () => {
+    const disconnectAuth = vi.fn(async () => {});
+    const startAuth = vi.fn(async () => ({
+      state: "auth_required" as const,
+      authorizationUrl: "https://auth.example/reconnect",
+      message: "Open the authorization URL.",
+    }));
+    const connector: Connector = {
+      id: "oauth",
+      kind: "mcp",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      disconnectAuth,
+      startAuth,
+    };
+    const storage = memoryStorage();
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage,
+      publicUrl: BASE,
+    });
+
+    const bearer = (await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      )
+    ).json()) as any;
+    expect(bearer.oauthManagement).toBe(false);
+    expect(bearer.connectors[0].oauth).toBe(true);
+
+    const clerk = (await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: "Bearer clerk-token" },
+        }),
+      )
+    ).json()) as any;
+    expect(clerk.oauthManagement).toBe(true);
+    expect(clerk.connectors[0].oauth).toBe(true);
+
+    await storage.set("catalog:oauth", "stale catalog");
+    await connecta.registry.recordCredentialHealth("oauth", {
+      state: "auth_required",
+      checkedAt: new Date().toISOString(),
+    });
+    const disconnected = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "DELETE" },
+    );
+    expect(disconnected.status).toBe(204);
+    expect(disconnectAuth).toHaveBeenCalledOnce();
+    expect(await storage.get("catalog:oauth")).toBeNull();
+    expect(
+      await connecta.registry.credentialHealthFor("oauth"),
+    ).toBeUndefined();
+
+    const restarted = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "POST" },
+    );
+    expect(restarted.status).toBe(200);
+    await expect(restarted.json()).resolves.toMatchObject({
+      state: "auth_required",
+      authorizationUrl: "https://auth.example/reconnect",
+    });
+    expect(startAuth).toHaveBeenCalledWith(
+      expect.anything(),
+      { force: true },
+    );
+  });
+
+  it("invalidates cached OAuth state when physical disconnect cleanup fails", async () => {
+    const connector: Connector = {
+      id: "oauth",
+      kind: "mcp",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      async disconnectAuth() {
+        throw new Error("provider cleanup failed");
+      },
+      async startAuth() {
+        return { state: "auth_required" };
+      },
+    };
+    const storage = memoryStorage();
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: fakeClerk(),
+      storage,
+      publicUrl: BASE,
+    });
+    await storage.set("catalog:oauth", "stale catalog");
+    await connecta.registry.recordCredentialHealth("oauth", {
+      state: "ok",
+      checkedAt: new Date().toISOString(),
+    });
+
+    const disconnected = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "DELETE" },
+    );
+
+    expect(disconnected.status).toBe(400);
+    await expect(disconnected.json()).resolves.toEqual({
+      error: "provider cleanup failed",
+    });
+    expect(await storage.get("catalog:oauth")).toBeNull();
+    expect(
+      await connecta.registry.credentialHealthFor("oauth"),
+    ).toBeUndefined();
+  });
+
+  it("keeps OAuth mutation same-origin, Clerk-only, and connector-scoped", async () => {
+    const connector: Connector = {
+      id: "oauth",
+      kind: "mcp",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      async disconnectAuth() {},
+      async startAuth() {
+        return {
+          state: "auth_required",
+          authorizationUrl: "javascript:alert(1)",
+        };
+      },
+    };
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+
+    const noOrigin = await connecta.fetch(
+      new Request(`${BASE}/ui/oauth/oauth`, {
+        method: "DELETE",
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    expect(noOrigin.status).toBe(403);
+
+    const bearer = await connecta.fetch(
+      new Request(`${BASE}/ui/oauth/oauth`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${TOKEN}`, Origin: BASE },
+      }),
+    );
+    expect(bearer.status).toBe(401);
+
+    const unknown = await credentialRequest(
+      connecta,
+      "/ui/oauth/missing",
+      { method: "DELETE" },
+    );
+    expect(unknown.status).toBe(404);
+
+    const options = await connecta.fetch(
+      new Request(`${BASE}/ui/oauth/oauth`, { method: "OPTIONS" }),
+    );
+    expect(options.status).toBe(405);
+    expect(options.headers.get("access-control-allow-origin")).toBeNull();
+
+    const restarted = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "POST" },
+    );
+    expect(restarted.status).toBe(502);
+    await expect(restarted.json()).resolves.toEqual({
+      error:
+        "OAuth authorization requires consent but no safe URL is available",
+    });
+  });
+
+  it("closes OAuth mutation scopes and rejects connector error states", async () => {
+    const closeScope = vi.fn(async () => {});
+    const connector: Connector = {
+      id: "oauth",
+      kind: "mcp",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      async disconnectAuth() {},
+      async startAuth() {
+        return {
+          state: "error",
+          message: "downstream unavailable",
+        };
+      },
+      closeScope,
+    };
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: fakeClerk(),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+
+    expect(
+      (await credentialRequest(connecta, "/ui/oauth/oauth", {
+        method: "DELETE",
+      })).status,
+    ).toBe(204);
+    expect(closeScope).toHaveBeenCalledTimes(1);
+
+    const restarted = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "POST" },
+    );
+    expect(restarted.status).toBe(502);
+    await expect(restarted.json()).resolves.toEqual({
+      error: "downstream unavailable",
+    });
+    expect(closeScope).toHaveBeenCalledTimes(2);
+
+    const unsupported = await credentialRequest(
+      connecta,
+      "/ui/oauth/oauth",
+      { method: "PUT" },
+    );
+    expect(unsupported.status).toBe(405);
+    expect(closeScope).toHaveBeenCalledTimes(2);
   });
 
   it("does not advertise credential mutation for a Clerk-kind provider without uiAuth", async () => {

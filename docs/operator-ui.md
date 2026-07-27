@@ -36,10 +36,12 @@ even though it is no longer the HTML page:
 | `GET /ui/activity` | the same auth and toolkit refusal, then optional `activity.readGate`; returns paged activity events |
 | `PUT` / `DELETE /ui/credentials/<connectorId>` | eligible Clerk operator, stable user id, unrestricted toolkit binding, and same-origin request |
 | `POST /ui/credentials/<connectorId>/test` | the same credential-mutation boundary; runs the shape-selected test hook |
+| `DELETE /ui/oauth/<connectorId>` | eligible unrestricted Clerk operator and same-origin request; fences and removes the downstream OAuth grant without starting consent |
+| `POST /ui/oauth/<connectorId>` | the same OAuth-mutation boundary; wipes the old grant and starts a fresh consent flow |
 
 Do not expose these APIs cross-origin or treat their `/ui` prefix as a public
-page URL. Credential `OPTIONS` requests return 405 and never opt into wildcard
-CORS.
+page URL. Credential and OAuth-management `OPTIONS` requests return 405 and
+never opt into wildcard CORS.
 
 ### What each page shows
 
@@ -62,7 +64,12 @@ the toolkits that include them. This is visibility into
 `ConnectaConfig.toolkits`, not a second source of truth: the page has no toolkit
 mutation controls, and changing a view still means changing deployment config
 and redeploying. Connections never contains vault Add/Replace/Test/Remove
-controls.
+controls. For downstream OAuth connectors, an eligible unrestricted Clerk
+operator also gets explicit Disconnect and Reconnect actions. Disconnect
+removes tokens, client registration, and pending PKCE/state; Reconnect replaces
+them and starts a fresh consent flow. Disconnect does not begin a replacement
+flow until the operator chooses Reconnect. Bearer and toolkit-restricted
+identities can inspect connection status but never receive these controls.
 
 **Credentials (`/credentials`)** renders one focused entry for each connector
 that declares an operator-managed credential slot. It shows the declared
@@ -98,6 +105,7 @@ showing a blank page. See [activity history](#activity-history).
     toolCount
   }],
   activityEnabled,
+  oauthManagement, // true only for an eligible unrestricted Clerk operator
   credentialManagement:
     | "available"
     | "requires_clerk"
