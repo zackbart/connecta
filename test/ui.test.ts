@@ -1364,6 +1364,64 @@ describe("status UI", () => {
     expect(closes).toBe(1);
   });
 
+  it("/ui/data defers the bounded teardown tail through waitUntil", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deferred: Promise<unknown>[] = [];
+    const connector: Connector = {
+      id: "remote",
+      kind: "mcp",
+      description: "Remote service",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read", description: "Read records" }];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        await gate;
+      },
+    };
+    const c = createConnecta({
+      connectors: [connector],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+
+    const res = await withTimeout(
+      c.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+        undefined,
+        {
+          waitUntil(promise: Promise<unknown>) {
+            deferred.push(promise);
+          },
+        },
+      ),
+      1_000,
+      "/ui/data with deferred teardown",
+    );
+
+    expect(res.status).toBe(200);
+    expect(deferred).toHaveLength(1);
+    await expect(
+      Promise.race([
+        deferred[0].then(() => "settled"),
+        Promise.resolve("pending"),
+      ]),
+    ).resolves.toBe("pending");
+    release();
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
   it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
     let slowStarted!: () => void;
     const started = new Promise<void>((resolve) => {

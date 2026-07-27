@@ -897,6 +897,9 @@ async function serveMcp(
     activity,
     defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
     probeTimeoutMs: opts.probeTimeoutMs,
+    ...(runtimeContext
+      ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
+      : {}),
   });
   if (opts.executor) {
     registerExecuteTool(server, registry, {
@@ -1045,6 +1048,9 @@ export function createFetchHandler(
     const url = new URL(request.url);
     const baseUrl = publicUrl ?? url.origin;
     const path = url.pathname;
+    const defer = runtimeContext
+      ? runtimeContext.waitUntil.bind(runtimeContext)
+      : undefined;
 
     /**
      * Piggyback a DUE credential liveness sweep on traffic that has already been
@@ -1060,7 +1066,7 @@ export function createFetchHandler(
       // throws while deciding whether anything is due. Nothing about a
       // background health check may turn a served request into a 500.
       try {
-        const sweep = registry.sweepCredentialHealthIfDue(baseUrl);
+        const sweep = registry.sweepCredentialHealthIfDue(baseUrl, defer);
         if (!sweep) return;
         const settled = sweep.then(
           () => {},
@@ -1068,7 +1074,7 @@ export function createFetchHandler(
             opts.logger.warn("[connecta] credential health sweep failed", err);
           },
         );
-        if (runtimeContext?.waitUntil) runtimeContext.waitUntil(settled);
+        if (defer) defer(settled);
         else void settled;
       } catch (err) {
         opts.logger.warn("[connecta] credential health sweep failed", err);
@@ -1256,6 +1262,7 @@ export function createFetchHandler(
           Boolean(opts.activity?.list),
           credentialManagement,
           opts.toolkits,
+          defer,
         );
         return privateJson(data);
       }

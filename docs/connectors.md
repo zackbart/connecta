@@ -266,8 +266,8 @@ as the probe does: it first asks a stateful downstream to terminate its session
 frees the *server* side, since closing a client merely aborts ours — then closes
 the cached client (or a half-open transport) and drops the scope's state.
 A downstream with no session id is never sent a `DELETE`; one that answers 405
-(a legal "I don't do that"), errors, or stalls past a small budget is closed
-anyway and left to age its session out as it did before.
+(a legal "I don't do that"), errors, or misses its one-second cross-internet round-trip budget is closed anyway; callers still wait at most 100 ms.
+On Workers, `waitUntil` keeps the bounded tail alive after the response.
 Tool definitions remain safely cached as plain data. Remote clients use the
 SDK's `CfWorkerJsonSchemaValidator` rather than its AJV default so advertised
 output schemas can be compiled without `eval`/`new Function` in edge runtimes.

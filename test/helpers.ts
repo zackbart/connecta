@@ -26,6 +26,7 @@ export function makeRegistry(
     /** Share one store between a registry and a vault (credential-health tests). */
     storage?: KVStorage;
     credentialVault?: CredentialVault;
+    logger?: Logger;
   } = {},
 ): Registry {
   const { storage = memoryStorage(), ...rest } = opts;

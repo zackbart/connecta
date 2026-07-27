@@ -21,7 +21,10 @@ import {
   storedCredentialShape,
 } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
-import { closeConnectorScope } from "./connector-scope.js";
+import {
+  closeConnectorScope,
+  type DeferredWork,
+} from "./connector-scope.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs, withTimeout } from "./timeout.js";
 import type {
   Connector,
@@ -536,6 +539,7 @@ export class CredentialHealthChecker {
   async check(
     baseUrl: string,
     opts: CredentialCheckOptions = {},
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult[]> {
     // An id naming no connector is reported, not dropped: a typo in a scheduled
     // check would otherwise return an empty list that looks exactly like a
@@ -546,7 +550,7 @@ export class CredentialHealthChecker {
     return mapWithConcurrency(targets, this.concurrency, (target) =>
       typeof target === "string"
         ? Promise.resolve({ connectorId: target, skipped: "not_found" as const })
-        : this.checkOne(target, baseUrl, opts),
+        : this.checkOne(target, baseUrl, opts, defer),
     );
   }
 
@@ -556,13 +560,16 @@ export class CredentialHealthChecker {
    * gate is armed BEFORE the sweep starts, so a burst of concurrent requests
    * produces one sweep.
    */
-  sweepIfDue(baseUrl: string): Promise<CredentialCheckResult[]> | undefined {
+  sweepIfDue(
+    baseUrl: string,
+    defer?: DeferredWork,
+  ): Promise<CredentialCheckResult[]> | undefined {
     if (!this.onRequest || this.sweeping) return undefined;
     const now = Date.now();
     if (now < this.nextSweepAt) return undefined;
     if (!this.hasCheckableConnectors()) return undefined;
     this.nextSweepAt = now + this.intervalMs;
-    const sweep = this.check(baseUrl).finally(() => {
+    const sweep = this.check(baseUrl, {}, defer).finally(() => {
       this.sweeping = undefined;
     });
     this.sweeping = sweep;
@@ -573,6 +580,7 @@ export class CredentialHealthChecker {
     connector: Connector,
     baseUrl: string,
     opts: CredentialCheckOptions,
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult> {
     const connectorId = connector.id;
     if (!isCheckableConnector(connector)) {
@@ -587,7 +595,12 @@ export class CredentialHealthChecker {
         ...(await this.recordOrNothing(connectorId)),
       };
     }
-    const run = this.runCheck(connector, baseUrl, opts.force ?? false);
+    const run = this.runCheck(
+      connector,
+      baseUrl,
+      opts.force ?? false,
+      defer,
+    );
     this.inFlight.set(connectorId, run);
     try {
       return await run;
@@ -607,6 +620,7 @@ export class CredentialHealthChecker {
     connector: Connector,
     baseUrl: string,
     force: boolean,
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult> {
     const connectorId = connector.id;
     const started = Date.now();
@@ -711,7 +725,7 @@ export class CredentialHealthChecker {
         });
       }
     } finally {
-      await closeConnectorScope(connector, ctx);
+      await closeConnectorScope(connector, ctx, defer);
     }
   }
 

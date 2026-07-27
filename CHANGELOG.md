@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Fixed
+
+- **Downstream session termination gets a realistic acknowledgement window and
+  an operator-visible failure signal** (issue #96). Probe callers retain their
+  100 ms teardown cap while the headers-only `DELETE` gets one second for a
+  cross-internet round trip; Workers keep that bounded tail alive with
+  `waitUntil`. Refusals and transport failures now warn through the deployment
+  logger, and expiry is reported honestly as unacknowledged because the
+  downstream may still complete a request that was already sent.
+
 ## 0.7.3 — 2026-07-27
 
 0.7.3 is the first published package after 0.7.1. It consolidates the

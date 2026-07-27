@@ -1293,6 +1293,38 @@ describe("the traffic-triggered sweep", () => {
     expect(linear.calls.status).toBe(1);
   });
 
+  it("keeps the teardown tail inside the request's waitUntil", async () => {
+    let closeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const linear = grantConnector();
+    linear.closeScope = async () => {
+      closeStarted();
+      await gate;
+    };
+    const connecta = deployment(linear);
+    const ctx = ctxWith();
+
+    const res = await mcpRequest(connecta, ctx);
+    expect(res.status).toBe(200);
+    await started;
+
+    const settled = ctx.settled();
+    await expect(
+      Promise.race([
+        settled.then(() => "settled"),
+        Promise.resolve("pending"),
+      ]),
+    ).resolves.toBe("pending");
+    release();
+    await expect(settled).resolves.toBeDefined();
+  });
+
   it("stays out of the request when onRequest is off", async () => {
     const linear = grantConnector();
     const connecta = createConnecta({

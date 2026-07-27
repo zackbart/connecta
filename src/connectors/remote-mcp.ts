@@ -75,15 +75,14 @@ export interface RemoteMcpOptions {
 
 /**
  * How long a downstream gets to answer the session-termination DELETE before
- * teardown stops waiting. Deliberately a fraction of the core's scope-close
- * budget (`closeConnectorScope`), so the whole teardown still lands inside the
- * window that budget makes safe on an edge runtime: whatever is still in flight
- * when this expires is aborted by the close that immediately follows. What that
- * costs is only the acknowledgement — the DELETE is headers-only and has long
- * since gone out — so a slow provider still usually ends the session; it just
- * does not get to tell us so.
+ * teardown stops waiting. This is a network round-trip budget, deliberately
+ * independent of the core's 100 ms caller-facing scope-close window: an
+ * already-established cross-internet connection avoids setup, but 50 ms is
+ * still too short for an ordinary round trip plus modest provider scheduling.
+ * The bounded tail is deferred on runtimes that can keep it alive after the
+ * response, while callers continue to wait at most 100 ms.
  */
-const TERMINATE_SESSION_BUDGET_MS = 50;
+const TERMINATE_SESSION_BUDGET_MS = 1_000;
 
 /**
  * Ceiling on the tools one catalog refresh will accumulate while walking
@@ -199,24 +198,62 @@ function msg(err: unknown): string {
  * (405 is a legal answer), errors, or never replies all fall through to the
  * close with the session left to age out as it did before.
  */
-async function terminateSession(transport: Transport): Promise<void> {
+async function terminateSession(
+  transport: Transport,
+  logger: Logger,
+  connectorId: string,
+): Promise<void> {
   const terminate = (
     transport as Transport & { terminateSession?: () => Promise<void> }
   ).terminateSession;
   if (typeof terminate !== "function") return;
   // The SDK issues no request at all when no `mcp-session-id` was captured, so
   // a stateless downstream never sees a spurious DELETE.
-  const done = (async () => terminate.call(transport))().catch(() => {
-    // The session is being abandoned either way; a refusal changes nothing.
-    // Caught here rather than at the await below so a late rejection — one
-    // arriving after the budget expired — is still consumed.
-  });
+  const done = Promise.resolve().then(() => terminate.call(transport));
   await new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, TERMINATE_SESSION_BUDGET_MS);
-    done.then(() => {
-      clearTimeout(timer);
+    let finished = false;
+    const warn = (message: string, error?: unknown) => {
+      try {
+        if (error === undefined) logger.warn(message);
+        else logger.warn(message, error);
+      } catch {
+        // A diagnostic sink cannot make best-effort teardown observable to the
+        // caller in the one way this contract forbids: by replacing its result.
+      }
+    };
+    const timer = setTimeout(() => {
+      if (finished) return;
+      finished = true;
+      warn(
+        `[connecta] connector "${connectorId}" session termination was not ` +
+          `acknowledged within ${TERMINATE_SESSION_BUDGET_MS} ms; the ` +
+          "downstream may still finish the headers-only DELETE, otherwise " +
+          "the session will remain until its provider timeout.",
+      );
       resolve();
-    });
+    }, TERMINATE_SESSION_BUDGET_MS);
+    done.then(
+      () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        resolve();
+      },
+      (error) => {
+        // The rejection handler stays attached after the timer wins, so an
+        // abort or other late failure is consumed without a duplicate warning.
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer);
+        warn(
+          `[connecta] connector "${connectorId}" session termination was ` +
+            "refused or failed; the downstream session may remain until its " +
+            "provider timeout.",
+          error,
+        );
+        resolve();
+      },
+    );
   });
 }
 
@@ -797,7 +834,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // Ask the downstream to drop its session first — closing only aborts our
       // side, and the DELETE that frees the server's rides on the very
       // AbortSignal the close is about to trip.
-      if (transport) await terminateSession(transport);
+      if (transport) await terminateSession(transport, ctx.logger, id);
 
       // Client.close() owns its connected transport. During an unfinished or
       // failed connect there is no cached client yet, so close the transport

@@ -6,7 +6,10 @@ import {
   type ActivityCallSource,
   type ActivityRequestContext,
 } from "./activity.js";
-import { closeConnectorScope } from "./connector-scope.js";
+import {
+  closeConnectorScope,
+  type DeferredWork,
+} from "./connector-scope.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import {
   classifyCallError,
@@ -586,6 +589,8 @@ export function createMetaTools(
     /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
+    /** Runtime continuation for the bounded tail of probe-owned teardown. */
+    defer?: DeferredWork;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -1090,6 +1095,7 @@ export function createMetaTools(
           closeConnectorScope(
             connector,
             registry.contextFor(connector.id, baseUrl, scope),
+            opts.defer,
           ),
         ),
       );
@@ -1587,12 +1593,14 @@ export function registerMetaTools(
     defaultToolTimeoutMs?: number;
     probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
+    defer?: DeferredWork;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     activity: ctx.activity,
+    defer: ctx.defer,
   });
 
   server.registerTool(

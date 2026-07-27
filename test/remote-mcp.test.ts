@@ -520,6 +520,7 @@ describe("downstream session termination", () => {
 
   it("keeps the probe verdict when the downstream refuses to terminate", async () => {
     const storage = memoryStorage();
+    const warn = vi.fn();
     await storage.set(
       "conn:down:oauth:tokens",
       JSON.stringify({ access_token: "at", token_type: "bearer" }),
@@ -529,20 +530,35 @@ describe("downstream session termination", () => {
       oauth: true,
       onDelete: async () => new Response("no", { status: 500 }),
     });
-    const registry = makeRegistry([connector], { storage });
+    const registry = makeRegistry([connector], {
+      storage,
+      logger: { ...silentLogger, warn },
+    });
 
     await expect(registry.checkCredentialHealth(BASE)).resolves.toMatchObject([
       { connectorId: "down", record: { state: "ok" } },
     ]);
     expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(
+      'connector "down" session termination was refused or failed',
+    );
+    expect(String(warn.mock.calls[0][1])).toContain(
+      "Failed to terminate session",
+    );
   });
 
   it("bounds a downstream that never answers the termination request", async () => {
+    const warn = vi.fn();
     const { connector, requests } = makeHttpDownstream({
       sessionId: "sess-1",
       onDelete: () => new Promise<Response>(() => {}),
     });
-    const context = { ...ctx(), requestScope: {} };
+    const context = {
+      ...ctx(),
+      logger: { ...silentLogger, warn },
+      requestScope: {},
+    };
 
     await expect(connector.status!(context)).resolves.toMatchObject({
       state: "ok",
@@ -555,9 +571,17 @@ describe("downstream session termination", () => {
     expect(pending).toBeDefined();
     // Teardown stopped waiting and closed anyway, which aborts the DELETE still
     // hanging on the transport's signal. Well inside the core's 100 ms
-    // scope-close budget, so a stalled provider cannot spend it.
+    // caller-facing scope-close budget when invoked through the core; this
+    // direct hook call waits its full network acknowledgement budget.
     expect(pending!.signal!.aborted).toBe(true);
-    expect(elapsed).toBeLessThan(1000);
+    expect(elapsed).toBeLessThan(2_000);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(
+      "session termination was not acknowledged within 1000 ms",
+    );
+    expect(warn.mock.calls[0][0]).toContain(
+      "downstream may still finish the headers-only DELETE",
+    );
   });
 });
 
