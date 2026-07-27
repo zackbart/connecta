@@ -154,6 +154,11 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+type ConnectorOperationOptions = Pick<
+  ConnectorContext,
+  "signal" | "timeoutMs"
+>;
+
 /**
  * The registry surface a per-connection MCP server consumes: every meta-tool
  * (`src/meta-tools.ts`) and the `execute_code` sandbox bridge (`src/execute.ts`)
@@ -178,20 +183,20 @@ export interface RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
+    callOptions?: ConnectorOperationOptions,
   ): Promise<ToolDef[]>;
   refreshTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
+    callOptions?: ConnectorOperationOptions,
   ): Promise<ToolDef[]>;
   peekTools(id: string): ToolDef[] | undefined;
   contextFor(
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
+    callOptions?: ConnectorOperationOptions,
   ): ConnectorContext;
   resultsStorage(): KVStorage;
   recordSuccess(id: string, latencyMs: number): void;
@@ -211,7 +216,7 @@ export interface RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
+    callOptions?: ConnectorOperationOptions,
   ): Promise<ConnectorStatus>;
   invalidateStored(id: string): Promise<void>;
 }
@@ -355,7 +360,7 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope: object = {},
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): ConnectorContext {
     return {
       storage: namespaced(this.opts.storage, `conn:${id}:`),
@@ -444,7 +449,7 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
@@ -483,7 +488,7 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
@@ -631,7 +636,7 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope: object = {},
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): Promise<ConnectorStatus> {
     const connector = this.connectors.get(id);
     if (!connector) return { state: "error", message: "Unknown connector" };
@@ -788,7 +793,7 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): Promise<ToolDef[]> {
     if (!this.visible(id)) throw this.unknownConnector(id);
     return this.inScopeTools(
@@ -801,7 +806,7 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): Promise<ToolDef[]> {
     if (!this.visible(id)) throw this.unknownConnector(id);
     return this.inScopeTools(
@@ -820,7 +825,7 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope: object = {},
-    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
+    callOptions: ConnectorOperationOptions = {},
   ): ConnectorContext {
     // Unreachable through the meta-tools (they resolve first), so a throw here
     // is a loud backstop rather than a silent grant of connector storage and
