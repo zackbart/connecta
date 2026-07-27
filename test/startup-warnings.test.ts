@@ -88,7 +88,7 @@ describe("open-mode credential-exposure warning", () => {
     const logger = spyLogger();
     createConnecta({
       connectors: [credentialConnector],
-      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
     });
     expect(warnings(logger)).toContain("no inbound authentication");
@@ -234,7 +234,7 @@ describe("toolkit-selection warning", () => {
       const logger = spyLogger();
       createConnecta({
         connectors: [credentialConnector],
-        credentialEncryptionKey: CREDENTIAL_KEY,
+        credentials: { encryptionKey: CREDENTIAL_KEY },
         toolkits,
         logger,
       });
@@ -523,7 +523,7 @@ describe("credential test-hook mismatch warning", () => {
       connectors: [fieldsWithSingleHook],
       auth: bearerToken("secret"),
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
     });
     const text = warnings(logger);
@@ -538,7 +538,7 @@ describe("credential test-hook mismatch warning", () => {
       connectors: [singleWithFieldsHook],
       auth: bearerToken("secret"),
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
     });
     const text = warnings(logger);
@@ -567,7 +567,7 @@ describe("credential test-hook mismatch warning", () => {
       ],
       auth: bearerToken("secret"),
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
     });
     expect(warnings(logger)).not.toContain("cannot test its credential");
@@ -597,14 +597,14 @@ describe("credential test-hook mismatch warning", () => {
       ],
       auth: bearerToken("secret"),
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
     });
     expect(warnings(logger)).not.toContain("cannot test its credential");
   });
 });
 
-describe("unusable maxResultBytes warning", () => {
+describe("unusable calls.maxResultBytes warning", () => {
   it("warns that a zero deployment cap fell back to the default", () => {
     const logger = spyLogger();
     createConnecta({
@@ -612,10 +612,10 @@ describe("unusable maxResultBytes warning", () => {
       auth: bearerToken("secret"),
       publicUrl: BASE,
       logger,
-      maxResultBytes: 0,
+      calls: { maxResultBytes: 0 },
     });
     const text = warnings(logger);
-    expect(text).toContain("maxResultBytes 0");
+    expect(text).toContain("calls.maxResultBytes 0");
     expect(text).toContain("50000");
   });
 
@@ -626,7 +626,7 @@ describe("unusable maxResultBytes warning", () => {
       auth: bearerToken("secret"),
       publicUrl: BASE,
       logger,
-      maxResultBytes: 400,
+      calls: { maxResultBytes: 400 },
     });
     expect(warnings(logger)).toContain(
       'connector "plain" sets maxResultBytes -1',
@@ -640,7 +640,7 @@ describe("unusable maxResultBytes warning", () => {
       auth: bearerToken("secret"),
       publicUrl: BASE,
       logger,
-      maxResultBytes: 10_000,
+      calls: { maxResultBytes: 10_000 },
     });
     expect(warnings(logger)).not.toContain("maxResultBytes");
   });

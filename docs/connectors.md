@@ -198,10 +198,10 @@ the URL).
 
 `maxResultBytes` is an *optional* per-connector inline result cap, in bytes.
 Connectors have very different result profiles, so the deployment-wide
-`ConnectaConfig.maxResultBytes` ([running connecta](./operations.md#running-it)) is only a starting point:
+`ConnectaConfig.calls.maxResultBytes` ([running connecta](./operations.md#running-it)) is only a starting point:
 set a tighter value on a chatty search connector, or a looser one on a
 document-fetch connector whose payloads are legitimately large. Precedence is
-**per-connector → `ConnectaConfig.maxResultBytes` → 50 000**, resolved per call.
+**per-connector → `ConnectaConfig.calls.maxResultBytes` → 50 000**, resolved per call.
 Those two are the only places a cap is set: there is no server-level knob and no
 meta-tool parameter behind them. What a cap counts is the serialization that
 would be stashed — for a `kind: "mcp"` connector the whole content envelope,
@@ -227,7 +227,7 @@ custom connector, since it is a plain field on the interface.
 Two consequences are worth stating outright. First, one `batch_call` may mix a
 connector on its own cap with siblings on the global one, so a batch's total
 inline size is the **sum of the participating connectors' caps** rather than the
-`10 × ConnectaConfig.maxResultBytes` it was before — widen a connector's cap
+`10 × ConnectaConfig.calls.maxResultBytes` it was before — widen a connector's cap
 knowing it also widens every batch that connector takes part in. Second,
 `execute_code` host-call results are **not** bounded by `maxResultBytes` at all,
 global or per-connector: the sandbox hands tool results to the guest as plain
@@ -488,9 +488,10 @@ e.g. a manifest generator asserting its own output compiles.
 
 The registry caches each connector's serializable `listTools` result in memory
 and, by default, the configured `KVStorage`. Fresh TTL defaults to **300 s**
-(`toolCacheTtlSeconds`); an expired catalog remains a failure fallback for
-**3600 s** (`toolCatalogStaleSeconds`). `persistToolCatalog: false` disables the
-storage layer. `api()` definitions remain static and are never persisted.
+(`discovery.catalogTtlSeconds`); an expired catalog remains a failure fallback
+for **3600 s** (`discovery.staleCatalogSeconds`).
+`discovery.persistCatalog: false` disables the storage layer. `api()`
+definitions remain static and are never persisted.
 OAuth completion/reauthorization invalidates both cache layers.
 
 ---

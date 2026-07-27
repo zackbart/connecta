@@ -371,8 +371,7 @@ describe("server /mcp end-to-end", () => {
       auth: bearerToken(TOKEN, { subjectId: "cli-zack" }),
       storage: memoryStorage(),
       publicUrl: BASE,
-      activity,
-      activityDeploymentId: "test",
+      activity: { store: activity, deploymentId: "test" },
     });
 
     await rpc(
@@ -436,8 +435,10 @@ describe("server /mcp end-to-end", () => {
       connectors: [failing],
       auth: bearerToken(TOKEN),
       activity: {
-        record(event) {
-          events.push(event);
+        store: {
+          record(event) {
+            events.push(event);
+          },
         },
       },
       publicUrl: BASE,
@@ -555,9 +556,9 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("honors the deployment-wide maxResultBytes end to end", async () => {
-    // `ConnectaConfig.maxResultBytes` is the only place a deployment sets the
-    // cap — `createMetaTools` takes no override (issue #44) — so this pins that
-    // the configured value reaches call_tool through serve() and stashes a
+    // `ConnectaConfig.calls.maxResultBytes` is the only place a deployment sets
+    // the cap — `createMetaTools` takes no override (issue #44) — so this pins
+    // that the configured value reaches call_tool through serve() and stashes a
     // pageable result.
     const c = createConnecta({
       connectors: [
@@ -577,7 +578,7 @@ describe("server /mcp end-to-end", () => {
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      maxResultBytes: 100,
+      calls: { maxResultBytes: 100 },
     });
     const res = await rpc(
       c,
@@ -609,6 +610,83 @@ describe("server /mcp end-to-end", () => {
       (await readBody(paged)).result.content[0].text,
     ) as { text: string };
     expect(JSON.parse(page.text)).toBe("x".repeat(500));
+  });
+
+  it("forwards calls.defaultTimeoutMs into connector call context", async () => {
+    const seen: Array<{ timeoutMs?: number; hasSignal: boolean }> = [];
+    const c = createConnecta({
+      connectors: [
+        api("budget", {
+          description: "Budget",
+          tools: [
+            {
+              name: "read",
+              description: "Read the call budget",
+              annotations: { readOnlyHint: true },
+              inputSchema: { type: "object" },
+              handler: (_args, ctx) => {
+                seen.push({
+                  timeoutMs: ctx.timeoutMs,
+                  hasSignal: Boolean(ctx.signal),
+                });
+                return { ok: true };
+              },
+            },
+          ],
+        }),
+      ],
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+      calls: { defaultTimeoutMs: 1_234 },
+    });
+
+    await rpc(
+      c,
+      "tools/call",
+      { name: "call_tool", arguments: { address: "budget.read" } },
+      { token: TOKEN },
+    );
+
+    expect(seen).toEqual([{ timeoutMs: 1_234, hasSignal: true }]);
+  });
+
+  it("forwards discovery.probeTimeoutMs to the discovery fan-out", async () => {
+    const hanging: Connector = {
+      id: "hang",
+      kind: "mcp",
+      description: "Never resolves",
+      listTools() {
+        return new Promise<never>(() => {});
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const c = createConnecta({
+      connectors: [hanging],
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+      discovery: { probeTimeoutMs: 10 },
+    });
+    const started = Date.now();
+
+    const response = await rpc(
+      c,
+      "tools/call",
+      {
+        name: "list_connectors",
+        arguments: { probe: true },
+      },
+      { token: TOKEN },
+    );
+    const body = await readBody(response);
+    const payload = JSON.parse(body.result.content[0].text) as {
+      connectors: Array<{ status: string; message?: string }>;
+    };
+
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(payload.connectors[0]).toMatchObject({ status: "error" });
+    expect(payload.connectors[0].message).toContain("timed out after 10ms");
   });
 });
 
@@ -866,8 +944,10 @@ describe("execute_code registration (code mode)", () => {
       publicUrl: BASE,
       executor: quickJsExecutor(),
       activity: {
-        record(event) {
-          events.push(event);
+        store: {
+          record(event) {
+            events.push(event);
+          },
         },
       },
     });

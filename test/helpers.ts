@@ -12,10 +12,10 @@ export const silentLogger: Logger = {
 };
 
 /**
- * A registry over `connectors`. `opts` carries the deployment-wide settings a
- * `ConnectaConfig` would supply — including `maxResultBytes`, which is the only
- * place a deployment-wide result cap is set (issue #44), so cap tests configure
- * it exactly the way production does.
+ * A registry over `connectors`. `opts` carries the flat internal settings that
+ * `ConnectaConfig` adapts into — including `ConnectaConfig.calls.maxResultBytes`,
+ * the only deployment-wide result cap (issue #44), so cap tests configure it
+ * exactly the way production does.
  */
 export function makeRegistry(
   connectors: Connector[],

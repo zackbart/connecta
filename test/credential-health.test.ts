@@ -1293,7 +1293,7 @@ describe("the traffic-triggered sweep", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
-      credentialHealth: { onRequest: false },
+      credentials: { health: { onRequest: false } },
     });
     const ctx = ctxWith();
 

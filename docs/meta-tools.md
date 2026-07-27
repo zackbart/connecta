@@ -130,7 +130,7 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   diagnostics?: boolean }`
   (`args` defaults to `{}`). Deadlines are best-effort and propagated to custom
   connectors as `ctx.signal`/`ctx.timeoutMs`. When the caller passes no
-  `timeoutMs`, the deployment's `defaultToolTimeoutMs` applies if one is
+  `timeoutMs`, the deployment's `calls.defaultTimeoutMs` applies if one is
   configured; there is no deadline otherwise. Retries occur only when the tool
   declares `readOnlyHint: true` or `idempotentHint: true` and the error is
   classified retryable. The call itself is allowed only when
@@ -169,7 +169,7 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   Blocks a `kind: "mcp"` connector builds itself are a different matter: under
   the cap they pass through exactly as the downstream produced them, so a
   connector that emits a malformed block emits it verbatim.
-- **Result-size guard.** If the result text exceeds `maxResultBytes`
+- **Result-size guard.** If the result text exceeds `calls.maxResultBytes`
   (a `createConnecta` option, default **50 000**, overridable per connector —
   see [connectors](./connectors.md#the-connector-interface)), the full text is stashed in
   storage (effective key `results:result:<crypto.randomUUID()>`, 900 s TTL,
@@ -212,7 +212,7 @@ through `call_tool`, `batch_call`, and `execute_code`.
 ### `get_result`
 
 - **Input:** `{ id: string, offset?: number, maxBytes?: number }` (`offset`
-  defaults to 0; `maxBytes` defaults to the deployment-wide `maxResultBytes` —
+  defaults to 0; `maxBytes` defaults to `calls.maxResultBytes` —
   a stashed result carries no connector identity, so a per-connector override
   changes where truncation happens, never how the pages are sized). `maxBytes`
   must be a whole number of bytes **>= 1**; anything else (0, negative,

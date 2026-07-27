@@ -182,7 +182,10 @@ const activity: ActivityStore = {
   },
 };
 
-createConnecta({ connectors, activity, activityDeploymentId: "production" });
+createConnecta({
+  connectors,
+  activity: { store: activity, deploymentId: "production" },
+});
 ```
 
 ### The event
@@ -204,7 +207,7 @@ interface ToolCallActivityEvent {
   errorCode?: string;         // the ConnectorCallError code, never its message
   serverName: string;
   serverVersion: string;
-  deploymentId?: string;      // from activityDeploymentId
+  deploymentId?: string;      // from activity.deploymentId
   toolkitId?: string;         // the ?toolkit= this connection selected (toolkits.md)
 }
 ```
@@ -238,13 +241,15 @@ Implementing `list` enables both `GET /ui/activity` and the Activity tab in
 `/ui`. The route sits behind the same auth gate as `/mcp`, refuses an identity
 bound to a toolkit with 403 (the log is deployment-wide —
 [toolkits](./toolkits.md#toolkits-scoped-views)), and then applies the optional
-`activityReadGate(actor)` for narrowing reads further (an admin allowlist, say):
+`activity.readGate(actor)` for narrowing reads further (an admin allowlist, say):
 
 ```ts
 createConnecta({
   connectors,
-  activity,
-  activityReadGate: (actor) => actor.kind === "clerk" && admins.has(actor.id!),
+  activity: {
+    store: activity,
+    readGate: (actor) => actor.kind === "clerk" && admins.has(actor.id!),
+  },
 });
 ```
 

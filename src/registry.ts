@@ -33,7 +33,7 @@ export const MIN_MAX_RESULT_BYTES = 1;
 /**
  * The one definition of a usable `maxResultBytes`: a finite whole number of at
  * least {@link MIN_MAX_RESULT_BYTES} bytes. Shared by all three intake points
- * — deployment config, the per-connector override, and `get_result`'s
+ * — `calls.maxResultBytes`, the per-connector override, and `get_result`'s
  * `maxBytes` argument — so a value that is valid at one is valid at all.
  *
  * Everything else is rejected rather than coerced, because each rejected shape
@@ -286,7 +286,7 @@ export class Registry implements RegistryView {
   ): void {
     if (configured !== undefined && !isValidMaxResultBytes(configured)) {
       logger.warn(
-        `[connecta] maxResultBytes ${configured} is not a whole number of ` +
+        `[connecta] calls.maxResultBytes ${configured} is not a whole number of ` +
           `bytes >= ${MIN_MAX_RESULT_BYTES}: it would serve an empty, ` +
           "oversized, or unguarded result instead of truncating. Using the " +
           `default ${DEFAULT_MAX_RESULT_BYTES} instead.`,

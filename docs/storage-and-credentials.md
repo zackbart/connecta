@@ -37,8 +37,8 @@ persisted state, `memoryStorage()` is fine.
 
 Token-backed API connectors may declare either a single `credential` slot or
 multiple named fields. Configure
-`createConnecta({ credentialEncryptionKey })` with a base64-encoded 32-byte AES
-key from the runtime's secret store. Connecta encrypts the credential set with AES-GCM
+`createConnecta({ credentials: { encryptionKey } })` with a base64-encoded
+32-byte AES key from the runtime's secret store. Connecta encrypts the credential set with AES-GCM
 and connector-specific authenticated data before writing it to the same
 `KVStorage` used by OAuth and result paging.
 
@@ -110,7 +110,7 @@ An empty stored map — reachable only through a hand-written plaintext — cont
 nothing, so it is drift.
 
 `createConnecta` **throws at construction** when any connector declares
-`credential` and no `credentialEncryptionKey` is configured, naming the
+`credential` and no `credentials.encryptionKey` is configured, naming the
 connectors involved — a deployment cannot silently boot with an unusable vault.
 It **warns at construction** — the same warning-only channel as the other
 insensible-config checks — for each connector whose only test hook cannot test
@@ -200,7 +200,7 @@ past the toolkit binding, so a request that is refused triggers nothing
 `ctx.waitUntil` (the Node adapter shims one) and returns the response
 immediately. It never adds latency to the request and never changes its result.
 Unauthenticated requests trigger nothing. Turn it off with
-`credentialHealth: { onRequest: false }`.
+`credentials: { health: { onRequest: false } }`.
 
 **2. On a schedule you own** — `Connecta.checkCredentials()`, an ordinary
 awaited call that returns one outcome per connector:
@@ -237,7 +237,7 @@ On Node, deferred work is drained on SIGTERM within `listen({ shutdownTimeoutMs 
 `timeoutMs`. A sweep in flight when the container is recycled is therefore cut
 off at the deadline; nothing is corrupted (a verdict is either written or not),
 but if you want sweeps to finish across a restart, pair the two: raise
-`shutdownTimeoutMs` above `credentialHealth.timeoutMs`, or lower the latter.
+`shutdownTimeoutMs` above `credentials.health.timeoutMs`, or lower the latter.
 
 ### Bounded cost
 
@@ -261,7 +261,7 @@ downstream auth endpoint, so the cost is bounded four ways:
    isolate, never two at once: a burst of requests costs one sweep.
 4. **Deadline and fan-out** — `timeoutMs` per check (default 30 000, the probe
    default) with at most `concurrency` (default 4) in flight, the same shape as
-   the `probeTimeoutMs` bound on the discovery fan-out.
+   `discovery.probeTimeoutMs` bound on the discovery fan-out.
 
 A `list_connectors({ probe: true })` and /ui's credential **Test** button record
 their verdicts too — they are the same check, run by hand — which also means an

@@ -459,9 +459,9 @@ export interface SkillArgs {
  * optional tenth tool, is registered separately by registerExecuteTool.)
  *
  * The deployment-wide result-size cap is read off the registry view rather than
- * passed in: `ConnectaConfig.maxResultBytes` and the per-connector override are
- * the only places a cap is set, so there is one answer to where a deployment
- * sets it (issue #44).
+ * passed in: `ConnectaConfig.calls.maxResultBytes` and the per-connector
+ * override are the only places a cap is set, so there is one answer to where a
+ * deployment sets it (issue #44).
  */
 export function createMetaTools(
   registry: RegistryView,
