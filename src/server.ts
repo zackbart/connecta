@@ -377,7 +377,10 @@ function releaseAdmissionWithResponse(
   }
   const reader = response.body.getReader();
   onAbort = () => {
-    void reader.cancel(signal.reason).finally(release);
+    // `cancel()` belongs to an operator/auth/SDK-provided stream and may
+    // reject. Consume both outcomes: `.finally(release)` would release the
+    // permit but preserve the rejection as an unhandled promise.
+    void reader.cancel(signal.reason).then(release, release);
   };
   signal.addEventListener("abort", onAbort, { once: true });
   if (signal.aborted) onAbort();

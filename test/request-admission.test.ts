@@ -182,6 +182,55 @@ describe("request admission", () => {
     await (await first).text();
   });
 
+  it("absorbs a rejecting response-stream cancellation and releases once", async () => {
+    let cancellations = 0;
+    const auth: InboundAuth = {
+      kind: "rejecting-stream",
+      authorize() {
+        return {
+          ok: false,
+          response: new Response(
+            new ReadableStream({
+              cancel() {
+                cancellations++;
+                return Promise.reject(new Error("cancel failed"));
+              },
+            }),
+            { status: 401 },
+          ),
+        };
+      },
+    };
+    const connecta = createConnecta({
+      connectors: [],
+      auth,
+      logger: silentLogger,
+      admission: {
+        requests: {
+          concurrency: 1,
+          maxQueueSize: 0,
+          queueTimeoutMs: 1_000,
+        },
+      },
+    });
+    const controller = new AbortController();
+    await connecta.fetch(mcpRequest(controller.signal));
+    controller.abort(new Error("caller left"));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const health = await connecta.fetch(new Request(`${BASE}/health`));
+    expect(await health.json()).toMatchObject({
+      admission: {
+        requests: {
+          active: 0,
+          queued: 0,
+          totals: { admitted: 1 },
+        },
+      },
+    });
+    expect(cancellations).toBe(1);
+  });
+
   it("close rejects queued and future MCP work while active work drains", async () => {
     const gate = blockingAuth();
     const connecta = createConnecta({

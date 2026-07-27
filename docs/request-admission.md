@@ -80,6 +80,13 @@ errors, or is cancelled; releases are idempotent. This deliberately counts a
 slow or broken response stream as active work instead of declaring capacity free
 while its bytes and socket still exist.
 
+The Node adapter's `maxBodyBytes` remains a separate ingress guard: it reads and
+caps the HTTP body while constructing the Web `Request`, before the portable
+`/mcp` admission boundary can run. Admission bounds MCP/auth/catalog/response
+work, but it is not a byte-budget for many simultaneous slow or near-limit
+uploads. Put an ingress proxy/body-rate limit in front of hostile public traffic
+and set `maxBodyBytes` to the smallest value the deployment actually needs.
+
 `connecta.close()` closes both queues before releasing executor resources:
 queued and future MCP work receives `server_shutting_down`, while admitted
 ordinary work may drain. The Node `listen()` adapter calls it as soon as
