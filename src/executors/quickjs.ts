@@ -4,6 +4,7 @@
 
 import { Buffer } from "node:buffer";
 import { fork, type ChildProcess } from "node:child_process";
+import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
   AdmissionController,
@@ -447,7 +448,16 @@ class QuickJsChildPool implements AdmittingExecutor {
       sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js",
       import.meta.url,
     );
-    const child = fork(fileURLToPath(childUrl), [], {
+    const childPath = fileURLToPath(childUrl);
+    if (!existsSync(childPath)) {
+      throw new Error(
+        `QuickJS child entry is missing at ${childPath}. ` +
+          "The @zackbart/connecta/quickjs subpath requires the package file " +
+          "layout on disk; externalize @zackbart/connecta (or at least " +
+          "@zackbart/connecta/quickjs) when bundling the server.",
+      );
+    }
+    const child = fork(childPath, [], {
       execArgv: sourceMode ? ["--import", "tsx"] : [],
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });

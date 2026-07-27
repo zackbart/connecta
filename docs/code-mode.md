@@ -101,6 +101,13 @@ Two known implementations:
   ambient authority, and a WASM abort or interpreter OOM kills a replaceable
   child rather than the HTTP-serving process.
 
+  This subpath depends on the published package layout: the executor forks the
+  `quickjs-child.js` file beside itself. A server bundler must externalize
+  `@zackbart/connecta` — or at least `@zackbart/connecta/quickjs` — so those
+  files remain on disk. Folding the subpath into a single-file bundle leaves
+  nothing for `fork()` to start; the first execution rejects with the expected
+  child path and the same externalization instruction.
+
   Four separate controls bound different costs:
 
   | Option | Default | Bounds |
