@@ -96,7 +96,9 @@ not equality, and the difference matters in both directions:
   handed the shape it expects. `/credentials` marks the credential unconfigured but
   removable, hides Test, and shows an operator-safe replacement message; a
   direct test answers **409** with that same message and invokes no hook; a
-  liveness check records it as an `error`
+  liveness check records `auth_required` with that message, and
+  `ctx.credential.get()` / `getAll()` refuse with the same typed call error
+  rather than hand an obsolete shape to connector code
   ([credential health](#credential-health-proactive-liveness-checks)). Replacing
   or removing the credential is the recovery — connecta never guesses how to
   migrate secret values between declarations.
@@ -183,9 +185,10 @@ Everything else is skipped, by design:
   classifier used by `/ui/data` and the credential test route asks whether the stored
   set still *contains* every declared field ([storage](#storage)): the reserved
   `value` for a single credential, every current name for a named one. A missing
-  declared field records an explicit `error` verdict and invokes neither hook nor
-  `status()`; this validation happens before the freshness shortcut so even a
-  still-fresh historical `ok` cannot mask a redeploy mismatch. Leftover
+  declared field records an explicit `auth_required` verdict and invokes
+  neither hook nor `status()`; this is a completed static classification, not a
+  check that failed to complete. It happens before the freshness shortcut so
+  even a still-fresh historical `ok` cannot mask a redeploy mismatch. Leftover
   undeclared keys are not drift and change nothing here — the credential is
   checked normally. Replace or remove the credential in `/credentials` to recover.
 
@@ -255,7 +258,7 @@ downstream auth endpoint, so the cost is bounded four ways:
    read reads the verdict, it does not produce one. For vault credentials, the
    local stored-key shape check runs before this shortcut; it performs no
    downstream call and prevents a pre-redeploy `ok` from hiding declaration
-   drift. A drift verdict then re-enters the budget: once the *same* error is
+   drift. A drift verdict then re-enters the budget: once the *same* verdict is
    stored and still fresh it is reported `skipped: "fresh"` rather than written
    again, because drift persists until an operator acts and re-settling it every
    sweep would spend a metered write per isolate to learn nothing.
@@ -320,7 +323,7 @@ drops the verdict and reports it as `discarded: true`. It fences across isolates
 not just within one, because the counter is in storage.
 
 **What a verdict is allowed to decide.** Only `auth_required` ever sets the
-cached status. Three rules, all in one function (`credentialVerdictApplies`):
+cached status. Four rules, all in one function (`credentialVerdictApplies`):
 
 - **`error` is not credential evidence.** A check that timed out, threw, or got a
   502 from the provider's status endpoint failed to *complete* — it learned
@@ -328,10 +331,16 @@ cached status. Three rules, all in one function (`credentialVerdictApplies`):
   whose calls are fine to `error` for a whole interval on a DNS blip. Error
   verdicts stay visible in `credentialCheck`, because an operator wants to know
   checks are failing, but the status keeps coming from observed real calls.
+- **Stored-shape drift is not `error`.** No downstream check failed: the local
+  classifier proved that the current declaration cannot consume the stored
+  set. It records `auth_required` with the shared replacement message, and that
+  verdict stays decisive until the credential is replaced or removed.
 - **A successful real call retires an `auth_required` verdict.** Traffic beats a
   background probe: a `lastSuccessAt` at or after `checkedAt` means the
-  credential demonstrably works whatever the check concluded. Deployment-wide,
-  like `hasObservedSuccess` — a sibling toolkit's success proves the same shared
+  credential demonstrably works whatever the check concluded. Stored-shape
+  drift is the exception: a credential-independent tool can succeed without
+  making a missing field appear. Otherwise this is deployment-wide, like
+  `hasObservedSuccess` — a sibling toolkit's success proves the same shared
   credential, and a verdict retired in one scope but not another would make one
   connector read two ways for a reason that has nothing to do with scope.
 - **`auth_required` outranks an observed real-call failure**, even a newer one.

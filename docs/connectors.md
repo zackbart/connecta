@@ -171,6 +171,10 @@ When a connector declares `credential`, `ctx.credential.get()` returns its
 decrypted single value, `get(name)` returns one named field, and `getAll()`
 returns the complete named set. Credential access is read-only from connector
 code: operators add, replace, test, and remove values through `/credentials`.
+Before returning anything, both accessors verify that storage contains every
+field the connector currently declares. A drifted shape throws typed
+`auth_required` with the replacement message instead of exposing obsolete
+values; harmless extra stored fields remain readable.
 `testCredential` and `testCredentials` optionally power the card's Test button
 without exposing values to the browser — and, because they answer "does this
 stored value still work" without touching downstream state, they are also what

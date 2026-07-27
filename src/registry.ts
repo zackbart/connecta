@@ -6,7 +6,11 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
-import type { CredentialVault } from "./credentials.js";
+import {
+  storedCredentialShape,
+  type CredentialVault,
+} from "./credentials.js";
+import { ConnectorCallError } from "./errors.js";
 import {
   CredentialHealthChecker,
   type CredentialCheckOptions,
@@ -362,19 +366,29 @@ export class Registry implements RegistryView {
     requestScope: object = {},
     callOptions: ConnectorOperationOptions = {},
   ): ConnectorContext {
+    const credentialConfig = this.connectors.get(id)?.credential;
+    let credentialAccess: ConnectorContext["credential"];
+    if (this.opts.credentialVault && credentialConfig) {
+      const vault = this.opts.credentialVault;
+      const readValues = async () => {
+        const values = await vault.getAll(id);
+        const shape = storedCredentialShape(credentialConfig, values);
+        if (shape.state === "mismatch") {
+          throw new ConnectorCallError("auth_required", shape.message);
+        }
+        return values;
+      };
+      credentialAccess = {
+        get: async (field = "value") =>
+          (await readValues())?.[field] ?? null,
+        getAll: readValues,
+      };
+    }
     return {
       storage: namespaced(this.opts.storage, `conn:${id}:`),
       logger: this.opts.logger,
       baseUrl,
-      ...(this.opts.credentialVault && this.connectors.get(id)?.credential
-        ? {
-            credential: {
-              get: (field?: string) =>
-                this.opts.credentialVault!.get(id, field),
-              getAll: () => this.opts.credentialVault!.getAll(id),
-            },
-          }
-        : {}),
+      ...(credentialAccess ? { credential: credentialAccess } : {}),
       requestScope,
       ...callOptions,
     };

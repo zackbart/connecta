@@ -26,10 +26,13 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   present only for connectors that hold one. An **`auth_required`** verdict
   *sets* the `probe: false` status — this is how it reaches an agent before a
   real call fails on the dead credential — until a successful real call recorded
-  after `checkedAt` retires it. An **`error`** verdict is reported but never sets
-  the status: a check that timed out or threw did not complete, so it is not
-  evidence about the credential. An **`ok`** verdict upgrades `unknown` to `ok`,
-  and never downgrades an observed failure.
+  after `checkedAt` retires it. Stored credential-shape drift is the exception:
+  it is statically known, remains decisive until replacement/removal, and makes
+  credential reads fail with the same typed `auth_required` message. An
+  **`error`** verdict is reported but never sets the status: a check that timed
+  out or threw did not complete, so it is not evidence about the credential. An
+  **`ok`** verdict upgrades `unknown` to `ok`, and never downgrades an observed
+  failure.
 - **Observed health** (the `lastSuccessAt` / `lastFailureAt` /
   `consecutiveFailures` / `lastError` fields, and the `error` state `probe:
   false` derives from them) comes from real calls made through `call_tool`,

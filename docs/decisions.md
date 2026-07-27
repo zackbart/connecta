@@ -351,14 +351,18 @@ two shapes in either direction (no special case needed — `value` is never a
 declared name, so each swap leaves the declared side unsatisfied). Drift is
 never auto-migrated: `/credentials` keeps Remove/Replace available and hides Test, the
 test route returns the shared 409 without calling a hook, and health replaces
-even a fresh historical `ok` with an explicit error without calling either a
-hook or `status()`. That last check must stay **before** health's freshness
-gate, or yesterday's valid verdict would confidently describe credentials no
-current hook can consume. What it must *not* do is stay outside the gate
-entirely: once the same drift error is stored and still fresh, health skips
-`fresh` like anything else, because drift is a durable operator-error state and
-re-settling it on every sweep in every isolate would bill a metered KV write for
-information nobody learned.
+even a fresh historical `ok` with `auth_required` without calling either a hook
+or `status()`. This is the explicit carve-out from the rule that `error` decides
+nothing: drift is a completed local classification, not a failed liveness
+check. The call plane agrees — `ctx.credential.get()` and `getAll()` throw the
+same typed `auth_required` replacement message instead of returning a shape the
+current declaration cannot consume. That local check must stay **before**
+health's freshness gate, or yesterday's valid verdict would confidently
+describe credentials no current hook can consume. What it must *not* do is stay
+outside the gate entirely: once the same drift verdict is stored and still
+fresh, health skips `fresh` like anything else, because drift persists until
+replacement and re-settling it on every sweep in every isolate would bill a
+metered KV write for information nobody learned.
 
 **Extra stored keys are explicitly not drift**, and the rule was relaxed to
 containment (was exact equality) before that ever shipped. Dropping a declared

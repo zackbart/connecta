@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { api } from "../src/connectors/api.js";
+import {
+  CredentialVault,
+  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+} from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import {
   alignEndToCharBoundary,
@@ -27,6 +31,7 @@ import {
 } from "./helpers.js";
 
 const BASE = "https://connecta.test";
+const CREDENTIAL_KEY = Buffer.alloc(32, 11).toString("base64");
 
 function textOf(result: { content: { text: string }[] }): unknown {
   return JSON.parse(result.content[0].text);
@@ -527,6 +532,76 @@ describe("list_connectors", () => {
     });
     expect(statusCalls).toBe(0);
     expect(listCalls).toBe(0);
+  });
+
+  it("reports stored-shape drift and refuses drifted credential reads", async () => {
+    let tests = 0;
+    const connector: Connector = {
+      id: "drift",
+      kind: "api",
+      description: "Drifted credential",
+      credential: {
+        label: "Service credential",
+        fields: [
+          { name: "apiKey", label: "API key" },
+          { name: "accountId", label: "Account id" },
+        ],
+      },
+      async testCredentials() {
+        tests++;
+        return { ok: true };
+      },
+      async listTools() {
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: "object" },
+          },
+        ];
+      },
+      async callTool(_name, _args, ctx) {
+        return ctx.credential!.getAll();
+      },
+    };
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.setAll("drift", { apiKey: "old-key" }, "user_1");
+    const registry = makeRegistry([connector], {
+      storage,
+      credentialVault: vault,
+    });
+    await registry.checkCredentialHealth(BASE);
+    const mt = createMetaTools(registry, BASE);
+
+    const listed = textOf(await mt.listConnectors({ probe: false })) as {
+      connectors: Array<{
+        status: string;
+        credentialCheck?: { state: string; message?: string };
+      }>;
+    };
+    expect(listed.connectors[0]).toMatchObject({
+      status: "auth_required",
+      credentialCheck: {
+        state: "auth_required",
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      },
+    });
+    expect(tests).toBe(0);
+
+    const called = textOf(
+      await mt.callTool({
+        address: "drift.read",
+        resultMode: "value",
+      }),
+    ) as { ok: boolean; error: { code: string; message: string } };
+    expect(called).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      },
+    });
   });
 
   it("reports health observed from real generic tool calls", async () => {
