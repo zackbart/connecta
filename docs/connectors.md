@@ -637,7 +637,7 @@ token_endpoint_auth_method: "none" }`.
    returns false all reject before `finishAuth` — otherwise anyone holding the
    pending URL could complete consent with their own account. An
    unknown/non-OAuth connector id and every unverifiable callback render the
-   same 400 status, body, and headers, and cost one storage read either way
+   same 400 status, body, and headers, and cost two storage reads either way
    (see below). For a real connector, the operator log records the precise
    reason; thrown messages are bounded and escaped there without turning this
    public route into a connector directory. A valid state lets the route
@@ -652,10 +652,11 @@ token_endpoint_auth_method: "none" }`.
    to `auth_required` — it never crashes the server or hides other connectors.
 
 **What the refusal hides, and what it doesn't.** Matching bodies buy nothing if
-the clock still sorts ids. `verifyState` reads `conn:<id>:oauth:state` and
-`oauth:generation`, while an id naming nothing used to touch no I/O. The free
-refusals (unknown/non-OAuth, or `finishAuth` without `verifyState`) now read both
-keys in that id's namespace, where an unconfigured id gets misses
+the clock still sorts ids. `verifyState` reads `conn:<id>:oauth:generation` and
+then the active epoch's `oauth:state` key, while an id naming nothing used to
+touch no I/O. The free refusals (unknown/non-OAuth, or `finishAuth` without
+`verifyState`) now perform the same generation-then-state reads in that id's
+namespace, where an unconfigured id gets misses
 (`equalizeRefusalCost`, `src/server.ts`).
 
 That is cost equalization, not constant time, and the difference is worth
@@ -681,13 +682,18 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 
 | Key | Contents |
 | --- | --- |
-| `conn:<id>:oauth:client` | DCR client information |
-| `conn:<id>:oauth:tokens` | access + refresh tokens |
-| `conn:<id>:oauth:verifier` | one-shot PKCE code verifier |
-| `conn:<id>:oauth:state` | one-shot `state` value checked by `verifyState` |
-| `conn:<id>:oauth:pending` | stored authorization URL while a flow is open |
-| `conn:<id>:oauth:generation` | unique active/reset epoch; the reset form fails credential reads closed |
-
-OAuth values carry their generation, so a late stale write stays unreadable.
-Force publishes a reset tombstone before deletion; immediate cross-instance
-fencing requires strongly consistent [storage](./storage-and-credentials.md#storage).
+| `conn:<id>:oauth:client:epoch:<generation>` | DCR client information |
+| `conn:<id>:oauth:tokens:epoch:<generation>` | access + refresh tokens |
+| `conn:<id>:oauth:verifier:epoch:<generation>` | one-shot PKCE code verifier |
+| `conn:<id>:oauth:state:epoch:<generation>` | one-shot `state` value checked by `verifyState` |
+| `conn:<id>:oauth:pending:epoch:<generation>` | stored authorization URL while a flow is open |
+| `conn:<id>:oauth:generation` | unique active epoch selecting the readable namespace |
+| `conn:<id>:oauth:cleanup:<encoded-generation>` | retry backlog of retired namespaces whose physical deletion has not completed |
+Before the first force reset, legacy and old numeric generations retain the
+historical unsuffixed keys and encodings so a rolling old isolate or rollback
+can still read them. Force publishes one unique active epoch before cleanup.
+Modern OAuth values carry that epoch and use its physical namespace, so a late
+stale write or delete cannot affect replacement state. Failed physical cleanup
+is retained in the active epoch's backlog and retried on the next reset.
+Immediate cross-instance fencing requires strongly consistent
+[storage](./storage-and-credentials.md#storage).

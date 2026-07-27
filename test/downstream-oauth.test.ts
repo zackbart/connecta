@@ -164,6 +164,41 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await p.tokens()).toBeUndefined();
   });
 
+  it("preserves old-reader formats before the first modern reset", async () => {
+    for (const generation of [null, "7"]) {
+      const storage = memoryStorage();
+      if (generation !== null) {
+        await storage.set("oauth:generation", generation);
+      }
+      const p = new KvOAuthProvider("svc", storage, REDIRECT);
+      const state = await p.state();
+      await p.saveCodeVerifier("legacy-verifier");
+      await p.redirectToAuthorization(
+        new URL("https://auth.example/legacy"),
+      );
+      await p.saveClientInformation({
+        client_id: "legacy-client",
+        redirect_uris: [REDIRECT],
+      });
+      await p.saveTokens({
+        access_token: "legacy-token",
+        token_type: "Bearer",
+      });
+
+      expect(await storage.get("oauth:state")).toBe(state);
+      expect(await storage.get("oauth:verifier")).toBe("legacy-verifier");
+      expect(await storage.get("oauth:pending")).toBe(
+        "https://auth.example/legacy",
+      );
+      expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
+        client_id: "legacy-client",
+      });
+      expect(JSON.parse((await storage.get("oauth:tokens"))!)).toMatchObject({
+        access_token: "legacy-token",
+      });
+    }
+  });
+
   it("saveTokens persists a refresh under a captured generation that has not advanced", async () => {
     // Ordinary token refresh (no force): the flow captured the current
     // generation and nothing bumped it, so the write must go through.
@@ -412,6 +447,41 @@ describe("KvOAuthProvider over memoryStorage", () => {
     await resetA;
 
     expect(await backing.get("oauth:generation")).toBe(secondGeneration);
+  });
+
+  it("retries failed cleanup of an older modern epoch on the next reset", async () => {
+    const backing = memoryStorage();
+    let failTokenDelete = false;
+    let oldTokenKey = "";
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        if (failTokenDelete && key === oldTokenKey) {
+          failTokenDelete = false;
+          throw new Error("transient token cleanup failure");
+        }
+        await backing.delete(key);
+      },
+    };
+    const first = new KvOAuthProvider("svc", storage, REDIRECT);
+    await first.resetAuthorization();
+    const firstGeneration = await first.generation();
+    oldTokenKey = oauthValueStorageKey("oauth:tokens", firstGeneration);
+    await first.saveTokens({
+      access_token: "retired-secret",
+      token_type: "Bearer",
+    });
+    expect(await backing.get(oldTokenKey)).not.toBeNull();
+
+    failTokenDelete = true;
+    await expect(first.resetAuthorization()).rejects.toThrow(
+      "transient token cleanup failure",
+    );
+    expect(await backing.get(oldTokenKey)).not.toBeNull();
+
+    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    expect(await backing.get(oldTokenKey)).toBeNull();
   });
 
   it("clearPending attempts every one-shot deletion after a failure", async () => {

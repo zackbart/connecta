@@ -25,6 +25,14 @@ const LEGACY_GENERATION = "legacy";
 const ACTIVE_GENERATION_PREFIX = "v2:";
 const RESETTING_GENERATION_PREFIX = "reset:";
 const STORED_VALUE_VERSION = 1;
+const OAUTH_VALUE_KEYS = [
+  "oauth:client",
+  "oauth:tokens",
+  "oauth:pending",
+  "oauth:verifier",
+  "oauth:state",
+] as const;
+const MAX_CLEANUP_BACKLOG = 1_000;
 
 interface StoredOAuthValue<T> {
   connectaOAuthVersion: typeof STORED_VALUE_VERSION;
@@ -64,6 +72,10 @@ export function oauthValueStorageKey(
   return generation !== null && isModernGeneration(generation)
     ? `${key}:epoch:${generation}`
     : key;
+}
+
+function cleanupBacklogKey(generation: string): string {
+  return `oauth:cleanup:${encodeURIComponent(generation)}`;
 }
 
 /**
@@ -114,7 +126,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * check-then-write race: a late old write cannot overwrite a replacement
    * flow's value because the two writes have different physical keys.
    */
-  private async writeValue<T>(key: string, value: T): Promise<void> {
+  private async writeValue<T>(
+    key: string,
+    value: T,
+    serializeLegacy: (value: T) => string,
+  ): Promise<void> {
     const generation = await this.writeGeneration();
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
@@ -128,15 +144,28 @@ export class KvOAuthProvider implements OAuthClientProvider {
       value,
     };
     const physicalKey = oauthValueStorageKey(key, generation);
-    await this.storage.set(physicalKey, JSON.stringify(stored));
+    await this.storage.set(
+      physicalKey,
+      isModernGeneration(generation)
+        ? JSON.stringify(stored)
+        : serializeLegacy(value),
+    );
     // If reset landed after the pre-write check and completed its cleanup
     // before this set, remove the now-unreachable residue ourselves. The epoch
     // key already provides correctness; this second check is physical hygiene.
-    if ((await this.generation()) !== generation) {
+    const current = await this.generation();
+    if (current !== generation) {
       try {
         await this.storage.delete(physicalKey);
       } catch {
-        // Best-effort cleanup of an already unreadable old namespace.
+        // Make a transient cleanup failure retryable by the next force reset.
+        // This is still best-effort if storage cannot accept the backlog write.
+        try {
+          await this.rememberRetiredGeneration(current, generation);
+        } catch {
+          // The old namespace is already unreadable; storage availability is
+          // the remaining physical-hygiene boundary.
+        }
       }
     }
   }
@@ -186,6 +215,45 @@ export class KvOAuthProvider implements OAuthClientProvider {
     if (firstError) throw firstError;
   }
 
+  private async cleanupBacklog(generation: string): Promise<string[]> {
+    const raw = await this.storage.get(cleanupBacklogKey(generation));
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length > MAX_CLEANUP_BACKLOG ||
+      !parsed.every((value) => typeof value === "string")
+    ) {
+      throw new Error(
+        `Invalid OAuth cleanup backlog for "${this.connectorId}"`,
+      );
+    }
+    return [...new Set(parsed)];
+  }
+
+  private async rememberRetiredGeneration(
+    active: string,
+    retired: string,
+  ): Promise<void> {
+    const backlog = await this.cleanupBacklog(active);
+    if (backlog.includes(retired)) return;
+    if (backlog.length >= MAX_CLEANUP_BACKLOG) {
+      throw new Error(
+        `OAuth cleanup backlog for "${this.connectorId}" is full`,
+      );
+    }
+    await this.storage.set(
+      cleanupBacklogKey(active),
+      JSON.stringify([...backlog, retired]),
+    );
+  }
+
+  private valueKeysForGeneration(generation: string): string[] {
+    return OAUTH_VALUE_KEYS.map((key) =>
+      oauthValueStorageKey(key, generation),
+    );
+  }
+
   get redirectUrl(): string {
     return this.redirectUri;
   }
@@ -212,7 +280,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async saveClientInformation(
     info: OAuthClientInformationMixed,
   ): Promise<void> {
-    await this.writeValue("oauth:client", info);
+    await this.writeValue("oauth:client", info, (value) =>
+      JSON.stringify(value),
+    );
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
@@ -225,7 +295,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await this.writeValue("oauth:tokens", tokens);
+    await this.writeValue("oauth:tokens", tokens, (value) =>
+      JSON.stringify(value),
+    );
   }
 
   /**
@@ -239,7 +311,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async state(): Promise<string> {
     const value = randomState();
-    await this.writeValue("oauth:state", value);
+    await this.writeValue("oauth:state", value, (raw) => raw);
     return value;
   }
 
@@ -256,7 +328,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
-    await this.writeValue("oauth:verifier", verifier);
+    await this.writeValue("oauth:verifier", verifier, (raw) => raw);
   }
 
   async codeVerifier(): Promise<string> {
@@ -268,7 +340,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.writeValue("oauth:pending", authorizationUrl.toString());
+    await this.writeValue(
+      "oauth:pending",
+      authorizationUrl.toString(),
+      (raw) => raw,
+    );
   }
 
   /** The stored authorization URL, if a flow is pending. */
@@ -317,28 +393,64 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async resetAuthorization(): Promise<void> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
+    const inherited = await this.cleanupBacklog(previous);
     const active = `${ACTIVE_GENERATION_PREFIX}${nonce}`;
+    const retired = [...new Set([...inherited, previous])];
+    if (retired.length > MAX_CLEANUP_BACKLOG) {
+      throw new Error(
+        `OAuth cleanup backlog for "${this.connectorId}" is full`,
+      );
+    }
+    // Publish the complete inherited cleanup work under the prospective epoch
+    // before making that epoch active. A crash or later retry can therefore
+    // always recover the older namespaces without a storage prefix scan.
+    await this.storage.set(
+      cleanupBacklogKey(active),
+      JSON.stringify(retired),
+    );
     // This is the one authoritative transition. From this point onward every
     // old physical namespace is unreadable. There is deliberately no second
     // "finalize" write: concurrent resets therefore cannot overwrite a newer
     // reset's epoch after their cleanup finishes out of order.
-    await this.storage.set("oauth:generation", active);
-    const baseKeys = [
-      "oauth:client",
-      "oauth:tokens",
-      "oauth:pending",
-      "oauth:verifier",
-      "oauth:state",
-    ];
-    // Remove the immediately superseded namespace and raw legacy residue.
-    // Generation fencing provides correctness; this deletion is storage
-    // hygiene and still attempts every key before surfacing a backend failure.
-    await this.deleteAll([
-      ...new Set([
-        ...baseKeys.map((key) => oauthValueStorageKey(key, previous)),
-        ...baseKeys,
-      ]),
-    ]);
+    try {
+      await this.storage.set("oauth:generation", active);
+    } catch (error) {
+      try {
+        await this.storage.delete(cleanupBacklogKey(active));
+      } catch {
+        // Best-effort removal of a manifest for an epoch never activated.
+      }
+      throw error;
+    }
+
+    let firstError: unknown;
+    const remaining: string[] = [];
+    for (const generation of retired) {
+      try {
+        await this.deleteAll(this.valueKeysForGeneration(generation));
+        await this.storage.delete(cleanupBacklogKey(generation));
+      } catch (error) {
+        firstError ??= error;
+        remaining.push(generation);
+      }
+    }
+
+    // Replace the conservative pre-transition manifest with only the work that
+    // failed. If this write/delete itself fails, the full initial manifest
+    // remains and a later reset safely retries extra idempotent deletions.
+    try {
+      if (remaining.length === 0) {
+        await this.storage.delete(cleanupBacklogKey(active));
+      } else {
+        await this.storage.set(
+          cleanupBacklogKey(active),
+          JSON.stringify(remaining),
+        );
+      }
+    } catch (error) {
+      firstError ??= error;
+    }
+    if (firstError) throw firstError;
   }
 
   async invalidateCredentials(

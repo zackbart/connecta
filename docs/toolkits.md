@@ -222,8 +222,9 @@ binding cannot narrow a view, and a view cannot admit an identity.
   answer "does this id exist": an unknown/non-OAuth id, a real connector with
   missing or mismatched state, one with no verifier, and one whose verifier
   throws all produce byte-identical failure responses, each paying the same
-  single `oauth:state` read so the answer does not arrive measurably sooner for
-  an id that names nothing. That is equal cost, not constant time — see
+  generation read followed by an `oauth:state` read so the answer does not
+  arrive measurably sooner for an id that names nothing. That is equal cost,
+  not constant time — see
   [downstream OAuth](./connectors.md#downstream-oauth) for what remains
   distinguishable. Only a callback whose verifier accepts the valid one-shot
   state can reveal a connector by succeeding; the operator log, not the public
