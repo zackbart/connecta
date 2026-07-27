@@ -2,17 +2,23 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.7.6 — 2026-07-27
 
-This change gives every runtime an explicit MCP memory-pressure boundary.
-Ordinary requests now stop at a bounded FIFO before auth and per-request server
-construction, while code mode retains a separate smaller pool and health/UI
-capacity remains reserved. Existing deployments gain conservative defaults;
-operators may tune the active count, queue, wait deadline, and retry hint.
+0.7.6 gives every runtime an explicit MCP memory-pressure boundary and closes
+three Node code-mode failure-reporting and transport gaps. Ordinary requests now
+stop at a bounded FIFO before auth and per-request server construction, while
+code mode retains a separate smaller pool and health/UI capacity remains
+reserved. Existing deployments gain conservative admission defaults; operators
+may tune the active count, queue, wait deadline, and retry hint. Node deployments
+also get actionable missing-child guidance, bounded stderr context when a
+QuickJS child exits abnormally, and transport-aware log truncation that
+preserves successful results. There are no dependency, storage, or package
+entrypoint changes.
 
 ### Added
 
-- **Bounded request admission and observable backpressure** (issue #85).
+- **Bounded request admission and observable backpressure** (issue #85,
+  PR #129).
   `/mcp` defaults to 16 active requests and 32 queued for at most five seconds.
   Overflow returns HTTP 503 plus a stable JSON-RPC `server_overloaded` error and
   `Retry-After`; queued cancellation removes the caller immediately, response
@@ -28,6 +34,24 @@ operators may tune the active count, queue, wait deadline, and retry hint.
   the 100/500/1,000/5,000-call matrix and a repeated 15,000-call soak, recording
   verified outcomes, throughput, p50/p95/p99, server-only peak/RSS-after-GC,
   and live heap without turning host-specific numbers into CI assertions.
+
+### Fixed
+
+- **Abnormal QuickJS child exits now include bounded stderr context** (issue
+  #118, PR #126). The parent retains only the most recent 8 KiB, waits for stdio
+  to close so final crash output is available, and includes the tail in startup
+  and runtime exit diagnostics without allowing stderr to grow unbounded.
+- **Missing QuickJS child files fail before `fork()` with an actionable error**
+  (issue #119, PR #127). The message names the exact expected
+  `quickjs-child.js` path and tells bundled Node deployments to externalize
+  `@zackbart/connecta` or its `quickjs` subpath so the published child file
+  remains on disk.
+- **QuickJS log truncation now budgets the bytes used by the complete IPC
+  transport** (issue #120, PR #128). The existing entry and character caps
+  remain, with an additional 512 KiB allowance measured after both JSON
+  encodings and space reserved for the truncation marker, preventing
+  escape-heavy logs from displacing an otherwise valid result in the 1 MiB
+  child-message envelope.
 
 ## 0.7.5 — 2026-07-27
 

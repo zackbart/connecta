@@ -108,6 +108,11 @@ Two known implementations:
   nothing for `fork()` to start; the first execution rejects with the expected
   child path and the same externalization instruction.
 
+  If a child starts and then exits abnormally, the returned diagnostic includes
+  only the most recent 8 KiB of its stderr. The parent waits for the stderr pipe
+  to close before reporting the exit, so final runtime crash output is included
+  without letting diagnostic capture grow without bound.
+
   Four separate controls bound different costs:
 
   | Option | Default | Bounds |
