@@ -10,6 +10,7 @@ import {
 import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import {
+  buildUiData,
   CONNECTA_FAVICON_SVG,
   credentialManagementCapability,
   filterUiConnectors,
@@ -28,6 +29,7 @@ import type {
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
+import { makeRegistry } from "./helpers.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -1251,6 +1253,70 @@ describe("status UI", () => {
 
     expect(res.status).toBe(200);
     expect(closes).toBe(1);
+  });
+
+  it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
+    let slowStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      slowStarted = resolve;
+    });
+    let releaseSlow!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let slowFinished = false;
+    let closedMidProbe = false;
+    const rejecting: Connector = {
+      id: "rejecting",
+      description: "Rejecting connector",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const slow: Connector = {
+      id: "slow",
+      description: "Slow connector",
+      async status() {
+        slowStarted();
+        await release;
+        slowFinished = true;
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        if (!slowFinished) closedMidProbe = true;
+      },
+    };
+    const registry = makeRegistry([rejecting, slow]);
+    const credentialHealthFor = registry.credentialHealthFor.bind(registry);
+    registry.credentialHealthFor = async (id) => {
+      if (id === "rejecting") throw new Error("future unguarded rejection");
+      return credentialHealthFor(id);
+    };
+
+    const loading = buildUiData(registry, BASE, {
+      name: "connecta",
+      version: "test",
+    });
+    await started;
+    await Promise.resolve();
+    expect(closedMidProbe).toBe(false);
+
+    releaseSlow();
+    await expect(loading).rejects.toThrow("future unguarded rejection");
+    expect(slowFinished).toBe(true);
+    expect(closedMidProbe).toBe(false);
   });
 
   it("serves authenticated, paginated activity when a reader is configured", async () => {

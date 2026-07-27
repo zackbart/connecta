@@ -394,7 +394,7 @@ export async function buildUiData(
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
-  const connectors = await Promise.all(
+  const settled = await Promise.allSettled(
     connectorSet.map(async (c): Promise<UiConnector> => {
       const status = await registry.statusFor(c.id, baseUrl, requestScope);
       const credentialCheck = await registry.credentialHealthFor(c.id);
@@ -530,15 +530,18 @@ export async function buildUiData(
         ...(credential ? { credential } : {}),
       };
     }),
-  ).finally(async () => {
-    await Promise.all(
-      connectorSet.map((connector) =>
-        closeConnectorScope(
-          connector,
-          registry.contextFor(connector.id, baseUrl, requestScope),
-        ),
+  );
+  await Promise.all(
+    connectorSet.map((connector) =>
+      closeConnectorScope(
+        connector,
+        registry.contextFor(connector.id, baseUrl, requestScope),
       ),
-    );
+    ),
+  );
+  const connectors = settled.map((result) => {
+    if (result.status === "rejected") throw result.reason;
+    return result.value;
   });
   return {
     serverInfo,

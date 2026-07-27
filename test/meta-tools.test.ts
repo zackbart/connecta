@@ -383,6 +383,66 @@ describe("list_connectors", () => {
     expect(closes).toBe(1);
   });
 
+  it("waits for every sibling probe before tearing down after a rejection", async () => {
+    let slowStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      slowStarted = resolve;
+    });
+    let releaseSlow!: () => void;
+    const release = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let slowFinished = false;
+    let closedMidProbe = false;
+    const rejecting: Connector = {
+      id: "rejecting",
+      description: "Rejecting connector",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const slow: Connector = {
+      id: "slow",
+      description: "Slow connector",
+      async status() {
+        slowStarted();
+        await release;
+        slowFinished = true;
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        if (!slowFinished) closedMidProbe = true;
+      },
+    };
+    const registry = makeRegistry([rejecting, slow]);
+    const credentialHealthFor = registry.credentialHealthFor.bind(registry);
+    registry.credentialHealthFor = async (id) => {
+      if (id === "rejecting") throw new Error("future unguarded rejection");
+      return credentialHealthFor(id);
+    };
+
+    const listing = createMetaTools(registry, BASE).listConnectors({
+      probe: true,
+    });
+    await started;
+    await Promise.resolve();
+    expect(closedMidProbe).toBe(false);
+
+    releaseSlow();
+    await expect(listing).rejects.toThrow("future unguarded rejection");
+    expect(slowFinished).toBe(true);
+    expect(closedMidProbe).toBe(false);
+  });
+
   it("reports a connector's display title separately from its address id", async () => {
     const titled = api("billing", {
       title: "Acme Billing",
