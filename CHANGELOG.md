@@ -2,17 +2,55 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.7.4 — 2026-07-27
+
+0.7.4 moves the built-in QuickJS executor out of the HTTP-serving process. A
+runaway guest used to occupy Node's event loop for its entire wall budget —
+health checks, ordinary tool calls, timers, and shutdown all waited behind it.
+Guest code now runs in a bounded pool of replaceable child processes behind
+FIFO admission, so the serving thread stays responsive regardless of what the
+model wrote, and a WASM abort or interpreter OOM kills a disposable child
+instead of the server. Deployments without an `executor`, and Workers
+deployments on `DynamicWorkerExecutor`, can take this release without reading
+further — the nine base meta-tools and every package entrypoint are untouched.
+Node code-mode deployments should note two intentional guest-visible changes:
+synchronous guest CPU gets its own 250 ms default budget separate from the
+30 s wall clock, and connector namespaces are lazy proxies, so
+`Object.keys(github)` is empty and an unknown function fails through the host
+bridge rather than at property access. Neither grants any authority.
+
+### Added
+
+- **QuickJS child-process pool with bounded admission** (issue #83, PR #116).
+  `quickJsExecutor()` gains `cpuTimeMs`, `concurrency`, `maxQueueSize`, and
+  `queueTimeoutMs` beside the existing wall/memory/stack caps. Admission is
+  acquired before provider construction, so queued calls retain no catalogs or
+  request-scoped closures; overflow and queue expiry return the stable,
+  retryable `executor_overloaded` error with `retryAfterMs`, and cancellation
+  and shutdown report `executor_cancelled` / `executor_closed`. Every
+  parent/child IPC envelope is byte-bounded, the parent treats child messages
+  as untrusted input, and a wall timeout retires the child on a structural
+  flag rather than error text a guest could fabricate.
+- **`Connecta.close()`** drains and releases executor resources, idempotently.
+  The Node `listen()` adapter calls it the moment graceful shutdown begins, so
+  sandbox children stop holding open the very requests shutdown waits on.
+- **`AdmittingExecutor` and `ExecutorLease`** extend the one-method `Executor`
+  seam for bounded executors. The lease carries execution so an
+  already-admitted caller cannot acquire twice and deadlock a pool of one;
+  `DynamicWorkerExecutor` remains structurally compatible unchanged.
+- **HTTP client disconnects now cancel in-flight work** in the Node adapter:
+  the abort propagates through the Web `Request` into `execute_code` catalog
+  construction, queued admission, host calls, and the running child.
 
 ### Fixed
 
 - **Downstream session termination gets a realistic acknowledgement window and
-  an operator-visible failure signal** (issue #96). Probe callers retain their
-  100 ms teardown cap while the headers-only `DELETE` gets one second for a
-  cross-internet round trip; Workers keep that bounded tail alive with
-  `waitUntil`. Refusals and transport failures now warn through the deployment
-  logger, and expiry is reported honestly as unacknowledged because the
-  downstream may still complete a request that was already sent.
+  an operator-visible failure signal** (issue #96, PR #117). Probe callers
+  retain their 100 ms teardown cap while the headers-only `DELETE` gets one
+  second for a cross-internet round trip; Workers keep that bounded tail alive
+  with `waitUntil`. Refusals and transport failures now warn through the
+  deployment logger, and expiry is reported honestly as unacknowledged because
+  the downstream may still complete a request that was already sent.
 
 ## 0.7.3 — 2026-07-27
 
