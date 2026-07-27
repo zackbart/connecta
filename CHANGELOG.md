@@ -2,6 +2,44 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.1 — 2026-07-27
+
+0.7.1 is a security-and-bounds patch. It closes both redirect paths that could
+let untrusted URL text choose an origin, and it puts hard request and response
+ceilings around discovery. There are no dependency changes and no breaking
+TypeScript changes. There is one intentional runtime hardening to notice:
+`remoteMcp` now rejects downstream redirects by default. A deployment whose MCP
+endpoint legitimately redirects within the same origin can opt into the new
+`redirects: "same-origin"` policy; cross-origin redirects and HTTPS downgrades
+remain impossible.
+
+### Added
+
+- **`remoteMcp` has an explicit downstream redirect policy** (issue #81).
+  `redirects` defaults to `"none"`; `"same-origin"` follows at most five
+  manually validated hops with deliberate 301/302/303/307/308 method and body
+  semantics. Static headers and OAuth credentials never reach a cross-origin
+  target, and policy failures are typed, non-retryable, and sanitized.
+
+### Changed
+
+- **Discovery requests and generated results are bounded** (issue #82).
+  `search_tools` accepts at most 100 results, `describe_tools` accepts at most
+  100 raw addresses, and both reject generated results above 256,000 UTF-8
+  bytes. Compact, JSON-schema, value, and code-mode paths share the same policy,
+  so alternate entry points cannot bypass it.
+
+### Fixed
+
+- **Inbound HTTP-to-HTTPS upgrades preserve the configured public origin**
+  (issue #89). Protocol-relative, backslash, and control-character path forms
+  can no longer turn the upgrade response into an open redirect; ordinary
+  operator and private API paths still retain their path and query.
+- **Downstream MCP redirects are validated before every target request**
+  (issue #81). Redirect loops, excessive chains, scheme downgrades, origin
+  changes, and credential-bearing URL targets now fail closed in both Node and
+  Workers.
+
 ## 0.7.0 — 2026-07-27
 
 0.7.0 is the surface settlement: one release that finishes moving connecta's
