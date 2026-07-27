@@ -9,7 +9,12 @@ import type {
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
-import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import {
+  MAX_REMOTE_REDIRECT_HOPS,
+  redirectSafeFetch,
+  remoteMcp,
+  RemoteMcpRedirectError,
+} from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
@@ -601,6 +606,229 @@ describe("remoteMcp() destination guard", () => {
       }),
     ).not.toThrow();
     expect(warn).not.toHaveBeenCalled();
+  });
+});
+
+describe("remoteMcp() redirect policy", () => {
+  it("rejects redirects by default without issuing the target request", async () => {
+    const calls: Array<{ url: string; init: RequestInit }> = [];
+    const guarded = redirectSafeFetch(
+      "down",
+      undefined,
+      async (url, init = {}) => {
+        calls.push({ url: new URL(url).href, init });
+        return new Response(null, {
+          status: 307,
+          headers: {
+            location: "https://other.test/mcp?token=redirect-secret",
+          },
+        });
+      },
+    );
+
+    const err = await guarded("https://downstream.test/mcp", {
+      method: "POST",
+      headers: { "x-api-key": "static-secret" },
+      body: "{}",
+    }).then(() => null, (error: unknown) => error);
+
+    expect(err).toBeInstanceOf(RemoteMcpRedirectError);
+    expect(err).toMatchObject({
+      code: "connector_call_failed",
+      retryable: false,
+    });
+    expect((err as Error).message).not.toContain("redirect-secret");
+    expect((err as Error).message).not.toContain("static-secret");
+    expect(calls).toHaveLength(1);
+    expect(calls[0].init.redirect).toBe("manual");
+  });
+
+  it.each([
+    [301, "GET", undefined],
+    [302, "GET", undefined],
+    [303, "GET", undefined],
+    [307, "POST", "payload"],
+    [308, "POST", "payload"],
+  ] as const)(
+    "follows an allowed same-origin %i with deliberate method/body semantics",
+    async (status, expectedMethod, expectedBody) => {
+      const calls: Array<{ url: string; init: RequestInit }> = [];
+      const guarded = redirectSafeFetch(
+        "down",
+        "same-origin",
+        async (url, init = {}) => {
+          calls.push({ url: new URL(url).href, init });
+          if (calls.length === 1) {
+            return new Response(null, {
+              status,
+              headers: {
+                location:
+                  status % 2 === 0
+                    ? "https://downstream.test/next"
+                    : "/next",
+              },
+            });
+          }
+          return new Response("ok");
+        },
+      );
+
+      await expect(
+        guarded("https://downstream.test/mcp", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "x-api-key": "static-secret",
+          },
+          body: "payload",
+        }),
+      ).resolves.toBeInstanceOf(Response);
+
+      expect(calls).toHaveLength(2);
+      expect(calls[1].url).toBe("https://downstream.test/next");
+      expect(calls[1].init.method).toBe(expectedMethod);
+      expect(calls[1].init.body).toBe(expectedBody);
+      expect(new Headers(calls[1].init.headers).get("x-api-key")).toBe(
+        "static-secret",
+      );
+      expect(
+        new Headers(calls[1].init.headers).get("content-type"),
+      ).toBe(expectedBody ? "application/json" : null);
+      expect(calls.every((call) => call.init.redirect === "manual")).toBe(true);
+    },
+  );
+
+  it.each([
+    "http://downstream.test/plaintext",
+    "https://127.0.0.1/mcp",
+    "https://10.0.0.1/mcp",
+    "https://169.254.169.254/latest/meta-data",
+    "https://0.0.0.0/mcp",
+    "https://[::1]/mcp",
+    "https://[::ffff:127.0.0.1]/mcp",
+    "https://[fe80::1]/mcp",
+    "https://224.0.0.1/mcp",
+  ])("never sends static headers to redirect target %s", async (target) => {
+    const calls: Array<{ url: string; headers: Headers }> = [];
+    const guarded = redirectSafeFetch(
+      "down",
+      "same-origin",
+      async (url, init = {}) => {
+        calls.push({
+          url: new URL(url).href,
+          headers: new Headers(init.headers),
+        });
+        return new Response(null, {
+          status: 307,
+          headers: { location: `${target}?secret=redirect-secret` },
+        });
+      },
+    );
+
+    const err = await guarded("https://downstream.test/mcp", {
+      method: "POST",
+      headers: { "x-api-key": "static-secret" },
+      body: "{}",
+    }).then(() => null, (error: unknown) => error);
+
+    expect(err).toBeInstanceOf(RemoteMcpRedirectError);
+    expect((err as Error).message).not.toContain("redirect-secret");
+    expect((err as Error).message).not.toContain(target);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].headers.get("x-api-key")).toBe("static-secret");
+  });
+
+  it("never sends an OAuth bearer token across an origin boundary", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "oauth:tokens",
+      JSON.stringify({ access_token: "oauth-secret", token_type: "bearer" }),
+    );
+    const calls: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (_url: string | URL, init: RequestInit = {}) => {
+        calls.push(new Headers(init.headers));
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://authorization.test/elsewhere" },
+        });
+      },
+    );
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp",
+      auth: { type: "oauth" },
+      redirects: "same-origin",
+    });
+
+    await expect(
+      connector.status!(ctx(storage)),
+    ).resolves.toMatchObject({
+      state: "error",
+      message: expect.stringContaining("cross-origin redirect"),
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].get("authorization")).toBe("Bearer oauth-secret");
+  });
+
+  it("fails redirect loops and chains beyond the hard hop limit", async () => {
+    const loopCalls: string[] = [];
+    const looping = redirectSafeFetch(
+      "down",
+      "same-origin",
+      async (url) => {
+        const current = new URL(url);
+        loopCalls.push(current.pathname);
+        return new Response(null, {
+          status: 308,
+          headers: { location: current.pathname === "/a" ? "/b" : "/a" },
+        });
+      },
+    );
+    await expect(looping("https://downstream.test/a")).rejects.toThrow(
+      /chain loops/,
+    );
+    expect(loopCalls).toEqual(["/a", "/b"]);
+
+    let chainCalls = 0;
+    const endless = redirectSafeFetch(
+      "down",
+      "same-origin",
+      async () =>
+        new Response(null, {
+          status: 307,
+          headers: { location: `/hop-${++chainCalls}` },
+        }),
+    );
+    await expect(endless("https://downstream.test/start")).rejects.toThrow(
+      new RegExp(`exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`),
+    );
+    expect(chainCalls).toBe(MAX_REMOTE_REDIRECT_HOPS + 1);
+  });
+
+  it("installs the guarded fetch on the real SDK transport", async () => {
+    const calls: Headers[] = [];
+    vi.stubGlobal(
+      "fetch",
+      async (_url: string | URL, init: RequestInit = {}) => {
+        calls.push(new Headers(init.headers));
+        return new Response(null, {
+          status: 307,
+          headers: { location: "https://other.test/mcp" },
+        });
+      },
+    );
+    const connector = remoteMcp("down", {
+      url: "https://downstream.test/mcp",
+      auth: { type: "headers", headers: { "x-api-key": "static-secret" } },
+    });
+
+    await expect(connector.status!(ctx())).resolves.toMatchObject({
+      state: "error",
+      message: expect.stringContaining("redirect policy rejected"),
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0].get("x-api-key")).toBe("static-secret");
   });
 });
 

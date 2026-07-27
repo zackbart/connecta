@@ -1,7 +1,10 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type {
+  FetchLike,
+  Transport,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
 import { ConnectorCallError } from "../errors.js";
@@ -17,6 +20,8 @@ import type {
 export type RemoteMcpAuth =
   | { type: "headers"; headers: Record<string, string> }
   | { type: "oauth" };
+
+export type RemoteMcpRedirectPolicy = "none" | "same-origin";
 
 export interface RemoteMcpOptions {
   url: string;
@@ -37,6 +42,14 @@ export interface RemoteMcpOptions {
    */
   usageGuide?: string;
   auth?: RemoteMcpAuth;
+  /**
+   * Downstream HTTP redirect policy. Defaults to `"none"`: every redirect is
+   * rejected. `"same-origin"` follows at most five redirects while preserving
+   * standard 301/302/303/307/308 method semantics. Cross-origin redirects and
+   * HTTPS downgrades are always refused, so credentials never cross the
+   * configured request's origin.
+   */
+  redirects?: RemoteMcpRedirectPolicy;
   /**
    * Refuse to connect to a non-`https://` `url` at construction (default
    * false). Loopback hosts (`localhost`, `127.0.0.1`, `[::1]`) are always
@@ -208,6 +221,127 @@ function isLoopbackHost(hostname: string): boolean {
   );
 }
 
+export const MAX_REMOTE_REDIRECT_HOPS = 5;
+const REDIRECT_STATUSES = new Set([301, 302, 303, 307, 308]);
+const BODY_HEADERS = [
+  "content-encoding",
+  "content-language",
+  "content-length",
+  "content-location",
+  "content-type",
+  "transfer-encoding",
+];
+
+export class RemoteMcpRedirectError extends ConnectorCallError {
+  constructor(connectorId: string, reason: string) {
+    super(
+      "connector_call_failed",
+      `Connector "${connectorId}" redirect policy rejected the downstream response: ${reason}.`,
+    );
+    this.name = "RemoteMcpRedirectError";
+  }
+}
+
+function redirectedInit(init: RequestInit, status: number): RequestInit {
+  const method = (init.method ?? "GET").toUpperCase();
+  const becomesGet =
+    (status === 303 && method !== "GET" && method !== "HEAD") ||
+    ((status === 301 || status === 302) && method === "POST");
+  if (!becomesGet) return init;
+  const headers = new Headers(init.headers);
+  for (const name of BODY_HEADERS) headers.delete(name);
+  return { ...init, method: "GET", body: undefined, headers };
+}
+
+/**
+ * Wrap fetch with explicit, bounded redirect handling.
+ *
+ * The starting URL of each fetch call is trusted by its caller (the configured
+ * MCP endpoint, or an OAuth URL discovered by the pinned SDK). Only Location
+ * values are policy-controlled here. No rejected target is ever fetched, so
+ * arbitrary static header names receive the same protection as Authorization.
+ */
+export function redirectSafeFetch(
+  connectorId: string,
+  policy: RemoteMcpRedirectPolicy = "none",
+  baseFetch: FetchLike = fetch,
+): FetchLike {
+  return async (input, initialInit = {}) => {
+    let current = new URL(input);
+    let init = initialInit;
+    const seen = new Set<string>([current.href]);
+    let hops = 0;
+
+    while (true) {
+      const response = await baseFetch(current, {
+        ...init,
+        redirect: "manual",
+      });
+      if (!REDIRECT_STATUSES.has(response.status)) return response;
+
+      const location = response.headers.get("location");
+      await response.body?.cancel().catch(() => {});
+      if (!location) {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          `HTTP ${response.status} carried no Location header`,
+        );
+      }
+      if (policy === "none") {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          `HTTP ${response.status} redirects are disabled`,
+        );
+      }
+      if (hops >= MAX_REMOTE_REDIRECT_HOPS) {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          `the redirect chain exceeded ${MAX_REMOTE_REDIRECT_HOPS} hops`,
+        );
+      }
+
+      let next: URL;
+      try {
+        next = new URL(location, current);
+      } catch {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          `HTTP ${response.status} carried an invalid Location header`,
+        );
+      }
+      if (current.protocol === "https:" && next.protocol !== "https:") {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          "an HTTPS-to-HTTP downgrade is not allowed",
+        );
+      }
+      if (next.origin !== current.origin) {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          "a cross-origin redirect is not allowed",
+        );
+      }
+      if (next.username || next.password) {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          "a redirect target containing URL credentials is not allowed",
+        );
+      }
+      if (seen.has(next.href)) {
+        throw new RemoteMcpRedirectError(
+          connectorId,
+          "the redirect chain loops",
+        );
+      }
+
+      seen.add(next.href);
+      hops++;
+      init = redirectedInit(init, response.status);
+      current = next;
+    }
+  };
+}
+
 interface ConnectionState {
   client: Client | null;
   transport: Transport | null;
@@ -324,30 +458,27 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return state.provider;
   };
 
-  // NOTE: StreamableHTTPClientTransport speaks over fetch, which transparently
-  // follows 3xx redirects. A malicious or compromised downstream MCP could
-  // redirect to an internal address (e.g. http://169.254.169.254/…) and fetch
-  // would re-issue the request — potentially carrying static auth headers. The
-  // scheme check above only guards the first hop; a fully robust guard (manual
-  // redirect handling + per-hop re-validation + stripping auth headers cross-
-  // origin) lives in the SDK transport and is deferred to a future non-patch
-  // release rather than reimplemented here.
   const buildTransport = (
     ctx: ConnectorContext,
     state: ConnectionState,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
+    const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
       return new StreamableHTTPClientTransport(url, {
         authProvider: getProvider(ctx, state),
+        fetch: guardedFetch,
       });
     }
     const headers =
       opts.auth?.type === "headers" ? opts.auth.headers : undefined;
     return new StreamableHTTPClientTransport(
       url,
-      headers ? { requestInit: { headers } } : undefined,
+      {
+        ...(headers ? { requestInit: { headers } } : {}),
+        fetch: guardedFetch,
+      },
     );
   };
 

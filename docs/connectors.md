@@ -277,6 +277,7 @@ export interface RemoteMcpOptions {
   auth?:
     | { type: "headers"; headers: Record<string, string> }
     | { type: "oauth" };
+  redirects?: "none" | "same-origin"; // default "none"; at most five hops
   requireHttps?: boolean;        // refuse a cleartext url outright; default false
   logger?: Logger;               // destination for the construction warning; default console
   // _transportFactory?: internal testing seam — see operations.md.
@@ -291,6 +292,27 @@ export interface RemoteMcpOptions {
 
 Auth failures degrade the connector to `auth_required` (a real
 `UnauthorizedError`) or `error` (any other failure, e.g. network) — never a crash.
+
+**Redirects are manual and fail closed.** The default `redirects: "none"`
+rejects every 301, 302, 303, 307, or 308 before issuing the target request.
+Set `"same-origin"` only for a downstream that legitimately moves its MCP or
+OAuth endpoints within one origin. That policy:
+
+- follows at most five hops and rejects loops;
+- resolves relative `Location` values but refuses a scheme, host, or port
+  change, including every public-to-loopback/private/link-local/metadata
+  redirect;
+- refuses HTTPS-to-HTTP downgrade explicitly;
+- preserves method and body for 307/308, changes POST to GET for 301/302, and
+  changes non-GET/HEAD methods to GET for 303, dropping body headers with the
+  body; and
+- returns a typed, non-retryable connector error that names the policy failure
+  without echoing the target URL, query, or credential values.
+
+Cross-origin redirects are not an opt-in mode. Because the target is rejected
+before `fetch`, neither the SDK's OAuth bearer token nor an arbitrary static
+header name can cross the origin boundary; the implementation does not rely on
+the runtime's special treatment of `Authorization`.
 
 **Catalog discovery follows MCP pagination.** `tools/list` is cursor-paginated
 in the spec: the server picks the page size and signals "there is more" with a
@@ -360,7 +382,7 @@ once from the full aggregated catalog before returning. It is reaching past a
 `private` marker on a pinned SDK, so a test asserts the method still exists and
 fails on any bump that renames it.
 
-**`requireHttps` — the cleartext-credential guard.** The threat is
+**`requireHttps` — the first-hop cleartext-credential guard.** The threat is
 `{ type: "headers" }` plus an `http://` `url`: the transport attaches those
 static headers to *every* request, so an API key or bearer token crosses the
 network in the clear, readable and replayable by anything on the path. connecta
@@ -376,9 +398,9 @@ posture is deliberate — a package-level hard failure would break working
 deployments proxying an internal `http://` MCP on a trusted network — but
 `requireHttps: true` is the right setting for anything reachable from outside
 one, and it is the only way to make the misconfiguration impossible rather than
-merely noisy. Note what the check does **not** cover: `fetch` follows redirects
-transparently, so the scheme guard applies to the first hop only (see the note
-in `src/connectors/remote-mcp.ts`).
+merely noisy. Later hops cannot weaken that decision: redirects are handled
+manually, cross-origin targets are refused, and an HTTPS downgrade is always an
+error regardless of `requireHttps`.
 
 **`logger`** is where that construction warning goes, defaulting to `console`.
 It exists because the warning fires inside `remoteMcp()`, before
