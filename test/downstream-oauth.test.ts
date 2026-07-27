@@ -8,10 +8,16 @@ import type {
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectorContext } from "../src/types.js";
+import type {
+  Connector,
+  ConnectorContext,
+  KVStorage,
+  Logger,
+} from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -546,13 +552,37 @@ describe("/oauth/callback/<id> route", () => {
   // provider reads oauth:state from, so tests seed the expected state here.
   const STATE_KEY = "conn:svc:oauth:state";
 
+  function callbackConnector(
+    id: string,
+    finishAuth: (code: string) => Promise<void>,
+    verifyState?: (
+      state: string | null,
+      ctx: ConnectorContext,
+    ) => Promise<boolean>,
+  ): Connector {
+    return {
+      id,
+      kind: "mcp",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {};
+      },
+      ...(verifyState ? { verifyState } : {}),
+      finishAuth,
+    };
+  }
+
   function makeConnecta(
     finishAuth: (code: string) => void,
     storage = memoryStorage(),
+    logger: Logger = silentLogger,
   ) {
     const connecta = createConnecta({
       publicUrl: BASE,
       storage,
+      logger,
       connectors: [
         remoteMcp("svc", {
           url: "https://unused.example/mcp",
@@ -601,28 +631,244 @@ describe("/oauth/callback/<id> route", () => {
     expect(await connecta.registry.credentialHealthFor("svc")).toBeUndefined();
   });
 
-  it("mismatched state → 400 and never calls finishAuth (login-CSRF guard)", async () => {
+  it("every unverifiable callback failure is indistinguishable", async () => {
     const spy = vi.fn();
     const { connecta, storage } = makeConnecta(spy);
+    const unverifiedFinish = vi.fn();
+    const throwingFinish = vi.fn();
+    const edgeConnecta = createConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      connectors: [
+        // A connector that exists but has no OAuth at all — the other half of
+        // `!connector || !connector.finishAuth`, and the id an attacker is
+        // likeliest to guess right. It must not answer differently from an id
+        // that names nothing.
+        api("plain", {
+          description: "not an OAuth connector",
+          tools: [
+            {
+              name: "noop",
+              description: "does nothing",
+              handler: async () => ({}),
+            },
+          ],
+        }),
+        callbackConnector("unverified", async (code) => {
+          unverifiedFinish(code);
+        }),
+        callbackConnector(
+          "throwing",
+          async (code) => {
+            throwingFinish(code);
+          },
+          async () => {
+            throw new Error("verifier unavailable");
+          },
+        ),
+      ],
+    });
     await storage.set(STATE_KEY, "the-real-state");
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=attacker-state`),
+    const shape = async (res: Response) => ({
+      status: res.status,
+      body: await res.text(),
+      headers: Object.fromEntries(res.headers.entries()),
+    });
+    const unknown = await shape(
+      await connecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/nope?code=abc&state=attacker-state`,
+        ),
+      ),
     );
-    expect(res.status).toBe(400);
-    expect(await res.text()).toContain("state mismatch");
+    const nonOAuth = await shape(
+      await edgeConnecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/plain?code=abc&state=attacker-state`,
+        ),
+      ),
+    );
+    const missingState = await shape(
+      await connecta.fetch(
+        new Request(`${BASE}/oauth/callback/svc?code=abc`),
+      ),
+    );
+    const mismatchedState = await shape(
+      await connecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/svc?code=abc&state=attacker-state`,
+        ),
+      ),
+    );
+    const noVerifier = await shape(
+      await edgeConnecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/unverified?code=abc&state=attacker-state`,
+        ),
+      ),
+    );
+    const throwingVerifier = await shape(
+      await edgeConnecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/throwing?code=abc&state=attacker-state`,
+        ),
+      ),
+    );
+    expect(unknown.status).toBe(400);
+    expect(unknown.body).toContain("Authorization could not be completed");
+    expect(nonOAuth).toEqual(unknown);
+    expect(missingState).toEqual(unknown);
+    expect(mismatchedState).toEqual(unknown);
+    expect(noVerifier).toEqual(unknown);
+    expect(throwingVerifier).toEqual(unknown);
     expect(spy).not.toHaveBeenCalled();
+    expect(unverifiedFinish).not.toHaveBeenCalled();
+    expect(throwingFinish).not.toHaveBeenCalled();
   });
 
-  it("absent state param → 400 and never calls finishAuth", async () => {
-    const spy = vi.fn();
-    const { connecta, storage } = makeConnecta(spy);
-    await storage.set(STATE_KEY, "the-real-state");
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc`),
+  it("logs the reason for an opaque state refusal", async () => {
+    const warn = vi.fn();
+    const logger = { ...silentLogger, warn };
+    const { connecta, storage } = makeConnecta(
+      vi.fn(),
+      memoryStorage(),
+      logger,
     );
+    warn.mockClear();
+    await storage.set(STATE_KEY, "the-real-state");
+
+    await connecta.fetch(
+      new Request(
+        `${BASE}/oauth/callback/svc?code=abc&state=attacker-state`,
+      ),
+    );
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0][0]).toContain(
+      "state did not match the pending authorization flow",
+    );
+  });
+
+  it("distinguishes a missing state parameter from a mismatched one in the log", async () => {
+    const warn = vi.fn();
+    const { connecta, storage } = makeConnecta(vi.fn(), memoryStorage(), {
+      ...silentLogger,
+      warn,
+    });
+    warn.mockClear();
+    await storage.set(STATE_KEY, "the-real-state");
+
+    await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc`));
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const diagnostic = String(warn.mock.calls[0][0]);
+    expect(diagnostic).toContain("the state parameter was missing");
+    expect(diagnostic).not.toContain("did not match");
+  });
+
+  // The response channel is closed above; this closes the clock. A refusal that
+  // returns without touching storage answers measurably sooner than one that
+  // read `oauth:state` first — on a KV-backed deployment that is a network hop
+  // — which would re-open the enumeration the flat 400 exists to deny. Counting
+  // reads rather than timing them: a wall-clock assertion is a CI flake waiting
+  // to happen, and the count is the property that actually matters.
+  it("an unknown id costs the same storage reads as a configured one", async () => {
+    const reads: string[] = [];
+    const inner = memoryStorage();
+    const counting: KVStorage = {
+      get: async (k) => {
+        reads.push(k);
+        return inner.get(k);
+      },
+      set: (k, v, o) => inner.set(k, v, o),
+      delete: (k) => inner.delete(k),
+    };
+    const connecta = createConnecta({
+      publicUrl: BASE,
+      storage: counting,
+      logger: silentLogger,
+      connectors: [
+        remoteMcp("svc", {
+          url: "https://unused.example/mcp",
+          auth: { type: "oauth" },
+          _transportFactory: () => ({ async close() {} }) as unknown as Transport,
+        }),
+        api("plain", {
+          description: "not an OAuth connector",
+          tools: [
+            {
+              name: "noop",
+              description: "does nothing",
+              handler: async () => ({}),
+            },
+          ],
+        }),
+        callbackConnector("unverified", async () => {}),
+      ],
+    });
+    await counting.set(STATE_KEY, "the-real-state");
+
+    const readsFor = async (id: string) => {
+      reads.length = 0;
+      const res = await connecta.fetch(
+        new Request(
+          `${BASE}/oauth/callback/${id}?code=abc&state=attacker-state`,
+        ),
+      );
+      expect(res.status).toBe(400);
+      return [...reads];
+    };
+
+    // The configured downstream-OAuth connector is the baseline: one read of
+    // its own namespaced state key, performed by KvOAuthProvider.verifyState.
+    expect(await readsFor("svc")).toEqual(["conn:svc:oauth:state"]);
+    // Every free-by-default refusal now pays the same one read, in its own
+    // namespace, where an unconfigured id simply misses.
+    expect(await readsFor("nope")).toEqual(["conn:nope:oauth:state"]);
+    expect(await readsFor("plain")).toEqual(["conn:plain:oauth:state"]);
+    expect(await readsFor("unverified")).toEqual([
+      "conn:unverified:oauth:state",
+    ]);
+  });
+
+  it("bounds and escapes a verifier exception in the operator log", async () => {
+    const warn = vi.fn();
+    const finishAuth = vi.fn();
+    const thrownMessage = `bad\n${"x".repeat(100)}`;
+    const connecta = createConnecta({
+      publicUrl: BASE,
+      storage: memoryStorage(),
+      logger: { ...silentLogger, warn },
+      connectors: [
+        callbackConnector(
+          "throwing",
+          async (code) => {
+            finishAuth(code);
+          },
+          async () => {
+            throw new Error(thrownMessage);
+          },
+        ),
+      ],
+    });
+    warn.mockClear();
+
+    const res = await connecta.fetch(
+      new Request(
+        `${BASE}/oauth/callback/throwing?code=abc&state=attacker-state`,
+      ),
+    );
+
     expect(res.status).toBe(400);
-    expect(await res.text()).toContain("state mismatch");
-    expect(spy).not.toHaveBeenCalled();
+    expect(finishAuth).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    const diagnostic = String(warn.mock.calls[0][0]);
+    expect(diagnostic).toContain("verifyState threw");
+    expect(diagnostic).toContain("\\n");
+    expect(diagnostic).not.toContain("\n");
+    expect(diagnostic).toContain("(truncated)");
+    expect(diagnostic).not.toContain("x".repeat(65));
   });
 
   it("error param → 400", async () => {
@@ -638,14 +884,6 @@ describe("/oauth/callback/<id> route", () => {
     const { connecta } = makeConnecta(vi.fn());
     const res = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc`));
     expect(res.status).toBe(400);
-  });
-
-  it("unknown connector id → 404", async () => {
-    const { connecta } = makeConnecta(vi.fn());
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/nope?code=abc`),
-    );
-    expect(res.status).toBe(404);
   });
 
   it("escapes a malicious error param (no raw <script> in the body)", async () => {

@@ -476,6 +476,7 @@ describe("missing-verifyState CSRF warning", () => {
     const text = warnings(logger);
     expect(text).toContain("state/CSRF check");
     expect(text).toContain('connector "oauth"');
+    expect(text).toContain("refuses every callback");
   });
 
   it("does not warn when the OAuth connector implements verifyState", () => {

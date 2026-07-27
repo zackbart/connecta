@@ -664,8 +664,8 @@ interface Connector {
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;       // optional health
   startAuth?(ctx: ConnectorContext,                               // optional OAuth kick
     opts?: { force?: boolean }): Promise<ConnectorStatus>;        //   (authorize_connector)
-  verifyState?(state: string | null,                              // optional OAuth CSRF check
-    ctx: ConnectorContext): Promise<boolean>;                     //   (see §6)
+  verifyState?(state: string | null,                              // required with finishAuth
+    ctx: ConnectorContext): Promise<boolean>;                     //   (OAuth CSRF check; §6)
   finishAuth?(code: string, ctx: ConnectorContext): Promise<void>; // optional OAuth finish
   handleRequest?(request: Request,                                // optional public route
     ctx: ConnectorContext): Promise<Response | null>;
@@ -1211,18 +1211,53 @@ token_endpoint_auth_method: "none" }`.
 5. **Operator opens it**, authenticates/consents downstream, and the provider
    redirects the browser back to **`GET <baseUrl>/oauth/callback/<connectorId>`**.
 6. **Callback → verifyState → finishAuth.** The route is public, so before
-   exchanging anything it calls the connector's `verifyState(state)` and rejects
-   with a 400 when the returned `state` doesn't match the flow connecta started
-   — otherwise anyone holding the pending URL could complete consent with their
-   own account. It then captures `code`, calls the connector's `finishAuth(code)`
-   → `transport.finishAuth(code)`, which exchanges the code for **tokens**
-   (`saveTokens`), then clears pending state and resets the client so the next
-   call reconnects with fresh tokens. The route returns a tiny "Connected" HTML
-   page (all params HTML-escaped, branding applied). The registry invalidates the
-   connector's tool cache in both storage layers.
+   exchanging anything it requires and calls the connector's
+   `verifyState(state)`. A missing verifier, a verifier that throws, or one that
+   returns false all reject before `finishAuth` — otherwise anyone holding the
+   pending URL could complete consent with their own account. An
+   unknown/non-OAuth connector id and every unverifiable callback render the
+   same 400 status, body, and headers, and cost one storage read either way
+   (see below). For a real connector, the operator log records the precise
+   reason; thrown messages are bounded and escaped there without turning this
+   public route into a connector directory. A valid state lets the route
+   capture `code`, call the
+   connector's `finishAuth(code)` → `transport.finishAuth(code)`, and exchange
+   the code for **tokens** (`saveTokens`). It clears pending state and resets the
+   client so the next call reconnects with fresh tokens. The route returns a
+   tiny "Connected" HTML page (all params HTML-escaped, branding applied). The
+   registry invalidates the connector's tool cache in both storage layers.
 7. **Auto-refresh.** On a later 401 with a stored refresh token, the SDK
    refreshes automatically. Persistent auth failure degrades the connector back
    to `auth_required` — it never crashes the server or hides other connectors.
+
+**What the refusal hides, and what it doesn't.** Matching bodies buy nothing if
+the clock still sorts the ids. `verifyState` reads `conn:<id>:oauth:state`
+before it can fail, so a configured id pays a storage round trip — a real
+network read on a KV-backed deployment — while an id naming nothing used to
+answer having touched no I/O at all. So the two refusals that would otherwise be
+free (an unknown or non-OAuth id, and a connector with `finishAuth` but no
+`verifyState`) read the same key in the same namespace first, and for an
+unconfigured id that is simply a miss (`equalizeRefusalCost`, `src/server.ts`).
+
+That is cost equalization, not constant time, and the difference is worth
+stating plainly:
+
+- **Equalized.** Status, body, and headers are byte-identical across every
+  refusal, and each performs exactly one read of one key in the connector's
+  namespace.
+- **Not equalized, and not equalizable here.** A store may answer a hit and a
+  miss at different speeds. A connector supplying its own `verifyState` decides
+  its own cost — one that throws before reading, or reads twice, sits outside
+  the shipped `KvOAuthProvider`'s single read. And a callback that *succeeds*
+  is plainly distinguishable, which is fine: succeeding requires the valid
+  one-shot `state`, which is the one thing an enumerating attacker does not
+  have.
+
+What this closes is the order-of-magnitude gap — no I/O at all versus a round
+trip — that made a wordlist against `/oauth/callback/<id>` cheap. Given enough
+samples and a quiet network, a residual difference may still be teasable out;
+the honest claim is that enumerating this route is no longer a matter of two
+curls and a stopwatch.
 
 ### Where state lives
 
@@ -1554,7 +1589,7 @@ Test suites (`test/`) and what they cover:
 | `meta-tools.test.ts` | the registry-backed meta-tools: timed health status, ranked/paginated discovery, concise/full descriptions, compact + JSON schemas, MCP/value result modes, structured errors, OAuth flow, fields selection, truncation + paging (including what the cap measures for non-text content, and `get_result`'s offset validation and character-boundary alignment), schema-valid results for returns JSON cannot represent, batch parallelism/isolation, and catalog-lookup health accounting (a failing catalog counts call-for-call with a failing execution, a typed `auth_required` keeps its code, recovery clears the count, cache hits record nothing) |
 | `api-connector.test.ts` | `api()` kind/description, tool defs, dispatch, default args, unknown-tool + handler-throw behaviour |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process MCP server via `_transportFactory` — listTools/callTool passthrough, downstream `isError`, Cloudflare-safe output-schema validation, ok status, and request-scoped client reuse |
-| `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, `hasStoredCredential` (present only for oauth, tracking stored tokens), the `/oauth/callback/<id>` route incl. HTML escaping and the credential-liveness verdict it clears |
+| `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips (DCR/tokens/PKCE/pending, scoped invalidation), oauth `auth_required` vs `error`, `startAuth` (kick / ok / force-wipe / network error), `finishAuth`, `hasStoredCredential` (present only for oauth, tracking stored tokens), the `/oauth/callback/<id>` route incl. response equality for unknown, non-OAuth, missing/mismatched state, absent-verifier, and throwing-verifier refusals, plus the *cost* equality behind it (a counting storage stub asserting every refusal performs the same single `conn:<id>:oauth:state` read, so the clock does not sort the ids the body refuses to name — §6); bounded/escaped operator diagnostics, missing state told apart from mismatched; HTML escaping; and the credential-liveness verdict a successful callback clears |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the toolkit binding a token declares (§16) — frozen, deduplicated, throwing on every shape that would not mean what it says (`unscoped` alone, a binding that permits nothing, a name outside the grammar, a non-array), and the `console.warn` a bound token with no `subjectId` earns |
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
 | `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
@@ -2191,8 +2226,18 @@ binding cannot narrow a view, and a view cannot admit an identity.
   restricted credential cannot answer with connector health for the whole org
   through the back door, and cannot overwrite a credential every toolkit shares.
   A binding that carries `unscoped: true` is not restricted and keeps them, which
-  is what an operator credential should look like. `/health` (a count, no names)
-  and the open routes are unchanged.
+  is what an operator credential should look like. `/health` remains a public
+  count with no names. The OAuth callback must also stay open so a downstream
+  authorization server can redirect a browser to it, and it is not meant to
+  answer "does this id exist": an unknown/non-OAuth id, a real connector with
+  missing or mismatched state, one with no verifier, and one whose verifier
+  throws all produce byte-identical failure responses, each paying the same
+  single `oauth:state` read so the answer does not arrive measurably sooner for
+  an id that names nothing. That is equal cost, not constant time — see
+  [§6](#6-downstream-oauth) for what remains distinguishable. Only a callback
+  whose verifier accepts the valid one-shot state can reveal a connector by
+  succeeding; the operator log, not the public failure page, preserves a real
+  connector's precise state-failure diagnosis.
 - **Scoping filters views, never state.** The tool cache and the persisted
   catalog (§4) are shared and stay whole: a scoped read delegates to the
   registry and filters the array it gets back. Two toolkits over the same

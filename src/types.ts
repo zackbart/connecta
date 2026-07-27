@@ -202,11 +202,11 @@ export interface Connector {
     opts?: { force?: boolean },
   ): Promise<ConnectorStatus>;
   /**
-   * Optional: verify the OAuth `state` returned to /oauth/callback/<id> against
-   * the value this connector generated when it started the flow. Present only
-   * on downstream-OAuth connectors. The callback MUST reject before finishAuth
-   * when this returns false — otherwise anyone holding the pending URL could
-   * complete consent with their own account.
+   * Verify the OAuth `state` returned to /oauth/callback/<id> against the value
+   * this connector generated when it started the flow. Required whenever
+   * `finishAuth` is present: the callback rejects before `finishAuth` when this
+   * hook is absent, throws, or returns false — otherwise anyone holding the
+   * pending URL could complete consent with their own account.
    */
   verifyState?(state: string | null, ctx: ConnectorContext): Promise<boolean>;
   /** Optional: complete a downstream OAuth flow (called by /oauth/callback/<id>). */
