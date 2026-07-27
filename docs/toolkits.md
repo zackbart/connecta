@@ -228,6 +228,14 @@ binding cannot narrow a view, and a view cannot admit an identity.
   distinguishable. Only a callback whose verifier accepts the valid one-shot
   state can reveal a connector by succeeding; the operator log, not the public
   failure page, preserves a real connector's precise state-failure diagnosis.
+- **The operator can inspect config, never mutate it.** The Connections page
+  renders a safe projection of the validated toolkit definitions returned by
+  `/ui/data`, including connector membership, tool filters, and scoped MCP URLs.
+  The config-only `description` is still never sent to clients. The page does
+  not create, edit, delete, or persist a toolkit; `ConnectaConfig.toolkits`
+  remains the only source of truth. The data route is deployment-wide and keeps
+  the restricted identity refusal above, so the read-only view cannot become a
+  directory of sibling teams.
 - **Scoping filters views, never state.** The tool cache and the persisted
   catalog ([connectors](./connectors.md#connectors)) are shared and stay whole: a scoped read delegates to the
   registry and filters the array it gets back. Two toolkits over the same

@@ -1255,6 +1255,7 @@ export function createFetchHandler(
           eligibleClerkOperator ? opts.credentialVault : undefined,
           Boolean(opts.activity?.list),
           credentialManagement,
+          opts.toolkits,
         );
         return privateJson(data);
       }

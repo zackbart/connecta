@@ -95,7 +95,8 @@ rather than a redaction pass: the event type has nowhere to put a payload, which
 is what keeps an operations log from becoming something worth stealing.
 
 **Operator pages that cannot administer the deployment.** Connections at `GET /`
-shows connector health, tool counts, and downstream authorization links;
+shows connector health, tool counts, downstream authorization links, and a
+read-only map of the toolkit views declared in deployment config;
 `/credentials` rotates stored secrets; and `/activity` shows the optional
 payload-free ledger. They share one data-free shell with no build step and use
 authenticated private APIs for deployment data. They cannot add a connector,
