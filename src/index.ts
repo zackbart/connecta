@@ -373,14 +373,17 @@ function warnInsecureConfig(
     );
   }
 
-  // OAuth connectors whose callback performs no state/CSRF check: the public
-  // /oauth/callback/<id> route would exchange any delivered code.
+  // OAuth connectors whose callback cannot perform a state/CSRF check. The
+  // public route refuses every callback for these connectors rather than hand
+  // an unverified code to finishAuth, so this warning explains why auth cannot
+  // complete instead of describing a vulnerability the server permits.
   for (const connector of oauthConnectors) {
     if (!connector.verifyState) {
       logger.warn(
         `[connecta] connector "${connector.id}" has an OAuth callback with no ` +
-          `state/CSRF check: /oauth/callback/${connector.id} will exchange any ` +
-          "delivered code. Implement `verifyState` (the shipped remoteMcp " +
+          `state/CSRF check: /oauth/callback/${connector.id} refuses every ` +
+          "callback rather than exchange an unverified code. Implement " +
+          "`verifyState` to complete authorization (the shipped remoteMcp " +
           "connector already does).",
       );
     }

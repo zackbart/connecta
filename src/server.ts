@@ -22,6 +22,7 @@ import {
   type Toolkit,
 } from "./toolkits.js";
 import type {
+  ConnectorContext,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
   ConnectaBranding,
@@ -658,12 +659,12 @@ interface McpScope {
 
 /**
  * Bounded, escaped form of a caller-influenced value (a rejected toolkit name,
- * an identity id) for the operator log. Goes through JSON.stringify so a
- * caller-controlled newline or control character cannot forge a log line, plus a
- * hand-rolled escape for U+2028/U+2029, which JSON.stringify leaves raw even
- * though a log reader treats them as line terminators. Truncated to the same
- * length the response body echoes at, so an oversized value cannot flood the log
- * either.
+ * identity id, or OAuth callback connector id) for the operator log. Goes
+ * through JSON.stringify so a caller-controlled newline or control character
+ * cannot forge a log line, plus a hand-rolled escape for U+2028/U+2029, which
+ * JSON.stringify leaves raw even though a log reader treats them as line
+ * terminators. Truncated to a small shared cap (also the toolkit response's echo
+ * limit), so an oversized value cannot flood the log either.
  */
 function loggableValue(requested: string): string {
   const bounded = requested.slice(0, MAX_ECHOED_TOOLKIT_NAME);
@@ -905,35 +906,105 @@ async function serveMcp(
   return transport.handleRequest(request);
 }
 
+/**
+ * Pay the storage read a real downstream-OAuth refusal pays, on the refusal
+ * paths that would otherwise pay nothing.
+ *
+ * Identical bodies do not hide a connector id if the clock still sorts them.
+ * `KvOAuthProvider.verifyState` reads `oauth:state` before it can fail, so a
+ * configured id costs one storage round trip — on the Workers deployment shape
+ * that is a real KV read, tens of milliseconds cold — while an id that names
+ * nothing used to return having touched no I/O at all. That gap is an oracle:
+ * sample the two and a wordlist recovers the connector list the flat 400 was
+ * meant to withhold. So the zero-I/O refusals read the same key in the same
+ * `conn:<id>:` namespace, which for an unconfigured id is simply a miss.
+ *
+ * This is deliberately *not* a constant-time claim, and §6 says so in prose: a
+ * hit and a miss are not identical in a KV store, and a connector shipping its
+ * own `verifyState` may do more or less work than one read. What it removes is
+ * the order-of-magnitude "no I/O versus a round trip" difference, which is the
+ * only part of the signal that makes enumeration cheap.
+ *
+ * A throwing read is swallowed: the refusal is the answer either way, and
+ * turning it into a 500 would hand back exactly the distinguishable response
+ * this whole path exists to deny.
+ */
+async function equalizeRefusalCost(context: ConnectorContext): Promise<void> {
+  try {
+    await context.storage.get("oauth:state");
+  } catch {
+    // Deliberately ignored — see above.
+  }
+}
+
 async function handleOAuthCallback(
   url: URL,
   registry: Registry,
   baseUrl: string,
+  logger: Logger,
   branding?: ConnectaBranding,
 ): Promise<Response> {
-  const id = url.pathname.slice("/oauth/callback/".length);
-  const connector = registry.getConnector(id);
-  if (!connector || !connector.finishAuth) {
-    return html(`Unknown connector "${id}".`, 404, branding);
-  }
   const error = url.searchParams.get("error");
   if (error) return html(`Authorization denied: ${error}`, 400, branding);
   const code = url.searchParams.get("code");
   if (!code) return html("Missing authorization code.", 400, branding);
+  const id = url.pathname.slice("/oauth/callback/".length);
+  const connector = registry.getConnector(id);
+  // Safe to build before we know the id names anything: `contextFor` is a pure
+  // constructor — a namespaced storage view over `conn:<id>:` and, only for a
+  // connector that declares one, a lazy credential accessor. It neither throws
+  // nor touches storage for an unknown id, which is what lets the refusals
+  // below borrow it to equalize their cost.
   const context = registry.contextFor(id, baseUrl);
+  const refused = () =>
+    html(
+      "Authorization could not be completed. Re-run authorization from " +
+        "connecta and try again.",
+      400,
+      branding,
+    );
+  if (!connector || !connector.finishAuth) {
+    await equalizeRefusalCost(context);
+    return refused();
+  }
   // CSRF / login-fixation guard: this route is intentionally public, so verify
   // the `state` matches the flow connecta started BEFORE exchanging the code.
-  if (connector.verifyState) {
-    const state = url.searchParams.get("state");
-    const ok = await connector.verifyState(state, context);
-    if (!ok) {
-      return html(
-        "Authorization state mismatch — this callback did not originate from " +
-          "a flow started by connecta. Re-run authorization and try again.",
-        400,
-        branding,
-      );
-    }
+  if (!connector.verifyState) {
+    await equalizeRefusalCost(context);
+    logger.warn(
+      `[connecta] refused an OAuth callback for connector ` +
+        `${loggableValue(id)} with 400: it implements finishAuth but no ` +
+        "verifyState, so connecta cannot establish that it started this flow. " +
+        "No authorization code was exchanged. Implement verifyState before " +
+        "trying again.",
+    );
+    return refused();
+  }
+  const state = url.searchParams.get("state");
+  let stateMatches: boolean;
+  try {
+    stateMatches = await connector.verifyState(state, context);
+  } catch (err) {
+    logger.warn(
+      `[connecta] refused an OAuth callback for connector ` +
+        `${loggableValue(id)} with 400: verifyState threw ` +
+        `${loggableValue(msg(err))}. No authorization code was exchanged. ` +
+        "Re-run authorization from connecta and check the verifier if it " +
+        "fails again.",
+    );
+    return refused();
+  }
+  if (!stateMatches) {
+    logger.warn(
+      `[connecta] refused an OAuth callback for connector ` +
+        `${loggableValue(id)} with 400: ` +
+        (state === null
+          ? "the state parameter was missing"
+          : "the state did not match the pending authorization flow") +
+        ". No authorization code was exchanged. Re-run authorization from " +
+        "connecta and try again.",
+    );
+    return refused();
   }
   try {
     await connector.finishAuth(code, context);
@@ -1067,7 +1138,13 @@ export function createFetchHandler(
       }
 
       if (path.startsWith("/oauth/callback/")) {
-        return handleOAuthCallback(url, registry, baseUrl, opts.branding);
+        return handleOAuthCallback(
+          url,
+          registry,
+          baseUrl,
+          opts.logger,
+          opts.branding,
+        );
       }
 
       if (request.method === "GET" && path === "/favicon.svg") {

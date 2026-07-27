@@ -419,7 +419,7 @@ describe("status UI", () => {
     );
     const body = await res.text();
 
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(400);
     expect(body).toContain("<title>Connecta</title>");
     expect(body).toContain('href="/favicon.svg"');
     expect(body).toContain("Connection status");
