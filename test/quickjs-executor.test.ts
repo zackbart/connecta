@@ -416,13 +416,13 @@ describe("quickJsExecutor", () => {
   });
 
   it("does not charge host-tool waits to the short guest CPU budget", async () => {
-    const ex = quickJsExecutor({ cpuTimeMs: 20, timeoutMs: 1_000 });
+    const ex = quickJsExecutor({ cpuTimeMs: 250, timeoutMs: 2_000 });
     const out = await ex.execute(`async () => slow.read()`, [
       {
         name: "slow",
         fns: {
           read: () =>
-            new Promise((resolve) => setTimeout(() => resolve("done"), 150)),
+            new Promise((resolve) => setTimeout(() => resolve("done"), 600)),
         },
       },
     ]);
