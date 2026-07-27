@@ -106,7 +106,8 @@ export interface ConnectorContext {
   /**
    * Identity shared by connector calls that belong to one inbound request.
    * Connectors may use it to reuse request-safe resources within that request,
-   * but must never retain I/O resources beyond the scope's lifetime.
+   * but must never retain I/O resources beyond the scope's lifetime. For
+   * probe-only scopes the core owns, `Connector.closeScope` signals that end.
    *
    * Optional for custom/test contexts; the context object itself is the scope
    * when omitted.
@@ -189,6 +190,18 @@ export interface Connector {
     args: unknown,
     ctx: ConnectorContext,
   ): Promise<unknown>;
+  /**
+   * Optional best-effort teardown for resources retained under
+   * `ctx.requestScope`. The core calls this at most once when a scope it created
+   * solely for probing ends, and never uses that scope again. Teardown gets a
+   * small, fixed best-effort completion window; a missing, rejected, or
+   * never-settling hook cannot change or hold open the operation's result
+   * beyond that bound.
+   *
+   * Per-request `/mcp` scopes are not closed through this hook: their
+   * request-local reuse remains in force until the request boundary.
+   */
+  closeScope?(ctx: ConnectorContext): Promise<void>;
   /** Optional connector-level health/auth status for list_connectors. */
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;
   /**

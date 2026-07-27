@@ -6,6 +6,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { Registry, ScopedRegistry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveToolkits } from "../src/toolkits.js";
+import { withTimeout } from "../src/timeout.js";
 import type {
   Connector,
   ConnectorStatus,
@@ -142,6 +143,50 @@ async function cachedStatus(registry: Registry, id: string): Promise<any> {
 }
 
 describe("credential liveness checks", () => {
+  it("keeps the verdict when best-effort scope teardown throws", async () => {
+    const linear = grantConnector();
+    let closes = 0;
+    linear.closeScope = async () => {
+      closes++;
+      throw new Error("teardown failed");
+    };
+    const registry = makeRegistry([linear]);
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome).toMatchObject({
+      connectorId: "linear",
+      record: { state: "ok" },
+    });
+    expect(closes).toBe(1);
+  });
+
+  it("bounds a never-settling teardown and clears in-flight state", async () => {
+    const linear = grantConnector();
+    let closes = 0;
+    linear.closeScope = async () => {
+      closes++;
+      await new Promise<never>(() => {});
+    };
+    const registry = makeRegistry([linear]);
+
+    const first = await withTimeout(
+      registry.checkCredentialHealth(BASE),
+      1_000,
+      "credential check with hung teardown",
+    );
+    const second = await withTimeout(
+      registry.checkCredentialHealth(BASE, { force: true }),
+      1_000,
+      "forced credential check after hung teardown",
+    );
+
+    expect(first[0]).toMatchObject({ record: { state: "ok" } });
+    expect(second[0]).toMatchObject({ record: { state: "ok" } });
+    expect(linear.calls.status).toBe(2);
+    expect(closes).toBe(2);
+  });
+
   it("flips a revoked grant to auth_required on the cached read, with no tool call", async () => {
     const linear = grantConnector();
     const registry = makeRegistry([linear]);

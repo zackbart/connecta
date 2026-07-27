@@ -1,5 +1,6 @@
 import { credentialTestRule } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
+import { closeConnectorScope } from "./connector-scope.js";
 import type { Registry } from "./registry.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
 
@@ -339,8 +340,9 @@ export async function buildUiData(
   activityEnabled = false,
 ): Promise<UiData> {
   const requestScope = {};
+  const connectorSet = registry.listConnectors();
   const connectors = await Promise.all(
-    registry.listConnectors().map(async (c): Promise<UiConnector> => {
+    connectorSet.map(async (c): Promise<UiConnector> => {
       const status = await registry.statusFor(c.id, baseUrl, requestScope);
       const credentialCheck = await registry.credentialHealthFor(c.id);
       let tools: UiTool[] = [];
@@ -459,7 +461,16 @@ export async function buildUiData(
         ...(credential ? { credential } : {}),
       };
     }),
-  );
+  ).finally(async () => {
+    await Promise.all(
+      connectorSet.map((connector) =>
+        closeConnectorScope(
+          connector,
+          registry.contextFor(connector.id, baseUrl, requestScope),
+        ),
+      ),
+    );
+  });
   return { serverInfo, connectors, activityEnabled };
 }
 

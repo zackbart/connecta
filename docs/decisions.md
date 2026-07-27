@@ -190,6 +190,17 @@ Cloudflare Workers prohibit carrying transport I/O state into a later request,
 and a cache that holds one is a bug that only appears in production. What may be
 cached is plain serializable data: tool definitions, output schemas,
 annotations. See [§4 → `remoteMcp`](./documentation.md#remotemcpid-opts).
+Scopes created solely for live probes end explicitly through the connector's
+best-effort `closeScope` hook, rather than by waiting for garbage collection.
+Ending the local scope is not enough on its own: a stateful downstream holds its
+session until told otherwise, so `remoteMcp` sends the spec's session-terminating
+`DELETE` *before* closing — after the close, the transport's abort signal has
+already fired and the request would be aborted on issue. Both steps are bounded.
+The core gives teardown a small fixed completion window — enough for the shipped
+transport's local abort, but not enough for a broken custom hook to hold a probe
+open indefinitely — and termination gets a fraction of that, so a downstream
+that stalls on the `DELETE` falls back to its own session timeout instead of
+spending the budget.
 
 Read "promise" strictly: the prohibition is on a promise a **later request could
 await**, or one closing over request-bound state (a transport, a stream, an abort
