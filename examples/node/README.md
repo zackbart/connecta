@@ -31,7 +31,7 @@ a toolkit it is not bound to gets the same 403 in every case — it cannot tell
 which views the deployment has — and it cannot read the deployment-wide operator
 surfaces (`/ui/data`, `/ui/activity`) either. Drop the `toolkits: [...]` option
 and the token goes back to selecting any view. Reference:
-[documentation.md §16](../../docs/documentation.md#16-toolkits-scoped-views).
+[toolkits](../../docs/toolkits.md#toolkits-scoped-views).
 
 ## What to change
 
@@ -47,5 +47,5 @@ and the token goes back to selecting any view. Reference:
   `/oauth/callback/<connectorId>` route resolves.
 
 Docker packaging of this same shape (env-driven, refuses to start without
-inbound auth) lives in [`../docker/`](../docker/). Full reference:
+inbound auth) lives in [`../docker/`](../docker/). Documentation index:
 [`docs/documentation.md`](../../docs/documentation.md).

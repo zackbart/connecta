@@ -72,8 +72,8 @@ and a commented-out `remoteMcp` block showing both downstream-auth variants
 code mode (`executor`), the credential vault (`credentialEncryptionKey`),
 activity history (`activity`), scoped views for several teams in the org
 (`toolkits`, see
-[documentation.md §16](../../docs/documentation.md#16-toolkits-scoped-views)),
+[toolkits](../../docs/toolkits.md#toolkits-scoped-views)),
 and `branding` — are ordinary `createConnecta` config; add them there. See the
 package [README](../../README.md) and
-[documentation.md](../../docs/documentation.md) for the full reference, or
-[decisions.md](../../docs/decisions.md) for the rationale.
+[documentation index](../../docs/documentation.md) for the subsystem
+references, or [decisions.md](../../docs/decisions.md) for the rationale.

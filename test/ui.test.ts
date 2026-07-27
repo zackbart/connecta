@@ -1542,8 +1542,8 @@ describe("status UI credential management", () => {
       message: "single:both-secret-9876",
     });
     // The route ran it, and so did the liveness sweep the /ui/data request
-    // triggered (§17) — both through the one rule, so every call is the
-    // single-value hook against the raw stored string.
+    // triggered (docs/storage-and-credentials.md) — both through the one rule,
+    // so every call is the single-value hook against the raw stored string.
     expect(testCredential).toHaveBeenCalled();
     for (const [value] of testCredential.mock.calls) {
       expect(value).toBe("both-secret-9876");

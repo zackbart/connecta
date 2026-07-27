@@ -1,8 +1,8 @@
 # connecta — decisions
 
-[`documentation.md`](./documentation.md) is how connecta works. This is what it
-refuses to be, and what it will not let you break. Two questions are answered
-here:
+The [`documentation.md`](./documentation.md) index points to how connecta works.
+This is what it refuses to be, and what it will not let you break. Two questions
+are answered here:
 
 - **"May I build X?"** → [Non-goals](#non-goals) and
   [Rejected alternatives](#rejected-alternatives). If X is listed, the answer is
@@ -33,7 +33,7 @@ deployment is a small config-as-code file, not a platform.
   routed to `call_destructive_tool`) rather than the mapping.
 - **Multi-tenancy.** One deployment is one tenant: one registry, one connector
   set, one downstream credential store, one operator surface. Toolkits
-  ([documentation.md §16](./documentation.md#16-toolkits-scoped-views)) are
+  ([toolkits](./toolkits.md#toolkits-scoped-views)) are
   *scoped views* over that single registry, not tenants. No route reads
   `?toolkit=` except `/mcp` — but "ignores the parameter" is not the same as
   "open to everyone": `/ui/data`, `/ui/activity`, and the credential API refuse
@@ -83,7 +83,7 @@ allowed; proposing one without reading why it lost is not.
 
 ### From executor and Cloudflare's code-mode runtime
 
-Code mode ([documentation.md §13](./documentation.md#13-code-mode-execute_code))
+Code mode ([code mode](./code-mode.md#code-mode-execute_code))
 takes the sandbox and leaves the platform. Deliberately not adopted:
 
 - **In-sandbox approvals and pauses** — a paused execution is durable state, and
@@ -122,7 +122,7 @@ binding and `AuthResult` also returns one, the provider's is a **ceiling**, not
 a default — connecta intersects them and grants `unscoped` only if both do. An
 adapter reading a user-writable claim can therefore narrow a view but never
 widen it. See `src/types.ts` (`ToolkitBinding`, `AuthResult.toolkitBinding`) and
-[documentation.md §16 → Binding a toolkit to an identity](./documentation.md#binding-a-toolkit-to-an-identity).
+[Binding a toolkit to an identity](./toolkits.md#binding-a-toolkit-to-an-identity).
 
 ### `@clerk/mcp-tools`
 
@@ -142,7 +142,7 @@ browser dashboard. Instead `acceptsToken: ["oauth_token", "session_token"]` is
 passed, and the `azp` pin is applied by hand *after* verification, only for
 tokens whose `tokenType` is `session_token`. See `src/auth/clerk.ts` and the
 `clerk.test.ts` row in
-[documentation.md §11](./documentation.md#11-testing--development).
+[testing & development](./operations.md#testing--development).
 
 ## Invariants
 
@@ -155,14 +155,14 @@ fails CI; where nothing does, the reviewer is the enforcement.
 what an agent can call.** `/ui`, the credential vault, and activity history are
 each held to this line:
 
-- `/ui` ([§14](./documentation.md#14-status-ui)) is read-only status. The shell
+- `/ui` ([status UI](./operator-ui.md#status-ui)) is read-only status. The shell
   is open because it carries no data; everything displayed comes from `/ui/data`
   behind the same gate as `/mcp`.
-- The credential vault ([§7](./documentation.md#7-storage)) is credential
+- The credential vault ([storage](./storage-and-credentials.md#storage)) is credential
   *storage*, not connector registration. Rotating a token should not need a
   redeploy; a token is also the one thing a config file should never hold. Which
   tools exist is still code.
-- Activity ([§15](./documentation.md#15-activity-history)) observes; it decides
+- Activity ([activity history](./operator-ui.md#activity-history)) observes; it decides
   nothing.
 
 If a new operator feature would let a browser change what an agent can reach,
@@ -175,21 +175,21 @@ Only tools explicitly annotated `readOnlyHint: true`, without a contradictory
 `execute_code` sandbox globals. **Missing, false, or contradictory annotations
 fail closed** and require `call_destructive_tool`. Never widen this by inferring
 safety from a name, a method, or a description. See
-[§3](./documentation.md#3-meta-tools-reference) and
-[§13](./documentation.md#13-code-mode-execute_code); enforced by
+[meta-tools](./meta-tools.md#meta-tools-reference) and
+[code mode](./code-mode.md#code-mode-execute_code); enforced by
 `test/meta-tools.test.ts` and `test/execute.test.ts`.
 
 ### Nothing request-bound survives a request
 
 The registry and its tool caches live outside the per-request server, per
-isolate ([§2](./documentation.md#2-architecture)). **No request-bound transport,
+isolate ([architecture](./architecture.md#architecture)). **No request-bound transport,
 stream, abort state, or promise may enter them.** Downstream MCP clients are
 created lazily per inbound request and reused only within that request (across a
 batch or an `execute_code` run), then discarded at the request boundary —
 Cloudflare Workers prohibit carrying transport I/O state into a later request,
 and a cache that holds one is a bug that only appears in production. What may be
 cached is plain serializable data: tool definitions, output schemas,
-annotations. See [§4 → `remoteMcp`](./documentation.md#remotemcpid-opts).
+annotations. See [`remoteMcp`](./connectors.md#remotemcpid-opts).
 Scopes created solely for live probes end explicitly through the connector's
 best-effort `closeScope` hook, rather than by waiting for garbage collection.
 Ending the local scope is not enough on its own: a stateful downstream holds its
@@ -219,7 +219,7 @@ nothing from the request that created it.
 
 Corollary: a fresh `McpServer` + transport is constructed for **every** request
 (an SDK ≥1.26 security requirement), never pooled —
-[§2, request lifecycle](./documentation.md#2-architecture).
+[request lifecycle](./architecture.md#architecture).
 
 ### Single tenant
 
@@ -228,7 +228,7 @@ One deployment, one tenant. Addresses are flat and two-segment
 connection per connector. Several code paths are correct *only* under this
 assumption — most visibly the absence of a concurrent-refresh lock in downstream
 OAuth. Instances must not share KV namespaces, D1 databases, secrets, or
-encryption keys ([§10](./documentation.md#10-deployment-architecture)).
+encryption keys ([deployment architecture](./operations.md#deployment-architecture)).
 
 ### Import-graph purity
 
@@ -237,7 +237,7 @@ The core is Web-API only: no `node:` builtins anywhere reachable from
 `fileStorage`). `test/purity.test.ts` statically walks the relative-import graph
 and fails if a `node:` import is reachable, or if `src/node.ts` /
 `src/storage/file.ts` are. Details in
-[§2 → the import-graph purity rule](./documentation.md#2-architecture).
+[the import-graph purity rule](./architecture.md#architecture).
 
 ### The published surface
 
@@ -263,8 +263,8 @@ returned by `/ui`, the meta-tools, or code mode — `/ui` sees masked metadata
 only. Mutations require a Clerk-authenticated, gate-approved operator on a
 same-origin request; the static bearer is refused. Sandboxed code can do nothing
 a sequence of explicitly read-only `call_tool` calls could not.
-[§7](./documentation.md#7-storage), [§13](./documentation.md#13-code-mode-execute_code),
-[§14](./documentation.md#14-status-ui).
+[storage](./storage-and-credentials.md#storage), [code mode](./code-mode.md#code-mode-execute_code),
+[status UI](./operator-ui.md#status-ui).
 
 ### One rule decides how a credential is tested
 
@@ -281,8 +281,8 @@ operator's configuration. A connector whose only hook cannot test its shape is
 simply not testable: no button, a 400 naming the mismatch, no liveness verdict
 from a credential hook — though a mismatched connector that declares `status()`
 is still probed through it, since that question never involves the shape — and a
-warning at boot. [§7](./documentation.md#7-storage),
-[§17](./documentation.md#17-credential-health-proactive-liveness-checks).
+warning at boot. [storage](./storage-and-credentials.md#storage),
+[credential health](./storage-and-credentials.md#credential-health-proactive-liveness-checks).
 
 ### Stored credentials are checked by containment, not equality
 
@@ -326,8 +326,8 @@ the answer is disclosure rather than enforcement: the classifier returns the
 leftover names as `undeclared` and `/ui` prints one non-blocking line naming
 them beside the credential — the only place they are visible at all, since the
 field list renders declared fields only. Replacing the credential clears them.
-[§14](./documentation.md#14-status-ui),
-[§17](./documentation.md#17-credential-health-proactive-liveness-checks).
+[status UI](./operator-ui.md#status-ui),
+[credential health](./storage-and-credentials.md#credential-health-proactive-liveness-checks).
 
 ### Activity is payload-free by construction
 
@@ -335,7 +335,7 @@ Activity records which resolved tool ran, for whom, and how it went — never
 arguments, results, generated code, search text, or raw error messages. **The
 exclusion is structural, not a redaction pass: the event type has nowhere to put
 a payload.** Keep it that way; a field that could hold one turns an operational
-log into an exfiltration target. [§15](./documentation.md#15-activity-history).
+log into an exfiltration target. [activity history](./operator-ui.md#activity-history).
 
 ### Two enforcement points for scope, each with one job
 
@@ -356,7 +356,7 @@ meta-tools are typed against `RegistryView` rather than `Registry`, so reaching
 for an unfiltered method is a compile error and a new meta-tool inherits the
 boundary without writing a check. Within a selected view, out-of-scope addresses
 must fail *identically* to nonexistent ones: there is no "exists but hidden"
-reply. [§16](./documentation.md#16-toolkits-scoped-views).
+reply. [toolkits](./toolkits.md#toolkits-scoped-views).
 
 ### A refusal never enumerates toolkits
 
@@ -375,7 +375,7 @@ the identity, the reason, and the bound toolkits; the response may not. That
 asymmetry is deliberate (SDK clients discard the body of a transport-level
 403/404 anyway), so when adding a refusal path, put the diagnosis in the log and
 keep the response flat.
-[§16](./documentation.md#16-toolkits-scoped-views).
+[toolkits](./toolkits.md#toolkits-scoped-views).
 
 ### Structural mistakes throw at construction
 

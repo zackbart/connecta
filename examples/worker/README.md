@@ -7,7 +7,7 @@ OAuth *and* a static bearer token, with state in a KV namespace.
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
 owns only its connector configuration, auth policy, domain, bindings,
-migrations, and secrets. See [documentation.md §10](../../docs/documentation.md#10-deployment-architecture).
+migrations, and secrets. See [deployment architecture](../../docs/operations.md#deployment-architecture).
 
 ## Files
 
@@ -43,7 +43,7 @@ wrangler deploy
 `PUBLIC_URL` and `CLERK_PUBLISHABLE_KEY` are plain vars in `wrangler.jsonc`.
 Enable Dynamic Client Registration on the Clerk instance (OAuth Applications →
 DCR) so Claude/Cursor can self-register — full walkthrough in
-[documentation.md §9](../../docs/documentation.md#9-setting-up-clerk-walkthrough).
+[setting up Clerk](../../docs/auth.md#setting-up-clerk-walkthrough).
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/ui` for
 the operator dashboard.
@@ -69,7 +69,7 @@ exist gets, so a team token is not a directory of the org's other teams. It also
 cannot read the deployment-wide operator surfaces (`/ui/data`, `/ui/activity`).
 Drop the `toolkits: [...]` option from a `bearerToken(...)` call and that
 credential goes back to selecting any view. Full reference:
-[documentation.md §16](../../docs/documentation.md#16-toolkits-scoped-views).
+[toolkits](../../docs/toolkits.md#toolkits-scoped-views).
 
 ## Code mode
 
@@ -151,7 +151,7 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
    ```
 
 Events carry no arguments, results, generated code, or raw error messages — see
-[documentation.md §15](../../docs/documentation.md#15-activity-history).
+[activity history](../../docs/operator-ui.md#activity-history).
 `toolkit_id` records which of the scoped views above a call came through, so an
 operator can tell the support team's traffic from the exec team's. The
 Worker entrypoint already forwards `ctx` to `connecta.fetch`, which is what lets

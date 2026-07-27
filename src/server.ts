@@ -222,7 +222,7 @@ async function authorize(
       actor: ActivityActor;
       providerKind?: string;
       userId?: string;
-      /** The admitting identity's toolkit binding, if it has one (§16). */
+      /** The admitting identity's toolkit binding (docs/toolkits.md). */
       toolkitBinding?: ToolkitBinding;
     }
   | { ok: false; response: Response }
@@ -346,11 +346,11 @@ async function authorizeUiAdmin(
   //
   // EVERY Clerk provider gets a turn, the way the /mcp gate does, because the
   // documented per-team pattern is several `clerkAuth(...)`s that differ only in
-  // `gate` and `toolkits` (§16). Stopping at the first would make admission
-  // depend on config order: the team-bound provider listed first would refuse
-  // the operator outright, and a refusal here — a failed gate, a missing user, a
-  // toolkit-bound identity — is exactly the case where a later provider is the
-  // one meant to admit. The last refusal is returned if none do.
+  // `gate` and `toolkits` (docs/toolkits.md). Stopping at the first would make
+  // admission depend on config order: the team-bound provider listed first
+  // would refuse the operator outright, and a refusal here — a failed gate, a
+  // missing user, a toolkit-bound identity — is exactly the case where a later
+  // provider is the one meant to admit. The last refusal is returned if none do.
   const providers = auth.filter(
     (candidate) => candidate.uiAuth?.kind === "clerk",
   );
@@ -718,7 +718,7 @@ function identityLabel(actor: ActivityActor): string {
 
 /**
  * Resolve `?toolkit=<name>` into the registry view this connection may see,
- * enforcing the caller's toolkit binding (§16) on the way.
+ * enforcing the caller's toolkit binding (docs/toolkits.md) on the way.
  *
  * For an UNBOUND identity (no binding configured — the pre-#37 shape):
  *
@@ -923,11 +923,11 @@ async function serveMcp(
  * meant to withhold. So the zero-I/O refusals read the same key in the same
  * `conn:<id>:` namespace, which for an unconfigured id is simply a miss.
  *
- * This is deliberately *not* a constant-time claim, and §6 says so in prose: a
- * hit and a miss are not identical in a KV store, and a connector shipping its
- * own `verifyState` may do more or less work than one read. What it removes is
- * the order-of-magnitude "no I/O versus a round trip" difference, which is the
- * only part of the signal that makes enumeration cheap.
+ * This is deliberately *not* a constant-time claim, and docs/connectors.md says
+ * so in prose: a hit and a miss are not identical in a KV store, and a connector
+ * shipping its own `verifyState` may do more or less work than one read. What it
+ * removes is the order-of-magnitude "no I/O versus a round trip" difference,
+ * which is the only part of the signal that makes enumeration cheap.
  *
  * A throwing read is swallowed: the refusal is the answer either way, and
  * turning it into a 500 would hand back exactly the distinguishable response
