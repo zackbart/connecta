@@ -1,8 +1,169 @@
 import { describe, expect, it } from "vitest";
-import { CredentialVault } from "../src/credentials.js";
+import {
+  CredentialVault,
+  describeUndeclaredCredentialFields,
+  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+  storedCredentialShape,
+} from "../src/credentials.js";
+import type { ConnectorCredentialConfig } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 
 const KEY = Buffer.alloc(32, 7).toString("base64");
+
+describe("storedCredentialShape", () => {
+  const single: ConnectorCredentialConfig = { label: "API token" };
+  const named: ConnectorCredentialConfig = {
+    label: "Service credentials",
+    fields: [
+      { name: "email", label: "Account email" },
+      { name: "apiKey", label: "API key" },
+    ],
+  };
+  const cases: Array<{
+    name: string;
+    declaration: ConnectorCredentialConfig;
+    stored: Record<string, unknown> | null;
+    state: "missing" | "valid" | "mismatch";
+    /** Expected leftovers, for a `valid` verdict. */
+    undeclared?: string[];
+  }> = [
+    {
+      name: "reports no stored credential",
+      declaration: single,
+      stored: null,
+      state: "missing",
+    },
+    {
+      name: "accepts exactly the reserved single-value field",
+      declaration: single,
+      stored: { value: "secret" },
+      state: "valid",
+      undeclared: [],
+    },
+    {
+      name: "rejects an old named field for a single declaration",
+      declaration: single,
+      stored: { apiKey: "secret" },
+      state: "mismatch",
+    },
+    {
+      name: "accepts extra fields beside a single declaration",
+      declaration: single,
+      stored: { value: "secret", extra: "old", legacy: "older" },
+      state: "valid",
+      undeclared: ["extra", "legacy"],
+    },
+    {
+      name: "accepts an exact named set regardless of order",
+      declaration: named,
+      stored: { apiKey: "secret", email: "operator@example.com" },
+      state: "valid",
+      undeclared: [],
+    },
+    {
+      name: "compares duplicate named declarations as a key set",
+      declaration: {
+        label: "Service credential",
+        fields: [
+          { name: "apiKey", label: "Primary API key" },
+          { name: "apiKey", label: "Repeated API key" },
+        ],
+      },
+      stored: { apiKey: "secret" },
+      state: "valid",
+      undeclared: [],
+    },
+    {
+      name: "rejects an old single value for a named declaration",
+      declaration: named,
+      stored: { value: "secret" },
+      state: "mismatch",
+    },
+    {
+      name: "rejects missing named fields",
+      declaration: named,
+      stored: { apiKey: "secret" },
+      state: "mismatch",
+    },
+    {
+      // The regression this rule was relaxed for: a redeploy that drops
+      // `email` leaves a stored set that still answers every `get("apiKey")`
+      // the connector makes, so it is not drift.
+      name: "accepts a stored superset of the declared named fields",
+      declaration: {
+        label: "Service credential",
+        fields: [{ name: "apiKey", label: "API key" }],
+      },
+      stored: { apiKey: "secret", email: "operator@example.com" },
+      state: "valid",
+      undeclared: ["email"],
+    },
+    {
+      name: "rejects a superset that is still missing a declared field",
+      declaration: named,
+      stored: { apiKey: "secret", region: "old" },
+      state: "mismatch",
+    },
+    {
+      name: "rejects an empty stored map against a single declaration",
+      declaration: single,
+      stored: {},
+      state: "mismatch",
+    },
+    {
+      name: "rejects an empty stored map against a named declaration",
+      declaration: named,
+      stored: {},
+      state: "mismatch",
+    },
+    {
+      name: "accepts a named field literally called value",
+      declaration: {
+        label: "Service credential",
+        fields: [{ name: "value", label: "Value" }],
+      },
+      stored: { value: "secret" },
+      state: "valid",
+      undeclared: [],
+    },
+  ];
+
+  for (const testCase of cases) {
+    it(testCase.name, () => {
+      const result = storedCredentialShape(
+        testCase.declaration,
+        testCase.stored,
+      );
+      expect(result.state).toBe(testCase.state);
+      if (result.state === "mismatch") {
+        expect(result.message).toBe(
+          STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+        );
+      }
+      if (result.state === "valid") {
+        expect(result.undeclared).toEqual(testCase.undeclared);
+      }
+    });
+  }
+
+  it("names leftover fields once, and summarizes a long tail", () => {
+    expect(describeUndeclaredCredentialFields(["email"])).toContain("(email)");
+    expect(describeUndeclaredCredentialFields(["email"])).toContain(
+      "drop it",
+    );
+    const many = describeUndeclaredCredentialFields([
+      "a",
+      "b",
+      "c",
+      "d",
+      "e",
+      "f",
+      "g",
+    ]);
+    expect(many).toContain("(a, b, c, d, e, and 2 more)");
+    expect(many).toContain("drop them");
+  });
+});
 
 describe("CredentialVault", () => {
   it("encrypts credentials in the existing KV storage and decrypts on demand", async () => {

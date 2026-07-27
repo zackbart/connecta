@@ -15,7 +15,10 @@
 // There is no background daemon and no long-lived timer, so Workers and Node run
 // the same code.
 
-import { credentialTestRule } from "./credentials.js";
+import {
+  credentialTestRule,
+  storedCredentialShape,
+} from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import { closeConnectorScope } from "./connector-scope.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs, withTimeout } from "./timeout.js";
@@ -388,15 +391,21 @@ function testHookFor(
   connector: Connector,
   values: ConnectorCredentialValues | null,
 ): ((ctx: ConnectorContext) => Promise<CredentialTestResult>) | undefined {
-  if (!values) return undefined;
+  if (
+    !connector.credential ||
+    storedCredentialShape(connector.credential, values).state !== "valid"
+  ) {
+    return undefined;
+  }
+  const storedValues = values!;
   const { mode } = credentialTestRule(connector);
   if (mode === "multiple") {
-    return (ctx) => connector.testCredentials!(values, ctx);
+    return (ctx) => connector.testCredentials!(storedValues, ctx);
   }
   // A single-value shape with nothing under the reserved field is still nothing
   // to test, so the stored value gets the last word even when the rule fits.
-  if (mode === "single" && typeof values.value === "string") {
-    return (ctx) => connector.testCredential!(values.value, ctx);
+  if (mode === "single" && typeof storedValues.value === "string") {
+    return (ctx) => connector.testCredential!(storedValues.value, ctx);
   }
   return undefined;
 }
@@ -577,16 +586,12 @@ export class CredentialHealthChecker {
         ...(await this.recordOrNothing(connectorId)),
       };
     }
-    if (!opts.force) {
-      const current = await this.store.get(connectorId);
-      if (
-        current &&
-        Date.now() - Date.parse(current.checkedAt) < this.intervalMs
-      ) {
-        return { connectorId, skipped: "fresh", record: current };
-      }
-    }
-    const run = this.runCheck(connector, baseUrl, opts.requestScope);
+    const run = this.runCheck(
+      connector,
+      baseUrl,
+      opts.force ?? false,
+      opts.requestScope,
+    );
     this.inFlight.set(connectorId, run);
     try {
       return await run;
@@ -605,32 +610,80 @@ export class CredentialHealthChecker {
   private async runCheck(
     connector: Connector,
     baseUrl: string,
+    force: boolean,
     requestScope?: object,
   ): Promise<CredentialCheckResult> {
     const connectorId = connector.id;
     const started = Date.now();
-    // Captured BEFORE anything downstream happens: everything after this point
-    // is a window in which the operator may replace the very credential being
-    // judged, and `settle` fences the write against exactly that.
+    // Captured BEFORE anything downstream happens — including the vault read
+    // below: everything after this point is a window in which the operator may
+    // replace the very credential being judged, and `settle` fences the write
+    // against exactly that. It cannot move later to save a read on the fresh
+    // path; a generation sampled AFTER the values would miss a `clear` that
+    // landed between the two and let a verdict about the replaced credential
+    // through the fence.
     const generation = await this.store.generation(connectorId);
+    let values: ConnectorCredentialValues | null = null;
+    let credentialReadError: unknown;
+    if (connector.credential && this.deps.credentialVault) {
+      try {
+        values = await this.deps.credentialVault.getAll(connectorId);
+      } catch (err) {
+        credentialReadError = err;
+      }
+      const shape = storedCredentialShape(connector.credential, values);
+      if (shape.state === "mismatch") {
+        // Drift is a persistent operator-error state, not an event: left
+        // outside the freshness gate it would spend a write on every sweep in
+        // every isolate, forever, against exactly the deployments this feature
+        // is meant to help (and on Cloudflare KV those writes are metered).
+        // Once the SAME drift verdict is already stored and still fresh, this
+        // is the rate limit doing its job, same as a fresh `ok`. A stored
+        // verdict that says anything else — a pre-redeploy `ok`, a different
+        // message — is still replaced immediately, which is the whole point of
+        // checking the shape before the gate.
+        if (!force) {
+          const current = await this.store.get(connectorId);
+          if (
+            current &&
+            current.state === "error" &&
+            current.message === shape.message &&
+            Date.now() - Date.parse(current.checkedAt) < this.intervalMs
+          ) {
+            return { connectorId, skipped: "fresh", record: current };
+          }
+        }
+        return this.settle(connectorId, started, generation, {
+          state: "error",
+          checkedAt: new Date().toISOString(),
+          message: shape.message,
+        });
+      }
+    }
+    // Shape drift is checked before this shortcut so an old, still-fresh `ok`
+    // cannot survive a redeploy that changed the credential declaration.
+    if (!force) {
+      const current = await this.store.get(connectorId);
+      if (
+        current &&
+        Date.now() - Date.parse(current.checkedAt) < this.intervalMs
+      ) {
+        return { connectorId, skipped: "fresh", record: current };
+      }
+    }
     const ownsScope = requestScope === undefined;
     const scope = requestScope ?? {};
     const ctx = this.deps.contextFor(connectorId, baseUrl, scope);
     try {
-      let values: ConnectorCredentialValues | null = null;
-      if (connector.credential && this.deps.credentialVault) {
-        try {
-          values = await this.deps.credentialVault.getAll(connectorId);
-        } catch (err) {
-          // A stored credential that cannot be decrypted (rotated key, corrupt
-          // envelope) is exactly the kind of dead credential this feature
-          // exists to surface early, so it is a verdict rather than a skip.
-          return this.settle(connectorId, started, generation, {
-            state: "auth_required",
-            checkedAt: new Date().toISOString(),
-            message: msg(err),
-          });
-        }
+      if (credentialReadError) {
+        // A stored credential that cannot be decrypted (rotated key, corrupt
+        // envelope) is exactly the kind of dead credential this feature
+        // exists to surface early, so it is a verdict rather than a skip.
+        return this.settle(connectorId, started, generation, {
+          state: "auth_required",
+          checkedAt: new Date().toISOString(),
+          message: msg(credentialReadError),
+        });
       }
       const stored = connector.hasStoredCredential
         ? await connector
