@@ -1,28 +1,13 @@
 import type {
   ActivityPage,
   ActivityStore,
-  ToolCallActivityEvent,
 } from "@zackbart/connecta";
 import { InvalidActivityCursorError } from "@zackbart/connecta";
-
-interface ActivityRow {
-  id: string;
-  occurred_at_ms: number;
-  request_id: string;
-  actor_kind: string;
-  actor_id: string | null;
-  connector_id: string;
-  tool_name: string;
-  source: ToolCallActivityEvent["source"];
-  outcome: ToolCallActivityEvent["outcome"];
-  duration_ms: number;
-  attempts: number;
-  error_code: string | null;
-  server_name: string;
-  server_version: string;
-  deployment_id: string | null;
-  toolkit_id: string | null;
-}
+import {
+  activityEventToRow,
+  activityRowToEvent,
+  type ActivityRow,
+} from "./d1-activity-row.js";
 
 interface Cursor {
   occurredAtMs: number;
@@ -54,63 +39,38 @@ function decodeCursor(value: string): Cursor {
   return { occurredAtMs, id };
 }
 
-function toEvent(row: ActivityRow): ToolCallActivityEvent {
-  return {
-    schemaVersion: 1,
-    id: row.id,
-    occurredAt: new Date(row.occurred_at_ms).toISOString(),
-    requestId: row.request_id,
-    actor: {
-      kind: row.actor_kind,
-      ...(row.actor_id ? { id: row.actor_id } : {}),
-    },
-    connectorId: row.connector_id,
-    toolName: row.tool_name,
-    address: `${row.connector_id}.${row.tool_name}`,
-    source: row.source,
-    outcome: row.outcome,
-    durationMs: row.duration_ms,
-    attempts: row.attempts,
-    ...(row.error_code ? { errorCode: row.error_code } : {}),
-    serverName: row.server_name,
-    serverVersion: row.server_version,
-    ...(row.deployment_id
-      ? { deploymentId: row.deployment_id }
-      : {}),
-    // Which toolkit-scoped view the call came through, when one was selected.
-    ...(row.toolkit_id ? { toolkitId: row.toolkit_id } : {}),
-  };
-}
-
 /** One append-only row per completed downstream call; no arguments or results. */
 export function d1ActivityStore(db: D1Database): ActivityStore {
   return {
     async record(event) {
+      const row = activityEventToRow(event);
       await db
         .prepare(
           `INSERT INTO tool_call_activity (
             id, occurred_at_ms, request_id, actor_kind, actor_id,
+            actor_namespace,
             connector_id, tool_name, source, outcome, duration_ms, attempts,
             error_code, server_name, server_version, deployment_id, toolkit_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         )
         .bind(
-          event.id,
-          Date.parse(event.occurredAt),
-          event.requestId,
-          event.actor.kind,
-          event.actor.id ?? null,
-          event.connectorId,
-          event.toolName,
-          event.source,
-          event.outcome,
-          event.durationMs,
-          event.attempts,
-          event.errorCode ?? null,
-          event.serverName,
-          event.serverVersion,
-          event.deploymentId ?? null,
-          event.toolkitId ?? null,
+          row.id,
+          row.occurred_at_ms,
+          row.request_id,
+          row.actor_kind,
+          row.actor_id,
+          row.actor_namespace,
+          row.connector_id,
+          row.tool_name,
+          row.source,
+          row.outcome,
+          row.duration_ms,
+          row.attempts,
+          row.error_code,
+          row.server_name,
+          row.server_version,
+          row.deployment_id,
+          row.toolkit_id,
         )
         .run();
     },
@@ -147,7 +107,7 @@ export function d1ActivityStore(db: D1Database): ActivityStore {
       const visible = hasMore ? rows.slice(0, boundedLimit) : rows;
       const last = visible.at(-1);
       return {
-        events: visible.map(toEvent),
+        events: visible.map(activityRowToEvent),
         ...(hasMore && last ? { nextCursor: encodeCursor(last) } : {}),
       };
     },

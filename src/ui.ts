@@ -1060,6 +1060,7 @@ ${clerkScript}
   .activity-time,
   .activity-actor,
   .activity-detail { color: var(--muted); font-size: .82rem; }
+  .activity-actor-id { color: var(--muted); margin-top: .1rem; }
   .activity-address { font-family: var(--mono); font-size: .78rem; overflow-wrap: anywhere; }
   .activity-outcome { font-size: .9em; }
   .activity-item.error .activity-outcome,
@@ -1459,7 +1460,9 @@ async function load() {
 
 function actorLabel(actor) {
   if (!actor || !actor.kind) return "unknown";
-  return actor.id ? actor.kind + " · " + actor.id : actor.kind;
+  return actor.label
+    ? actor.kind + " · " + actor.label
+    : actor.id ? actor.kind + " · " + actor.id : actor.kind;
 }
 
 function renderActivity() {
@@ -1478,6 +1481,8 @@ function renderActivity() {
       event.errorCode,
       actor.kind,
       actor.id,
+      actor.namespace,
+      actor.label,
     ].some((value) => String(value || "").toLowerCase().includes(query));
   });
   const uniqueTools = new Set(ACTIVITY.map((event) => event.address)).size;
@@ -1501,13 +1506,23 @@ function renderActivity() {
       ? " · " + esc(event.attempts) + " attempts"
       : "";
     const errorCopy = event.errorCode ? " · " + esc(event.errorCode) : "";
+    const actorId = event.actor?.id
+      ? (event.actor.namespace
+        ? event.actor.namespace + " · " + event.actor.id
+        : event.actor.id)
+      : "";
+    const stableActorId = actorId &&
+      (event.actor?.label || event.actor?.namespace)
+      ? '<div class="activity-actor-id mono">' + esc(actorId) + "</div>"
+      : "";
     item.innerHTML =
       '<div class="activity-stamp"><span class="dot ' +
       (outcomeClass === "success" ? "ok" : "") +
       '" aria-hidden="true"></span><div><time class="activity-time" datetime="' +
       esc(event.occurredAt) + '">' +
       esc(formatDate(event.occurredAt)) +
-      '</time><div class="activity-actor">' + esc(actorLabel(event.actor)) + '</div></div></div>' +
+      '</time><div class="activity-actor">' + esc(actorLabel(event.actor)) +
+      "</div>" + stableActorId + "</div></div>" +
       '<div><div class="activity-address">' + esc(event.address) +
       '</div><div class="activity-detail">' + esc(event.source) + retryCopy +
       errorCopy + '</div></div>' +

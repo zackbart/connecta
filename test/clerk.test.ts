@@ -18,6 +18,20 @@ const BASE = "https://connecta.test";
 const domain = "clerk.example.com$";
 const publishableKey =
   "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
+const friendlyUser = (fullName = "Ada Lovelace") => ({
+  fullName,
+  firstName: "Ada",
+  lastName: "Lovelace",
+  username: "ada",
+  primaryEmailAddressId: "primary",
+  emailAddresses: [
+    {
+      id: "primary",
+      emailAddress: "ada@example.com",
+      verification: { status: "verified" },
+    },
+  ],
+});
 
 describe("clerkAuth inbound auth", () => {
   beforeEach(() => {
@@ -45,6 +59,185 @@ describe("clerkAuth inbound auth", () => {
       signInUrl: "https://accounts.example.com/sign-in",
       signUpUrl: "https://accounts.example.com/sign-up",
     });
+    expect(auth.activityActorNamespace).toBe("https://clerk.example.com");
+  });
+
+  it("resolves and caches friendly activity labels without affecting auth", async () => {
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+      publicUrl: BASE,
+    });
+    mocks.getUser.mockResolvedValue({
+      fullName: "  Zack   Bart ",
+      firstName: "Zack",
+      lastName: "Bart",
+      username: "zack",
+      primaryEmailAddressId: "primary",
+      emailAddresses: [
+        {
+          id: "primary",
+          emailAddress: "zack@example.com",
+          verification: { status: "verified" },
+        },
+      ],
+    });
+
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
+      "Zack Bart",
+    );
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
+      "Zack Bart",
+    );
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+
+    mocks.getUser.mockResolvedValue({
+      fullName: null,
+      firstName: null,
+      lastName: null,
+      username: null,
+      primaryEmailAddressId: "primary",
+      emailAddresses: [
+        {
+          id: "primary",
+          emailAddress: "operator@example.com",
+          verification: { status: "verified" },
+        },
+      ],
+    });
+    await expect(auth.activityActorLabel!("user_email")).resolves.toBe(
+      "operator@example.com",
+    );
+
+    mocks.getUser.mockRejectedValue(new Error("Clerk unavailable"));
+    await expect(
+      auth.activityActorLabel!("user_offline"),
+    ).resolves.toBeUndefined();
+    const callsAfterFailure = mocks.getUser.mock.calls.length;
+    await expect(
+      auth.activityActorLabel!("user_offline"),
+    ).resolves.toBeUndefined();
+    expect(mocks.getUser).toHaveBeenCalledTimes(callsAfterFailure);
+  });
+
+  it("does not use an unverified email as an activity label", async () => {
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+    });
+    mocks.getUser.mockResolvedValue({
+      fullName: null,
+      firstName: null,
+      lastName: null,
+      username: "friendly-handle",
+      primaryEmailAddressId: "primary",
+      emailAddresses: [
+        {
+          id: "primary",
+          emailAddress: "unverified@example.com",
+          verification: { status: "unverified" },
+        },
+      ],
+    });
+
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
+      "friendly-handle",
+    );
+  });
+
+  it("coalesces concurrent activity label lookups for one id", async () => {
+    let resolveUser!: (user: ReturnType<typeof friendlyUser>) => void;
+    mocks.getUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+    });
+
+    const first = auth.activityActorLabel!("user_123");
+    const second = auth.activityActorLabel!("user_123");
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+    resolveUser(friendlyUser());
+
+    await expect(first).resolves.toBe("Ada Lovelace");
+    await expect(second).resolves.toBe("Ada Lovelace");
+  });
+
+  it("bounds labels and refreshes them after the success TTL", async () => {
+    vi.useFakeTimers();
+    mocks.getUser.mockResolvedValue(friendlyUser(`  ${"A".repeat(200)}  `));
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+    });
+
+    const first = await auth.activityActorLabel!("user_123");
+    expect(first).toBe("A".repeat(160));
+    mocks.getUser.mockResolvedValue(friendlyUser("Grace Hopper"));
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(first);
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(5 * 60 * 1000);
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
+      "Grace Hopper",
+    );
+    expect(mocks.getUser).toHaveBeenCalledTimes(2);
+  });
+
+  it("caps hung Clerk activity lookups across concurrent readers", async () => {
+    vi.useFakeTimers();
+    mocks.getUser.mockImplementation(() => new Promise(() => {}));
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+    });
+
+    const lookups = Array.from({ length: 12 }, (_, index) =>
+      auth.activityActorLabel!(`user_${index}`),
+    );
+    expect(mocks.getUser).toHaveBeenCalledTimes(8);
+    await vi.advanceTimersByTimeAsync(1_250);
+    await expect(Promise.all(lookups)).resolves.toEqual(
+      Array(12).fill(undefined),
+    );
+
+    // Caller-facing promises and pending-map entries have settled, but the
+    // eight raw Clerk calls are still physically hung. Do not start a ninth.
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expect(
+      auth.activityActorLabel!("user_after_timeout"),
+    ).resolves.toBeUndefined();
+    expect(mocks.getUser).toHaveBeenCalledTimes(8);
+  });
+
+  it("uses a late Clerk result after the caller-facing lookup timed out", async () => {
+    vi.useFakeTimers();
+    let resolveUser!: (user: ReturnType<typeof friendlyUser>) => void;
+    mocks.getUser.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveUser = resolve;
+        }),
+    );
+    const auth = clerkAuth({
+      publishableKey,
+      secretKey: "sk_test_fake",
+    });
+
+    const first = auth.activityActorLabel!("user_123");
+    await vi.advanceTimersByTimeAsync(1_250);
+    await expect(first).resolves.toBeUndefined();
+
+    resolveUser(friendlyUser());
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(auth.activityActorLabel!("user_123")).resolves.toBe(
+      "Ada Lovelace",
+    );
+    expect(mocks.getUser).toHaveBeenCalledTimes(1);
   });
 
   // One clerkAuth per team — same keys, that team's `gate`, that team's

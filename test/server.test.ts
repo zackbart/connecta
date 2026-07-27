@@ -25,7 +25,7 @@ import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
-import type { Connector } from "../src/types.js";
+import type { Connector, InboundAuth } from "../src/types.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -436,6 +436,54 @@ describe("server /mcp end-to-end", () => {
       events.slice(1).every((event) => event.source === "batch_call"),
     ).toBe(true);
     expect(JSON.stringify(events)).not.toContain("never-store-this");
+  });
+
+  it("stores the admitting activity identity namespace with the stable actor id", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const auth: InboundAuth = {
+      kind: "oidc",
+      activityActorNamespace: "https://identity.example",
+      authorize(request) {
+        return request.headers.get("authorization") === `Bearer ${TOKEN}`
+          ? { ok: true, userId: "local-user-1" }
+          : {
+              ok: false,
+              response: Response.json(
+                { error: "unauthorized" },
+                { status: 401 },
+              ),
+            };
+      },
+    };
+    const c = createConnecta({
+      connectors: [calc()],
+      auth,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      activity: {
+        store: {
+          record(event) {
+            events.push(event);
+          },
+        },
+      },
+    });
+
+    await rpc(
+      c,
+      "tools/call",
+      {
+        name: "call_tool",
+        arguments: { address: "calc.add", args: { a: 1, b: 2 } },
+      },
+      { token: TOKEN },
+    );
+
+    expect(events[0].actor).toEqual({
+      kind: "oidc",
+      id: "local-user-1",
+      namespace: "https://identity.example",
+    });
   });
 
   it("stores a finite error code instead of a raw downstream error", async () => {

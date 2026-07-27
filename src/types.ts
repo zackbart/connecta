@@ -438,6 +438,23 @@ export interface ConnectaBranding {
 export interface InboundAuth {
   kind: string;
   /**
+   * Stable, non-secret namespace of the identity directory behind
+   * `activityActorLabel`. Stored with new activity actors so two providers with
+   * the same `kind` never receive each other's ids. Legacy actors without a
+   * namespace are resolved only when exactly one directory is unambiguous.
+   * Must be 1–256 printable, non-space ASCII characters; invalid values are
+   * treated as an unknown directory and are not persisted.
+   */
+  activityActorNamespace?: string;
+  /**
+   * Best-effort friendly label for a stable activity actor id. Called only
+   * while serving an authorized activity read, never during tool admission or
+   * event writes. The result is display-only and cannot grant access.
+   */
+  activityActorLabel?(
+    subjectId: string,
+  ): string | undefined | Promise<string | undefined>;
+  /**
    * Optional browser sign-in configuration. When present, operator pages use it
    * provider instead of asking the operator to paste a static bearer secret.
    */
