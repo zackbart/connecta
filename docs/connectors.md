@@ -688,12 +688,12 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 | `conn:<id>:oauth:state:epoch:<generation>` | one-shot `state` value checked by `verifyState` |
 | `conn:<id>:oauth:pending:epoch:<generation>` | stored authorization URL while a flow is open |
 | `conn:<id>:oauth:generation` | unique active epoch selecting the readable namespace |
-| `conn:<id>:oauth:cleanup:<encoded-generation>` | retry backlog of retired namespaces whose physical deletion has not completed |
-Before the first force reset, legacy and old numeric generations retain the
-historical unsuffixed keys and encodings so a rolling old isolate or rollback
-can still read them. Force publishes one unique active epoch before cleanup.
-Modern OAuth values carry that epoch and use its physical namespace, so a late
-stale write or delete cannot affect replacement state. Failed physical cleanup
-is retained in the active epoch's backlog and retried on the next reset.
-Immediate cross-instance fencing requires strongly consistent
-[storage](./storage-and-credentials.md#storage).
+| `conn:<id>:oauth:cleanup:<encoded-generation>` | bounded immutable lineage of retired namespaces the next force must retry |
+Before the first force reset, legacy and old numeric generations retain the historical
+unsuffixed keys and encodings for rolling-deploy and rollback safety. Force publishes
+one active epoch before cleanup; its physical namespace and full observed lineage stop
+stale mutation and let a later force retry late-write or transient-failure residue.
+The three-method `KVStorage` interface has no list or compare-and-swap, so the lineage
+cannot promise lossless cleanup for sibling resets or a crash around an unrecorded
+late write. Those bytes remain unreadable but may need operator prefix deletion.
+Immediate fencing also requires strongly consistent [storage](./storage-and-credentials.md#storage).

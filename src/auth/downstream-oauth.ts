@@ -424,32 +424,19 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
 
     let firstError: unknown;
-    const remaining: string[] = [];
     for (const generation of retired) {
       try {
         await this.deleteAll(this.valueKeysForGeneration(generation));
         await this.storage.delete(cleanupBacklogKey(generation));
       } catch (error) {
         firstError ??= error;
-        remaining.push(generation);
       }
     }
-
-    // Replace the conservative pre-transition manifest with only the work that
-    // failed. If this write/delete itself fails, the full initial manifest
-    // remains and a later reset safely retries extra idempotent deletions.
-    try {
-      if (remaining.length === 0) {
-        await this.storage.delete(cleanupBacklogKey(active));
-      } else {
-        await this.storage.set(
-          cleanupBacklogKey(active),
-          JSON.stringify(remaining),
-        );
-      }
-    } catch (error) {
-      firstError ??= error;
-    }
+    // Keep the active manifest immutable for the epoch's whole lifetime, even
+    // after successful cleanup. A late old-epoch write can land after cleanup;
+    // if its self-delete fails, the next reset must still inherit the complete
+    // lineage without racing a manifest shrink/delete. The successor copies
+    // this manifest before activation and then removes this retired copy.
     if (firstError) throw firstError;
   }
 

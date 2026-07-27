@@ -484,6 +484,87 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await backing.get(oldTokenKey)).toBeNull();
   });
 
+  it("keeps lineage while a late stale-write cleanup races the next reset", async () => {
+    const backing = memoryStorage();
+    let staleSetReached!: () => void;
+    const atStaleSet = new Promise<void>((resolve) => {
+      staleSetReached = resolve;
+    });
+    let releaseStaleSet!: () => void;
+    const staleSetGate = new Promise<void>((resolve) => {
+      releaseStaleSet = resolve;
+    });
+    let rememberReadReached!: () => void;
+    const atRememberRead = new Promise<void>((resolve) => {
+      rememberReadReached = resolve;
+    });
+    let releaseRememberRead!: () => void;
+    const rememberReadGate = new Promise<void>((resolve) => {
+      releaseRememberRead = resolve;
+    });
+    let activeManifest = "";
+    let gatedRememberRead = false;
+    let failLateDelete = false;
+    let lateCleanupFailed = false;
+    const storage: KVStorage = {
+      async get(key) {
+        if (
+          lateCleanupFailed &&
+          key === activeManifest &&
+          !gatedRememberRead
+        ) {
+          gatedRememberRead = true;
+          const value = await backing.get(key);
+          rememberReadReached();
+          await rememberReadGate;
+          return value;
+        }
+        return backing.get(key);
+      },
+      async set(key, value, opts) {
+        if (key === "oauth:tokens") {
+          staleSetReached();
+          await staleSetGate;
+        }
+        await backing.set(key, value, opts);
+      },
+      async delete(key) {
+        if (failLateDelete && key === "oauth:tokens") {
+          failLateDelete = false;
+          lateCleanupFailed = true;
+          throw new Error("late cleanup unavailable");
+        }
+        await backing.delete(key);
+      },
+    };
+    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
+    stale.captureGeneration(await stale.generation());
+    const lateWrite = stale.saveTokens({
+      access_token: "late-secret",
+      token_type: "Bearer",
+    });
+    await atStaleSet;
+
+    const resetter = new KvOAuthProvider("svc", storage, REDIRECT);
+    await resetter.resetAuthorization();
+    const active = await resetter.generation();
+    activeManifest = `oauth:cleanup:${encodeURIComponent(active)}`;
+    expect(JSON.parse((await backing.get(activeManifest))!)).toContain(
+      "legacy",
+    );
+
+    failLateDelete = true;
+    releaseStaleSet();
+    await atRememberRead;
+    // A successor copies the immutable lineage while the stale writer is
+    // paused after reading it.
+    await new KvOAuthProvider("svc", storage, REDIRECT).resetAuthorization();
+    releaseRememberRead();
+    await lateWrite;
+
+    expect(await backing.get("oauth:tokens")).toBeNull();
+  });
+
   it("clearPending attempts every one-shot deletion after a failure", async () => {
     const backing = memoryStorage();
     const deleted: string[] = [];

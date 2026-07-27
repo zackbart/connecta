@@ -44,7 +44,7 @@ operations have very different consistency, pagination, and cost models.
 | `conn:<id>:oauth:pending:epoch:<generation>`, `:verifier:epoch:<generation>`, `:state:epoch:<generation>` | One OAuth attempt. Cleared after a successful callback. Epoch-specific physical keys prevent an old callback from deleting a replacement flow. Legacy deployments use the unsuffixed names until the first reset. |
 | `conn:<id>:oauth:client:epoch:<generation>`, `:tokens:epoch:<generation>` | The connector's durable downstream grant. Replaced by refresh/code exchange. Force makes the old namespace unreadable before best-effort physical cleanup. Legacy deployments use the unsuffixed names until the first reset. |
 | `conn:<id>:oauth:generation` | Unique active epoch. Force publishes this single authoritative transition before cleanup. Every OAuth value is tagged and physically namespaced, so late old-epoch writes and deletes cannot affect replacement state. |
-| `conn:<id>:oauth:cleanup:<encoded-generation>` | Bounded retry manifest inherited by each new epoch. Retains retired namespaces after transient deletion failures so the next force can finish physical cleanup without a prefix scan. Removed when its work succeeds. |
+| `conn:<id>:oauth:cleanup:<encoded-generation>` | Bounded immutable lineage inherited by each new epoch. The active copy remains after cleanup so a later force retries residue from late writes or transient failures; its successor removes the retired copy after inheriting it. |
 | `conn:<id>:credential:v1` | Until an eligible operator replaces or removes the connector credential. |
 | `credhealth:<id>` | Latest verdict. A credential change drops the in-memory mirror and attempts a best-effort persisted deletion; an eventually consistent or failed store may temporarily serve the prior verdict again. |
 | `credhealth:gen:<id>` | Retained counter used to discard a check that observed a credential change on a consistent store. |
@@ -69,6 +69,13 @@ OAuth/credential coordination in a strongly consistent store (for example a
 Durable Object) while still implementing the same `KVStorage` seam. Catalog and
 credential-health invalidation are operational hints, not authorization
 boundaries, and remain best-effort across stores and isolates.
+
+The OAuth cleanup lineage is also a hygiene aid, not an authorization boundary.
+Because `KVStorage` has no list or compare-and-swap, concurrent sibling resets
+or a process crash around an unrecorded late write can leave physically
+unreachable old-epoch bytes. They are unreadable, but an operator requiring
+complete physical erasure must stop writers and delete the connector's
+`conn:<id>:oauth:` prefix through the storage backend's administration.
 
 Removing a connector from TypeScript configuration does **not** automatically
 delete its namespace. There is no safe inference that a missing declaration is
