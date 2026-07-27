@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { normalizeCode, quickJsExecutor } from "../src/executors/quickjs.js";
 import type { ExecutorProvider } from "../src/types.js";
@@ -71,6 +72,96 @@ describe("quickJsExecutor", () => {
     );
     expect(out.error).toBeUndefined();
     expect(out.result).toEqual({ first: 3, sums: [20, 40] });
+  });
+
+  it.each([
+    ["0.125 MiB", 128 * 1024, true],
+    ["0.5 MiB", 512 * 1024, false],
+    ["1.5 MiB", 1536 * 1024, false],
+    ["3.5 MiB", 3584 * 1024, false],
+    ["7 MiB", 7 * 1024 * 1024, false],
+  ])(
+    "bridges or deterministically rejects a %s serialized host result",
+    async (_label, size, succeeds) => {
+      const payload = "x".repeat(size);
+      const ex = quickJsExecutor({ timeoutMs: 10_000 });
+      const out = await ex.execute(`async () => (await large.get()).length`, [
+        { name: "large", fns: { get: async () => payload } },
+      ]);
+      if (succeeds) {
+        expect(out).toEqual({ result: size });
+      } else {
+        expect(out.result).toBeUndefined();
+        expect(out.error).toContain("serialized bridge limit");
+      }
+    },
+    15_000,
+  );
+
+  it("keeps concurrent near-limit bridge rounds deterministic", async () => {
+    const size = 192 * 1024;
+    const payload = "x".repeat(size);
+    const ex = quickJsExecutor({ timeoutMs: 10_000 });
+    const provider: ExecutorProvider[] = [
+      { name: "large", fns: { get: async () => payload } },
+    ];
+    for (let round = 0; round < 5; round += 1) {
+      const outputs = await Promise.all(
+        Array.from({ length: 20 }, () =>
+          ex.execute(`async () => (await large.get()).length`, provider),
+        ),
+      );
+      expect(outputs).toEqual(Array(20).fill({ result: size }));
+    }
+  }, 30_000);
+
+  it.each([
+    ["0.5 MiB", 512 * 1024],
+    ["1.5 MiB", 1536 * 1024],
+    ["3.5 MiB", 3584 * 1024],
+    ["7 MiB", 7 * 1024 * 1024],
+  ])(
+    "rejects concurrent %s host results before they enter QuickJS",
+    async (_label, size) => {
+      const payload = "x".repeat(size);
+      const ex = quickJsExecutor({ timeoutMs: 10_000 });
+      const provider: ExecutorProvider[] = [
+        { name: "large", fns: { get: async () => payload } },
+      ];
+      const outputs = await Promise.all(
+        Array.from({ length: 8 }, () =>
+          ex.execute(`async () => (await large.get()).length`, provider),
+        ),
+      );
+      for (const output of outputs) {
+        expect(output.result).toBeUndefined();
+        expect(output.error).toContain("serialized bridge limit");
+      }
+    },
+    20_000,
+  );
+
+  it("measures the bridge limit in UTF-8 bytes, not UTF-16 code units", async () => {
+    const payload = "😀".repeat(70_000);
+    const ex = quickJsExecutor();
+    const out = await ex.execute(`async () => unicode.get()`, [
+      { name: "unicode", fns: { get: async () => payload } },
+    ]);
+    expect(payload.length).toBeLessThan(256 * 1024);
+    expect(out.error).toContain("serialized bridge limit");
+  });
+
+  it("preserves logs when a host result cannot be serialized", async () => {
+    const circular: Record<string, unknown> = {};
+    circular.self = circular;
+    const ex = quickJsExecutor();
+    const out = await ex.execute(
+      `async () => { console.log("before host call"); return bad.result(); }`,
+      [{ name: "bad", fns: { result: async () => circular } }],
+    );
+    expect(out.result).toBeUndefined();
+    expect(out.error).toContain("could not be serialized");
+    expect(out.logs).toEqual(["before host call"]);
   });
 
   it("forwards every argument verbatim, positionally", async () => {
@@ -176,6 +267,51 @@ describe("quickJsExecutor", () => {
     const out = await ex.execute(`async () => slow.forever({})`, hang);
     expect(out.error).toContain("timed out");
   }, 10_000);
+
+  it("releases every losing deadline timer after host waits settle", async () => {
+    const before = process
+      .getActiveResourcesInfo()
+      .filter((resource) => resource === "Timeout").length;
+    const ex = quickJsExecutor({ timeoutMs: 2_000 });
+    const out = await ex.execute(
+      `async () => {
+        for (let index = 0; index < 20; index += 1) await fast.one();
+        return 20;
+      }`,
+      [{ name: "fast", fns: { one: async () => 1 } }],
+    );
+    const after = process
+      .getActiveResourcesInfo()
+      .filter((resource) => resource === "Timeout").length;
+    expect(out).toEqual({ result: 20 });
+    expect(after).toBeLessThanOrEqual(before);
+  });
+
+  it("lets a short-lived process exit near computation time", () => {
+    const child = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "--input-type=module",
+        "--eval",
+        [
+          'import { quickJsExecutor } from "./src/executors/quickjs.ts";',
+          "const ex = quickJsExecutor({ timeoutMs: 5_000 });",
+          'const providers = [{ name: "fast", fns: { one: async () => 1 } }];',
+          'const out = await ex.execute("async () => { for (let i = 0; i < 20; i += 1) await fast.one(); return 20; }", providers);',
+          "if (out.result !== 20) process.exitCode = 1;",
+        ].join("\n"),
+      ],
+      {
+        cwd: process.cwd(),
+        encoding: "utf8",
+        timeout: 2_000,
+      },
+    );
+    expect(child.error).toBeUndefined();
+    expect(child.status, child.stderr).toBe(0);
+  });
 
   it("drains pending host calls after a timeout without spinning", async () => {
     // Two stragglers settling at different times after the budget expires.

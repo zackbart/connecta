@@ -88,7 +88,13 @@ Two known implementations:
   The 30 s default is intentionally tighter than codemode's 60 s: sandbox code
   is tool-call glue, not compute, so a shorter leash surfaces hung downstreams
   sooner. Both executors forward provider-function arguments verbatim and
-  positionally, so identical sandbox code behaves the same on either.
+  positionally, so identical sandbox code behaves the same on either. To keep
+  QuickJS runtime disposal deterministic under concurrent load, one serialized
+  host result may be at most 256 KiB of UTF-8. Larger results fail that host
+  call with a normal catchable error before the value enters the guest. This
+  is separate from the final ~24k-character response budget: guest code can
+  still reduce an input more than ten times larger before returning its compact
+  answer.
 
   ```ts
   import { quickJsExecutor } from "@zackbart/connecta/quickjs";

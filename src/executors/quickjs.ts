@@ -40,9 +40,37 @@ const MAX_LOG_ENTRIES = 200;
 // keeps the worst case — 200 maxed-out entries — bounded well under a MiB.
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const MAX_LOG_TOTAL_CHARS = 256_000;
+// Keep one host result below the range where quickjs-emscripten@0.32.0 can
+// nondeterministically fail during runtime disposal under concurrent load.
+// This still lets guest code reduce data more than ten times larger than
+// connecta's final response budget.
+const MAX_HOST_RESULT_BYTES = 256 * 1024;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function exceedsUtf8ByteLimit(value: string, limit: number): boolean {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x7f) bytes += 1;
+    else if (code <= 0x7ff) bytes += 2;
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc00 &&
+      value.charCodeAt(index + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      index += 1;
+    } else {
+      bytes += 3;
+    }
+    if (bytes > limit) return true;
+  }
+  return false;
 }
 
 /** Normalize model output into an async-arrow expression: strip markdown fences, wrap bare bodies. */
@@ -118,6 +146,25 @@ function armWake(bridge: HostBridge): void {
   });
 }
 
+function waitForHostOrDeadline(
+  waitForSettle: Promise<void>,
+  remainingMs: number,
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      done = true;
+      resolve(false);
+    }, remainingMs);
+    void waitForSettle.then(() => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 function installBridge(
   ctx: QuickJSContext,
   providers: ExecutorProvider[],
@@ -176,7 +223,20 @@ function installBridge(
       if (!f) throw new Error(`Unknown function ${ns}.${fn}`);
       const args = JSON.parse(argsJson) as unknown[];
       const value = await f(...args);
-      return JSON.stringify({ ok: true, value });
+      let json: string;
+      try {
+        json = JSON.stringify({ ok: true, value });
+      } catch (err) {
+        throw new Error(
+          `Host result from ${ns}.${fn} could not be serialized: ${msg(err)}`,
+        );
+      }
+      if (exceedsUtf8ByteLimit(json, MAX_HOST_RESULT_BYTES)) {
+        throw new Error(
+          `Host result from ${ns}.${fn} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
+        );
+      }
+      return json;
     } catch (err) {
       return JSON.stringify({ ok: false, error: msg(err) });
     }
@@ -326,10 +386,10 @@ export function quickJsExecutor(
           if (remaining <= 0) {
             return { result: undefined, error: timeoutError };
           }
-          const settled = await Promise.race([
-            bridge.waitForSettle.then(() => true),
-            new Promise<boolean>((r) => setTimeout(() => r(false), remaining)),
-          ]);
+          const settled = await waitForHostOrDeadline(
+            bridge.waitForSettle,
+            remaining,
+          );
           if (settled) armWake(bridge);
           else {
             return { result: undefined, error: timeoutError };
