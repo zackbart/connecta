@@ -700,6 +700,37 @@ describe("server open routes", () => {
     );
   });
 
+  it("keeps authority-shaped upgrade paths on the configured origin", async () => {
+    const c = makeConnecta();
+    for (const unsafe of [
+      "//evil.example/x",
+      "/\\evil.example/x",
+      "/\t/evil.example/x",
+      "/\r/evil.example/x",
+      "/\n/evil.example/x",
+    ]) {
+      const res = await c.fetch(
+        new Request(`http://connecta.test${unsafe}?next=%2Fcredentials`),
+      );
+      const location = new URL(res.headers.get("location")!);
+      expect(res.status).toBe(308);
+      expect(location.origin).toBe(BASE);
+      expect(location.search).toBe("?next=%2Fcredentials");
+    }
+  });
+
+  it("preserves ordinary operator and private-API paths while upgrading", async () => {
+    const c = makeConnecta();
+    for (const path of [
+      "/credentials?from=http",
+      "/ui/data?include=connectors",
+    ]) {
+      const res = await c.fetch(new Request(`http://connecta.test${path}`));
+      expect(res.status).toBe(308);
+      expect(res.headers.get("location")).toBe(`${BASE}${path}`);
+    }
+  });
+
   it("dispatches connector-owned routes, inside the security headers", async () => {
     const withRoute: Connector = {
       ...calc(),
