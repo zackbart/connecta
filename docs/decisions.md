@@ -214,10 +214,12 @@ request: `sweepIfDue` returns `undefined` while a sweep is in flight rather than
 sharing the existing one, a per-connector check already running is *reported*
 (`skipped: "in_flight"`) rather than joined, and both clear themselves when they
 settle. The sweep also closes over nothing request-bound — it is started with
-`check(baseUrl)` and no `requestScope` — while the promise itself goes to the
-`ctx.waitUntil` of the request that happened to trigger it. A new cache holding
-a promise needs the same two properties: nobody else awaits it, and it captures
-nothing from the request that created it.
+`check(baseUrl)`, and the deprecated `CredentialCheckOptions.requestScope` is
+ignored so no caller can lend it an ordinary request scope and suppress
+teardown — while the promise itself goes to the `ctx.waitUntil` of the request
+that happened to trigger it. A new cache holding a promise needs the same two
+properties: nobody else awaits it, and it captures nothing from the request
+that created it.
 
 Corollary: a fresh `McpServer` + transport is constructed for **every** request
 (an SDK ≥1.26 security requirement), never pooled —
