@@ -6,6 +6,7 @@ import {
   type ActivityCallSource,
   type ActivityRequestContext,
 } from "./activity.js";
+import { closeConnectorScope } from "./connector-scope.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import {
   classifyCallError,
@@ -788,8 +789,12 @@ export function createMetaTools(
 
     async listConnectors(args: ListArgs = {}): Promise<ToolResult> {
       const probe = args.probe ?? true;
+      // Live inventory owns a short-lived scope separate from the request's
+      // call scope. Closing it cannot defeat call_tool/batch/execute_code reuse.
+      const connectors = registry.listConnectors();
+      const scope = probe ? {} : requestScope;
       const out = await Promise.all(
-        registry.listConnectors().map(async (c) => {
+        connectors.map(async (c) => {
           const statusStarted = Date.now();
           const observed = registry.healthFor(c.id);
           const verdict = await registry.credentialHealthFor(c.id);
@@ -799,7 +804,7 @@ export function createMetaTools(
           if (probe) {
             try {
               status = await withTimeout(
-                registry.statusFor(c.id, baseUrl, requestScope),
+                registry.statusFor(c.id, baseUrl, scope),
                 probeTimeoutMs,
                 `list_connectors probe of "${c.id}"`,
               );
@@ -886,7 +891,7 @@ export function createMetaTools(
           if (probe && status.state === "ok") {
             try {
               tools = await withTimeout(
-                registry.refreshTools(c.id, baseUrl, requestScope),
+                registry.refreshTools(c.id, baseUrl, scope),
                 probeTimeoutMs,
                 `list_connectors catalog refresh of "${c.id}"`,
               );
@@ -918,7 +923,17 @@ export function createMetaTools(
             ...(status.message ? { message: status.message } : {}),
           };
         }),
-      );
+      ).finally(async () => {
+        if (!probe) return;
+        await Promise.all(
+          connectors.map((connector) =>
+            closeConnectorScope(
+              connector,
+              registry.contextFor(connector.id, baseUrl, scope),
+            ),
+          ),
+        );
+      });
       return jsonResult({ connectors: out });
     },
 

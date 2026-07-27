@@ -12,6 +12,7 @@ import {
 import { Registry } from "../src/registry.js";
 import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { withTimeout } from "../src/timeout.js";
 import type { Connector } from "../src/types.js";
 import {
   authConnector,
@@ -300,6 +301,83 @@ describe("list_connectors", () => {
     expect(byId.broken.toolCount).toBe(0);
     expect(byId.needsauth.status).toBe("auth_required");
     expect(byId.needsauth.authorizationUrl).toContain("auth.example");
+  });
+
+  it("keeps probe results when best-effort scope teardown throws", async () => {
+    let probeScope: object | undefined;
+    let callScope: object | undefined;
+    let closes = 0;
+    const connector: Connector = {
+      id: "scoped",
+      kind: "mcp",
+      description: "Scoped downstream",
+      async status(ctx) {
+        probeScope = ctx.requestScope;
+        return { state: "ok" };
+      },
+      async listTools(ctx) {
+        expect(ctx.requestScope).toBe(probeScope);
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool(_name, _args, ctx) {
+        callScope = ctx.requestScope;
+        return { content: [{ type: "text", text: "ok" }] };
+      },
+      async closeScope(ctx) {
+        closes++;
+        expect(ctx.requestScope).toBe(probeScope);
+        throw new Error("teardown failed");
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+
+    const parsed = textOf(await mt.listConnectors({ probe: true })) as {
+      connectors: Array<{ status: string; toolCount: number }>;
+    };
+    expect(parsed.connectors[0]).toMatchObject({
+      status: "ok",
+      toolCount: 1,
+    });
+    expect(closes).toBe(1);
+
+    const called = await mt.callTool({ address: "scoped.read" });
+    expect(called.isError).toBeFalsy();
+    expect(callScope).not.toBe(probeScope);
+    // Per-request call scope is not a pure-probe scope and stays reusable.
+    expect(closes).toBe(1);
+  });
+
+  it("bounds a never-settling probe teardown", async () => {
+    let closes = 0;
+    const connector: Connector = {
+      id: "hungclose",
+      kind: "mcp",
+      description: "Hung teardown",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        closes++;
+        await new Promise<never>(() => {});
+      },
+    };
+
+    const result = await withTimeout(
+      createMetaTools(makeRegistry([connector]), BASE).listConnectors({
+        probe: true,
+      }),
+      1_000,
+      "list_connectors with hung teardown",
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(closes).toBe(1);
   });
 
   it("reports a connector's display title separately from its address id", async () => {

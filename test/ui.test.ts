@@ -4,6 +4,7 @@ import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { withTimeout } from "../src/timeout.js";
 import {
   CONNECTA_FAVICON_SVG,
   filterUiConnectors,
@@ -691,6 +692,87 @@ describe("status UI", () => {
     expect(byId.broken.status).toBe("error");
     expect(byId.broken.tools).toEqual([]);
     expect(byId.broken.toolCount).toBe(0);
+  });
+
+  it("/ui/data keeps its payload when best-effort scope teardown throws", async () => {
+    let closes = 0;
+    const connector: Connector = {
+      id: "remote",
+      kind: "mcp",
+      description: "Remote service",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read", description: "Read records" }];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        closes++;
+        throw new Error("teardown failed");
+      },
+    };
+    const c = createConnecta({
+      connectors: [connector],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+
+    const res = await c.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      connectors: [{ id: "remote", status: "ok", toolCount: 1 }],
+    });
+    expect(closes).toBe(1);
+  });
+
+  it("/ui/data bounds a never-settling scope teardown", async () => {
+    let closes = 0;
+    const connector: Connector = {
+      id: "remote",
+      kind: "mcp",
+      description: "Remote service",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read", description: "Read records" }];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        closes++;
+        await new Promise<never>(() => {});
+      },
+    };
+    const c = createConnecta({
+      connectors: [connector],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+
+    const res = await withTimeout(
+      c.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      ),
+      1_000,
+      "/ui/data with hung teardown",
+    );
+
+    expect(res.status).toBe(200);
+    expect(closes).toBe(1);
   });
 
   it("serves authenticated, paginated activity when a reader is configured", async () => {

@@ -58,8 +58,57 @@ export interface RemoteMcpOptions {
   _transportFactory?: (ctx: ConnectorContext) => Transport;
 }
 
+/**
+ * How long a downstream gets to answer the session-termination DELETE before
+ * teardown stops waiting. Deliberately a fraction of the core's scope-close
+ * budget (`closeConnectorScope`), so the whole teardown still lands inside the
+ * window that budget makes safe on an edge runtime: whatever is still in flight
+ * when this expires is aborted by the close that immediately follows. What that
+ * costs is only the acknowledgement — the DELETE is headers-only and has long
+ * since gone out — so a slow provider still usually ends the session; it just
+ * does not get to tell us so.
+ */
+const TERMINATE_SESSION_BUDGET_MS = 50;
+
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/**
+ * End the downstream's session before the connection is torn down.
+ *
+ * `Client.close()` only unwinds our side — it aborts the transport's controller
+ * and fires `onclose`. Spec session termination is a separate DELETE carrying
+ * `Mcp-Session-Id`, and without it a stateful provider keeps the session alive
+ * until its own (often hour-long) timeout, which a periodic probe would then
+ * accumulate several of per connector.
+ *
+ * Ordering is load-bearing: the SDK sends that DELETE on the transport's
+ * AbortSignal, so calling this *after* close would abort the request on issue
+ * and silently do nothing. Everything else is best-effort — a transport with no
+ * `terminateSession` (a custom one, or an older SDK), a downstream that refuses
+ * (405 is a legal answer), errors, or never replies all fall through to the
+ * close with the session left to age out as it did before.
+ */
+async function terminateSession(transport: Transport): Promise<void> {
+  const terminate = (
+    transport as Transport & { terminateSession?: () => Promise<void> }
+  ).terminateSession;
+  if (typeof terminate !== "function") return;
+  // The SDK issues no request at all when no `mcp-session-id` was captured, so
+  // a stateless downstream never sees a spurious DELETE.
+  const done = (async () => terminate.call(transport))().catch(() => {
+    // The session is being abandoned either way; a refusal changes nothing.
+    // Caught here rather than at the await below so a late rejection — one
+    // arriving after the budget expired — is still consumed.
+  });
+  await new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, TERMINATE_SESSION_BUDGET_MS);
+    done.then(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+  });
 }
 
 function isLoopbackHost(hostname: string): boolean {
@@ -78,6 +127,12 @@ interface ConnectionState {
   authRequired: boolean;
   provider: KvOAuthProvider | null;
   connectedGeneration: number | null;
+  /**
+   * One-way latch: set by closeScope and never cleared, so neither a late
+   * connect nor a `reset()` can cache a client into a scope that is already
+   * gone — that client would have no owner left to close it.
+   */
+  closed: boolean;
 }
 
 /**
@@ -126,6 +181,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       { cause },
     );
 
+  const scopeEndedError = () =>
+    new Error(`Connector "${id}" scope ended during connection.`);
+
   const stateFor = (ctx: ConnectorContext): ConnectionState => {
     const scope = ctx.requestScope ?? ctx;
     let state = states.get(scope);
@@ -137,6 +195,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
+        closed: false,
       };
       states.set(scope, state);
     }
@@ -188,6 +247,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.connecting = null;
     state.authRequired = false;
     state.connectedGeneration = null;
+    // `closed` is deliberately not cleared — see ConnectionState.
   };
 
   const ensureConnected = async (
@@ -198,17 +258,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // wiped credentials. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
     if (state.client && isOauth && state.connectedGeneration !== null) {
-      if (
-        (await getProvider(ctx, state).generation()) !==
-        state.connectedGeneration
-      ) {
+      const generation = await getProvider(ctx, state).generation();
+      if (state.closed) throw scopeEndedError();
+      if (generation !== state.connectedGeneration) {
         reset(state);
       }
     }
+    if (state.closed) throw scopeEndedError();
     if (state.client) return;
     state.connecting ??= (async () => {
       const provider = isOauth ? getProvider(ctx, state) : null;
       const genAtStart = provider ? await provider.generation() : 0;
+      if (state.closed) throw scopeEndedError();
       // Stamp the provider so any saveTokens/saveClientInformation the SDK fires
       // during this connect (code exchange, DCR) — or during a later refresh on
       // the resulting client — is dropped if a concurrent force bumps the
@@ -226,20 +287,46 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.transport = t;
       try {
         await c.connect(t);
+        // A probe deadline can end its scope while connect is still in flight.
+        // The transport is closed immediately by closeScope; if connect wins
+        // that race anyway, close the resulting client rather than resurrecting
+        // a session in the detached state object.
+        if (state.closed) {
+          try {
+            await c.close();
+          } catch {
+            // The scope has already been discarded either way.
+          }
+          throw scopeEndedError();
+        }
         // A force re-auth that landed WHILE we were connecting wiped the creds
         // this client just bound to. Discard it rather than cache a connection
         // that resurrects the wiped-and-reauthorized connector from a stale
         // isolate. Surfaces as auth_required — the connector genuinely needs
         // re-consent now.
-        if (provider && (await provider.generation()) !== genAtStart) {
-          try {
-            await c.close();
-          } catch {
-            // discarding either way
+        if (provider) {
+          const generation = await provider.generation();
+          // closeScope can land while the generation read is pending, after
+          // connect succeeded but before this client is cached. Discard the
+          // client on that side of the await too.
+          if (state.closed) {
+            try {
+              await c.close();
+            } catch {
+              // The scope has already been discarded either way.
+            }
+            throw scopeEndedError();
           }
-          throw new UnauthorizedError(
-            "Connector was re-authorized during connect; reconnect required.",
-          );
+          if (generation !== genAtStart) {
+            try {
+              await c.close();
+            } catch {
+              // discarding either way
+            }
+            throw new UnauthorizedError(
+              "Connector was re-authorized during connect; reconnect required.",
+            );
+          }
         }
         state.client = c;
         state.connectedGeneration = genAtStart;
@@ -307,6 +394,38 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           throw authRequiredError(err);
         }
         throw err;
+      }
+    },
+
+    async closeScope(ctx) {
+      const scope = ctx.requestScope ?? ctx;
+      const state = states.get(scope);
+      if (!state) return;
+
+      // Delete before awaiting: a duplicate teardown is a no-op, and no later
+      // lookup can reuse the state while its client is closing.
+      states.delete(scope);
+      state.closed = true;
+      const client = state.client;
+      const transport = state.transport;
+      state.client = null;
+      state.transport = null;
+      state.connecting = null;
+      state.authRequired = false;
+      state.connectedGeneration = null;
+
+      // Ask the downstream to drop its session first — closing only aborts our
+      // side, and the DELETE that frees the server's rides on the very
+      // AbortSignal the close is about to trip.
+      if (transport) await terminateSession(transport);
+
+      // Client.close() owns its connected transport. During an unfinished or
+      // failed connect there is no cached client yet, so close the transport
+      // directly to abort/release that half-open session.
+      if (client) {
+        await client.close();
+      } else {
+        await transport?.close();
       }
     },
 

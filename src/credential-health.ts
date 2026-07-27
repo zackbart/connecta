@@ -17,6 +17,7 @@
 
 import { credentialTestRule } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
+import { closeConnectorScope } from "./connector-scope.js";
 import { DEFAULT_PROBE_TIMEOUT_MS, normalizeTimeoutMs, withTimeout } from "./timeout.js";
 import type {
   Connector,
@@ -328,7 +329,10 @@ export interface CredentialCheckOptions {
   force?: boolean;
   /** Restrict the sweep to these connector ids. Default: every connector. */
   ids?: string[];
-  /** Request-scope identity to reuse a connector's per-request resources. */
+  /**
+   * Internal scope identity supplied by an existing owner. When omitted, the
+   * check creates and ends its own probe scope.
+   */
   requestScope?: object;
 }
 
@@ -609,48 +613,54 @@ export class CredentialHealthChecker {
     // is a window in which the operator may replace the very credential being
     // judged, and `settle` fences the write against exactly that.
     const generation = await this.store.generation(connectorId);
-    const ctx = this.deps.contextFor(connectorId, baseUrl, requestScope);
-    let values: ConnectorCredentialValues | null = null;
-    if (connector.credential && this.deps.credentialVault) {
+    const ownsScope = requestScope === undefined;
+    const scope = requestScope ?? {};
+    const ctx = this.deps.contextFor(connectorId, baseUrl, scope);
+    try {
+      let values: ConnectorCredentialValues | null = null;
+      if (connector.credential && this.deps.credentialVault) {
+        try {
+          values = await this.deps.credentialVault.getAll(connectorId);
+        } catch (err) {
+          // A stored credential that cannot be decrypted (rotated key, corrupt
+          // envelope) is exactly the kind of dead credential this feature
+          // exists to surface early, so it is a verdict rather than a skip.
+          return this.settle(connectorId, started, generation, {
+            state: "auth_required",
+            checkedAt: new Date().toISOString(),
+            message: msg(err),
+          });
+        }
+      }
+      const stored = connector.hasStoredCredential
+        ? await connector
+            .hasStoredCredential(ctx)
+            .catch(() => values !== null)
+        : values !== null;
+      if (!stored) return { connectorId, skipped: "no_credential" };
+      if (!this.canAsk(connector, values)) {
+        return { connectorId, skipped: "not_checkable" };
+      }
+
       try {
-        values = await this.deps.credentialVault.getAll(connectorId);
+        const verdict = await withTimeout(
+          this.probe(connector, ctx, values),
+          this.timeoutMs,
+          `credential check of "${connectorId}"`,
+        );
+        return await this.settle(connectorId, started, generation, {
+          ...verdict,
+          checkedAt: new Date().toISOString(),
+        });
       } catch (err) {
-        // A stored credential that cannot be decrypted (rotated key, corrupt
-        // envelope) is exactly the kind of dead credential this feature exists
-        // to surface early, so it is a verdict rather than a skip.
-        return this.settle(connectorId, started, generation, {
-          state: "auth_required",
+        return await this.settle(connectorId, started, generation, {
+          state: "error",
           checkedAt: new Date().toISOString(),
           message: msg(err),
         });
       }
-    }
-    const stored = connector.hasStoredCredential
-      ? await connector
-          .hasStoredCredential(ctx)
-          .catch(() => values !== null)
-      : values !== null;
-    if (!stored) return { connectorId, skipped: "no_credential" };
-    if (!this.canAsk(connector, values)) {
-      return { connectorId, skipped: "not_checkable" };
-    }
-
-    try {
-      const verdict = await withTimeout(
-        this.probe(connector, ctx, values),
-        this.timeoutMs,
-        `credential check of "${connectorId}"`,
-      );
-      return await this.settle(connectorId, started, generation, {
-        ...verdict,
-        checkedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      return await this.settle(connectorId, started, generation, {
-        state: "error",
-        checkedAt: new Date().toISOString(),
-        message: msg(err),
-      });
+    } finally {
+      if (ownsScope) await closeConnectorScope(connector, ctx);
     }
   }
 

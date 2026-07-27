@@ -1,13 +1,19 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import type {
+  FetchLike,
+  Transport,
+} from "@modelcontextprotocol/sdk/shared/transport.js";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
+import { withTimeout } from "../src/timeout.js";
+import { buildUiData } from "../src/ui.js";
 import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
 import { makeRegistry, silentLogger } from "./helpers.js";
 
@@ -62,6 +68,112 @@ async function makeConnector() {
     description: "Downstream",
     _transportFactory: () => clientTransport,
   });
+}
+
+async function makeTrackedConnector(opts: { oauth?: boolean } = {}) {
+  const { server, clientTransport } = await connectServer();
+  closer = () => server.close();
+  const counts = { connect: 0, close: 0 };
+  const trackedTransport: Transport = {
+    async start() {
+      counts.connect++;
+      await clientTransport.start();
+    },
+    send: (message, sendOpts) => clientTransport.send(message, sendOpts),
+    async close() {
+      counts.close++;
+      await clientTransport.close();
+    },
+  };
+  // The SDK installs its callbacks on the transport object it receives. Forward
+  // those properties to the linked in-memory transport while keeping start and
+  // close wrapped exactly once for accounting.
+  for (const key of ["onclose", "onerror", "onmessage"] as const) {
+    Object.defineProperty(trackedTransport, key, {
+      get: () => clientTransport[key],
+      set: (value) => {
+        clientTransport[key] = value as never;
+      },
+    });
+  }
+  const connector = remoteMcp("down", {
+    url: "https://unused.example/mcp",
+    description: "Downstream",
+    ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
+    _transportFactory: () => trackedTransport,
+  });
+  return { connector, counts };
+}
+
+interface DownstreamRequest {
+  method: string;
+  sessionId: string | null;
+  /** Whether the transport had already aborted when the request went out. */
+  abortedWhenIssued: boolean;
+  signal: AbortSignal | null | undefined;
+}
+
+/**
+ * A downstream reached through the SDK's real HTTP transport, so the session
+ * DELETE is observable — `InMemoryTransport` has no session semantics at all,
+ * which is exactly why the connect/close counters above cannot see it. Passing
+ * `sessionId` makes the downstream stateful: it answers initialize with the
+ * `mcp-session-id` header that spec termination has to carry back.
+ */
+function makeHttpDownstream(
+  opts: {
+    sessionId?: string;
+    oauth?: boolean;
+    onDelete?: () => Promise<Response>;
+  } = {},
+) {
+  const url = "https://downstream.test/mcp";
+  const requests: DownstreamRequest[] = [];
+  const fetchStub: FetchLike = async (_url, init = {}) => {
+    const headers = new Headers(init.headers as HeadersInit | undefined);
+    requests.push({
+      method: init.method ?? "GET",
+      sessionId: headers.get("mcp-session-id"),
+      abortedWhenIssued: init.signal?.aborted ?? false,
+      signal: init.signal,
+    });
+    if (init.method === "DELETE") {
+      return (await opts.onDelete?.()) ?? new Response(null, { status: 200 });
+    }
+    // The transport optimistically opens a GET SSE stream after initializing;
+    // 405 is the spec's "no stream here", which it accepts silently.
+    if (init.method !== "POST") return new Response(null, { status: 405 });
+    const message = JSON.parse(String(init.body));
+    if (message.method !== "initialize") {
+      return new Response(null, { status: 202 });
+    }
+    return new Response(
+      JSON.stringify({
+        jsonrpc: "2.0",
+        id: message.id,
+        result: {
+          protocolVersion: message.params.protocolVersion,
+          capabilities: {},
+          serverInfo: { name: "downstream", version: "1.0.0" },
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          ...(opts.sessionId ? { "mcp-session-id": opts.sessionId } : {}),
+        },
+      },
+    );
+  };
+  const connector = remoteMcp("down", {
+    url,
+    description: "Downstream",
+    ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
+    _transportFactory: () =>
+      new StreamableHTTPClientTransport(new URL(url), { fetch: fetchStub }),
+  });
+  return { connector, requests };
 }
 
 describe("remoteMcp() connector", () => {
@@ -209,6 +321,213 @@ describe("remoteMcp() connector", () => {
 
     expect(result.content[0].text).toBe("echo:next request");
     expect(builds).toBe(2);
+  });
+
+  it("closes a connected scope at most once", async () => {
+    const { connector, counts } = await makeTrackedConnector();
+    const requestScope = {};
+    const context = { ...ctx(), requestScope };
+
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+    expect(counts).toEqual({ connect: 1, close: 0 });
+
+    await connector.closeScope!(context);
+    await connector.closeScope!(context);
+
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+
+  it("discards a client when its scope closes during the post-connect generation read", async () => {
+    const backing = memoryStorage();
+    let generationReads = 0;
+    let reachedSecondRead!: () => void;
+    const secondRead = new Promise<void>((resolve) => {
+      reachedSecondRead = resolve;
+    });
+    let releaseSecondRead!: () => void;
+    const generationGate = new Promise<void>((resolve) => {
+      releaseSecondRead = resolve;
+    });
+    const storage: KVStorage = {
+      async get(key) {
+        if (key === "oauth:generation" && ++generationReads === 2) {
+          reachedSecondRead();
+          await generationGate;
+        }
+        return backing.get(key);
+      },
+      set: (key, value, opts) => backing.set(key, value, opts),
+      delete: (key) => backing.delete(key),
+    };
+    const { connector, counts } = await makeTrackedConnector({ oauth: true });
+    const context = { ...ctx(storage), requestScope: {} };
+
+    const status = connector.status!(context);
+    await withTimeout(secondRead, 250, "post-connect generation read");
+    await connector.closeScope!(context);
+    expect(counts).toEqual({ connect: 1, close: 1 });
+    releaseSecondRead();
+
+    await expect(status).resolves.toMatchObject({
+      state: "error",
+      message: expect.stringContaining("scope ended during connection"),
+    });
+    // The connected client was discarded rather than cached into the detached
+    // state. Its transport had already observed close, so no second close is
+    // necessary.
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+});
+
+describe("probe scope teardown", () => {
+  it("closes a half-open transport after a probe deadline", async () => {
+    const counts = { connect: 0, close: 0 };
+    const connector = remoteMcp("down", {
+      url: "https://unused.example/mcp",
+      description: "Downstream",
+      _transportFactory: () =>
+        ({
+          async start() {
+            counts.connect++;
+            await new Promise<never>(() => {});
+          },
+          async send() {},
+          async close() {
+            counts.close++;
+          },
+        }) as unknown as Transport,
+    });
+
+    const result = await createMetaTools(makeRegistry([connector]), BASE, {
+      probeTimeoutMs: 10,
+    }).listConnectors({ probe: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toContain("timed out");
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+
+  it("closes the remote session opened by list_connectors({ probe: true })", async () => {
+    const { connector, counts } = await makeTrackedConnector();
+    const result = await createMetaTools(
+      makeRegistry([connector]),
+      BASE,
+    ).listConnectors({ probe: true });
+
+    expect(result.isError).toBeFalsy();
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+
+  it("closes the remote session opened by buildUiData", async () => {
+    const { connector, counts } = await makeTrackedConnector();
+    const data = await buildUiData(
+      makeRegistry([connector]),
+      BASE,
+      { name: "connecta", version: "test" },
+    );
+
+    expect(data.connectors[0]).toMatchObject({
+      id: "down",
+      status: "ok",
+      toolCount: 2,
+    });
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+
+  it("closes the remote session opened by a credential-health sweep", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "conn:down:oauth:tokens",
+      JSON.stringify({ access_token: "at", token_type: "bearer" }),
+    );
+    const { connector, counts } = await makeTrackedConnector({
+      oauth: true,
+    });
+    const registry = makeRegistry([connector], { storage });
+
+    await expect(registry.checkCredentialHealth(BASE)).resolves.toMatchObject([
+      { connectorId: "down", record: { state: "ok" } },
+    ]);
+    expect(counts).toEqual({ connect: 1, close: 1 });
+  });
+});
+
+describe("downstream session termination", () => {
+  it("sends the spec DELETE for a stateful downstream before closing", async () => {
+    const { connector, requests } = makeHttpDownstream({ sessionId: "sess-1" });
+    const context = { ...ctx(), requestScope: {} };
+
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+    await connector.closeScope!(context);
+
+    const deletes = requests.filter((r) => r.method === "DELETE");
+    expect(deletes).toHaveLength(1);
+    expect(deletes[0].sessionId).toBe("sess-1");
+    // Load-bearing: the DELETE rides the transport's AbortSignal, so a
+    // termination issued after the close would be aborted on arrival and free
+    // nothing server-side while still looking like it worked.
+    expect(deletes[0].abortedWhenIssued).toBe(false);
+    expect(deletes[0].signal!.aborted).toBe(true);
+  });
+
+  it("sends no DELETE for a stateless downstream", async () => {
+    const { connector, requests } = makeHttpDownstream();
+    const context = { ...ctx(), requestScope: {} };
+
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+    await connector.closeScope!(context);
+
+    // No `mcp-session-id` was ever issued, so there is no session to end and a
+    // DELETE would only be an unexplained request in the provider's logs.
+    expect(requests.some((r) => r.method === "DELETE")).toBe(false);
+  });
+
+  it("keeps the probe verdict when the downstream refuses to terminate", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "conn:down:oauth:tokens",
+      JSON.stringify({ access_token: "at", token_type: "bearer" }),
+    );
+    const { connector, requests } = makeHttpDownstream({
+      sessionId: "sess-1",
+      oauth: true,
+      onDelete: async () => new Response("no", { status: 500 }),
+    });
+    const registry = makeRegistry([connector], { storage });
+
+    await expect(registry.checkCredentialHealth(BASE)).resolves.toMatchObject([
+      { connectorId: "down", record: { state: "ok" } },
+    ]);
+    expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
+  });
+
+  it("bounds a downstream that never answers the termination request", async () => {
+    const { connector, requests } = makeHttpDownstream({
+      sessionId: "sess-1",
+      onDelete: () => new Promise<Response>(() => {}),
+    });
+    const context = { ...ctx(), requestScope: {} };
+
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+    const started = Date.now();
+    await connector.closeScope!(context);
+    const elapsed = Date.now() - started;
+
+    const pending = requests.find((r) => r.method === "DELETE");
+    expect(pending).toBeDefined();
+    // Teardown stopped waiting and closed anyway, which aborts the DELETE still
+    // hanging on the transport's signal. Well inside the core's 100 ms
+    // scope-close budget, so a stalled provider cannot spend it.
+    expect(pending!.signal!.aborted).toBe(true);
+    expect(elapsed).toBeLessThan(1000);
   });
 });
 
