@@ -10,20 +10,10 @@ const ignoredDirectories = new Set([
   "dist",
   "node_modules",
 ]);
-const staleReferenceAllowlist = new Set([
-  "CHANGELOG.md",
-  "scripts/check-doc-links.mjs",
-  "test/doc-links.test.ts",
-]);
-const staleReferenceExtensions = new Set([
-  ".cjs",
-  ".js",
-  ".jsx",
-  ".md",
-  ".mjs",
-  ".ts",
-  ".tsx",
-]);
+// Historical release notes quote the section-number syntax that existed when
+// those releases shipped. They are records, not live documentation pointers.
+const staleReferenceAllowlist = new Set(["CHANGELOG.md"]);
+const staleReferenceDirectoryPrefixes = ["src/", "docs/", "examples/"];
 
 const legacySections = [
   {
@@ -412,12 +402,15 @@ async function checkLinks(root, markdownPaths, markdownCache, errors) {
 
 async function checkStaleReferences(root, paths, errors) {
   const stalePattern =
-    /(?:docs\/)?documentation\.md(?:#[A-Za-z0-9_/-]+|\s+§\s*\d+)/gi;
+    /(?:docs\/)?documentation\.md(?:#[A-Za-z0-9_/-]+|\s+§\s*\d+)|§\s*\d+/gi;
   for (const path of paths) {
     const shown = displayPath(root, path);
     if (
       staleReferenceAllowlist.has(shown) ||
-      !staleReferenceExtensions.has(extname(path).toLowerCase())
+      (shown !== "README.md" &&
+        !staleReferenceDirectoryPrefixes.some((prefix) =>
+          shown.startsWith(prefix),
+        ))
     ) {
       continue;
     }
