@@ -2,9 +2,9 @@
  * connecta on Cloudflare Workers.
  *
  * One MCP endpoint aggregating a downstream remote MCP and an HTTP API behind
- * the nine meta-tools plus execute_code (code mode, Dynamic Worker sandbox),
- * guarded by Clerk OAuth *and* a static bearer token, with OAuth/cache state
- * in a KV namespace.
+ * the nine base meta-tools, guarded by Clerk OAuth *and* a static bearer token,
+ * with OAuth/cache state in a KV namespace. Add the optional Worker Loader
+ * binding in wrangler.jsonc to register execute_code.
  *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
@@ -19,7 +19,9 @@
  *      and CLERK_PUBLISHABLE_KEY + PUBLIC_URL as plain vars in wrangler.jsonc.
  *   4. Enable Dynamic Client Registration in the Clerk dashboard
  *        (OAuth Applications -> DCR toggle) so Claude/Cursor can self-register.
- *   5. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
+ *   5. Optional paid code mode: add the documented `worker_loaders` binding to
+ *      wrangler.jsonc. Binding presence enables execute_code automatically.
+ *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
  */
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
@@ -44,9 +46,8 @@ interface Env {
   PUBLIC_URL: string;
   /**
    * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering the
-   * optional execute_code meta-tool. Dynamic Workers is in open beta on paid
-   * plans; delete the binding + the `executor` line below to run without it —
-   * connecta then serves the nine base meta-tools.
+   * optional execute_code meta-tool. Dynamic Workers require the Workers Paid
+   * plan; leave the binding absent for the nine base meta-tools on either plan.
    */
   LOADER?: WorkerLoader;
 }
@@ -55,7 +56,8 @@ function build(env: Env) {
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
     storage: cloudflareKvStorage(env.CONNECTA_KV),
-    // Code mode: models can orchestrate the connectors below in sandboxed JS.
+    // Binding-as-switch: adding worker_loaders in wrangler.jsonc enables code
+    // mode; leaving it absent keeps this deployment free-tier compatible.
     ...(env.LOADER
       ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
       : {}),

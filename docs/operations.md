@@ -114,6 +114,12 @@ Needs a KV binding (`wrangler kv namespace create CONNECTA_KV`, id into
 operator pages live at `<PUBLIC_URL>/`, `<PUBLIC_URL>/credentials`, and
 `<PUBLIC_URL>/activity` ([status UI](./operator-ui.md#status-ui)).
 
+That example is Workers Free compatible by default. On the Workers Paid plan,
+adding its documented `worker_loaders` binding makes the optional `env.LOADER`
+register `execute_code` automatically; removing the binding returns the same
+source to the nine base meta-tools. See
+[Cloudflare code-mode configuration](./code-mode.md#executors).
+
 ### Docker
 
 A single self-contained service (no database — state is the `fileStorage` JSON on

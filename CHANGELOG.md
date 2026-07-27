@@ -2,6 +2,24 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.5 — 2026-07-27
+
+0.7.5 makes the deployable Cloudflare Worker starter match Connecta's
+pay-as-you-opt-in runtime behavior. The default config now runs on Workers Free;
+accounts that want sandboxed `execute_code` add one paid Worker Loader binding,
+and the existing optional `env.LOADER` wiring turns code mode on without a
+source edit. There are no package API or runtime changes.
+
+### Changed
+
+- **The Cloudflare Worker starter is now free-tier compatible by default.**
+  Its Worker Loader binding is an explicit paid-plan opt-in: adding that one
+  Wrangler block makes the already-optional `env.LOADER` register
+  `execute_code`, while leaving it absent serves the nine base meta-tools from
+  the same TypeScript. The Worker example, package README, and code-mode
+  reference now document the binding-as-switch pattern, plan requirement, and
+  deployment-owned `@cloudflare/codemode` install together.
+
 ## 0.7.4 — 2026-07-27
 
 0.7.4 moves the built-in QuickJS executor out of the HTTP-serving process. A

@@ -68,14 +68,32 @@ Two known implementations:
 - **Cloudflare Workers** — `DynamicWorkerExecutor` from
   [`@cloudflare/codemode`](https://www.npmjs.com/package/@cloudflare/codemode)
   (structurally compatible; no adapter). Runs code in a Dynamic Worker isolate
-  with `globalOutbound: null`. Needs a Worker Loader binding
-  (`"worker_loaders": [{ "binding": "LOADER" }]` in wrangler.jsonc — open beta,
-  paid plans):
+  with `globalOutbound: null`. Dynamic Workers are
+  [available only on the Workers Paid plan](https://developers.cloudflare.com/dynamic-workers/pricing/).
+  The deployment can use Worker Loader binding presence as its complete
+  configuration switch:
 
   ```ts
   import { DynamicWorkerExecutor } from "@cloudflare/codemode";
-  createConnecta({ executor: new DynamicWorkerExecutor({ loader: env.LOADER }), /* … */ });
+  createConnecta({
+    ...(env.LOADER
+      ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
+      : {}),
+    /* … */
+  });
   ```
+
+  ```jsonc
+  // Add on the Paid plan to enable execute_code; omit on the Free plan.
+  "worker_loaders": [{ "binding": "LOADER" }]
+  ```
+
+  `env.LOADER` must be optional in the deployment's `Env` type. With the
+  binding absent, the same source registers only the nine base meta-tools and
+  remains Workers Free compatible. With it present, `execute_code` appears
+  automatically; an extra boolean environment variable would not remove the
+  paid binding and is therefore not a useful plan switch. The complete
+  pattern is in the [Worker example](../examples/worker/README.md#code-mode).
 
 - **Node** — `quickJsExecutor()` from `@zackbart/connecta/quickjs`:
   install the optional `quickjs-emscripten` peer, then use the QuickJS engine
