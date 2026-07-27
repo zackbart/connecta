@@ -95,6 +95,52 @@ function scriptSrcs(body: string): string[] {
     .filter((src): src is string => src !== undefined);
 }
 
+function inlineScript(body: string): string {
+  const scripts = [...body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
+  return scripts.at(-1)?.[1] ?? "";
+}
+
+class TestElement {
+  textContent = "";
+  value = "";
+  children: TestElement[] = [];
+  private html = "";
+  private classes = new Set<string>();
+  readonly classList = {
+    add: (...names: string[]) => names.forEach((name) => this.classes.add(name)),
+    remove: (...names: string[]) =>
+      names.forEach((name) => this.classes.delete(name)),
+    toggle: (name: string, force?: boolean) => {
+      const enabled = force ?? !this.classes.has(name);
+      if (enabled) this.classes.add(name);
+      else this.classes.delete(name);
+      return enabled;
+    },
+    contains: (name: string) => this.classes.has(name),
+  };
+
+  get innerHTML() {
+    return this.html;
+  }
+  set innerHTML(value: string) {
+    this.html = value;
+    this.children = [];
+  }
+  setAttribute() {}
+  removeAttribute() {}
+  appendChild(child: TestElement) {
+    this.children.push(child);
+    return child;
+  }
+  focus() {}
+  querySelector() {
+    return null;
+  }
+  querySelectorAll() {
+    return [];
+  }
+}
+
 function fakeClerk(
   frontendApiUrl = "https://clerk.example.com",
   portal: { signInUrl?: string; signUpUrl?: string } = {},
@@ -482,6 +528,33 @@ describe("status UI", () => {
     }
   });
 
+  it("serves bodyless HEAD responses for every operator page", async () => {
+    const c = makeConnecta();
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const get = await c.fetch(new Request(`${BASE}${path}`));
+      const head = await c.fetch(
+        new Request(`${BASE}${path}`, { method: "HEAD" }),
+      );
+      expect(head.status).toBe(get.status);
+      expect(await head.text()).toBe("");
+      expect(head.headers.get("content-type")).toBe(
+        get.headers.get("content-type"),
+      );
+      expect(head.headers.get("x-content-type-options")).toBe(
+        get.headers.get("x-content-type-options"),
+      );
+      expect(head.headers.get("x-frame-options")).toBe(
+        get.headers.get("x-frame-options"),
+      );
+      expect(head.headers.get("referrer-policy")).toBe(
+        get.headers.get("referrer-policy"),
+      );
+      expect(head.headers.get("content-security-policy")).toMatch(
+        /^script-src 'nonce-[^']+' 'strict-dynamic'/,
+      );
+    }
+  });
+
   it("permanently redirects legacy /ui bookmarks to Connections", async () => {
     const c = makeConnecta();
     const res = await c.fetch(new Request(`${BASE}/ui?from=bookmark`));
@@ -829,6 +902,162 @@ describe("status UI", () => {
     expect(html).toContain("if (isCurrent())");
   });
 
+  it("clears and refetches identity state when Clerk reports a new session", async () => {
+    const html = renderUiHtml({
+      kind: "clerk",
+      publishableKey: "pk_test_fake",
+      frontendApiUrl: "https://clerk.example.com",
+    });
+    const elements = new Map<string, TestElement>();
+    const element = (id: string) => {
+      let value = elements.get(id);
+      if (!value) {
+        value = new TestElement();
+        elements.set(id, value);
+      }
+      return value;
+    };
+    const documentListeners = new Map<string, (...args: any[]) => unknown>();
+    const windowListeners = new Map<string, (...args: any[]) => unknown>();
+    const document = {
+      title: "",
+      getElementById: element,
+      createElement: () => new TestElement(),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
+        documentListeners.set(name, listener),
+    };
+    const location = new URL(`${BASE}/`);
+    const window = {
+      location,
+      confirm: () => true,
+      setTimeout,
+      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
+        windowListeners.set(name, listener),
+      Clerk: undefined as unknown,
+    };
+    const localStorage = {
+      getItem: () => null,
+      setItem: () => {},
+      removeItem: () => {},
+    };
+    let session = {
+      id: "sess_a",
+      getToken: async () => "token-a",
+    };
+    let clerkListener: ((resources: { session: typeof session }) => void) | undefined;
+    const Clerk = {
+      user: { id: "user_a" },
+      get session() {
+        return session;
+      },
+      load: async () => {},
+      addListener: (listener: typeof clerkListener) => {
+        clerkListener = listener;
+      },
+      redirectToSignIn: () => {},
+      signOut: async () => {},
+    };
+    window.Clerk = Clerk;
+
+    const payload = (id: string) => ({
+      serverInfo: { name: id, version: "1" },
+      credentialManagement: "available",
+      activityEnabled: true,
+      connectors: [
+        {
+          id,
+          title: id,
+          status: "ok",
+          toolCount: 0,
+          tools: [],
+        },
+      ],
+    });
+    let resolveSecond: ((response: Response) => void) | undefined;
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(Response.json(payload("identity-a")))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveSecond = resolve;
+          }),
+      );
+    const run = new Function(
+      "window",
+      "document",
+      "history",
+      "localStorage",
+      "fetch",
+      "Clerk",
+      "navigator",
+      "CSS",
+      "URL",
+      "URLSearchParams",
+      inlineScript(html),
+    );
+    run(
+      window,
+      document,
+      { pushState: () => {} },
+      localStorage,
+      fetch,
+      Clerk,
+      { clipboard: { writeText: async () => {} } },
+      { escape: (value: string) => value },
+      URL,
+      URLSearchParams,
+    );
+    await windowListeners.get("load")?.();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(element("list").children[0]?.innerHTML).toContain("identity-a");
+
+    const navigate = (page: string, path: string) =>
+      documentListeners.get("click")?.({
+        target: {
+          closest: () => ({
+            href: `${BASE}${path}`,
+            dataset: { operatorPage: page },
+          }),
+        },
+        button: 0,
+        defaultPrevented: false,
+        metaKey: false,
+        ctrlKey: false,
+        shiftKey: false,
+        altKey: false,
+        preventDefault: () => {},
+      });
+    navigate("credentials", "/credentials");
+    element("credentialNotice").textContent = "identity-a secret-shaped notice";
+    navigate("connections", "/");
+    expect(element("credentialNotice").textContent).toBe("");
+
+    element("credentialNotice").textContent = "identity-a secret-shaped notice";
+    session = {
+      id: "sess_b",
+      getToken: async () => "token-b",
+    };
+    clerkListener?.({ session });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(element("list").children).toEqual([]);
+    expect(element("credentialList").children).toEqual([]);
+    expect(element("credentialNotice").textContent).toBe("");
+    expect(element("activityList").children).toEqual([]);
+    expect(element("credentialsNav").classList.contains("hidden")).toBe(true);
+    expect(element("activityNav").classList.contains("hidden")).toBe(true);
+    expect(fetch).toHaveBeenCalledTimes(2);
+
+    resolveSecond?.(Response.json(payload("identity-b")));
+    await vi.waitFor(() => {
+      expect(element("list").children[0]?.innerHTML).toContain("identity-b");
+    });
+  });
+
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
     const c = makeConnecta();
     const res = await c.fetch(new Request(`${BASE}/ui/data`));
@@ -903,6 +1132,44 @@ describe("status UI", () => {
       )
     ).json()) as any;
     expect(noSlots.credentialManagement).toBe("no_slots");
+  });
+
+  it("does not advertise credential mutation for a Clerk-kind provider without uiAuth", async () => {
+    const handRolledClerk: InboundAuth = {
+      kind: "clerk",
+      authorize(request) {
+        if (request.headers.get("authorization") === "Bearer hand-rolled") {
+          return { ok: true, userId: "user_123" };
+        }
+        return {
+          ok: false,
+          response: Response.json({ error: "unauthorized" }, { status: 401 }),
+        };
+      },
+    };
+    const connecta = createConnecta({
+      connectors: [credentialConnector()],
+      auth: handRolledClerk,
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
+    });
+    const headers = { Authorization: "Bearer hand-rolled" };
+
+    const data = (await (
+      await connecta.fetch(new Request(`${BASE}/ui/data`, { headers }))
+    ).json()) as any;
+    expect(data.credentialManagement).toBe("requires_clerk");
+    expect(data.connectors[0].credential).toBeUndefined();
+
+    const mutation = await connecta.fetch(
+      new Request(`${BASE}/ui/credentials/vaulted`, {
+        method: "PUT",
+        headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "new-secret" }),
+      }),
+    );
+    expect(mutation.status).toBe(403);
   });
 
   it("/ui/data keeps its payload when best-effort scope teardown throws", async () => {

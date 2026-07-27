@@ -1129,6 +1129,7 @@ let ACTIVITY_LOADED = false;
 let CURRENT_PAGE = INITIAL_PAGE;
 let SESSION_GENERATION = 0;
 let ACTIVITY_GENERATION = 0;
+let CLERK_SESSION_ID = null;
 $("mcpUrl").textContent = MCP_URL;
 
 function esc(s) {
@@ -1267,7 +1268,10 @@ function activatePage(page, options) {
       loadActivity(true);
     }
   }
-  if (next !== "credentials") $("credentialList").innerHTML = "";
+  if (next !== "credentials") {
+    $("credentialList").innerHTML = "";
+    setNotice("");
+  }
   // Focus what is actually on screen. While gated the page views are hidden, so
   // focusing their heading is a silent no-op that drops focus to <body> and
   // restarts the next Tab from the top of the document — the gate's own h1 is
@@ -1819,6 +1823,17 @@ async function init() {
         signInFallbackRedirectUrl: window.location.href,
         signUpFallbackRedirectUrl: window.location.href,
         afterSignOutUrl: window.location.href,
+      });
+      CLERK_SESSION_ID = Clerk.session?.id ?? null;
+      Clerk.addListener((resources) => {
+        const nextSessionId = resources.session?.id ?? null;
+        if (nextSessionId === CLERK_SESSION_ID) return;
+        CLERK_SESSION_ID = nextSessionId;
+        // Clerk has already updated its public session before notifying
+        // listeners. Clear synchronously so stale identity-scoped data cannot
+        // be repainted while the replacement identity is being fetched.
+        showGate("");
+        void load();
       });
     } catch (e) {
       return showGate("Clerk could not initialize: " + e.message);
