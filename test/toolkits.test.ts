@@ -1378,7 +1378,7 @@ describe("/mcp toolkit selection", () => {
         events.push(event);
       },
     };
-    const c = deployment({ activity });
+    const c = deployment({ activity: { store: activity } });
     await rpc(
       c,
       "tools/call",
@@ -1669,7 +1669,9 @@ describe("/mcp toolkit binding", () => {
 
   it("keeps the deployment-wide surfaces away from a bound token", async () => {
     const c = boundDeployment({
-      activity: { record: () => {}, list: async () => ({ events: [] }) },
+      activity: {
+        store: { record: () => {}, list: async () => ({ events: [] }) },
+      },
     });
     const get = (path: string, token: string) =>
       c.fetch(
@@ -1716,7 +1718,9 @@ describe("/mcp toolkit binding", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
-      credentialEncryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+      credentials: {
+        encryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+      },
     });
     const res = await c.fetch(
       new Request(`${BASE}/ui/credentials/zendesk`, {
@@ -1757,7 +1761,9 @@ describe("/mcp toolkit binding", () => {
     const write = async (auth: InboundAuth[]) => {
       const c = deploymentWith(auth, {
         connectors: [...ORG_CONNECTORS(), vaulted],
-        credentialEncryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+        credentials: {
+          encryptionKey: btoa("0123456789abcdef0123456789abcdef"),
+        },
       });
       return c.fetch(
         new Request(`${BASE}/ui/credentials/vaulted`, {
@@ -1838,8 +1844,10 @@ describe("/mcp toolkit binding", () => {
     const events: ToolCallActivityEvent[] = [];
     const c = boundDeployment({
       activity: {
-        record: (event) => {
-          events.push(event);
+        store: {
+          record: (event) => {
+            events.push(event);
+          },
         },
       },
     });

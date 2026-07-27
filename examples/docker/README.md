@@ -69,8 +69,8 @@ that forwards to port 8787 and sets `X-Forwarded-Proto: https`.
 Edit [`server.ts`](./server.ts) and rebuild. It ships one demo `time` connector
 and a commented-out `remoteMcp` block showing both downstream-auth variants
 (static `headers` and full `oauth`). Options this entrypoint does not wire —
-code mode (`executor`), the credential vault (`credentialEncryptionKey`),
-activity history (`activity`), scoped views for several teams in the org
+code mode (`executor`), the credential vault (`credentials.encryptionKey`),
+activity history (`activity.store`), scoped views for several teams in the org
 (`toolkits`, see
 [toolkits](../../docs/toolkits.md#toolkits-scoped-views)),
 and `branding` — are ordinary `createConnecta` config; add them there. See the

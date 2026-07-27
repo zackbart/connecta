@@ -61,8 +61,8 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/ui/data` → **auth gate**, then the dashboard JSON ([status UI](./operator-ui.md#status-ui)). A
      toolkit-bound identity is refused ([toolkits](./toolkits.md#toolkits-scoped-views)) — the payload is deployment-wide.
    - `/ui/activity` → **auth gate** + the same toolkit-binding refusal +
-     optional `activityReadGate`, then paged activity events ([activity history](./operator-ui.md#activity-history)). `GET` only;
-     404 when no `activity.list` is configured.
+     optional `activity.readGate`, then paged activity events ([activity history](./operator-ui.md#activity-history)). `GET` only;
+     404 when no `activity.store.list` is configured.
    - `/mcp` → **auth gate**, then the caller's toolkit binding + `?toolkit=`
      resolution ([toolkits](./toolkits.md#toolkits-scoped-views)), then MCP. `POST` carries every meta-tool call; `GET` and
      `DELETE` are not special-cased here and fall through to the transport's

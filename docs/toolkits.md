@@ -229,7 +229,7 @@ binding cannot narrow a view, and a view cannot admit an identity.
   connector share one cached catalog and one downstream connection budget;
   neither can poison the other's view.
 - **Result caps are a property of the connector, not of the view.** The
-  per-connector → deployment-wide → default chain behind `maxResultBytes`
+  per-connector → `calls.maxResultBytes` → default chain
   ([connectors](./connectors.md#the-connector-interface)) resolves identically in every scope, and
   `get_result`'s default page size stays on the deployment-wide value
   everywhere. A toolkit narrows *which* stashed results a session may page,

@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -50,7 +50,6 @@ try {
       throw new Error(`Platform-specific implementation leaked into ${path}`);
     }
   }
-
   await writeFile(
     join(work, "package.json"),
     JSON.stringify({ private: true, type: "module" }),
@@ -92,6 +91,73 @@ if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing Quic
     ["install", "--ignore-scripts", "--omit=optional", archive],
     work,
   );
+  const coreDeclarations = await readFile(
+    join(
+      work,
+      "node_modules",
+      "@zackbart",
+      "connecta",
+      "dist",
+      "index.d.ts",
+    ),
+    "utf8",
+  );
+  for (const declaration of [
+    "export interface ConnectaActivityConfig {",
+    "    store: ActivityStore;",
+    "    readGate?: ActivityReadGate;",
+    "    deploymentId?: string;",
+    "export interface ConnectaCredentialsConfig {",
+    "    encryptionKey?: string;",
+    "    health?: CredentialHealthConfig;",
+    "export interface ConnectaDiscoveryConfig {",
+    "    catalogTtlSeconds?: number;",
+    "    persistCatalog?: boolean;",
+    "    staleCatalogSeconds?: number;",
+    "    probeTimeoutMs?: number;",
+    "export interface ConnectaCallsConfig {",
+    "    defaultTimeoutMs?: number;",
+    "    maxResultBytes?: number;",
+    "    activity?: ConnectaActivityConfig;",
+    "    credentials?: ConnectaCredentialsConfig;",
+    "    discovery?: ConnectaDiscoveryConfig;",
+    "    calls?: ConnectaCallsConfig;",
+  ]) {
+    if (!coreDeclarations.includes(declaration)) {
+      throw new Error(
+        `Packed core declarations are missing: ${declaration.trim()}`,
+      );
+    }
+  }
+  const publicConfigStart = coreDeclarations.indexOf(
+    "export interface ConnectaConfig {",
+  );
+  const connectaStart = coreDeclarations.indexOf("export interface Connecta {");
+  if (publicConfigStart < 0 || connectaStart <= publicConfigStart) {
+    throw new Error("Packed core declarations are missing ConnectaConfig");
+  }
+  const publicConfig = coreDeclarations.slice(
+    publicConfigStart,
+    connectaStart,
+  );
+  for (const legacyName of [
+    "activityReadGate",
+    "activityDeploymentId",
+    "credentialEncryptionKey",
+    "credentialHealth",
+    "toolCacheTtlSeconds",
+    "persistToolCatalog",
+    "toolCatalogStaleSeconds",
+    "probeTimeoutMs",
+    "defaultToolTimeoutMs",
+    "maxResultBytes",
+  ]) {
+    if (new RegExp(`^\\s+${legacyName}\\??:`, "m").test(publicConfig)) {
+      throw new Error(
+        `Packed ConnectaConfig still exposes legacy field ${legacyName}`,
+      );
+    }
+  }
   for (const dependency of ["@clerk/backend", "quickjs-emscripten"]) {
     if (existsSync(join(work, "node_modules", dependency))) {
       throw new Error(`Optional peer ${dependency} was installed with core`);

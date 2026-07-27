@@ -100,7 +100,7 @@ export interface ConnectorContext {
   /**
    * Read-only access to this connector's operator-managed credential. Present
    * only when the connector declares `credential` and the deployment configures
-   * `credentialEncryptionKey`.
+   * `credentials.encryptionKey`.
    */
   credential?: ConnectorCredentialAccess;
   /**
@@ -139,7 +139,7 @@ export interface Connector {
   /**
    * Max inline result size (bytes) for this connector's tools before
    * call_tool/batch_call truncate and stash the full text for get_result
-   * paging. Overrides the deployment-wide `ConnectaConfig.maxResultBytes`;
+   * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 50_000). Must be a whole
    * number of bytes >= 1; anything else warns at startup and is ignored, so
    * the connector inherits the deployment-wide cap.

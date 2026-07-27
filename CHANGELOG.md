@@ -2,6 +2,61 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Breaking
+
+- **`ConnectaConfig` tuning is grouped by subsystem for 0.7.0** (issue #28).
+  The flat 0.6.x options are removed rather than deprecated: TypeScript rejects
+  them, and JavaScript callers get one fail-fast error from `createConnecta`
+  listing every legacy own property it finds and its replacement. Supplying
+  both an old and a new path is still an error; there is no precedence rule or
+  compatibility alias. Migrate configuration as follows:
+
+  | 0.6.x | 0.7.0 |
+  |---|---|
+  | `activity` | `activity.store` |
+  | `activityReadGate` | `activity.readGate` |
+  | `activityDeploymentId` | `activity.deploymentId` |
+  | `credentialEncryptionKey` | `credentials.encryptionKey` |
+  | `credentialHealth` | `credentials.health` |
+  | `toolCacheTtlSeconds` | `discovery.catalogTtlSeconds` |
+  | `persistToolCatalog` | `discovery.persistCatalog` |
+  | `toolCatalogStaleSeconds` | `discovery.staleCatalogSeconds` |
+  | `probeTimeoutMs` | `discovery.probeTimeoutMs` |
+  | `defaultToolTimeoutMs` | `calls.defaultTimeoutMs` |
+  | `maxResultBytes` | `calls.maxResultBytes` |
+
+  For example:
+
+  ```ts
+  // 0.6.x
+  createConnecta({
+    connectors,
+    storage,
+    activity,
+    credentialEncryptionKey: env.CONNECTA_CREDENTIAL_KEY,
+    toolCacheTtlSeconds: 300,
+    defaultToolTimeoutMs: 30_000,
+    maxResultBytes: 50_000,
+  });
+
+  // 0.7.0
+  createConnecta({
+    connectors,
+    storage,
+    activity: { store: activity },
+    credentials: { encryptionKey: env.CONNECTA_CREDENTIAL_KEY },
+    discovery: { catalogTtlSeconds: 300 },
+    calls: { defaultTimeoutMs: 30_000, maxResultBytes: 50_000 },
+  });
+  ```
+
+  The defaults and runtime behavior of each option are unchanged. Connector
+  definitions keep their per-connector `maxResultBytes`, and structural seams
+  such as `storage`, `auth`, `connectors`, `toolkits`, and `executor` remain at
+  the top level.
+
 ## 0.6.1 — 2026-07-26
 
 A patch release: three bug fixes and a documentation overhaul. No new

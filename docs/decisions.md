@@ -255,6 +255,21 @@ What ships in the tarball is a boundary, not an accident, and
 New code that needs a platform API or a heavyweight engine goes behind a subpath
 with an optional peer, or into `examples/`.
 
+### Public tuning is grouped; internal plumbing may stay flat
+
+`ConnectaConfig` groups related deployment tuning under `activity`,
+`credentials`, `discovery`, and `calls`. Structural seams such as `connectors`,
+`auth`, `storage`, and `executor` stay top-level. The grouping is a public
+contract, not an internal renaming campaign: `createConnecta` adapts it once and
+the Registry/server option types may remain flat.
+
+The v0.7 change is intentionally clean. TypeScript exposes no deprecated flat
+aliases, and `createConnecta` rejects JavaScript legacy own-properties before it
+reads any other option. One aggregated error lists every old→new path, including
+an old activity store that has not moved under `activity.store`; an old value is
+never silently replaced by a default, and supplying old and new paths does not
+invent precedence. [running connecta](./operations.md#running-it).
+
 ### Credentials never leave the host
 
 Vault values are AES-GCM encrypted into `KVStorage` with the key held outside

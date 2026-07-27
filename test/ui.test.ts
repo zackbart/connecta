@@ -149,7 +149,7 @@ function makeCredentialConnecta() {
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentials: { encryptionKey: CREDENTIAL_KEY },
   });
   return { connecta, storage };
 }
@@ -192,7 +192,7 @@ function makeMultiCredentialConnecta() {
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentials: { encryptionKey: CREDENTIAL_KEY },
   });
   return { connecta, storage };
 }
@@ -226,7 +226,7 @@ function makeFieldsWithSingleHookConnecta() {
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentials: { encryptionKey: CREDENTIAL_KEY },
     logger: silentLogger(),
   });
   return { connecta, testCredential };
@@ -250,7 +250,7 @@ function makeSingleWithFieldsHookConnecta() {
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentials: { encryptionKey: CREDENTIAL_KEY },
     logger: silentLogger(),
   });
   return { connecta, testCredentials };
@@ -291,7 +291,7 @@ function makeBothHooksConnecta(shape: "single" | "multiple") {
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentials: { encryptionKey: CREDENTIAL_KEY },
   });
   return { connecta, testCredential, testCredentials };
 }
@@ -327,8 +327,10 @@ function makeShapeDriftConnecta(
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
     publicUrl: BASE,
-    credentialEncryptionKey: CREDENTIAL_KEY,
-    credentialHealth: { onRequest: false },
+    credentials: {
+      encryptionKey: CREDENTIAL_KEY,
+      health: { onRequest: false },
+    },
   });
   return { connecta, testCredential, testCredentials };
 }
@@ -846,7 +848,7 @@ describe("status UI", () => {
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      activity,
+      activity: { store: activity },
     });
 
     const data = await c.fetch(
@@ -876,13 +878,15 @@ describe("status UI", () => {
       connectors: [calc()],
       auth: [bearerToken(TOKEN), fakeClerk()],
       activity: {
-        record() {},
-        async list() {
-          return { events: [] };
+        store: {
+          record() {},
+          async list() {
+            return { events: [] };
+          },
         },
+        readGate: (actor) =>
+          actor.kind === "clerk" && Boolean(actor.id),
       },
-      activityReadGate: (actor) =>
-        actor.kind === "clerk" && Boolean(actor.id),
       publicUrl: BASE,
     });
 
@@ -906,9 +910,11 @@ describe("status UI", () => {
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       activity: {
-        record() {},
-        async list() {
-          throw new InvalidActivityCursorError();
+        store: {
+          record() {},
+          async list() {
+            throw new InvalidActivityCursorError();
+          },
         },
       },
       publicUrl: BASE,
@@ -1017,8 +1023,10 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage,
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
-      credentialHealth: { onRequest: false },
+      credentials: {
+        encryptionKey: CREDENTIAL_KEY,
+        health: { onRequest: false },
+      },
     });
 
     const data = await connecta.fetch(
@@ -1094,8 +1102,10 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage,
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
-      credentialHealth: { onRequest: false },
+      credentials: {
+        encryptionKey: CREDENTIAL_KEY,
+        health: { onRequest: false },
+      },
     });
 
     const data = await connecta.fetch(
@@ -1143,8 +1153,10 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage: memoryStorage(),
       publicUrl: BASE,
-      credentialEncryptionKey: CREDENTIAL_KEY,
-      credentialHealth: { onRequest: false },
+      credentials: {
+        encryptionKey: CREDENTIAL_KEY,
+        health: { onRequest: false },
+      },
     });
 
     const save = await credentialRequest(
@@ -1769,7 +1781,7 @@ describe("status UI credential management", () => {
         connectors: [credentialConnector()],
         storage: memoryStorage(),
       }),
-    ).toThrow("credentialEncryptionKey is required");
+    ).toThrow("credentials.encryptionKey is required");
   });
 });
 

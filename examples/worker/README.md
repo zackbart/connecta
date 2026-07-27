@@ -145,8 +145,10 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
 
    createConnecta({
      // …
-     activity: d1ActivityStore(env.ACTIVITY_DB),
-     activityDeploymentId: "production",
+     activity: {
+       store: d1ActivityStore(env.ACTIVITY_DB),
+       deploymentId: "production",
+     },
    });
    ```
 

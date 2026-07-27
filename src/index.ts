@@ -28,6 +28,84 @@ import type {
   Logger,
 } from "./types.js";
 
+/** Payload-free activity storage and operator-read policy. */
+export interface ConnectaActivityConfig {
+  /**
+   * Privacy-minimal downstream tool activity storage. Writes are best-effort
+   * and never change tool results. Implement `list` to enable the Activity UI.
+   */
+  store: ActivityStore;
+  /**
+   * Optional authorization gate for the Activity read API. MCP authentication
+   * is still required first. Omit to admit every authenticated actor.
+   */
+  readGate?: ActivityReadGate;
+  /** Stable deployment label included in activity events, e.g. "production". */
+  deploymentId?: string;
+}
+
+/** Operator-vault encryption and proactive credential-health tuning. */
+export interface ConnectaCredentialsConfig {
+  /**
+   * Base64-encoded 32-byte AES key for connector credentials managed in /ui.
+   * Keep this in the runtime's secret store, never in KV or source control.
+   */
+  encryptionKey?: string;
+  /**
+   * Tuning for proactive credential liveness checks that let a connector's
+   * status flip to `auth_required` before an agent's call fails. Defaults: one
+   * check per connector per 15 minutes, four in flight, 30 seconds each,
+   * triggered opportunistically by inbound authenticated traffic.
+   *
+   * Optional even without an encryption key because downstream OAuth connectors
+   * manage their own grants. `Connecta.checkCredentials()` runs the same checks
+   * on demand for a Worker cron trigger or Node interval.
+   */
+  health?: CredentialHealthConfig;
+}
+
+/** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
+export interface ConnectaDiscoveryConfig {
+  /** Tool-list cache TTL (seconds). Default 300. */
+  catalogTtlSeconds?: number;
+  /**
+   * Persist serializable remote tool catalogs in storage so cold isolates can
+   * discover tools without a downstream handshake. Default true.
+   */
+  persistCatalog?: boolean;
+  /**
+   * How long an expired persisted catalog remains available as a fallback
+   * when a live refresh fails. Default 3600 seconds.
+   */
+  staleCatalogSeconds?: number;
+  /**
+   * Deadline (ms) for each downstream probe/catalog call fanned out by
+   * `list_connectors`, `search_tools`, and `describe_tools`. Defaults to
+   * 30_000. A timed-out connector degrades independently; this does not apply
+   * to tool calls or currently abort the underlying fetch.
+   */
+  probeTimeoutMs?: number;
+}
+
+/** Deployment-wide call deadlines and inline-result paging threshold. */
+export interface ConnectaCallsConfig {
+  /**
+   * Deadline (ms) for `call_tool`/`batch_call` calls that pass no `timeoutMs`.
+   * An explicit per-call value wins. Opt-in: unset by default, so existing
+   * long-running calls gain no surprise deadline.
+   *
+   * This bounds one attempt, not all retries. `execute_code` host calls are
+   * unaffected because they already carry their own bound.
+   */
+  defaultTimeoutMs?: number;
+  /**
+   * Max inline result size (bytes) before truncation and `get_result` paging.
+   * Must be a finite whole number >= 1; invalid values warn and fall back to
+   * 50_000. Connectors may override it individually.
+   */
+  maxResultBytes?: number;
+}
+
 export interface ConnectaConfig {
   connectors: Connector[];
   /**
@@ -62,18 +140,6 @@ export interface ConnectaConfig {
    * address, or an address naming no tool on an in-code connector all throw.
    */
   toolkits?: ToolkitConfig;
-  /**
-   * Privacy-minimal downstream tool activity storage. Writes are best-effort
-   * and never change tool results. Implement `list` to enable the Activity UI.
-   */
-  activity?: ActivityStore;
-  /**
-   * Optional authorization gate for the Activity read API. MCP authentication
-   * is still required first. Omit to admit every authenticated actor.
-   */
-  activityReadGate?: ActivityReadGate;
-  /** Stable deployment label included in activity events, e.g. "production". */
-  activityDeploymentId?: string;
   /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
   /** KVStorage impl. Defaults to memoryStorage(). */
@@ -83,78 +149,17 @@ export interface ConnectaConfig {
    * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl?: string;
-  /**
-   * Base64-encoded 32-byte AES key for connector credentials managed in /ui.
-   * Keep this in the runtime's secret store, never in KV or source control.
-   */
-  credentialEncryptionKey?: string;
+  /** Payload-free tool activity storage and operator-read policy. */
+  activity?: ConnectaActivityConfig;
+  /** Operator credential vault and proactive liveness-check settings. */
+  credentials?: ConnectaCredentialsConfig;
+  /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
+  discovery?: ConnectaDiscoveryConfig;
+  /** Deployment-wide call deadlines and result paging threshold. */
+  calls?: ConnectaCallsConfig;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding;
   logger?: Logger;
-  /** Tool-list cache TTL (seconds). Default 300. */
-  toolCacheTtlSeconds?: number;
-  /**
-   * Persist serializable remote tool catalogs in storage so cold isolates can
-   * discover tools without a downstream handshake. Default true.
-   */
-  persistToolCatalog?: boolean;
-  /**
-   * How long an expired persisted catalog remains available as a fallback
-   * when a live refresh fails. Default 3600 seconds.
-   */
-  toolCatalogStaleSeconds?: number;
-  /**
-   * Max inline result size (bytes) before call_tool/batch_call truncate and
-   * stash the full text for get_result paging. Must be a whole number of bytes
-   * >= 1; anything else (0, negative, fractional, NaN, Infinity) warns at
-   * startup and falls back to the default 50_000.
-   */
-  maxResultBytes?: number;
-  /**
-   * Deadline (ms) applied to call_tool/batch_call calls that pass no
-   * `timeoutMs`, giving the connector both a budget (`ctx.timeoutMs`) and a
-   * cancellation signal (`ctx.signal`). An explicit per-call `timeoutMs` always
-   * wins. **Opt-in — undefined by default**, because switching it on globally
-   * would put a deadline on every call in an existing deployment and the
-   * failure mode is a working long-running call starting to time out.
-   * `execute_code` host calls are unaffected; they already carry a 15 s bound.
-   *
-   * Bounds a single attempt, not the whole call — the same as an explicit
-   * `timeoutMs` has always done. A call that also passes `maxRetries` can
-   * therefore run to roughly `(maxRetries + 1)` times this value plus backoff.
-   * `maxRetries` defaults to 0, so this is the total for every call that does
-   * not explicitly ask to retry.
-   */
-  defaultToolTimeoutMs?: number;
-  /**
-   * Deadline (ms) applied to each individual downstream probe/catalog call that
-   * the discovery meta-tools fan out — `list_connectors` (with `probe`),
-   * `search_tools`, and `describe_tools` — so a single hung connector can no
-   * longer stall the whole meta-tool call. **Defaults to a generous 30_000**,
-   * chosen to trip only on a pathological hang, not on a realistically slow
-   * probe, so having it on by default will not break existing deployments.
-   * Bounds one downstream call, not the whole fan-out: a connector that outruns
-   * it degrades to an unavailable/errored entry while the rest are unaffected.
-   *
-   * Does NOT apply to `call_tool`/`batch_call` — those carry their own budget
-   * via `defaultToolTimeoutMs` or a per-call `timeoutMs`. Note this bounds the
-   * caller-facing wait only; the underlying fetch is not currently aborted, so
-   * real cancellation of the downstream request is a deferred follow-up.
-   */
-  probeTimeoutMs?: number;
-  /**
-   * Tuning for the proactive credential liveness checks (issue #24) that let a
-   * connector's status flip to `auth_required` *before* an agent's call fails.
-   * Defaults are safe to leave alone: at most one check per connector per 15
-   * minutes, four in flight, 30 s each, triggered opportunistically by inbound
-   * authenticated traffic. Only connectors holding a credential connecta stores
-   * — an operator-managed `credential`, or a downstream-OAuth grant — are ever
-   * checked, and a check never calls a downstream tool.
-   *
-   * `Connecta.checkCredentials()` is the same check on demand, for a Worker cron
-   * trigger or a Node interval.
-   */
-  credentialHealth?: CredentialHealthConfig;
   serverInfo?: {
     name?: string;
     version?: string;
@@ -193,7 +198,7 @@ export interface Connecta {
    *
    * Returns one outcome per connector considered, including why a connector was
    * skipped (`fresh` is the rate limit: a connector checked less than
-   * `credentialHealth.intervalSeconds` ago is not re-checked unless `force`).
+   * `credentials.health.intervalSeconds` ago is not re-checked unless `force`).
    * Never rejects on a connector failure — a broken connector becomes an `error`
    * verdict. Needs a base URL for connector contexts: `publicUrl` supplies it,
    * or pass one.
@@ -221,6 +226,59 @@ function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
     const rank = (x: InboundAuth) => (x.kind === "bearer" ? 0 : 1);
     return rank(a) - rank(b);
   });
+}
+
+const LEGACY_CONFIG_MIGRATIONS = [
+  ["activityReadGate", "activity.readGate"],
+  ["activityDeploymentId", "activity.deploymentId"],
+  ["credentialEncryptionKey", "credentials.encryptionKey"],
+  ["credentialHealth", "credentials.health"],
+  ["toolCacheTtlSeconds", "discovery.catalogTtlSeconds"],
+  ["persistToolCatalog", "discovery.persistCatalog"],
+  ["toolCatalogStaleSeconds", "discovery.staleCatalogSeconds"],
+  ["probeTimeoutMs", "discovery.probeTimeoutMs"],
+  ["defaultToolTimeoutMs", "calls.defaultTimeoutMs"],
+  ["maxResultBytes", "calls.maxResultBytes"],
+] as const;
+
+const hasOwn = (value: object, key: PropertyKey): boolean =>
+  Object.prototype.hasOwnProperty.call(value, key);
+
+/**
+ * Fail closed at the public boundary: a JavaScript caller on the v0.6 shape
+ * must receive one complete migration error, never silently lose an option to
+ * a default. This runs before createConnecta reads any other config field.
+ */
+function assertNoLegacyConfig(config: ConnectaConfig): void {
+  const candidate = config as unknown as Record<PropertyKey, unknown>;
+  const found: Array<readonly [string, string]> = [];
+  if (hasOwn(candidate, "activity")) {
+    const activity = candidate.activity;
+    const isObject =
+      typeof activity === "object" && activity !== null;
+    // A valid v0.6 ActivityStore can itself own a backend field named `store`.
+    // Its required `record` method (including a prototype method) therefore
+    // takes precedence over the otherwise-new wrapper shape.
+    const hasLegacyRecord =
+      isObject &&
+      typeof (activity as { record?: unknown }).record === "function";
+    if (
+      activity !== undefined &&
+      (!isObject ||
+        hasLegacyRecord ||
+        !hasOwn(activity, "store"))
+    ) {
+      found.push(["activity", "activity.store"]);
+    }
+  }
+  for (const migration of LEGACY_CONFIG_MIGRATIONS) {
+    if (hasOwn(candidate, migration[0])) found.push(migration);
+  }
+  if (found.length === 0) return;
+  throw new Error(
+    "Unsupported v0.6.x ConnectaConfig options. Migrate each path for v0.7.0:\n" +
+      found.map(([oldPath, newPath]) => `- ${oldPath} -> ${newPath}`).join("\n"),
+  );
 }
 
 /**
@@ -391,26 +449,28 @@ function warnInsecureConfig(
 }
 
 export function createConnecta(config: ConnectaConfig): Connecta {
+  assertNoLegacyConfig(config);
   const storage = config.storage ?? memoryStorage();
   const logger = config.logger ?? defaultLogger();
   const credentialConnectors = config.connectors.filter((c) => c.credential);
-  if (credentialConnectors.length > 0 && !config.credentialEncryptionKey) {
+  const encryptionKey = config.credentials?.encryptionKey;
+  if (credentialConnectors.length > 0 && !encryptionKey) {
     throw new Error(
-      `credentialEncryptionKey is required by connector credentials: ${credentialConnectors.map((c) => c.id).join(", ")}`,
+      `credentials.encryptionKey is required by connector credentials: ${credentialConnectors.map((c) => c.id).join(", ")}`,
     );
   }
-  const credentialVault = config.credentialEncryptionKey
-    ? new CredentialVault(storage, config.credentialEncryptionKey)
+  const credentialVault = encryptionKey
+    ? new CredentialVault(storage, encryptionKey)
     : undefined;
   const registry = new Registry(config.connectors, {
     storage,
     logger,
     credentialVault,
-    toolCacheTtlSeconds: config.toolCacheTtlSeconds,
-    persistToolCatalog: config.persistToolCatalog,
-    toolCatalogStaleSeconds: config.toolCatalogStaleSeconds,
-    maxResultBytes: config.maxResultBytes,
-    credentialHealth: config.credentialHealth,
+    toolCacheTtlSeconds: config.discovery?.catalogTtlSeconds,
+    persistToolCatalog: config.discovery?.persistCatalog,
+    toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
+    maxResultBytes: config.calls?.maxResultBytes,
+    credentialHealth: config.credentials?.health,
   });
   // Throws on every structural mistake it can see (see resolveToolkits): a
   // typo must not become a scope the operator never wrote. Note this is about
@@ -433,12 +493,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       version: config.serverInfo?.version ?? CONNECTA_VERSION,
     },
     logger,
-    activity: config.activity,
-    activityReadGate: config.activityReadGate,
-    activityDeploymentId: config.activityDeploymentId,
+    activity: config.activity?.store,
+    activityReadGate: config.activity?.readGate,
+    activityDeploymentId: config.activity?.deploymentId,
     executor: config.executor,
-    defaultToolTimeoutMs: config.defaultToolTimeoutMs,
-    probeTimeoutMs: config.probeTimeoutMs,
+    defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
+    probeTimeoutMs: config.discovery?.probeTimeoutMs,
     credentialVault,
     deploymentInfo: config.deploymentInfo,
     branding: config.branding,

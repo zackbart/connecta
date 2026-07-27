@@ -446,8 +446,8 @@ async function mapWithConcurrency<T, R>(
  *    triggered sweep per interval per isolate, and never two at once, so a burst
  *    of requests costs one sweep, not one per request.
  * 4. **Deadline + fan-out bound** — each check is bounded by `timeoutMs` and at
- *    most `concurrency` run together (the same shape as the `probeTimeoutMs`
- *    bound on the discovery fan-out, issue #19).
+ *    most `concurrency` run together (the same shape as the
+ *    `discovery.probeTimeoutMs` bound on the discovery fan-out, issue #19).
  */
 export class CredentialHealthChecker {
   private readonly store: CredentialHealthStore;
