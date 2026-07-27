@@ -2,6 +2,37 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.3 — 2026-07-27
+
+0.7.3 finishes the current runtime-hardening queue. Probe scopes and QuickJS
+host results now have terminal cleanup semantics, and a stored credential whose
+shape no longer matches its connector cannot look healthy or reach connector
+code. There are no dependency, configuration, storage-schema, or breaking
+TypeScript changes.
+
+### Fixed
+
+- **Stored credential-shape drift is decisive on both status and calls** (issue
+  #90). The fast connector inventory reports the existing `auth_required`
+  replacement state instead of a stale `ok`, while `ctx.credential.get()` and
+  `getAll()` reject the obsolete shape before returning any value. Generic
+  failed health checks remain non-decisive, valid stored supersets remain
+  readable, and replacement/removal remains the recovery path.
+- **Probe teardown cannot be skipped or resurrect a closed request scope**
+  (issue #91). Sibling work settles before shared teardown, cleanup no longer
+  short-circuits on the first rejection, and a closed scope remains terminal.
+  The formerly exported scope-borrowing option remains accepted as deprecated
+  and ignored so the fix does not create a TypeScript compatibility break.
+- **QuickJS host-result cleanup is deterministic under timeout and load**
+  (issue #84). Settled bridge results are bounded, consumed exactly once, and
+  released when execution completes or its deadline wins, preventing late work
+  from retaining unobservable values.
+- **The documentation guard catches the legacy syntax it was meant to prevent**
+  (issue #94). Bare `§N` citations now fail on live source, docs, examples, and
+  README surfaces—including extensionless files—while historical changelog
+  entries remain explicitly exempt. Negative fixtures cover every structural
+  invariant.
+
 ## 0.7.2 — 2026-07-27
 
 0.7.2 is a discovery-and-operator-safety patch. Long downstream catalogs now
