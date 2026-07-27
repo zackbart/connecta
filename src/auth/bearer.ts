@@ -29,9 +29,10 @@ export interface BearerTokenOptions extends ToolkitBindingOptions {
  * against `secret`. Checked BEFORE the Clerk gate in the server; a mismatch
  * falls through so a co-configured Clerk provider can still admit the request.
  *
- * `toolkits` binds the token to named toolkits (§16): one `bearerToken(...)` per
- * team credential, each naming the view that team may open. Omit it and the
- * token stays unbound — every declared toolkit plus the full registry.
+ * `toolkits` binds the token to named toolkits (docs/toolkits.md): one
+ * `bearerToken(...)` per team credential, each naming the view that team may
+ * open. Omit it and the token stays unbound — every declared toolkit plus the
+ * full registry.
  */
 export function bearerToken(
   secret: string,
@@ -46,11 +47,12 @@ export function bearerToken(
   );
   if (toolkitBinding && !options.subjectId) {
     // A bound token stands for one team, and both surfaces that report on it —
-    // the 403 refusal log (§16) and activity events (§15) — can only say
-    // "bearer" without a subjectId. With several bound tokens that makes an
-    // operator unable to tell which credential was refused, or whose call
-    // succeeded. console.warn (as the Clerk adapter does) because an adapter is
-    // constructed before `createConnecta` has a logger to hand it.
+    // the 403 refusal log (docs/toolkits.md) and activity events
+    // (docs/operator-ui.md) — can only say "bearer" without a subjectId. With
+    // several bound tokens that makes an operator unable to tell which
+    // credential was refused, or whose call succeeded. console.warn (as the
+    // Clerk adapter does) because an adapter is constructed before
+    // `createConnecta` has a logger to hand it.
     console.warn(
       "[connecta] bearerToken is bound to toolkits " +
         `(${toolkitBinding.toolkits.join(", ") || "unscoped only"}) but has no ` +

@@ -13,22 +13,36 @@ One fetch-native core, running on both Node and Cloudflare Workers.
 
 ## Verification
 
-`npm run check` must pass before you claim anything is done — `typecheck` →
-`test` (both vitest projects) → `build` → `check:examples`. It is also the
-`prepack` hook. `npm run release:check` adds `check:security` and
+`npm run check` must pass before you claim anything is done — `check:docs` →
+`typecheck` → `test` (both vitest projects) → `build` → `check:examples`. It is
+also the `prepack` hook. `npm run release:check` adds `check:security` and
 `check:package` and is what CI runs on publish; use it when touching packaging,
 dependencies, or exports.
 
 ## The map
 
-- [`docs/documentation.md`](./docs/documentation.md) — the reference manual.
-  §2 is architecture and the request lifecycle; §3 the meta-tools; §11 the
-  suite-by-suite test map. **Read the section for a subsystem before changing
-  it.** Do not renumber or rename its sections — the `#N-...` anchors are linked
-  from README, examples, and source comments.
+- [`docs/documentation.md`](./docs/documentation.md) — compatibility index for
+  the old numbered manual anchors. New links belong in the canonical subsystem
+  documents, not the index.
+- [`docs/architecture.md`](./docs/architecture.md) — product shape, request
+  lifecycle, import purity, and package layout.
+- [`docs/meta-tools.md`](./docs/meta-tools.md) and
+  [`docs/connectors.md`](./docs/connectors.md) — the fixed tool surface and the
+  connector contracts behind it.
+- [`docs/auth.md`](./docs/auth.md) and
+  [`docs/storage-and-credentials.md`](./docs/storage-and-credentials.md) —
+  inbound identity, downstream state, and credential liveness.
+- [`docs/operations.md`](./docs/operations.md) — configuration, deployment,
+  the suite-by-suite test map, and troubleshooting.
+- [`docs/code-mode.md`](./docs/code-mode.md),
+  [`docs/operator-ui.md`](./docs/operator-ui.md), and
+  [`docs/toolkits.md`](./docs/toolkits.md) — the optional sandbox, operator
+  surfaces, and scoped registry views.
 - [`docs/decisions.md`](./docs/decisions.md) — non-goals, rejected alternatives,
   and the invariants a change must preserve. Check it before building something
   new; "we already decided not to" is a real answer there.
+
+**Read the canonical document for a subsystem before changing it.**
 
 ## Where new code goes
 
@@ -55,7 +69,8 @@ Suites live in `test/` and run as two vitest projects (`vitest.config.ts`): the
 runtime-portable, **add it to `WORKERS_SUITES`** — being an allowlist, a
 portable suite left out silently never runs on Workers. Leave it out only for
 Node-only surfaces (`fileStorage`, the QuickJS executor, the Clerk adapter, the
-fs-walking guardrails). New behavior also gets a row in documentation.md §11.
+fs-walking guardrails). New behavior also gets a row in
+[`docs/operations.md`](./docs/operations.md#testing--development).
 
 ## Conventions
 

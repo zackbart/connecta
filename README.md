@@ -180,13 +180,13 @@ endpoint, credential, and tool choices stay in your project, declared with
 ## Learn more
 
 - **[Documentation](https://github.com/zackbart/connecta/blob/main/docs/documentation.md)**
-  — the reference manual: architecture, connectors, inbound auth and downstream
-  OAuth, storage, Clerk setup, testing, and troubleshooting. Start with the
-  [meta-tools reference](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#3-meta-tools-reference),
-  the [config options](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#8-running-it),
-  [code mode](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#13-code-mode-execute_code),
-  [toolkits](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#16-toolkits-scoped-views),
-  or [credential health](https://github.com/zackbart/connecta/blob/main/docs/documentation.md#17-credential-health-proactive-liveness-checks).
+  — the reference index for architecture, connectors, inbound auth and
+  downstream OAuth, storage, Clerk setup, testing, and troubleshooting. Start
+  with the [meta-tools reference](https://github.com/zackbart/connecta/blob/main/docs/meta-tools.md#meta-tools-reference),
+  the [config options](https://github.com/zackbart/connecta/blob/main/docs/operations.md#running-it),
+  [code mode](https://github.com/zackbart/connecta/blob/main/docs/code-mode.md#code-mode-execute_code),
+  [toolkits](https://github.com/zackbart/connecta/blob/main/docs/toolkits.md#toolkits-scoped-views),
+  or [credential health](https://github.com/zackbart/connecta/blob/main/docs/storage-and-credentials.md#credential-health-proactive-liveness-checks).
 - **[Decisions](https://github.com/zackbart/connecta/blob/main/docs/decisions.md)**
   — what connecta refuses to be, which alternatives lost and why, and the
   invariants a change must preserve.

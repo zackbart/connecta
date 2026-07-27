@@ -267,9 +267,9 @@ export interface Executor {
 
 /**
  * Which toolkits one inbound identity may open — the membership half of the
- * deployment=org / toolkit=team framing (§16). A mapping, never a policy
- * engine: one identity → the toolkit names it may select, plus whether it may
- * connect with no `?toolkit=` at all.
+ * deployment=org / toolkit=team framing (docs/toolkits.md). A mapping, never a
+ * policy engine: one identity → the toolkit names it may select, plus whether
+ * it may connect with no `?toolkit=` at all.
  *
  * An identity with NO binding is unbound and keeps the pre-binding behavior:
  * any declared toolkit, or the full registry. A binding is enforced at connect
@@ -392,11 +392,11 @@ export interface InboundAuth {
    */
   uiAuth?: UiAuthConfig;
   /**
-   * Optional toolkit binding for every identity this provider admits (§16).
-   * Declared statically so `createConnecta` can validate the names against
-   * `ConnectaConfig.toolkits` and throw on a typo — a binding nobody wrote is
-   * not one an operator can reason about. An `authorize` result may narrow it
-   * per identity with its own `toolkitBinding`.
+   * Optional toolkit binding for every identity this provider admits
+   * (docs/toolkits.md). Declared statically so `createConnecta` can validate the
+   * names against `ConnectaConfig.toolkits` and throw on a typo — a binding
+   * nobody wrote is not one an operator can reason about. An `authorize` result
+   * may narrow it per identity with its own `toolkitBinding`.
    */
   toolkitBinding?: ToolkitBinding;
   /** Serve/short-circuit .well-known + OPTIONS. Return null when not handled. */

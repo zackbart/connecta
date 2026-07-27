@@ -129,7 +129,7 @@ function toolFilter(
  * an allowlist is a scope the operator did not write, and a scope nobody wrote
  * is not one an operator can reason about. (A definition scopes visibility only;
  * WHICH identity may select it is the separate binding below — see the module
- * header and documentation.md §16.) Tool names are checked only for connectors that expose
+ * header and docs/toolkits.md.) Tool names are checked only for connectors that expose
  * `staticTools` (i.e. `api()`); a remote connector's catalog is fetched lazily
  * over the network and is unknown at construction time.
  */
