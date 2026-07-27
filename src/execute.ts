@@ -149,9 +149,17 @@ export async function buildSandboxProviders(
   const catalogStarted = Date.now();
   const loaded = await Promise.allSettled(
     connectors.map((connector) =>
-      registry.getTools(connector.id, baseUrl, requestScope),
+      registry.getTools(connector.id, baseUrl, requestScope, {
+        signal: limits.signal,
+      }),
     ),
   );
+  if (limits.signal?.aborted) {
+    throw new ExecutorAdmissionError(
+      "executor_cancelled",
+      "Execution was cancelled during catalog construction.",
+    );
+  }
   const catalogs = new Map<string, ToolDef[]>();
   const callAddress = async (address: unknown, args: unknown) => {
     const resolved = registry.resolveAddress(String(address));
@@ -513,6 +521,12 @@ export function createExecuteTool(
         activity,
         { signal: controller.signal },
       );
+      if (controller.signal.aborted) {
+        throw new ExecutorAdmissionError(
+          "executor_cancelled",
+          "Execution was cancelled during sandbox setup.",
+        );
+      }
       outcome = lease
         ? await lease.execute(code, providers)
         : await executor.execute(code, providers);
@@ -591,6 +605,7 @@ export function registerExecuteTool(
     executor: Executor;
     logger: Logger;
     activity?: ActivityRequestContext;
+    requestSignal?: AbortSignal;
   },
 ): void {
   const handler = createExecuteTool(
@@ -617,7 +632,26 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    async (args, extra) =>
-      handler(args as { code: string }, { signal: extra.signal }),
+    async (args, extra) => {
+      const controller = new AbortController();
+      const signals = [extra.signal, ctx.requestSignal].filter(
+        (signal): signal is AbortSignal => signal !== undefined,
+      );
+      const forwarders = signals.map((signal) => {
+        const forward = () => controller.abort(signal.reason);
+        if (signal.aborted) forward();
+        else signal.addEventListener("abort", forward, { once: true });
+        return { signal, forward };
+      });
+      try {
+        return await handler(args as { code: string }, {
+          signal: controller.signal,
+        });
+      } finally {
+        for (const { signal, forward } of forwarders) {
+          signal.removeEventListener("abort", forward);
+        }
+      }
+    },
   );
 }

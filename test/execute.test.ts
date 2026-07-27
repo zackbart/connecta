@@ -629,6 +629,62 @@ describe("execute_code handler", () => {
     held.release();
   });
 
+  it("cancels catalog construction and releases its admitted lease", async () => {
+    let catalogStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      catalogStarted = resolve;
+    });
+    let catalogSignal: AbortSignal | undefined;
+    const connector: Connector = {
+      id: "catalog",
+      kind: "api",
+      listTools(ctx) {
+        catalogSignal = ctx.signal;
+        catalogStarted();
+        return new Promise((_, reject) => {
+          ctx.signal?.addEventListener(
+            "abort",
+            () => reject(ctx.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const release = vi.fn();
+    const execute = vi.fn(async () => ({ result: null }));
+    const executor: AdmittingExecutor = {
+      execute,
+      async acquire() {
+        return { execute, release };
+      },
+    };
+    const controller = new AbortController();
+    const registry = makeRegistry([connector]);
+    const pending = createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+    )(
+      { code: "async () => null" },
+      { signal: controller.signal },
+    );
+    await started;
+    controller.abort(new Error("request disconnected"));
+    const out = await pending;
+    const parsed = JSON.parse(out.content[0].text) as {
+      error: { code: string };
+    };
+    expect(parsed.error.code).toBe("executor_cancelled");
+    expect(catalogSignal?.aborted).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(registry.healthFor("catalog")).toBeUndefined();
+  });
+
   it("passes code + providers to the executor and wraps the result", async () => {
     const registry = makeRegistry([calcConnector]);
     const executor = fakeExecutor({ result: { picked: [1, 2] }, logs: ["hi"] });

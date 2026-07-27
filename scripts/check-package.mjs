@@ -90,6 +90,15 @@ const clerk = await import("@zackbart/connecta/auth/clerk");
 const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
+const executor = quickjs.quickJsExecutor({ timeoutMs: 2_000 });
+try {
+  const outcome = await executor.execute("async () => 42", []);
+  if (outcome.result !== 42 || outcome.error) {
+    throw new Error("packed QuickJS child execution failed: " + JSON.stringify(outcome));
+  }
+} finally {
+  await executor.close();
+}
 `,
   );
   run(

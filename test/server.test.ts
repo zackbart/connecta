@@ -1153,7 +1153,9 @@ describe("execute_code registration (code mode)", () => {
       const callLatency = await ordinaryCall;
       const outcomes = await Promise.all(runaways);
       latencies.sort((a, b) => a - b);
+      const p95 = latencies[Math.ceil(latencies.length * 0.95) - 1];
       const p99 = latencies[latencies.length - 1];
+      expect(p95).toBeLessThan(150);
       expect(p99).toBeLessThan(150);
       expect(callLatency).toBeLessThan(150);
       expect(

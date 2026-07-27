@@ -146,6 +146,12 @@ export function listen(
         const response = await connecta.fetch(request, undefined, ctx);
         await writeResponse(res, response);
       } catch (error) {
+        // A client that deliberately went away can make either the request
+        // handler or response pipeline reject. The request's abort signal is
+        // the authoritative classification: there is no caller left to answer,
+        // and logging an expected disconnect would turn cancellation into an
+        // error-log spam vector.
+        if (controller.signal.aborted) return;
         // A headless deployment has nothing else to go on; never swallow this.
         console.error("[connecta] request failed", error);
         if (res.headersSent) {

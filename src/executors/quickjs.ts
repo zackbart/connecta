@@ -65,6 +65,10 @@ interface ActiveRun {
 
 interface ChildSlot {
   child?: ChildProcess;
+  ready?: Promise<void>;
+  resolveReady?: () => void;
+  rejectReady?: (error: Error) => void;
+  readyTimer?: ReturnType<typeof setTimeout>;
   active?: ActiveRun;
   expectedExit?: ChildProcess;
   consecutiveCrashes: number;
@@ -79,6 +83,7 @@ const DEFAULT_CONCURRENCY = 1;
 const DEFAULT_MAX_QUEUE_SIZE = 32;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
 const CHILD_EXIT_GRACE_MS = 250;
+const CHILD_STARTUP_TIMEOUT_MS = 10_000;
 const MAX_ERROR_CHARS = 4_000;
 
 function msg(err: unknown): string {
@@ -143,6 +148,43 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
     };
     signal?.addEventListener("abort", onAbort, { once: true });
     if (signal?.aborted) onAbort();
+  });
+}
+
+function waitForReady(
+  ready: Promise<void>,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!signal) return ready;
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (operation: () => void) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      operation();
+    };
+    const onAbort = () =>
+      finish(() =>
+        reject(
+          new ExecutorAdmissionError(
+            "executor_cancelled",
+            "Execution was cancelled while the sandbox was starting.",
+          ),
+        ),
+      );
+    signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    void ready.then(
+      () => finish(resolve),
+      (error: unknown) =>
+        finish(() =>
+          reject(error instanceof Error ? error : new Error(String(error))),
+        ),
+    );
   });
 }
 
@@ -269,6 +311,12 @@ class QuickJsChildPool implements AdmittingExecutor {
       );
     }
     await this.ensureChild(slot, signal);
+    if (signal?.aborted) {
+      throw new ExecutorAdmissionError(
+        "executor_cancelled",
+        "Execution was cancelled before it started.",
+      );
+    }
     const child = slot.child;
     if (!child?.connected) {
       throw new Error("QuickJS child IPC channel is unavailable.");
@@ -277,6 +325,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     const id = this.nextJobId++;
     const providerMap = new Map(providers.map((item) => [item.name, item]));
     let payloadJson: string;
+    let runMessage: ParentToChildMessage;
     try {
       payloadJson = stringifyBounded(
         {
@@ -287,6 +336,8 @@ class QuickJsChildPool implements AdmittingExecutor {
         } satisfies RunPayload,
         "QuickJS run payload",
       );
+      runMessage = { type: "run", payloadJson };
+      stringifyBounded(runMessage, "QuickJS run IPC envelope");
     } catch (err) {
       return { result: undefined, error: msg(err) };
     }
@@ -330,7 +381,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       }
       try {
         child.send(
-          { type: "run", payloadJson } satisfies ParentToChildMessage,
+          runMessage,
           (error) => {
             if (!error || slot.active?.id !== id) return;
             this.rejectActive(slot, error);
@@ -357,7 +408,10 @@ class QuickJsChildPool implements AdmittingExecutor {
         "Executor is shutting down.",
       );
     }
-    if (slot.child?.connected) return;
+    if (slot.child?.connected) {
+      if (slot.ready) await waitForReady(slot.ready, signal);
+      return;
+    }
     await delay(Math.max(0, slot.notBefore - Date.now()), signal);
     if (this.closed) {
       throw new ExecutorAdmissionError(
@@ -376,22 +430,43 @@ class QuickJsChildPool implements AdmittingExecutor {
       stdio: ["ignore", "ignore", "ignore", "ipc"],
     });
     slot.child = child;
+    slot.ready = new Promise<void>((resolve, reject) => {
+      slot.resolveReady = resolve;
+      slot.rejectReady = reject;
+    });
+    slot.readyTimer = setTimeout(() => {
+      if (slot.child !== child || !slot.ready) return;
+      const error = new Error(
+        `QuickJS child did not become ready within ${CHILD_STARTUP_TIMEOUT_MS}ms.`,
+      );
+      this.failChildStartup(slot, child, error);
+    }, CHILD_STARTUP_TIMEOUT_MS);
     child.on("message", (message: ChildToParentMessage) => {
       void this.onMessage(slot, child, message);
     });
     child.on("error", (error) => {
       if (slot.child !== child) return;
+      if (slot.ready) {
+        this.failChildStartup(slot, child, error);
+        return;
+      }
       this.rejectActive(slot, error);
+      this.recycle(slot);
     });
     child.on("exit", (code, exitSignal) => {
       const expected = slot.expectedExit === child;
       if (slot.expectedExit === child) slot.expectedExit = undefined;
+      this.rejectChildReady(
+        slot,
+        child,
+        new Error(
+          `QuickJS child exited before becoming ready` +
+          ` (${exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`}).`,
+        ),
+      );
       if (slot.child === child) slot.child = undefined;
       if (expected) return;
-      slot.consecutiveCrashes++;
-      slot.notBefore =
-        Date.now() +
-        Math.min(5_000, 100 * 2 ** (slot.consecutiveCrashes - 1));
+      this.recordCrash(slot);
       this.resolveActive(slot, {
         result: undefined,
         error:
@@ -401,6 +476,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     });
     child.unref();
     child.channel?.unref();
+    if (slot.ready) await waitForReady(slot.ready, signal);
   }
 
   private async onMessage(
@@ -408,6 +484,10 @@ class QuickJsChildPool implements AdmittingExecutor {
     child: ChildProcess,
     message: ChildToParentMessage,
   ): Promise<void> {
+    if (message.type === "ready") {
+      this.resolveChildReady(slot, child);
+      return;
+    }
     const active = slot.active;
     if (!active || slot.child !== child || !message) return;
     if (message.type === "host-call") {
@@ -457,28 +537,28 @@ class QuickJsChildPool implements AdmittingExecutor {
         throw new RangeError("Host call arguments exceeded the IPC limit.");
       }
       const payload = JSON.parse(message.payloadJson) as HostCallPayload;
-      const provider = active.providers.get(message.namespace);
+      const provider = active.providers.get(payload.namespace);
       const fn =
-        provider && Object.hasOwn(provider.fns, message.functionName)
-          ? provider.fns[message.functionName]
+        provider && Object.hasOwn(provider.fns, payload.functionName)
+          ? provider.fns[payload.functionName]
           : undefined;
       if (!fn) {
         throw new Error(
-          `Unknown function ${message.namespace}.${message.functionName}`,
+          `Unknown function ${payload.namespace}.${payload.functionName}`,
         );
       }
       const value = await fn(...payload.args);
       try {
         payloadJson = stringifyBounded(
           { ok: true, value } satisfies HostResultPayload,
-          `Host result from ${message.namespace}.${message.functionName}`,
+          `Host result from ${payload.namespace}.${payload.functionName}`,
           MAX_QUICKJS_HOST_RPC_BYTES,
         );
       } catch (err) {
         const detail =
           err instanceof RangeError
-            ? `Host result from ${message.namespace}.${message.functionName} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
-            : `Host result from ${message.namespace}.${message.functionName} could not be serialized: ${msg(err)}`;
+            ? `Host result from ${payload.namespace}.${payload.functionName} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
+            : `Host result from ${payload.namespace}.${payload.functionName} could not be serialized: ${msg(err)}`;
         payloadJson = errorPayload(detail);
       }
     } catch (err) {
@@ -486,12 +566,14 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     if (!child.connected) return;
     try {
-      child.send({
+      const response = {
         type: "host-result",
         jobId: message.jobId,
         callId: message.callId,
         payloadJson,
-      } satisfies ParentToChildMessage);
+      } satisfies ParentToChildMessage;
+      stringifyBounded(response, "QuickJS host-result IPC envelope");
+      child.send(response);
     } catch {
       // The execution has already ended or the child is exiting. Its exit
       // handler owns the structured failure for any still-active job.
@@ -522,9 +604,63 @@ class QuickJsChildPool implements AdmittingExecutor {
     slot.child?.channel?.unref();
   }
 
+  private resolveChildReady(slot: ChildSlot, child: ChildProcess): void {
+    if (slot.child !== child || !slot.ready) return;
+    if (slot.readyTimer) clearTimeout(slot.readyTimer);
+    const resolve = slot.resolveReady;
+    slot.ready = undefined;
+    slot.resolveReady = undefined;
+    slot.rejectReady = undefined;
+    slot.readyTimer = undefined;
+    resolve?.();
+  }
+
+  private rejectChildReady(
+    slot: ChildSlot,
+    child: ChildProcess,
+    error: Error,
+  ): void {
+    if (slot.child !== child || !slot.ready) return;
+    if (slot.readyTimer) clearTimeout(slot.readyTimer);
+    const reject = slot.rejectReady;
+    slot.ready = undefined;
+    slot.resolveReady = undefined;
+    slot.rejectReady = undefined;
+    slot.readyTimer = undefined;
+    reject?.(error);
+  }
+
+  private recordCrash(slot: ChildSlot): void {
+    slot.consecutiveCrashes++;
+    slot.notBefore =
+      Date.now() +
+      Math.min(5_000, 100 * 2 ** (slot.consecutiveCrashes - 1));
+  }
+
+  private failChildStartup(
+    slot: ChildSlot,
+    child: ChildProcess,
+    error: Error,
+  ): void {
+    if (slot.child !== child || !slot.ready) return;
+    // Detach before the rejected readiness promise can release the lease. A
+    // queued successor must never observe a connected child that is unready
+    // and already on its way out.
+    slot.expectedExit = child;
+    this.rejectChildReady(slot, child, error);
+    slot.child = undefined;
+    this.recordCrash(slot);
+    child.kill();
+  }
+
   private recycle(slot: ChildSlot): void {
     const child = slot.child;
     if (!child) return;
+    this.rejectChildReady(
+      slot,
+      child,
+      new Error("QuickJS child was recycled before becoming ready."),
+    );
     slot.expectedExit = child;
     slot.child = undefined;
     child.kill();
@@ -535,6 +671,14 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (!child) return Promise.resolve();
     this.rejectActive(
       slot,
+      new ExecutorAdmissionError(
+        "executor_closed",
+        "Executor is shutting down.",
+      ),
+    );
+    this.rejectChildReady(
+      slot,
+      child,
       new ExecutorAdmissionError(
         "executor_closed",
         "Executor is shutting down.",

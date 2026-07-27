@@ -12,7 +12,7 @@ import {
   serializedBytes,
   stringifyBounded,
 } from "./quickjs-protocol.js";
-import { executeQuickJs } from "./quickjs-runtime.js";
+import { executeQuickJs, prepareQuickJs } from "./quickjs-runtime.js";
 
 let activeJobId: number | undefined;
 let nextCallId = 1;
@@ -30,6 +30,10 @@ function msg(err: unknown): string {
 
 function send(message: ChildToParentMessage): void {
   if (!process.send) throw new Error("QuickJS child IPC channel is unavailable.");
+  // Bound the actual process.send envelope, not only its nested payloadJson.
+  // Guest-controlled strings must be rejected while they are still isolated
+  // in this disposable process, before Node materializes them in the parent.
+  stringifyBounded(message, "QuickJS child IPC envelope");
   process.send(message);
 }
 
@@ -42,8 +46,12 @@ function provider(name: string, jobId: number): ExecutorProvider {
         return async (...args: unknown[]): Promise<unknown> => {
           const callId = nextCallId++;
           const payloadJson = stringifyBounded(
-            { args } satisfies HostCallPayload,
-            `Host call ${name}.${key} arguments`,
+            {
+              namespace: name,
+              functionName: key,
+              args,
+            } satisfies HostCallPayload,
+            "Host call payload",
             MAX_QUICKJS_HOST_RPC_BYTES,
           );
           const result = new Promise<unknown>((resolve, reject) => {
@@ -53,8 +61,6 @@ function provider(name: string, jobId: number): ExecutorProvider {
             type: "host-call",
             jobId,
             callId,
-            namespace: name,
-            functionName: key,
             payloadJson,
           });
           return result;
@@ -152,3 +158,10 @@ process.on("message", (message: ParentToChildMessage) => {
 });
 
 process.on("disconnect", () => process.exit(0));
+
+// The parent does not start an execution's wall budget until the trusted WASM
+// module is loaded. This keeps cold-start latency from being misclassified as
+// guest CPU/wall failure while the parent's startup timeout still bounds a
+// child that never becomes ready.
+await prepareQuickJs();
+send({ type: "ready" });

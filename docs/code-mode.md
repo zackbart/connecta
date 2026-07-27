@@ -95,7 +95,12 @@ Two known implementations:
   `memoryLimitBytes` (64 MiB) and `maxStackSizeBytes` (1 MiB) remain per-guest
   QuickJS limits. Queue overflow and queue expiry return the stable,
   retryable `executor_overloaded` error with `retryAfterMs`; request
-  cancellation removes a queued caller or terminates its running child.
+  cancellation removes a queued caller, aborts catalog construction and host
+  calls, or terminates its running child. A cold child first loads trusted
+  QuickJS WASM under a separate 10-second startup ceiling; the configurable
+  execution wall budget starts only after that child reports ready, and
+  cancellation can abandon the readiness wait without poisoning the warming
+  slot.
 
   Guest `await` is driven from the host, not by suspending the interpreter: a
   tool call hands the guest a QuickJS deferred promise and the host pumps
@@ -111,10 +116,12 @@ Two known implementations:
   before failing with `Unknown function github.name`; neither behavior grants
   authority. Both executors still forward arguments positionally.
 
-  One serialized host result or guest call argument may be at most 256 KiB of
-  UTF-8. Larger values fail that host call before entering the other process.
+  One serialized host result or complete guest call payload (namespace,
+  function name, and arguments together) may be at most 256 KiB of UTF-8.
+  Larger values fail that host call before entering the other process.
   The child applies the final ~24k-character result policy before sending a
-  result, and the whole child-to-parent envelope has a 1 MiB hard ceiling.
+  result, and every complete parent/child IPC envelope has a 1 MiB hard
+  ceiling.
 
   ```ts
   import { quickJsExecutor } from "@zackbart/connecta/quickjs";

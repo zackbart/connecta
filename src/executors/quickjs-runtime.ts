@@ -22,6 +22,11 @@ export interface QuickJsRuntimeOptions {
   maxStackSizeBytes: number;
 }
 
+/** Load and compile the shared QuickJS WASM module before a run budget starts. */
+export async function prepareQuickJs(): Promise<void> {
+  await getQuickJS();
+}
+
 const MAX_LOG_ENTRIES = 200;
 // Cap each entry AND the cumulative buffer at capture time so untrusted guest
 // code can't retain unbounded host memory: a single `console.log("x".repeat(N))`

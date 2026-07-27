@@ -285,6 +285,7 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor({
       memoryLimitBytes: 4 * 1024 * 1024,
       timeoutMs: 10_000,
+      cpuTimeMs: 5_000,
     });
     const out = await ex.execute(
       `async () => {
@@ -471,6 +472,23 @@ describe("quickJsExecutor", () => {
     await ex.close?.();
   });
 
+  it("cancels a cold readiness wait without poisoning the warming slot", async () => {
+    const ex = quickJsExecutor({ timeoutMs: 2_000 });
+    const controller = new AbortController();
+    const lease = await ex.acquire({ signal: controller.signal });
+    const started = performance.now();
+    const pending = lease.execute("async () => 1", []);
+    setTimeout(() => controller.abort(), 1);
+    await expect(pending).rejects.toMatchObject({
+      code: "executor_cancelled",
+    });
+    lease.release();
+    expect(performance.now() - started).toBeLessThan(500);
+    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
+      result: 9,
+    });
+  });
+
   it("bounds the final guest result before child-to-parent IPC", async () => {
     const ex = quickJsExecutor({
       memoryLimitBytes: 16 * 1024 * 1024,
@@ -496,6 +514,18 @@ describe("quickJsExecutor", () => {
         catch (e) { return e.message; }
       }`,
       [{ name: "echo", fns: { read: async (value) => value } }],
+    );
+    expect(out.result).toContain("IPC limit");
+  });
+
+  it("bounds guest-controlled function names before parent IPC", async () => {
+    const ex = quickJsExecutor({ memoryLimitBytes: 16 * 1024 * 1024 });
+    const out = await ex.execute(
+      `async () => {
+        try { return await echo["x".repeat(2 * 1024 * 1024)](); }
+        catch (e) { return e.message; }
+      }`,
+      [{ name: "echo", fns: { read: async () => "ok" } }],
     );
     expect(out.result).toContain("IPC limit");
   });

@@ -111,6 +111,13 @@ Node QuickJS pool owns its instance. There is one queue, before provider
 construction; queued calls retain no catalog, request scope, or closure per
 tool.
 
+A newly forked child sends a ready handshake only after the trusted QuickJS
+WASM module is loaded. Guest wall time starts after that handshake, while a
+separate fixed startup ceiling contains a child that never becomes ready.
+Cancellation abandons an individual readiness wait without rejecting the
+shared warmup; startup failure atomically detaches the child before the lease
+can admit a successor.
+
 ### Worker threads for built-in QuickJS
 
 An Emscripten abort in a worker generally terminates that worker, so crash
