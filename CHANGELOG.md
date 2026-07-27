@@ -2,6 +2,63 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.7 — 2026-07-27
+
+0.7.7 gives operators explicit downstream OAuth lifecycle controls, makes
+Activity identities useful without weakening their privacy boundary, and
+hardens persistent connector state against reset and cleanup races. The
+Connections page now reports the installed Connecta package version rather than
+the deployment's configurable MCP server version. There are no dependency or
+package-entrypoint changes.
+
+Deployments using the optional Worker D1 Activity example must add its nullable
+`actor_namespace` column before deploying the updated writer; the example
+README includes the `ALTER TABLE` migration. Existing rows remain valid legacy
+events and fail closed when their identity directory is ambiguous.
+
+OAuth epoch fencing and disconnect are immediate on read-after-write-consistent
+storage. Cloudflare Workers KV is eventually consistent, so another location
+may temporarily observe the prior epoch or grant; deployments requiring
+immediate global disconnect or rotation should use a strongly consistent
+adapter such as a Durable Object. Legacy unsuffixed OAuth values require no
+migration and remain readable until the first intentional reset. Complete
+physical erasure can require operator-side backend prefix cleanup because the
+three-method storage seam cannot enumerate keys.
+
+### Added
+
+- **Operator-managed downstream OAuth disconnect and reconnect** (issue #122,
+  PR #134). Eligible unrestricted Clerk operators receive same-origin
+  Connections controls backed by a durable disconnected epoch. Passive status,
+  tool, and UI probes cannot restart consent; only explicit reconnect can
+  replace that epoch. Bearer and toolkit-restricted identities remain refused,
+  unusable authorization URLs fail closed, and request-owned connector scopes,
+  catalogs, health, and toolkit state are refreshed after mutations.
+- **Friendly, provider-scoped Activity identities** (issue #124, PR #135).
+  Authorized reads may resolve a stored actor through its admitting identity
+  directory; Clerk prefers full name, verified primary email, then username.
+  Labels are display-only and never persisted or trusted from storage. The UI
+  retains a namespace-qualified stable ID, while lookup concurrency, retained
+  state, cache size, and page latency remain bounded. Legacy events resolve
+  only when one directory is unambiguous.
+
+### Changed
+
+- **Connections reports the installed npm package version** (PR #133). Its
+  header now uses the build-asserted Connecta package version rather than the
+  configurable deployment/MCP `serverInfo.version`.
+
+### Fixed
+
+- **Persistent connector state is fenced across reset, replacement, and
+  cleanup races** (issue #130, PR #132). Downstream OAuth uses epoch-specific
+  physical namespaces, one authoritative reset transition, immutable cleanup
+  lineage, and one provider per connection attempt so stale callbacks, writes,
+  and deletes cannot affect replacement credentials. Catalog invalidation is
+  serialized with persisted refreshes, transient OAuth cleanup is retried, and
+  Node file-storage pruning occurs only on later mutations so a read cannot
+  overwrite a newer value from another instance.
+
 ## 0.7.6 — 2026-07-27
 
 0.7.6 gives every runtime an explicit MCP memory-pressure boundary and closes
