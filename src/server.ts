@@ -222,8 +222,8 @@ async function authorize(
   | {
       ok: true;
       actor: ActivityActor;
-      providerKind?: string;
-      userId?: string;
+      /** True only when the admitting provider can also authorize UI mutation. */
+      uiAdminEligible?: boolean;
       /** The admitting identity's toolkit binding (docs/toolkits.md). */
       toolkitBinding?: ToolkitBinding;
     }
@@ -261,8 +261,9 @@ async function authorize(
           kind: provider.kind,
           ...(subjectId ? { id: subjectId } : {}),
         },
-        providerKind: provider.kind,
-        ...(result.userId ? { userId: result.userId } : {}),
+        ...(result.userId && provider.uiAuth?.kind === "clerk"
+          ? { uiAdminEligible: true }
+          : {}),
         ...(binding.binding ? { toolkitBinding: binding.binding } : {}),
       };
     }
@@ -1197,7 +1198,7 @@ export function createFetchHandler(
 
       const operatorPage = operatorPageForPath(path);
       if (operatorPage) {
-        if (request.method !== "GET") {
+        if (request.method !== "GET" && request.method !== "HEAD") {
           return privateJson({ error: "method not allowed" }, { status: 405 });
         }
         // Open shell — carries no operator data; everything comes from the
@@ -1212,7 +1213,9 @@ export function createFetchHandler(
         // — only script execution, the XSS sink, is gated.
         const nonce = uiScriptNonce();
         return new Response(
-          renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage),
+          request.method === "HEAD"
+            ? null
+            : renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage),
           {
             status: 200,
             headers: {
@@ -1235,8 +1238,7 @@ export function createFetchHandler(
         // After the restriction check, not before: an identity that may not
         // read this surface should not get to trigger background work from it.
         sweepCredentials();
-        const eligibleClerkOperator =
-          authz.providerKind === "clerk" && Boolean(authz.userId);
+        const eligibleClerkOperator = authz.uiAdminEligible === true;
         const credentialManagement = credentialManagementCapability({
           eligibleClerkOperator,
           hasCredentialSlots: registry
