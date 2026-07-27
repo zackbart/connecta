@@ -47,6 +47,7 @@ import {
   resolveBranding,
   renderUiHtml,
 } from "./ui.js";
+import { oauthValueStorageKey } from "./auth/downstream-oauth.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -732,7 +733,7 @@ async function handleCredentialRequest(
               input.input.values,
               admin.userId,
             );
-      opts.registry.invalidate(connectorId);
+      await opts.registry.invalidateStored(connectorId);
       // The credential the last verdict judged is gone; judging its replacement
       // is the next check's job, not this one's.
       await opts.registry.clearCredentialHealth(connectorId);
@@ -744,7 +745,7 @@ async function handleCredentialRequest(
 
   if (request.method === "DELETE") {
     await opts.credentialVault.delete(connectorId);
-    opts.registry.invalidate(connectorId);
+    await opts.registry.invalidateStored(connectorId);
     await opts.registry.clearCredentialHealth(connectorId);
     return new Response(null, {
       status: 204,
@@ -1026,17 +1027,16 @@ async function serveMcp(
  * paths that would otherwise pay nothing.
  *
  * Identical bodies do not hide a connector id if the clock still sorts them.
- * `KvOAuthProvider.verifyState` reads `oauth:state` before it can fail, so a
- * configured id costs one storage round trip — on the Workers deployment shape
- * that is a real KV read, tens of milliseconds cold — while an id that names
- * nothing used to return having touched no I/O at all. That gap is an oracle:
- * sample the two and a wordlist recovers the connector list the flat 400 was
- * meant to withhold. So the zero-I/O refusals read the same key in the same
- * `conn:<id>:` namespace, which for an unconfigured id is simply a miss.
+ * `KvOAuthProvider.verifyState` reads `oauth:state` and its generation before
+ * it can reject a mismatched value, so a configured id costs two storage round
+ * trips on the ordinary path while an id naming nothing used to touch no I/O.
+ * That gap is an oracle: sample the two and a wordlist recovers the connector
+ * list the flat 400 was meant to withhold. So zero-I/O refusals read the same
+ * keys in the same `conn:<id>:` namespace, where an unconfigured id gets misses.
  *
  * This is deliberately *not* a constant-time claim, and docs/connectors.md says
  * so in prose: a hit and a miss are not identical in a KV store, and a connector
- * shipping its own `verifyState` may do more or less work than one read. What it
+ * shipping its own `verifyState` may do more or less work. What it
  * removes is the order-of-magnitude "no I/O versus a round trip" difference,
  * which is the only part of the signal that makes enumeration cheap.
  *
@@ -1046,7 +1046,10 @@ async function serveMcp(
  */
 async function equalizeRefusalCost(context: ConnectorContext): Promise<void> {
   try {
-    await context.storage.get("oauth:state");
+    const generation = await context.storage.get("oauth:generation");
+    await context.storage.get(
+      oauthValueStorageKey("oauth:state", generation),
+    );
   } catch {
     // Deliberately ignored — see above.
   }

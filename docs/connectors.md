@@ -637,7 +637,7 @@ token_endpoint_auth_method: "none" }`.
    returns false all reject before `finishAuth` — otherwise anyone holding the
    pending URL could complete consent with their own account. An
    unknown/non-OAuth connector id and every unverifiable callback render the
-   same 400 status, body, and headers, and cost one storage read either way
+   same 400 status, body, and headers, and cost two storage reads either way
    (see below). For a real connector, the operator log records the precise
    reason; thrown messages are bounded and escaped there without turning this
    public route into a connector directory. A valid state lets the route
@@ -652,27 +652,22 @@ token_endpoint_auth_method: "none" }`.
    to `auth_required` — it never crashes the server or hides other connectors.
 
 **What the refusal hides, and what it doesn't.** Matching bodies buy nothing if
-the clock still sorts the ids. `verifyState` reads `conn:<id>:oauth:state`
-before it can fail, so a configured id pays a storage round trip — a real
-network read on a KV-backed deployment — while an id naming nothing used to
-answer having touched no I/O at all. So the two refusals that would otherwise be
-free (an unknown or non-OAuth id, and a connector with `finishAuth` but no
-`verifyState`) read the same key in the same namespace first, and for an
-unconfigured id that is simply a miss (`equalizeRefusalCost`, `src/server.ts`).
+the clock still sorts ids. `verifyState` reads `conn:<id>:oauth:generation` and
+then the active epoch's `oauth:state` key, while an id naming nothing used to
+touch no I/O. The free refusals (unknown/non-OAuth, or `finishAuth` without
+`verifyState`) now perform the same generation-then-state reads in that id's
+namespace, where an unconfigured id gets misses
+(`equalizeRefusalCost`, `src/server.ts`).
 
 That is cost equalization, not constant time, and the difference is worth
 stating plainly:
 
 - **Equalized.** Status, body, and headers are byte-identical across every
-  refusal, and each performs exactly one read of one key in the connector's
-  namespace.
+  refusal, and each ordinary path performs the same two namespace reads.
 - **Not equalized, and not equalizable here.** A store may answer a hit and a
   miss at different speeds. A connector supplying its own `verifyState` decides
-  its own cost — one that throws before reading, or reads twice, sits outside
-  the shipped `KvOAuthProvider`'s single read. And a callback that *succeeds*
-  is plainly distinguishable, which is fine: succeeding requires the valid
-  one-shot `state`, which is the one thing an enumerating attacker does not
-  have.
+  its own cost, and a callback that succeeds is plainly distinguishable. That is
+  fine: success requires the valid one-shot `state`.
 
 What this closes is the order-of-magnitude gap — no I/O at all versus a round
 trip — that made a wordlist against `/oauth/callback/<id>` cheap. Given enough
@@ -687,13 +682,18 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 
 | Key | Contents |
 | --- | --- |
-| `conn:<id>:oauth:client` | DCR client information |
-| `conn:<id>:oauth:tokens` | access + refresh tokens |
-| `conn:<id>:oauth:verifier` | one-shot PKCE code verifier |
-| `conn:<id>:oauth:state` | one-shot `state` value checked by `verifyState` |
-| `conn:<id>:oauth:pending` | stored authorization URL while a flow is open |
-| `conn:<id>:oauth:generation` | monotonic counter bumped by a `force` re-auth, so an isolate holding a client from a prior generation notices it went stale |
-
-`clearPending()` wipes `pending` + `verifier` + `state` after the callback;
-`tokens` and `client` persist. This is why OAuth connectors need **durable**
-storage ([storage](./storage-and-credentials.md#storage)).
+| `conn:<id>:oauth:client:epoch:<generation>` | DCR client information |
+| `conn:<id>:oauth:tokens:epoch:<generation>` | access + refresh tokens |
+| `conn:<id>:oauth:verifier:epoch:<generation>` | one-shot PKCE code verifier |
+| `conn:<id>:oauth:state:epoch:<generation>` | one-shot `state` value checked by `verifyState` |
+| `conn:<id>:oauth:pending:epoch:<generation>` | stored authorization URL while a flow is open |
+| `conn:<id>:oauth:generation` | unique active epoch selecting the readable namespace |
+| `conn:<id>:oauth:cleanup:<encoded-generation>` | bounded immutable lineage of retired namespaces the next force must retry |
+Before the first force reset, legacy and old numeric generations retain the historical
+unsuffixed keys and encodings for rolling-deploy and rollback safety. Force publishes
+one active epoch before cleanup; its physical namespace and full observed lineage stop
+stale mutation and let a later force retry late-write or transient-failure residue.
+The three-method `KVStorage` interface has no list or compare-and-swap, so the lineage
+cannot promise lossless cleanup for sibling resets or a crash around an unrecorded
+late write. Those bytes remain unreadable but may need operator prefix deletion.
+Immediate fencing also requires strongly consistent [storage](./storage-and-credentials.md#storage).

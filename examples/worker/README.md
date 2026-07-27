@@ -22,7 +22,9 @@ migrations, and secrets. See [deployment architecture](../../docs/operations.md#
 
 `cloudflare-kv.ts` and `d1-activity.ts` deliberately live here rather than in
 the package: storage backends are deployment-owned, so the package ships only
-the generic `KVStorage` and `ActivityStore` contracts.
+the generic `KVStorage` and `ActivityStore` contracts. Workers KV is eventually
+consistent across locations; use a strongly consistent `KVStorage` adapter when
+OAuth disconnect or rotation must become globally visible immediately.
 
 ## Deploy
 

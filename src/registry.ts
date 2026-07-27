@@ -235,6 +235,10 @@ export class Registry implements RegistryView {
   private readonly connectors = new Map<string, Connector>();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly invalidated = new Set<string>();
+  /** Per-connector epoch preventing a pre-invalidation refresh from publishing. */
+  private readonly catalogGenerations = new Map<string, number>();
+  /** Serialize persisted catalog set/delete operations within this isolate. */
+  private readonly catalogMutations = new Map<string, Promise<void>>();
   /** Deployment-wide observations — every call, whatever view made it. */
   private readonly health = new HealthLog();
   private readonly ttlMs: number;
@@ -459,6 +463,36 @@ export class Registry implements RegistryView {
     });
   }
 
+  private catalogGeneration(id: string): number {
+    return this.catalogGenerations.get(id) ?? 0;
+  }
+
+  private advanceCatalogGeneration(id: string): void {
+    this.catalogGenerations.set(id, this.catalogGeneration(id) + 1);
+  }
+
+  /**
+   * Keep this isolate's writes and invalidations ordered. Without the queue, an
+   * old refresh can finish its storage.set after a credential change deletes
+   * the catalog and resurrect the pre-change listing.
+   */
+  private enqueueCatalogMutation(
+    id: string,
+    operation: () => Promise<void>,
+  ): Promise<void> {
+    const previous = this.catalogMutations.get(id) ?? Promise.resolve();
+    const next = previous.catch(() => {}).then(operation);
+    this.catalogMutations.set(id, next);
+    void next
+      .finally(() => {
+        if (this.catalogMutations.get(id) === next) {
+          this.catalogMutations.delete(id);
+        }
+      })
+      .catch(() => {});
+    return next;
+  }
+
   /** Force a live listTools refresh and replace both catalog cache layers. */
   async refreshTools(
     id: string,
@@ -468,11 +502,16 @@ export class Registry implements RegistryView {
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
+    const generation = this.catalogGeneration(id);
     const tools = connector.staticTools
       ? connector.staticTools
       : await connector.listTools(
           this.contextFor(id, baseUrl, requestScope, callOptions),
         );
+    // The caller that began this refresh may still use its result, but a
+    // credential/OAuth change that landed while listTools was in flight means
+    // the listing must not enter either shared cache layer.
+    if (generation !== this.catalogGeneration(id)) return tools;
     const now = Date.now();
     const previous = this.cache.get(id);
     const catalogChanged =
@@ -487,13 +526,16 @@ export class Registry implements RegistryView {
     });
     this.invalidated.delete(id);
     if (shouldPersist) {
-      try {
-        await this.storeCatalog(id, tools);
-      } catch (err) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog persistence failed: ${msg(err)}`,
-        );
-      }
+      await this.enqueueCatalogMutation(id, async () => {
+        if (generation !== this.catalogGeneration(id)) return;
+        try {
+          await this.storeCatalog(id, tools);
+        } catch (err) {
+          this.opts.logger.warn(
+            `[connecta] connector "${id}" catalog persistence failed: ${msg(err)}`,
+          );
+        }
+      });
     }
     return tools;
   }
@@ -510,11 +552,13 @@ export class Registry implements RegistryView {
     if (connector.staticTools) return connector.staticTools;
 
     const now = Date.now();
+    const requestGeneration = this.catalogGeneration(id);
     const hit = this.cache.get(id);
     if (hit && hit.exp > now) return hit.tools;
 
     let stale = hit && hit.staleUntil > now ? hit.tools : undefined;
     if (this.persistToolCatalog && !this.invalidated.has(id)) {
+      const generation = this.catalogGeneration(id);
       let persisted: PersistedCatalog | null = null;
       try {
         persisted = this.validCatalog(
@@ -524,6 +568,10 @@ export class Registry implements RegistryView {
         this.opts.logger.warn(
           `[connecta] connector "${id}" catalog read failed: ${msg(err)}`,
         );
+      }
+      if (generation !== this.catalogGeneration(id)) {
+        persisted = null;
+        stale = undefined;
       }
       if (persisted && persisted.staleUntil > now) {
         this.cache.set(id, {
@@ -539,7 +587,11 @@ export class Registry implements RegistryView {
     try {
       return await this.refreshTools(id, baseUrl, requestScope, callOptions);
     } catch (err) {
-      if (stale) {
+      if (
+        stale &&
+        requestGeneration === this.catalogGeneration(id) &&
+        !this.invalidated.has(id)
+      ) {
         this.opts.logger.warn(
           `[connecta] connector "${id}" catalog refresh failed; serving stale catalog: ${msg(err)}`,
         );
@@ -675,29 +727,37 @@ export class Registry implements RegistryView {
 
   /** Drop a connector's cached tool list (e.g. after auth completes). */
   invalidate(id: string): void {
+    this.advanceCatalogGeneration(id);
     this.cache.delete(id);
     this.invalidated.add(id);
     if (this.persistToolCatalog) {
-      void this.opts.storage.delete(this.catalogKey(id)).catch((err) => {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
-        );
+      void this.enqueueCatalogMutation(id, async () => {
+        try {
+          await this.opts.storage.delete(this.catalogKey(id));
+        } catch (err) {
+          this.opts.logger.warn(
+            `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
+          );
+        }
       });
     }
   }
 
   /** Drop both in-memory and persisted tool catalogs. */
   async invalidateStored(id: string): Promise<void> {
+    this.advanceCatalogGeneration(id);
     this.cache.delete(id);
     this.invalidated.add(id);
     if (this.persistToolCatalog) {
-      try {
-        await this.opts.storage.delete(this.catalogKey(id));
-      } catch (err) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
-        );
-      }
+      await this.enqueueCatalogMutation(id, async () => {
+        try {
+          await this.opts.storage.delete(this.catalogKey(id));
+        } catch (err) {
+          this.opts.logger.warn(
+            `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
+          );
+        }
+      });
     }
   }
 }

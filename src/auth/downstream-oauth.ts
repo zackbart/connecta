@@ -21,6 +21,63 @@ function timingSafeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+const LEGACY_GENERATION = "legacy";
+const ACTIVE_GENERATION_PREFIX = "v2:";
+const RESETTING_GENERATION_PREFIX = "reset:";
+const STORED_VALUE_VERSION = 1;
+const OAUTH_VALUE_KEYS = [
+  "oauth:client",
+  "oauth:tokens",
+  "oauth:pending",
+  "oauth:verifier",
+  "oauth:state",
+] as const;
+const MAX_CLEANUP_BACKLOG = 1_000;
+
+interface StoredOAuthValue<T> {
+  connectaOAuthVersion: typeof STORED_VALUE_VERSION;
+  generation: string;
+  value: T;
+}
+
+function storedOAuthValue<T>(
+  value: unknown,
+): value is StoredOAuthValue<T> {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<StoredOAuthValue<T>>;
+  return (
+    candidate.connectaOAuthVersion === STORED_VALUE_VERSION &&
+    typeof candidate.generation === "string" &&
+    "value" in candidate
+  );
+}
+
+function isModernGeneration(generation: string): boolean {
+  return (
+    generation.startsWith(ACTIVE_GENERATION_PREFIX) ||
+    generation.startsWith(RESETTING_GENERATION_PREFIX)
+  );
+}
+
+/**
+ * Physical key for an OAuth value in one authorization epoch. Legacy values
+ * keep their historical names so upgrades can read an existing grant. Modern
+ * values get an epoch-specific namespace: a stale write or delete can then
+ * affect only its own flow, even if it lands after a replacement flow.
+ */
+export function oauthValueStorageKey(
+  key: string,
+  generation: string | null,
+): string {
+  return generation !== null && isModernGeneration(generation)
+    ? `${key}:epoch:${generation}`
+    : key;
+}
+
+function cleanupBacklogKey(generation: string): string {
+  return `oauth:cleanup:${encodeURIComponent(generation)}`;
+}
+
 /**
  * OAuthClientProvider implemented over KVStorage for a single downstream
  * connector. Keys live in the connector's namespace as `oauth:<field>`.
@@ -32,11 +89,11 @@ function timingSafeEqual(a: string, b: string): boolean {
  */
 export class KvOAuthProvider implements OAuthClientProvider {
   /**
-   * The force-reauth generation this provider's flow started under, captured by
-   * the connector before it drives a connect. `null` until stamped — a provider
-   * used outside a connect flow (or in isolation) writes unconditionally.
+   * The reset generation this provider's flow started under. Every OAuth value
+   * it writes carries this epoch, so a late write can land after a reset without
+   * becoming readable under the new generation.
    */
-  private capturedGeneration: number | null = null;
+  private capturedGeneration: string | null = null;
 
   constructor(
     private readonly connectorId: string,
@@ -46,24 +103,155 @@ export class KvOAuthProvider implements OAuthClientProvider {
 
   /**
    * Stamp the force-reauth generation the current connect flow started under.
-   * Subsequent saveTokens/saveClientInformation writes are dropped if KV's
-   * generation has since advanced (a concurrent force wiped credentials) — see
-   * isStale(). Called by the connector once per connect, before c.connect().
+   * Called by the connector once per connect, before c.connect(). The callback
+   * path captures the generation stored beside its verified state instead.
    */
-  captureGeneration(gen: number): void {
+  captureGeneration(gen: string): void {
     this.capturedGeneration = gen;
   }
 
   /**
-   * Whether a concurrent force re-auth advanced the KV generation past the one
-   * this flow captured. When true, this isolate's SDK is mid-flight against
-   * credentials that were just wiped — persisting them would resurrect the
-   * wiped-and-reauthorized connector for later isolates. Fails open (writes)
-   * when no generation was captured.
+   * The epoch this provider writes under. Direct unit/custom use lazily captures
+   * the current generation; connector-driven connect and callback paths stamp it
+   * explicitly before the SDK can write.
    */
-  private async isStale(): Promise<boolean> {
-    if (this.capturedGeneration === null) return false;
-    return (await this.generation()) > this.capturedGeneration;
+  private async writeGeneration(): Promise<string> {
+    this.capturedGeneration ??= await this.generation();
+    return this.capturedGeneration;
+  }
+
+  /**
+   * Store a value in the flow's physical epoch namespace. The pre-write check
+   * avoids needless stale residue. The namespaced key closes the remaining
+   * check-then-write race: a late old write cannot overwrite a replacement
+   * flow's value because the two writes have different physical keys.
+   */
+  private async writeValue<T>(
+    key: string,
+    value: T,
+    serializeLegacy: (value: T) => string,
+  ): Promise<void> {
+    const generation = await this.writeGeneration();
+    if (
+      generation.startsWith(RESETTING_GENERATION_PREFIX) ||
+      (await this.generation()) !== generation
+    ) {
+      return;
+    }
+    const stored: StoredOAuthValue<T> = {
+      connectaOAuthVersion: STORED_VALUE_VERSION,
+      generation,
+      value,
+    };
+    const physicalKey = oauthValueStorageKey(key, generation);
+    await this.storage.set(
+      physicalKey,
+      isModernGeneration(generation)
+        ? JSON.stringify(stored)
+        : serializeLegacy(value),
+    );
+    // If reset landed after the pre-write check and completed its cleanup
+    // before this set, remove the now-unreachable residue ourselves. The epoch
+    // key already provides correctness; this second check is physical hygiene.
+    const current = await this.generation();
+    if (current !== generation) {
+      try {
+        await this.storage.delete(physicalKey);
+      } catch {
+        // Make a transient cleanup failure retryable by the next force reset.
+        // This is still best-effort if storage cannot accept the backlog write.
+        try {
+          await this.rememberRetiredGeneration(current, generation);
+        } catch {
+          // The old namespace is already unreadable; storage availability is
+          // the remaining physical-hygiene boundary.
+        }
+      }
+    }
+  }
+
+  /**
+   * Read a value only when it belongs to the active generation. Plain legacy
+   * values remain readable until the first v2 reset, so upgrades do not discard
+   * an existing grant; once a modern epoch exists, untagged residue fails
+   * closed.
+   */
+  private async readValue<T>(
+    key: string,
+    parseLegacy: (raw: string) => T,
+  ): Promise<{ value: T; generation: string } | undefined> {
+    const generation = await this.generation();
+    const raw = await this.storage.get(
+      oauthValueStorageKey(key, generation),
+    );
+    if (raw === null) return undefined;
+    if (generation.startsWith(RESETTING_GENERATION_PREFIX)) return undefined;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      // Raw string state from a pre-envelope deployment is handled below.
+    }
+    if (storedOAuthValue<T>(parsed)) {
+      return parsed.generation === generation
+        ? { value: parsed.value, generation }
+        : undefined;
+    }
+    if (isModernGeneration(generation)) return undefined;
+    return { value: parseLegacy(raw), generation };
+  }
+
+  /** Attempt every key deletion, then report the first backend failure. */
+  private async deleteAll(keys: readonly string[]): Promise<void> {
+    let firstError: unknown;
+    for (const key of keys) {
+      try {
+        await this.storage.delete(key);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError) throw firstError;
+  }
+
+  private async cleanupBacklog(generation: string): Promise<string[]> {
+    const raw = await this.storage.get(cleanupBacklogKey(generation));
+    if (raw === null) return [];
+    const parsed: unknown = JSON.parse(raw);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length > MAX_CLEANUP_BACKLOG ||
+      !parsed.every((value) => typeof value === "string")
+    ) {
+      throw new Error(
+        `Invalid OAuth cleanup backlog for "${this.connectorId}"`,
+      );
+    }
+    return [...new Set(parsed)];
+  }
+
+  private async rememberRetiredGeneration(
+    active: string,
+    retired: string,
+  ): Promise<void> {
+    const backlog = await this.cleanupBacklog(active);
+    if (backlog.includes(retired)) return;
+    if (backlog.length >= MAX_CLEANUP_BACKLOG) {
+      throw new Error(
+        `OAuth cleanup backlog for "${this.connectorId}" is full`,
+      );
+    }
+    await this.storage.set(
+      cleanupBacklogKey(active),
+      JSON.stringify([...backlog, retired]),
+    );
+  }
+
+  private valueKeysForGeneration(generation: string): string[] {
+    return OAUTH_VALUE_KEYS.map((key) =>
+      oauthValueStorageKey(key, generation),
+    );
   }
 
   get redirectUrl(): string {
@@ -81,39 +269,35 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    const raw = await this.storage.get("oauth:client");
-    return raw ? (JSON.parse(raw) as OAuthClientInformationMixed) : undefined;
+    return (
+      await this.readValue(
+        "oauth:client",
+        (raw) => JSON.parse(raw) as OAuthClientInformationMixed,
+      )
+    )?.value;
   }
 
   async saveClientInformation(
     info: OAuthClientInformationMixed,
   ): Promise<void> {
-    // A concurrent force wiped credentials and bumped the generation while this
-    // flow ran — skip rather than re-register a client under revoked state. The
-    // in-memory SDK keeps this info for the current (doomed) connect, which the
-    // connector's post-connect fence then discards.
-    if (await this.isStale()) return;
-    await this.storage.set("oauth:client", JSON.stringify(info));
+    await this.writeValue("oauth:client", info, (value) =>
+      JSON.stringify(value),
+    );
   }
 
   async tokens(): Promise<OAuthTokens | undefined> {
-    const raw = await this.storage.get("oauth:tokens");
-    return raw ? (JSON.parse(raw) as OAuthTokens) : undefined;
+    return (
+      await this.readValue(
+        "oauth:tokens",
+        (raw) => JSON.parse(raw) as OAuthTokens,
+      )
+    )?.value;
   }
 
   async saveTokens(tokens: OAuthTokens): Promise<void> {
-    // Generation-guarded write. The dangerous case: an isolate mid-connect (or
-    // mid-refresh) whose SDK just minted fresh tokens against a still-valid
-    // grant, racing a force re-auth that wiped KV and bumped the generation.
-    // Persisting here would resurrect those tokens for later isolates to read.
-    // A silent skip (not a throw) is deliberate: throwing propagates out of the
-    // SDK's auth() and fails the in-flight request/connect noisily, whereas
-    // skipping lets the in-memory client finish its current operation while
-    // leaving KV wiped — the connector's generation check drops that client on
-    // its next call. Fails open when no generation was captured, so ordinary
-    // token refresh (no force) still persists.
-    if (await this.isStale()) return;
-    await this.storage.set("oauth:tokens", JSON.stringify(tokens));
+    await this.writeValue("oauth:tokens", tokens, (value) =>
+      JSON.stringify(value),
+    );
   }
 
   /**
@@ -127,7 +311,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   async state(): Promise<string> {
     const value = randomState();
-    await this.storage.set("oauth:state", value);
+    await this.writeValue("oauth:state", value, (raw) => raw);
     return value;
   }
 
@@ -136,67 +320,152 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * value. Absent stored state or absent candidate → false (fail closed).
    */
   async verifyState(candidate: string | null): Promise<boolean> {
-    const expected = await this.storage.get("oauth:state");
+    const expected = await this.readValue("oauth:state", (raw) => raw);
     if (!expected || candidate === null) return false;
-    return timingSafeEqual(candidate, expected);
+    const matches = timingSafeEqual(candidate, expected.value);
+    if (matches) this.captureGeneration(expected.generation);
+    return matches;
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
-    await this.storage.set("oauth:verifier", verifier);
+    await this.writeValue("oauth:verifier", verifier, (raw) => raw);
   }
 
   async codeVerifier(): Promise<string> {
-    const raw = await this.storage.get("oauth:verifier");
-    if (!raw) throw new Error(`No PKCE code verifier for "${this.connectorId}"`);
-    return raw;
+    const stored = await this.readValue("oauth:verifier", (raw) => raw);
+    if (!stored) {
+      throw new Error(`No PKCE code verifier for "${this.connectorId}"`);
+    }
+    return stored.value;
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.storage.set("oauth:pending", authorizationUrl.toString());
+    await this.writeValue(
+      "oauth:pending",
+      authorizationUrl.toString(),
+      (raw) => raw,
+    );
   }
 
   /** The stored authorization URL, if a flow is pending. */
   async pendingAuthorizationUrl(): Promise<string | undefined> {
-    return (await this.storage.get("oauth:pending")) ?? undefined;
+    return (
+      await this.readValue("oauth:pending", (raw) => raw)
+    )?.value;
   }
 
   /** Clear one-shot flow state after the callback completes. */
   async clearPending(): Promise<void> {
-    await this.storage.delete("oauth:pending");
-    await this.storage.delete("oauth:verifier");
-    await this.storage.delete("oauth:state");
+    const generation = await this.writeGeneration();
+    await this.deleteAll([
+      oauthValueStorageKey("oauth:pending", generation),
+      oauthValueStorageKey("oauth:verifier", generation),
+      oauthValueStorageKey("oauth:state", generation),
+    ]);
   }
 
   /**
-   * Force-reauth generation. Monotonic counter shared across isolates via KV;
-   * NOT cleared by clearPending/invalidateCredentials — its whole job is to
-   * keep advancing so an isolate holding a client from a prior generation can
-   * notice it went stale. Defaults to 0 when never bumped.
+   * Force-reauth epoch shared across isolates through storage. Old numeric
+   * generations remain valid strings for migration; new resets use unique
+   * nonces, avoiding the lost-update race of read/increment/write.
    */
-  async generation(): Promise<number> {
-    const raw = await this.storage.get("oauth:generation");
-    const n = raw ? Number(raw) : 0;
-    return Number.isFinite(n) ? n : 0;
+  async generation(): Promise<string> {
+    return (await this.storage.get("oauth:generation")) ?? LEGACY_GENERATION;
   }
 
-  /** Advance the generation (on force re-auth) and return the new value. */
-  async bumpGeneration(): Promise<number> {
-    const next = (await this.generation()) + 1;
-    await this.storage.set("oauth:generation", String(next));
+  /** Publish a unique active epoch without a read/modify/write race. */
+  async bumpGeneration(): Promise<string> {
+    const next = `${ACTIVE_GENERATION_PREFIX}${crypto.randomUUID()}`;
+    await this.storage.set("oauth:generation", next);
     return next;
+  }
+
+  /**
+   * Fence every flow that could still write, then remove all durable and
+   * one-shot authorization state. The generation is intentionally retained:
+   * it is the epoch fence that tells another isolate not to resurrect
+   * credentials it read before this reset.
+   *
+   * Once the fence is durable, attempt every deletion even if one fails. A
+   * partial backend outage should not leave unrelated secrets behind merely
+   * because an earlier key happened to be the first failed delete.
+   */
+  async resetAuthorization(): Promise<void> {
+    const nonce = crypto.randomUUID();
+    const previous = await this.generation();
+    const inherited = await this.cleanupBacklog(previous);
+    const active = `${ACTIVE_GENERATION_PREFIX}${nonce}`;
+    const retired = [...new Set([...inherited, previous])];
+    if (retired.length > MAX_CLEANUP_BACKLOG) {
+      throw new Error(
+        `OAuth cleanup backlog for "${this.connectorId}" is full`,
+      );
+    }
+    // Publish the complete inherited cleanup work under the prospective epoch
+    // before making that epoch active. A crash or later retry can therefore
+    // always recover the older namespaces without a storage prefix scan.
+    await this.storage.set(
+      cleanupBacklogKey(active),
+      JSON.stringify(retired),
+    );
+    // This is the one authoritative transition. From this point onward every
+    // old physical namespace is unreadable. There is deliberately no second
+    // "finalize" write: concurrent resets therefore cannot overwrite a newer
+    // reset's epoch after their cleanup finishes out of order.
+    try {
+      await this.storage.set("oauth:generation", active);
+    } catch (error) {
+      try {
+        await this.storage.delete(cleanupBacklogKey(active));
+      } catch {
+        // Best-effort removal of a manifest for an epoch never activated.
+      }
+      throw error;
+    }
+
+    let firstError: unknown;
+    for (const generation of retired) {
+      try {
+        await this.deleteAll(this.valueKeysForGeneration(generation));
+        await this.storage.delete(cleanupBacklogKey(generation));
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    // Keep the active manifest immutable for the epoch's whole lifetime, even
+    // after successful cleanup. A late old-epoch write can land after cleanup;
+    // if its self-delete fails, the next reset must still inherit the complete
+    // lineage without racing a manifest shrink/delete. The successor copies
+    // this manifest before activation and then removes this retired copy.
+    if (firstError) throw firstError;
   }
 
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
-    if (scope === "all" || scope === "client") {
-      await this.storage.delete("oauth:client");
+    const generation = await this.writeGeneration();
+    if (scope === "all") {
+      await this.deleteAll([
+        oauthValueStorageKey("oauth:client", generation),
+        oauthValueStorageKey("oauth:tokens", generation),
+        oauthValueStorageKey("oauth:verifier", generation),
+      ]);
+      return;
     }
-    if (scope === "all" || scope === "tokens") {
-      await this.storage.delete("oauth:tokens");
+    if (scope === "client") {
+      await this.storage.delete(
+        oauthValueStorageKey("oauth:client", generation),
+      );
     }
-    if (scope === "all" || scope === "verifier") {
-      await this.storage.delete("oauth:verifier");
+    if (scope === "tokens") {
+      await this.storage.delete(
+        oauthValueStorageKey("oauth:tokens", generation),
+      );
+    }
+    if (scope === "verifier") {
+      await this.storage.delete(
+        oauthValueStorageKey("oauth:verifier", generation),
+      );
     }
   }
 }

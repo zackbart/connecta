@@ -251,6 +251,55 @@ describe("tool cache TTL", () => {
     expect(calls).toBe(2);
   });
 
+  it("does not publish a catalog refresh invalidated while listTools is in flight", async () => {
+    const storage = memoryStorage();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let calls = 0;
+    const connector: Connector = {
+      id: "racing",
+      kind: "mcp",
+      async listTools() {
+        calls++;
+        if (calls === 1) {
+          reached();
+          await gate;
+          return [{ name: "old_credential_tool" }];
+        }
+        return [{ name: "new_credential_tool" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+
+    const oldRefresh = registry.getTools("racing", BASE);
+    await started;
+    await registry.invalidateStored("racing");
+    release();
+
+    expect((await oldRefresh)[0].name).toBe("old_credential_tool");
+    expect(registry.peekTools("racing")).toBeUndefined();
+    expect(await storage.get("catalog:racing")).toBeNull();
+
+    expect((await registry.getTools("racing", BASE))[0].name).toBe(
+      "new_credential_tool",
+    );
+    expect(await storage.get("catalog:racing")).toContain(
+      "new_credential_tool",
+    );
+  });
+
   it("reuses a persisted serializable catalog in a cold registry", async () => {
     const storage = memoryStorage();
     let calls = 0;

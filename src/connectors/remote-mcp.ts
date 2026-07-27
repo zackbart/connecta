@@ -393,7 +393,7 @@ interface ConnectionState {
   connecting: Promise<void> | null;
   authRequired: boolean;
   provider: KvOAuthProvider | null;
-  connectedGeneration: number | null;
+  connectedGeneration: string | null;
   /**
    * One-way latch: set by closeScope and never cleared, so neither a late
    * connect nor a `reset()` can cache a client into a scope that is already
@@ -518,16 +518,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return state.provider;
   };
 
+  const newProvider = (ctx: ConnectorContext): KvOAuthProvider =>
+    new KvOAuthProvider(
+      id,
+      ctx.storage,
+      `${ctx.baseUrl}/oauth/callback/${id}`,
+    );
+
   const buildTransport = (
     ctx: ConnectorContext,
-    state: ConnectionState,
+    provider: KvOAuthProvider | null,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
     const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
       return new StreamableHTTPClientTransport(url, {
-        authProvider: getProvider(ctx, state),
+        authProvider: provider ?? newProvider(ctx),
         fetch: guardedFetch,
       });
     }
@@ -547,6 +554,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.transport = null;
     state.connecting = null;
     state.authRequired = false;
+    state.provider = null;
     state.connectedGeneration = null;
     // `closed` is deliberately not cleared — see ConnectionState.
   };
@@ -575,84 +583,92 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
     if (state.closed) throw scopeEndedError();
     if (state.client) return;
-    state.connecting ??= (async () => {
-      const provider = isOauth ? getProvider(ctx, state) : null;
-      const genAtStart = provider ? await provider.generation() : 0;
-      if (state.closed) throw scopeEndedError();
-      // Stamp the provider so any saveTokens/saveClientInformation the SDK fires
-      // during this connect (code exchange, DCR) — or during a later refresh on
-      // the resulting client — is dropped if a concurrent force bumps the
-      // generation past this point, instead of re-persisting wiped credentials.
-      provider?.captureGeneration(genAtStart);
-      // The SDK defaults to AJV, which compiles every advertised outputSchema
-      // with `new Function`. Cloudflare Workers prohibit dynamic code
-      // generation, so a remote such as Stripe fails during tools/list unless
-      // the SDK's edge-safe validator is selected explicitly.
-      const c = new Client(
-        { name: "connecta", version: CONNECTA_VERSION },
-        { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
-      );
-      const t = buildTransport(ctx, state);
-      state.transport = t;
-      try {
-        await c.connect(t);
-        // A probe deadline can end its scope while connect is still in flight.
-        // The transport is closed immediately by closeScope; if connect wins
-        // that race anyway, close the resulting client rather than resurrecting
-        // a session in the detached state object.
-        if (state.closed) {
+    if (!state.connecting) {
+      let attempt!: Promise<void>;
+      attempt = (async () => {
+        const ownsAttempt = () =>
+          state.connecting === attempt && !state.closed;
+        const abandon = async (owner: Client | Transport) => {
           try {
-            await c.close();
+            await owner.close();
           } catch {
-            // The scope has already been discarded either way.
+            // The attempt is detached either way.
           }
           throw scopeEndedError();
-        }
-        // A force re-auth that landed WHILE we were connecting wiped the creds
-        // this client just bound to. Discard it rather than cache a connection
-        // that resurrects the wiped-and-reauthorized connector from a stale
-        // isolate. Surfaces as auth_required — the connector genuinely needs
-        // re-consent now.
-        if (provider) {
-          const generation = await provider.generation();
-          // closeScope can land while the generation read is pending, after
-          // connect succeeded but before this client is cached. Discard the
-          // client on that side of the await too.
-          if (state.closed) {
-            try {
-              await c.close();
-            } catch {
-              // The scope has already been discarded either way.
+        };
+        // Let the assignment immediately below this async IIFE publish
+        // `state.connecting = attempt` before ownership is checked. OAuth's
+        // generation read naturally yields; unauthenticated transports do not.
+        await Promise.resolve();
+        // A provider belongs to exactly one connect attempt. A force reset can
+        // abandon that attempt while its transport still holds the provider;
+        // the replacement must never mutate the abandoned provider's epoch.
+        const provider = isOauth ? newProvider(ctx) : null;
+        const genAtStart = provider ? await provider.generation() : "";
+        if (!ownsAttempt()) throw scopeEndedError();
+        provider?.captureGeneration(genAtStart);
+        // The SDK defaults to AJV, which compiles every advertised outputSchema
+        // with `new Function`. Cloudflare Workers prohibit dynamic code
+        // generation, so a remote such as Stripe fails during tools/list unless
+        // the SDK's edge-safe validator is selected explicitly.
+        const c = new Client(
+          { name: "connecta", version: CONNECTA_VERSION },
+          { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+        );
+        const t = buildTransport(ctx, provider);
+        if (!ownsAttempt()) await abandon(t);
+        state.transport = t;
+        try {
+          await c.connect(t);
+          // A probe deadline can end its scope while connect is still in flight.
+          // The transport is closed immediately by closeScope; if connect wins
+          // that race anyway, close the resulting client rather than
+          // resurrecting a session in the detached state object.
+          if (!ownsAttempt()) await abandon(c);
+          // A force re-auth that landed WHILE we were connecting wiped the
+          // credentials this client just bound to. Discard it rather than
+          // cache a stale-isolate connection.
+          if (provider) {
+            const generation = await provider.generation();
+            // closeScope can land while the generation read is pending, after
+            // connect succeeded but before this client is cached. Discard the
+            // client on that side of the await too.
+            if (!ownsAttempt()) await abandon(c);
+            if (generation !== genAtStart) {
+              try {
+                await c.close();
+              } catch {
+                // discarding either way
+              }
+              throw new UnauthorizedError(
+                "Connector was re-authorized during connect; reconnect required.",
+              );
             }
-            throw scopeEndedError();
           }
-          if (generation !== genAtStart) {
-            try {
-              await c.close();
-            } catch {
-              // discarding either way
-            }
-            throw new UnauthorizedError(
-              "Connector was re-authorized during connect; reconnect required.",
-            );
+          if (!ownsAttempt()) await abandon(c);
+          state.client = c;
+          state.connectedGeneration = genAtStart;
+          state.authRequired = false;
+        } catch (err) {
+          // Only a real 401/UnauthorizedError means auth is the problem — a
+          // network error on an oauth connector must surface as "error", not
+          // "auth_required".
+          if (err instanceof UnauthorizedError && ownsAttempt()) {
+            state.authRequired = true;
           }
+          if (err instanceof UnauthorizedError) {
+            throw authRequiredError(err);
+          }
+          throw err;
+        } finally {
+          // Force reset may have abandoned this attempt and installed a new one
+          // in the same request scope. An old completion must not erase the new
+          // promise and allow a third concurrent connect.
+          if (state.connecting === attempt) state.connecting = null;
         }
-        state.client = c;
-        state.connectedGeneration = genAtStart;
-        state.authRequired = false;
-      } catch (err) {
-        // Only a real 401/UnauthorizedError means auth is the problem — a
-        // network error on an oauth connector must surface as "error", not
-        // "auth_required".
-        if (err instanceof UnauthorizedError) {
-          state.authRequired = true;
-          throw authRequiredError(err);
-        }
-        throw err;
-      } finally {
-        state.connecting = null;
-      }
-    })();
+      })();
+      state.connecting = attempt;
+    }
     return state.connecting;
   };
 
@@ -760,7 +776,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // Classify that exactly like connect-time and call-time authorization
         // failures, and latch it for the rest of this request scope.
         if (err instanceof UnauthorizedError) {
-          state.authRequired = true;
+          if (state.client === client) state.authRequired = true;
           throw authRequiredError(err);
         }
         throw err;
@@ -788,8 +804,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     async callTool(name, args, ctx) {
       const state = stateFor(ctx);
       await ensureConnected(ctx, state);
+      const client = state.client!;
       try {
-        return await state.client!.callTool(
+        return await client.callTool(
           {
             name,
             arguments: (args ?? {}) as Record<string, unknown>,
@@ -805,7 +822,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       } catch (err) {
         // A grant revoked after connect surfaces here, not in ensureConnected.
         if (err instanceof UnauthorizedError) {
-          state.authRequired = true;
+          if (state.client === client) state.authRequired = true;
           throw authRequiredError(err);
         }
         throw err;
@@ -867,12 +884,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     async finishAuth(code, ctx) {
       const state = stateFor(ctx);
       const provider = getProvider(ctx, state);
-      // The provider here may carry no captured generation, so its token saves
-      // fail open. That is safe only because generation advances solely via the
-      // force path, which always wipes oauth:state — so verifyState rejects any
-      // pre-force callback before this runs. Keep those two facts coupled.
+      // verifyState ran on this request-scoped provider first and captured the
+      // pending flow's generation. If force reset races the exchange, any late
+      // token write remains tagged with that older generation and is unreadable.
       const t = (state.transport ??
-        buildTransport(ctx, state)) as StreamableHTTPClientTransport;
+        buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
       await t.finishAuth(code);
       await provider.clearPending();
       // Reset so the next use reconnects with the freshly stored tokens.
@@ -899,27 +915,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const p = getProvider(ctx, state);
       if (startOpts?.force) {
-        // Wipe stored credentials and drop the live connection so the next
-        // connect attempt runs the flow from scratch (DCR + PKCE + consent).
-        // Fence the in-flight connect first: a late-completing attempt must not
-        // resurrect the credentials we're about to wipe, nor leave `client` set
-        // (which would make ensureConnected below report already-authorized and
-        // silently defeat force).
-        await state.connecting?.catch(() => {});
+        // Publish the replacement epoch before waiting on or closing any
+        // request-local transport. A hung connect therefore cannot delay the
+        // fence, and every late OAuth write stays in the older namespace.
+        const connecting = state.connecting;
         try {
-          await state.client?.close();
-        } catch {
-          // best-effort; the connection is being discarded either way
+          await p.resetAuthorization();
+        } finally {
+          // Consume the abandoned connect and close whichever half of the
+          // client/transport exists. Reset is unconditional because KV may be
+          // already be fenced behind a newer epoch after a cleanup error.
+          void connecting?.catch(() => {});
+          try {
+            if (state.client) {
+              await state.client.close();
+            } else {
+              await state.transport?.close();
+            }
+          } catch {
+            // best-effort; the state is discarded either way
+          }
+          reset(state);
         }
-        // Bump the shared generation FIRST so any other isolate — one mid-
-        // connect, or on its next tool call — sees the advance and drops its
-        // client instead of keeping the token we're about to revoke.
-        await p.bumpGeneration();
-        // Wipe KV before dropping in-memory state so nothing racing back in can
-        // write tokens over a half-cleared slot.
-        await p.invalidateCredentials("all");
-        await p.clearPending();
-        reset(state);
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
         // the SDK flow, which would overwrite the PKCE verifier and invalidate
