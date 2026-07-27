@@ -96,8 +96,31 @@ takes the sandbox and leaves the platform. Deliberately not adopted:
 - **`createCodemodeRuntime`, the Durable-Object-based runtime** — connecta uses
   `DynamicWorkerExecutor` directly. Sandbox, not platform.
 
-The `Executor` seam is one method for exactly this reason: whatever the platform
-grows, connecta's side of it stays `execute(code, providers)`.
+The portable `Executor` seam still starts with one required method for exactly
+this reason: whatever the platform grows, a Workers executor remains
+structurally compatible with `execute(code, providers)`. Bounded executors may
+add `acquire()` and return an `ExecutorLease` whose own `execute()` is the
+already-admitted path. The lease carrying execution is load-bearing: acquiring
+in `createExecuteTool` and then calling the executor's ordinary `execute()`
+would acquire twice and deadlock a pool of one. `close()` is likewise optional,
+used by process-owning executors and by Node graceful shutdown.
+
+The bounded admission controller lives in the Web-clean core so another
+code-mode executor can reuse its FIFO/overflow/cancellation semantics, but the
+Node QuickJS pool owns its instance. There is one queue, before provider
+construction; queued calls retain no catalog, request scope, or closure per
+tool.
+
+### Worker threads for built-in QuickJS
+
+An Emscripten abort in a worker generally terminates that worker, so crash
+propagation alone does not rule workers out. Address-space containment does:
+worker `resourceLimits` do not cap WebAssembly memory, and a hostile guest can
+still drive process-wide RSS. The built-in executor therefore uses replaceable
+child processes. One execution occupies one child, including host-tool waits;
+multiplexing unrelated contexts in a child would make terminating one runaway
+execution kill the others and is deferred until measurements justify that
+trade.
 
 ### A deployment-level `identities: {…}` table for toolkit membership
 
@@ -268,10 +291,11 @@ encryption keys ([deployment architecture](./operations.md#deployment-architectu
 ### Import-graph purity
 
 The core is Web-API only: no `node:` builtins anywhere reachable from
-`src/index.ts`. The only Node-touching path is `src/node.ts` (`listen()` +
-`fileStorage`). `test/purity.test.ts` statically walks the relative-import graph
-and fails if a `node:` import is reachable, or if `src/node.ts` /
-`src/storage/file.ts` are. Details in
+`src/index.ts`. Node-touching code lives only behind explicit subpaths:
+`src/node.ts` / `src/storage/file.ts` behind `./node`, and the QuickJS process
+pool behind `./quickjs`. `test/purity.test.ts` statically walks the
+relative-import graph and fails if a `node:` import or any of those modules is
+reachable. Details in
 [the import-graph purity rule](./architecture.md#architecture).
 
 ### The published surface

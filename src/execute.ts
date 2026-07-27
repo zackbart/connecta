@@ -8,10 +8,18 @@ import {
   discoverySearchLimit,
   errorResult,
   jsonResult,
-  serializeResultText,
   type ToolResult,
 } from "./meta-tools.js";
+import {
+  guardExecuteResultValue,
+  MAX_EXECUTE_LOG_CHARS,
+  truncateExecuteText,
+} from "./executor-result.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
+import {
+  ExecutorAdmissionError,
+  isAdmittingExecutor,
+} from "./executor-admission.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import type { RegistryView } from "./registry.js";
 import type {
@@ -22,9 +30,6 @@ import type {
   ToolDef,
 } from "./types.js";
 
-/** ~6k tokens. Sandbox code should filter data down before returning. */
-const MAX_RESULT_CHARS = 24_000;
-const MAX_LOG_CHARS = 4_000;
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
 export const EXECUTE_MAX_HOST_CALLS = 20;
 export const EXECUTE_MAX_BATCH_CALLS = 10;
@@ -136,6 +141,7 @@ export async function buildSandboxProviders(
     "connecta",
     "console",
     "__invoke",
+    "__namespace",
     "__call",
     "__log",
   ]);
@@ -474,24 +480,6 @@ export async function buildSandboxProviders(
   return providers;
 }
 
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  return `${text.slice(0, max)}\n--- TRUNCATED (${text.length} chars total) — filter/map/slice data inside your code and return only what you need ---`;
-}
-
-function guardResultValue(value: unknown): unknown {
-  // Same serialization the call_tool guards measure, so a program returning
-  // nothing is rendered one way across every result path (issue #42).
-  const text = serializeResultText(value);
-  if (text.length <= MAX_RESULT_CHARS) return value;
-  return {
-    truncated: true,
-    preview: text.slice(0, MAX_RESULT_CHARS),
-    totalChars: text.length,
-    hint: "filter/map/slice data inside execute_code and return only what you need",
-  };
-}
-
 /** The execute_code handler. Exported for direct testing. */
 export function createExecuteTool(
   registry: RegistryView,
@@ -500,28 +488,63 @@ export function createExecuteTool(
   logger: Logger,
   activity?: ActivityRequestContext,
 ) {
-  return async ({ code }: { code: string }): Promise<ToolResult> => {
+  return async (
+    { code }: { code: string },
+    options: { signal?: AbortSignal } = {},
+  ): Promise<ToolResult> => {
     const controller = new AbortController();
-    const providers = await buildSandboxProviders(
-      registry,
-      baseUrl,
-      logger,
-      activity,
-      { signal: controller.signal },
-    );
+    const forwardAbort = () => controller.abort(options.signal?.reason);
+    if (options.signal?.aborted) forwardAbort();
+    else {
+      options.signal?.addEventListener("abort", forwardAbort, { once: true });
+    }
+    let lease;
     let outcome;
     try {
-      outcome = await executor.execute(code, providers);
+      // Admission comes before provider construction: queued calls retain no
+      // catalogs, request scopes, or one-closure-per-tool provider arrays.
+      if (isAdmittingExecutor(executor)) {
+        lease = await executor.acquire({ signal: controller.signal });
+      }
+      const providers = await buildSandboxProviders(
+        registry,
+        baseUrl,
+        logger,
+        activity,
+        { signal: controller.signal },
+      );
+      outcome = lease
+        ? await lease.execute(code, providers)
+        : await executor.execute(code, providers);
     } catch (err) {
+      if (err instanceof ExecutorAdmissionError) {
+        const result = jsonResult({
+          error: {
+            code: err.code,
+            message: err.message,
+            retryable: err.retryable,
+            ...(err.retryAfterMs !== undefined
+              ? { retryAfterMs: err.retryAfterMs }
+              : {}),
+          },
+        });
+        result.isError = true;
+        return result;
+      }
       return errorResult(`Executor failed: ${msg(err)}`);
     } finally {
       // A sandbox timeout or early return must also release any outstanding
       // host waits and signal cooperative connectors to stop their work.
       controller.abort();
+      lease?.release();
+      options.signal?.removeEventListener("abort", forwardAbort);
     }
     const logs =
       outcome.logs && outcome.logs.length > 0
-        ? truncate(outcome.logs.join("\n"), MAX_LOG_CHARS)
+        ? truncateExecuteText(
+            outcome.logs.join("\n"),
+            MAX_EXECUTE_LOG_CHARS,
+          )
         : undefined;
     if (outcome.error) {
       return errorResult(
@@ -533,7 +556,7 @@ export function createExecuteTool(
     // error path so captured logs survive instead of a raw SDK 500.
     let result: unknown;
     try {
-      result = guardResultValue(outcome.result);
+      result = guardExecuteResultValue(outcome.result);
     } catch (err) {
       return errorResult(
         `Error: result is not JSON-serializable: ${msg(err)}${logs ? `\n\nLogs:\n${logs}` : ""}`,
@@ -594,6 +617,7 @@ export function registerExecuteTool(
         openWorldHint: true,
       },
     },
-    async (args) => handler(args as { code: string }),
+    async (args, extra) =>
+      handler(args as { code: string }, { signal: extra.signal }),
   );
 }

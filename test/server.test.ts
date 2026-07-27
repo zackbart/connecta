@@ -11,6 +11,15 @@ import {
 const WORKERD =
   typeof navigator !== "undefined" &&
   navigator.userAgent?.includes("Cloudflare-Workers");
+
+async function loadQuickJsExecutor() {
+  // This module now imports node:child_process by design. Keep it out of the
+  // Workers bundle entirely; the two callers below skip under workerd.
+  const path = "../src/executors/quickjs" + ".js";
+  return import(/* @vite-ignore */ path) as Promise<
+    typeof import("../src/executors/quickjs.js")
+  >;
+}
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
@@ -976,13 +985,14 @@ describe("execute_code registration (code mode)", () => {
     );
     expect(names1).not.toContain("execute_code");
 
-    const { quickJsExecutor } = await import("../src/executors/quickjs.js");
     const withExec = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      executor: quickJsExecutor(),
+      executor: {
+        execute: async () => ({ result: null }),
+      },
     });
     const res2 = await rpc(withExec, "tools/list", {}, { token: TOKEN });
     const names2 = (await readBody(res2)).result.tools.map(
@@ -993,7 +1003,7 @@ describe("execute_code registration (code mode)", () => {
   });
 
   it.skipIf(WORKERD)("runs code against connectors end to end", async () => {
-    const { quickJsExecutor } = await import("../src/executors/quickjs.js");
+    const { quickJsExecutor } = await loadQuickJsExecutor();
     const events: ToolCallActivityEvent[] = [];
     const c = createConnecta({
       connectors: [calc()],
@@ -1032,10 +1042,11 @@ describe("execute_code registration (code mode)", () => {
     expect(payload.logs).toBe("done");
     expect(events).toHaveLength(3);
     expect(events.every((event) => event.source === "execute_code")).toBe(true);
+    await c.close();
   });
 
   it.skipIf(WORKERD)("discovers and calls an API tool inside one execute_code request", async () => {
-    const { quickJsExecutor } = await import("../src/executors/quickjs.js");
+    const { quickJsExecutor } = await loadQuickJsExecutor();
     const c = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
@@ -1078,5 +1089,80 @@ describe("execute_code registration (code mode)", () => {
       schema: "{ a: number, b: number }",
       value: { sum: 9 },
     });
+    await c.close();
   });
+
+  it.skipIf(WORKERD)(
+    "keeps health and ordinary calls responsive while guests run away",
+    async () => {
+      const { quickJsExecutor } = await loadQuickJsExecutor();
+      const executor = quickJsExecutor({
+        concurrency: 4,
+        maxQueueSize: 8,
+        cpuTimeMs: 200,
+        timeoutMs: 2_000,
+      });
+      const c = createConnecta({
+        connectors: [calc()],
+        auth: bearerToken(TOKEN),
+        storage: memoryStorage(),
+        publicUrl: BASE,
+        executor,
+      });
+      const probeStart = performance.now();
+      const healthProbes = Array.from(
+        { length: 20 },
+        (_, index) =>
+          new Promise<number>((resolve) => {
+            const due = probeStart + index * 10;
+            setTimeout(() => {
+              void c.fetch(new Request(`${BASE}/health`)).then((response) => {
+                expect(response.status).toBe(200);
+                resolve(performance.now() - due);
+              });
+            }, index * 10);
+          }),
+      );
+      const ordinaryCall = new Promise<number>((resolve) => {
+        const due = probeStart + 50;
+        setTimeout(() => {
+          void rpc(
+            c,
+            "tools/call",
+            {
+              name: "call_tool",
+              arguments: {
+                address: "calc.add",
+                args: { a: 4, b: 6 },
+              },
+            },
+            { token: TOKEN },
+          ).then(async (response) => {
+            const body = await readBody(response);
+            expect(JSON.parse(body.result.content[0].text)).toEqual({
+              sum: 10,
+            });
+            resolve(performance.now() - due);
+          });
+        }, 50);
+      });
+      const runaways = Array.from({ length: 4 }, () =>
+        executor.execute(`async () => { while (true) {} }`, []),
+      );
+      const latencies = await Promise.all(healthProbes);
+      const callLatency = await ordinaryCall;
+      const outcomes = await Promise.all(runaways);
+      latencies.sort((a, b) => a - b);
+      const p99 = latencies[latencies.length - 1];
+      expect(p99).toBeLessThan(150);
+      expect(callLatency).toBeLessThan(150);
+      expect(
+        outcomes.every((outcome) =>
+          outcome.error?.includes("guest CPU budget"),
+        ),
+      ).toBe(true);
+      await c.close();
+    },
+    10_000,
+  );
 });

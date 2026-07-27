@@ -264,6 +264,23 @@ export interface ExecutorProvider {
  */
 export interface Executor {
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
+  /** Release runtime resources. Node's built-in pool implements this. */
+  close?(): void | Promise<void>;
+}
+
+/**
+ * Optional admission capability used by bounded executors. The acquired lease
+ * carries execution so an already-admitted caller cannot accidentally acquire
+ * a second slot and deadlock a pool of one.
+ */
+export interface AdmittingExecutor extends Executor {
+  acquire(options?: { signal?: AbortSignal }): Promise<ExecutorLease>;
+}
+
+export interface ExecutorLease {
+  execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
+  /** Idempotent. Call from finally even when provider construction fails. */
+  release(): void;
 }
 
 /**

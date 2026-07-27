@@ -63,6 +63,15 @@ describe("public package boundary", () => {
       optional: true,
     });
     expect(packageJson.exports).toHaveProperty("./quickjs");
+    expect(
+      readFileSync(join(ROOT, "src", "executors", "quickjs.ts"), "utf8"),
+    ).toContain('from "node:child_process"');
+    expect(readdirSync(join(ROOT, "src", "executors")).sort()).toEqual([
+      "quickjs-child.ts",
+      "quickjs-protocol.ts",
+      "quickjs-runtime.ts",
+      "quickjs.ts",
+    ]);
   });
 
   it("exports validateToolInput from the core entry", async () => {

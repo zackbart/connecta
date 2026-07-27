@@ -209,6 +209,8 @@ export interface Connecta {
     force?: boolean;
     ids?: string[];
   }) => Promise<CredentialCheckResult[]>;
+  /** Drain and release configured executor resources. Idempotent. */
+  close: () => Promise<void>;
 }
 
 function defaultLogger(): Logger {
@@ -505,6 +507,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     branding: config.branding,
     ...(toolkits ? { toolkits } : {}),
   });
+  let closePromise: Promise<void> | undefined;
   return {
     fetch: (request, _env, ctx) =>
       handler(
@@ -536,6 +539,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         ...(opts.force !== undefined ? { force: opts.force } : {}),
         ...(opts.ids ? { ids: opts.ids } : {}),
       });
+    },
+    close: async () => {
+      closePromise ??= Promise.resolve().then(async () => {
+        await config.executor?.close?.();
+      });
+      await closePromise;
     },
   };
 }
@@ -591,8 +600,10 @@ export type {
   ConnectorContext,
   ConnectorStatus,
   CredentialTestResult,
+  AdmittingExecutor,
   ExecuteResult,
   Executor,
+  ExecutorLease,
   ExecutorProvider,
   InboundAuth,
   ToolkitBinding,

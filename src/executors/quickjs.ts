@@ -1,409 +1,565 @@
-// QuickJS-in-WebAssembly executor — the Node-side sandbox for execute_code.
-//
-// Model-written code runs inside a QuickJS interpreter compiled to WASM:
-// memory-safe, no ambient authority — the guest has no fetch, filesystem,
-// env, timers, or imports. The only bridge to the host is `__call`, which
-// returns a QuickJS promise that the host resolves with a JSON payload after
-// running the provider function; `executePendingJobs` drives guest
-// continuations from a host-side loop. Values cross the boundary as JSON, so
-// provider args/results must be JSON-serializable.
+// Node's built-in code-mode executor. QuickJS itself lives in a disposable
+// child process: guest CPU, WASM aborts, and interpreter OOMs cannot block or
+// terminate the HTTP-serving process.
 
+import { fork, type ChildProcess } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import {
-  getQuickJS,
-  shouldInterruptAfterDeadline,
-  type QuickJSContext,
-  type QuickJSDeferredPromise,
-} from "quickjs-emscripten";
-import type { ExecuteResult, Executor, ExecutorProvider } from "../types.js";
+  AdmissionController,
+  ExecutorAdmissionError,
+} from "../executor-admission.js";
+import type {
+  AdmittingExecutor,
+  ExecuteResult,
+  ExecutorLease,
+  ExecutorProvider,
+} from "../types.js";
+import {
+  MAX_QUICKJS_IPC_BYTES,
+  MAX_QUICKJS_HOST_RPC_BYTES,
+  type ChildToParentMessage,
+  type ExecutionPayload,
+  type HostCallPayload,
+  type HostResultPayload,
+  type ParentToChildMessage,
+  type RunPayload,
+  serializedBytes,
+  stringifyBounded,
+} from "./quickjs-protocol.js";
+import type { QuickJsRuntimeOptions } from "./quickjs-runtime.js";
+
+export { normalizeCode } from "./quickjs-runtime.js";
 
 export interface QuickJsExecutorOptions {
   /**
-   * Wall-clock budget for the whole execution, host tool calls included
-   * (same wall-clock-budget semantics as codemode's DynamicWorkerExecutor).
-   * Default 30s — intentionally tighter than codemode's 60s default: connecta
-   * sandbox code is tool-call glue, not compute, so a shorter leash surfaces
-   * hung downstreams sooner. Raise it here if a workload legitimately needs it.
+   * Wall-clock budget for the whole execution, host tool calls included.
+   * Default 30s.
    */
   timeoutMs?: number;
-  /** Guest heap limit. Default 64 MiB. */
+  /**
+   * Cumulative time spent synchronously driving guest JavaScript. Host waits do
+   * not consume it. Default 250ms.
+   */
+  cpuTimeMs?: number;
+  /** Guest heap limit per child execution. Default 64 MiB. */
   memoryLimitBytes?: number;
   /** Guest stack limit. Default 1 MiB. */
   maxStackSizeBytes?: number;
+  /** Maximum simultaneous executions/child processes. Default 1. */
+  concurrency?: number;
+  /** Maximum callers waiting before provider construction. Default 32. */
+  maxQueueSize?: number;
+  /** Maximum admission wait. Default 5s. */
+  queueTimeoutMs?: number;
 }
 
-const MAX_LOG_ENTRIES = 200;
-// Cap each entry AND the cumulative buffer at capture time so untrusted guest
-// code can't retain unbounded host memory: a single `console.log("x".repeat(N))`
-// otherwise copies the whole N-char guest string into a host array we hold for
-// the entire execution. 8k chars/entry is generous for glue-code logging (the
-// join in execute.ts trims the assembled log to 4k anyway), and 256k total
-// keeps the worst case — 200 maxed-out entries — bounded well under a MiB.
-const MAX_LOG_ENTRY_CHARS = 8_000;
-const MAX_LOG_TOTAL_CHARS = 256_000;
-// Keep one host result below the range where quickjs-emscripten@0.32.0 can
-// nondeterministically fail during runtime disposal under concurrent load.
-// This still lets guest code reduce data more than ten times larger than
-// connecta's final response budget.
-const MAX_HOST_RESULT_BYTES = 256 * 1024;
+interface ActiveRun {
+  id: number;
+  providers: Map<string, ExecutorProvider>;
+  resolve: (outcome: ExecuteResult) => void;
+  reject: (error: Error) => void;
+  signal?: AbortSignal;
+  onAbort?: () => void;
+  wallTimer: ReturnType<typeof setTimeout>;
+}
+
+interface ChildSlot {
+  child?: ChildProcess;
+  active?: ActiveRun;
+  expectedExit?: ChildProcess;
+  consecutiveCrashes: number;
+  notBefore: number;
+}
+
+const DEFAULT_TIMEOUT_MS = 30_000;
+const DEFAULT_CPU_TIME_MS = 250;
+const DEFAULT_MEMORY_LIMIT_BYTES = 64 * 1024 * 1024;
+const DEFAULT_STACK_LIMIT_BYTES = 1024 * 1024;
+const DEFAULT_CONCURRENCY = 1;
+const DEFAULT_MAX_QUEUE_SIZE = 32;
+const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
+const CHILD_EXIT_GRACE_MS = 250;
+const MAX_ERROR_CHARS = 4_000;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function exceedsUtf8ByteLimit(value: string, limit: number): boolean {
-  let bytes = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x7f) bytes += 1;
-    else if (code <= 0x7ff) bytes += 2;
-    else if (
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      index + 1 < value.length &&
-      value.charCodeAt(index + 1) >= 0xdc00 &&
-      value.charCodeAt(index + 1) <= 0xdfff
-    ) {
-      bytes += 4;
-      index += 1;
-    } else {
-      bytes += 3;
-    }
-    if (bytes > limit) return true;
+function positiveWhole(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (
+    !Number.isFinite(resolved) ||
+    !Number.isInteger(resolved) ||
+    resolved < 1
+  ) {
+    throw new TypeError(`${name} must be a positive whole number.`);
   }
-  return false;
+  return resolved;
 }
 
-/** Normalize model output into an async-arrow expression: strip markdown fences, wrap bare bodies. */
-export function normalizeCode(code: string): string {
-  let c = code.trim();
-  const fence = /^```[\w-]*\s*\n([\s\S]*?)\n?```$/.exec(c);
-  if (fence) c = fence[1].trim();
-  // Sniff for an existing function expression past any leading comments/blank
-  // lines — models routinely prefix their code with a `//` or `/* */` note,
-  // which would otherwise defeat the detection and wrap the whole thing.
-  const head = c.replace(/^(?:\s+|\/\/[^\n]*|\/\*[\s\S]*?\*\/)+/, "");
-  if (/^async\b/.test(head) || head.startsWith("(")) return c;
-  return `async () => {\n${c}\n}`;
-}
-
-/** Guest-side prelude: console capture, the JSON call bridge, one frozen global per provider. */
-function setupScript(providers: ExecutorProvider[]): string {
-  const lines: string[] = [
-    `globalThis.console = (() => {
-  const fmt = (x) => { if (typeof x === "string") return x; try { return JSON.stringify(x); } catch { return String(x); } };
-  const emit = (...a) => __log(a.map(fmt).join(" "));
-  return { log: emit, info: emit, warn: emit, error: emit, debug: emit };
-})();`,
-    `globalThis.__invoke = async (ns, fn, args) => {
-  const r = JSON.parse(await __call(ns, fn, JSON.stringify(args)));
-  if (!r.ok) throw new Error(r.error);
-  return r.value;
-};`,
-  ];
-  for (const p of providers) {
-    const ns = JSON.stringify(p.name);
-    const fields = Object.keys(p.fns).map((fn) => {
-      const f = JSON.stringify(fn);
-      // Forward every argument verbatim, positionally — same as codemode's
-      // sandbox proxy (`(...args) => call(fn, args)`). The host wrappers in
-      // buildSandboxProviders already guard the no-arg case, so no coercion.
-      return `  [${f}]: (...a) => __invoke(${ns}, ${f}, a),`;
-    });
-    lines.push(`globalThis[${ns}] = Object.freeze({\n${fields.join("\n")}\n});`);
+function nonNegativeWhole(
+  value: number | undefined,
+  fallback: number,
+  name: string,
+): number {
+  const resolved = value ?? fallback;
+  if (
+    !Number.isFinite(resolved) ||
+    !Number.isInteger(resolved) ||
+    resolved < 0
+  ) {
+    throw new TypeError(`${name} must be a non-negative whole number.`);
   }
-  return lines.join("\n");
+  return resolved;
 }
 
-/** True when a dumped error is QuickJS's deadline-interrupt signal. */
-function isInterrupt(dumped: unknown): boolean {
-  if (!dumped || typeof dumped !== "object") return false;
-  const e = dumped as { name?: unknown; message?: unknown };
-  return e.name === "InternalError" && e.message === "interrupted";
+function errorPayload(error: string): string {
+  return JSON.stringify({
+    ok: false,
+    error: error.slice(0, MAX_ERROR_CHARS),
+  } satisfies HostResultPayload);
 }
 
-function formatGuestError(dumped: unknown): string {
-  if (dumped && typeof dumped === "object") {
-    const e = dumped as { name?: unknown; message?: unknown };
-    if (e.message != null) {
-      return e.name != null && e.name !== "Error"
-        ? `${String(e.name)}: ${String(e.message)}`
-        : String(e.message);
-    }
-  }
-  return typeof dumped === "string" ? dumped : JSON.stringify(dumped);
-}
-
-interface HostBridge {
-  pending: number;
-  aborted: boolean;
-  wake: () => void;
-  waitForSettle: Promise<void>;
-}
-
-function armWake(bridge: HostBridge): void {
-  bridge.waitForSettle = new Promise((resolve) => {
-    bridge.wake = resolve;
-  });
-}
-
-function waitForHostOrDeadline(
-  waitForSettle: Promise<void>,
-  remainingMs: number,
-): Promise<boolean> {
-  return new Promise((resolve) => {
-    let done = false;
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  if (ms <= 0) return Promise.resolve();
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
-      done = true;
-      resolve(false);
-    }, remainingMs);
-    void waitForSettle.then(() => {
-      if (done) return;
-      done = true;
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
       clearTimeout(timer);
-      resolve(true);
-    });
+      signal?.removeEventListener("abort", onAbort);
+      reject(
+        new ExecutorAdmissionError(
+          "executor_cancelled",
+          "Execution was cancelled while the sandbox was restarting.",
+        ),
+      );
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
 }
 
-function installBridge(
-  ctx: QuickJSContext,
-  providers: ExecutorProvider[],
-  logs: string[],
-): HostBridge {
-  const bridge: HostBridge = {
-    pending: 0,
-    aborted: false,
-    wake: () => {},
-    waitForSettle: Promise.resolve(),
-  };
-  armWake(bridge);
+class QuickJsChildPool implements AdmittingExecutor {
+  private readonly admission: AdmissionController;
+  private readonly slots: ChildSlot[];
+  private readonly available: ChildSlot[];
+  private readonly runtimeOptions: QuickJsRuntimeOptions;
+  private closed = false;
+  private nextJobId = 1;
 
-  // Running total of chars actually retained in `logs`; once the cumulative
-  // budget is spent we push one marker and drop the rest, so a flood of large
-  // entries can't grow the host array without bound.
-  let logTotalChars = 0;
-  let logBudgetSpent = false;
-  const logFn = ctx.newFunction("__log", (h) => {
-    if (logs.length >= MAX_LOG_ENTRIES) {
-      if (logs.length === MAX_LOG_ENTRIES) {
-        logs.push(`[log truncated after ${MAX_LOG_ENTRIES} entries]`);
-      }
-      return;
-    }
-    if (logBudgetSpent) return;
-    // Cap the entry before retaining it: `getString` yields a transient copy,
-    // but slicing here keeps only a bounded string alive in `logs`.
-    let entry = ctx.getString(h);
-    if (entry.length > MAX_LOG_ENTRY_CHARS) {
-      entry = `${entry.slice(0, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
-    }
-    if (logTotalChars + entry.length > MAX_LOG_TOTAL_CHARS) {
-      logs.push("[log truncated: size budget exceeded]");
-      logBudgetSpent = true;
-      return;
-    }
-    logs.push(entry);
-    logTotalChars += entry.length;
-  });
-  ctx.setProp(ctx.global, "__log", logFn);
-  logFn.dispose();
-
-  const byName = new Map(providers.map((p) => [p.name, p]));
-  const invoke = async (
-    ns: string,
-    fn: string,
-    argsJson: string,
-  ): Promise<string> => {
-    try {
-      const provider = byName.get(ns);
-      const f =
-        provider && Object.hasOwn(provider.fns, fn)
-          ? provider.fns[fn]
-          : undefined;
-      if (!f) throw new Error(`Unknown function ${ns}.${fn}`);
-      const args = JSON.parse(argsJson) as unknown[];
-      const value = await f(...args);
-      let json: string;
-      try {
-        json = JSON.stringify({ ok: true, value });
-      } catch (err) {
-        throw new Error(
-          `Host result from ${ns}.${fn} could not be serialized: ${msg(err)}`,
-        );
-      }
-      if (exceedsUtf8ByteLimit(json, MAX_HOST_RESULT_BYTES)) {
-        throw new Error(
-          `Host result from ${ns}.${fn} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
-        );
-      }
-      return json;
-    } catch (err) {
-      return JSON.stringify({ ok: false, error: msg(err) });
-    }
-  };
-
-  const callFn = ctx.newFunction("__call", (nsH, fnH, argsH) => {
-    const ns = ctx.getString(nsH);
-    const fn = ctx.getString(fnH);
-    const argsJson = ctx.getString(argsH);
-    const deferred: QuickJSDeferredPromise = ctx.newPromise();
-    bridge.pending++;
-    void invoke(ns, fn, argsJson).then((json) => {
-      bridge.pending--;
-      if (bridge.aborted) {
-        // Context is (about to be) torn down — settle nothing, free our handles.
-        deferred.dispose();
-      } else {
-        const h = ctx.newString(json);
-        deferred.resolve(h);
-        h.dispose();
-      }
-      bridge.wake();
+  constructor(options: QuickJsExecutorOptions) {
+    const concurrency = positiveWhole(
+      options.concurrency,
+      DEFAULT_CONCURRENCY,
+      "concurrency",
+    );
+    const queueTimeoutMs = positiveWhole(
+      options.queueTimeoutMs,
+      DEFAULT_QUEUE_TIMEOUT_MS,
+      "queueTimeoutMs",
+    );
+    this.admission = new AdmissionController({
+      concurrency,
+      maxQueueSize: nonNegativeWhole(
+        options.maxQueueSize,
+        DEFAULT_MAX_QUEUE_SIZE,
+        "maxQueueSize",
+      ),
+      queueTimeoutMs,
+      retryAfterMs: queueTimeoutMs,
     });
-    return deferred.handle;
-  });
-  ctx.setProp(ctx.global, "__call", callFn);
-  callFn.dispose();
+    this.runtimeOptions = {
+      timeoutMs: positiveWhole(
+        options.timeoutMs,
+        DEFAULT_TIMEOUT_MS,
+        "timeoutMs",
+      ),
+      cpuTimeMs: positiveWhole(
+        options.cpuTimeMs,
+        DEFAULT_CPU_TIME_MS,
+        "cpuTimeMs",
+      ),
+      memoryLimitBytes: positiveWhole(
+        options.memoryLimitBytes,
+        DEFAULT_MEMORY_LIMIT_BYTES,
+        "memoryLimitBytes",
+      ),
+      maxStackSizeBytes: positiveWhole(
+        options.maxStackSizeBytes,
+        DEFAULT_STACK_LIMIT_BYTES,
+        "maxStackSizeBytes",
+      ),
+    };
+    this.slots = Array.from({ length: concurrency }, () => ({
+      consecutiveCrashes: 0,
+      notBefore: 0,
+    }));
+    this.available = [...this.slots];
+  }
 
-  return bridge;
+  async acquire(options: { signal?: AbortSignal } = {}): Promise<ExecutorLease> {
+    const admission = await this.admission.acquire(options);
+    const slot = this.available.shift();
+    if (!slot) {
+      admission.release();
+      throw new Error("Executor admission invariant failed: no child slot.");
+    }
+    let released = false;
+    let executed = false;
+    return {
+      execute: async (code, providers) => {
+        if (released) throw new Error("Executor lease was already released.");
+        if (executed) throw new Error("Executor lease may execute only once.");
+        executed = true;
+        return this.run(slot, code, providers, options.signal);
+      },
+      release: () => {
+        if (released) return;
+        released = true;
+        if (slot.active) {
+          this.rejectActive(
+            slot,
+            new Error("Executor lease was released during execution."),
+          );
+          this.recycle(slot);
+        }
+        this.available.push(slot);
+        admission.release();
+      },
+    };
+  }
+
+  async execute(
+    code: string,
+    providers: ExecutorProvider[],
+  ): Promise<ExecuteResult> {
+    const lease = await this.acquire();
+    try {
+      return await lease.execute(code, providers);
+    } finally {
+      lease.release();
+    }
+  }
+
+  async close(): Promise<void> {
+    if (this.closed) return;
+    this.closed = true;
+    this.admission.close();
+    const exits = this.slots.map((slot) => this.stopSlot(slot));
+    await Promise.allSettled(exits);
+  }
+
+  private async run(
+    slot: ChildSlot,
+    code: string,
+    providers: ExecutorProvider[],
+    signal?: AbortSignal,
+  ): Promise<ExecuteResult> {
+    if (signal?.aborted) {
+      throw new ExecutorAdmissionError(
+        "executor_cancelled",
+        "Execution was cancelled before it started.",
+      );
+    }
+    await this.ensureChild(slot, signal);
+    const child = slot.child;
+    if (!child?.connected) {
+      throw new Error("QuickJS child IPC channel is unavailable.");
+    }
+
+    const id = this.nextJobId++;
+    const providerMap = new Map(providers.map((item) => [item.name, item]));
+    let payloadJson: string;
+    try {
+      payloadJson = stringifyBounded(
+        {
+          id,
+          code,
+          providerNames: providers.map((item) => item.name),
+          options: this.runtimeOptions,
+        } satisfies RunPayload,
+        "QuickJS run payload",
+      );
+    } catch (err) {
+      return { result: undefined, error: msg(err) };
+    }
+
+    child.ref();
+    child.channel?.ref();
+    return new Promise<ExecuteResult>((resolve, reject) => {
+      const wallTimer = setTimeout(() => {
+        this.resolveActive(
+          slot,
+          {
+            result: undefined,
+            error: `QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`,
+          },
+        );
+        this.recycle(slot);
+      }, this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS);
+      const active: ActiveRun = {
+        id,
+        providers: providerMap,
+        resolve,
+        reject,
+        ...(signal ? { signal } : {}),
+        wallTimer,
+      };
+      active.onAbort = () => {
+        this.rejectActive(
+          slot,
+          new ExecutorAdmissionError(
+            "executor_cancelled",
+            "Execution was cancelled.",
+          ),
+        );
+        this.recycle(slot);
+      };
+      signal?.addEventListener("abort", active.onAbort, { once: true });
+      slot.active = active;
+      if (signal?.aborted) {
+        active.onAbort();
+        return;
+      }
+      try {
+        child.send(
+          { type: "run", payloadJson } satisfies ParentToChildMessage,
+          (error) => {
+            if (!error || slot.active?.id !== id) return;
+            this.rejectActive(slot, error);
+            this.recycle(slot);
+          },
+        );
+      } catch (err) {
+        this.rejectActive(
+          slot,
+          err instanceof Error ? err : new Error(String(err)),
+        );
+        this.recycle(slot);
+      }
+    });
+  }
+
+  private async ensureChild(
+    slot: ChildSlot,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    if (this.closed) {
+      throw new ExecutorAdmissionError(
+        "executor_closed",
+        "Executor is shutting down.",
+      );
+    }
+    if (slot.child?.connected) return;
+    await delay(Math.max(0, slot.notBefore - Date.now()), signal);
+    if (this.closed) {
+      throw new ExecutorAdmissionError(
+        "executor_closed",
+        "Executor is shutting down.",
+      );
+    }
+
+    const sourceMode = import.meta.url.endsWith(".ts");
+    const childUrl = new URL(
+      sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js",
+      import.meta.url,
+    );
+    const child = fork(fileURLToPath(childUrl), [], {
+      execArgv: sourceMode ? ["--import", "tsx"] : [],
+      stdio: ["ignore", "ignore", "ignore", "ipc"],
+    });
+    slot.child = child;
+    child.on("message", (message: ChildToParentMessage) => {
+      void this.onMessage(slot, child, message);
+    });
+    child.on("error", (error) => {
+      if (slot.child !== child) return;
+      this.rejectActive(slot, error);
+    });
+    child.on("exit", (code, exitSignal) => {
+      const expected = slot.expectedExit === child;
+      if (slot.expectedExit === child) slot.expectedExit = undefined;
+      if (slot.child === child) slot.child = undefined;
+      if (expected) return;
+      slot.consecutiveCrashes++;
+      slot.notBefore =
+        Date.now() +
+        Math.min(5_000, 100 * 2 ** (slot.consecutiveCrashes - 1));
+      this.resolveActive(slot, {
+        result: undefined,
+        error:
+          `QuickJS child exited unexpectedly` +
+          ` (${exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`}).`,
+      });
+    });
+    child.unref();
+    child.channel?.unref();
+  }
+
+  private async onMessage(
+    slot: ChildSlot,
+    child: ChildProcess,
+    message: ChildToParentMessage,
+  ): Promise<void> {
+    const active = slot.active;
+    if (!active || slot.child !== child || !message) return;
+    if (message.type === "host-call") {
+      if (message.jobId !== active.id) return;
+      await this.handleHostCall(child, active, message);
+      return;
+    }
+    if (message.type !== "result" || message.jobId !== active.id) return;
+    if (serializedBytes(message.payloadJson) > MAX_QUICKJS_IPC_BYTES) {
+      this.resolveActive(slot, {
+        result: undefined,
+        error: "QuickJS execution result exceeded the IPC limit.",
+      });
+      this.recycle(slot);
+      return;
+    }
+    try {
+      const payload = JSON.parse(message.payloadJson) as ExecutionPayload;
+      slot.consecutiveCrashes = 0;
+      slot.notBefore = 0;
+      this.resolveActive(slot, payload.outcome);
+      if (payload.outcome.error?.includes("Execution timed out")) {
+        // A timed-out host call may still retain QuickJS handles. A fresh child
+        // is cheaper and safer than reusing a context with unknown stragglers.
+        this.recycle(slot);
+      }
+    } catch (err) {
+      this.resolveActive(slot, {
+        result: undefined,
+        error: `QuickJS child returned an invalid result: ${msg(err)}`,
+      });
+      this.recycle(slot);
+    }
+  }
+
+  private async handleHostCall(
+    child: ChildProcess,
+    active: ActiveRun,
+    message: Extract<ChildToParentMessage, { type: "host-call" }>,
+  ): Promise<void> {
+    let payloadJson: string;
+    try {
+      if (
+        serializedBytes(message.payloadJson) >
+        MAX_QUICKJS_HOST_RPC_BYTES
+      ) {
+        throw new RangeError("Host call arguments exceeded the IPC limit.");
+      }
+      const payload = JSON.parse(message.payloadJson) as HostCallPayload;
+      const provider = active.providers.get(message.namespace);
+      const fn =
+        provider && Object.hasOwn(provider.fns, message.functionName)
+          ? provider.fns[message.functionName]
+          : undefined;
+      if (!fn) {
+        throw new Error(
+          `Unknown function ${message.namespace}.${message.functionName}`,
+        );
+      }
+      const value = await fn(...payload.args);
+      try {
+        payloadJson = stringifyBounded(
+          { ok: true, value } satisfies HostResultPayload,
+          `Host result from ${message.namespace}.${message.functionName}`,
+          MAX_QUICKJS_HOST_RPC_BYTES,
+        );
+      } catch (err) {
+        const detail =
+          err instanceof RangeError
+            ? `Host result from ${message.namespace}.${message.functionName} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
+            : `Host result from ${message.namespace}.${message.functionName} could not be serialized: ${msg(err)}`;
+        payloadJson = errorPayload(detail);
+      }
+    } catch (err) {
+      payloadJson = errorPayload(msg(err));
+    }
+    if (!child.connected) return;
+    try {
+      child.send({
+        type: "host-result",
+        jobId: message.jobId,
+        callId: message.callId,
+        payloadJson,
+      } satisfies ParentToChildMessage);
+    } catch {
+      // The execution has already ended or the child is exiting. Its exit
+      // handler owns the structured failure for any still-active job.
+    }
+  }
+
+  private resolveActive(slot: ChildSlot, outcome: ExecuteResult): void {
+    const active = slot.active;
+    if (!active) return;
+    this.clearActive(slot, active);
+    active.resolve(outcome);
+  }
+
+  private rejectActive(slot: ChildSlot, error: Error): void {
+    const active = slot.active;
+    if (!active) return;
+    this.clearActive(slot, active);
+    active.reject(error);
+  }
+
+  private clearActive(slot: ChildSlot, active: ActiveRun): void {
+    clearTimeout(active.wallTimer);
+    if (active.onAbort) {
+      active.signal?.removeEventListener("abort", active.onAbort);
+    }
+    slot.active = undefined;
+    slot.child?.unref();
+    slot.child?.channel?.unref();
+  }
+
+  private recycle(slot: ChildSlot): void {
+    const child = slot.child;
+    if (!child) return;
+    slot.expectedExit = child;
+    slot.child = undefined;
+    child.kill();
+  }
+
+  private stopSlot(slot: ChildSlot): Promise<void> {
+    const child = slot.child;
+    if (!child) return Promise.resolve();
+    this.rejectActive(
+      slot,
+      new ExecutorAdmissionError(
+        "executor_closed",
+        "Executor is shutting down.",
+      ),
+    );
+    slot.expectedExit = child;
+    slot.child = undefined;
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, 1_000);
+      child.once("exit", () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill();
+    });
+  }
 }
 
 /**
- * Sandbox executor for Node (or any JS runtime) built on quickjs-emscripten.
- * Suits connecta's execute_code: code is tool-call glue, so an interpreter's
- * speed is irrelevant while its isolation (plain WASM, zero native deps) is
- * the point. One fresh QuickJS context per execution; the WASM module itself
- * is cached across calls by quickjs-emscripten.
+ * Bounded Node QuickJS executor. Admission is acquired before connecta builds
+ * providers; one lease maps to one child and carries execution, avoiding a
+ * double-acquire deadlock at concurrency 1.
  */
 export function quickJsExecutor(
   options: QuickJsExecutorOptions = {},
-): Executor {
-  const timeoutMs = options.timeoutMs ?? 30_000;
-  const memoryLimitBytes = options.memoryLimitBytes ?? 64 * 1024 * 1024;
-  const maxStackSizeBytes = options.maxStackSizeBytes ?? 1024 * 1024;
-
-  return {
-    async execute(
-      code: string,
-      providers: ExecutorProvider[],
-    ): Promise<ExecuteResult> {
-      const QuickJS = await getQuickJS();
-      const ctx = QuickJS.newContext();
-      const deadline = Date.now() + timeoutMs;
-      const timeoutError = `Execution timed out after ${timeoutMs}ms.`;
-      ctx.runtime.setMemoryLimit(memoryLimitBytes);
-      ctx.runtime.setMaxStackSize(maxStackSizeBytes);
-      ctx.runtime.setInterruptHandler(shouldInterruptAfterDeadline(deadline));
-
-      const logs: string[] = [];
-      const bridge = installBridge(ctx, providers, logs);
-      const finish = (r: ExecuteResult): ExecuteResult => {
-        bridge.aborted = true;
-        // Outstanding host calls still hold deferred-promise handles; their
-        // callbacks free them and wake the drain, which disposes the context
-        // once the last straggler settles. Re-arm before every wait so the
-        // deferred never resolves-and-stays-resolved between settles — that
-        // would spin the microtask queue and starve the very timers the
-        // stragglers are waiting on. Arming before the pending check (and
-        // synchronously, before the first await) closes the settle-before-arm
-        // window: any settle after this point resolves the promise we await.
-        if (bridge.pending === 0) ctx.dispose();
-        else {
-          void (async () => {
-            armWake(bridge);
-            while (bridge.pending > 0) {
-              await bridge.waitForSettle;
-              armWake(bridge);
-            }
-            ctx.dispose();
-          })();
-        }
-        return logs.length > 0 ? { ...r, logs } : r;
-      };
-      const fail = (error: string): ExecuteResult =>
-        finish({ result: undefined, error });
-
-      const setup = ctx.evalCode(setupScript(providers));
-      if (setup.error) {
-        const detail = formatGuestError(ctx.dump(setup.error));
-        setup.error.dispose();
-        return fail(`Sandbox setup failed: ${detail}`);
-      }
-      setup.value.dispose();
-
-      const evaluated = ctx.evalCode(
-        `Promise.resolve((\n${normalizeCode(code)}\n)())`,
-      );
-      if (evaluated.error) {
-        const dumped = ctx.dump(evaluated.error);
-        evaluated.error.dispose();
-        // A synchronous runaway (no await to yield on) trips the deadline
-        // interrupt here; surface the friendly timeout, not "interrupted".
-        if (isInterrupt(dumped) && Date.now() >= deadline) return fail(timeoutError);
-        return fail(formatGuestError(dumped));
-      }
-      const promiseHandle = evaluated.value;
-
-      // Drive the guest: run microtask jobs, inspect the result promise,
-      // sleep until a host call settles (or the budget runs out), repeat.
-      // Returns without touching the context lifecycle; disposal happens below.
-      const drive = async (): Promise<ExecuteResult> => {
-        for (;;) {
-          const jobs = ctx.runtime.executePendingJobs();
-          if (jobs.error) {
-            const dumped = ctx.dump(jobs.error);
-            jobs.error.dispose();
-            // A runaway inside a resumed continuation trips the interrupt here.
-            if (isInterrupt(dumped) && Date.now() >= deadline) {
-              return { result: undefined, error: timeoutError };
-            }
-            return { result: undefined, error: formatGuestError(dumped) };
-          }
-          const state = ctx.getPromiseState(promiseHandle);
-          if (state.type === "fulfilled") {
-            const result: unknown = ctx.dump(state.value);
-            state.value.dispose();
-            return { result };
-          }
-          if (state.type === "rejected") {
-            const dumped = ctx.dump(state.error);
-            state.error.dispose();
-            // A synchronous runaway rejects the async fn's promise with the
-            // interrupt; surface the friendly timeout, not "interrupted".
-            if (isInterrupt(dumped) && Date.now() >= deadline) {
-              return { result: undefined, error: timeoutError };
-            }
-            return { result: undefined, error: formatGuestError(dumped) };
-          }
-          if (bridge.pending === 0) {
-            return {
-              result: undefined,
-              error:
-                "Execution stalled: code awaits something that can never settle.",
-            };
-          }
-          const remaining = deadline - Date.now();
-          if (remaining <= 0) {
-            return { result: undefined, error: timeoutError };
-          }
-          const settled = await waitForHostOrDeadline(
-            bridge.waitForSettle,
-            remaining,
-          );
-          if (settled) armWake(bridge);
-          else {
-            return { result: undefined, error: timeoutError };
-          }
-        }
-      };
-
-      let outcome: ExecuteResult;
-      try {
-        outcome = await drive();
-      } finally {
-        promiseHandle.dispose();
-      }
-      return finish(outcome);
-    },
-  };
+): AdmittingExecutor {
+  return new QuickJsChildPool(options);
 }

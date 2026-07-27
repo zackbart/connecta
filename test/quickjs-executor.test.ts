@@ -1,7 +1,36 @@
 import { spawnSync } from "node:child_process";
-import { describe, expect, it } from "vitest";
-import { normalizeCode, quickJsExecutor } from "../src/executors/quickjs.js";
-import type { ExecutorProvider } from "../src/types.js";
+import { afterEach, describe, expect, it } from "vitest";
+import { createExecuteTool } from "../src/execute.js";
+import {
+  normalizeCode,
+  quickJsExecutor as createQuickJsExecutor,
+  type QuickJsExecutorOptions,
+} from "../src/executors/quickjs.js";
+import type {
+  AdmittingExecutor,
+  ExecutorProvider,
+} from "../src/types.js";
+import {
+  calcConnector,
+  makeRegistry,
+  silentLogger,
+} from "./helpers.js";
+
+const executors: AdmittingExecutor[] = [];
+
+function quickJsExecutor(
+  options?: QuickJsExecutorOptions,
+): AdmittingExecutor {
+  const executor = createQuickJsExecutor(options);
+  executors.push(executor);
+  return executor;
+}
+
+afterEach(async () => {
+  await Promise.allSettled(
+    executors.splice(0).map(async (executor) => executor.close?.()),
+  );
+});
 
 function providers(): ExecutorProvider[] {
   return [
@@ -222,19 +251,32 @@ describe("quickJsExecutor", () => {
   it("rejects unknown provider functions", async () => {
     const ex = quickJsExecutor();
     const out = await ex.execute(
-      `async () => { try { await connecta.nope(); } catch (e) { return "x"; } }`,
+      `async () => {
+        try { await connecta.nope(); }
+        catch (e) { return e.message; }
+      }`,
       providers(),
     );
-    // connecta.nope is not defined on the frozen namespace → TypeError.
-    expect(out.error ?? out.result).toBeDefined();
+    expect(out.result).toBe("Unknown function connecta.nope");
   });
 
-  it("maps a runaway synchronous loop to the friendly timeout message", async () => {
+  it("uses lazy namespaces without enumerating one property per tool", async () => {
+    const ex = quickJsExecutor();
+    const out = await ex.execute(
+      `async () => ({
+        keys: Object.keys(calc),
+        sum: (await calc.add({ a: 2, b: 3 })).sum
+      })`,
+      providers(),
+    );
+    expect(out).toEqual({ result: { keys: [], sum: 5 } });
+  });
+
+  it("maps a runaway synchronous loop to the guest CPU budget", async () => {
     const ex = quickJsExecutor({ timeoutMs: 300 });
     const out = await ex.execute(`async () => { while (true) {} }`, []);
     expect(out.result).toBeUndefined();
-    // Not QuickJS's raw "interrupted" — the same message as a host-call timeout.
-    expect(out.error).toBe("Execution timed out after 300ms.");
+    expect(out.error).toBe("Execution exceeded the 250ms guest CPU budget.");
   }, 10_000);
 
   it("rejects an allocation that exceeds the guest heap limit", async () => {
@@ -257,6 +299,11 @@ describe("quickJsExecutor", () => {
     // The heap cap trips, not the wall-clock deadline.
     expect(out.error).not.toContain("timed out");
     expect(out.error).toMatch(/memory/i);
+    // Whether QuickJS returned a memory error or aborted the child, the slot is
+    // replaceable and the serving process remains usable.
+    await expect(ex.execute("async () => 7", [])).resolves.toEqual({
+      result: 7,
+    });
   }, 15_000);
 
   it("times out when a host call hangs", async () => {
@@ -365,5 +412,148 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor();
     const out = await ex.execute("async () => {{{", []);
     expect(out.error).toBeTruthy();
+  });
+
+  it("does not charge host-tool waits to the short guest CPU budget", async () => {
+    const ex = quickJsExecutor({ cpuTimeMs: 20, timeoutMs: 1_000 });
+    const out = await ex.execute(`async () => slow.read()`, [
+      {
+        name: "slow",
+        fns: {
+          read: () =>
+            new Promise((resolve) => setTimeout(() => resolve("done"), 150)),
+        },
+      },
+    ]);
+    expect(out).toEqual({ result: "done" });
+  });
+
+  it("keeps the Node event loop responsive while a guest runs away", async () => {
+    const ex = quickJsExecutor({ cpuTimeMs: 200, timeoutMs: 2_000 });
+    let last = performance.now();
+    let maxGap = 0;
+    const heartbeat = setInterval(() => {
+      const now = performance.now();
+      maxGap = Math.max(maxGap, now - last);
+      last = now;
+    }, 10);
+    const out = await ex.execute(`async () => { while (true) {} }`, []);
+    clearInterval(heartbeat);
+    expect(out.error).toContain("guest CPU budget");
+    expect(maxGap).toBeLessThan(150);
+  }, 10_000);
+
+  it("cancels a running child from the inbound request signal", async () => {
+    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    const handler = createExecuteTool(
+      makeRegistry([calcConnector]),
+      "https://connecta.test",
+      ex,
+      silentLogger,
+    );
+    const controller = new AbortController();
+    const pending = handler(
+      { code: `async () => { while (true) {} }` },
+      { signal: controller.signal },
+    );
+    setTimeout(() => controller.abort(), 50);
+    const out = await pending;
+    const payload = JSON.parse(out.content[0].text) as {
+      error: { code: string; retryable: boolean };
+    };
+    expect(payload.error).toMatchObject({
+      code: "executor_cancelled",
+      retryable: false,
+    });
+    await expect(ex.execute("async () => 9", [])).resolves.toEqual({
+      result: 9,
+    });
+    await ex.close?.();
+  });
+
+  it("bounds the final guest result before child-to-parent IPC", async () => {
+    const ex = quickJsExecutor({
+      memoryLimitBytes: 16 * 1024 * 1024,
+      cpuTimeMs: 1_000,
+    });
+    const out = await ex.execute(
+      `async () => "x".repeat(5 * 1024 * 1024)`,
+      [],
+    );
+    expect(out.error).toBeUndefined();
+    expect(out.result).toMatchObject({
+      truncated: true,
+      totalChars: expect.any(Number),
+    });
+    expect(JSON.stringify(out).length).toBeLessThan(100_000);
+  });
+
+  it("bounds guest-to-host call arguments before IPC", async () => {
+    const ex = quickJsExecutor({ memoryLimitBytes: 16 * 1024 * 1024 });
+    const out = await ex.execute(
+      `async () => {
+        try { return await echo.read("x".repeat(2 * 1024 * 1024)); }
+        catch (e) { return e.message; }
+      }`,
+      [{ name: "echo", fns: { read: async (value) => value } }],
+    );
+    expect(out.result).toContain("IPC limit");
+  });
+
+  it("keeps a 10,000-tool direct call inside a one-second warm budget", async () => {
+    const fns: ExecutorProvider["fns"] = {};
+    for (let index = 0; index < 10_000; index++) {
+      fns[`tool_${index}`] = async () => index;
+    }
+    const ex = quickJsExecutor({ cpuTimeMs: 1_000 });
+    await ex.execute("async () => 1", [{ name: "catalog", fns }]);
+    const started = performance.now();
+    const out = await ex.execute("async () => catalog.tool_9999()", [
+      { name: "catalog", fns },
+    ]);
+    expect(out).toEqual({ result: 9_999 });
+    expect(performance.now() - started).toBeLessThan(1_000);
+  });
+
+  it("bounds a 50-way saturation burst without starving heartbeats", async () => {
+    const ex = quickJsExecutor({
+      concurrency: 4,
+      maxQueueSize: 50,
+      cpuTimeMs: 30,
+      timeoutMs: 2_000,
+    });
+    let last = performance.now();
+    const gaps: number[] = [];
+    const heartbeat = setInterval(() => {
+      const now = performance.now();
+      gaps.push(now - last);
+      last = now;
+    }, 10);
+    const outputs = await Promise.all(
+      Array.from({ length: 50 }, () =>
+        ex.execute(`async () => { while (true) {} }`, []),
+      ),
+    );
+    clearInterval(heartbeat);
+    gaps.sort((a, b) => a - b);
+    const p99 = gaps[Math.min(gaps.length - 1, Math.floor(gaps.length * 0.99))];
+    expect(outputs.every((out) => out.error?.includes("guest CPU budget"))).toBe(
+      true,
+    );
+    expect(p99).toBeLessThan(150);
+  }, 15_000);
+
+  it("close terminates active children and rejects new admission", async () => {
+    const ex = quickJsExecutor({ cpuTimeMs: 5_000, timeoutMs: 10_000 });
+    const running = ex.execute(`async () => { while (true) {} }`, []);
+    const closed = expect(running).rejects.toMatchObject({
+      code: "executor_closed",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    await ex.close?.();
+    await closed;
+    await expect(ex.execute("async () => 1", [])).rejects.toMatchObject({
+      code: "executor_closed",
+    });
   });
 });

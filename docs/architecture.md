@@ -109,14 +109,17 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
 ### The import-graph purity rule
 
 The core is **Web-API only** — no `node:` builtins anywhere reachable from
-`src/index.ts` (the package root entry). The **only** Node-touching path is
-`src/node.ts` (the `"@zackbart/connecta/node"` subpath: `listen()` + `fileStorage`). This
-keeps the same core running unmodified on Cloudflare Workers, Node, and Bun.
+`src/index.ts` (the package root entry). Node APIs live behind explicit
+subpaths: `src/node.ts` / `src/storage/file.ts` behind
+`"@zackbart/connecta/node"`, and the QuickJS process pool behind
+`"@zackbart/connecta/quickjs"`. This keeps the same core running unmodified on
+Cloudflare Workers, Node, and Bun.
 
 `test/purity.test.ts` enforces this: it statically walks the relative-import
-graph from `src/index.ts` and asserts (a) no `from "node:…"` / `require("node:…")`
-appears in any reachable file, and (b) `src/node.ts` and `src/storage/file.ts`
-are never reached. Break the rule and the test suite fails.
+graph from `src/index.ts` and asserts (a) no `from "node:…"` /
+`require("node:…")` appears in any reachable file, and (b) the Node adapter,
+file storage, QuickJS parent/child, and optional auth adapter are never reached.
+Break the rule and the test suite fails.
 
 ### Package layout
 
@@ -154,6 +157,8 @@ connecta/
     timeout.ts            # the shared probe deadline vocabulary (withTimeout, 30 s default)
     activity.ts           # payload-free activity contracts + best-effort recorder
     errors.ts             # ConnectorCallError + error classification
+    executor-admission.ts # portable bounded queue + admitted lease contract
+    executor-result.ts    # execute_code result/log transport shaping
     mcp-result.ts         # result wrapping, fields selection, truncation/paging
     ui.ts                 # shared operator shell + /ui/data payload builder
     favicon.ts            # default monochrome mark served at /favicon.*
@@ -166,7 +171,10 @@ connecta/
       clerk.ts            # optional Clerk adapter ("@zackbart/connecta/auth/clerk")
       downstream-oauth.ts # KvOAuthProvider — OAuthClientProvider over KVStorage
     executors/
-      quickjs.ts          # quickJsExecutor()  ("@zackbart/connecta/quickjs")
+      quickjs.ts          # Node child pool  ("@zackbart/connecta/quickjs")
+      quickjs-child.ts    # disposable child-process entry
+      quickjs-protocol.ts # bounded parent/child messages
+      quickjs-runtime.ts  # QuickJS/WASM context driver inside the child
     storage/
       memory.ts           # memoryStorage()
       file.ts             # fileStorage()  (node-only)

@@ -53,8 +53,15 @@ The seam is deliberately tiny (`src/types.ts`):
 ```ts
 interface Executor {
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
+  close?(): void | Promise<void>;
 }
 ```
+
+A bounded executor may additionally implement `acquire({ signal })` and return
+an `ExecutorLease`. The lease carries its own `execute()`; callers that already
+hold a lease never call the executor's ordinary `execute()` and therefore
+cannot double-acquire a pool of one. Executors without that capability,
+including `DynamicWorkerExecutor`, keep the one-method path unchanged.
 
 Two known implementations:
 
@@ -70,12 +77,25 @@ Two known implementations:
   createConnecta({ executor: new DynamicWorkerExecutor({ loader: env.LOADER }), /* … */ });
   ```
 
-- **Node (or anywhere)** — `quickJsExecutor()` from `@zackbart/connecta/quickjs`:
+- **Node** — `quickJsExecutor()` from `@zackbart/connecta/quickjs`:
   install the optional `quickjs-emscripten` peer, then use the QuickJS engine
-  compiled to WebAssembly. WASM is
-  memory-safe with no ambient authority, so the guest genuinely cannot reach
-  the network or filesystem; options cap memory (default 64 MiB), stack
-  (1 MiB), and wall-clock time (30 s, host tool calls included).
+  compiled to WebAssembly in a disposable child process. The guest has no
+  ambient authority, and a WASM abort or interpreter OOM kills a replaceable
+  child rather than the HTTP-serving process.
+
+  Four separate controls bound different costs:
+
+  | Option | Default | Bounds |
+  | --- | ---: | --- |
+  | `cpuTimeMs` | 250 ms | cumulative synchronous guest CPU; host waits do not count |
+  | `timeoutMs` | 30 s | total execution wall time, including host waits |
+  | `concurrency` | 1 | simultaneous executions/child processes |
+  | `maxQueueSize` / `queueTimeoutMs` | 32 / 5 s | callers waiting before provider construction |
+
+  `memoryLimitBytes` (64 MiB) and `maxStackSizeBytes` (1 MiB) remain per-guest
+  QuickJS limits. Queue overflow and queue expiry return the stable,
+  retryable `executor_overloaded` error with `retryAfterMs`; request
+  cancellation removes a queued caller or terminates its running child.
 
   Guest `await` is driven from the host, not by suspending the interpreter: a
   tool call hands the guest a QuickJS deferred promise and the host pumps
@@ -85,21 +105,33 @@ Two known implementations:
   is why the executor can notice a promise that can never settle and fail fast
   with "execution stalled" instead of burning the whole timeout.
 
-  The 30 s default is intentionally tighter than codemode's 60 s: sandbox code
-  is tool-call glue, not compute, so a shorter leash surfaces hung downstreams
-  sooner. Both executors forward provider-function arguments verbatim and
-  positionally, so identical sandbox code behaves the same on either. To keep
-  QuickJS runtime disposal deterministic under concurrent load, one serialized
-  host result may be at most 256 KiB of UTF-8. Larger results fail that host
-  call with a normal catchable error before the value enters the guest. This
-  is separate from the final ~24k-character response budget: guest code can
-  still reduce an input more than ten times larger before returning its compact
-  answer.
+  Direct connector namespaces are lazy Proxies, so setup creates one object per
+  connector rather than one generated closure per visible tool. Consequently
+  `Object.keys(github)` is empty, and an unknown function crosses the bridge
+  before failing with `Unknown function github.name`; neither behavior grants
+  authority. Both executors still forward arguments positionally.
+
+  One serialized host result or guest call argument may be at most 256 KiB of
+  UTF-8. Larger values fail that host call before entering the other process.
+  The child applies the final ~24k-character result policy before sending a
+  result, and the whole child-to-parent envelope has a 1 MiB hard ceiling.
 
   ```ts
   import { quickJsExecutor } from "@zackbart/connecta/quickjs";
-  createConnecta({ executor: quickJsExecutor({ timeoutMs: 30_000 }), /* … */ });
+  const connecta = createConnecta({
+    executor: quickJsExecutor({
+      cpuTimeMs: 250,
+      timeoutMs: 30_000,
+      concurrency: 1,
+      maxQueueSize: 32,
+      queueTimeoutMs: 5_000,
+    }),
+    /* … */
+  });
   ```
+
+  `connecta.close()` terminates/releases executor resources. The Node
+  `listen()` adapter calls it as soon as graceful shutdown begins.
 
 **Never** back the seam with an unsandboxed `eval`/`node:vm` — the code is
 model-written and must be treated as hostile.
@@ -110,11 +142,14 @@ model-written and must be treated as hostile.
   skipped (same isolation as `search_tools`), and name collisions after
   sanitization are logged and skipped (first wins). `connecta` is a reserved
   namespace.
+- Bounded executors acquire before those providers are built, so queued calls
+  retain no catalogs or request-scoped connector closures.
 - Results are JSON-serialized and truncated at ~24k chars with an explicit
   marker telling the model to reduce data in code; logs are capped too.
 - A guest that awaits something that can never settle fails fast with an
   "execution stalled" error rather than burning the whole timeout
   (QuickJS executor).
 - In the QuickJS executor, `Promise.all` over tool calls runs the host calls
-  concurrently; if a downstream call outlives the timeout, the sandbox context
-  is torn down as soon as the call settles.
+  concurrently. A lease remains occupied during host waits; active CPU slots
+  and in-flight workflows are therefore the same initial limit rather than a
+  multiplexed pool.
