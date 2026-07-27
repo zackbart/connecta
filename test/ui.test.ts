@@ -23,6 +23,7 @@ import {
   type UiConnector,
 } from "../src/ui.js";
 import { CONNECTA_FAVICON_ICO } from "../src/favicon.js";
+import { CONNECTA_VERSION } from "../src/version.js";
 import type {
   ActivityStore,
   ToolCallActivityEvent,
@@ -1002,7 +1003,8 @@ describe("status UI", () => {
     window.Clerk = Clerk;
 
     const payload = (id: string) => ({
-      serverInfo: { name: id, version: "1" },
+      serverInfo: { name: id, version: "host-build-1" },
+      connectaVersion: "package-7.8.9",
       credentialManagement: "available",
       activityEnabled: true,
       connectors: [
@@ -1062,6 +1064,9 @@ describe("status UI", () => {
     await windowListeners.get("load")?.();
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(element("list").children[0]?.innerHTML).toContain("identity-a");
+    expect(element("serverInfo").textContent).toBe(
+      "identity-a vpackage-7.8.9",
+    );
     expect(element("toolkitList").children[0]?.innerHTML).toContain(
       "view-identity-a",
     );
@@ -1134,6 +1139,7 @@ describe("status UI", () => {
     expect(res.status).toBe(200);
     const body = (await res.json()) as any;
     expect(body.serverInfo.name).toBe("connecta");
+    expect(body.connectaVersion).toBe(CONNECTA_VERSION);
     expect(body.activityEnabled).toBe(false);
     expect(body.credentialManagement).toBe("requires_clerk");
     expect(body.toolkits).toEqual([]);
