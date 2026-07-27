@@ -574,7 +574,11 @@ export type {
   CredentialHealthRecord,
 } from "./credential-health.js";
 
-export type { RemoteMcpOptions, RemoteMcpAuth } from "./connectors/remote-mcp.js";
+export type {
+  RemoteMcpOptions,
+  RemoteMcpAuth,
+  RemoteMcpRedirectPolicy,
+} from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";
 export type {
   Connector,
