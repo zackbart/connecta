@@ -2,7 +2,13 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.7.5 — 2026-07-27
+
+0.7.5 makes the deployable Cloudflare Worker starter match Connecta's
+pay-as-you-opt-in runtime behavior. The default config now runs on Workers Free;
+accounts that want sandboxed `execute_code` add one paid Worker Loader binding,
+and the existing optional `env.LOADER` wiring turns code mode on without a
+source edit. There are no package API or runtime changes.
 
 ### Changed
 
