@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Changed
+
+- **The Cloudflare Worker starter is now free-tier compatible by default.**
+  Its Worker Loader binding is an explicit paid-plan opt-in: adding that one
+  Wrangler block makes the already-optional `env.LOADER` register
+  `execute_code`, while leaving it absent serves the nine base meta-tools from
+  the same TypeScript. The Worker example, package README, and code-mode
+  reference now document the binding-as-switch pattern, plan requirement, and
+  deployment-owned `@cloudflare/codemode` install together.
+
 ## 0.7.4 — 2026-07-27
 
 0.7.4 moves the built-in QuickJS executor out of the HTTP-serving process. A

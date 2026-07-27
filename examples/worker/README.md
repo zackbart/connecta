@@ -1,8 +1,10 @@
 # connecta — Cloudflare Worker example
 
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
-API connector behind the nine meta-tools plus `execute_code`, guarded by Clerk
-OAuth *and* a static bearer token, with state in a KV namespace.
+API connector behind the nine base meta-tools, guarded by Clerk OAuth *and* a
+static bearer token, with state in a KV namespace. Optional paid code mode adds
+`execute_code` through one Wrangler binding; the checked-in configuration
+deploys without it and is compatible with the Workers Free plan.
 
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
@@ -74,11 +76,25 @@ credential goes back to selecting any view. Full reference:
 
 ## Code mode
 
-`worker_loaders` in `wrangler.jsonc` binds the Dynamic Worker sandbox behind
-`execute_code`. Dynamic Workers is in open beta on paid plans — delete the
-binding and the `executor` line in `src/index.ts` to run with the nine base
-meta-tools only. `src/index.ts` already treats the binding as optional, so an
-account without it degrades cleanly rather than failing to boot.
+Code mode is a deploy-time opt-in because its Dynamic Worker sandbox requires
+the [Workers Paid plan](https://developers.cloudflare.com/dynamic-workers/pricing/).
+The Worker Loader binding is the switch; no TypeScript change or separate
+environment variable is needed. Add this block to `wrangler.jsonc` (and a comma
+after the preceding property):
+
+```jsonc
+"worker_loaders": [{ "binding": "LOADER" }]
+```
+
+`src/index.ts` detects `env.LOADER`, constructs `DynamicWorkerExecutor`, and
+registers `execute_code` automatically. Leave the binding absent — as it is in
+the checked-in config — to deploy the same source on the Workers Free plan with
+the nine base meta-tools. A deployment copied into its own repository must also
+install the executor package before enabling the binding:
+
+```sh
+npm install @cloudflare/codemode
+```
 
 ## Activity history (optional)
 

@@ -170,8 +170,9 @@ Point an MCP client at `http://localhost:8787/mcp` with an
 Runnable deployments live in
 [`examples/`](https://github.com/zackbart/connecta/tree/main/examples):
 [`worker/`](https://github.com/zackbart/connecta/tree/main/examples/worker) is a
-deployable Cloudflare Worker with KV and D1 adapters, and the template to copy
-for a real deployment;
+free-tier-compatible Cloudflare Worker with KV and D1 adapters, and the template
+to copy for a real deployment; adding one Worker Loader binding opts it into
+paid Dynamic Worker code mode without changing its TypeScript;
 [`node/`](https://github.com/zackbart/connecta/tree/main/examples/node) adds
 toolkits and code mode to the server above;
 [`docker/`](https://github.com/zackbart/connecta/tree/main/examples/docker) is a
