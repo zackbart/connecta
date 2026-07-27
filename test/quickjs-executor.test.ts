@@ -273,7 +273,9 @@ describe("quickJsExecutor", () => {
   });
 
   it("maps a runaway synchronous loop to the guest CPU budget", async () => {
-    const ex = quickJsExecutor({ timeoutMs: 300 });
+    // Wall budget far above the 250ms CPU default: a slow CI tick past a tight
+    // wall deadline would otherwise let wallInterrupted win the race.
+    const ex = quickJsExecutor({ timeoutMs: 5_000 });
     const out = await ex.execute(`async () => { while (true) {} }`, []);
     expect(out.result).toBeUndefined();
     expect(out.error).toBe("Execution exceeded the 250ms guest CPU budget.");
@@ -314,6 +316,11 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor({ timeoutMs: 300 });
     const out = await ex.execute(`async () => slow.forever({})`, hang);
     expect(out.error).toContain("timed out");
+    // The child reports the wall expiry structurally, the parent retires it,
+    // and the replacement slot keeps serving.
+    await expect(ex.execute("async () => 3", [])).resolves.toEqual({
+      result: 3,
+    });
   }, 10_000);
 
   it("releases every losing deadline timer after host waits settle", async () => {

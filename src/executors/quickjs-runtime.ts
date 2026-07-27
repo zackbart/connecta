@@ -266,6 +266,15 @@ function installBridge(
 }
 
 /**
+ * ExecuteResult plus a structural wall-expiry marker. Guest errors flow through
+ * formatGuestError verbatim, so the timeout message text is forgeable; this
+ * flag is set only by the return sites below and never from guest values.
+ */
+export interface QuickJsExecutionResult extends ExecuteResult {
+  timedOut?: boolean;
+}
+
+/**
  * Execute one program inside the child. Wall time includes host waits; guest
  * CPU accumulates only while evalCode/executePendingJobs is synchronously
  * driving QuickJS, so a slow downstream does not consume the short CPU budget.
@@ -274,7 +283,7 @@ export async function executeQuickJs(
   code: string,
   providers: ExecutorProvider[],
   options: QuickJsRuntimeOptions,
-): Promise<ExecuteResult> {
+): Promise<QuickJsExecutionResult> {
       const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } =
         options;
       const QuickJS = await getQuickJS();
@@ -309,7 +318,7 @@ export async function executeQuickJs(
 
       const logs: string[] = [];
       const bridge = installBridge(ctx, providers, logs);
-      const finish = (r: ExecuteResult): ExecuteResult => {
+      const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
         // Outstanding host calls still hold deferred-promise handles; their
         // callbacks free them and wake the drain, which disposes the context
@@ -334,12 +343,17 @@ export async function executeQuickJs(
       };
       const fail = (error: string): ExecuteResult =>
         finish({ result: undefined, error });
+      const timedOut = (): QuickJsExecutionResult => ({
+        result: undefined,
+        error: timeoutError,
+        timedOut: true,
+      });
 
       const setup = runGuest(() => ctx.evalCode(setupScript(providers)));
       if (setup.error) {
         const detail = formatGuestError(ctx.dump(setup.error));
         setup.error.dispose();
-        if (wallInterrupted) return fail(timeoutError);
+        if (wallInterrupted) return finish(timedOut());
         if (cpuInterrupted) return fail(cpuTimeoutError);
         return fail(`Sandbox setup failed: ${detail}`);
       }
@@ -351,7 +365,7 @@ export async function executeQuickJs(
       if (evaluated.error) {
         const dumped = ctx.dump(evaluated.error);
         evaluated.error.dispose();
-        if (isInterrupt(dumped) && wallInterrupted) return fail(timeoutError);
+        if (isInterrupt(dumped) && wallInterrupted) return finish(timedOut());
         if (isInterrupt(dumped) && cpuInterrupted) return fail(cpuTimeoutError);
         return fail(formatGuestError(dumped));
       }
@@ -360,17 +374,17 @@ export async function executeQuickJs(
       // Drive the guest: run microtask jobs, inspect the result promise,
       // sleep until a host call settles (or the budget runs out), repeat.
       // Returns without touching the context lifecycle; disposal happens below.
-      const drive = async (): Promise<ExecuteResult> => {
+      const drive = async (): Promise<QuickJsExecutionResult> => {
         for (;;) {
           if (Date.now() >= deadline) {
-            return { result: undefined, error: timeoutError };
+            return timedOut();
           }
           const jobs = runGuest(() => ctx.runtime.executePendingJobs());
           if (jobs.error) {
             const dumped = ctx.dump(jobs.error);
             jobs.error.dispose();
             if (isInterrupt(dumped) && wallInterrupted) {
-              return { result: undefined, error: timeoutError };
+              return timedOut();
             }
             if (isInterrupt(dumped) && cpuInterrupted) {
               return { result: undefined, error: cpuTimeoutError };
@@ -387,7 +401,7 @@ export async function executeQuickJs(
             const dumped = ctx.dump(state.error);
             state.error.dispose();
             if (isInterrupt(dumped) && wallInterrupted) {
-              return { result: undefined, error: timeoutError };
+              return timedOut();
             }
             if (isInterrupt(dumped) && cpuInterrupted) {
               return { result: undefined, error: cpuTimeoutError };
@@ -403,7 +417,7 @@ export async function executeQuickJs(
           }
           const remaining = deadline - Date.now();
           if (remaining <= 0) {
-            return { result: undefined, error: timeoutError };
+            return timedOut();
           }
           const settled = await waitForHostOrDeadline(
             bridge.waitForSettle,
@@ -411,12 +425,12 @@ export async function executeQuickJs(
           );
           if (settled) armWake(bridge);
           else {
-            return { result: undefined, error: timeoutError };
+            return timedOut();
           }
         }
       };
 
-      let outcome: ExecuteResult;
+      let outcome: QuickJsExecutionResult;
       try {
         outcome = await drive();
       } finally {

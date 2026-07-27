@@ -100,6 +100,7 @@ async function run(payload: RunPayload): Promise<void> {
     );
     const prepared: ExecutionPayload = {
       outcome: prepareExecuteResultForTransport(raw),
+      ...(raw.timedOut ? { timedOut: true } : {}),
     };
     let payloadJson: string;
     try {

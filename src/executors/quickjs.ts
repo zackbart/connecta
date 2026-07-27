@@ -484,12 +484,17 @@ class QuickJsChildPool implements AdmittingExecutor {
     child: ChildProcess,
     message: ChildToParentMessage,
   ): Promise<void> {
+    // A compromised child is exactly the adversary this process boundary
+    // contains, and this handler's rejection would crash the serving process.
+    // Refuse malformed intake before touching any field.
+    if (!message || typeof message !== "object") return;
     if (message.type === "ready") {
       this.resolveChildReady(slot, child);
       return;
     }
     const active = slot.active;
-    if (!active || slot.child !== child || !message) return;
+    if (!active || slot.child !== child) return;
+    if (typeof message.payloadJson !== "string") return;
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
       await this.handleHostCall(child, active, message);
@@ -509,9 +514,11 @@ class QuickJsChildPool implements AdmittingExecutor {
       slot.consecutiveCrashes = 0;
       slot.notBefore = 0;
       this.resolveActive(slot, payload.outcome);
-      if (payload.outcome.error?.includes("Execution timed out")) {
+      if (payload.timedOut) {
         // A timed-out host call may still retain QuickJS handles. A fresh child
         // is cheaper and safer than reusing a context with unknown stragglers.
+        // The runtime sets this flag itself: matching error text here would let
+        // a guest throw "Execution timed out…" and force cold-start churn.
         this.recycle(slot);
       }
     } catch (err) {

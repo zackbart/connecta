@@ -129,6 +129,15 @@ multiplexing unrelated contexts in a child would make terminating one runaway
 execution kill the others and is deferred until measurements justify that
 trade.
 
+A child that finishes cleanly stays warm for the next execution rather than
+being disposed per run. The accepted residue: a guest that escaped QuickJS
+itself — which already requires an interpreter or WASM bug — could persist in
+that child and observe later executions routed through it. Crash, wall
+timeout, and cancellation all replace the child, and the parent treats every
+child message as untrusted input either way. Dispose-per-run would close the
+gap at a cold-start cost per execution; adopt it only if that latency proves
+acceptable or the threat model changes.
+
 ### A deployment-level `identities: {…}` table for toolkit membership
 
 Toolkit membership could have been declared centrally, keyed by identity id:

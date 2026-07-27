@@ -47,6 +47,11 @@ export type HostResultPayload =
 
 export interface ExecutionPayload {
   outcome: ExecuteResult;
+  /**
+   * Set by the runtime on wall-clock expiry. The parent recycles the child on
+   * this flag, never on error text a guest can fabricate.
+   */
+  timedOut?: boolean;
 }
 
 export function serializedBytes(text: string): number {
