@@ -2,6 +2,7 @@
 // child process: guest CPU, WASM aborts, and interpreter OOMs cannot block or
 // terminate the HTTP-serving process.
 
+import { Buffer } from "node:buffer";
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import {
@@ -84,10 +85,31 @@ const DEFAULT_MAX_QUEUE_SIZE = 32;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
 const CHILD_EXIT_GRACE_MS = 250;
 const CHILD_STARTUP_TIMEOUT_MS = 10_000;
+const MAX_CHILD_STDERR_BYTES = 8 * 1024;
 const MAX_ERROR_CHARS = 4_000;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function retainStderrTail(current: Buffer, chunk: Buffer | string): Buffer {
+  const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
+  if (incoming.length >= MAX_CHILD_STDERR_BYTES) {
+    return Buffer.from(
+      incoming.subarray(incoming.length - MAX_CHILD_STDERR_BYTES),
+    );
+  }
+  const combined = Buffer.concat([current, incoming]);
+  if (combined.length <= MAX_CHILD_STDERR_BYTES) return combined;
+  return Buffer.from(combined.subarray(combined.length - MAX_CHILD_STDERR_BYTES));
+}
+
+function childExitError(message: string, stderrTail: Buffer): Error {
+  if (stderrTail.length === 0) return new Error(message);
+  return new Error(
+    `${message}\nRecent child stderr (last ${stderrTail.length} bytes):\n` +
+      stderrTail.toString("utf8"),
+  );
 }
 
 function positiveWhole(
@@ -427,8 +449,15 @@ class QuickJsChildPool implements AdmittingExecutor {
     );
     const child = fork(fileURLToPath(childUrl), [], {
       execArgv: sourceMode ? ["--import", "tsx"] : [],
-      stdio: ["ignore", "ignore", "ignore", "ipc"],
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
+    let stderrTail: Buffer = Buffer.alloc(0);
+    child.stderr?.on("data", (chunk: Buffer | string) => {
+      stderrTail = retainStderrTail(stderrTail, chunk);
+    });
+    (
+      child.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null
+    )?.unref?.();
     slot.child = child;
     slot.ready = new Promise<void>((resolve, reject) => {
       slot.resolveReady = resolve;
@@ -453,26 +482,30 @@ class QuickJsChildPool implements AdmittingExecutor {
       this.rejectActive(slot, error);
       this.recycle(slot);
     });
-    child.on("exit", (code, exitSignal) => {
+    // `close`, unlike `exit`, runs after the stdio streams have closed, so the
+    // diagnostic includes stderr bytes flushed immediately before a crash.
+    child.on("close", (code, exitSignal) => {
       const expected = slot.expectedExit === child;
       if (slot.expectedExit === child) slot.expectedExit = undefined;
+      const exitDescription = `${
+        exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`
+      }`;
       this.rejectChildReady(
         slot,
         child,
-        new Error(
-          `QuickJS child exited before becoming ready` +
-          ` (${exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`}).`,
+        childExitError(
+          `QuickJS child exited before becoming ready (${exitDescription}).`,
+          stderrTail,
         ),
       );
       if (slot.child === child) slot.child = undefined;
       if (expected) return;
       this.recordCrash(slot);
-      this.resolveActive(slot, {
-        result: undefined,
-        error:
-          `QuickJS child exited unexpectedly` +
-          ` (${exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`}).`,
-      });
+      const error = childExitError(
+        `QuickJS child exited unexpectedly (${exitDescription}).`,
+        stderrTail,
+      );
+      this.resolveActive(slot, { result: undefined, error: error.message });
     });
     child.unref();
     child.channel?.unref();
