@@ -919,8 +919,8 @@ export function createMetaTools(
       // call scope. Closing it cannot defeat call_tool/batch/execute_code reuse.
       const connectors = registry.listConnectors();
       const scope = probe ? {} : requestScope;
-      const out = await Promise.all(
-        connectors.map(async (c) => {
+      const pending = connectors.map(
+        async (c) => {
           const statusStarted = Date.now();
           const observed = registry.healthFor(c.id);
           const verdict = await registry.credentialHealthFor(c.id);
@@ -1079,17 +1079,23 @@ export function createMetaTools(
               : {}),
             ...(status.message ? { message: status.message } : {}),
           };
-        }),
-      ).finally(async () => {
-        if (!probe) return;
-        await Promise.all(
-          connectors.map((connector) =>
-            closeConnectorScope(
-              connector,
-              registry.contextFor(connector.id, baseUrl, scope),
-            ),
+        },
+      );
+      if (!probe) {
+        return jsonResult({ connectors: await Promise.all(pending) });
+      }
+      const settled = await Promise.allSettled(pending);
+      await Promise.all(
+        connectors.map((connector) =>
+          closeConnectorScope(
+            connector,
+            registry.contextFor(connector.id, baseUrl, scope),
           ),
-        );
+        ),
+      );
+      const out = settled.map((result) => {
+        if (result.status === "rejected") throw result.reason;
+        return result.value;
       });
       return jsonResult({ connectors: out });
     },

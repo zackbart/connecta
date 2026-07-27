@@ -344,6 +344,31 @@ describe("remoteMcp() connector", () => {
     expect(counts).toEqual({ connect: 1, close: 1 });
   });
 
+  it("does not create connection state for a scope closed before use", async () => {
+    let builds = 0;
+    const connector = remoteMcp("down", {
+      url: "https://unused.example/mcp",
+      description: "Downstream",
+      _transportFactory: () => {
+        builds++;
+        return {
+          async start() {
+            throw new Error("closed scope built a transport");
+          },
+          async send() {},
+          async close() {},
+        };
+      },
+    });
+    const context = { ...ctx(), requestScope: {} };
+
+    await connector.closeScope!(context);
+    await expect(connector.listTools(context)).rejects.toThrow(
+      "scope ended during connection",
+    );
+    expect(builds).toBe(0);
+  });
+
   it("discards a client when its scope closes during the post-connect generation read", async () => {
     const backing = memoryStorage();
     let generationReads = 0;

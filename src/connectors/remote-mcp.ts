@@ -380,6 +380,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // transport, response bodies, AbortSignals, or connection promise reachable
   // from the isolate singleton. Those are request-bound in Cloudflare Workers.
   const states = new WeakMap<object, ConnectionState>();
+  // Closing is terminal even after `states.delete`: a late or future lookup
+  // must not recreate an ownerless connection under the ended scope.
+  const closedScopes = new WeakSet<object>();
   const isOauth = opts.auth?.type === "oauth";
   const logger = opts.logger ?? console;
 
@@ -449,6 +452,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
   const stateFor = (ctx: ConnectorContext): ConnectionState => {
     const scope = ctx.requestScope ?? ctx;
+    if (closedScopes.has(scope)) throw scopeEndedError();
     let state = states.get(scope);
     if (!state) {
       state = {
@@ -773,11 +777,13 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async closeScope(ctx) {
       const scope = ctx.requestScope ?? ctx;
+      // Tombstone before any lookup or await. This also makes close-before-use
+      // terminal rather than allowing the scope to spring into existence later.
+      closedScopes.add(scope);
       const state = states.get(scope);
       if (!state) return;
 
-      // Delete before awaiting: a duplicate teardown is a no-op, and no later
-      // lookup can reuse the state while its client is closing.
+      // Delete before awaiting: a duplicate teardown is a no-op.
       states.delete(scope);
       state.closed = true;
       const client = state.client;

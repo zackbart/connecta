@@ -158,7 +158,9 @@ connectors normally do not need to inspect it. A connector that retains a
 request-safe resource under that identity may implement `closeScope(ctx)`.
 When the core creates a scope solely to probe — the credential-health sweep,
 `list_connectors({ probe: true })`, or `/ui/data` — it calls the hook **at most
-once** after the probe finishes and never uses that scope again. Teardown is
+once** after every sibling probe has settled and never uses that scope again.
+Closing a scope is terminal: a connector must refuse to recreate request-bound
+state under the same identity after teardown. Teardown is
 best-effort and gets only a small, fixed completion window: a missing hook, one
 that rejects, or one that never settles cannot replace the probe's result or
 hold the request open indefinitely. The hook is deliberately not called between

@@ -332,11 +332,6 @@ export interface CredentialCheckOptions {
   force?: boolean;
   /** Restrict the sweep to these connector ids. Default: every connector. */
   ids?: string[];
-  /**
-   * Internal scope identity supplied by an existing owner. When omitted, the
-   * check creates and ends its own probe scope.
-   */
-  requestScope?: object;
 }
 
 /**
@@ -586,12 +581,7 @@ export class CredentialHealthChecker {
         ...(await this.recordOrNothing(connectorId)),
       };
     }
-    const run = this.runCheck(
-      connector,
-      baseUrl,
-      opts.force ?? false,
-      opts.requestScope,
-    );
+    const run = this.runCheck(connector, baseUrl, opts.force ?? false);
     this.inFlight.set(connectorId, run);
     try {
       return await run;
@@ -611,7 +601,6 @@ export class CredentialHealthChecker {
     connector: Connector,
     baseUrl: string,
     force: boolean,
-    requestScope?: object,
   ): Promise<CredentialCheckResult> {
     const connectorId = connector.id;
     const started = Date.now();
@@ -671,8 +660,9 @@ export class CredentialHealthChecker {
         return { connectorId, skipped: "fresh", record: current };
       }
     }
-    const ownsScope = requestScope === undefined;
-    const scope = requestScope ?? {};
+    // Credential checks are always probe owners. No caller may lend them an
+    // ordinary request scope and thereby suppress the teardown below.
+    const scope = {};
     const ctx = this.deps.contextFor(connectorId, baseUrl, scope);
     try {
       if (credentialReadError) {
@@ -713,7 +703,7 @@ export class CredentialHealthChecker {
         });
       }
     } finally {
-      if (ownsScope) await closeConnectorScope(connector, ctx);
+      await closeConnectorScope(connector, ctx);
     }
   }
 
