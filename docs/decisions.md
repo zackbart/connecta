@@ -284,6 +284,51 @@ is still probed through it, since that question never involves the shape — and
 warning at boot. [§7](./documentation.md#7-storage),
 [§17](./documentation.md#17-credential-health-proactive-liveness-checks).
 
+### Stored credentials are checked by containment, not equality
+
+The declaration must also fit what is already stored after a redeploy. A second
+pure rule in the same module (`storedCredentialShape`) compares key sets only,
+and asks one question: does the vault hold **every field the connector currently
+declares** — the reserved `value` for a single credential, every declared name
+for a named one? `/ui`, the test route, and credential health all read it, and
+none of them keeps a private variant.
+
+A stored set that is missing a declared field is drift, which covers every case
+issue #69 reported: a renamed field, a newly added one, and a swap between the
+two shapes in either direction (no special case needed — `value` is never a
+declared name, so each swap leaves the declared side unsatisfied). Drift is
+never auto-migrated: `/ui` keeps Remove/Replace available and hides Test, the
+test route returns the shared 409 without calling a hook, and health replaces
+even a fresh historical `ok` with an explicit error without calling either a
+hook or `status()`. That last check must stay **before** health's freshness
+gate, or yesterday's valid verdict would confidently describe credentials no
+current hook can consume. What it must *not* do is stay outside the gate
+entirely: once the same drift error is stored and still fresh, health skips
+`fresh` like anything else, because drift is a durable operator-error state and
+re-settling it on every sweep in every isolate would bill a metered KV write for
+information nobody learned.
+
+**Extra stored keys are explicitly not drift**, and the rule was relaxed to
+containment (was exact equality) before that ever shipped. Dropping a declared
+field leaves its secret behind in the vault, but every accessor the connector
+uses — `ctx.credential.get("apiKey")`, `getAll().apiKey` — keeps returning the
+right secret, and every tool call keeps working. Calling that drift would tell
+an operator to re-enter a credential that *works* and that many providers will
+not reissue in readable form; the cure would be worse than a disease that isn't
+there.
+
+The trade-off we accept in exchange: the dropped field's secret lingers
+encrypted in KV until the credential is replaced, and a connector that iterates
+`getAll()` rather than naming its fields could still hand a now-undeclared value
+downstream. Both are bounded (the value was already stored, and only that
+connector can read it) and neither justifies breaking a working deployment, so
+the answer is disclosure rather than enforcement: the classifier returns the
+leftover names as `undeclared` and `/ui` prints one non-blocking line naming
+them beside the credential — the only place they are visible at all, since the
+field list renders declared fields only. Replacing the credential clears them.
+[§14](./documentation.md#14-status-ui),
+[§17](./documentation.md#17-credential-health-proactive-liveness-checks).
+
 ### Activity is payload-free by construction
 
 Activity records which resolved tool ran, for whom, and how it went — never

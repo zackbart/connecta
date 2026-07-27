@@ -1,5 +1,6 @@
 import type {
   Connector,
+  ConnectorCredentialConfig,
   ConnectorCredentialValues,
   KVStorage,
 } from "./types.js";
@@ -41,6 +42,98 @@ export interface CredentialMetadata {
 
 /** Which hook a testable credential is checked with. */
 export type CredentialTestMode = "single" | "multiple";
+
+/** Operator-safe explanation shared by every surface that detects shape drift. */
+export const STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR =
+  "Stored credential fields do not match this connector's current declaration. Replace the credential before using or testing this connector.";
+
+export type StoredCredentialShape =
+  | { state: "missing" }
+  | {
+      state: "valid";
+      mode: CredentialTestMode;
+      /**
+       * Stored keys the connector no longer declares, sorted. Harmless — the
+       * credential works — but worth telling an operator about, since nothing
+       * else in `/ui` can show a field the declaration has stopped naming.
+       */
+      undeclared: string[];
+    }
+  | {
+      state: "mismatch";
+      mode: CredentialTestMode;
+      message: typeof STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR;
+    };
+
+/**
+ * Compare a connector's current declaration with the keys in its stored
+ * credential. Values are deliberately ignored: callers may pass decrypted
+ * values or `/ui`'s masked field metadata and get exactly the same answer.
+ *
+ * The test is CONTAINMENT, not equality: the stored key set is compatible when
+ * it holds every field currently declared — the reserved `value` key for a
+ * single-value declaration, every declared name for a named one. Anything the
+ * declaration asks for and the vault does not have is `mismatch`, which is
+ * precisely what a renamed field, a newly added field, or a swap between the
+ * two shapes produces. The swap needs no special case: `value` is never one of
+ * the declared names, so single→named and named→single each leave the declared
+ * side unsatisfied. An empty stored map (reachable through a hand-written
+ * plaintext) satisfies nothing and is a mismatch too.
+ *
+ * Extra keys are NOT drift. They are what *dropping* a field leaves behind, and
+ * every accessor a connector actually uses — `ctx.credential.get("apiKey")`,
+ * `getAll().apiKey` — keeps returning the right secret across that redeploy.
+ * Calling it drift would order an operator to re-enter a working secret that
+ * many providers will not reissue in readable form. The leftovers come back as
+ * `undeclared` instead, for a surface to mention without blocking anything.
+ */
+export function storedCredentialShape(
+  config: ConnectorCredentialConfig,
+  stored: Readonly<Record<string, unknown>> | null,
+): StoredCredentialShape {
+  if (!stored) return { state: "missing" };
+  const mode: CredentialTestMode = config.fields?.length
+    ? "multiple"
+    : "single";
+  const declared = new Set(
+    mode === "multiple" ? config.fields!.map((field) => field.name) : ["value"],
+  );
+  const actual = Object.keys(stored);
+  const present = new Set(actual);
+  for (const field of declared) {
+    if (!present.has(field)) {
+      return {
+        state: "mismatch",
+        mode,
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      };
+    }
+  }
+  return {
+    state: "valid",
+    mode,
+    undeclared: actual.filter((field) => !declared.has(field)).sort(),
+  };
+}
+
+/** How many leftover field names an advisory names before it summarizes. */
+const UNDECLARED_SAMPLE = 5;
+
+/**
+ * The one sentence describing leftover stored fields, so every surface words it
+ * the same way. Names only — the values stay in the vault, and a field name from
+ * a previous declaration is not a secret. Deliberately reassuring: nothing is
+ * broken, and the only thing an operator gains by acting is that a connector
+ * iterating `getAll()` stops seeing a field its code no longer knows about.
+ */
+export function describeUndeclaredCredentialFields(fields: string[]): string {
+  const shown = fields.slice(0, UNDECLARED_SAMPLE);
+  const rest = fields.length - shown.length;
+  const named = shown.join(", ") + (rest > 0 ? `, and ${rest} more` : "");
+  return fields.length === 1
+    ? `Stored credential also holds a field this connector no longer declares (${named}). It keeps working; replace the credential to drop it.`
+    : `Stored credential also holds fields this connector no longer declares (${named}). It keeps working; replace the credential to drop them.`;
+}
 
 /** A declared credential shape whose only test hook cannot test it. */
 export interface CredentialTestMismatch {

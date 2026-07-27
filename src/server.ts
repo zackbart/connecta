@@ -13,6 +13,7 @@ import { InvalidActivityCursorError } from "./activity.js";
 import {
   credentialTestRule,
   describeCredentialTestMismatch,
+  storedCredentialShape,
 } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import { ScopedRegistry, type Registry, type RegistryView } from "./registry.js";
@@ -567,26 +568,29 @@ async function handleCredentialRequest(
       );
     }
     try {
+      const values = await opts.credentialVault.getAll(connectorId);
+      const shape = storedCredentialShape(connector.credential, values);
+      if (shape.state === "missing") {
+        return privateJson(
+          {
+            error:
+              rule.mode === "multiple"
+                ? "configure the credentials before testing them"
+                : "configure the credential before testing it",
+          },
+          { status: 409 },
+        );
+      }
+      if (shape.state === "mismatch") {
+        return privateJson({ error: shape.message }, { status: 409 });
+      }
+      const storedValues = values!;
       const ctx = opts.registry.contextFor(connectorId, baseUrl);
       let result;
       if (rule.mode === "multiple") {
-        const values = await opts.credentialVault.getAll(connectorId);
-        if (!values) {
-          return privateJson(
-            { error: "configure the credentials before testing them" },
-            { status: 409 },
-          );
-        }
-        result = await connector.testCredentials!(values, ctx);
+        result = await connector.testCredentials!(storedValues, ctx);
       } else {
-        const value = await opts.credentialVault.get(connectorId);
-        if (!value) {
-          return privateJson(
-            { error: "configure the credential before testing it" },
-            { status: 409 },
-          );
-        }
-        result = await connector.testCredential!(value, ctx);
+        result = await connector.testCredential!(storedValues.value, ctx);
       }
       // The operator just ran the very check the liveness sweep runs; record it
       // so the cached status surfaces agree with what /ui just showed them.

@@ -3,6 +3,10 @@ import { createConnecta } from "../src/index.js";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
+import {
+  CredentialVault,
+  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+} from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import {
@@ -288,6 +292,43 @@ function makeBothHooksConnecta(shape: "single" | "multiple") {
     storage: memoryStorage(),
     publicUrl: BASE,
     credentialEncryptionKey: CREDENTIAL_KEY,
+  });
+  return { connecta, testCredential, testCredentials };
+}
+
+function makeShapeDriftConnecta(
+  storage: ReturnType<typeof memoryStorage>,
+  shape: "single" | "multiple",
+) {
+  const testCredential = vi.fn(async () => ({ ok: true }));
+  const testCredentials = vi.fn(async () => ({ ok: true }));
+  const connector =
+    shape === "single"
+      ? api("drift", {
+          description: "Shape drift test",
+          credential: { label: "API token" },
+          testCredential,
+          tools: [],
+        })
+      : api("drift", {
+          description: "Shape drift test",
+          credential: {
+            label: "Service credentials",
+            fields: [
+              { name: "email", label: "Account email" },
+              { name: "apiKey", label: "API key" },
+            ],
+          },
+          testCredentials,
+          tools: [],
+        });
+  const connecta = createConnecta({
+    connectors: [connector],
+    auth: [bearerToken(TOKEN), fakeClerk()],
+    storage,
+    publicUrl: BASE,
+    credentialEncryptionKey: CREDENTIAL_KEY,
+    credentialHealth: { onRequest: false },
   });
   return { connecta, testCredential, testCredentials };
 }
@@ -949,6 +990,371 @@ describe("status UI", () => {
 });
 
 describe("status UI credential management", () => {
+  it("keeps a stored superset usable, testable, and flagged as leftover", async () => {
+    // The redeploy issue #79's review probed: the connector used to declare
+    // { email, apiKey } and now declares only { apiKey }. The stored secret
+    // still answers every read the connector makes, so nothing may break —
+    // but the operator is told the vault is carrying a passenger.
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).setAll(
+      "superset",
+      { email: "operator@example.com", apiKey: "live-key-secret" },
+      "user_123",
+    );
+    const testCredentials = vi.fn(async () => ({ ok: true }));
+    const connecta = createConnecta({
+      connectors: [
+        api("superset", {
+          description: "Dropped a field",
+          credential: {
+            label: "Service credentials",
+            fields: [{ name: "apiKey", label: "API key" }],
+          },
+          testCredentials,
+          tools: [],
+        }),
+      ],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage,
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentialHealth: { onRequest: false },
+    });
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const credential = ((await data.json()) as any).connectors[0].credential;
+    expect(credential).toMatchObject({
+      configured: true,
+      removable: true,
+      testable: true,
+      fields: [{ name: "apiKey", configured: true }],
+    });
+    expect(credential).not.toHaveProperty("error");
+    expect(credential.notice).toContain("email");
+    // Non-blocking: it names the leftover, it does not demand a replacement.
+    expect(credential.notice).toContain("keeps working");
+
+    const html = await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui`, {
+          headers: { Authorization: "Bearer clerk-token" },
+        }),
+      )
+    ).text();
+    expect(html).not.toContain("live-key-secret");
+    // The card is client-rendered from /ui/data, so the shell carries the
+    // branch: the notice prints as muted copy, not the underlined `.msg` an
+    // error gets, and the Test button is still drawn.
+    expect(html).toContain('<p class="credential-copy meta">\' + esc(cred.notice)');
+    expect(html).toContain('data-credential-action="test"');
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/superset/test",
+      { method: "POST" },
+    );
+    expect(test.status).toBe(200);
+    await expect(test.json()).resolves.toEqual({ ok: true });
+    // The hook sees what the vault holds, exactly as a real call would.
+    expect(testCredentials).toHaveBeenCalledWith(
+      { email: "operator@example.com", apiKey: "live-key-secret" },
+      expect.anything(),
+    );
+
+    // And the sweep agrees: a superset is not drift, so the Test verdict stands.
+    const [health] = await connecta.registry.checkCredentialHealth(BASE);
+    expect(health).toMatchObject({
+      connectorId: "superset",
+      skipped: "fresh",
+      record: { state: "ok" },
+    });
+  });
+
+  it("keeps a single-value credential usable when an old named field lingers", async () => {
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).setAll(
+      "legacy",
+      { value: "current-secret", region: "eu-west-1" },
+      "user_123",
+    );
+    const testCredential = vi.fn(async () => ({ ok: true }));
+    const connecta = createConnecta({
+      connectors: [
+        api("legacy", {
+          description: "Single value beside a leftover",
+          credential: { label: "API token" },
+          testCredential,
+          tools: [],
+        }),
+      ],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage,
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentialHealth: { onRequest: false },
+    });
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const credential = ((await data.json()) as any).connectors[0].credential;
+    expect(credential).toMatchObject({ configured: true, testable: true });
+    expect(credential).not.toHaveProperty("error");
+    expect(credential.notice).toContain("region");
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/legacy/test",
+      { method: "POST" },
+    );
+    expect(test.status).toBe(200);
+    expect(testCredential).toHaveBeenCalledWith(
+      "current-secret",
+      expect.anything(),
+    );
+  });
+
+  it("treats duplicate named declarations with true key-set semantics", async () => {
+    const testCredentials = vi.fn(
+      async (values: Record<string, string>) => ({
+        ok: values.apiKey === "duplicate-field-secret",
+      }),
+    );
+    const connector = api("duplicate", {
+      description: "Duplicate field declaration",
+      credential: {
+        label: "Service credential",
+        fields: [
+          { name: "apiKey", label: "Primary API key" },
+          { name: "apiKey", label: "Repeated API key" },
+        ],
+      },
+      testCredentials,
+      tools: [],
+    });
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: [bearerToken(TOKEN), fakeClerk()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      credentialEncryptionKey: CREDENTIAL_KEY,
+      credentialHealth: { onRequest: false },
+    });
+
+    const save = await credentialRequest(
+      connecta,
+      "/ui/credentials/duplicate",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          values: { apiKey: "duplicate-field-secret" },
+        }),
+      },
+    );
+    expect(save.status).toBe(200);
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: true,
+      removable: true,
+      testable: true,
+      fields: [
+        { name: "apiKey", configured: true },
+        { name: "apiKey", configured: true },
+      ],
+    });
+    expect(payload.connectors[0].credential).not.toHaveProperty("error");
+
+    const test = await credentialRequest(
+      connecta,
+      "/ui/credentials/duplicate/test",
+      { method: "POST" },
+    );
+    expect(test.status).toBe(200);
+    await expect(test.json()).resolves.toEqual({ ok: true });
+    expect(testCredentials).toHaveBeenCalledTimes(1);
+    expect(testCredentials).toHaveBeenCalledWith(
+      { apiKey: "duplicate-field-secret" },
+      expect.anything(),
+    );
+
+    // The manual Test recorded a fresh ok. Health still runs its local shape
+    // classifier before the freshness shortcut, so this proves that classifier
+    // sees the declaration as the same key set rather than false drift.
+    const [health] = await connecta.registry.checkCredentialHealth(BASE);
+    expect(health).toMatchObject({
+      connectorId: "duplicate",
+      skipped: "fresh",
+      record: { state: "ok" },
+    });
+    expect(testCredentials).toHaveBeenCalledTimes(1);
+  });
+
+  it("detects named-to-single storage drift and recovers after replacement", async () => {
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).setAll(
+      "drift",
+      { email: "operator@example.com", apiKey: "old-key-secret" },
+      "user_123",
+    );
+    const { connecta, testCredential } = makeShapeDriftConnecta(
+      storage,
+      "single",
+    );
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: false,
+      removable: true,
+      testable: false,
+      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+
+    const driftedTest = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift/test",
+      { method: "POST" },
+    );
+    expect(driftedTest.status).toBe(409);
+    await expect(driftedTest.json()).resolves.toEqual({
+      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+    expect(testCredential).not.toHaveBeenCalled();
+
+    const replacement = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value: "replacement-secret" }),
+      },
+    );
+    expect(replacement.status).toBe(200);
+    const recoveredData = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const recoveredPayload = (await recoveredData.json()) as any;
+    expect(recoveredPayload.connectors[0].credential).toMatchObject({
+      configured: true,
+      removable: true,
+      testable: true,
+    });
+    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty(
+      "error",
+    );
+    const recoveredTest = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift/test",
+      { method: "POST" },
+    );
+    expect(recoveredTest.status).toBe(200);
+    expect(testCredential).toHaveBeenCalledWith(
+      "replacement-secret",
+      expect.anything(),
+    );
+  });
+
+  it("detects single-to-named storage drift and recovers after replacement", async () => {
+    const storage = memoryStorage();
+    await new CredentialVault(storage, CREDENTIAL_KEY).set(
+      "drift",
+      "old-single-secret",
+      "user_123",
+    );
+    const { connecta, testCredentials } = makeShapeDriftConnecta(
+      storage,
+      "multiple",
+    );
+
+    const data = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const payload = (await data.json()) as any;
+    expect(payload.connectors[0].credential).toMatchObject({
+      configured: false,
+      removable: true,
+      testable: false,
+      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      fields: [
+        { name: "email", configured: false },
+        { name: "apiKey", configured: false },
+      ],
+    });
+
+    const driftedTest = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift/test",
+      { method: "POST" },
+    );
+    expect(driftedTest.status).toBe(409);
+    await expect(driftedTest.json()).resolves.toEqual({
+      error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+    expect(testCredentials).not.toHaveBeenCalled();
+
+    const values = {
+      email: "operator@example.com",
+      apiKey: "replacement-key",
+    };
+    const replacement = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift",
+      {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ values }),
+      },
+    );
+    expect(replacement.status).toBe(200);
+    const recoveredData = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+    const recoveredPayload = (await recoveredData.json()) as any;
+    expect(recoveredPayload.connectors[0].credential).toMatchObject({
+      configured: true,
+      removable: true,
+      testable: true,
+      fields: [
+        { name: "email", configured: true },
+        { name: "apiKey", configured: true },
+      ],
+    });
+    expect(recoveredPayload.connectors[0].credential).not.toHaveProperty(
+      "error",
+    );
+    const recoveredTest = await credentialRequest(
+      connecta,
+      "/ui/credentials/drift/test",
+      { method: "POST" },
+    );
+    expect(recoveredTest.status).toBe(200);
+    expect(testCredentials).toHaveBeenCalledWith(values, expect.anything());
+  });
+
   it("stores, masks, exposes to the connector, tests, and removes a credential", async () => {
     const { connecta, storage } = makeCredentialConnecta();
 

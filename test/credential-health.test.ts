@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
-import { CredentialVault } from "../src/credentials.js";
+import {
+  CredentialVault,
+  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+} from "../src/credentials.js";
 import { createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry, ScopedRegistry } from "../src/registry.js";
@@ -385,6 +388,236 @@ describe("credential liveness checks", () => {
     const entry = await cachedStatus(registry, "resend");
     expect(entry.status).toBe("auth_required");
     expect(entry.message).toBe("Token was revoked.");
+  });
+
+  it("replaces a fresh ok verdict when named storage drifts to a single declaration", async () => {
+    const calls = { status: 0, listTools: 0, callTool: 0, test: 0 };
+    const connector: Connector = {
+      id: "drift",
+      kind: "api",
+      description: "Shape drift",
+      credential: { label: "API token" },
+      async testCredential() {
+        calls.test++;
+        return { ok: true };
+      },
+      async status() {
+        calls.status++;
+        return { state: "ok" };
+      },
+      async listTools() {
+        calls.listTools++;
+        return [];
+      },
+      async callTool() {
+        calls.callTool++;
+        return null;
+      },
+    };
+    const { registry, vault } = vaultRegistry([connector]);
+    await vault.setAll(
+      "drift",
+      { email: "operator@example.com", apiKey: "old-key" },
+      "user_1",
+    );
+    await registry.recordCredentialHealth("drift", {
+      state: "ok",
+      checkedAt: new Date().toISOString(),
+    });
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome).toMatchObject({
+      connectorId: "drift",
+      record: {
+        state: "error",
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      },
+    });
+    expect(outcome.skipped).toBeUndefined();
+    expect(await registry.credentialHealthFor("drift")).toMatchObject({
+      state: "error",
+      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+    expect(calls.test).toBe(0);
+    expect(calls.status).toBe(0);
+  });
+
+  it("replaces a fresh ok verdict when single storage drifts to named fields", async () => {
+    const calls = { status: 0, listTools: 0, callTool: 0, test: 0 };
+    const connector: Connector = {
+      id: "drift",
+      kind: "api",
+      description: "Shape drift",
+      credential: {
+        label: "Service credentials",
+        fields: [
+          { name: "email", label: "Account email" },
+          { name: "apiKey", label: "API key" },
+        ],
+      },
+      async testCredentials() {
+        calls.test++;
+        return { ok: true };
+      },
+      async status() {
+        calls.status++;
+        return { state: "ok" };
+      },
+      async listTools() {
+        calls.listTools++;
+        return [];
+      },
+      async callTool() {
+        calls.callTool++;
+        return null;
+      },
+    };
+    const { registry, vault } = vaultRegistry([connector]);
+    await vault.set("drift", "old-single-secret", "user_1");
+    await registry.recordCredentialHealth("drift", {
+      state: "ok",
+      checkedAt: new Date().toISOString(),
+    });
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome).toMatchObject({
+      connectorId: "drift",
+      record: {
+        state: "error",
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      },
+    });
+    expect(outcome.skipped).toBeUndefined();
+    expect(await registry.credentialHealthFor("drift")).toMatchObject({
+      state: "error",
+      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+    expect(calls.test).toBe(0);
+    expect(calls.status).toBe(0);
+  });
+
+  it("checks a stored superset of the declared fields like any other credential", async () => {
+    const calls = { status: 0, test: 0 };
+    let seen: Record<string, string> | undefined;
+    // The redeploy in issue #79's review: `email` was dropped from the
+    // declaration, the vault still holds it, and `apiKey` still works.
+    const connector: Connector = {
+      id: "superset",
+      kind: "api",
+      description: "Dropped a field",
+      credential: {
+        label: "Service credentials",
+        fields: [{ name: "apiKey", label: "API key" }],
+      },
+      async testCredentials(values) {
+        calls.test++;
+        seen = values;
+        return { ok: true, message: "Key accepted." };
+      },
+      async status() {
+        calls.status++;
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const { registry, vault } = vaultRegistry([connector]);
+    await vault.setAll(
+      "superset",
+      { email: "operator@example.com", apiKey: "live-key-abcdefghij" },
+      "user_1",
+    );
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome).toMatchObject({
+      connectorId: "superset",
+      record: { state: "ok", message: "Key accepted." },
+    });
+    expect(calls.test).toBe(1);
+    // The hook is handed what the vault actually holds — the same set
+    // `ctx.credential.getAll()` gives the connector during a real call.
+    expect(seen).toEqual({
+      email: "operator@example.com",
+      apiKey: "live-key-abcdefghij",
+    });
+    expect(await registry.credentialHealthFor("superset")).toMatchObject({
+      state: "ok",
+    });
+  });
+
+  it("charges a repeated drift verdict to the freshness budget instead of a write", async () => {
+    const writes: string[] = [];
+    const inner = memoryStorage();
+    const storage = {
+      get: (k: string) => inner.get(k),
+      set: (k: string, v: string) => {
+        writes.push(k);
+        return inner.set(k, v);
+      },
+      delete: (k: string) => inner.delete(k),
+    };
+    const vault = new CredentialVault(storage, KEY);
+    const connector: Connector = {
+      id: "drift",
+      kind: "api",
+      description: "Shape drift",
+      credential: { label: "API token" },
+      async testCredential() {
+        return { ok: true };
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = makeRegistry([connector], {
+      storage,
+      credentialVault: vault,
+    });
+    await vault.setAll(
+      "drift",
+      { email: "operator@example.com", apiKey: "old-key" },
+      "user_1",
+    );
+    // The drift verdict this sweep would form, already stored and stamped two
+    // minutes ago: past MIN_WRITE_GAP_MS, so only the freshness gate can stop
+    // the write. Drift is a durable operator-error state; re-settling it on
+    // every sweep in every isolate would bill a metered write for nothing.
+    await registry.recordCredentialHealth("drift", {
+      state: "error",
+      checkedAt: new Date(Date.now() - 120_000).toISOString(),
+      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
+    writes.length = 0;
+
+    const [outcome] = await registry.checkCredentialHealth(BASE);
+
+    expect(outcome).toMatchObject({
+      connectorId: "drift",
+      skipped: "fresh",
+      record: {
+        state: "error",
+        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+      },
+    });
+    expect(writes.filter((k) => k.startsWith("credhealth:"))).toEqual([]);
+    // `force` is still the operator's override, and still re-settles.
+    const [forced] = await registry.checkCredentialHealth(BASE, {
+      force: true,
+    });
+    expect(forced.skipped).toBeUndefined();
+    expect(writes.filter((k) => k.startsWith("credhealth:"))).toEqual([
+      "credhealth:drift",
+    ]);
   });
 
   it("reports a credential it can no longer decrypt as auth_required", async () => {

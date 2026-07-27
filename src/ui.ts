@@ -1,4 +1,8 @@
-import { credentialTestRule } from "./credentials.js";
+import {
+  credentialTestRule,
+  describeUndeclaredCredentialFields,
+  storedCredentialShape,
+} from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
 import { closeConnectorScope } from "./connector-scope.js";
 import type { Registry } from "./registry.js";
@@ -280,6 +284,12 @@ export interface UiConnector {
     updatedAt?: string;
     testable: boolean;
     error?: string;
+    /**
+     * Something true and non-blocking about a working credential — today, that
+     * the vault still holds fields the connector has stopped declaring.
+     * Distinct from `error`, which means the credential cannot be used.
+     */
+    notice?: string;
   };
 }
 
@@ -369,7 +379,7 @@ export async function buildUiData(
         // One rule, shared with the test route: only the hook matching the
         // declared credential shape can run, so the button is offered only
         // where a click can succeed (src/credentials.ts).
-        const testable = credentialTestRule(c).mode !== null;
+        const testRule = credentialTestRule(c);
         const credentialFields = (
           metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
         ) =>
@@ -397,6 +407,10 @@ export async function buildUiData(
         try {
           const metadata = await credentialVault.metadata(c.id);
           const fields = credentialFields(metadata);
+          const shape = storedCredentialShape(
+            c.credential,
+            metadata?.fields ?? null,
+          );
           credential = {
             label: c.credential.label,
             ...(c.credential.description
@@ -406,9 +420,7 @@ export async function buildUiData(
               ? { placeholder: c.credential.placeholder }
               : {}),
             ...(fields?.length ? { fields } : {}),
-            configured: fields?.length
-              ? fields.every((field) => field.configured)
-              : Boolean(metadata),
+            configured: shape.state === "valid",
             removable: Boolean(metadata),
             ...(metadata
               ? {
@@ -416,7 +428,21 @@ export async function buildUiData(
                   updatedAt: metadata.updatedAt,
                 }
               : {}),
-            testable,
+            testable:
+              testRule.mode !== null && shape.state !== "mismatch",
+            ...(shape.state === "mismatch"
+              ? { error: shape.message }
+              : {}),
+            // A dropped field leaves its secret in the vault, and the field
+            // list below only renders fields the connector still declares —
+            // so without this line there is nowhere an operator could see it.
+            ...(shape.state === "valid" && shape.undeclared.length
+              ? {
+                  notice: describeUndeclaredCredentialFields(
+                    shape.undeclared,
+                  ),
+                }
+              : {}),
           };
         } catch {
           const fields = credentialFields();
@@ -431,7 +457,7 @@ export async function buildUiData(
             ...(fields?.length ? { fields } : {}),
             configured: false,
             removable: true,
-            testable,
+            testable: testRule.mode !== null,
             error: "Stored credential could not be read.",
           };
         }
@@ -1171,6 +1197,9 @@ function render() {
       }
       if (cred.error) {
         head += '<div class="msg">' + esc(cred.error) + "</div>";
+      }
+      if (cred.notice) {
+        head += '<p class="credential-copy meta">' + esc(cred.notice) + "</p>";
       }
       if (AUTH.kind === "clerk") {
         head += '<div class="credential-actions">';

@@ -1379,6 +1379,33 @@ operator to configure a credential they already configured — and a liveness sw
 reports it `not_checkable` rather than probing it through a hook its shape cannot
 use.
 
+**Stored-shape drift.** A credential written by an older connector declaration
+stays compatible as long as it **contains every field the declaration currently
+names** — the reserved `value` key for a single credential, every declared name
+for a named one (`storedCredentialShape`, `src/credentials.ts`). Containment,
+not equality, and the difference matters in both directions:
+
+- **A missing declared field is drift.** A rename, a newly added field, or a
+  redeploy that swaps between the single-value and named shapes all land here:
+  the declaration asks for a key the vault does not have, so no hook could be
+  handed the shape it expects. `/ui` marks the credential unconfigured but
+  removable, hides Test, and shows an operator-safe replacement message; a
+  direct test answers **409** with that same message and invokes no hook; a
+  liveness check records it as an `error`
+  ([§17](#17-credential-health-proactive-liveness-checks)). Replacing or
+  removing the credential is the recovery — connecta never guesses how to
+  migrate secret values between declarations.
+- **An extra stored field is not.** Dropping a field from the declaration leaves
+  its secret behind in the vault, but `ctx.credential.get("apiKey")` and
+  `getAll().apiKey` keep returning exactly what they returned before, so every
+  tool call keeps working and the credential stays configured, testable, and
+  healthy. `/ui` prints one non-blocking line naming the leftover fields (the
+  field list itself renders declared fields only, so this is the only place they
+  appear); replacing the credential drops them. Nothing else changes.
+
+An empty stored map — reachable only through a hand-written plaintext — contains
+nothing, so it is drift.
+
 `createConnecta` **throws at construction** when any connector declares
 `credential` and no `credentialEncryptionKey` is configured, naming the
 connectors involved — a deployment cannot silently boot with an unusable vault.
@@ -1612,10 +1639,10 @@ Test suites (`test/`) and what they cover:
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
 | `toolkits.test.ts` | the toolkit scope boundary (§16) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** (§16): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
-| `credential-health.test.ts` | proactive credential liveness ([§17](#17-credential-health-proactive-liveness-checks)) — healthy→revoked→recovered transitions reaching `list_connectors({ probe: false })` with no tool call or catalog fetch, best-effort scope teardown preserving the verdict and a never-settling teardown leaving no permanent in-flight check, the vault path through the hook the declared shape selects (a single value via `testCredential` including an undecryptable value, named fields via `testCredentials` receiving the whole set, and `testCredential` winning on a single value that declares both), the two mismatched shapes skipped `not_checkable` with neither hook invoked and one of them still probed through its `status()`, rate limiting (`fresh` skips, repeated reads probing nothing, a fresh check once the interval passes, and no storage read at all for a connector that cannot have a verdict), connectors with nothing stored / no id at all never probed, per-check deadline and thrown-check verdicts, the `concurrency` fan-out bound, what a verdict may decide (`auth_required` over a newer real-call failure, `error` deciding nothing over either a prior success or no evidence, a future stamp clamped so it can age out), the generation fence against a clear landing mid-check, `probe: true` recording the status phase but never a failing catalog refresh and stamping at observation time, `authorize_connector` recording verdicts, scoped visibility of a shared connector's verdict, and the traffic-triggered sweep end-to-end (once per burst, never unauthenticated, never awaited by the request, a throwing sweep still serving 200, `onRequest: false`, `/ui/data` payload, and the rejected base-URL promise) |
-| `credentials.test.ts` | the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
+| `credential-health.test.ts` | proactive credential liveness ([§17](#17-credential-health-proactive-liveness-checks)) — healthy→revoked→recovered transitions reaching `list_connectors({ probe: false })` with no tool call or catalog fetch, best-effort scope teardown preserving the verdict and a never-settling teardown leaving no permanent in-flight check, the vault path through the hook the declared shape selects (a single value via `testCredential` including an undecryptable value, named fields via `testCredentials` receiving the whole set, and `testCredential` winning on a single value that declares both), the two mismatched hook shapes skipped `not_checkable` with neither hook invoked and one of them still probed through its `status()`, both directions of stored-shape drift replacing even a fresh `ok` with an explicit error while invoking neither hook nor status, a stored superset checked normally through its hook with the whole stored set, a repeat drift verdict charged to the freshness budget rather than a write (and `force` still re-settling), rate limiting (`fresh` skips, repeated reads probing nothing, a fresh check once the interval passes, and no storage read at all for a connector that cannot have a verdict), connectors with nothing stored / no id at all never probed, per-check deadline and thrown-check verdicts, the `concurrency` fan-out bound, what a verdict may decide (`auth_required` over a newer real-call failure, `error` deciding nothing over either a prior success or no evidence, a future stamp clamped so it can age out), the generation fence against a clear landing mid-check, `probe: true` recording the status phase but never a failing catalog refresh and stamping at observation time, `authorize_connector` recording verdicts, scoped visibility of a shared connector's verdict, and the traffic-triggered sweep end-to-end (once per burst, never unauthenticated, never awaited by the request, a throwing sweep still serving 200, `onRequest: false`, `/ui/data` payload, and the rejected base-URL promise) |
+| `credentials.test.ts` | the pure stored-shape classifier — containment, not equality: an exact set and a stored superset (single and named) both valid with the leftovers reported, a missing declared field, a superset still missing one, a single↔named swap in either direction, and an empty stored map all mismatched, duplicate declarations compared as a key set, and the leftover-field sentence naming one field or summarizing a long tail — plus the AES-GCM vault: encrypt/decrypt round-trip, ciphertext bound to its connector id, named multi-field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys in one namespace |
 | `activity.test.ts` | best-effort delivery — a rejected async write attaches to `waitUntil` instead of throwing; approved destructive calls are recorded under their actual entry point |
-| `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in incl. the absolute-https gate every `uiAuth` URL passes, MCP URL derivation), gated `/ui/data` with broken-connector isolation and bounded best-effort scope teardown, the credential API incl. same-origin/bearer rejection and the liveness verdict its Test action records (and its PUT/DELETE clear), `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
+| `ui.test.ts` | `/ui` shell (manual-token fallback, Clerk sign-in incl. the absolute-https gate every `uiAuth` URL passes, MCP URL derivation), gated `/ui/data` with broken-connector isolation and bounded best-effort scope teardown, the credential API incl. same-origin/bearer rejection, both stored-shape drift directions and replacement recovery, a stored superset (named and single) staying configured/testable with a non-blocking notice naming the leftover field, and the liveness verdict its Test action records (and its PUT/DELETE clear), `/ui/activity` paging and gate, connector filtering, favicons, OAuth result pages |
 | `branding.test.ts` | branding fallbacks and overrides across `/ui`, OAuth result pages, `/favicon.*`, and escaping (branding is not an injection vector) |
 | `clerk.test.ts` | protected-resource metadata, public ClerkJS config for `/ui`, OAuth *and* browser session tokens, the hand-applied `azp` rejection of a session token minted for a sibling origin (§5 — `authorizedParties` is deliberately not passed), the toolkit binding the provider declares for the users it admits, and the `allowedDomains` allowlist (§5): construction-time rejection of every non-domain shape (empty list, non-array, `@`, trailing dot, Unicode lookalike), an admitted verified email, case-insensitivity on both sides, the lookalike/subdomain/substring non-matches (including an allowed domain hidden in a quoted local part), fail-closed on missing/unverified/malformed email and on a failing lookup, the malformed addresses that must not be *repaired* into a match (interior space, tab, newline, ideographic space, trailing root dot, a U+212A KELVIN SIGN `toLowerCase` would fold to ASCII), composition with `gate` (either denies, and the allowlist runs first so an outsider never reaches gate code), one cached verdict covering both, the 1,024-identity LRU bound and fail-closed eviction, unchanged allow/deny TTL windows for a small steady set, a denial logged with the domain bounded but never the address, and no lookup at all when the option is unset |
 | `startup-warnings.test.ts` | the construction-time `logger.warn`s and the conditions that must *not* trigger them: open mode with a credential/OAuth connector, `publicUrl` unset beside an OAuth connector, branding URLs dropped by the scheme gate (incl. non-string values, which warn rather than throw), a `uiAuth` URL — `frontendApiUrl`, `signInUrl`, or `signUpUrl` — dropped for not being absolute https, with an unset optional one staying quiet (§14), an OAuth callback with no `verifyState`, the three toolkit warnings keyed off the *resolved* toolkits (`toolkits: {}`, where nothing is selectable, stays quiet while the open-mode warning still fires; no-auth, authenticated-but-unbound, and partially-bound each get their own line, the last naming the unbound providers; declaring the exemption with `unscoped: true` silences it), and an unusable `maxResultBytes` — deployment-wide or per-connector — falling back with the effective cap named |
@@ -1811,10 +1838,14 @@ a downstream connector cannot turn the operator's one-click authorization link
 into a `javascript:` or `data:` payload. `credential` is present only for a
 connector that declares one **and** only for a Clerk-authenticated operator; the
 static bearer may read connector health but never credential metadata. It carries `{ label, description?, placeholder?,
-fields?, configured, removable?, lastFour?, updatedAt?, testable, error? }` —
-masked metadata only, never a value. `testable` is true only when the connector
-implements the test hook its declared credential shape selects (§7), so the card
-never offers a Test button whose click cannot succeed.
+fields?, configured, removable?, lastFour?, updatedAt?, testable, error?,
+notice? }` — masked metadata only, never a value. `testable` is true only when
+the connector implements the test hook its declared credential shape selects
+(§7), so the card never offers a Test button whose click cannot succeed. `error`
+means the credential cannot be used (unreadable, or drifted from the current
+declaration); `notice` is the non-blocking counterpart — today, that the vault
+still holds fields the connector has stopped declaring (§7), which is worth
+saying because the field list renders declared fields only.
 
 The page renders the instance name/version, one card per connector (display title
 when configured, stable id, description, a status dot — green `ok` / amber `auth_required` / red `error`,
@@ -2493,6 +2524,16 @@ Everything else is skipped, by design:
   back — `createConnecta` warns about the mismatch at construction, and until it
   is fixed the connector carries no verdict at all. It still gets probed through
   `status()` if it has one: that question never involves the mismatch.
+- **Stored keys must still fit the current declaration.** The vault may outlive
+  the code that declared it. Before any hook or `status()` runs, the same pure
+  classifier used by `/ui` and the credential test route asks whether the stored
+  set still *contains* every declared field ([§7](#7-storage)): the reserved
+  `value` for a single credential, every current name for a named one. A missing
+  declared field records an explicit `error` verdict and invokes neither hook nor
+  `status()`; this validation happens before the freshness shortcut so even a
+  still-fresh historical `ok` cannot mask a redeploy mismatch. Leftover
+  undeclared keys are not drift and change nothing here — the credential is
+  checked normally. Replace or remove the credential in `/ui` to recover.
 
 ### When checks run
 
@@ -2557,7 +2598,13 @@ downstream auth endpoint, so the cost is bounded four ways:
    (default 900) short-circuits the check and is reported as `skipped: "fresh"`.
    Verdicts are persisted, so a Worker cron isolate and every request isolate
    share one budget. **Repeated status reads never each trigger a check** — a
-   read reads the verdict, it does not produce one.
+   read reads the verdict, it does not produce one. For vault credentials, the
+   local stored-key shape check runs before this shortcut; it performs no
+   downstream call and prevents a pre-redeploy `ok` from hiding declaration
+   drift. A drift verdict then re-enters the budget: once the *same* error is
+   stored and still fresh it is reported `skipped: "fresh"` rather than written
+   again, because drift persists until an operator acts and re-settling it every
+   sweep would spend a metered write per isolate to learn nothing.
 3. **Sweep gate, per isolate** — one traffic-triggered sweep per interval per
    isolate, never two at once: a burst of requests costs one sweep.
 4. **Deadline and fan-out** — `timeoutMs` per check (default 30 000, the probe
