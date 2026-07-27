@@ -63,7 +63,7 @@ export interface ConnectorCredentialFieldConfig {
   name: string;
   /** Short field label, e.g. "Account email". */
   label: string;
-  /** Plain-language guidance shown in /ui. Never include the credential itself. */
+  /** Plain-language guidance shown in /credentials. Never include the credential itself. */
   description?: string;
   /** Input placeholder, e.g. "you@example.com". */
   placeholder?: string;
@@ -75,7 +75,7 @@ export interface ConnectorCredentialFieldConfig {
 export interface ConnectorCredentialConfig {
   /** Short group or field label, e.g. "API token" or "Service credentials". */
   label: string;
-  /** Plain-language guidance shown in /ui. Never include the credential itself. */
+  /** Plain-language guidance shown in /credentials. Never include the credential itself. */
   description?: string;
   /** Password-field placeholder, e.g. "Paste API token". */
   placeholder?: string;
@@ -153,14 +153,14 @@ export interface Connector {
    * and imperative; it is read by agents, not operators.
    */
   usageGuide?: string;
-  /** Optional operator-managed credential slot rendered inside this connector's /ui card. */
+  /** Optional operator-managed credential slot rendered on /credentials. */
   credential?: ConnectorCredentialConfig;
-  /** Optional server-side check used by /ui's Test action. */
+  /** Optional server-side check used by /credentials' Test action. */
   testCredential?(
     value: string,
     ctx: ConnectorContext,
   ): Promise<CredentialTestResult>;
-  /** Optional multi-field credential check used by /ui's Test action. */
+  /** Optional multi-field credential check used by /credentials' Test action. */
   testCredentials?(
     values: ConnectorCredentialValues,
     ctx: ConnectorContext,
@@ -228,7 +228,8 @@ export interface Connector {
    * Optional: serve a connector-owned HTTP route — for example a signed
    * download link minted by one of the connector's tools. Called only after
    * every built-in route misses, so a connector can never shadow `/mcp`,
-   * `/ui`, `/health`, or the credential API. The first connector to return a
+   * `/`, `/credentials`, `/activity`, `/health`, or the credential API. The
+   * first connector to return a
    * Response wins, in registration order; return null to decline.
    *
    * These routes are PUBLIC: connecta applies no auth gate to them. A
@@ -317,14 +318,14 @@ export type UiAuthConfig = {
   kind: "clerk";
   publishableKey: string;
   /**
-   * Origin `/ui` fetches its browser sign-in loader from. **Must be an absolute
+   * Origin the operator shell fetches its browser sign-in loader from. **Must be an absolute
    * `https:` URL** — the value lands in a `<script src>`, so the gate is
    * stricter than the branding href gate: no `http:`, no loopback exemption, and
    * no root-relative form (a relative path is rejected, not resolved). The
    * shipped `clerkAuth` adapter derives this from the publishable key and
    * Clerk's Frontend API is always https, so nothing legitimate needs a
    * carve-out. A value that fails the gate reaches neither the loader tag nor
-   * the page's inline auth config: `/ui` renders without the loader and reports
+   * the page's inline auth config: operator pages render without it and report
    * that Clerk could not load, and `createConnecta` names the drop in a startup
    * warning.
    */
@@ -335,7 +336,7 @@ export type UiAuthConfig = {
    * this value is where Clerk *navigates* the operator's browser. An Account
    * Portal address is always https, so the stricter gate costs nothing real: a
    * value that fails it (a `javascript:`/`data:` payload, a cleartext `http:`
-   * address, a relative path) reaches no part of the page, `/ui` signs in
+   * address, a relative path) reaches no part of the page, the shell signs in
    * through Clerk's default instead, and `createConnecta` names the drop in a
    * startup warning.
    */
@@ -358,7 +359,7 @@ export interface ConnectaBranding {
   ownerName?: string;
   /** Optional link for the organization or owner label. */
   ownerUrl?: string;
-  /** Status-dashboard introduction. */
+  /** Operator-page introduction and meta description. */
   description?: string;
   /**
    * Browser tab title and page meta name. Defaults to
@@ -387,7 +388,7 @@ export interface ConnectaBranding {
 export interface InboundAuth {
   kind: string;
   /**
-   * Optional browser sign-in configuration. When present, `/ui` uses this
+   * Optional browser sign-in configuration. When present, operator pages use it
    * provider instead of asking the operator to paste a static bearer secret.
    */
   uiAuth?: UiAuthConfig;

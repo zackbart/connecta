@@ -32,9 +32,9 @@ export interface ClerkAuthOptions extends ToolkitBindingOptions {
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   /** Advertised scopes in protected-resource metadata. */
   scopes?: string[];
-  /** Optional hosted Account Portal sign-in URL for `/ui`. Absolute https only. */
+  /** Optional hosted Account Portal sign-in URL for operator pages. Absolute https only. */
   signInUrl?: string;
-  /** Optional hosted Account Portal sign-up URL for `/ui`. Absolute https only. */
+  /** Optional hosted Account Portal sign-up URL for operator pages. Absolute https only. */
   signUpUrl?: string;
 }
 
@@ -377,7 +377,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       let userId: string | undefined;
       try {
         const state = await clerk.authenticateRequest(request, {
-          // MCP clients use Clerk OAuth access tokens; the browser dashboard
+          // MCP clients use Clerk OAuth access tokens; the browser operator UI
           // uses the signed-in operator's short-lived Clerk session token.
           // authorizedParties must NOT be passed here: OAuth access tokens may
           // be JWTs without an azp claim, and Clerk rejects azp=undefined when

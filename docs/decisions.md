@@ -57,7 +57,7 @@ deployment is a small config-as-code file, not a platform.
   Approval is the host's job; connecta just makes the question visible.
 - **Runtime connector registration.** Adding a connector is a code change and a
   deploy. There is no database of integrations and no endpoint that creates one.
-- **A runtime admin UI.** The read-only dashboard is the limit — see the
+- **A runtime admin UI.** The operator page set is the limit — see the
   no-runtime-admin invariant, which is the hard version of this bullet.
 - **Elicitation passthrough.** Downstream servers asking the user mid-call has
   no route through a stateless aggregator.
@@ -152,16 +152,18 @@ fails CI; where nothing does, the reviewer is the enforcement.
 ### No runtime admin
 
 **Nothing in the operator surface may add a connector, change a policy, or alter
-what an agent can call.** `/ui`, the credential vault, and activity history are
-each held to this line:
+what an agent can call.** Connections, Credentials, and Activity are each held
+to this line:
 
-- `/ui` ([status UI](./operator-ui.md#status-ui)) is read-only status. The shell
-  is open because it carries no data; everything displayed comes from `/ui/data`
-  behind the same gate as `/mcp`.
+- Connections at `/` ([status UI](./operator-ui.md#status-ui)) is read-only
+  deployment status. Like `/credentials` and `/activity`, its shell is open
+  because it carries no data; everything displayed comes from private `/ui/*`
+  APIs behind inbound authentication.
 - The credential vault ([storage](./storage-and-credentials.md#storage)) is credential
-  *storage*, not connector registration. Rotating a token should not need a
-  redeploy; a token is also the one thing a config file should never hold. Which
-  tools exist is still code.
+  *storage*, not connector registration. Credentials is deliberately not called
+  Settings: rotating a token should not need a redeploy, but connector
+  declarations, toolkit membership, auth policy, and callable tools remain
+  config-as-code. A token is also the one thing a config file should never hold.
 - Activity ([activity history](./operator-ui.md#activity-history)) observes; it decides
   nothing.
 
@@ -274,10 +276,11 @@ invent precedence. [running connecta](./operations.md#running-it).
 
 Vault values are AES-GCM encrypted into `KVStorage` with the key held outside
 KV, readable only by the owning connector through `ctx.credential`, and never
-returned by `/ui`, the meta-tools, or code mode — `/ui` sees masked metadata
-only. Mutations require a Clerk-authenticated, gate-approved operator on a
-same-origin request; the static bearer is refused. Sandboxed code can do nothing
-a sequence of explicitly read-only `call_tool` calls could not.
+returned by the operator pages, meta-tools, or code mode — `/ui/data` sends
+masked metadata only to an eligible Clerk operator, for rendering at
+`/credentials`. Mutations require a Clerk-authenticated, gate-approved operator
+on a same-origin request; the static bearer is refused. Sandboxed code can do
+nothing a sequence of explicitly read-only `call_tool` calls could not.
 [storage](./storage-and-credentials.md#storage), [code mode](./code-mode.md#code-mode-execute_code),
 [status UI](./operator-ui.md#status-ui).
 
@@ -288,7 +291,8 @@ tested as a set by `testCredentials`, a single-value `credential` by
 `testCredential` — and the other hook is **never substituted**, because it would
 be handed a shape the connector never declared. That rule lives once, in
 `credentialTestRule` (`src/credentials.ts`), and every consumer reads it rather
-than re-deciding: `/ui`'s `testable` flag, `POST /ui/credentials/<id>/test`, the
+than re-deciding: `/ui/data`'s `testable` flag,
+`POST /ui/credentials/<id>/test`, the
 construction-time mismatch warning, and the credential liveness probes
 (`src/credential-health.ts`). Three copies of this decision is how it drifted the
 first time (issue #55) — a button connecta offered led to a 409 blaming the
@@ -305,14 +309,14 @@ The declaration must also fit what is already stored after a redeploy. A second
 pure rule in the same module (`storedCredentialShape`) compares key sets only,
 and asks one question: does the vault hold **every field the connector currently
 declares** — the reserved `value` for a single credential, every declared name
-for a named one? `/ui`, the test route, and credential health all read it, and
+for a named one? `/ui/data`, the test route, and credential health all read it, and
 none of them keeps a private variant.
 
 A stored set that is missing a declared field is drift, which covers every case
 issue #69 reported: a renamed field, a newly added one, and a swap between the
 two shapes in either direction (no special case needed — `value` is never a
 declared name, so each swap leaves the declared side unsatisfied). Drift is
-never auto-migrated: `/ui` keeps Remove/Replace available and hides Test, the
+never auto-migrated: `/credentials` keeps Remove/Replace available and hides Test, the
 test route returns the shared 409 without calling a hook, and health replaces
 even a fresh historical `ok` with an explicit error without calling either a
 hook or `status()`. That last check must stay **before** health's freshness
@@ -338,7 +342,7 @@ encrypted in KV until the credential is replaced, and a connector that iterates
 downstream. Both are bounded (the value was already stored, and only that
 connector can read it) and neither justifies breaking a working deployment, so
 the answer is disclosure rather than enforcement: the classifier returns the
-leftover names as `undeclared` and `/ui` prints one non-blocking line naming
+leftover names as `undeclared` and `/credentials` prints one non-blocking line naming
 them beside the credential — the only place they are visible at all, since the
 field list renders declared fields only. Replacing the credential clears them.
 [status UI](./operator-ui.md#status-ui),

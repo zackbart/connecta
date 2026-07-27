@@ -50,15 +50,17 @@ The key spaces do not overlap:
 | Downstream MCP OAuth | `conn:<id>:oauth:*` |
 | Paged meta-tool results | `results:*` |
 
-The encryption key stays outside KV. `/ui` returns only `configured`, masked
-per-field metadata, and the update time. Mutation endpoints require a
+The encryption key stays outside KV. `/ui/data` returns only `configured`,
+masked per-field metadata, and the update time to an eligible Clerk operator.
+Mutation endpoints require a
 Clerk-authenticated, gate-approved operator, reject the static inbound bearer,
 reject an identity bound to a toolkit ([toolkits](./toolkits.md#toolkits-scoped-views)) — a
 credential is deployment-wide, so writing one reaches every view — require a
 same-origin request, disable wildcard CORS, and never return the credential after
 saving it.
 
-The routes `/ui` drives (all under the same rules above):
+The private routes the Credentials page at `/credentials` drives (all under the
+same rules above):
 
 | Route | Effect |
 | --- | --- |
@@ -76,7 +78,7 @@ connector never declared. That one rule (`credentialTestRule`,
 selection, and the credential liveness checks
 ([credential health](#credential-health-proactive-liveness-checks)) all read, so the button,
 the route, and the background sweep cannot disagree: a connector implementing
-only the mismatched hook is not testable, `/ui` renders no Test action, a direct
+only the mismatched hook is not testable, `/credentials` renders no Test action, a direct
 `POST` to the route answers **400** naming the mismatch — never a 409 telling an
 operator to configure a credential they already configured — and a liveness sweep
 reports it `not_checkable` rather than probing it through a hook its shape cannot
@@ -91,7 +93,7 @@ not equality, and the difference matters in both directions:
 - **A missing declared field is drift.** A rename, a newly added field, or a
   redeploy that swaps between the single-value and named shapes all land here:
   the declaration asks for a key the vault does not have, so no hook could be
-  handed the shape it expects. `/ui` marks the credential unconfigured but
+  handed the shape it expects. `/credentials` marks the credential unconfigured but
   removable, hides Test, and shows an operator-safe replacement message; a
   direct test answers **409** with that same message and invokes no hook; a
   liveness check records it as an `error`
@@ -102,7 +104,7 @@ not equality, and the difference matters in both directions:
   its secret behind in the vault, but `ctx.credential.get("apiKey")` and
   `getAll().apiKey` keep returning exactly what they returned before, so every
   tool call keeps working and the credential stays configured, testable, and
-  healthy. `/ui` prints one non-blocking line naming the leftover fields (the
+  healthy. `/credentials` prints one non-blocking line naming the leftover fields (the
   field list itself renders declared fields only, so this is the only place they
   appear); replacing the credential drops them. Nothing else changes.
 
@@ -141,7 +143,7 @@ hooks that exist to answer this question:
 
 | Credential | Checked with | A failure reads as |
 | --- | --- | --- |
-| Operator-managed (`credential`, in the vault — [storage](#storage)) | the hook the **declared credential shape** selects — `testCredentials(values)` for named `fields`, `testCredential(value)` for a single value — literally the same call /ui's Test button makes ([storage](#operator-managed-connector-credentials)) | `auth_required` with the connector's message; replace the value in `/ui` |
+| Operator-managed (`credential`, in the vault — [storage](#storage)) | the hook the **declared credential shape** selects — `testCredentials(values)` for named `fields`, `testCredential(value)` for a single value — literally the same call the Credentials page's Test button makes ([storage](#operator-managed-connector-credentials)) | `auth_required` with the connector's message; replace the value in `/credentials` |
 | Downstream OAuth (`remoteMcp({ auth: { type: "oauth" } })`, [downstream OAuth](./connectors.md#downstream-oauth)) | `status(ctx)`, which refreshes the grant — that *is* the liveness question for a token | `auth_required` with the consent `authorizationUrl` |
 
 Everything else is skipped, by design:
@@ -166,7 +168,7 @@ Everything else is skipped, by design:
   to be asked, and is reported as `not_checkable`. So is one whose **declared
   credential shape cannot use the hook it implements** — named `fields` with only
   `testCredential`, or a single value with only `testCredentials`. The check
-  selects the hook through the same rule /ui and the credential API read
+  selects the hook through the same rule the Credentials page and credential API read
   ([storage](#operator-managed-connector-credentials)), and never substitutes the
   other one: handing `testCredential` a `value` field named fields never wrote
   would test the empty string and record a confident `auth_required` about a
@@ -178,14 +180,14 @@ Everything else is skipped, by design:
   `status()` if it has one: that question never involves the mismatch.
 - **Stored keys must still fit the current declaration.** The vault may outlive
   the code that declared it. Before any hook or `status()` runs, the same pure
-  classifier used by `/ui` and the credential test route asks whether the stored
+  classifier used by `/ui/data` and the credential test route asks whether the stored
   set still *contains* every declared field ([storage](#storage)): the reserved
   `value` for a single credential, every current name for a named one. A missing
   declared field records an explicit `error` verdict and invokes neither hook nor
   `status()`; this validation happens before the freshness shortcut so even a
   still-fresh historical `ok` cannot mask a redeploy mismatch. Leftover
   undeclared keys are not drift and change nothing here — the credential is
-  checked normally. Replace or remove the credential in `/ui` to recover.
+  checked normally. Replace or remove the credential in `/credentials` to recover.
 
 ### When checks run
 
@@ -263,7 +265,8 @@ downstream auth endpoint, so the cost is bounded four ways:
    default) with at most `concurrency` (default 4) in flight, the same shape as
    `discovery.probeTimeoutMs` bound on the discovery fan-out.
 
-A `list_connectors({ probe: true })` and /ui's credential **Test** button record
+A `list_connectors({ probe: true })` and `/credentials`' credential **Test**
+button record
 their verdicts too — they are the same check, run by hand — which also means an
 operator who just probed live is not swept again moments later. A live probe
 records only a definite `ok`/`auth_required` from the connector's **status**
@@ -293,7 +296,7 @@ Two caveats worth knowing:
 | --- | --- |
 | `list_connectors({ probe: false })` | `credentialCheck`, and the `status` it sets ([meta-tools](./meta-tools.md#list_connectors)) |
 | `list_connectors({ probe: true })` | live status as always, plus `credentialCheck` refreshed by that probe |
-| `/ui` | a "Credential check" line on the connector card: verdict, when, and why |
+| `/` and `/credentials` | a "Credential check" line: verdict, when, and why |
 
 Verdicts live in the deployment's own storage under `credhealth:<connectorId>`,
 alongside the `conn:<id>:*` and `catalog:<id>` keys ([storage](#storage)). They are

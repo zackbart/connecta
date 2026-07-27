@@ -73,8 +73,8 @@ function build(env: Env) {
         toolkits: ["exec"],
       }),
       // The operator signs in with Clerk. `unscoped: true` keeps the full
-      // registry, /ui, and the deployment-wide activity log — and saying so
-      // explicitly (rather than leaving the provider unbound) is what tells
+      // registry, operator pages, and the deployment-wide activity log. Saying
+      // so explicitly (rather than leaving the provider unbound) is what tells
       // connecta the exemption is deliberate, so it stops warning that one
       // credential still opens every view. Restrict WHO may sign in with
       // `allowedDomains` (or a `gate`, for anything a domain cannot express);

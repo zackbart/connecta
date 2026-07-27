@@ -45,11 +45,11 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - When `publicUrl` is HTTPS, an incoming HTTP request is redirected to the
      matching HTTPS URL with 308. `/health` is exempt so that loopback
      container probes are not sent out to the public origin.
-   - `OPTIONS` → each auth provider's `handleMetadata` gets a chance (CORS
-     preflight); otherwise a 204 with wildcard CORS.
    - `/ui/credentials/<connectorId>[/test]` → the credential vault API
      ([storage](./storage-and-credentials.md#storage)), matched **first** so nothing else can shadow it. `OPTIONS` is a 405
      here: these mutation routes never opt into the wildcard CORS preflight.
+   - `OPTIONS` → each auth provider's `handleMetadata` gets a chance (CORS
+     preflight); otherwise a 204 with wildcard CORS.
    - `/.well-known/*` → auth providers' `handleMetadata` (open, no auth); 404 if
      none handle it.
    - `/health` → open JSON `{ status: "ok", connectors: <count>, server,
@@ -57,8 +57,13 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/oauth/callback/<connectorId>` → downstream-OAuth completion (open).
    - `GET /favicon.svg` / `GET /favicon.ico` → the branding mark, or connecta's
      default ([status UI](./operator-ui.md#status-ui)).
-   - `GET /ui` → the open status-page shell (no data).
-   - `/ui/data` → **auth gate**, then the dashboard JSON ([status UI](./operator-ui.md#status-ui)). A
+   - `GET /ui` → permanent compatibility redirect (`308`) to `/`.
+   - `GET /`, `GET /credentials`, and `GET /activity` → the same open,
+     data-free operator shell with Connections, Credentials, or Activity
+     selected from the requested path ([status UI](./operator-ui.md#status-ui)).
+     These built-ins are matched before connector-owned routes, so a connector
+     cannot shadow them.
+   - `/ui/data` → **auth gate**, then the operator JSON ([status UI](./operator-ui.md#status-ui)). A
      toolkit-bound identity is refused ([toolkits](./toolkits.md#toolkits-scoped-views)) — the payload is deployment-wide.
    - `/ui/activity` → **auth gate** + the same toolkit-binding refusal +
      optional `activity.readGate`, then paged activity events ([activity history](./operator-ui.md#activity-history)). `GET` only;
@@ -73,12 +78,19 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
      500, not a fall-through to 404.
    - anything else → 404.
    Responses include `nosniff` and a no-referrer policy. HTTPS responses include
-   HSTS, and `/ui` additionally refuses framing through CSP and
-   `X-Frame-Options`; MCP and metadata CORS headers remain unchanged.
-2. **Auth gate** (`/mcp` only): each provider's `authorize` runs in order
+   HSTS. Every canonical operator shell additionally receives the same
+   nonce-based script CSP, framing denial through CSP and `X-Frame-Options`,
+   URL escaping/gates, and content-type protection; the shell source contains no
+   connector, credential, activity, actor, or deployment data. MCP and metadata
+   CORS headers remain unchanged.
+2. **Auth gate** (`/mcp` and private operator APIs): each provider's `authorize` runs in order
    (bearer before Clerk); the first `ok` admits the request. If all fail, the
    last provider's `Response` (a 401/403 challenge) is returned. No providers
-   configured ⇒ open (dev only).
+   configured ⇒ open (dev only). The three canonical operator shells do not pass
+   this gate; their client fetches to `/ui/data`, `/ui/activity`, and the
+   credential API do. Deployment-wide private operator APIs also refuse an
+   identity restricted to a toolkit, and credential mutations apply the
+   narrower Clerk/user-id/same-origin checks.
 3. **Fresh stateless `McpServer` per request** (`serveMcp`): a new `McpServer` +
    `WebStandardStreamableHTTPServerTransport({ enableJsonResponse: true })` are
    created for **every** request (an SDK ≥1.26 security requirement), the nine
@@ -123,7 +135,7 @@ connecta/
     storage-and-credentials.md # state, vault credentials, proactive liveness
     operations.md         # config, deployment, tests, troubleshooting
     code-mode.md          # optional execute_code sandbox
-    operator-ui.md        # status UI and payload-free activity
+    operator-ui.md        # Connections, Credentials, and payload-free Activity
     toolkits.md           # scoped registry views and identity binding
   src/
     index.ts              # createConnecta + public re-exports (Workers-clean entry)
@@ -143,7 +155,7 @@ connecta/
     activity.ts           # payload-free activity contracts + best-effort recorder
     errors.ts             # ConnectorCallError + error classification
     mcp-result.ts         # result wrapping, fields selection, truncation/paging
-    ui.ts                 # /ui shell + /ui/data payload builder
+    ui.ts                 # shared operator shell + /ui/data payload builder
     favicon.ts            # default monochrome mark served at /favicon.*
     version.ts            # CONNECTA_VERSION (asserted against package.json in tests)
     connectors/

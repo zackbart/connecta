@@ -5,7 +5,7 @@
 // something *observed* a failure, so an expired or revoked token surfaced
 // mid-task as a failed agent call. A liveness check asks the connector whether
 // the credential it holds still works, records the verdict, and lets the cached
-// status surfaces (`list_connectors({ probe: false })`, `/ui`) report
+// status surfaces (`list_connectors({ probe: false })`, operator pages) report
 // `auth_required` BEFORE a real call discovers it.
 //
 // Runtime-agnostic on purpose: nothing here schedules itself. The core exposes a
@@ -346,14 +346,14 @@ export interface CredentialCheckOptions {
  * Deliberately narrow. `listTools`/`callTool` are NOT liveness probes here: a
  * tool call may mutate downstream state, and the catalog path is already covered
  * by the existing probe. So a connector is checkable only through the two hooks
- * that exist to answer exactly this question — `testCredential(s)` (what /ui's
+ * that exist to answer exactly this question — `testCredential(s)` (what the
  * Test button runs) and `status()` — and only when it has a credential of ours
  * to be asked about: an operator-managed `credential`, or a stored downstream
  * grant it reports via `hasStoredCredential`. A static-token connector stores
  * nothing here and is never probed on a timer.
  *
  * Whether a test hook counts is `credentialTestRule`'s call, not this function's
- * — the same rule /ui's Test button and the credential API read (issue #55), so
+ * Credentials Test button and the credential API read (issue #55), so
  * a credential the operator cannot test by hand is not one a sweep tests behind
  * their back. A connector whose only hook cannot test its declared shape is
  * checkable only if it also implements `status()`.
@@ -374,7 +374,7 @@ export function isCheckableConnector(connector: Connector): boolean {
  *
  * `isCheckableConnector` answers the static question ("could this connector be
  * asked at all"); this answers it against the vault. The hook itself is picked
- * by `credentialTestRule` (src/credentials.ts, issue #55), the one rule /ui's
+ * by `credentialTestRule` (src/credentials.ts, issue #55), the one rule the UI's
  * `testable` flag and `POST /ui/credentials/<id>/test` also read: named
  * `credential.fields` are tested as a set by `testCredentials`, a single-value
  * `credential` by `testCredential` on the vault's reserved `value` field, and
@@ -750,12 +750,12 @@ export class CredentialHealthChecker {
       }
       // A rejected stored credential needs an operator, not a retry — the same
       // actionable state a revoked OAuth grant reports. There is no consent URL
-      // for a vault credential; /ui's credential form is where it is replaced.
+      // for a vault credential; /credentials is where it is replaced.
       return {
         state: "auth_required",
         message:
           result.message ??
-          "Stored credential was rejected by the connector — replace it in /ui.",
+          "Stored credential was rejected by the connector — replace it in /credentials.",
       };
     }
     const status = await connector.status!(ctx);

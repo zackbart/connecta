@@ -612,7 +612,8 @@ export class Registry implements RegistryView {
 
   /**
    * Drop a connector's liveness verdict, because its credential just changed
-   * under us (OAuth callback completed, credential stored or removed in /ui). A
+   * under us (OAuth callback completed, credential stored or removed on
+   * /credentials). A
    * stale `auth_required` must not outlive the re-authorization that fixed it —
    * that is the difference between recovery working and needing a restart.
    */

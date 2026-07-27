@@ -36,6 +36,8 @@ import { CONNECTA_FAVICON_ICO } from "./favicon.js";
 import {
   buildUiData,
   CONNECTA_FAVICON_SVG,
+  credentialManagementCapability,
+  operatorPageForPath,
   resolveBranding,
   renderUiHtml,
 } from "./ui.js";
@@ -94,7 +96,7 @@ export interface ServerOptions {
   probeTimeoutMs?: number;
   /** When set, the execute_code meta-tool is registered on top of the nine. */
   executor?: Executor;
-  /** Encrypted connector-credential storage backing the authenticated /ui controls. */
+  /** Encrypted connector-credential storage backing the Credentials page. */
   credentialVault?: CredentialVault;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding;
@@ -109,7 +111,7 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** Per-request base64 nonce for the /ui page's inline scripts (Node 20+ and Workers). */
+/** Per-request base64 nonce for an operator shell's scripts (Node 20+ and Workers). */
 function uiScriptNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let binary = "";
@@ -192,7 +194,7 @@ function html(
     <h1>Connection status</h1>
     <div class="copy">
       <p>${escapeHtml(body)}</p>
-      <p><a href="/ui">Return to ${escapeHtml(brand.productName)}</a></p>
+      <p><a href="/">Return to ${escapeHtml(brand.productName)}</a></p>
     </div>
   </main>
 </body>
@@ -318,10 +320,10 @@ function withSecurityHeaders(
   if (requestUrl.protocol === "https:") {
     headers.set("Strict-Transport-Security", "max-age=31536000");
   }
-  if (path === "/ui") {
-    // The /ui GET response ships its own nonce-based script CSP (which already
-    // includes frame-ancestors 'none'); only fall back to the framing-only
-    // directive when no CSP is present (e.g. HTTPS redirects, error responses).
+  if (operatorPageForPath(path) || path === "/ui") {
+    // Operator HTML responses ship their own nonce-based script CSP (which
+    // already includes frame-ancestors 'none'); only fall back to the
+    // framing-only directive when no CSP is present (for example redirects).
     if (!headers.has("Content-Security-Policy")) {
       headers.set("Content-Security-Policy", "frame-ancestors 'none'");
     }
@@ -552,8 +554,8 @@ async function handleCredentialRequest(
     if (request.method !== "POST") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
-    // The declared credential shape picks the hook — the same single rule /ui
-    // asks for its Test affordance, so a shown button always reaches a hook
+    // The declared credential shape picks the hook — the same single rule the
+    // Credentials page asks for its Test affordance, so a shown button reaches
     // that reads the shape the credential was stored in.
     const rule = credentialTestRule(connector);
     if (!rule.mode) {
@@ -593,7 +595,7 @@ async function handleCredentialRequest(
         result = await connector.testCredential!(storedValues.value, ctx);
       }
       // The operator just ran the very check the liveness sweep runs; record it
-      // so the cached status surfaces agree with what /ui just showed them.
+      // so cached status surfaces agree with what the operator page showed.
       await opts.registry.recordCredentialHealth(connectorId, {
         state: result.ok ? "ok" : "auth_required",
         checkedAt: new Date().toISOString(),
@@ -1083,7 +1085,10 @@ export function createFetchHandler(
       new URL(publicUrl).protocol === "https:" &&
       url.protocol === "http:"
     ) {
-      const target = new URL(`${url.pathname}${url.search}`, publicUrl);
+      // Canonicalize the legacy bookmark while upgrading it so an old /ui URL
+      // reaches the new Connections entry point in one permanent redirect.
+      const targetPath = path === "/ui" ? "/" : url.pathname;
+      const target = new URL(`${targetPath}${url.search}`, publicUrl);
       return withSecurityHeaders(
         new Response(null, {
           status: 308,
@@ -1172,7 +1177,23 @@ export function createFetchHandler(
       }
 
       if (path === "/ui") {
-        // Open shell — carries no data; data comes only from the gated /ui/data.
+        if (request.method !== "GET") {
+          return privateJson({ error: "method not allowed" }, { status: 405 });
+        }
+        const target = new URL(`/${url.search}`, baseUrl);
+        return new Response(null, {
+          status: 308,
+          headers: { Location: target.toString() },
+        });
+      }
+
+      const operatorPage = operatorPageForPath(path);
+      if (operatorPage) {
+        if (request.method !== "GET") {
+          return privateJson({ error: "method not allowed" }, { status: 405 });
+        }
+        // Open shell — carries no operator data; everything comes from the
+        // authenticated /ui/* APIs after the browser establishes a session.
         const uiAuth = auth.find((provider) => provider.uiAuth)?.uiAuth;
         const mcpUrl = new URL("/mcp", baseUrl).toString();
         // Nonce the page's inline script (and the Clerk loader). 'strict-dynamic'
@@ -1182,16 +1203,19 @@ export function createFetchHandler(
         // style/font/network needs and the page's inline <style> stay unrestricted
         // — only script execution, the XSS sink, is gated.
         const nonce = uiScriptNonce();
-        return new Response(renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce), {
-          status: 200,
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Security-Policy":
-              `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'; ` +
-              "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
-            "X-Content-Type-Options": "nosniff",
+        return new Response(
+          renderUiHtml(uiAuth, mcpUrl, opts.branding, nonce, operatorPage),
+          {
+            status: 200,
+            headers: {
+              "Content-Type": "text/html; charset=utf-8",
+              "Content-Security-Policy":
+                `script-src 'nonce-${nonce}' 'strict-dynamic' https: 'unsafe-inline'; ` +
+                "object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+              "X-Content-Type-Options": "nosniff",
+            },
           },
-        });
+        );
       }
 
       if (path === "/ui/data") {
@@ -1203,16 +1227,24 @@ export function createFetchHandler(
         // After the restriction check, not before: an identity that may not
         // read this surface should not get to trigger background work from it.
         sweepCredentials();
+        const eligibleClerkOperator =
+          authz.providerKind === "clerk" && Boolean(authz.userId);
+        const credentialManagement = credentialManagementCapability({
+          eligibleClerkOperator,
+          hasCredentialSlots: registry
+            .listConnectors()
+            .some((connector) => Boolean(connector.credential)),
+          hasCredentialVault: Boolean(opts.credentialVault),
+        });
         const data = await buildUiData(
           registry,
           baseUrl,
           serverInfo,
           // The static headless bearer may read connector health, but only a
           // Clerk-authenticated operator receives credential metadata.
-          authz.providerKind === "clerk" && authz.userId
-            ? opts.credentialVault
-            : undefined,
+          eligibleClerkOperator ? opts.credentialVault : undefined,
           Boolean(opts.activity?.list),
+          credentialManagement,
         );
         return privateJson(data);
       }

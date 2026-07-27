@@ -18,9 +18,11 @@ cp examples/docker/.env.example examples/docker/.env
 docker compose -f examples/docker/docker-compose.yml up -d --build
 ```
 
-The MCP endpoint is then at `http://localhost:8787/mcp`, and the read-only
-operator dashboard at `http://localhost:8787/ui` (paste `CONNECTA_TOKEN` when
-running bearer-only; with Clerk configured it signs you in through Clerk).
+The MCP endpoint is then at `http://localhost:8787/mcp`. Open
+`http://localhost:8787/` for Connections, `/credentials` for credential
+management, or `/activity` for activity history (paste `CONNECTA_TOKEN` when
+running bearer-only; with Clerk configured the operator shell signs you in
+through Clerk). Legacy `/ui` redirects to `/`.
 `/health` is always open (used by the container HEALTHCHECK) and is served over
 plain HTTP even when `PUBLIC_URL` is HTTPS, so the probe never leaves the
 container.

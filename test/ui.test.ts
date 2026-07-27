@@ -11,10 +11,13 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import {
   CONNECTA_FAVICON_SVG,
+  credentialManagementCapability,
   filterUiConnectors,
   isSafeHttpUrl,
   isSafeIconHref,
   isSafeHttpsUrl,
+  operatorPageForPath,
+  operatorPageTitle,
   renderUiHtml,
   type UiConnector,
 } from "../src/ui.js";
@@ -395,28 +398,119 @@ describe("status UI filtering", () => {
   });
 });
 
+describe("operator page routing and capabilities", () => {
+  it("maps only canonical shell paths and builds page-specific titles", () => {
+    expect(operatorPageForPath("/")).toBe("connections");
+    expect(operatorPageForPath("/credentials")).toBe("credentials");
+    expect(operatorPageForPath("/activity")).toBe("activity");
+    expect(operatorPageForPath("/ui")).toBeUndefined();
+    expect(operatorPageForPath("/ui/data")).toBeUndefined();
+    expect(operatorPageTitle("credentials", "Acme Connecta")).toBe(
+      "Credentials — Acme Connecta",
+    );
+  });
+
+  it("orders credential capability states without revealing topology to bearer", () => {
+    expect(
+      credentialManagementCapability({
+        eligibleClerkOperator: false,
+        hasCredentialSlots: true,
+        hasCredentialVault: true,
+      }),
+    ).toBe("requires_clerk");
+    expect(
+      credentialManagementCapability({
+        eligibleClerkOperator: true,
+        hasCredentialSlots: false,
+        hasCredentialVault: false,
+      }),
+    ).toBe("no_slots");
+    expect(
+      credentialManagementCapability({
+        eligibleClerkOperator: true,
+        hasCredentialSlots: true,
+        hasCredentialVault: false,
+      }),
+    ).toBe("vault_not_configured");
+    expect(
+      credentialManagementCapability({
+        eligibleClerkOperator: true,
+        hasCredentialSlots: true,
+        hasCredentialVault: true,
+      }),
+    ).toBe("available");
+  });
+});
+
 describe("status UI", () => {
-  it("/ui serves the manual-token fallback for bearer-only deployments", async () => {
+  it("serves direct, page-specific, data-free operator shells", async () => {
     const c = makeConnecta();
-    const res = await c.fetch(new Request(`${BASE}/ui`));
-    expect(res.status).toBe(200);
-    expect(res.headers.get("content-type")).toContain("text/html");
-    const body = await res.text();
-    expect(body).toContain("<!doctype html>");
-    expect(body).toContain("<title>Connecta</title>");
-    expect(body).toContain('href="/favicon.svg"');
-    expect(body).toContain('href="/favicon.ico"');
-    expect(body).toContain("this Connecta instance");
-    expect(body).toContain("/ui/data");
-    expect(body).toContain("MCP connection");
-    expect(body).toContain(`const MCP_URL = "${BASE}/mcp";`);
-    expect(body).toContain('id="copyMcpUrl"');
-    expect(body).toContain('placeholder="Bearer token"');
-    expect(body).toContain('id="activityTab"');
-    expect(body).toContain('aria-pressed="true">Connections</button>');
-    expect(body).toContain('aria-pressed="false">Activity</button>');
-    expect(body).toContain("Arguments and results are never stored.");
-    expect(body).not.toContain("clerk.browser.js");
+    for (const [path, page, label] of [
+      ["/", "connections", "Connections"],
+      ["/credentials", "credentials", "Credentials"],
+      ["/activity", "activity", "Activity"],
+    ] as const) {
+      const res = await c.fetch(new Request(`${BASE}${path}`));
+      expect(res.status).toBe(200);
+      expect(res.headers.get("content-type")).toContain("text/html");
+      const body = await res.text();
+      expect(body).toContain("<!doctype html>");
+      expect(body).toContain(`<title>${label} — Connecta</title>`);
+      expect(body).toContain(`const INITIAL_PAGE = "${page}";`);
+      expect(body).toContain(`<section id="${page}View">`);
+      expect(body).toContain(`id="${page}Nav"`);
+      expect(body).toContain(
+        `data-operator-page="${page}" aria-current="page"`,
+      );
+      expect(body).toContain('href="/"');
+      expect(body).toContain('href="/credentials"');
+      expect(body).toContain('href="/activity"');
+      expect(body).toContain("history.pushState");
+      expect(body).toContain('addEventListener("popstate"');
+      // Gated, the page views are hidden and their headings cannot take focus:
+      // the gate's own h1 is the only visible heading, so Back/Forward while
+      // signed out must target it rather than dropping focus to <body>.
+      expect(body).toContain(
+        "$(DATA ? next + \"Heading\" : \"gateHeading\").focus()",
+      );
+      expect(body).toContain("/ui/data");
+      expect(body).toContain(`const MCP_URL = "${BASE}/mcp";`);
+      expect(body).toContain('placeholder="Bearer token"');
+      expect(body).not.toContain("Calculator");
+      expect(body).not.toContain("Broken connector");
+      expect(body).not.toContain("clerk.browser.js");
+    }
+  });
+
+  it("permanently redirects legacy /ui bookmarks to Connections", async () => {
+    const c = makeConnecta();
+    const res = await c.fetch(new Request(`${BASE}/ui?from=bookmark`));
+    expect(res.status).toBe(308);
+    expect(res.headers.get("location")).toBe(`${BASE}/?from=bookmark`);
+  });
+
+  it("keeps deployment and operator data out of every open shell", async () => {
+    const c = createConnecta({
+      connectors: [
+        api("sentinel_connector", {
+          description: "SENTINEL_CONNECTOR_DESCRIPTION",
+          tools: [],
+        }),
+      ],
+      auth: bearerToken(TOKEN, { subjectId: "SENTINEL_ACTOR" }),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
+    });
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const body = await (
+        await c.fetch(new Request(`${BASE}${path}`))
+      ).text();
+      expect(body).not.toContain("sentinel_connector");
+      expect(body).not.toContain("SENTINEL_CONNECTOR_DESCRIPTION");
+      expect(body).not.toContain("SENTINEL_ACTOR");
+      expect(body).not.toContain("SENTINEL_DEPLOYMENT");
+    }
   });
 
   it("serves Connecta favicons in their advertised formats", async () => {
@@ -467,7 +561,7 @@ describe("status UI", () => {
     expect(body).toContain("<title>Connecta</title>");
     expect(body).toContain('href="/favicon.svg"');
     expect(body).toContain("Connection status");
-    expect(body).toContain('href="/ui">Return to Connecta</a>');
+    expect(body).toContain('href="/">Return to Connecta</a>');
     expect(body).toContain("Connecta");
   });
 
@@ -482,29 +576,31 @@ describe("status UI", () => {
         description: "Manage Acme agent connections.",
       },
     });
-    const res = await c.fetch(new Request(`${BASE}/ui`));
+    const res = await c.fetch(new Request(`${BASE}/`));
     const body = await res.text();
 
-    expect(body).toContain("<title>Connecta — Acme &amp; Co.</title>");
+    expect(body).toContain(
+      "<title>Connections — Connecta — Acme &amp; Co.</title>",
+    );
     expect(body).toContain('href="https://example.com"');
     expect(body).toContain("Manage Acme agent connections.");
   });
 
-  it("/ui derives the MCP connection URL from the request origin", async () => {
+  it("the Connections shell derives the MCP URL from the request origin", async () => {
     const c = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
     });
     const origin = "https://request-origin.test";
-    const res = await c.fetch(new Request(`${origin}/ui`));
+    const res = await c.fetch(new Request(`${origin}/`));
     const body = await res.text();
 
     expect(res.status).toBe(200);
     expect(body).toContain(`const MCP_URL = "${origin}/mcp";`);
   });
 
-  it("/ui uses Clerk sign-in when a Clerk provider is configured", async () => {
+  it("the operator shell uses Clerk sign-in when configured", async () => {
     const domain = "clerk.example.com$";
     const publishableKey =
       "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
@@ -522,7 +618,7 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
 
-    const res = await c.fetch(new Request(`${BASE}/ui`));
+    const res = await c.fetch(new Request(`${BASE}/`));
     const body = await res.text();
     expect(res.status).toBe(200);
     expect(body).toContain("https://clerk.example.com/npm/@clerk/clerk-js@6");
@@ -531,26 +627,30 @@ describe("status UI", () => {
     expect(body).toContain('const AUTH = {"kind":"clerk"');
   });
 
-  it("/ui sets a nonce-based script CSP and nonces every script tag", async () => {
+  it("operator shells set nonce-based CSP and nonce every script tag", async () => {
     const c = makeConnecta();
-    const res = await c.fetch(new Request(`${BASE}/ui`));
-
-    const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("'strict-dynamic'");
-    expect(csp).toContain("object-src 'none'");
-    expect(csp).toContain("base-uri 'none'");
-    expect(csp).toContain("frame-ancestors 'none'");
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-
-    const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
-    expect(nonce).toBeTruthy();
-
-    const body = await res.text();
-    const scriptTags = body.match(/<script[^>]*>/g) ?? [];
-    expect(scriptTags.length).toBeGreaterThan(0);
-    for (const tag of scriptTags) {
-      expect(tag).toContain(`nonce="${nonce}"`);
+    const nonces = new Set<string>();
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const res = await c.fetch(new Request(`${BASE}${path}`));
+      const csp = res.headers.get("content-security-policy") ?? "";
+      expect(csp).toContain("'strict-dynamic'");
+      expect(csp).toContain("object-src 'none'");
+      expect(csp).toContain("base-uri 'none'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(res.headers.get("x-frame-options")).toBe("DENY");
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
+      expect(nonce).toBeTruthy();
+      nonces.add(nonce!);
+      const body = await res.text();
+      const scriptTags = body.match(/<script[^>]*>/g) ?? [];
+      expect(scriptTags.length).toBeGreaterThan(0);
+      for (const tag of scriptTags) {
+        expect(tag).toContain(`nonce="${nonce}"`);
+      }
     }
+    expect(nonces.size).toBe(3);
   });
 
   it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {
@@ -560,7 +660,7 @@ describe("status UI", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const res = await c.fetch(new Request(`${BASE}/ui`));
+    const res = await c.fetch(new Request(`${BASE}/`));
     const csp = res.headers.get("content-security-policy") ?? "";
     const nonce = csp.match(/'nonce-([^']+)'/)?.[1];
     expect(nonce).toBeTruthy();
@@ -590,7 +690,7 @@ describe("status UI", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
       });
-      const res = await c.fetch(new Request(`${BASE}/ui`));
+      const res = await c.fetch(new Request(`${BASE}/`));
       const body = await res.text();
       // The shell still renders — a rejected loader origin drops the loader, it
       // does not fail the page.
@@ -609,7 +709,7 @@ describe("status UI", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(scriptSrcs(body)).toEqual([
       "https://clerk.example.com/npm/@clerk/clerk-js@6/dist/clerk.browser.js",
     ]);
@@ -633,7 +733,7 @@ describe("status UI", () => {
         storage: memoryStorage(),
         publicUrl: BASE,
       });
-      const res = await c.fetch(new Request(`${BASE}/ui`));
+      const res = await c.fetch(new Request(`${BASE}/`));
       const body = await res.text();
       // Only the navigation targets drop: the page and its loader still render,
       // and Clerk.load falls back to its own sign-in defaults.
@@ -660,7 +760,7 @@ describe("status UI", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(body).toContain(
       '"signInUrl":"https://accounts.example.com/sign-in"',
     );
@@ -682,7 +782,7 @@ describe("status UI", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
     });
-    const body = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    const body = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(body).not.toContain('"signInUrl"');
     expect(body).not.toContain("alert(1)");
     expect(body).toContain(
@@ -691,7 +791,11 @@ describe("status UI", () => {
   });
 
   it("renderUiHtml emits no nonce attributes when no nonce is passed", () => {
-    expect(renderUiHtml()).not.toContain("nonce=");
+    const html = renderUiHtml();
+    expect(html).not.toContain("nonce=");
+    const inlineScript = /<script>([\s\S]*)<\/script>/.exec(html)?.[1];
+    expect(inlineScript).toBeTruthy();
+    expect(() => new Function(inlineScript!)).not.toThrow();
     const withClerk = renderUiHtml({
       kind: "clerk",
       publishableKey: "pk_test_fake",
@@ -699,6 +803,30 @@ describe("status UI", () => {
     });
     expect(withClerk).toContain("clerk.browser.js");
     expect(withClerk).not.toContain("nonce=");
+  });
+
+  it("fences identity-scoped UI state by session and activity generation", () => {
+    const html = renderUiHtml();
+    expect(html).toContain("let SESSION_GENERATION = 0;");
+    expect(html).toContain("let ACTIVITY_GENERATION = 0;");
+    expect(html).toContain("function clearIdentityState()");
+    expect(html).toContain("SESSION_GENERATION += 1;");
+    expect(html).toContain(
+      "function showGate(msg) {\n  clearIdentityState();",
+    );
+    expect(html).toContain("DATA = null;");
+    expect(html).toContain('$(\"credentialList\").innerHTML = \"\";');
+    expect(html).toContain('$(\"activityList\").innerHTML = \"\";');
+    expect(
+      html.match(/generation !== SESSION_GENERATION/g)?.length,
+    ).toBeGreaterThanOrEqual(5);
+    expect(html).toContain(
+      "sessionGeneration === SESSION_GENERATION &&",
+    );
+    expect(html).toContain(
+      "activityGeneration === ACTIVITY_GENERATION",
+    );
+    expect(html).toContain("if (isCurrent())");
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -719,6 +847,7 @@ describe("status UI", () => {
     const body = (await res.json()) as any;
     expect(body.serverInfo.name).toBe("connecta");
     expect(body.activityEnabled).toBe(false);
+    expect(body.credentialManagement).toBe("requires_clerk");
 
     const byId = Object.fromEntries(
       body.connectors.map((x: any) => [x.id, x]),
@@ -726,6 +855,7 @@ describe("status UI", () => {
     expect(byId.calc.status).toBe("ok");
     expect(byId.calc.title).toBe("Calculator");
     expect(byId.calc.toolCount).toBe(1);
+    expect(byId.calc.credential).toBeUndefined();
     expect(byId.calc.tools[0]).toMatchObject({
       name: "add",
       address: "calc.add",
@@ -735,6 +865,44 @@ describe("status UI", () => {
     expect(byId.broken.status).toBe("error");
     expect(byId.broken.tools).toEqual([]);
     expect(byId.broken.toolCount).toBe(0);
+  });
+
+  it("/ui/data exposes only the credential capability allowed for this identity", async () => {
+    const { connecta } = makeCredentialConnecta();
+    const bearer = (await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        }),
+      )
+    ).json()) as any;
+    expect(bearer.credentialManagement).toBe("requires_clerk");
+    expect(bearer.connectors[0].credential).toBeUndefined();
+
+    const clerk = (await (
+      await connecta.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: "Bearer clerk-token" },
+        }),
+      )
+    ).json()) as any;
+    expect(clerk.credentialManagement).toBe("available");
+    expect(clerk.connectors[0].credential.label).toBe("API token");
+
+    const withoutSlots = createConnecta({
+      connectors: [calc()],
+      auth: [fakeClerk()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const noSlots = (await (
+      await withoutSlots.fetch(
+        new Request(`${BASE}/ui/data`, {
+          headers: { Authorization: "Bearer clerk-token" },
+        }),
+      )
+    ).json()) as any;
+    expect(noSlots.credentialManagement).toBe("no_slots");
   });
 
   it("/ui/data keeps its payload when best-effort scope teardown throws", async () => {
@@ -982,16 +1150,25 @@ describe("status UI", () => {
     expect(byId.evil.authorizationUrl).toBeUndefined();
   });
 
-  it("renders connector credential controls without embedding a secret", async () => {
+  it("keeps credential controls in Credentials and secrets out of every shell", async () => {
     const { connecta } = makeCredentialConnecta();
-    const html = await (
-      await connecta.fetch(new Request(`${BASE}/ui`))
+    const connections = await (
+      await connecta.fetch(new Request(`${BASE}/`))
     ).text();
+    const credentials = await (
+      await connecta.fetch(new Request(`${BASE}/credentials`))
+    ).text();
+    const connectionsMarkup = connections.slice(
+      0,
+      connections.lastIndexOf("<script"),
+    );
 
-    expect(html).toContain('data-credential-action="save"');
-    expect(html).toContain('autocomplete="new-password"');
-    expect(html).toContain("/ui/credentials/");
-    expect(html).not.toContain("valid-secret-9876");
+    expect(connectionsMarkup).not.toContain("data-credential-action");
+    expect(credentials).toContain('data-credential-action="save"');
+    expect(credentials).toContain('autocomplete="new-password"');
+    expect(credentials).toContain("/ui/credentials/");
+    expect(connections).not.toContain("valid-secret-9876");
+    expect(credentials).not.toContain("valid-secret-9876");
   });
 });
 
@@ -1048,13 +1225,13 @@ describe("status UI credential management", () => {
 
     const html = await (
       await connecta.fetch(
-        new Request(`${BASE}/ui`, {
+        new Request(`${BASE}/credentials`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
     ).text();
     expect(html).not.toContain("live-key-secret");
-    // The card is client-rendered from /ui/data, so the shell carries the
+    // Credentials is client-rendered from /ui/data, so the shell carries the
     // branch: the notice prints as muted copy, not the underlined `.msg` an
     // error gets, and the Test button is still drawn.
     expect(html).toContain('<p class="credential-copy meta">\' + esc(cred.notice)');

@@ -121,7 +121,7 @@ interface Connector {
     fields?: Array<{
       name: string;
       label: string;
-      description?: string;        // guidance shown in /ui; never the secret itself
+      description?: string;        // guidance shown on /credentials; never the secret itself
       placeholder?: string;
       inputType?: "email" | "password" | "text";
     }>;
@@ -168,13 +168,13 @@ request-scoped reuse.
 When a connector declares `credential`, `ctx.credential.get()` returns its
 decrypted single value, `get(name)` returns one named field, and `getAll()`
 returns the complete named set. Credential access is read-only from connector
-code: operators add, replace, test, and remove values through `/ui`.
+code: operators add, replace, test, and remove values through `/credentials`.
 `testCredential` and `testCredentials` optionally power the card's Test button
 without exposing values to the browser — and, because they answer "does this
 stored value still work" without touching downstream state, they are also what
 the credential liveness checks call ([credential health](./storage-and-credentials.md#credential-health-proactive-liveness-checks)).
-The declared credential **shape picks the hook**, in /ui, in the credential API,
-and in those liveness checks alike: named `credential.fields` are tested by
+The declared credential **shape picks the hook**, on `/credentials`, in the
+credential API, and in those liveness checks alike: named `credential.fields` are tested by
 `testCredentials`, a single-value `credential` by `testCredential`. Implement the
 one that matches — declaring only the other leaves the credential untestable, and
 warns at construction ([storage](./storage-and-credentials.md#operator-managed-connector-credentials)).
@@ -190,7 +190,8 @@ fetched lazily and have nothing to check at construction time, which is why
 
 `handleRequest` lets a connector serve its own HTTP route — a signed download
 link one of its tools minted, say. It is dispatched **after** every built-in
-route, so it can never shadow `/mcp`, `/ui`, `/health`, or the credential API,
+route, so it can never shadow `/mcp`, `/`, `/credentials`, `/activity`,
+`/health`, or the credential API,
 and the first connector returning a Response wins. These routes are **public**:
 connecta applies no auth gate to them, so a connector serving data here must
 authenticate the request itself (for example with a signed capability token in
@@ -335,7 +336,7 @@ export interface ApiOptions {
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap
   usageGuide?: string;
-  credential?: ConnectorCredentialConfig;   // operator-managed secret, rendered in /ui (storage-and-credentials.md)
+  credential?: ConnectorCredentialConfig;   // operator-managed secret, rendered on /credentials (storage-and-credentials.md)
   testCredential?: (value: string,
     ctx: ConnectorContext) => Promise<CredentialTestResult>;
   testCredentials?: (values: Record<string, string>,
@@ -350,7 +351,7 @@ export interface ApiOptions {
 
 `credential`, `testCredential`, and `testCredentials` are pass-throughs to the
 same-named fields on the `Connector` interface above — declare a credential here
-and the connector's `/ui` card grows Add / Replace / Test / Remove controls,
+and the connector gets Add / Replace / Test / Remove controls on `/credentials`,
 while `ctx.credential` gives handlers read-only access to the decrypted value
 ([storage](./storage-and-credentials.md#operator-managed-connector-credentials)). The credential **shape picks
 the hook**, and connecta never substitutes the other one:
@@ -361,8 +362,8 @@ the hook**, and connecta never substitutes the other one:
 | `fields: [...]` (named set) | `testCredentials` | the whole decrypted named set |
 
 Declare both and each is used for the shape it fits; declare only the hook that
-does *not* fit the shape and the credential is simply **not testable** — `/ui`
-renders no Test button, `POST /ui/credentials/<id>/test` answers 400 naming the
+does *not* fit the shape and the credential is simply **not testable** —
+`/credentials` renders no Test button, `POST /ui/credentials/<id>/test` answers 400 naming the
 mismatch, and `createConnecta` warns at construction so the mistake surfaces on
 the way in rather than under an operator's click
 ([storage](./storage-and-credentials.md#operator-managed-connector-credentials)).
