@@ -5,7 +5,9 @@ import { registerMetaTools } from "./meta-tools.js";
 import { CONNECTA_INSTRUCTIONS } from "./skills.js";
 import type {
   ActivityActor,
+  ActivityPage,
   ActivityReadGate,
+  ActivityReadPage,
   ActivityRequestContext,
   ActivityStore,
 } from "./activity.js";
@@ -270,11 +272,15 @@ async function authorize(
         );
         return { ok: false, response: unusableBinding() };
       }
+      const actorNamespace = activityActorNamespace(provider);
       return {
         ok: true,
         actor: {
           kind: provider.kind,
           ...(subjectId ? { id: subjectId } : {}),
+          ...(subjectId && actorNamespace
+            ? { namespace: actorNamespace }
+            : {}),
         },
         ...(result.userId && provider.uiAuth?.kind === "clerk"
           ? { uiAdminEligible: true }
@@ -930,6 +936,165 @@ function identityLabel(actor: ActivityActor): string {
   return actor.id ? `${actor.kind} ${loggableValue(actor.id)}` : actor.kind;
 }
 
+const ACTIVITY_ACTOR_NAMESPACE_RE = /^[\x21-\x7e]{1,256}$/;
+const ACTIVITY_LABEL_CONCURRENCY = 8;
+const ACTIVITY_LABEL_PAGE_BUDGET_MS = 1_500;
+const ACTIVITY_LABEL_MAX_LENGTH = 160;
+
+function activityActorNamespace(
+  provider: InboundAuth,
+): string | undefined {
+  return typeof provider.activityActorNamespace === "string" &&
+    ACTIVITY_ACTOR_NAMESPACE_RE.test(provider.activityActorNamespace)
+    ? provider.activityActorNamespace
+    : undefined;
+}
+
+function cleanActivityActorLabel(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const compact = value.replace(/\s+/gu, " ").trim();
+  if (!compact) return undefined;
+  return Array.from(compact).slice(0, ACTIVITY_LABEL_MAX_LENGTH).join("");
+}
+
+async function boundedActivityActorLabel(
+  hook: NonNullable<InboundAuth["activityActorLabel"]>,
+  id: string,
+  budgetMs: number,
+): Promise<string | undefined> {
+  let timer: number | undefined;
+  try {
+    return await Promise.race([
+      Promise.resolve(hook(id))
+        .then(cleanActivityActorLabel)
+        .catch(() => undefined),
+      new Promise<undefined>((resolve) => {
+        timer = setTimeout(resolve, budgetMs);
+      }),
+    ]);
+  } catch {
+    return undefined;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+/**
+ * Add display-only actor labels to one authorized activity page. Resolution is
+ * best-effort, bounded, and read-time only: stored events retain stable ids and
+ * a profile-provider outage falls back to those ids without failing the page.
+ */
+async function enrichActivityActorLabels(
+  page: ActivityPage,
+  auth: readonly InboundAuth[],
+): Promise<ActivityReadPage> {
+  const identities = new Map<
+    string,
+    { kind: string; id: string; namespace?: string }
+  >();
+  for (const event of page.events) {
+    if (!event.actor.id) continue;
+    identities.set(JSON.stringify([
+      event.actor.kind,
+      event.actor.namespace,
+      event.actor.id,
+    ]), {
+      kind: event.actor.kind,
+      id: event.actor.id,
+      ...(event.actor.namespace
+        ? { namespace: event.actor.namespace }
+        : {}),
+    });
+  }
+  const queue = [...identities.entries()];
+  const labels = new Map<string, string>();
+  let next = 0;
+  const deadline = Date.now() + ACTIVITY_LABEL_PAGE_BUDGET_MS;
+  const workers = Array.from(
+    { length: Math.min(ACTIVITY_LABEL_CONCURRENCY, queue.length) },
+    async () => {
+      while (next < queue.length) {
+        const [key, identity] = queue[next++];
+        const sameKindProviders = auth
+          .map((provider, index) => ({ provider, index }))
+          .filter(({ provider }) => provider.kind === identity.kind);
+        const candidates = sameKindProviders.filter(({ provider }) =>
+          Boolean(provider.activityActorLabel),
+        );
+        const eligible = identity.namespace
+          ? candidates.filter(
+              ({ provider }) =>
+                activityActorNamespace(provider) === identity.namespace,
+            )
+          : (() => {
+              const directoryKey = ({
+                provider,
+                index,
+              }: (typeof sameKindProviders)[number]) => {
+                const namespace = activityActorNamespace(provider);
+                return namespace === undefined
+                  ? `provider:${index}`
+                  : `namespace:${namespace}`;
+              };
+              // Every same-kind provider participates in the ambiguity check,
+              // even if it cannot resolve labels. Otherwise a legacy ID owned
+              // by a provider without a resolver could be disclosed to a
+              // different provider that happens to have one.
+              const directories = new Set(
+                sameKindProviders.map(directoryKey),
+              );
+              if (directories.size !== 1) return [];
+              const [directory] = directories;
+              return candidates.filter(
+                (candidate) => directoryKey(candidate) === directory,
+              );
+            })();
+        // One namespace is one directory. Use its first configured resolver so
+        // duplicate gate adapters over the same Clerk instance do not multiply
+        // the provider-level concurrency cap.
+        const provider = eligible[0]?.provider;
+        if (!provider) continue;
+        const remaining = deadline - Date.now();
+        if (remaining <= 0) return;
+        const label = await boundedActivityActorLabel(
+          provider.activityActorLabel!.bind(provider),
+          identity.id,
+          remaining,
+        );
+        if (label) {
+          labels.set(key, label);
+        }
+      }
+    },
+  );
+  await Promise.all(workers);
+  return {
+    ...page,
+    events: page.events.map((event) => {
+      const resolved = event.actor.id
+        ? labels.get(JSON.stringify([
+            event.actor.kind,
+            event.actor.namespace,
+            event.actor.id,
+          ]))
+        : undefined;
+      // Never trust or echo a `label` supplied by storage. The persisted event
+      // schema has no label; only this authenticated read path may add one.
+      const actor: ActivityActor = {
+        kind: event.actor.kind,
+        ...(event.actor.id ? { id: event.actor.id } : {}),
+        ...(event.actor.namespace
+          ? { namespace: event.actor.namespace }
+          : {}),
+      };
+      return {
+        ...event,
+        actor: resolved ? { ...actor, label: resolved } : actor,
+      };
+    }),
+  };
+}
+
 /**
  * Resolve `?toolkit=<name>` into the registry view this connection may see,
  * enforcing the caller's toolkit binding (docs/toolkits.md) on the way.
@@ -1562,7 +1727,8 @@ export function createFetchHandler(
           ? Math.min(100, Math.max(1, Math.trunc(requestedLimit)))
           : 50;
         try {
-          return privateJson(await opts.activity.list({ cursor, limit }));
+          const page = await opts.activity.list({ cursor, limit });
+          return privateJson(await enrichActivityActorLabels(page, auth));
         } catch (error) {
           if (error instanceof InvalidActivityCursorError) {
             return privateJson({ error: error.message }, { status: 400 });

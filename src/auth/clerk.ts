@@ -10,6 +10,7 @@ import {
 import type { AuthResult, InboundAuth } from "../types.js";
 
 type ClerkClient = ReturnType<typeof createClerkClient>;
+type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
 
 export interface ClerkAuthOptions extends ToolkitBindingOptions {
   publishableKey: string;
@@ -64,11 +65,42 @@ function fapiUrl(publishableKey: string): string {
 
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
+const ACTIVITY_LABEL_TTL_MS = 5 * 60 * 1000;
+const ACTIVITY_LABEL_MISS_TTL_MS = 30 * 1000;
+const ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS = 1_250;
+const ACTIVITY_LABEL_MAX_IN_FLIGHT = 8;
 // Per clerkAuth instance. This is deliberately fixed rather than an operator
 // knob: admission correctness never depends on retaining an entry, and 1,024
 // keeps the common steady identity set hot without letting one-off denied
 // identities define the isolate's lifetime memory footprint.
 const GATE_CACHE_MAX_IDENTITIES = 1_024;
+const ACTIVITY_LABEL_MAX_LENGTH = 160;
+
+function cleanActivityLabel(
+  value: string | null | undefined,
+): string | undefined {
+  if (!value) return undefined;
+  const compact = value.replace(/\s+/gu, " ").trim();
+  if (!compact) return undefined;
+  return Array.from(compact).slice(0, ACTIVITY_LABEL_MAX_LENGTH).join("");
+}
+
+/** Prefer a person's name, then a verified primary email, then username. */
+function activityLabelForUser(user: ClerkUser): string | undefined {
+  const fullName =
+    user.fullName ??
+    [user.firstName, user.lastName].filter(Boolean).join(" ");
+  const primary = user.emailAddresses?.find(
+    (address) =>
+      address.id === user.primaryEmailAddressId &&
+      address.verification?.status === "verified",
+  );
+  return (
+    cleanActivityLabel(fullName) ??
+    cleanActivityLabel(primary?.emailAddress) ??
+    cleanActivityLabel(user.username)
+  );
+}
 
 /**
  * One label of a domain: ASCII letters/digits, interior hyphens only, 63
@@ -201,8 +233,98 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
+  const activityLabelCache = new Map<
+    string,
+    { label?: string; exp: number }
+  >();
+  const pendingActivityLabels = new Map<
+    string,
+    Promise<string | undefined>
+  >();
+  const inFlightActivityLabelIds = new Set<string>();
+  let activeActivityLabelLookups = 0;
 
   const resolveBase = (baseUrl: string) => opts.publicUrl ?? baseUrl;
+
+  const cacheActivityLabel = (
+    userId: string,
+    label: string | undefined,
+  ): void => {
+    activityLabelCache.delete(userId);
+    activityLabelCache.set(userId, {
+      ...(label ? { label } : {}),
+      exp:
+        Date.now() +
+        (label ? ACTIVITY_LABEL_TTL_MS : ACTIVITY_LABEL_MISS_TTL_MS),
+    });
+    if (activityLabelCache.size > GATE_CACHE_MAX_IDENTITIES) {
+      const oldest = activityLabelCache.keys().next();
+      if (!oldest.done) activityLabelCache.delete(oldest.value);
+    }
+  };
+
+  const resolveActivityLabel = async (
+    userId: string,
+  ): Promise<string | undefined> => {
+    const cached = activityLabelCache.get(userId);
+    if (cached) {
+      if (Date.now() < cached.exp) {
+        activityLabelCache.delete(userId);
+        activityLabelCache.set(userId, cached);
+        return cached.label;
+      }
+      activityLabelCache.delete(userId);
+    }
+    const existing = pendingActivityLabels.get(userId);
+    if (existing) return existing;
+    // The Clerk SDK's getUser call has no AbortSignal. Keep the real upstream
+    // concurrency bounded even when requests hang forever: do not queue more
+    // identities in memory, and do not start a duplicate for an id whose raw
+    // lookup outlived its caller-facing deadline.
+    if (
+      inFlightActivityLabelIds.has(userId) ||
+      activeActivityLabelLookups >= ACTIVITY_LABEL_MAX_IN_FLIGHT
+    ) {
+      cacheActivityLabel(userId, undefined);
+      return undefined;
+    }
+
+    activeActivityLabelLookups++;
+    inFlightActivityLabelIds.add(userId);
+    const upstream = clerk.users
+      .getUser(userId)
+      .then((user) => {
+        const label = activityLabelForUser(user);
+        cacheActivityLabel(userId, label);
+        return label;
+      })
+      .catch(() => {
+        cacheActivityLabel(userId, undefined);
+        return undefined;
+      })
+      .finally(() => {
+        activeActivityLabelLookups--;
+        inFlightActivityLabelIds.delete(userId);
+      });
+    const lookup = new Promise<string | undefined>((resolve) => {
+      let settled = false;
+      const finish = (label: string | undefined) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        resolve(label);
+      };
+      const timer = setTimeout(() => {
+        cacheActivityLabel(userId, undefined);
+        finish(undefined);
+      }, ACTIVITY_LABEL_LOOKUP_TIMEOUT_MS);
+      void upstream.then(finish);
+    }).finally(() => {
+      pendingActivityLabels.delete(userId);
+    });
+    pendingActivityLabels.set(userId, lookup);
+    return lookup;
+  };
 
   const unauthorized = (baseUrl: string, tokenPresent: boolean): Response => {
     const error = tokenPresent ? `error="invalid_token", ` : "";
@@ -316,7 +438,9 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
   return {
     kind: "clerk",
+    activityActorNamespace: fapiUrl(opts.publishableKey),
     ...(toolkitBinding ? { toolkitBinding } : {}),
+    activityActorLabel: resolveActivityLabel,
     uiAuth: {
       kind: "clerk",
       publishableKey: opts.publishableKey,

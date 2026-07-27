@@ -25,6 +25,7 @@ import {
 import { CONNECTA_FAVICON_ICO } from "../src/favicon.js";
 import { CONNECTA_VERSION } from "../src/version.js";
 import type {
+  ActivityReadPage,
   ActivityStore,
   ToolCallActivityEvent,
 } from "../src/activity.js";
@@ -1320,6 +1321,165 @@ describe("status UI", () => {
     expect(reconnect.disabled).toBe(false);
   });
 
+  it("renders friendly activity labels with visible stable-id disambiguation", async () => {
+    const html = renderUiHtml();
+    const elements = new Map<string, TestElement>();
+    const element = (id: string) => {
+      let value = elements.get(id);
+      if (!value) {
+        value = new TestElement();
+        elements.set(id, value);
+      }
+      return value;
+    };
+    const document = {
+      title: "",
+      getElementById: element,
+      createElement: () => new TestElement(),
+      querySelector: () => null,
+      querySelectorAll: () => [],
+      addEventListener: () => {},
+    };
+    const events = [
+      {
+        schemaVersion: 1,
+        id: "event-1",
+        occurredAt: "2026-07-23T12:00:00.000Z",
+        requestId: "request",
+        actor: {
+          kind: "clerk",
+          id: "user_1",
+          namespace: "https://tenant-a.example",
+          label: "Ada Lovelace",
+        },
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source: "call_tool",
+        outcome: "success",
+        durationMs: 2,
+        attempts: 1,
+        serverName: "connecta",
+        serverVersion: "0.1.0",
+      },
+      {
+        schemaVersion: 1,
+        id: "event-2",
+        occurredAt: "2026-07-23T12:01:00.000Z",
+        requestId: "request",
+        actor: {
+          kind: "clerk",
+          id: "user_2",
+          namespace: "https://tenant-b.example",
+          label: "Ada Lovelace",
+        },
+        connectorId: "notes",
+        toolName: "list",
+        address: "notes.list",
+        source: "call_tool",
+        outcome: "success",
+        durationMs: 3,
+        attempts: 1,
+        serverName: "connecta",
+        serverVersion: "0.1.0",
+      },
+      {
+        schemaVersion: 1,
+        id: "event-3",
+        occurredAt: "2026-07-23T12:02:00.000Z",
+        requestId: "request",
+        actor: { kind: "clerk", id: "user_fallback" },
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source: "call_tool",
+        outcome: "success",
+        durationMs: 4,
+        attempts: 1,
+        serverName: "connecta",
+        serverVersion: "0.1.0",
+      },
+    ];
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(
+        Response.json({
+          serverInfo: { name: "connecta", version: "host" },
+          connectaVersion: "package",
+          credentialManagement: "no_slots",
+          oauthManagement: false,
+          activityEnabled: true,
+          connectors: [],
+          toolkits: [],
+        }),
+      )
+      .mockResolvedValueOnce(Response.json({ events }));
+    const run = new Function(
+      "window",
+      "document",
+      "history",
+      "localStorage",
+      "fetch",
+      "Clerk",
+      "navigator",
+      "CSS",
+      "URL",
+      "URLSearchParams",
+      inlineScript(html),
+    );
+    run(
+      {
+        location: new URL(`${BASE}/activity`),
+        confirm: () => true,
+        setTimeout,
+        addEventListener: () => {},
+      },
+      document,
+      { pushState: () => {} },
+      {
+        getItem: () => TOKEN,
+        setItem: () => {},
+        removeItem: () => {},
+      },
+      fetch,
+      undefined,
+      { clipboard: { writeText: async () => {} } },
+      { escape: (value: string) => value },
+      URL,
+      URLSearchParams,
+    );
+
+    await vi.waitFor(() => {
+      expect(element("activityList").children).toHaveLength(3);
+    });
+    expect(element("activityList").children[0].innerHTML).toContain(
+      "clerk · Ada Lovelace",
+    );
+    expect(element("activityList").children[0].innerHTML).toContain("user_1");
+    expect(element("activityList").children[0].innerHTML).toContain(
+      "https://tenant-a.example · user_1",
+    );
+    expect(element("activityList").children[1].innerHTML).toContain("user_2");
+    expect(element("activityList").children[1].innerHTML).toContain(
+      "https://tenant-b.example · user_2",
+    );
+    expect(element("activityList").children[2].innerHTML).toContain(
+      "clerk · user_fallback",
+    );
+
+    element("activitySearch").value = "ada lovelace";
+    await (element("activitySearch") as any).oninput();
+    expect(element("activityList").children).toHaveLength(2);
+    element("activitySearch").value = "user_1";
+    await (element("activitySearch") as any).oninput();
+    expect(element("activityList").children).toHaveLength(1);
+    expect(element("activityList").children[0].innerHTML).toContain("user_1");
+    element("activitySearch").value = "tenant-b.example";
+    await (element("activitySearch") as any).oninput();
+    expect(element("activityList").children).toHaveLength(1);
+    expect(element("activityList").children[0].innerHTML).toContain("user_2");
+  });
+
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
     const c = makeConnecta();
     const res = await c.fetch(new Request(`${BASE}/ui/data`));
@@ -1992,6 +2152,317 @@ describe("status UI", () => {
       events: [event],
       nextCursor: "next",
     });
+  });
+
+  it("adds friendly activity labels at read time while retaining stable ids", async () => {
+    const actorLabel = vi.fn(async (id: string) => {
+      if (id === "user_offline") throw new Error("profile lookup failed");
+      return "  Ada   Lovelace\n";
+    });
+    const auth: InboundAuth = {
+      kind: "clerk",
+      activityActorLabel: actorLabel,
+      authorize(request) {
+        return request.headers.get("authorization") === "Bearer clerk-token"
+          ? { ok: true, userId: "operator" }
+          : {
+              ok: false,
+              response: Response.json(
+                { error: "unauthorized" },
+                { status: 401 },
+              ),
+            };
+      },
+    };
+    const event = (
+      id: string,
+      actor: ToolCallActivityEvent["actor"],
+    ): ToolCallActivityEvent => ({
+      schemaVersion: 1,
+      id,
+      occurredAt: "2026-07-23T12:00:00.000Z",
+      requestId: "22222222-2222-4222-8222-222222222222",
+      actor,
+      connectorId: "calc",
+      toolName: "add",
+      address: "calc.add",
+      source: "call_tool",
+      outcome: "success",
+      durationMs: 12,
+      attempts: 1,
+      serverName: "connecta",
+      serverVersion: "0.1.0",
+    });
+    const stored = [
+      event("event-1", { kind: "clerk", id: "user_123" }),
+      event("event-2", { kind: "clerk", id: "user_123" }),
+      event("event-3", { kind: "clerk", id: "user_offline" }),
+      event("event-4", { kind: "bearer", id: "ci-runner" }),
+    ];
+    const c = createConnecta({
+      connectors: [calc()],
+      auth,
+      activity: {
+        store: {
+          record() {},
+          async list() {
+            return { events: stored };
+          },
+        },
+      },
+      publicUrl: BASE,
+    });
+
+    const response = await c.fetch(
+      new Request(`${BASE}/ui/activity`, {
+        headers: { Authorization: "Bearer clerk-token" },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const page = (await response.json()) as ActivityReadPage;
+    expect(page.events[0].actor).toEqual({
+      kind: "clerk",
+      id: "user_123",
+      label: "Ada Lovelace",
+    });
+    expect(page.events[1].actor.label).toBe("Ada Lovelace");
+    expect(page.events[2].actor).toEqual({
+      kind: "clerk",
+      id: "user_offline",
+    });
+    expect(page.events[3].actor).toEqual({
+      kind: "bearer",
+      id: "ci-runner",
+    });
+    expect(actorLabel).toHaveBeenCalledTimes(2);
+    expect(stored.every((item) => !("label" in item.actor))).toBe(true);
+  });
+
+  it("resolves activity ids only through their admitting provider namespace", async () => {
+    const directoryA = vi.fn(async () => "Wrong Person");
+    const directoryB = vi.fn(async () => "Right Person");
+    const duplicateDirectoryB = vi.fn(async () => "Duplicate Resolver");
+    const denied = () => ({
+      ok: false as const,
+      response: Response.json({ error: "unauthorized" }, { status: 401 }),
+    });
+    const providerA: InboundAuth = {
+      kind: "oidc",
+      activityActorNamespace: "https://id-a.example",
+      activityActorLabel: directoryA,
+      authorize: denied,
+    };
+    const providerB: InboundAuth = {
+      kind: "oidc",
+      activityActorNamespace: "https://id-b.example",
+      activityActorLabel: directoryB,
+      authorize(request) {
+        return request.headers.get("authorization") === "Bearer operator"
+          ? { ok: true, userId: "operator" }
+          : denied();
+      },
+    };
+    const providerBSecondGate: InboundAuth = {
+      kind: "oidc",
+      activityActorNamespace: "https://id-b.example",
+      activityActorLabel: duplicateDirectoryB,
+      authorize: denied,
+    };
+    const baseEvent: ToolCallActivityEvent = {
+      schemaVersion: 1,
+      id: "event-namespaced",
+      occurredAt: "2026-07-23T12:00:00.000Z",
+      requestId: "request",
+      actor: {
+        kind: "oidc",
+        id: "local-user-1",
+        namespace: "https://id-b.example",
+        label: "Forged Stored Label",
+      } as ToolCallActivityEvent["actor"],
+      connectorId: "calc",
+      toolName: "add",
+      address: "calc.add",
+      source: "call_tool",
+      outcome: "success",
+      durationMs: 1,
+      attempts: 1,
+      serverName: "connecta",
+      serverVersion: "0.1.0",
+    };
+    const c = createConnecta({
+      connectors: [calc()],
+      auth: [providerA, providerB, providerBSecondGate],
+      activity: {
+        store: {
+          record() {},
+          async list() {
+            return {
+              events: [
+                baseEvent,
+                {
+                  ...baseEvent,
+                  id: "event-legacy",
+                  actor: {
+                    kind: "oidc",
+                    id: "legacy-local-id",
+                    label: "Forged Legacy Label",
+                  } as ToolCallActivityEvent["actor"],
+                },
+              ],
+            };
+          },
+        },
+      },
+      publicUrl: BASE,
+    });
+
+    const response = await c.fetch(
+      new Request(`${BASE}/ui/activity`, {
+        headers: { Authorization: "Bearer operator" },
+      }),
+    );
+    const page = (await response.json()) as ActivityReadPage;
+
+    expect(page.events[0].actor).toEqual({
+      kind: "oidc",
+      id: "local-user-1",
+      namespace: "https://id-b.example",
+      label: "Right Person",
+    });
+    expect(page.events[1].actor).toEqual({
+      kind: "oidc",
+      id: "legacy-local-id",
+    });
+    expect(directoryA).not.toHaveBeenCalled();
+    expect(directoryB).toHaveBeenCalledOnce();
+    expect(duplicateDirectoryB).not.toHaveBeenCalled();
+  });
+
+  it("does not resolve legacy ids when any same-kind provider makes the directory ambiguous", async () => {
+    const denied = () => ({
+      ok: false as const,
+      response: Response.json({ error: "unauthorized" }, { status: 401 }),
+    });
+    for (const ownerNamespace of [
+      "https://id-a.example",
+      undefined,
+    ]) {
+      const wrongDirectory = vi.fn(async () => "Wrong Person");
+      const ownerWithoutResolver: InboundAuth = {
+        kind: "oidc",
+        ...(ownerNamespace
+          ? { activityActorNamespace: ownerNamespace }
+          : {}),
+        authorize: denied,
+      };
+      const otherDirectory: InboundAuth = {
+        kind: "oidc",
+        activityActorNamespace: "https://id-b.example",
+        activityActorLabel: wrongDirectory,
+        authorize(request) {
+          return request.headers.get("authorization") === "Bearer operator"
+            ? { ok: true, userId: "operator" }
+            : denied();
+        },
+      };
+      const event: ToolCallActivityEvent = {
+        schemaVersion: 1,
+        id: "event-legacy",
+        occurredAt: "2026-07-23T12:00:00.000Z",
+        requestId: "request",
+        actor: { kind: "oidc", id: "legacy-local-id" },
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source: "call_tool",
+        outcome: "success",
+        durationMs: 1,
+        attempts: 1,
+        serverName: "connecta",
+        serverVersion: "0.1.0",
+      };
+      const c = createConnecta({
+        connectors: [calc()],
+        auth: [ownerWithoutResolver, otherDirectory],
+        activity: {
+          store: {
+            record() {},
+            async list() {
+              return { events: [event] };
+            },
+          },
+        },
+        publicUrl: BASE,
+      });
+
+      const response = await c.fetch(
+        new Request(`${BASE}/ui/activity`, {
+          headers: { Authorization: "Bearer operator" },
+        }),
+      );
+      const page = (await response.json()) as ActivityReadPage;
+
+      expect(page.events[0].actor).toEqual(event.actor);
+      expect(wrongDirectory).not.toHaveBeenCalled();
+    }
+  });
+
+  it("bounds a custom activity-label resolver that never settles", async () => {
+    vi.useFakeTimers();
+    try {
+      const auth: InboundAuth = {
+        kind: "oidc",
+        activityActorNamespace: "https://identity.example",
+        activityActorLabel: () => new Promise(() => {}),
+        authorize: () => ({ ok: true, userId: "operator" }),
+      };
+      const event: ToolCallActivityEvent = {
+        schemaVersion: 1,
+        id: "event",
+        occurredAt: "2026-07-23T12:00:00.000Z",
+        requestId: "request",
+        actor: {
+          kind: "oidc",
+          id: "local-user",
+          namespace: "https://identity.example",
+        },
+        connectorId: "calc",
+        toolName: "add",
+        address: "calc.add",
+        source: "call_tool",
+        outcome: "success",
+        durationMs: 1,
+        attempts: 1,
+        serverName: "connecta",
+        serverVersion: "0.1.0",
+      };
+      const c = createConnecta({
+        connectors: [calc()],
+        auth,
+        activity: {
+          store: {
+            record() {},
+            async list() {
+              return { events: [event] };
+            },
+          },
+        },
+        publicUrl: BASE,
+      });
+
+      const pending = c.fetch(
+        new Request(`${BASE}/ui/activity`, {
+          headers: { Authorization: "Bearer operator" },
+        }),
+      );
+      await vi.advanceTimersByTimeAsync(1_500);
+      const response = await pending;
+      const page = (await response.json()) as ActivityReadPage;
+      expect(page.events[0].actor).toEqual(event.actor);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("supports a Clerk-only activity read gate", async () => {

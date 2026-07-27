@@ -16,6 +16,12 @@ export type ActivityOutcome = "success" | "error" | "timeout";
 export interface ActivityActor {
   kind: string;
   id?: string;
+  /**
+   * Stable, non-secret identity-directory namespace supplied by the admitting
+   * auth provider. It lets authorized reads resolve ids through the same
+   * provider rather than another provider that happens to share `kind`.
+   */
+  namespace?: string;
 }
 
 /**
@@ -52,6 +58,20 @@ export interface ToolCallActivityEvent {
 
 export interface ActivityPage {
   events: ToolCallActivityEvent[];
+  nextCursor?: string;
+}
+
+/** Display-only actor returned by the authenticated activity read API. */
+export interface ActivityReadActor extends ActivityActor {
+  label?: string;
+}
+
+export type ActivityReadEvent = Omit<ToolCallActivityEvent, "actor"> & {
+  actor: ActivityReadActor;
+};
+
+export interface ActivityReadPage {
+  events: ActivityReadEvent[];
   nextCursor?: string;
 }
 

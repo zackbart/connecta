@@ -33,6 +33,30 @@ per team credential — and `unscoped: true` additionally lets it connect with n
 `?toolkit=`. Both are part of toolkit binding and are documented with their
 enforcement in [toolkits](./toolkits.md#toolkits-scoped-views).
 
+### Friendly activity identities for custom auth
+
+An auth adapter may resolve its stable actor ids for authorized Activity reads:
+
+```ts
+const auth: InboundAuth = {
+  kind: "oidc",
+  activityActorNamespace: "https://issuer.example", // stable, non-secret
+  activityActorLabel: async (subjectId) => lookupDisplayName(subjectId),
+  authorize: /* … */,
+};
+```
+
+The namespace is stored with new activity actors and must identify the
+directory that owns the ids, not one deployment or credential. It prevents an
+id admitted by one provider from being disclosed to another provider that
+happens to use the same `kind`. For a legacy event with no namespace, connecta
+calls a resolver only when the configured providers reduce to one unambiguous
+directory; otherwise the UI safely shows the stable id. Resolvers are
+display-only, never participate in admission, and their output is normalized
+and bounded before it reaches the Activity response. A namespace must be 1–256
+printable, non-space ASCII characters; an invalid value is ignored and treated
+as an unknown directory so resolution fails closed.
+
 ### `clerkAuth(options)`
 
 connecta acts as an OAuth 2.1 **resource server**; Clerk is the **authorization
@@ -86,6 +110,15 @@ export interface ClerkAuthOptions {
   a **403** with no challenge and no reason.
 - Requires **Dynamic Client Registration** enabled on the Clerk instance so
   Claude/Cursor can self-register (see [setting up Clerk](#setting-up-clerk-walkthrough)).
+
+For authorized Activity reads, the adapter also resolves each stored Clerk user
+ID to a display label: full name first, then verified primary email, then
+username. Its identity namespace is the Clerk Frontend API origin derived from
+the publishable key, so several gates over one Clerk instance remain one
+directory while different instances never receive each other's ids. Resolution
+is bounded, cached, and best-effort; a Clerk API failure falls back to the
+stable ID and never blocks the activity page or tool calls. The friendly value
+is added only to the read response, not stored in events.
 
 ### Three access-control layers
 

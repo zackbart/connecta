@@ -307,7 +307,7 @@ interface ToolCallActivityEvent {
   id: string;                 // uuid
   occurredAt: string;         // ISO 8601
   requestId: string;          // shared by every call in one inbound request
-  actor: { kind: string; id?: string };
+  actor: { kind: string; id?: string; namespace?: string };
   connectorId: string;
   toolName: string;
   address: string;            // `${connectorId}.${toolName}`
@@ -332,8 +332,16 @@ being folded into the ordinary path.
 ### Actor identity
 
 `actor.id` is deliberately optional: a shared secret cannot honestly identify a
-person. Clerk-authenticated calls carry the Clerk user ID
-(`{ kind: "clerk", id: "user_…" }`); static-bearer calls are labeled
+person. Clerk-authenticated calls store the stable Clerk user ID and its
+non-secret identity-directory namespace. On an authorized activity read, the
+Clerk adapter adds a display-only `actor.label` to the response from the user's
+name, verified primary email, or username. The UI leads with that friendly
+label, keeps the namespace-qualified stable ID visible beneath it to
+disambiguate duplicate or user-controlled names across identity directories,
+and falls back to the ID when lookup is unavailable.
+Labels are cached briefly, concurrency/latency bounded, and never accepted from
+or copied into stored events. Legacy events without a namespace are enriched
+only when one identity directory is unambiguous for their `kind`. Static-bearer calls are labeled
 `{ kind: "bearer" }` with no id unless `bearerToken(secret, { subjectId })`
 assigns that credential a stable subject ([inbound auth](./auth.md#inbound-auth)). An open deployment (no `auth`
 configured) records `{ kind: "anonymous" }`.
