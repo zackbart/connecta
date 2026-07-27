@@ -113,9 +113,9 @@ export interface ConnectorContext {
    * when omitted.
    */
   requestScope?: object;
-  /** Best-effort cancellation signal for this individual tool call. */
+  /** Best-effort cancellation signal for this connector operation. */
   signal?: AbortSignal;
-  /** Requested tool-call deadline in milliseconds. */
+  /** Requested connector-operation deadline in milliseconds. */
   timeoutMs?: number;
 }
 
