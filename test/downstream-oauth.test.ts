@@ -7,7 +7,10 @@ import type {
   OAuthTokens,
 } from "@modelcontextprotocol/sdk/shared/auth.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { KvOAuthProvider } from "../src/auth/downstream-oauth.js";
+import {
+  KvOAuthProvider,
+  oauthValueStorageKey,
+} from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createConnecta } from "../src/index.js";
@@ -34,7 +37,7 @@ async function storeCurrentOAuthValue(
 ): Promise<void> {
   const generation = (await storage.get("oauth:generation")) ?? "legacy";
   await storage.set(
-    key,
+    oauthValueStorageKey(key, generation),
     JSON.stringify({
       connectaOAuthVersion: 1,
       generation,
@@ -143,7 +146,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     const generation = await p.bumpGeneration();
     await p.clearPending();
     await p.invalidateCredentials("all");
-    // The epoch is a tombstone, not ordinary state cleanup may erase.
+    // The epoch is a fence; ordinary state cleanup may not erase it.
     expect(await p.generation()).toBe(generation);
   });
 
@@ -185,7 +188,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
     // A starts its flow under the legacy generation.
     a.captureGeneration(await a.generation());
 
-    // B publishes a unique tombstone, wipes state, and opens a new epoch.
+    // B publishes a unique epoch, wipes state, and opens a new namespace.
     await b.resetAuthorization();
 
     // A's late writes are dropped — KV stays wiped.
@@ -256,7 +259,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
       "token delete unavailable",
     );
 
-    expect(await backing.get("oauth:generation")).toMatch(/^reset:/);
+    expect(await backing.get("oauth:generation")).toMatch(/^v2:/);
     expect(deleted).toEqual([
       "oauth:client",
       "oauth:tokens",
@@ -269,8 +272,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await backing.get("oauth:pending")).toBeNull();
     expect(await backing.get("oauth:verifier")).toBeNull();
     expect(await backing.get("oauth:state")).toBeNull();
-    // The surviving physical token is legacy residue under a modern reset
-    // tombstone, so it is no longer a usable credential.
+    // The surviving physical token is legacy residue outside the active
+    // generation namespace, so it is no longer a usable credential.
     expect(await p.tokens()).toBeUndefined();
   });
 
@@ -305,12 +308,18 @@ describe("KvOAuthProvider over memoryStorage", () => {
     });
     await writing;
     await resetter.resetAuthorization();
+    await resetter.saveTokens({
+      access_token: "fresh",
+      token_type: "Bearer",
+    });
     releaseWrite();
     await lateWrite;
 
-    expect(await backing.get("oauth:tokens")).not.toBeNull();
-    expect(await stale.tokens()).toBeUndefined();
-    expect(await resetter.tokens()).toBeUndefined();
+    expect(await backing.get("oauth:tokens")).toBeNull();
+    // Both readers see the active namespace; the old physical write cannot
+    // overwrite the fresh token stored under that namespace.
+    expect(await stale.tokens()).toMatchObject({ access_token: "fresh" });
+    expect(await resetter.tokens()).toMatchObject({ access_token: "fresh" });
   });
 
   it("fences one-shot state and callback token writes from an older flow", async () => {
@@ -338,6 +347,73 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await resetter.verifyState(expectedState)).toBe(false);
   });
 
+  it("does not retag the provider that performed a reset", async () => {
+    const storage = memoryStorage();
+    const staleAttempt = new KvOAuthProvider("svc", storage, REDIRECT);
+    staleAttempt.captureGeneration(await staleAttempt.generation());
+
+    await staleAttempt.resetAuthorization();
+    await staleAttempt.saveTokens({
+      access_token: "late-from-abandoned-transport",
+      token_type: "Bearer",
+    });
+
+    expect(await staleAttempt.tokens()).toBeUndefined();
+    expect(
+      await new KvOAuthProvider("svc", storage, REDIRECT).tokens(),
+    ).toBeUndefined();
+  });
+
+  it("concurrent resets cannot finalize over a newer epoch", async () => {
+    const backing = memoryStorage();
+    let firstCleanupReached!: () => void;
+    const firstCleanup = new Promise<void>((resolve) => {
+      firstCleanupReached = resolve;
+    });
+    let releaseFirstCleanup!: () => void;
+    const firstCleanupGate = new Promise<void>((resolve) => {
+      releaseFirstCleanup = resolve;
+    });
+    let heldFirstCleanup = false;
+    let secondGeneration: string | null = null;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      async set(key, value, opts) {
+        if (key === "oauth:generation" && heldFirstCleanup) {
+          secondGeneration = value;
+        }
+        await backing.set(key, value, opts);
+      },
+      async delete(key) {
+        if (key === "oauth:client" && !heldFirstCleanup) {
+          heldFirstCleanup = true;
+          firstCleanupReached();
+          await firstCleanupGate;
+        }
+        if (
+          secondGeneration !== null &&
+          key.startsWith("oauth:tokens:epoch:")
+        ) {
+          throw new Error("second reset cleanup failed");
+        }
+        await backing.delete(key);
+      },
+    };
+    const a = new KvOAuthProvider("svc", storage, REDIRECT);
+    const b = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    const resetA = a.resetAuthorization();
+    await firstCleanup;
+    await expect(b.resetAuthorization()).rejects.toThrow(
+      "second reset cleanup failed",
+    );
+    expect(secondGeneration).toMatch(/^v2:/);
+    releaseFirstCleanup();
+    await resetA;
+
+    expect(await backing.get("oauth:generation")).toBe(secondGeneration);
+  });
+
   it("clearPending attempts every one-shot deletion after a failure", async () => {
     const backing = memoryStorage();
     const deleted: string[] = [];
@@ -357,6 +433,54 @@ describe("KvOAuthProvider over memoryStorage", () => {
       "oauth:verifier",
       "oauth:state",
     ]);
+  });
+
+  it("an old callback cannot clear a replacement flow's one-shot state", async () => {
+    const storage = memoryStorage();
+    const oldCallback = new KvOAuthProvider("svc", storage, REDIRECT);
+    const oldState = await oldCallback.state();
+    await oldCallback.saveCodeVerifier("old-verifier");
+    expect(await oldCallback.verifyState(oldState)).toBe(true);
+
+    const replacement = new KvOAuthProvider("svc", storage, REDIRECT);
+    await replacement.resetAuthorization();
+    const freshState = await replacement.state();
+    await replacement.saveCodeVerifier("fresh-verifier");
+    await replacement.redirectToAuthorization(
+      new URL("https://auth.example/fresh"),
+    );
+
+    await oldCallback.clearPending();
+
+    expect(await replacement.verifyState(freshState)).toBe(true);
+    expect(await replacement.codeVerifier()).toBe("fresh-verifier");
+    expect(await replacement.pendingAuthorizationUrl()).toBe(
+      "https://auth.example/fresh",
+    );
+  });
+
+  it("a stale invalidation cannot remove replacement credentials", async () => {
+    const storage = memoryStorage();
+    const stale = new KvOAuthProvider("svc", storage, REDIRECT);
+    stale.captureGeneration(await stale.generation());
+
+    const replacement = new KvOAuthProvider("svc", storage, REDIRECT);
+    await replacement.resetAuthorization();
+    await replacement.saveTokens({
+      access_token: "fresh",
+      token_type: "Bearer",
+    });
+    await replacement.saveClientInformation({
+      client_id: "fresh",
+      redirect_uris: [REDIRECT],
+    });
+
+    await stale.invalidateCredentials("all");
+
+    expect(await replacement.tokens()).toMatchObject({ access_token: "fresh" });
+    expect(await replacement.clientInformation()).toMatchObject({
+      client_id: "fresh",
+    });
   });
 
   it("invalidateCredentials is scoped", async () => {
@@ -625,6 +749,52 @@ describe("remoteMcp() startAuth", () => {
     expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
     expect(builds).toBe(2);
     await expect(abandoned).resolves.toMatchObject({ state: "error" });
+  });
+
+  it("an abandoned Unauthorized completion cannot poison its healthy replacement", async () => {
+    const storage = memoryStorage();
+    const c = ctx(storage);
+    let reachedStart!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reachedStart = resolve;
+    });
+    let rejectOld!: (error: Error) => void;
+    let builds = 0;
+    const healthy = await connectServer();
+    closer = () => healthy.server.close();
+    const connector = remoteMcp("svc", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: () => {
+        builds++;
+        if (builds === 1) {
+          return {
+            start() {
+              reachedStart();
+              return new Promise<void>((_resolve, reject) => {
+                rejectOld = reject;
+              });
+            },
+            async send() {},
+            async close() {
+              // Simulate a transport whose close cannot cancel start().
+            },
+          } as unknown as Transport;
+        }
+        return healthy.clientTransport;
+      },
+    });
+
+    const abandoned = connector.status!(c);
+    await started;
+    await expect(connector.startAuth!(c, { force: true })).resolves.toMatchObject({
+      state: "ok",
+    });
+    rejectOld(new UnauthorizedError("late 401"));
+    await expect(abandoned).resolves.toMatchObject({ state: "error" });
+
+    expect(await connector.status!(c)).toMatchObject({ state: "ok" });
+    expect(builds).toBe(2);
   });
 
   it("a plain network error → error, NOT auth_required", async () => {
@@ -1047,22 +1217,29 @@ describe("/oauth/callback/<id> route", () => {
     // The configured downstream-OAuth connector is the baseline: state plus
     // the epoch that decides whether that state is still current.
     expect(await readsFor("svc")).toEqual([
-      "conn:svc:oauth:state",
       "conn:svc:oauth:generation",
+      "conn:svc:oauth:state",
     ]);
     // Every free-by-default refusal pays the same reads in its own namespace,
     // where an unconfigured id simply misses.
     expect(await readsFor("nope")).toEqual([
-      "conn:nope:oauth:state",
       "conn:nope:oauth:generation",
+      "conn:nope:oauth:state",
     ]);
     expect(await readsFor("plain")).toEqual([
-      "conn:plain:oauth:state",
       "conn:plain:oauth:generation",
+      "conn:plain:oauth:state",
     ]);
     expect(await readsFor("unverified")).toEqual([
-      "conn:unverified:oauth:state",
       "conn:unverified:oauth:generation",
+      "conn:unverified:oauth:state",
+    ]);
+
+    // A configured connector with no outstanding flow still pays both reads.
+    await counting.delete(STATE_KEY);
+    expect(await readsFor("svc")).toEqual([
+      "conn:svc:oauth:generation",
+      "conn:svc:oauth:state",
     ]);
   });
 

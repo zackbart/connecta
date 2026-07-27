@@ -41,11 +41,11 @@ operations have very different consistency, pagination, and cost models.
 
 | Key space | Lifetime and cleanup |
 | --- | --- |
-| `conn:<id>:oauth:pending`, `:verifier`, `:state` | One OAuth attempt. Cleared after a successful callback and before a force re-authorization starts a replacement flow. |
-| `conn:<id>:oauth:client`, `:tokens` | The connector's durable downstream grant. Replaced by refresh/code exchange; cleared by force re-authorization. |
-| `conn:<id>:oauth:generation` | Unique epoch. Force first publishes a `reset:` tombstone that makes credential reads fail closed, attempts every deletion, then publishes the new active epoch. Every OAuth value is tagged so a late old-epoch write stays unreadable. |
+| `conn:<id>:oauth:pending:epoch:<generation>`, `:verifier:epoch:<generation>`, `:state:epoch:<generation>` | One OAuth attempt. Cleared after a successful callback. Epoch-specific physical keys prevent an old callback from deleting a replacement flow. Legacy deployments use the unsuffixed names until the first reset. |
+| `conn:<id>:oauth:client:epoch:<generation>`, `:tokens:epoch:<generation>` | The connector's durable downstream grant. Replaced by refresh/code exchange. Force makes the old namespace unreadable before best-effort physical cleanup. Legacy deployments use the unsuffixed names until the first reset. |
+| `conn:<id>:oauth:generation` | Unique active epoch. Force publishes this single authoritative transition before cleanup. Every OAuth value is tagged and physically namespaced, so late old-epoch writes and deletes cannot affect replacement state. |
 | `conn:<id>:credential:v1` | Until an eligible operator replaces or removes the connector credential. |
-| `credhealth:<id>` | Latest verdict. A credential change makes a best-effort deletion and ignores it logically in the current isolate. |
+| `credhealth:<id>` | Latest verdict. A credential change drops the in-memory mirror and attempts a best-effort persisted deletion; an eventually consistent or failed store may temporarily serve the prior verdict again. |
 | `credhealth:gen:<id>` | Retained counter used to discard a check that observed a credential change on a consistent store. |
 | `catalog:<id>` | TTL-bounded. Credential/OAuth changes serialize a best-effort deletion after older writes in the current isolate. |
 | `results:*` | TTL-bounded pages created only for oversized meta-tool results. |

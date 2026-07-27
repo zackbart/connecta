@@ -47,6 +47,7 @@ import {
   resolveBranding,
   renderUiHtml,
 } from "./ui.js";
+import { oauthValueStorageKey } from "./auth/downstream-oauth.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -1045,8 +1046,10 @@ async function serveMcp(
  */
 async function equalizeRefusalCost(context: ConnectorContext): Promise<void> {
   try {
-    await context.storage.get("oauth:state");
-    await context.storage.get("oauth:generation");
+    const generation = await context.storage.get("oauth:generation");
+    await context.storage.get(
+      oauthValueStorageKey("oauth:state", generation),
+    );
   } catch {
     // Deliberately ignored — see above.
   }
