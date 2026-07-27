@@ -332,6 +332,11 @@ export interface CredentialCheckOptions {
   force?: boolean;
   /** Restrict the sweep to these connector ids. Default: every connector. */
   ids?: string[];
+  /**
+   * @deprecated Ignored. Credential checks always create and close their own
+   * probe scope; no core path supplies an existing request scope.
+   */
+  requestScope?: object;
 }
 
 /**

@@ -82,7 +82,8 @@ export interface ConnectaDiscoveryConfig {
    * Deadline (ms) for each downstream probe/catalog call fanned out by
    * `list_connectors`, `search_tools`, and `describe_tools`. Defaults to
    * 30_000. A timed-out connector degrades independently; this does not apply
-   * to tool calls or currently abort the underlying fetch.
+   * to tool calls. Catalog walks receive the same cancellation signal, which
+   * aborts an in-flight page where supported and prevents another from starting.
    */
   probeTimeoutMs?: number;
 }
