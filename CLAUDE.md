@@ -50,10 +50,11 @@ Two boundaries CI enforces that are not obvious from reading a file:
 
 - **Import-graph purity.** Nothing reachable from `src/index.ts` may import a
   `node:` builtin — the core is Web-API only so it runs unchanged on Workers.
-  `src/node.ts` and `src/storage/file.ts` are the sole Node-touching paths and
-  must stay unreachable from the root entry. `test/purity.test.ts` walks the
-  import graph and fails otherwise. Need a Node API? It goes behind the
-  `/node` subpath.
+  `src/node.ts`, `src/storage/file.ts`, and the QuickJS process-pool entry
+  (`src/executors/quickjs.ts` + child) are the Node-touching paths and must stay
+  unreachable from the root entry. `test/purity.test.ts` walks the import graph
+  and fails otherwise. Need a Node API? It goes behind an explicit Node-only
+  subpath (`/node` or `/quickjs`), never the root.
 - **The published surface.** Platform-specific storage adapters live in
   `examples/`, not the package. `@clerk/backend` and `quickjs-emscripten` are
   optional peers behind the `./auth/clerk` and `./quickjs` subpaths and must

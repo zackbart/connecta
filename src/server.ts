@@ -907,6 +907,7 @@ async function serveMcp(
       executor: opts.executor,
       logger: opts.logger,
       activity,
+      requestSignal: request.signal,
     });
   }
   const transport = new WebStandardStreamableHTTPServerTransport({

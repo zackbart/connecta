@@ -50,7 +50,9 @@ An optional tenth meta-tool, `execute_code`, runs model-written async JavaScript
 in a sandbox with no network, filesystem, or environment access — only the
 explicitly read-only tools as callable globals — turning a loop, a join across
 connectors, or a filter over a large response into one round trip instead of a
-dozen. Configure no `executor` and connecta is exactly the nine-tool server.
+dozen. The built-in Node executor runs QuickJS in bounded, replaceable child
+processes so guest CPU never occupies the HTTP event loop. Configure no
+`executor` and connecta is exactly the nine-tool server.
 
 ## Why it's shaped this way
 

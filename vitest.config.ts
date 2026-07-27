@@ -18,6 +18,7 @@ const WORKERS_SUITES = [
   "test/credentials.test.ts",
   "test/downstream-oauth.test.ts",
   "test/errors.test.ts",
+  "test/executor-admission.test.ts",
   "test/execute.test.ts",
   "test/meta-tools.test.ts",
   "test/registry.test.ts",

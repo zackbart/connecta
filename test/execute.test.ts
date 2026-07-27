@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -7,12 +7,18 @@ import {
   unwrapForSandbox,
 } from "../src/execute.js";
 import { ConnectorCallError } from "../src/errors.js";
+import { AdmissionController } from "../src/executor-admission.js";
 import {
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
 } from "../src/meta-tools.js";
-import type { Connector, Executor, ExecutorProvider } from "../src/types.js";
+import type {
+  AdmittingExecutor,
+  Connector,
+  Executor,
+  ExecutorProvider,
+} from "../src/types.js";
 import {
   brokenConnector,
   calcConnector,
@@ -492,6 +498,193 @@ describe("buildSandboxProviders", () => {
 });
 
 describe("execute_code handler", () => {
+  it("admits before provider construction and executes on the lease", async () => {
+    const registry = makeRegistry([calcConnector]);
+    const getTools = vi.spyOn(registry, "getTools");
+    const admission = new AdmissionController({
+      concurrency: 1,
+      maxQueueSize: 1,
+      queueTimeoutMs: 1_000,
+    });
+    let finishFirst!: () => void;
+    const firstMayFinish = new Promise<void>((resolve) => {
+      finishFirst = resolve;
+    });
+    let executions = 0;
+    const executor: AdmittingExecutor = {
+      async execute() {
+        throw new Error("already-admitted path reacquired the executor");
+      },
+      async acquire(options = {}) {
+        const token = await admission.acquire(options);
+        return {
+          async execute() {
+            executions++;
+            if (executions === 1) await firstMayFinish;
+            return { result: executions };
+          },
+          release: () => token.release(),
+        };
+      },
+    };
+    const handler = createExecuteTool(registry, BASE, executor, silentLogger);
+    const first = handler({ code: "async () => 1" });
+    await vi.waitFor(() => expect(executions).toBe(1));
+    const second = handler({ code: "async () => 2" });
+    await Promise.resolve();
+
+    // The second request is queued with only its signal/resolver. Its catalog
+    // and request-scoped providers do not exist until the first lease releases.
+    expect(getTools).toHaveBeenCalledTimes(1);
+    finishFirst();
+    expect((await first).isError).toBeUndefined();
+    expect((await second).isError).toBeUndefined();
+    expect(getTools).toHaveBeenCalledTimes(2);
+    expect(executions).toBe(2);
+  });
+
+  it("returns stable retryable overload details before building providers", async () => {
+    const registry = makeRegistry([calcConnector]);
+    const getTools = vi.spyOn(registry, "getTools");
+    const admission = new AdmissionController({
+      concurrency: 1,
+      maxQueueSize: 0,
+      queueTimeoutMs: 321,
+      retryAfterMs: 321,
+    });
+    const held = await admission.acquire();
+    const executor: AdmittingExecutor = {
+      async execute() {
+        return { result: null };
+      },
+      async acquire(options = {}) {
+        const token = await admission.acquire(options);
+        return {
+          execute: async () => ({ result: null }),
+          release: () => token.release(),
+        };
+      },
+    };
+    const out = await createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+    )({ code: "async () => null" });
+    const parsed = JSON.parse(out.content[0].text) as {
+      error: {
+        code: string;
+        retryable: boolean;
+        retryAfterMs: number;
+      };
+    };
+    expect(out.isError).toBe(true);
+    expect(parsed.error).toEqual({
+      code: "executor_overloaded",
+      message: "Executor queue is full.",
+      retryable: true,
+      retryAfterMs: 321,
+    });
+    expect(getTools).not.toHaveBeenCalled();
+    held.release();
+  });
+
+  it("removes a cancelled request from the admission queue", async () => {
+    const registry = makeRegistry([calcConnector]);
+    const admission = new AdmissionController({
+      concurrency: 1,
+      maxQueueSize: 1,
+      queueTimeoutMs: 1_000,
+    });
+    const held = await admission.acquire();
+    const executor: AdmittingExecutor = {
+      async execute() {
+        return { result: null };
+      },
+      async acquire(options = {}) {
+        const token = await admission.acquire(options);
+        return {
+          execute: async () => ({ result: null }),
+          release: () => token.release(),
+        };
+      },
+    };
+    const controller = new AbortController();
+    const result = createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+    )({ code: "async () => null" }, { signal: controller.signal });
+    controller.abort();
+    const out = await result;
+    const parsed = JSON.parse(out.content[0].text) as {
+      error: { code: string; retryable: boolean };
+    };
+    expect(parsed.error).toMatchObject({
+      code: "executor_cancelled",
+      retryable: false,
+    });
+    expect(admission.queuedCount).toBe(0);
+    held.release();
+  });
+
+  it("cancels catalog construction and releases its admitted lease", async () => {
+    let catalogStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      catalogStarted = resolve;
+    });
+    let catalogSignal: AbortSignal | undefined;
+    const connector: Connector = {
+      id: "catalog",
+      kind: "api",
+      listTools(ctx) {
+        catalogSignal = ctx.signal;
+        catalogStarted();
+        return new Promise((_, reject) => {
+          ctx.signal?.addEventListener(
+            "abort",
+            () => reject(ctx.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const release = vi.fn();
+    const execute = vi.fn(async () => ({ result: null }));
+    const executor: AdmittingExecutor = {
+      execute,
+      async acquire() {
+        return { execute, release };
+      },
+    };
+    const controller = new AbortController();
+    const registry = makeRegistry([connector]);
+    const pending = createExecuteTool(
+      registry,
+      BASE,
+      executor,
+      silentLogger,
+    )(
+      { code: "async () => null" },
+      { signal: controller.signal },
+    );
+    await started;
+    controller.abort(new Error("request disconnected"));
+    const out = await pending;
+    const parsed = JSON.parse(out.content[0].text) as {
+      error: { code: string };
+    };
+    expect(parsed.error.code).toBe("executor_cancelled");
+    expect(catalogSignal?.aborted).toBe(true);
+    expect(execute).not.toHaveBeenCalled();
+    expect(release).toHaveBeenCalledOnce();
+    expect(registry.healthFor("catalog")).toBeUndefined();
+  });
+
   it("passes code + providers to the executor and wraps the result", async () => {
     const registry = makeRegistry([calcConnector]);
     const executor = fakeExecutor({ result: { picked: [1, 2] }, logs: ["hi"] });

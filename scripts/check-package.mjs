@@ -34,8 +34,14 @@ try {
     "assets/connecta-clay-hero.png",
     "dist/index.js",
     "dist/index.d.ts",
+    "dist/types.d.ts",
     "dist/json-schema.js",
     "dist/json-schema.d.ts",
+    "dist/executors/quickjs.js",
+    "dist/executors/quickjs.d.ts",
+    "dist/executors/quickjs-child.js",
+    "dist/executors/quickjs-protocol.js",
+    "dist/executors/quickjs-runtime.js",
     "src/index.ts",
   ]) {
     if (!paths.has(required)) {
@@ -84,6 +90,15 @@ const clerk = await import("@zackbart/connecta/auth/clerk");
 const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
+const executor = quickjs.quickJsExecutor({ timeoutMs: 2_000 });
+try {
+  const outcome = await executor.execute("async () => 42", []);
+  if (outcome.result !== 42 || outcome.error) {
+    throw new Error("packed QuickJS child execution failed: " + JSON.stringify(outcome));
+  }
+} finally {
+  await executor.close();
+}
 `,
   );
   run(
@@ -122,6 +137,9 @@ if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing Quic
     "    credentials?: ConnectaCredentialsConfig;",
     "    discovery?: ConnectaDiscoveryConfig;",
     "    calls?: ConnectaCallsConfig;",
+    "    close: () => Promise<void>;",
+    "AdmittingExecutor,",
+    "ExecutorLease,",
   ]) {
     if (!coreDeclarations.includes(declaration)) {
       throw new Error(
@@ -140,6 +158,27 @@ if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing Quic
     publicConfigStart,
     connectaStart,
   );
+  const typeDeclarations = await readFile(
+    join(
+      work,
+      "node_modules",
+      "@zackbart",
+      "connecta",
+      "dist",
+      "types.d.ts",
+    ),
+    "utf8",
+  );
+  for (const declaration of [
+    "export interface AdmittingExecutor extends Executor {",
+    "export interface ExecutorLease {",
+  ]) {
+    if (!typeDeclarations.includes(declaration)) {
+      throw new Error(
+        `Packed executor declarations are missing: ${declaration}`,
+      );
+    }
+  }
   for (const legacyName of [
     "activityReadGate",
     "activityDeploymentId",

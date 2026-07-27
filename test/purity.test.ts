@@ -96,9 +96,13 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
   it("never reaches node-only modules or optional auth adapters", () => {
     const nodeAdapter = join(SRC, "node.ts");
     const fileStorage = join(SRC, "storage", "file.ts");
+    const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
+    const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
     expect(graph.has(fileStorage)).toBe(false);
+    expect(graph.has(quickJsExecutor)).toBe(false);
+    expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
   });
 });

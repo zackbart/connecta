@@ -218,6 +218,8 @@ export interface Connecta {
      */
     defer?: DeferredWork;
   }) => Promise<CredentialCheckResult[]>;
+  /** Drain and release configured executor resources. Idempotent. */
+  close: () => Promise<void>;
 }
 
 function defaultLogger(): Logger {
@@ -514,6 +516,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     branding: config.branding,
     ...(toolkits ? { toolkits } : {}),
   });
+  let closePromise: Promise<void> | undefined;
   return {
     fetch: (request, _env, ctx) =>
       handler(
@@ -549,6 +552,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         },
         opts.defer,
       );
+    },
+    close: async () => {
+      closePromise ??= Promise.resolve().then(async () => {
+        await config.executor?.close?.();
+      });
+      await closePromise;
     },
   };
 }
@@ -604,8 +613,10 @@ export type {
   ConnectorContext,
   ConnectorStatus,
   CredentialTestResult,
+  AdmittingExecutor,
   ExecuteResult,
   Executor,
+  ExecutorLease,
   ExecutorProvider,
   InboundAuth,
   ToolkitBinding,

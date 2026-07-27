@@ -49,7 +49,7 @@ const connecta = createConnecta({
   // also what downstream OAuth callbacks use), so set it explicitly for the
   // scheduled check below.
   publicUrl: `http://localhost:${port}`,
-  // Code mode: execute_code runs model-written JS in a QuickJS/WASM sandbox.
+  // Code mode: QuickJS runs model-written JS in a bounded disposable child.
   // Remove this line to serve the nine base meta-tools only.
   executor: quickJsExecutor(),
   connectors: [

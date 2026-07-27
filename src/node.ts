@@ -32,6 +32,7 @@ const BODY_TOO_LARGE = Symbol("body-too-large");
 async function toRequest(
   req: IncomingMessage,
   maxBodyBytes: number,
+  signal: AbortSignal,
 ): Promise<Request | typeof BODY_TOO_LARGE> {
   const host = req.headers.host ?? "localhost";
   const proto =
@@ -60,6 +61,7 @@ async function toRequest(
     method,
     headers,
     body,
+    signal,
     // Required by Node's fetch when sending a body stream.
     ...(body ? { duplex: "half" } : {}),
   } as RequestInit);
@@ -111,8 +113,27 @@ export function listen(
 
   const server = createServer((req, res) => {
     void (async () => {
+      const controller = new AbortController();
+      const abortRequest = () => {
+        if (!controller.signal.aborted) {
+          controller.abort(new Error("HTTP client disconnected."));
+        }
+      };
+      const abortIncompleteRequest = () => {
+        if (!req.complete) abortRequest();
+      };
+      const abortIncompleteResponse = () => {
+        if (!res.writableFinished) abortRequest();
+      };
+      req.once("aborted", abortRequest);
+      req.once("close", abortIncompleteRequest);
+      res.once("close", abortIncompleteResponse);
       try {
-        const request = await toRequest(req, maxBodyBytes);
+        const request = await toRequest(
+          req,
+          maxBodyBytes,
+          controller.signal,
+        );
         if (request === BODY_TOO_LARGE) {
           res.statusCode = 413;
           // The request stream was abandoned mid-body, so this connection
@@ -125,6 +146,12 @@ export function listen(
         const response = await connecta.fetch(request, undefined, ctx);
         await writeResponse(res, response);
       } catch (error) {
+        // A client that deliberately went away can make either the request
+        // handler or response pipeline reject. The request's abort signal is
+        // the authoritative classification: there is no caller left to answer,
+        // and logging an expected disconnect would turn cancellation into an
+        // error-log spam vector.
+        if (controller.signal.aborted) return;
         // A headless deployment has nothing else to go on; never swallow this.
         console.error("[connecta] request failed", error);
         if (res.headersSent) {
@@ -136,6 +163,10 @@ export function listen(
         }
         res.statusCode = 500;
         res.end("Internal Server Error");
+      } finally {
+        req.removeListener("aborted", abortRequest);
+        req.removeListener("close", abortIncompleteRequest);
+        res.removeListener("close", abortIncompleteResponse);
       }
     })();
   });
@@ -152,11 +183,14 @@ export function listen(
         process.exit(1);
       }, timeoutMs);
       forced.unref?.();
+      // Stop queued/running sandbox work now, not after server.close has
+      // waited for the very requests those children are holding open.
+      const executorClose = connecta.close();
       // close() alone waits on idle keep-alive sockets, so a single browser
       // tab would stall every shutdown until the force-exit deadline.
       server.closeIdleConnections();
       server.close(() => {
-        void Promise.allSettled([...pending]).then(() => {
+        void Promise.allSettled([...pending, executorClose]).then(() => {
           clearTimeout(forced);
           process.exit(0);
         });
