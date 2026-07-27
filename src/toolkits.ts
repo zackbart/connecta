@@ -41,6 +41,14 @@ export type ToolkitConfig = Record<string, ToolkitDefinition>;
 export interface Toolkit {
   readonly name: string;
   readonly description?: string;
+  /**
+   * The validated config this scope came from. Kept as immutable data so
+   * deployment-wide operator surfaces can explain the running configuration
+   * without inventing a second source of truth.
+   */
+  readonly connectors: readonly string[];
+  readonly includeTools: readonly string[];
+  readonly excludeTools: readonly string[];
   /** True when `connectorId` is inside this toolkit's scope. */
   hasConnector(connectorId: string): boolean;
   /** True when `<connectorId>.<toolName>` is inside this toolkit's scope. */
@@ -178,6 +186,9 @@ function resolveToolkit(
   return {
     name,
     ...(definition.description ? { description: definition.description } : {}),
+    connectors: Object.freeze([...connectorIds]),
+    includeTools: Object.freeze([...(definition.includeTools ?? [])]),
+    excludeTools: Object.freeze([...(definition.excludeTools ?? [])]),
     hasConnector: (connectorId) => connectorIds.has(connectorId),
     hasTool: (connectorId, toolName) => {
       if (!connectorIds.has(connectorId)) return false;

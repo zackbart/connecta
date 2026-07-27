@@ -6,6 +6,7 @@ import {
 import type { CredentialVault } from "./credentials.js";
 import { closeConnectorScope } from "./connector-scope.js";
 import type { Registry } from "./registry.js";
+import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
 
 /** Connecta's default monochrome "C" mark. */
@@ -296,8 +297,20 @@ export interface UiConnector {
 export interface UiData {
   serverInfo: { name: string; version: string };
   connectors: UiConnector[];
+  /** Read-only projection of the validated deployment config. */
+  toolkits: UiToolkit[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
+}
+
+export interface UiToolkit {
+  name: string;
+  description?: string;
+  connectors: string[];
+  includeTools: string[];
+  excludeTools: string[];
+  /** Tools currently loaded through healthy connectors and visible in this view. */
+  toolCount: number;
 }
 
 export type CredentialManagementCapability =
@@ -391,6 +404,7 @@ export async function buildUiData(
   credentialManagement: CredentialManagementCapability = credentialVault
     ? "available"
     : "requires_clerk",
+  toolkits?: ReadonlyMap<string, Toolkit>,
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -540,9 +554,29 @@ export async function buildUiData(
       ),
     );
   });
+  const toolkitData: UiToolkit[] = [...(toolkits?.values() ?? [])].map(
+    (toolkit) => ({
+      name: toolkit.name,
+      ...(toolkit.description ? { description: toolkit.description } : {}),
+      connectors: [...toolkit.connectors],
+      includeTools: [...toolkit.includeTools],
+      excludeTools: [...toolkit.excludeTools],
+      toolCount: connectors.reduce(
+        (count, connector) =>
+          count +
+          (toolkit.hasConnector(connector.id)
+            ? connector.tools.filter((tool) =>
+                toolkit.hasTool(connector.id, tool.name),
+              ).length
+            : 0),
+        0,
+      ),
+    }),
+  );
   return {
     serverInfo,
     connectors,
+    toolkits: toolkitData,
     activityEnabled,
     credentialManagement,
   };
@@ -876,6 +910,57 @@ ${clerkScript}
   .connector-description { margin-top: .25rem; max-width: 40rem; }
   .connector-message,
   .connector-auth { margin-top: .75rem; }
+  .connector-toolkits {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem .5rem;
+    margin-top: .5rem;
+  }
+  .scope-label {
+    border: 1px solid var(--rule);
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: .72rem;
+    padding: .05rem .35rem;
+  }
+
+  .toolkit-copy { margin-bottom: 1rem; max-width: 42rem; }
+  .toolkit-ledger { border-bottom: 1px solid var(--rule); }
+  .toolkit-card {
+    border-top: 1px solid var(--rule);
+    padding: .9rem 0 1rem;
+  }
+  .toolkit-head {
+    display: grid;
+    gap: var(--gap);
+    grid-template-columns: minmax(0, 2fr) minmax(10rem, 1fr);
+  }
+  .toolkit-name {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+  }
+  .toolkit-name h3 { overflow-wrap: anywhere; }
+  .toolkit-state { text-align: right; }
+  .toolkit-description { margin-top: .25rem; max-width: 40rem; }
+  .toolkit-connectors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem;
+    margin-top: .75rem;
+  }
+  .toolkit-connector {
+    border-left: 1px solid var(--ink);
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: .4rem;
+    padding-left: .5rem;
+  }
+  .toolkit-rules { margin-top: .75rem; }
+  .toolkit-rules > * + * { margin-top: .25rem; }
+  .toolkit-endpoint { margin-top: .75rem; }
 
   .credential-ledger { border-bottom: 1px solid var(--rule); }
   .credential-card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
@@ -991,9 +1076,11 @@ ${clerkScript}
     .section,
     .section + .section { margin-top: 2.5rem; }
     .connector-head,
+    .toolkit-head,
     .tool,
     .activity-item { grid-template-columns: 1fr; }
-    .connector-state { text-align: left; }
+    .connector-state,
+    .toolkit-state { text-align: left; }
     .credential-field { align-items: start; grid-template-columns: 1fr; gap: .25rem; }
     input { min-height: 2.75rem; }
   }
@@ -1066,6 +1153,16 @@ ${clerkScript}
             aria-label="Filter connectors or tools">
         </div>
         <div id="list" class="connector-tools" aria-busy="false"></div>
+      </div>
+    </section>
+    <section class="section pgrid" aria-labelledby="toolkitLedgerHeading">
+      <h2 class="pcap" id="toolkitLedgerHeading">Toolkits</h2>
+      <div class="pbody">
+        <p class="toolkit-copy meta">
+          Read-only views from deployment config. Change the config and redeploy
+          to update them.
+        </p>
+        <div id="toolkitList" class="toolkit-ledger"></div>
       </div>
     </section>
   </section>
@@ -1185,6 +1282,7 @@ function clearIdentityState() {
   DATA = null;
   clearActivityState();
   $("list").innerHTML = "";
+  $("toolkitList").innerHTML = "";
   $("filter").value = "";
   $("credentialList").innerHTML = "";
   $("credentialList").setAttribute("aria-busy", "false");
@@ -1456,6 +1554,75 @@ async function loadActivity(reset) {
   }
 }
 
+function toolkitMcpUrl(name) {
+  const url = new URL(MCP_URL, window.location.href);
+  url.searchParams.set("toolkit", name);
+  return url.toString();
+}
+
+function renderToolkits() {
+  const list = $("toolkitList");
+  const toolkits = DATA.toolkits || [];
+  list.innerHTML = "";
+  if (!toolkits.length) {
+    list.innerHTML =
+      '<p class="empty">No toolkits are configured. Unscoped clients see the full connector registry.</p>';
+    return;
+  }
+  const connectors = new Map(
+    DATA.connectors.map((connector) => [connector.id, connector]),
+  );
+  for (const toolkit of toolkits) {
+    const el = document.createElement("article");
+    el.className = "toolkit-card";
+    const connectorCount = toolkit.connectors.length;
+    const toolCount = toolkit.toolCount || 0;
+    let body =
+      '<div class="toolkit-head"><div><div class="toolkit-name">' +
+      '<h3 class="mono">' + esc(toolkit.name) + "</h3>" +
+      '<span class="cap">configured view</span></div>';
+    if (toolkit.description) {
+      body += '<p class="toolkit-description meta">' +
+        esc(toolkit.description) + "</p>";
+    }
+    body += '</div><div class="toolkit-state cap">' +
+      connectorCount + (connectorCount === 1 ? " connector" : " connectors") +
+      " · " + toolCount + (toolCount === 1 ? " loaded tool" : " loaded tools") +
+      "</div></div>";
+    body += '<ul class="toolkit-connectors" aria-label="Included connectors">';
+    for (const id of toolkit.connectors) {
+      const connector = connectors.get(id);
+      body += '<li class="toolkit-connector"><span>' +
+        esc(connector?.title || id) + '</span><code class="mono">' +
+        esc(id) + "</code></li>";
+    }
+    body += "</ul>";
+    body += '<div class="toolkit-rules meta">';
+    if (toolkit.includeTools.length) {
+      body += '<p>Only: <span class="mono">' +
+        toolkit.includeTools.map(esc).join('</span>, <span class="mono">') +
+        "</span></p>";
+    }
+    if (toolkit.excludeTools.length) {
+      body += '<p>Hidden: <span class="mono">' +
+        toolkit.excludeTools.map(esc).join('</span>, <span class="mono">') +
+        "</span></p>";
+    }
+    if (!toolkit.includeTools.length && !toolkit.excludeTools.length) {
+      body += "<p>All tools on the included connectors are visible.</p>";
+    }
+    body += "</div>";
+    const endpoint = toolkitMcpUrl(toolkit.name);
+    body += '<div class="endpoint toolkit-endpoint"><div class="endpoint-row">' +
+      '<code class="mono">' + esc(endpoint) + "</code>" +
+      '<button class="linklike" type="button" data-toolkit-copy="' +
+      esc(toolkit.name) + '" aria-label="Copy endpoint for ' +
+      esc(toolkit.name) + '">Copy URL</button></div></div>';
+    el.innerHTML = body;
+    list.appendChild(el);
+  }
+}
+
 function renderConnections() {
   const q = $("filter").value.trim().toLowerCase();
   const list = $("list");
@@ -1475,6 +1642,15 @@ function renderConnections() {
       '<h2>' + esc(c.title || c.id) + "</h2></div>";
     if (c.description) {
       head += '<p class="connector-description meta">' + esc(c.description) + "</p>";
+    }
+    const memberships = (DATA.toolkits || [])
+      .filter((toolkit) => toolkit.connectors.includes(c.id))
+      .map((toolkit) => toolkit.name);
+    if (memberships.length) {
+      head += '<div class="connector-toolkits meta"><span>Toolkits</span>' +
+        memberships.map((name) =>
+          '<span class="scope-label">' + esc(name) + "</span>"
+        ).join("") + "</div>";
     }
     head += '</div><div class="connector-state cap">' + esc(status) + " · " +
       c.toolCount + (c.toolCount === 1 ? " tool" : " tools") +
@@ -1529,6 +1705,7 @@ function renderConnections() {
         : "No connectors are declared in this deployment.") +
       "</p>";
   }
+  renderToolkits();
 }
 
 function renderCredentials() {
@@ -1769,6 +1946,19 @@ $("copyMcpUrl").onclick = async () => {
   const button = $("copyMcpUrl");
   try {
     await navigator.clipboard.writeText(MCP_URL);
+    button.textContent = "Copied";
+  } catch (e) {
+    button.textContent = "Copy failed";
+  }
+  window.setTimeout(() => { button.textContent = "Copy URL"; }, 1600);
+};
+$("toolkitList").onclick = async (event) => {
+  const button = event.target.closest("[data-toolkit-copy]");
+  if (!button) return;
+  try {
+    await navigator.clipboard.writeText(
+      toolkitMcpUrl(button.dataset.toolkitCopy),
+    );
     button.textContent = "Copied";
   } catch (e) {
     button.textContent = "Copy failed";

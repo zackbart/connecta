@@ -51,7 +51,15 @@ link when one is required. The local filter searches connector and tool
 names/descriptions. Broken connectors are isolated as `status: "error"` with
 `tools: []`; tools are listed only after status is `ok`, because probing a
 second OAuth flow could invalidate the authorization URL just returned.
-Connections never contains vault Add/Replace/Test/Remove controls.
+Connections also projects the validated
+[toolkit](./toolkits.md#toolkits-scoped-views) config as a read-only ledger:
+each view's description, connectors, explicit tool inclusions/exclusions,
+currently loaded effective tool count, and copyable scoped MCP URL. Connector
+rows name the toolkits that include them. This is visibility into
+`ConnectaConfig.toolkits`, not a second source of truth: the page has no toolkit
+mutation controls, and changing a view still means changing deployment config
+and redeploying. Connections never contains vault Add/Replace/Test/Remove
+controls.
 
 **Credentials (`/credentials`)** renders one focused entry for each connector
 that declares an operator-managed credential slot. It shows the declared
@@ -78,6 +86,14 @@ showing a blank page. See [activity history](#activity-history).
 {
   serverInfo,
   connectors,
+  toolkits: [{
+    name,
+    description?,
+    connectors,
+    includeTools,
+    excludeTools,
+    toolCount
+  }],
   activityEnabled,
   credentialManagement:
     | "available"
@@ -88,6 +104,12 @@ showing a blank page. See [activity history](#activity-history).
 ```
 
 `connectors` contains status and tool data for every admitted operator.
+`toolkits` is the serializable, read-only projection of the already validated
+deployment config; `toolCount` counts the tools currently loaded through healthy
+connectors that the toolkit would expose. An unavailable connector therefore
+still appears in `connectors` but contributes no loaded tools. Because toolkit
+names and membership describe the whole deployment, the existing
+toolkit-restricted-identity refusal runs before this payload is built.
 `credential` metadata appears only for a connector with a declared slot and
 only when the request belongs to an eligible Clerk operator with a vault. The
 static bearer may read connector health but never credential metadata.

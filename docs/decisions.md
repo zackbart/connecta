@@ -158,7 +158,9 @@ to this line:
 - Connections at `/` ([status UI](./operator-ui.md#status-ui)) is read-only
   deployment status. Like `/credentials` and `/activity`, its shell is open
   because it carries no data; everything displayed comes from private `/ui/*`
-  APIs behind inbound authentication.
+  APIs behind inbound authentication. Read-only projections of deployment
+  config are status too: Connections may explain toolkit membership and
+  effective scope, but it cannot change either.
 - The credential vault ([storage](./storage-and-credentials.md#storage)) is credential
   *storage*, not connector registration. Credentials is deliberately not called
   Settings: rotating a token should not need a redeploy, but connector

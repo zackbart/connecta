@@ -138,6 +138,31 @@ function rawText(result: { content: { text: string }[] }): string {
 }
 
 describe("toolkit config validation", () => {
+  it("retains an immutable, serializable view of the validated config", () => {
+    const toolkit = resolveToolkits(
+      {
+        support: {
+          connectors: ["zendesk", "notion", "zendesk"],
+          includeTools: ["zendesk.search_tickets"],
+          excludeTools: ["zendesk.delete_ticket"],
+          description: "Support team access",
+        },
+      },
+      ORG_CONNECTORS(),
+    )!.get("support")!;
+
+    expect(toolkit).toMatchObject({
+      name: "support",
+      description: "Support team access",
+      connectors: ["zendesk", "notion"],
+      includeTools: ["zendesk.search_tickets"],
+      excludeTools: ["zendesk.delete_ticket"],
+    });
+    expect(Object.isFrozen(toolkit.connectors)).toBe(true);
+    expect(Object.isFrozen(toolkit.includeTools)).toBe(true);
+    expect(Object.isFrozen(toolkit.excludeTools)).toBe(true);
+  });
+
   it("throws when a toolkit references an unknown connector", () => {
     expect(() =>
       resolveToolkits(
