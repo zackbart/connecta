@@ -57,7 +57,7 @@ interface ConnectaConfig {
 | `calls.maxResultBytes?` | 50_000 | deployment-wide inline result cap before truncation + `get_result` paging, as a finite whole number of bytes >= 1; out-of-range values warn and fall back, and a connector may override it with its own `maxResultBytes` ([connectors](./connectors.md#connectors)) |
 | `admission.requests?` | `{ concurrency: 16, maxQueueSize: 32, queueTimeoutMs: 5_000, retryAfterMs: 1_000 }` | global FIFO `/mcp` capacity before auth/server/catalog construction; overflow is an HTTP 503 structured MCP error while health/UI retain reserved responsiveness ([request admission](./request-admission.md#request-admission-and-backpressure)) |
 | `admission.code?` | `{ concurrency: 2, maxQueueSize: 8, queueTimeoutMs: 5_000, retryAfterMs: 1_000 }` | separate smaller fallback pool for one-method executors; an executor implementing `acquire()` owns its own limits instead ([request admission](./request-admission.md#policy-and-configuration)) |
-| `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon |
+| `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec — clients render the declared icon/title instead of a scraped favicon; an overridden `version` is MCP/deployment metadata, while Connections still shows the installed Connecta package version |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
 | `executor?` | unset ⇒ nine tools | code-mode sandbox ([code mode](./code-mode.md#code-mode-execute_code)) |
 

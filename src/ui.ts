@@ -11,6 +11,7 @@ import {
 import type { Registry } from "./registry.js";
 import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
+import { CONNECTA_VERSION } from "./version.js";
 
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -299,6 +300,8 @@ export interface UiConnector {
 
 export interface UiData {
   serverInfo: { name: string; version: string };
+  /** Version of the installed @zackbart/connecta package. */
+  connectaVersion: string;
   connectors: UiConnector[];
   /** Read-only projection of the validated deployment config. */
   toolkits: UiToolkit[];
@@ -581,6 +584,7 @@ export async function buildUiData(
   );
   return {
     serverInfo,
+    connectaVersion: CONNECTA_VERSION,
     connectors,
     toolkits: toolkitData,
     activityEnabled,
@@ -1431,7 +1435,7 @@ async function load() {
   $("app").classList.remove("hidden");
   $("appNav").classList.remove("hidden");
   const si = DATA.serverInfo || {};
-  $("serverInfo").textContent = (si.name || ${escapeScriptString(brand.productName)}) + " v" + (si.version || "?");
+  $("serverInfo").textContent = (si.name || ${escapeScriptString(brand.productName)}) + " v" + (DATA.connectaVersion || "?");
   updateCapabilities();
   activatePage(CURRENT_PAGE);
 }

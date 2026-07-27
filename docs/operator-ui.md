@@ -44,7 +44,9 @@ CORS.
 ### What each page shows
 
 **Connections (`/`)** keeps the MCP URL and Copy URL action, the configured
-server name/version, and the connector ledger. Each connector shows its display
+server name plus the installed `@zackbart/connecta` package version, and the
+connector ledger. The package version is independent of an optional
+`serverInfo.version` deployment/MCP override. Each connector shows its display
 title and stable id, description, status and message, tool count/list, a
 credential-liveness verdict when relevant, and a downstream OAuth authorization
 link when one is required. The local filter searches connector and tool
@@ -86,6 +88,7 @@ showing a blank page. See [activity history](#activity-history).
 ```ts
 {
   serverInfo,
+  connectaVersion, // installed @zackbart/connecta package
   connectors,
   toolkits: [{
     name,
