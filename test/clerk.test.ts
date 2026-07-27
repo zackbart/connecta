@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   authenticateRequest: vi.fn(),
@@ -23,6 +23,10 @@ describe("clerkAuth inbound auth", () => {
   beforeEach(() => {
     mocks.authenticateRequest.mockReset();
     mocks.getUser.mockReset();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("exposes public ClerkJS configuration to the status UI", () => {
@@ -387,6 +391,113 @@ describe("clerkAuth inbound auth", () => {
       await expect(request()).resolves.toEqual({ ok: true, userId: "user_123" });
       expect(mocks.getUser).toHaveBeenCalledTimes(1);
       expect(gate).toHaveBeenCalledTimes(1);
+    });
+
+    it("bounds denied identities and re-checks an evicted identity", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+        const userId = request.headers
+          .get("authorization")!
+          .replace("Bearer ", "");
+        return {
+          toAuth: () => ({ isAuthenticated: true, userId }),
+        };
+      });
+      mocks.getUser.mockImplementation(async (userId: string) =>
+        userWithEmail(`${userId}@outside.example`),
+      );
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        allowedDomains: ["acme.com"],
+      });
+      const request = (userId: string) =>
+        auth.authorize(
+          new Request(`${BASE}/mcp`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${userId}` },
+          }),
+          BASE,
+        );
+
+      // Fill the 1,024-identity bound, then make the oldest entry recently used.
+      for (let index = 0; index < 1_024; index++) {
+        const result = await request(`user_${index}`);
+        expect(result.ok).toBe(false);
+      }
+      expect(mocks.getUser).toHaveBeenCalledTimes(1_024);
+      expect((await request("user_0")).ok).toBe(false);
+      expect(mocks.getUser).toHaveBeenCalledTimes(1_024);
+
+      // A 1,025th distinct denial displaces the least recently used entry
+      // rather than growing the Map.
+      expect((await request("user_1024")).ok).toBe(false);
+      expect(mocks.getUser).toHaveBeenCalledTimes(1_025);
+
+      // The touched entry remains cached, while user_1 was evicted. The latter
+      // is checked with Clerk again and remains denied; eviction can never turn
+      // a refusal into an admission.
+      expect((await request("user_0")).ok).toBe(false);
+      expect(mocks.getUser).toHaveBeenCalledTimes(1_025);
+      expect((await request("user_1")).ok).toBe(false);
+      expect(mocks.getUser).toHaveBeenCalledTimes(1_026);
+      warn.mockRestore();
+    });
+
+    it("keeps allow and deny TTLs unchanged for a small steady set", async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-26T12:00:00Z"));
+      mocks.authenticateRequest.mockImplementation(async (request: Request) => {
+        const userId = request.headers
+          .get("authorization")!
+          .replace("Bearer ", "");
+        return {
+          toAuth: () => ({ isAuthenticated: true, userId }),
+        };
+      });
+      mocks.getUser.mockImplementation(async (userId: string) =>
+        userWithEmail(
+          userId === "allowed" ? "dev@acme.com" : "dev@outside.example",
+        ),
+      );
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const auth = clerkAuth({
+        publishableKey,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+        allowedDomains: ["acme.com"],
+      });
+      const request = (userId: string) =>
+        auth.authorize(
+          new Request(`${BASE}/mcp`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${userId}` },
+          }),
+          BASE,
+        );
+      const lookupCount = (userId: string) =>
+        mocks.getUser.mock.calls.filter(([id]) => id === userId).length;
+
+      expect((await request("allowed")).ok).toBe(true);
+      expect((await request("denied")).ok).toBe(false);
+      await request("allowed");
+      await request("denied");
+      expect(lookupCount("allowed")).toBe(1);
+      expect(lookupCount("denied")).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await request("allowed");
+      await request("denied");
+      expect(lookupCount("allowed")).toBe(1);
+      expect(lookupCount("denied")).toBe(2);
+
+      await vi.advanceTimersByTimeAsync(30_000);
+      await request("allowed");
+      await request("denied");
+      expect(lookupCount("allowed")).toBe(2);
+      expect(lookupCount("denied")).toBe(3);
+      warn.mockRestore();
     });
 
     it("changes nothing when the option is unset", async () => {
