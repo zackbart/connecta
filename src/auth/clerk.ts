@@ -64,6 +64,11 @@ function fapiUrl(publishableKey: string): string {
 
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
 const GATE_FORBIDDEN_TTL_MS = 30 * 1000;
+// Per clerkAuth instance. This is deliberately fixed rather than an operator
+// knob: admission correctness never depends on retaining an entry, and 1,024
+// keeps the common steady identity set hot without letting one-off denied
+// identities define the isolate's lifetime memory footprint.
+const GATE_CACHE_MAX_IDENTITIES = 1_024;
 
 /**
  * One label of a domain: ASCII letters/digits, interior hyphens only, 63
@@ -277,7 +282,16 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   const checkGate = async (userId: string): Promise<boolean> => {
     if (!opts.gate && !allowedDomains) return true;
     const hit = gateCache.get(userId);
-    if (hit && Date.now() < hit.exp) return hit.allowed;
+    if (hit) {
+      if (Date.now() < hit.exp) {
+        // Map iteration order is the LRU order. Refreshing a valid hit keeps a
+        // small active identity set resident when one-off identities churn.
+        gateCache.delete(userId);
+        gateCache.set(userId, hit);
+        return hit.allowed;
+      }
+      gateCache.delete(userId);
+    }
     let allowed = false;
     try {
       allowed =
@@ -292,6 +306,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         Date.now() +
         (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
     });
+    if (gateCache.size > GATE_CACHE_MAX_IDENTITIES) {
+      const oldest = gateCache.keys().next();
+      if (!oldest.done) gateCache.delete(oldest.value);
+    }
     return allowed;
   };
 
