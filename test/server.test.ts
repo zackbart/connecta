@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createConnecta } from "../src/index.js";
+import {
+  MAX_DESCRIBE_ADDRESSES,
+  MAX_SEARCH_LIMIT,
+} from "../src/meta-tools.js";
 
 // True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
 // executor (emscripten WASM loaded from disk) — Workers deployments use
@@ -193,6 +197,12 @@ describe("server /mcp end-to-end", () => {
     expect(
       byName.search_tools.inputSchema.properties.includeSchemas.enum,
     ).toEqual(["compact", "json"]);
+    expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
+      MAX_SEARCH_LIMIT,
+    );
+    expect(byName.describe_tools.inputSchema.properties.addresses.maxItems).toBe(
+      MAX_DESCRIBE_ADDRESSES,
+    );
     expect(byName.call_tool.inputSchema.properties).toHaveProperty("timeoutMs");
     expect(byName.call_tool.inputSchema.properties).toHaveProperty(
       "maxRetries",

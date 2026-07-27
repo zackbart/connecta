@@ -74,7 +74,9 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 - **Input:** `{ query?: string, connector?: string, limit?: number,
   offset?: number, fullDescriptions?: boolean,
   includeSchemas?: "compact" | "json" }`. `limit` defaults to **25**;
-  `offset` defaults to 0. Empty/omitted `query` browses everything.
+  its hard maximum is **100**, and `offset` defaults to 0. Empty/omitted
+  `query` browses everything; page with `offset` rather than raising `limit`
+  past the maximum.
 - **Ranking:** exact and prefix tool-name matches rank above name substrings,
   which rank above description-only matches. Multi-word queries require every
   term to occur across the name and description.
@@ -87,6 +89,10 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   descriptions are whitespace-compacted and capped at 240 characters unless
   `fullDescriptions: true`. `includeSchemas` adds input/output schemas and
   annotations to the search page, removing the usual `describe_tools` round trip.
+  A generated page may not exceed **256,000 UTF-8 bytes**. An unusually large
+  full-description or full-schema page fails with `result_too_large` and a hint
+  to request a smaller page or compact representation instead of injecting a
+  partial result.
 
 ```json
 {
@@ -106,7 +112,8 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 ### `describe_tools`
 
 - **Input:** `{ addresses: string[], format?: "compact" | "json",
-  fullDescriptions?: boolean }` — `format` defaults to **`"compact"`**.
+  fullDescriptions?: boolean }` — at most **100** addresses per call;
+  `format` defaults to **`"compact"`**.
 - **Output:** `{ tools: [{ name, address, description?, guide?, inputSchema,
   outputSchema?, annotations? } |
   { address, error }] }`. Descriptions are concise unless
@@ -121,7 +128,15 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   and rendering depth capped at 4 (`…` beyond). Schemas that aren't object
   schemas fall back to raw JSON. Compact is far cheaper on context than the raw
   schema; ask for `"json"` when you need the exact constraints. Unknown
-  addresses/tools yield an `error` entry rather than throwing.
+  addresses/tools yield an `error` entry rather than throwing. The same
+  **256,000-byte** generated-result ceiling as `search_tools` applies; split the
+  addresses or use compact format when a set of full schemas would exceed it.
+
+The count checks live both in the MCP input schemas and in the handlers.
+Oversized input therefore fails before catalog ranking or address resolution,
+including for direct internal callers. Count-limit failures are non-retryable
+`invalid_args`; generated-result ceiling failures are non-retryable
+`result_too_large`.
 
 ### `call_tool`
 

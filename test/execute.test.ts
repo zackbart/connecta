@@ -7,6 +7,11 @@ import {
   unwrapForSandbox,
 } from "../src/execute.js";
 import { ConnectorCallError } from "../src/errors.js";
+import {
+  MAX_DESCRIBE_ADDRESSES,
+  MAX_DISCOVERY_RESULT_BYTES,
+  MAX_SEARCH_LIMIT,
+} from "../src/meta-tools.js";
 import type { Connector, Executor, ExecutorProvider } from "../src/types.js";
 import {
   brokenConnector,
@@ -372,6 +377,49 @@ describe("buildSandboxProviders", () => {
       { address: "calc.add", ok: true, data: { sum: 3 } },
       { address: "remote.echo", ok: true, data: "echo:hello" },
     ]);
+  });
+
+  it("applies the ordinary discovery count limits inside code mode", async () => {
+    const verbose: Connector = {
+      id: "verbose",
+      staticTools: [
+        {
+          name: "read",
+          description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
+          annotations: { readOnlyHint: true },
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const providers = await buildSandboxProviders(
+      makeRegistry([calcConnector, verbose]),
+      BASE,
+      silentLogger,
+    );
+    const connecta = providers.find((p) => p.name === "connecta")!;
+
+    await expect(
+      connecta.fns.search({ limit: MAX_SEARCH_LIMIT + 1 }),
+    ).rejects.toThrow(`through ${MAX_SEARCH_LIMIT}`);
+    await expect(
+      connecta.fns.describe({
+        addresses: Array.from(
+          { length: MAX_DESCRIBE_ADDRESSES + 1 },
+          () => "calc.add",
+        ),
+      }),
+    ).rejects.toThrow(`at most ${MAX_DESCRIBE_ADDRESSES}`);
+    await expect(
+      connecta.fns.search({
+        connector: "verbose",
+        fullDescriptions: true,
+      }),
+    ).rejects.toMatchObject({ code: "result_too_large" });
   });
 
   it("bounds total host calls and connecta.batch size", async () => {

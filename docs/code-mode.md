@@ -33,7 +33,10 @@ The model's code runs where the ONLY capabilities are:
   outstanding host waits and signals cooperative connectors to cancel.
 - **`connecta.search(args)` / `connecta.describe(args)`** — inspect the
   already-loaded catalog inside the same inbound request, so discovery and
-  execution can be orchestrated without extra MCP round trips.
+  execution can be orchestrated without extra MCP round trips. They use the
+  ordinary discovery policy: search pages contain at most 100 tools, describe
+  accepts at most 100 addresses, and either generated result is capped at
+  256,000 UTF-8 bytes.
 - **`console.*`** — captured and returned as `logs`.
 
 No `fetch`, filesystem, env, timers, or imports. Tool calls return plain
