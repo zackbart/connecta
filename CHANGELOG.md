@@ -82,6 +82,63 @@ All notable changes to this package are documented here.
   not-configured state when `activity.store.list` is absent. OAuth result pages
   now return to `/`.
 
+### Fixed
+
+- **A paginated downstream MCP server no longer loses everything after its
+  first `tools/list` page** (issue #77). `tools/list` is cursor-paginated in the
+  MCP specification and the SDK's `Client.listTools()` returns one page,
+  `nextCursor` included, without following it. `remoteMcp()` called it once, so
+  a downstream that paged its catalog was split in half without complaint:
+  page-one tools were counted, searchable, describable and callable, and every
+  tool after them appeared not to exist — missing from `list_connectors` counts,
+  `search_tools`, `describe_tools`, and address resolution alike, with nothing
+  in any log saying a page had been left behind. That is the wrong failure for
+  a product whose premise is progressive discovery over large tool catalogs,
+  since large catalogs are exactly the ones that paginate. A catalog refresh now
+  walks the whole cursor chain on the same request-scoped client before the
+  result is indexed. Cursors are handed back byte-for-byte and never parsed,
+  rewritten, or persisted; an empty-string `nextCursor` is treated as *present*
+  (pagination ends on an absent one, and a truthiness check there would truncate
+  the catalog silently). A downstream that advertises no `nextCursor` is
+  unchanged in both directions: one request, sent with no `cursor` param, and
+  byte-identical tool definitions. Tools are deduplicated by name, first page
+  wins, so an unstable cursor that overlaps pages cannot inflate `toolCount`,
+  double a `search_tools` row, or churn the registry into a persistence write
+  per refresh. A `nextCursor: null` — a common JSON idiom for end-of-pagination
+  that the MCP result schema does not accept — is now reported as a named
+  nonconformance instead of a raw Zod dump. Any page that fails fails the whole
+  refresh rather than publishing a prefix, so the registry keeps serving the
+  last complete catalog through its existing stale fallback.
+
+  The walk is bounded on **tools**, not pages. A page ceiling is the wrong
+  dimension — the server picks the page size, so N pages is N × a number
+  connecta cannot observe, and the common conformant idiom of "advertise a
+  cursor whenever the page came back full, then serve one empty page to
+  terminate" means a well-behaved 10,000-tool server paging at 100 spends 101
+  requests. So a refresh now fails immediately on a cursor handed back twice,
+  fails on two consecutive pages that add nothing while still promising more
+  (one is legal — that empty terminator), caps what it accumulates at
+  `MAX_TOOLS` (100,000, the top of the catalog envelope issue #82 benchmarks),
+  and keeps `MAX_TOOL_PAGES` (raised to 10,000) only as an unreachable runaway
+  backstop. These bounds make an unterminating walk finite and report it as a
+  connector error; they do not cancel one that a probe deadline has already
+  abandoned, because `withTimeout` bounds the caller's wait rather than the
+  work.
+
+- **Downstream output-schema validation now covers every page of a paginated
+  catalog, not just the last one** (issue #77). The MCP SDK's
+  `Client.listTools()` rebuilds its output-schema validators and task-support
+  sets from each page it receives, clearing them first — so walking the cursor
+  chain left the request-scoped client validating the final page alone. A
+  `call_tool` against any earlier-page tool then found no validator and
+  silently skipped both the "declared an `outputSchema` but returned no
+  `structuredContent`" check and the structured-content validation, and lost
+  the required-task guard with them. Enforcement depended on which page a tool
+  happened to land on. A completed walk now re-primes that cache once from the
+  full aggregated catalog; a test asserts the pinned SDK still provides the
+  method it reaches for, so a future bump fails CI rather than quietly
+  restoring the gap.
+
 ## 0.6.1 — 2026-07-26
 
 A patch release: three bug fixes and a documentation overhaul. No new

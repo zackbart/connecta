@@ -223,6 +223,37 @@ Corollary: a fresh `McpServer` + transport is constructed for **every** request
 (an SDK ≥1.26 security requirement), never pooled —
 [request lifecycle](./architecture.md#architecture).
 
+### A downstream catalog is complete or it is a failure
+
+`tools/list` is cursor-paginated, and a partially collected catalog is
+indistinguishable from a small one — the missing tools do not error, they simply
+appear not to exist. So a `remoteMcp` refresh collects **every** page before
+anything indexes the result, and a page that fails fails the whole refresh
+rather than publishing the prefix it already had. The registry's stale-catalog
+fallback is what covers the gap; a partial replacement is never cached or
+persisted. Four properties hold this together and a change must keep all four:
+cursors are **opaque** (handed back byte-for-byte, never parsed, rewritten, or
+carried past the request); an **empty-string** `nextCursor` is *present* (the
+chain ends on an absent one, and a truthiness check there truncates silently);
+tools are **deduplicated first-wins** by name, since an unstable cursor can
+overlap pages and a double-counted tool misreports the catalog everywhere it is
+counted; and the walk is **bounded on tools, not pages** (`MAX_TOOLS` in
+`src/connectors/remote-mcp.ts`, with repeated-cursor and zero-progress checks
+ahead of it and `MAX_TOOL_PAGES` behind it as a runaway backstop). The page
+count is the wrong dimension to bound because the server picks the page size —
+a page ceiling is a tool ceiling times a number connecta cannot see, and one low
+enough to defend anything lands inside the 100,000-tool envelope the product is
+benchmarked against ([issue #82](https://github.com/zackbart/connecta/issues/82)).
+These bounds make an unterminating walk finite and legible; they do **not**
+cancel one, because a probe deadline abandons the caller, not the work. See
+[`remoteMcp`](./connectors.md#remotemcpid-opts).
+
+Corollary the SDK forces on us: `Client.listTools()` rebuilds its output-schema
+validator cache from *each* page, clearing it first, so a multi-page walk must
+re-prime that cache from the full catalog before any of those tools is called.
+Skip it and downstream output-schema validation quietly applies to the last page
+only.
+
 ### Single tenant
 
 One deployment, one tenant. Addresses are flat and two-segment

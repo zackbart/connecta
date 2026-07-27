@@ -70,6 +70,94 @@ export interface RemoteMcpOptions {
  */
 const TERMINATE_SESSION_BUDGET_MS = 50;
 
+/**
+ * Ceiling on the tools one catalog refresh will accumulate while walking
+ * `tools/list`.
+ *
+ * This is the bound that matters, and pages are the wrong dimension to put it
+ * in: the *server* picks the page size, so a page ceiling is a tool ceiling
+ * multiplied by a number connecta can neither observe in advance nor control.
+ * At ten tools a page, 100 pages is 1,000 tools; at a hundred, 10,000 — and
+ * connecta's own large-catalog envelope is benchmarked to 100,000 (issue #82).
+ * A page ceiling low enough to be a real defense therefore sits *inside* the
+ * catalog sizes this product exists to serve. Worse, the common conformant
+ * idiom is to advertise a `nextCursor` whenever a page came back full and then
+ * serve one empty page to terminate, so a perfectly well-behaved 10,000-tool
+ * server paging at 100 spends 101 requests: bound the pages and its entire
+ * catalog fails, for doing nothing wrong.
+ *
+ * So the ceiling goes on accumulated tools — the thing actually held in memory
+ * — and it sits at the top of the benchmarked envelope rather than below it.
+ * Deliberately the same philosophy as issue #82's discovery-response bounds:
+ * cap the bytes a caller can be made to hold, not the number of round trips it
+ * took to get them.
+ */
+const MAX_TOOLS = 100_000;
+
+/**
+ * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
+ * the primary defense.
+ *
+ * The walk terminates on its own well before this: a cursor handed back twice
+ * is a definite loop, two consecutive pages that add no new tools are a server
+ * going nowhere, and MAX_TOOLS caps what any of it can accumulate. This exists
+ * only so the loop is finite even if a downstream somehow satisfies all three
+ * forever, because the caller's probe deadline abandons the *caller*, not the
+ * loop. Set high enough that no honest server reaches it.
+ */
+const MAX_TOOL_PAGES = 10_000;
+
+/** One entry of the SDK's `tools/list` result, before it becomes a ToolDef. */
+type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
+
+/**
+ * Re-prime an SDK client's tool-metadata cache from the *full* walked catalog.
+ *
+ * `Client.listTools()` ends by calling its private `cacheToolMetadata`, which
+ * **clears** the output-schema validators and the task-support sets before
+ * repopulating them from the page it just received. Call it once per page —
+ * which walking the chain necessarily does — and the request-scoped client is
+ * left holding metadata for the *last* page alone. `callTool` then finds no
+ * validator for every earlier-page tool and silently skips both the "declared
+ * an outputSchema but returned no structuredContent" check and the
+ * structured-content validation, and finds no task requirement so a
+ * required-task tool is dispatched as a plain `tools/call`. Enforcement would
+ * depend on which page a tool happened to land on, which is not enforcement.
+ *
+ * So hand the whole aggregated list back deliberately, once, at the end. The
+ * SDK types the method `private`, hence the cast; the SDK version is pinned
+ * exactly and `test/remote-mcp-pagination.test.ts` asserts the method still
+ * exists, so a bump that renames it fails CI rather than quietly restoring the
+ * bug.
+ */
+function primeToolMetadata(client: Client, tools: ListedTool[]): void {
+  const prime = (
+    client as unknown as {
+      cacheToolMetadata?: (tools: ListedTool[]) => void;
+    }
+  ).cacheToolMetadata;
+  if (typeof prime !== "function") return;
+  prime.call(client, tools);
+}
+
+/**
+ * True for a result-parse failure caused by the page's `nextCursor` itself —
+ * in practice `nextCursor: null`, a very common JSON idiom for "no more pages"
+ * that the MCP schema does not accept (the chain ends on an *absent* cursor).
+ * Duck-typed rather than `instanceof ZodError`: the SDK may parse with its own
+ * zod instance, and cross-instance `instanceof` is a coin flip.
+ */
+function isCursorShapeError(err: unknown): boolean {
+  const issues = (err as { issues?: unknown } | null)?.issues;
+  return (
+    Array.isArray(issues) &&
+    issues.some((issue) => {
+      const path = (issue as { path?: unknown }).path;
+      return Array.isArray(path) && path[0] === "nextCursor";
+    })
+  );
+}
+
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -183,6 +271,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
   const scopeEndedError = () =>
     new Error(`Connector "${id}" scope ended during connection.`);
+
+  /**
+   * One `tools/list` request. The only thing wrapped here is the diagnosis of a
+   * `nextCursor` the MCP result schema refuses — overwhelmingly `null`, which
+   * plenty of servers use to mean "no more pages" but the spec spells as an
+   * *absent* cursor. The SDK surfaces that as a raw validation dump about a
+   * field the operator never sees; say which server broke which rule instead.
+   * Accepting `null` as end-of-chain outright is issue #99.
+   */
+  const listPage = async (client: Client, cursor: string | undefined) => {
+    try {
+      return await client.listTools(
+        cursor === undefined ? undefined : { cursor },
+      );
+    } catch (err) {
+      if (!isCursorShapeError(err)) throw err;
+      throw new Error(
+        `Connector "${id}" returned a tools/list page whose nextCursor is neither a string nor absent (a null cursor is the usual culprit) — MCP ends pagination on an absent nextCursor, so this catalog cannot be walked.`,
+        { cause: err },
+      );
+    }
+  };
 
   const stateFor = (ctx: ConnectorContext): ConnectionState => {
     const scope = ctx.requestScope ?? ctx;
@@ -355,19 +465,113 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     maxResultBytes: opts.maxResultBytes,
     usageGuide: opts.usageGuide,
 
+    // `tools/list` is cursor-paginated: the server chooses the page size and
+    // signals "there is more" with a `nextCursor`, which the SDK's
+    // Client.listTools() returns without following. Collect the whole chain
+    // here, because a half-collected catalog is indistinguishable from a small
+    // one — later-page tools would simply appear not to exist, unsearchable and
+    // unaddressable, with nothing anywhere saying why.
+    //
+    // All pages ride the one request-scoped client already connected above, and
+    // the accumulator is returned rather than stored: a cursor is opaque and
+    // session-bound, so nothing here may outlive this call.
     async listTools(ctx) {
       const state = stateFor(ctx);
       await ensureConnected(ctx, state);
-      const res = await state.client!.listTools();
-      return res.tools.map(
-        (t): ToolDef => ({
-          name: t.name,
-          description: t.description,
-          inputSchema: t.inputSchema as ToolDef["inputSchema"],
-          outputSchema: t.outputSchema as ToolDef["outputSchema"],
-          annotations: t.annotations as ToolDef["annotations"],
-        }),
-      );
+      // Bind the client once so the whole walk provably rides one session — a
+      // cursor is only meaningful to the connection that issued it, and a
+      // re-read could in principle pick up a different one. It is NOT guarding
+      // against closeScope nulling state.client mid-loop: closeScope sets
+      // `closed` and nulls `client` in one synchronous run, and the loop
+      // re-checks `closed` before every page, so the nulled client is
+      // unreachable from here.
+      const client = state.client!;
+      // Raw SDK tools, not ToolDefs: the metadata re-prime below needs fields
+      // (task support) that a ToolDef deliberately does not carry.
+      const listed: ListedTool[] = [];
+      const names = new Set<string>();
+      const spent = new Set<string>();
+      let cursor: string | undefined;
+      /** Consecutive pages that advertised a successor but added nothing. */
+      let barren = 0;
+      let complete = false;
+      for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+        // The scope can end between pages (probe timeout, teardown). Stop
+        // rather than keep paging into a transport that is being closed.
+        if (state.closed) throw scopeEndedError();
+        // Page one sends no params at all, so a non-paginated server sees
+        // exactly the request it saw before pagination existed.
+        const res = await listPage(client, cursor);
+        let added = 0;
+        for (const t of res.tools) {
+          // First page wins. An unstable cursor can serve the same tool on two
+          // pages — a failure mode that did not exist while only page one was
+          // read — and a duplicate would inflate `toolCount`, double the tool's
+          // `search_tools` row, and churn the registry's catalog-changed
+          // comparison into a persistence write on every refresh.
+          if (names.has(t.name)) continue;
+          names.add(t.name);
+          listed.push(t);
+          added++;
+        }
+        // Pagination ends when `nextCursor` is ABSENT — not when it is falsy.
+        // An empty string is a legal cursor and means "keep going"; `if
+        // (!next)` here would silently truncate that server's catalog.
+        const next = res.nextCursor;
+        if (typeof next !== "string") {
+          complete = true;
+          break;
+        }
+        // A page that adds nothing and still claims a successor made no
+        // progress. Allow exactly one: the widespread idiom is to advertise a
+        // cursor whenever a page came back full and then serve one empty page
+        // to terminate, and that server is conformant. Two in a row is a
+        // downstream going nowhere, and this kills a "fresh cursor forever, no
+        // tools" adversary in a couple of round trips instead of thousands.
+        if (added === 0 && ++barren > 1) {
+          throw new Error(
+            `Connector "${id}" returned two consecutive tools/list pages that added no tools and still advertised another — the catalog is not advancing.`,
+          );
+        }
+        if (added > 0) barren = 0;
+        // A cursor handed back a second time is not a slow server, it is a
+        // loop. Fail now rather than walking it until a ceiling notices.
+        if (spent.has(next)) {
+          throw new Error(
+            `Connector "${id}" handed back a tools/list cursor it had already issued — the pagination chain loops.`,
+          );
+        }
+        // Checked here rather than on arrival: this bounds what a *walk* may
+        // accumulate, and a server that answers in one page was always free to
+        // send whatever it sends.
+        if (listed.length > MAX_TOOLS) {
+          throw new Error(
+            `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_TOOLS}-tool ceiling one catalog refresh will collect.`,
+          );
+        }
+        // Opaque by contract: handed straight back, never parsed, rewritten,
+        // or persisted.
+        spent.add(next);
+        cursor = next;
+      }
+      // Fail the refresh outright. Returning what we have would publish a
+      // partial catalog that looks complete; throwing lets the registry keep
+      // serving the last complete one via its stale fallback.
+      if (!complete) {
+        throw new Error(
+          `Connector "${id}" kept advertising more tools/list pages after ${MAX_TOOL_PAGES} — refusing to page further.`,
+        );
+      }
+      // Repair what the per-page listTools calls left behind before any of
+      // these tools can be called. See primeToolMetadata.
+      primeToolMetadata(client, listed);
+      return listed.map((t) => ({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.inputSchema as ToolDef["inputSchema"],
+        outputSchema: t.outputSchema as ToolDef["outputSchema"],
+        annotations: t.annotations as ToolDef["annotations"],
+      }));
     },
 
     async callTool(name, args, ctx) {
