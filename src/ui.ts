@@ -305,7 +305,6 @@ export interface UiData {
 
 export interface UiToolkit {
   name: string;
-  description?: string;
   connectors: string[];
   includeTools: string[];
   excludeTools: string[];
@@ -557,7 +556,6 @@ export async function buildUiData(
   const toolkitData: UiToolkit[] = [...(toolkits?.values() ?? [])].map(
     (toolkit) => ({
       name: toolkit.name,
-      ...(toolkit.description ? { description: toolkit.description } : {}),
       connectors: [...toolkit.connectors],
       includeTools: [...toolkit.includeTools],
       excludeTools: [...toolkit.excludeTools],
@@ -944,7 +942,6 @@ ${clerkScript}
   }
   .toolkit-name h3 { overflow-wrap: anywhere; }
   .toolkit-state { text-align: right; }
-  .toolkit-description { margin-top: .25rem; max-width: 40rem; }
   .toolkit-connectors {
     display: flex;
     flex-wrap: wrap;
@@ -1581,10 +1578,6 @@ function renderToolkits() {
       '<div class="toolkit-head"><div><div class="toolkit-name">' +
       '<h3 class="mono">' + esc(toolkit.name) + "</h3>" +
       '<span class="cap">configured view</span></div>';
-    if (toolkit.description) {
-      body += '<p class="toolkit-description meta">' +
-        esc(toolkit.description) + "</p>";
-    }
     body += '</div><div class="toolkit-state cap">' +
       connectorCount + (connectorCount === 1 ? " connector" : " connectors") +
       " · " + toolCount + (toolCount === 1 ? " loaded tool" : " loaded tools") +
@@ -1599,9 +1592,9 @@ function renderToolkits() {
     body += "</ul>";
     body += '<div class="toolkit-rules meta">';
     if (toolkit.includeTools.length) {
-      body += '<p>Only: <span class="mono">' +
+      body += '<p>Per-connector allowlist: <span class="mono">' +
         toolkit.includeTools.map(esc).join('</span>, <span class="mono">') +
-        "</span></p>";
+        "</span>. Connectors without an allowlist keep all tools.</p>";
     }
     if (toolkit.excludeTools.length) {
       body += '<p>Hidden: <span class="mono">' +

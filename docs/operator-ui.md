@@ -53,9 +53,10 @@ names/descriptions. Broken connectors are isolated as `status: "error"` with
 second OAuth flow could invalidate the authorization URL just returned.
 Connections also projects the validated
 [toolkit](./toolkits.md#toolkits-scoped-views) config as a read-only ledger:
-each view's description, connectors, explicit tool inclusions/exclusions,
-currently loaded effective tool count, and copyable scoped MCP URL. Connector
-rows name the toolkits that include them. This is visibility into
+each view's connectors, explicit tool inclusions/exclusions, currently loaded
+effective tool count, and copyable scoped MCP URL. The config-only
+`description` remains on the server and is never included. Connector rows name
+the toolkits that include them. This is visibility into
 `ConnectaConfig.toolkits`, not a second source of truth: the page has no toolkit
 mutation controls, and changing a view still means changing deployment config
 and redeploying. Connections never contains vault Add/Replace/Test/Remove
@@ -88,7 +89,6 @@ showing a blank page. See [activity history](#activity-history).
   connectors,
   toolkits: [{
     name,
-    description?,
     connectors,
     includeTools,
     excludeTools,
@@ -109,7 +109,8 @@ deployment config; `toolCount` counts the tools currently loaded through healthy
 connectors that the toolkit would expose. An unavailable connector therefore
 still appears in `connectors` but contributes no loaded tools. Because toolkit
 names and membership describe the whole deployment, the existing
-toolkit-restricted-identity refusal runs before this payload is built.
+toolkit-restricted-identity refusal runs before this payload is built. The
+operator-only `description` field is deliberately absent.
 `credential` metadata appears only for a connector with a declared slot and
 only when the request belongs to an eligible Clerk operator with a vault. The
 static bearer may read connector health but never credential metadata.

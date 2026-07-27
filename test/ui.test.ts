@@ -48,6 +48,27 @@ function calc() {
   });
 }
 
+function notes() {
+  return api("notes", {
+    title: "Notes",
+    description: "Team notes",
+    tools: [
+      {
+        name: "list",
+        description: "List notes",
+        inputSchema: { type: "object" },
+        handler: () => ({ notes: [] }),
+      },
+      {
+        name: "get",
+        description: "Get a note",
+        inputSchema: { type: "object" },
+        handler: () => ({ note: null }),
+      },
+    ],
+  });
+}
+
 /** A connector whose listTools always throws — exercises broken-connector isolation. */
 function broken(): Connector {
   return {
@@ -994,9 +1015,8 @@ describe("status UI", () => {
       toolkits: [
         {
           name: `view-${id}`,
-          description: `Toolkit for ${id}`,
           connectors: [id],
-          includeTools: [],
+          includeTools: [`${id}.read`],
           excludeTools: [],
           toolCount: 0,
         },
@@ -1042,6 +1062,9 @@ describe("status UI", () => {
     expect(element("list").children[0]?.innerHTML).toContain("identity-a");
     expect(element("toolkitList").children[0]?.innerHTML).toContain(
       "view-identity-a",
+    );
+    expect(element("toolkitList").children[0]?.innerHTML).toContain(
+      "Connectors without an allowlist keep all tools.",
     );
 
     const navigate = (page: string, path: string) =>
@@ -1133,7 +1156,7 @@ describe("status UI", () => {
 
   it("/ui/data explains validated toolkit config without making it mutable", async () => {
     const c = createConnecta({
-      connectors: [calc()],
+      connectors: [calc(), notes()],
       auth: bearerToken(TOKEN, {
         subjectId: "operator",
         toolkits: ["calculator", "no_add"],
@@ -1143,9 +1166,9 @@ describe("status UI", () => {
       publicUrl: BASE,
       toolkits: {
         calculator: {
-          connectors: ["calc"],
+          connectors: ["calc", "notes"],
           includeTools: ["calc.add"],
-          description: "Approved calculator access",
+          description: "PRIVATE_OPERATOR_NOTE",
         },
         no_add: {
           connectors: ["calc"],
@@ -1163,11 +1186,11 @@ describe("status UI", () => {
     expect(body.toolkits).toEqual([
       {
         name: "calculator",
-        description: "Approved calculator access",
-        connectors: ["calc"],
+        connectors: ["calc", "notes"],
         includeTools: ["calc.add"],
         excludeTools: [],
-        toolCount: 1,
+        // includeTools narrows calc only; notes has no allowlist and keeps both.
+        toolCount: 3,
       },
       {
         name: "no_add",
@@ -1177,6 +1200,9 @@ describe("status UI", () => {
         toolCount: 0,
       },
     ]);
+    expect(JSON.stringify(body.toolkits)).not.toContain(
+      "PRIVATE_OPERATOR_NOTE",
+    );
   });
 
   it("/ui/data exposes only the credential capability allowed for this identity", async () => {
