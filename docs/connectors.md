@@ -292,6 +292,74 @@ export interface RemoteMcpOptions {
 Auth failures degrade the connector to `auth_required` (a real
 `UnauthorizedError`) or `error` (any other failure, e.g. network) — never a crash.
 
+**Catalog discovery follows MCP pagination.** `tools/list` is cursor-paginated
+in the spec: the server picks the page size and signals "there is more" with a
+`nextCursor`. The SDK's `Client.listTools()` sends one request and returns one
+page, so a catalog refresh walks the chain itself and only publishes the
+result once the last page is in. That matters more here than in a plain MCP
+client — connecta's whole value is progressive discovery over large catalogs,
+and those are exactly the catalogs that paginate. A half-collected one would
+not look broken; the missing tools would simply appear not to exist, absent
+from `list_connectors` counts, `search_tools`, `describe_tools`, and address
+resolution alike, with nothing anywhere saying why.
+
+Four rules the implementation is built around:
+
+- **Cursors are opaque.** Each `nextCursor` goes back exactly as received —
+  never parsed, rewritten, or persisted past the request that received it. The
+  first request sends no `cursor` at all, so a non-paginated downstream still
+  costs exactly one round trip and returns exactly what it returned before.
+- **Absent ends the chain, not falsy.** An empty-string `nextCursor` is
+  *present* and means keep going; a truthiness check there would silently
+  truncate that server's catalog. A `nextCursor: null` — a common JSON idiom
+  for "no more pages" that the MCP result schema does not accept — is reported
+  as a named nonconformance rather than a raw validation dump.
+- **Tools are first-wins and deduplicated by name.** An unstable cursor can
+  serve the same tool on two pages. Counting it twice would inflate
+  `list_connectors` counts, double its `search_tools` row, and make the
+  registry's catalog-changed comparison see churn where nothing changed.
+- **Partial is never published.** Any page that fails fails the whole refresh,
+  so nothing caches or persists a prefix — the registry's stale-catalog
+  fallback keeps serving the last *complete* catalog where it is still
+  eligible.
+
+**The walk is bounded — on tools, not pages.** A page ceiling is the wrong
+dimension: the *server* chooses the page size, so N pages is really N × an
+unobservable number of tools, and a ceiling low enough to defend anything sits
+inside the catalog sizes connecta is benchmarked to serve (100,000 tools, issue
+#82). Worse, the widespread conformant idiom is to advertise a `nextCursor`
+whenever a page came back full and then serve one empty page to terminate — so
+a well-behaved 10,000-tool server paging at 100 spends 101 requests, and a
+100-page cap fails its entire catalog for doing nothing wrong. Instead:
+
+- a cursor handed back twice is a definite loop and fails the refresh at once;
+- two consecutive pages that add no new tools while still advertising a
+  successor fail it too (one is legal — that empty terminator);
+- `MAX_TOOLS` (100,000, in `src/connectors/remote-mcp.ts`) caps what a walk
+  accumulates, which is the actual memory bound;
+- and `MAX_TOOL_PAGES` (10,000) survives only as a runaway backstop.
+
+To be precise about what those bounds buy: they make an unterminating walk
+*finite*, and they surface it as a connector error instead of a
+plausible-looking partial catalog. They do **not** stop a loop that a probe
+deadline has already abandoned. `withTimeout` bounds the caller's wait, not the
+work — the catalog read runs on the request scope with no teardown behind it,
+so an abandoned walk keeps paging with nobody waiting until it terminates on
+its own. Giving the walk a real deadline is a separate, deferred problem
+([`src/timeout.ts`](../src/timeout.ts), issue #98).
+
+Every page rides the one request-scoped client, and the cursor lives only in
+that loop: a later inbound request reconnects and starts again from page one.
+One consequence is not optional bookkeeping: the SDK's `Client.listTools()`
+**re-primes its output-schema validators from the page it just received**,
+clearing what it held first. Walking N pages would leave the client validating
+only the last one, so `call_tool` would enforce a declared `outputSchema` — and
+the required-task guard — for some tools and silently skip it for others,
+depending on which page they landed on. The walk therefore re-primes that cache
+once from the full aggregated catalog before returning. It is reaching past a
+`private` marker on a pinned SDK, so a test asserts the method still exists and
+fails on any bump that renames it.
+
 **`requireHttps` — the cleartext-credential guard.** The threat is
 `{ type: "headers" }` plus an `http://` `url`: the transport attaches those
 static headers to *every* request, so an API key or bearer token crosses the
