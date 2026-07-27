@@ -32,6 +32,7 @@ class CrashingChild extends EventEmitter {
       (message as { type?: unknown }).type === "run"
     ) {
       queueMicrotask(() => {
+        this.emit("exit", 17, null);
         this.stderr.write(
           `HEAD_SENTINEL${"x".repeat(20_000)}TAIL_SENTINEL`,
         );
