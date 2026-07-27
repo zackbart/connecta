@@ -26,6 +26,7 @@ import type {
   ConnectorContext,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
+  ConnectorStatus,
   ConnectaBranding,
   Executor,
   InboundAuth,
@@ -43,11 +44,16 @@ import {
   buildUiData,
   CONNECTA_FAVICON_SVG,
   credentialManagementCapability,
+  isSafeHttpUrl,
   operatorPageForPath,
   resolveBranding,
   renderUiHtml,
 } from "./ui.js";
 import { oauthValueStorageKey } from "./auth/downstream-oauth.js";
+import {
+  closeConnectorScope,
+  type DeferredWork,
+} from "./connector-scope.js";
 
 const CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
@@ -447,10 +453,11 @@ async function authorizeUiAdmin(
   baseUrl: string,
   auth: InboundAuth[],
   logger: Logger,
+  purpose = "credential management",
 ): Promise<{ ok: true; userId: string } | { ok: false; response: Response }> {
-  // Credential mutation is intentionally narrower than /mcp and /ui/data: only
+  // Operator mutation is intentionally narrower than /mcp and /ui/data: only
   // an interactive Clerk provider may admit it. A static bearer token is useful
-  // for headless tool calls but must not become a vault-admin key.
+  // for headless tool calls but must not become a deployment-admin key.
   //
   // EVERY Clerk provider gets a turn, the way the /mcp gate does, because the
   // documented per-team pattern is several `clerkAuth(...)`s that differ only in
@@ -466,7 +473,7 @@ async function authorizeUiAdmin(
     return {
       ok: false,
       response: privateJson(
-        { error: "credential management requires Clerk authentication" },
+        { error: `${purpose} requires Clerk authentication` },
         { status: 403 },
       ),
     };
@@ -491,7 +498,7 @@ async function authorizeUiAdmin(
     );
     if (!binding.ok) {
       logger.warn(
-        `[connecta] refused a credential-API request admitted by inbound auth ` +
+        `[connecta] refused an operator-mutation request admitted by inbound auth ` +
           `provider "${provider.kind}" with 403: ${binding.reason}.`,
       );
       lastResponse = unusableBinding();
@@ -757,6 +764,105 @@ async function handleCredentialRequest(
   }
 
   return privateJson({ error: "method not allowed" }, { status: 405 });
+}
+
+async function handleOAuthManagementRequest(
+  request: Request,
+  connectorId: string,
+  opts: ServerOptions,
+  baseUrl: string,
+  defer?: DeferredWork,
+): Promise<Response> {
+  if (!isSameOrigin(request, baseUrl)) {
+    return privateJson(
+      { error: "same-origin request required" },
+      { status: 403 },
+    );
+  }
+  const admin = await authorizeUiAdmin(
+    request,
+    baseUrl,
+    opts.auth,
+    opts.logger,
+    "OAuth management",
+  );
+  if (!admin.ok) return admin.response;
+
+  const connector = opts.registry.getConnector(connectorId);
+  if (!connector?.disconnectAuth || !connector.startAuth) {
+    return privateJson(
+      { error: "unknown OAuth connector" },
+      { status: 404 },
+    );
+  }
+  if (request.method !== "DELETE" && request.method !== "POST") {
+    return privateJson({ error: "method not allowed" }, { status: 405 });
+  }
+
+  const requestScope = {};
+  const ctx = opts.registry.contextFor(connectorId, baseUrl, requestScope);
+  try {
+    let result: ConnectorStatus | undefined;
+    let operationError: unknown;
+    try {
+      if (request.method === "DELETE") {
+        await connector.disconnectAuth(ctx);
+      } else {
+        result = await connector.startAuth(ctx, { force: true });
+      }
+    } catch (error) {
+      operationError = error;
+    }
+
+    // The old grant and its catalog verdict are invalid after either operation,
+    // including a partially failed physical cleanup whose epoch fence succeeded.
+    try {
+      await opts.registry.invalidateStored(connectorId);
+      await opts.registry.clearCredentialHealth(connectorId);
+    } catch (error) {
+      operationError ??= error;
+    }
+    if (operationError) {
+      return privateJson({ error: msg(operationError) }, { status: 400 });
+    }
+
+    if (request.method === "DELETE") {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          "Cache-Control": "no-store",
+          "Referrer-Policy": "no-referrer",
+        },
+      });
+    }
+
+    const authorizationUrl = isSafeHttpUrl(result!.authorizationUrl)
+      ? result!.authorizationUrl
+      : undefined;
+    if (result!.state === "error") {
+      return privateJson(
+        { error: result!.message || "OAuth authorization could not start" },
+        { status: 502 },
+      );
+    }
+    if (result!.state === "auth_required" && !authorizationUrl) {
+      return privateJson(
+        {
+          error:
+            result!.message ||
+            "OAuth authorization requires consent but no safe URL is available",
+        },
+        { status: 502 },
+      );
+    }
+    return privateJson({
+      state: result!.state,
+      ...(result!.message ? { message: result!.message } : {}),
+      ...(authorizationUrl ? { authorizationUrl } : {}),
+    });
+  } finally {
+    await closeConnectorScope(connector, ctx, defer);
+  }
 }
 
 /** Length beyond which a rejected toolkit name is not echoed back. */
@@ -1256,6 +1362,20 @@ export function createFetchHandler(
           baseUrl,
         );
       }
+      const oauthManagementMatch =
+        /^\/ui\/oauth\/([a-z0-9_-]+)$/.exec(path);
+      if (oauthManagementMatch) {
+        if (request.method === "OPTIONS") {
+          return privateJson({ error: "method not allowed" }, { status: 405 });
+        }
+        return handleOAuthManagementRequest(
+          request,
+          oauthManagementMatch[1],
+          opts,
+          baseUrl,
+          defer,
+        );
+      }
 
       if (request.method === "OPTIONS") {
         for (const a of auth) {
@@ -1407,6 +1527,7 @@ export function createFetchHandler(
           credentialManagement,
           opts.toolkits,
           defer,
+          eligibleClerkOperator,
         );
         return privateJson(data);
       }

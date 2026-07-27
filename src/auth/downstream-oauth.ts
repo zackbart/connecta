@@ -24,6 +24,7 @@ function timingSafeEqual(a: string, b: string): boolean {
 const LEGACY_GENERATION = "legacy";
 const ACTIVE_GENERATION_PREFIX = "v2:";
 const RESETTING_GENERATION_PREFIX = "reset:";
+const DISCONNECTED_GENERATION_PREFIX = "disconnected:";
 const STORED_VALUE_VERSION = 1;
 const OAUTH_VALUE_KEYS = [
   "oauth:client",
@@ -55,7 +56,8 @@ function storedOAuthValue<T>(
 function isModernGeneration(generation: string): boolean {
   return (
     generation.startsWith(ACTIVE_GENERATION_PREFIX) ||
-    generation.startsWith(RESETTING_GENERATION_PREFIX)
+    generation.startsWith(RESETTING_GENERATION_PREFIX) ||
+    generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
   );
 }
 
@@ -134,6 +136,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const generation = await this.writeGeneration();
     if (
       generation.startsWith(RESETTING_GENERATION_PREFIX) ||
+      generation.startsWith(DISCONNECTED_GENERATION_PREFIX) ||
       (await this.generation()) !== generation
     ) {
       return;
@@ -185,7 +188,12 @@ export class KvOAuthProvider implements OAuthClientProvider {
       oauthValueStorageKey(key, generation),
     );
     if (raw === null) return undefined;
-    if (generation.startsWith(RESETTING_GENERATION_PREFIX)) return undefined;
+    if (
+      generation.startsWith(RESETTING_GENERATION_PREFIX) ||
+      generation.startsWith(DISCONNECTED_GENERATION_PREFIX)
+    ) {
+      return undefined;
+    }
 
     let parsed: unknown;
     try {
@@ -373,6 +381,16 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return (await this.storage.get("oauth:generation")) ?? LEGACY_GENERATION;
   }
 
+  /** True only after an operator disconnect, until an explicit authorization starts. */
+  async operatorDisconnected(): Promise<boolean> {
+    return this.isOperatorDisconnectedGeneration(await this.generation());
+  }
+
+  /** Interpret a generation already read by a connector without another KV lookup. */
+  isOperatorDisconnectedGeneration(generation: string): boolean {
+    return generation.startsWith(DISCONNECTED_GENERATION_PREFIX);
+  }
+
   /** Publish a unique active epoch without a read/modify/write race. */
   async bumpGeneration(): Promise<string> {
     const next = `${ACTIVE_GENERATION_PREFIX}${crypto.randomUUID()}`;
@@ -390,11 +408,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * partial backend outage should not leave unrelated secrets behind merely
    * because an earlier key happened to be the first failed delete.
    */
-  async resetAuthorization(): Promise<void> {
+  async resetAuthorization(operatorDisconnected = false): Promise<void> {
     const nonce = crypto.randomUUID();
     const previous = await this.generation();
     const inherited = await this.cleanupBacklog(previous);
-    const active = `${ACTIVE_GENERATION_PREFIX}${nonce}`;
+    const active = `${
+      operatorDisconnected
+        ? DISCONNECTED_GENERATION_PREFIX
+        : ACTIVE_GENERATION_PREFIX
+    }${nonce}`;
     const retired = [...new Set([...inherited, previous])];
     if (retired.length > MAX_CLEANUP_BACKLOG) {
       throw new Error(

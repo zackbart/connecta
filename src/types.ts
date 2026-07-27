@@ -215,6 +215,12 @@ export interface Connector {
     opts?: { force?: boolean },
   ): Promise<ConnectorStatus>;
   /**
+   * Optional: remove every stored downstream OAuth credential and pending flow
+   * without immediately starting a replacement flow. Present only on
+   * connectors whose authorization can be managed by the operator UI.
+   */
+  disconnectAuth?(ctx: ConnectorContext): Promise<void>;
+  /**
    * Verify the OAuth `state` returned to /oauth/callback/<id> against the value
    * this connector generated when it started the flow. Required whenever
    * `finishAuth` is present: the callback rejects before `finishAuth` when this

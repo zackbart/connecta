@@ -257,6 +257,8 @@ export interface UiConnector {
   authorizationUrl?: string;
   toolCount: number;
   tools: UiTool[];
+  /** This connector exposes operator-managed downstream OAuth lifecycle hooks. */
+  oauth?: boolean;
   /**
    * Verdict of the last proactive credential liveness check (issue #24), for the
    * connectors that hold a credential connecta stores. Shown beside the live
@@ -307,6 +309,8 @@ export interface UiData {
   toolkits: UiToolkit[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
+  /** True only for an eligible, unrestricted Clerk operator. */
+  oauthManagement: boolean;
 }
 
 export interface UiToolkit {
@@ -411,6 +415,7 @@ export async function buildUiData(
     : "requires_clerk",
   toolkits?: ReadonlyMap<string, Toolkit>,
   defer?: DeferredWork,
+  oauthManagement = false,
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -536,6 +541,7 @@ export async function buildUiData(
           : {}),
         toolCount: tools.length,
         tools,
+        ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
         ...(credentialCheck
           ? {
               credentialCheck: {
@@ -589,6 +595,7 @@ export async function buildUiData(
     toolkits: toolkitData,
     activityEnabled,
     credentialManagement,
+    oauthManagement,
   };
 }
 
@@ -864,6 +871,8 @@ ${clerkScript}
   #notice { margin-bottom: .75rem; }
   #notice:empty { display: none; }
   #notice:not(:empty) { text-decoration: underline; }
+  #oauthNotice { margin-bottom: .75rem; }
+  #oauthNotice:empty { display: none; }
   .error-notice, .msg { text-decoration: underline; }
   .card,
   .credential-card,
@@ -1152,6 +1161,7 @@ ${clerkScript}
           </div>
         </div>
         <p class="cap" id="serverInfo">${escapeHtmlAttr(brand.productName)} operator</p>
+        <p id="oauthNotice" class="meta" role="status" aria-live="polite" tabindex="-1"></p>
       </div>
     </div>
     <section class="section pgrid" aria-labelledby="connectorLedgerHeading">
@@ -1264,6 +1274,12 @@ function setNotice(message, isError) {
   $("credentialNotice").setAttribute("role", isError ? "alert" : "status");
 }
 
+function setOauthNotice(message, isError) {
+  $("oauthNotice").textContent = message || "";
+  $("oauthNotice").classList.toggle("error-notice", Boolean(isError));
+  $("oauthNotice").setAttribute("role", isError ? "alert" : "status");
+}
+
 async function sessionToken() {
   return AUTH.kind === "clerk"
     ? await Clerk.session?.getToken()
@@ -1291,6 +1307,7 @@ function clearIdentityState() {
   DATA = null;
   clearActivityState();
   $("list").innerHTML = "";
+  setOauthNotice("");
   $("toolkitList").innerHTML = "";
   $("filter").value = "";
   $("credentialList").innerHTML = "";
@@ -1684,6 +1701,20 @@ function renderConnections() {
         : '<p class="connector-auth meta">Authorization URL: ' +
           esc(c.authorizationUrl) + "</p>";
     }
+    if (c.oauth && DATA.oauthManagement) {
+      const oauthName = c.title || c.id;
+      head += '<div class="credential-actions">';
+      head += '<button type="button" class="linklike danger" ' +
+        'aria-label="Disconnect OAuth for ' + esc(oauthName) + '" ' +
+        'data-oauth-action="disconnect" data-connector="' + esc(c.id) +
+        '">Disconnect OAuth</button>';
+      head += '<button type="button" class="linklike" ' +
+        'aria-label="' + (c.status === "ok" ? "Reconnect OAuth for " :
+          "Restart authorization for ") + esc(oauthName) + '" ' +
+        'data-oauth-action="reconnect" data-connector="' + esc(c.id) +
+        '">' + (c.status === "ok" ? "Reconnect OAuth" : "Restart authorization") +
+        "</button></div>";
+    }
     if (c.credential) {
       head += '<p class="connector-auth"><a class="linklike" href="/credentials" ' +
         'data-operator-page="credentials">Manage credential →</a></p>';
@@ -1712,6 +1743,77 @@ function renderConnections() {
   }
   renderToolkits();
 }
+
+async function oauthRequest(connector, method, generation) {
+  const token = await sessionToken();
+  if (generation !== SESSION_GENERATION) {
+    throw new Error("The operator session changed.");
+  }
+  if (!token) throw new Error("Your Clerk session has expired.");
+  const res = await fetch("/ui/oauth/" + encodeURIComponent(connector), {
+    method,
+    headers: { Authorization: "Bearer " + token },
+  });
+  if (res.status === 204) return null;
+  let payload = {};
+  try { payload = await res.json(); } catch (e) {}
+  if (!res.ok) throw new Error(payload.error || "Request failed (" + res.status + ").");
+  return payload;
+}
+
+$("list").onclick = async (event) => {
+  const button = event.target.closest("[data-oauth-action]");
+  if (!button) return;
+  const connector = button.dataset.connector;
+  const action = button.dataset.oauthAction;
+  const generation = SESSION_GENERATION;
+  const question = action === "disconnect"
+    ? "Disconnect OAuth for " + connector +
+      "? Stored credentials and any pending authorization will be removed."
+    : "Restart OAuth for " + connector +
+      "? Stored credentials and any pending authorization will be replaced.";
+  if (!window.confirm(question)) return;
+
+  setOauthNotice("");
+  const buttons = [...document.querySelectorAll(
+    '[data-connector="' + CSS.escape(connector) + '"]'
+  )];
+  buttons.forEach((item) => { item.disabled = true; });
+  try {
+    const result = await oauthRequest(
+      connector,
+      action === "disconnect" ? "DELETE" : "POST",
+      generation,
+    );
+    if (generation !== SESSION_GENERATION) return;
+    await load();
+    if (generation !== SESSION_GENERATION) return;
+    setOauthNotice(
+      action === "disconnect"
+        ? "OAuth disconnected. Restart authorization when you are ready to reconnect."
+        : result?.message ||
+          "Authorization restarted. Open the authorization link to reconnect.",
+    );
+    $("oauthNotice").focus();
+  } catch (e) {
+    if (generation !== SESSION_GENERATION) return;
+    // A reset can publish its durable epoch before best-effort physical cleanup
+    // reports failure. Refresh so stale tools/health/actions never survive that
+    // partial success, while preserving the original error for the operator.
+    try {
+      await load();
+    } catch (refreshError) {
+      // The mutation error is the actionable one; load() already owns its gate.
+    }
+    if (generation !== SESSION_GENERATION) return;
+    setOauthNotice(e.message || "OAuth action failed.", true);
+    $("oauthNotice").focus();
+  } finally {
+    if (generation === SESSION_GENERATION) {
+      buttons.forEach((item) => { item.disabled = false; });
+    }
+  }
+};
 
 function renderCredentials() {
   const list = $("credentialList");

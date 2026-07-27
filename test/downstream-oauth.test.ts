@@ -18,6 +18,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import type {
   Connector,
   ConnectorContext,
+  InboundAuth,
   KVStorage,
   Logger,
 } from "../src/types.js";
@@ -772,17 +773,166 @@ describe("remoteMcp() hasStoredCredential", () => {
 });
 
 describe("remoteMcp() startAuth", () => {
-  it("is absent unless auth is oauth", () => {
+  it("OAuth lifecycle hooks are absent unless auth is oauth", () => {
     const headers = remoteMcp("svc", {
       url: "https://unused.example/mcp",
       auth: { type: "headers", headers: { Authorization: "Bearer x" } },
     });
     expect(headers.startAuth).toBeUndefined();
+    expect(headers.disconnectAuth).toBeUndefined();
     const oauth = remoteMcp("svc", {
       url: "https://unused.example/mcp",
       auth: { type: "oauth" },
     });
     expect(oauth.startAuth).toBeDefined();
+    expect(oauth.disconnectAuth).toBeDefined();
+  });
+
+  it("disconnect wipes the grant without starting a replacement flow", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "oauth:tokens",
+      JSON.stringify({ access_token: "old", token_type: "Bearer" }),
+    );
+    await storage.set("oauth:pending", "https://auth.example/stale");
+    let builds = 0;
+    const connector = remoteMcp("svc", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: () => {
+        builds++;
+        return throwingTransport(new UnauthorizedError("401"));
+      },
+    });
+    const c = ctx(storage);
+
+    await connector.disconnectAuth!(c);
+
+    expect(builds).toBe(0);
+    expect(await connector.hasStoredCredential!(c)).toBe(false);
+    expect(await storage.get("oauth:tokens")).toBeNull();
+    expect(await storage.get("oauth:pending")).toBeNull();
+    expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
+
+    const passive = await connector.status!(c);
+    expect(passive).toMatchObject({
+      state: "auth_required",
+      message: expect.stringContaining("disconnected by an operator"),
+    });
+    expect(passive.authorizationUrl).toBeUndefined();
+    expect(builds).toBe(0);
+    expect(await storage.get("oauth:pending")).toBeNull();
+  });
+
+  it("can start a fresh authorization after an explicit disconnect", async () => {
+    const storage = memoryStorage();
+    const c = ctx(storage);
+    const authUrl = "https://auth.example/reconnect";
+    const connector = remoteMcp("svc", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: () =>
+        throwingTransport(new UnauthorizedError("401"), async () => {
+          await storeCurrentOAuthValue(storage, "oauth:pending", authUrl);
+        }),
+    });
+
+    await connector.disconnectAuth!(c);
+    const status = await connector.startAuth!(c);
+
+    expect(status).toMatchObject({
+      state: "auth_required",
+      authorizationUrl: authUrl,
+    });
+    expect(await storage.get("oauth:generation")).toMatch(/^v2:/);
+  });
+
+  it("keeps DELETE durable across /ui/data until POST explicitly reconnects", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "conn:svc:oauth:tokens",
+      JSON.stringify({ access_token: "old", token_type: "Bearer" }),
+    );
+    const authUrl = "https://auth.example/reconnect";
+    let builds = 0;
+    const connector = remoteMcp("svc", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: (transportCtx) => {
+        builds++;
+        return throwingTransport(new UnauthorizedError("401"), async () => {
+          await storeCurrentOAuthValue(
+            transportCtx.storage,
+            "oauth:pending",
+            authUrl,
+          );
+        });
+      },
+    });
+    const clerk: InboundAuth = {
+      kind: "clerk",
+      uiAuth: {
+        kind: "clerk",
+        publishableKey: "pk_test_fake",
+        frontendApiUrl: "https://clerk.example.com",
+      },
+      authorize(request) {
+        return request.headers.get("authorization") === "Bearer clerk-token"
+          ? { ok: true, userId: "user_123" }
+          : {
+              ok: false,
+              response: Response.json(
+                { error: "unauthorized" },
+                { status: 401 },
+              ),
+            };
+      },
+    };
+    const connecta = createConnecta({
+      connectors: [connector],
+      auth: clerk,
+      storage,
+      publicUrl: BASE,
+    });
+    const operatorRequest = (path: string, method = "GET") =>
+      connecta.fetch(
+        new Request(`${BASE}${path}`, {
+          method,
+          headers: {
+            Authorization: "Bearer clerk-token",
+            Origin: BASE,
+          },
+        }),
+      );
+
+    expect((await operatorRequest("/ui/oauth/svc", "DELETE")).status).toBe(204);
+    const data = (await (
+      await operatorRequest("/ui/data")
+    ).json()) as {
+      connectors: Array<{
+        status: string;
+        authorizationUrl?: string;
+        toolCount: number;
+      }>;
+    };
+    expect(data.connectors[0]).toMatchObject({
+      status: "auth_required",
+      toolCount: 0,
+    });
+    expect(data.connectors[0].authorizationUrl).toBeUndefined();
+    expect(builds).toBe(0);
+    expect(await storage.get("conn:svc:oauth:pending")).toBeNull();
+    expect(await storage.get("conn:svc:oauth:generation")).toMatch(
+      /^disconnected:/,
+    );
+
+    const restarted = await operatorRequest("/ui/oauth/svc", "POST");
+    expect(restarted.status).toBe(200);
+    await expect(restarted.json()).resolves.toMatchObject({
+      state: "auth_required",
+      authorizationUrl: authUrl,
+    });
+    expect(builds).toBe(1);
   });
 
   it("kicks the flow and returns auth_required with the stored URL", async () => {
