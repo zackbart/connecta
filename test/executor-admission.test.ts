@@ -117,4 +117,44 @@ describe("AdmissionController", () => {
     active.release();
     expect(admission.activeCount).toBe(0);
   });
+
+  it("reports payload-free totals and queue-wait observations", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000);
+      const admission = new AdmissionController({
+        concurrency: 1,
+        maxQueueSize: 2,
+        queueTimeoutMs: 1_000,
+        retryAfterMs: 250,
+      });
+      const active = await admission.acquire();
+      const queued = admission.acquire();
+      vi.setSystemTime(1_125);
+      active.release();
+      const admitted = await queued;
+
+      expect(admitted.waitMs).toBe(125);
+      expect(admission.snapshot()).toEqual({
+        concurrency: 1,
+        maxQueueSize: 2,
+        queueTimeoutMs: 1_000,
+        retryAfterMs: 250,
+        active: 1,
+        queued: 0,
+        closed: false,
+        totals: {
+          admitted: 2,
+          queued: 1,
+          rejected: 0,
+          cancelled: 0,
+          closed: 0,
+        },
+        queueWaitMs: { count: 1, total: 125, max: 125 },
+      });
+      admitted.release();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

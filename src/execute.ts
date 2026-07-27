@@ -513,6 +513,11 @@ export function createExecuteTool(
       // catalogs, request scopes, or one-closure-per-tool provider arrays.
       if (isAdmittingExecutor(executor)) {
         lease = await executor.acquire({ signal: controller.signal });
+        if ((lease.waitMs ?? 0) > 0) {
+          logger.debug("[connecta] execute_code admitted after queue wait", {
+            waitMs: lease.waitMs,
+          });
+        }
       }
       const providers = await buildSandboxProviders(
         registry,
@@ -532,6 +537,12 @@ export function createExecuteTool(
         : await executor.execute(code, providers);
     } catch (err) {
       if (err instanceof ExecutorAdmissionError) {
+        if (err.code === "executor_overloaded") {
+          logger.warn("[connecta] execute_code admission rejected", {
+            code: err.code,
+            retryAfterMs: err.retryAfterMs,
+          });
+        }
         const result = jsonResult({
           error: {
             code: err.code,

@@ -22,6 +22,7 @@ const WORKERS_SUITES = [
   "test/execute.test.ts",
   "test/meta-tools.test.ts",
   "test/registry.test.ts",
+  "test/request-admission.test.ts",
   "test/remote-mcp-pagination.test.ts",
   "test/remote-mcp.test.ts",
   "test/server.test.ts",

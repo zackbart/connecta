@@ -111,6 +111,17 @@ Node QuickJS pool owns its instance. There is one queue, before provider
 construction; queued calls retain no catalog, request scope, or closure per
 tool.
 
+The same primitive now bounds the wider `/mcp` request boundary
+([request admission](./request-admission.md#request-admission-and-backpressure)).
+That pool is deliberately global FIFO: it establishes a deployment memory
+ceiling without smuggling tenant policy into the registry. Admission happens
+before auth and per-request MCP construction, while health and operator routes
+bypass the pool so saturation remains observable. A permit follows the response
+body through completion, cancellation, or stream failure; releasing when the
+handler merely produced a `Response` would let slow clients consume uncounted
+memory and sockets. Code mode remains a second, smaller pool rather than
+borrowing ordinary capacity as permission to create sandboxes.
+
 A newly forked child sends a ready handshake only after the trusted QuickJS
 WASM module is loaded. Guest wall time starts after that handshake, while a
 separate fixed startup ceiling contains a child that never becomes ready.

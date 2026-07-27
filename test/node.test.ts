@@ -134,6 +134,16 @@ describe("Node listen adapter", () => {
     request.destroy();
     await viWaitForAbort(() => observedSignal?.aborted === true);
     expect(observedSignal?.reason).toBeInstanceOf(Error);
+    await viWaitForAbort(async () => {
+      const health = await connecta.fetch(
+        new Request("http://127.0.0.1/health"),
+      );
+      const body = (await health.json()) as any;
+      return (
+        body.admission.requests.active === 0 &&
+        body.admission.code.active === 0
+      );
+    });
     await connecta.close();
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -142,9 +152,11 @@ describe("Node listen adapter", () => {
   });
 });
 
-async function viWaitForAbort(predicate: () => boolean): Promise<void> {
+async function viWaitForAbort(
+  predicate: () => boolean | Promise<boolean>,
+): Promise<void> {
   const deadline = Date.now() + 1_000;
-  while (!predicate()) {
+  while (!(await predicate())) {
     if (Date.now() >= deadline) throw new Error("Request signal was not aborted.");
     await new Promise((resolve) => setTimeout(resolve, 5));
   }

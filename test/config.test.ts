@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createConnecta,
+  type ConnectaAdmissionConfig,
   type ConnectaActivityConfig,
   type ConnectaCallsConfig,
   type ConnectaConfig,
@@ -34,7 +35,7 @@ const EXPECTED_ALL_MIGRATIONS = [
 ].join("\n");
 
 describe("ConnectaConfig v0.7 shape", () => {
-  it("accepts all four cohesive config groups", () => {
+  it("accepts all five cohesive config groups", () => {
     const activity: ConnectaActivityConfig = {
       store: { record() {} },
       readGate: () => true,
@@ -53,17 +54,51 @@ describe("ConnectaConfig v0.7 shape", () => {
       defaultTimeoutMs: 1_000,
       maxResultBytes: 123,
     };
+    const admission: ConnectaAdmissionConfig = {
+      requests: {
+        concurrency: 4,
+        maxQueueSize: 8,
+        queueTimeoutMs: 250,
+      },
+      code: {
+        concurrency: 1,
+        maxQueueSize: 2,
+        queueTimeoutMs: 100,
+      },
+    };
     const config: ConnectaConfig = {
       connectors: [],
       activity,
       credentials,
       discovery,
       calls,
+      admission,
     };
 
     const connecta = createConnecta(config);
 
     expect(connecta.registry.maxResultBytes).toBe(123);
+  });
+
+  it("rejects malformed admission bounds at construction", () => {
+    expect(() =>
+      createConnecta({
+        connectors: [],
+        admission: { requests: { concurrency: 0 } },
+      }),
+    ).toThrow("concurrency must be a positive whole number");
+    expect(() =>
+      createConnecta({
+        connectors: [],
+        admission: { requests: { maxQueueSize: -1 } },
+      }),
+    ).toThrow("maxQueueSize must be a non-negative whole number");
+    expect(() =>
+      createConnecta({
+        connectors: [],
+        admission: { code: { queueTimeoutMs: Number.NaN } },
+      }),
+    ).toThrow("queueTimeoutMs must be a positive whole number");
   });
 
   it("forwards catalog freshness and persistence settings at the boundary", async () => {

@@ -12,6 +12,7 @@ import {
 } from "../executor-admission.js";
 import type {
   AdmittingExecutor,
+  AdmissionSnapshot,
   ExecuteResult,
   ExecutorLease,
   ExecutorProvider,
@@ -279,6 +280,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     let released = false;
     let executed = false;
     return {
+      waitMs: admission.waitMs,
       execute: async (code, providers) => {
         if (released) throw new Error("Executor lease was already released.");
         if (executed) throw new Error("Executor lease may execute only once.");
@@ -299,6 +301,10 @@ class QuickJsChildPool implements AdmittingExecutor {
         admission.release();
       },
     };
+  }
+
+  admissionSnapshot(): AdmissionSnapshot {
+    return this.admission.snapshot();
   }
 
   async execute(

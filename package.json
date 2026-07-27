@@ -67,6 +67,7 @@
     "check:examples": "tsc -p tsconfig.examples.node.json && tsc -p tsconfig.examples.worker.json",
     "check:security": "npm audit --omit=dev --audit-level=moderate",
     "check:package": "node scripts/check-package.mjs",
+    "load:admission": "npm run build && node scripts/admission-load.mjs",
     "check": "npm run check:docs && npm run typecheck && npm run test && npm run build && npm run check:examples",
     "release:check": "npm run check && npm run check:security && npm run check:package",
     "prepack": "npm run check",
