@@ -1088,7 +1088,15 @@ export function createFetchHandler(
       // Canonicalize the legacy bookmark while upgrading it so an old /ui URL
       // reaches the new Connections entry point in one permanent redirect.
       const targetPath = path === "/ui" ? "/" : url.pathname;
-      const target = new URL(`${targetPath}${url.search}`, publicUrl);
+      // Assign the path and query onto the configured URL instead of resolving
+      // attacker-controlled text against it. A pathname beginning with `//`
+      // (including a backslash form normalized by URL parsing) is an authority
+      // when passed to `new URL(value, base)` and would otherwise replace the
+      // deployment host.
+      const target = new URL(publicUrl);
+      target.pathname = targetPath;
+      target.search = url.search;
+      target.hash = "";
       return withSecurityHeaders(
         new Response(null, {
           status: 308,
