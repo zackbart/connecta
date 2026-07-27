@@ -43,19 +43,31 @@ operations have very different consistency, pagination, and cost models.
 | --- | --- |
 | `conn:<id>:oauth:pending`, `:verifier`, `:state` | One OAuth attempt. Cleared after a successful callback and before a force re-authorization starts a replacement flow. |
 | `conn:<id>:oauth:client`, `:tokens` | The connector's durable downstream grant. Replaced by refresh/code exchange; cleared by force re-authorization. |
-| `conn:<id>:oauth:generation` | Intentional tombstone. Advanced before an OAuth reset and retained so other isolates cannot resurrect pre-reset credentials. |
+| `conn:<id>:oauth:generation` | Unique epoch. Force first publishes a `reset:` tombstone that makes credential reads fail closed, attempts every deletion, then publishes the new active epoch. Every OAuth value is tagged so a late old-epoch write stays unreadable. |
 | `conn:<id>:credential:v1` | Until an eligible operator replaces or removes the connector credential. |
-| `credhealth:<id>` | Until its verdict expires logically or the credential changes. A change deletes it immediately. |
-| `credhealth:gen:<id>` | Intentional tombstone advanced on credential change to fence a check already in flight. |
-| `catalog:<id>` | TTL-bounded and explicitly invalidated when credential or OAuth state changes. |
+| `credhealth:<id>` | Latest verdict. A credential change makes a best-effort deletion and ignores it logically in the current isolate. |
+| `credhealth:gen:<id>` | Retained counter used to discard a check that observed a credential change on a consistent store. |
+| `catalog:<id>` | TTL-bounded. Credential/OAuth changes serialize a best-effort deletion after older writes in the current isolate. |
 | `results:*` | TTL-bounded pages created only for oversized meta-tool results. |
 | Other `conn:<id>:*` | Owned entirely by that custom connector. |
 
-TTL is a storage contract: a backend must stop returning an expired value.
-`memoryStorage` deletes it from memory, `fileStorage` now removes it from the
-state file when a read discovers expiry, and Cloudflare KV applies its native
-expiry where its minimum TTL allows. A custom adapter may clean physical bytes
-later, but it must make the key unreadable on time.
+Connecta's own TTLs are at least 60 seconds. `memoryStorage` deletes on read,
+`fileStorage` makes an expired value unreadable on read and physically prunes it
+on the next mutation, and Cloudflare KV applies native expiry. The Worker
+example stores a custom connector's shorter TTL without expiry because Workers
+KV rejects values below its 60-second minimum.
+
+**Consistency is part of the deployment choice.** The OAuth epoch protocol
+closes late-write, concurrent-force, partial-delete, and callback/reset races
+when storage provides read-after-write consistency. [Cloudflare Workers KV is
+eventually consistent](https://developers.cloudflare.com/kv/concepts/how-kv-works/)
+across locations, so another location can temporarily
+observe the prior epoch and grant; do not claim immediate global disconnect or
+rotation on that adapter. A deployment requiring that guarantee must put
+OAuth/credential coordination in a strongly consistent store (for example a
+Durable Object) while still implementing the same `KVStorage` seam. Catalog and
+credential-health invalidation are operational hints, not authorization
+boundaries, and remain best-effort across stores and isolates.
 
 Removing a connector from TypeScript configuration does **not** automatically
 delete its namespace. There is no safe inference that a missing declaration is
@@ -64,7 +76,7 @@ interface deliberately has no prefix scan. Disconnect or remove credentials
 while the connector is still configured when a product surface supports it;
 otherwise delete that connector's documented keys through the deployment's
 storage administration. Never delete an OAuth or credential-health generation
-key while another live instance may still hold the older generation.
+key while another live instance may still hold older state.
 
 ### Operator-managed connector credentials
 
@@ -356,8 +368,8 @@ and a stale consent URL, for a whole interval right after the operator fixed it.
 Clearing advances a per-connector generation counter (`credhealth:gen:<id>`, the
 same pattern as the OAuth force-reauth generation in [downstream OAuth](./connectors.md#downstream-oauth)),
 which a check captures when it starts and re-reads before writing; a mismatch
-drops the verdict and reports it as `discarded: true`. It fences across isolates,
-not just within one, because the counter is in storage.
+drops the verdict and reports it as `discarded: true`. It fences across isolates
+when that storage provides the consistency described above.
 
 **What a verdict is allowed to decide.** Only `auth_required` ever sets the
 cached status. Four rules, all in one function (`credentialVerdictApplies`):

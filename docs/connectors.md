@@ -652,27 +652,21 @@ token_endpoint_auth_method: "none" }`.
    to `auth_required` — it never crashes the server or hides other connectors.
 
 **What the refusal hides, and what it doesn't.** Matching bodies buy nothing if
-the clock still sorts the ids. `verifyState` reads `conn:<id>:oauth:state`
-before it can fail, so a configured id pays a storage round trip — a real
-network read on a KV-backed deployment — while an id naming nothing used to
-answer having touched no I/O at all. So the two refusals that would otherwise be
-free (an unknown or non-OAuth id, and a connector with `finishAuth` but no
-`verifyState`) read the same key in the same namespace first, and for an
-unconfigured id that is simply a miss (`equalizeRefusalCost`, `src/server.ts`).
+the clock still sorts ids. `verifyState` reads `conn:<id>:oauth:state` and
+`oauth:generation`, while an id naming nothing used to touch no I/O. The free
+refusals (unknown/non-OAuth, or `finishAuth` without `verifyState`) now read both
+keys in that id's namespace, where an unconfigured id gets misses
+(`equalizeRefusalCost`, `src/server.ts`).
 
 That is cost equalization, not constant time, and the difference is worth
 stating plainly:
 
 - **Equalized.** Status, body, and headers are byte-identical across every
-  refusal, and each performs exactly one read of one key in the connector's
-  namespace.
+  refusal, and each ordinary path performs the same two namespace reads.
 - **Not equalized, and not equalizable here.** A store may answer a hit and a
   miss at different speeds. A connector supplying its own `verifyState` decides
-  its own cost — one that throws before reading, or reads twice, sits outside
-  the shipped `KvOAuthProvider`'s single read. And a callback that *succeeds*
-  is plainly distinguishable, which is fine: succeeding requires the valid
-  one-shot `state`, which is the one thing an enumerating attacker does not
-  have.
+  its own cost, and a callback that succeeds is plainly distinguishable. That is
+  fine: success requires the valid one-shot `state`.
 
 What this closes is the order-of-magnitude gap — no I/O at all versus a round
 trip — that made a wordlist against `/oauth/callback/<id>` cheap. Given enough
@@ -692,8 +686,8 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 | `conn:<id>:oauth:verifier` | one-shot PKCE code verifier |
 | `conn:<id>:oauth:state` | one-shot `state` value checked by `verifyState` |
 | `conn:<id>:oauth:pending` | stored authorization URL while a flow is open |
-| `conn:<id>:oauth:generation` | monotonic counter bumped by a `force` re-auth, so an isolate holding a client from a prior generation notices it went stale |
+| `conn:<id>:oauth:generation` | unique active/reset epoch; the reset form fails credential reads closed |
 
-`clearPending()` wipes one-shot flow keys; force re-authorization advances
-`generation` and deletes every other OAuth key. The retained generation stops a
-stale isolate resurrecting credentials, hence **durable** [storage](./storage-and-credentials.md#storage).
+OAuth values carry their generation, so a late stale write stays unreadable.
+Force publishes a reset tombstone before deletion; immediate cross-instance
+fencing requires strongly consistent [storage](./storage-and-credentials.md#storage).

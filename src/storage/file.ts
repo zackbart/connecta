@@ -72,6 +72,13 @@ export function fileStorage(
     }
   }
   const persist = () => {
+    // Physical expiry rides on an operation that was already going to write.
+    // A read must not flush this instance's load-once snapshot: another live
+    // instance may have written newer unrelated values since we loaded it.
+    const now = Date.now();
+    for (const [key, entry] of Object.entries(data)) {
+      if (entry.exp && now > entry.exp) delete data[key];
+    }
     const dir = dirname(path);
     if (dir) mkdirSync(dir, { recursive: true, mode: 0o700 });
     const tmp = `${path}.tmp`;
@@ -86,10 +93,6 @@ export function fileStorage(
     if (!e) return null;
     if (e.exp && Date.now() > e.exp) {
       delete data[key];
-      // Expiry is a deletion, not merely a read miss. Persist it now so a
-      // restart does not reload the same dead payload forever and the state
-      // file's size reflects the live key set.
-      persist();
       return null;
     }
     return e;

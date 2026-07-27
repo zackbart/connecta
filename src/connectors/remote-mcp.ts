@@ -393,7 +393,7 @@ interface ConnectionState {
   connecting: Promise<void> | null;
   authRequired: boolean;
   provider: KvOAuthProvider | null;
-  connectedGeneration: number | null;
+  connectedGeneration: string | null;
   /**
    * One-way latch: set by closeScope and never cleared, so neither a late
    * connect nor a `reset()` can cache a client into a scope that is already
@@ -575,9 +575,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
     if (state.closed) throw scopeEndedError();
     if (state.client) return;
-    state.connecting ??= (async () => {
+    if (!state.connecting) {
+      let attempt!: Promise<void>;
+      attempt = (async () => {
       const provider = isOauth ? getProvider(ctx, state) : null;
-      const genAtStart = provider ? await provider.generation() : 0;
+      const genAtStart = provider ? await provider.generation() : "";
       if (state.closed) throw scopeEndedError();
       // Stamp the provider so any saveTokens/saveClientInformation the SDK fires
       // during this connect (code exchange, DCR) — or during a later refresh on
@@ -650,9 +652,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         throw err;
       } finally {
-        state.connecting = null;
+        // Force reset may have abandoned this attempt and installed a new one
+        // in the same request scope. An old completion must not erase the new
+        // promise and allow a third concurrent connect.
+        if (state.connecting === attempt) state.connecting = null;
       }
-    })();
+      })();
+      state.connecting = attempt;
+    }
     return state.connecting;
   };
 
@@ -867,10 +874,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     async finishAuth(code, ctx) {
       const state = stateFor(ctx);
       const provider = getProvider(ctx, state);
-      // The provider here may carry no captured generation, so its token saves
-      // fail open. That is safe only because generation advances solely via the
-      // force path, which always wipes oauth:state — so verifyState rejects any
-      // pre-force callback before this runs. Keep those two facts coupled.
+      // verifyState ran on this request-scoped provider first and captured the
+      // pending flow's generation. If force reset races the exchange, any late
+      // token write remains tagged with that older generation and is unreadable.
       const t = (state.transport ??
         buildTransport(ctx, state)) as StreamableHTTPClientTransport;
       await t.finishAuth(code);
@@ -899,28 +905,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const state = stateFor(ctx);
       const p = getProvider(ctx, state);
       if (startOpts?.force) {
-        // Wipe stored credentials and drop the live connection so the next
-        // connect attempt runs the flow from scratch (DCR + PKCE + consent).
-        // Fence the in-flight connect first: a late-completing attempt must not
-        // resurrect the credentials we're about to wipe, nor leave `client` set
-        // (which would make ensureConnected below report already-authorized and
-        // silently defeat force).
-        await state.connecting?.catch(() => {});
+        // Publish the fail-closed reset tombstone before waiting on or closing
+        // any request-local transport. A hung connect therefore cannot delay
+        // the fence, and every late OAuth write carries the older epoch.
+        const connecting = state.connecting;
         try {
-          await state.client?.close();
-        } catch {
-          // best-effort; the connection is being discarded either way
-        }
-        try {
-          // Fence other isolates first, then wipe the complete OAuth key set.
-          // The provider attempts every delete before reporting a storage
-          // failure, so a partial outage leaves as little sensitive residue as
-          // the backend permits.
           await p.resetAuthorization();
         } finally {
-          // The live client was closed above and KV may now be partially
-          // cleared. Never keep presenting that local state as connected,
-          // including when the storage backend reported a failed delete.
+          // Consume the abandoned connect and close whichever half of the
+          // client/transport exists. Reset is unconditional because KV may be
+          // intentionally left behind a fail-closed tombstone after an error.
+          void connecting?.catch(() => {});
+          try {
+            if (state.client) {
+              await state.client.close();
+            } else {
+              await state.transport?.close();
+            }
+          } catch {
+            // best-effort; the state is discarded either way
+          }
           reset(state);
         }
       } else {

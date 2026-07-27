@@ -31,8 +31,29 @@ describe("fileStorage", () => {
     const store = fileStorage(path);
     await store.set("k", "v", { ttlSeconds: -1 });
     expect(await store.get("k")).toBeNull();
+    // A later mutation physically prunes expired entries; the read itself does
+    // not flush a load-once snapshot that could clobber another live instance.
+    await store.set("live", "value");
     expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("k");
     expect(await fileStorage(path).get("k")).toBeNull();
+  });
+
+  it("an expired read cannot overwrite another instance's newer values", async () => {
+    const path = tempStatePath();
+    writeFileSync(
+      path,
+      JSON.stringify({
+        expired: { value: "gone", exp: Date.now() - 1 },
+        live: { value: "old" },
+      }),
+    );
+
+    const reader = fileStorage(path);
+    const writer = fileStorage(path);
+    await writer.set("live", "new");
+
+    expect(await reader.get("expired")).toBeNull();
+    expect(await fileStorage(path).get("live")).toBe("new");
   });
 
   it("quarantines a corrupt state file instead of overwriting it", async () => {

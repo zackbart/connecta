@@ -4,6 +4,10 @@ import type { KVStorage } from "@zackbart/connecta";
  * KVStorage backed by a Cloudflare Workers KV namespace binding.
  * Note: Workers KV enforces a 60s minimum TTL; shorter TTLs are dropped
  * (stored without expiry) rather than rejected.
+ *
+ * Workers KV is eventually consistent across locations. It is suitable for
+ * this example's durable state, but cannot promise immediate global OAuth
+ * disconnect/rotation; use a strongly consistent adapter when that is required.
  */
 export function cloudflareKvStorage(namespace: KVNamespace): KVStorage {
   return {
