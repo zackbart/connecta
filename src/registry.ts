@@ -619,8 +619,9 @@ export class Registry implements RegistryView {
   checkCredentialHealth(
     baseUrl: string,
     opts?: CredentialCheckOptions,
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult[]> {
-    return this.credentialHealth.check(baseUrl, opts);
+    return this.credentialHealth.check(baseUrl, opts, defer);
   }
 
   /**

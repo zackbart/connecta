@@ -215,7 +215,8 @@ awaited call that returns one outcome per connector:
 export default {
   async fetch(request, env, ctx) { return build(env).fetch(request, env, ctx); },
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(build(env).checkCredentials());
+    const defer = ctx.waitUntil.bind(ctx);
+    ctx.waitUntil(build(env).checkCredentials({ defer }));
   },
 };
 
@@ -229,9 +230,12 @@ Both examples ship this wiring (`examples/worker/src/index.ts` +
 contexts: `publicUrl` supplies it — the value downstream OAuth callbacks already
 require — or pass `{ baseUrl }`. It takes `{ force }` to ignore the freshness
 budget and `{ ids }` to check named connectors (an id naming no connector comes
-back as `skipped: "not_found"` rather than silently checking nothing), and never
-rejects on a connector failure. Missing base URL is a rejected promise, not a
-throw, so `ctx.waitUntil(...)` and `.catch(...)` can both see it.
+back as `skipped: "not_found"` rather than silently checking nothing). On
+Workers, pass the bound `waitUntil` as `{ defer }` too: the check result keeps
+its 100 ms teardown cap, while this second handle keeps the bounded downstream
+session-termination tail alive. A connector failure never rejects the check.
+Missing base URL is a rejected promise, not a throw, so `ctx.waitUntil(...)` and
+`.catch(...)` can both see it.
 
 The two triggers are complements, not alternatives: opportunistic checks make a
 *busy* deployment self-maintaining with no setup, and a scheduler covers an

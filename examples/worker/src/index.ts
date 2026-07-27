@@ -177,6 +177,7 @@ export default {
     ctx: ExecutionContext,
   ): Promise<void> {
     connecta ??= build(env);
-    ctx.waitUntil(connecta.checkCredentials());
+    const defer = ctx.waitUntil.bind(ctx);
+    ctx.waitUntil(connecta.checkCredentials({ defer }));
   },
 };
