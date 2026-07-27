@@ -3,6 +3,9 @@ import { z } from "zod";
 import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
 import { recordToolActivity, type ActivityRequestContext } from "./activity.js";
 import {
+  assertDiscoveryResultSize,
+  discoveryAddresses,
+  discoverySearchLimit,
   errorResult,
   jsonResult,
   serializeResultText,
@@ -369,7 +372,7 @@ export async function buildSandboxProviders(
         }
         matches.sort((a, b) => b.score - a.score || a.order - b.order);
         const offset = Math.max(0, Math.trunc(args.offset ?? 0));
-        const limit = Math.max(1, Math.trunc(args.limit ?? 25));
+        const limit = discoverySearchLimit(args.limit);
         const page = matches.slice(offset, offset + limit).map((match) => {
           const input = match.tool.inputSchema ?? { type: "object" };
           return {
@@ -404,7 +407,7 @@ export async function buildSandboxProviders(
           offset + page.length < matches.length
             ? offset + page.length
             : undefined;
-        return {
+        const result = {
           tools: page,
           total: matches.length,
           offset,
@@ -412,6 +415,11 @@ export async function buildSandboxProviders(
           hasMore: nextOffset !== undefined,
           ...(nextOffset !== undefined ? { nextOffset } : {}),
         };
+        assertDiscoveryResultSize(
+          result,
+          "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+        );
+        return result;
       },
       describe: async (raw: unknown) => {
         const args = (raw ?? {}) as {
@@ -419,12 +427,10 @@ export async function buildSandboxProviders(
           format?: "compact" | "json";
           fullDescriptions?: boolean;
         };
-        if (!Array.isArray(args.addresses)) {
-          throw new Error("addresses must be an array");
-        }
+        const addresses = discoveryAddresses(args.addresses);
         const format = args.format ?? "compact";
-        return {
-          tools: args.addresses.map((rawAddress) => {
+        const result = {
+          tools: addresses.map((rawAddress) => {
             const address = String(rawAddress);
             const resolved = registry.resolveAddress(address);
             if (!resolved) {
@@ -457,6 +463,11 @@ export async function buildSandboxProviders(
             };
           }),
         };
+        assertDiscoveryResultSize(
+          result,
+          'Split the address list or use format: "compact".',
+        );
+        return result;
       },
     },
   });

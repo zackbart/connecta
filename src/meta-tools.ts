@@ -65,11 +65,125 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-const DEFAULT_SEARCH_LIMIT = 25;
+export const DEFAULT_SEARCH_LIMIT = 25;
+/**
+ * A discovery page is for choosing the next tool, not exporting the catalog.
+ * One hundred leaves room for broad browsing while keeping each deliberate
+ * page far below the catalog sizes Connecta supports.
+ */
+export const MAX_SEARCH_LIMIT = 100;
+/** Same one-request work bound for address-based discovery. */
+export const MAX_DESCRIBE_ADDRESSES = 100;
+/**
+ * Final UTF-8 ceiling for a generated search/describe response. The count
+ * limits are the ordinary guard; this catches unusually large full schemas or
+ * descriptions that make even a bounded page expensive.
+ */
+export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 type ErrorDetails = CallErrorDetails;
+
+export class DiscoveryPolicyError extends Error {
+  constructor(
+    readonly code: "invalid_args" | "result_too_large",
+    message: string,
+  ) {
+    super(message);
+    this.name = "DiscoveryPolicyError";
+  }
+}
+
+/** Validate before ranking so a huge page request does no proportional work. */
+export function discoverySearchLimit(value: unknown): number {
+  if (value === undefined) return DEFAULT_SEARCH_LIMIT;
+  if (
+    typeof value !== "number" ||
+    !Number.isInteger(value) ||
+    value < 1 ||
+    value > MAX_SEARCH_LIMIT
+  ) {
+    throw new DiscoveryPolicyError(
+      "invalid_args",
+      `limit must be a whole number from 1 through ${MAX_SEARCH_LIMIT}. Page through larger catalogs with offset.`,
+    );
+  }
+  return value;
+}
+
+/** Validate the raw list so duplicate addresses consume the same bound. */
+export function discoveryAddresses(value: unknown): unknown[] {
+  if (!Array.isArray(value)) {
+    throw new DiscoveryPolicyError(
+      "invalid_args",
+      "addresses must be an array.",
+    );
+  }
+  if (value.length > MAX_DESCRIBE_ADDRESSES) {
+    throw new DiscoveryPolicyError(
+      "invalid_args",
+      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across describe_tools calls.`,
+    );
+  }
+  return value;
+}
+
+/** Serialize once and count the exact bytes jsonResult would emit. */
+function boundedDiscoveryText(
+  value: unknown,
+  hint: string,
+): string {
+  const text = JSON.stringify(value, null, 2);
+  if (text === undefined) {
+    throw new TypeError("Discovery result is not JSON-serializable.");
+  }
+  const bytes = enc.encode(text).length;
+  if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
+    throw new DiscoveryPolicyError(
+      "result_too_large",
+      `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
+    );
+  }
+  return text;
+}
+
+/** Apply the same final result guard to code-mode discovery helpers. */
+export function assertDiscoveryResultSize(
+  value: unknown,
+  hint: string,
+): void {
+  boundedDiscoveryText(value, hint);
+}
+
+function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
+  const result = jsonResult({
+    error: {
+      code: error.code,
+      message: error.message,
+      retryable: false,
+    },
+  });
+  result.isError = true;
+  return result;
+}
+
+function discoveryResult(value: unknown, hint: string): ToolResult {
+  try {
+    const text = boundedDiscoveryText(value, hint);
+    return {
+      content: [{ type: "text", text }],
+      ...(value !== null && typeof value === "object" && !Array.isArray(value)
+        ? { structuredContent: value as Record<string, unknown> }
+        : {}),
+    };
+  } catch (err) {
+    if (err instanceof DiscoveryPolicyError) {
+      return discoveryErrorResult(err);
+    }
+    throw err;
+  }
+}
 
 /**
  * The longest the engine will park a synchronous inbound request in *waiting
@@ -939,7 +1053,15 @@ export function createMetaTools(
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
       const q = args.query ?? "";
-      const limit = Math.max(1, Math.trunc(args.limit ?? DEFAULT_SEARCH_LIMIT));
+      let limit: number;
+      try {
+        limit = discoverySearchLimit(args.limit);
+      } catch (err) {
+        if (err instanceof DiscoveryPolicyError) {
+          return discoveryErrorResult(err);
+        }
+        throw err;
+      }
       const offset = Math.max(0, Math.trunc(args.offset ?? 0));
       const conns = args.connector
         ? [registry.getConnector(args.connector)].filter(
@@ -1050,17 +1172,28 @@ export function createMetaTools(
         offset + page.length < matches.length
           ? offset + page.length
           : undefined;
-      return jsonResult({
-        connectors: groups,
-        total: matches.length,
-        offset,
-        limit,
-        hasMore: nextOffset !== undefined,
-        ...(nextOffset !== undefined ? { nextOffset } : {}),
-      });
+      return discoveryResult(
+        {
+          connectors: groups,
+          total: matches.length,
+          offset,
+          limit,
+          hasMore: nextOffset !== undefined,
+          ...(nextOffset !== undefined ? { nextOffset } : {}),
+        },
+        "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+      );
     },
 
     async describeTools(args: DescribeArgs): Promise<ToolResult> {
+      try {
+        discoveryAddresses(args.addresses);
+      } catch (err) {
+        if (err instanceof DiscoveryPolicyError) {
+          return discoveryErrorResult(err);
+        }
+        throw err;
+      }
       const format = args.format ?? "compact";
       const resolved = args.addresses.map((address) => ({
         address,
@@ -1131,7 +1264,10 @@ export function createMetaTools(
           ...(tool.annotations ? { annotations: tool.annotations } : {}),
         };
       });
-      return jsonResult({ tools: out });
+      return discoveryResult(
+        { tools: out },
+        'Split the address list or use format: "compact".',
+      );
     },
 
     async callTool(args: CallArgs): Promise<ToolResult> {
@@ -1327,10 +1463,8 @@ export function createMetaTools(
 
 const LIST_DESC =
   "List connectors with status, cached tool count, and recent real-call health. Use probe=false for a fast inventory; use probe=true (default) only to diagnose live health or authorization.";
-const SEARCH_DESC =
-  'Start here when a tool address is unknown. Exact/name matches rank above description matches; an empty query browses all. includeSchemas="compact" usually removes the describe_tools round trip.';
-const DESCRIBE_DESC =
-  'Inspect known tool addresses when search_tools did not include a sufficient schema. Returns descriptions, input/output schemas, and behavior annotations; format "compact" is the default.';
+const SEARCH_DESC = `Start here when a tool address is unknown. Exact/name matches rank above description matches; an empty query browses all. Pages contain at most ${MAX_SEARCH_LIMIT} tools. includeSchemas="compact" usually removes the describe_tools round trip.`;
+const DESCRIBE_DESC = `Inspect up to ${MAX_DESCRIBE_ADDRESSES} known tool addresses when search_tools did not include a sufficient schema. Returns descriptions, input/output schemas, and behavior annotations; format "compact" is the default.`;
 const CALL_DESC =
   'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
@@ -1444,7 +1578,7 @@ export function registerMetaTools(
       inputSchema: {
         query: z.string().optional(),
         connector: z.string().optional(),
-        limit: z.number().int().positive().optional(),
+        limit: z.number().int().positive().max(MAX_SEARCH_LIMIT).optional(),
         offset: z.number().int().nonnegative().optional(),
         fullDescriptions: z.boolean().optional(),
         includeSchemas: z.enum(["compact", "json"]).optional(),
@@ -1459,7 +1593,7 @@ export function registerMetaTools(
     {
       description: describedFor(registry, DESCRIBE_DESC, "describe"),
       inputSchema: {
-        addresses: z.array(z.string()),
+        addresses: z.array(z.string()).max(MAX_DESCRIBE_ADDRESSES),
         format: z.enum(["compact", "json"]).optional(),
         fullDescriptions: z.boolean().optional(),
       },

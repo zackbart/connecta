@@ -6,7 +6,10 @@ import {
   alignEndToCharBoundary,
   alignStartToCharBoundary,
   createMetaTools,
+  MAX_DESCRIBE_ADDRESSES,
+  MAX_DISCOVERY_RESULT_BYTES,
   MAX_RETRY_BACKOFF_MS,
+  MAX_SEARCH_LIMIT,
   retryBackoffMs,
 } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
@@ -698,6 +701,109 @@ describe("search_tools", () => {
     expect(next.connectors.flatMap((c) => c.tools)).toHaveLength(1);
   });
 
+  it("bounds page size before loading or ranking a catalog", async () => {
+    let loads = 0;
+    const tools = Array.from({ length: MAX_SEARCH_LIMIT }, (_, i) => ({
+      name: `tool-${i}`,
+    }));
+    const connector: Connector = {
+      id: "large",
+      async listTools() {
+        loads++;
+        return tools;
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+
+    for (const limit of [MAX_SEARCH_LIMIT - 1, MAX_SEARCH_LIMIT]) {
+      const result = await mt.searchTools({ limit });
+      expect(result.isError).toBeFalsy();
+      const parsed = textOf(result) as SearchResult;
+      expect(parsed.connectors.flatMap((group) => group.tools)).toHaveLength(
+        limit,
+      );
+    }
+    expect(loads).toBe(1);
+
+    for (const limit of [MAX_SEARCH_LIMIT + 1, Number.MAX_SAFE_INTEGER]) {
+      const result = await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({ limit });
+      expect(result.isError).toBe(true);
+      expect(textOf(result)).toMatchObject({
+        error: { code: "invalid_args", retryable: false },
+      });
+    }
+    // The rejected calls never reached listTools.
+    expect(loads).toBe(1);
+  });
+
+  it("keeps 100,000-tool pagination exact at the first, middle, and final page", async () => {
+    const total = 100_000;
+    const connector: Connector = {
+      id: "huge",
+      staticTools: Array.from({ length: total }, (_, i) => ({
+        name: `tool-${String(i).padStart(6, "0")}`,
+      })),
+      async listTools() {
+        throw new Error("static catalog should not load");
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const seen = new Set<string>();
+    for (const offset of [0, 50_000, total - MAX_SEARCH_LIMIT]) {
+      const page = textOf(
+        await mt.searchTools({ offset, limit: MAX_SEARCH_LIMIT }),
+      ) as SearchResult;
+      expect(page.total).toBe(total);
+      expect(page.offset).toBe(offset);
+      expect(page.connectors[0].tools).toHaveLength(MAX_SEARCH_LIMIT);
+      for (const tool of page.connectors[0].tools) {
+        expect(seen.has(tool.address)).toBe(false);
+        seen.add(tool.address);
+      }
+    }
+    expect(seen.size).toBe(3 * MAX_SEARCH_LIMIT);
+  });
+
+  it("rejects an oversized multibyte search result with a paging hint", async () => {
+    const connector: Connector = {
+      id: "verbose",
+      staticTools: [
+        {
+          name: "read",
+          description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const result = await createMetaTools(
+      makeRegistry([connector]),
+      BASE,
+    ).searchTools({ fullDescriptions: true });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatchObject({
+      error: {
+        code: "result_too_large",
+        message: expect.stringContaining("UTF-8 bytes"),
+        retryable: false,
+      },
+    });
+  });
+
   it("ranks tool-name matches above incidental description matches", async () => {
     const conn: Connector = {
       id: "knowledge",
@@ -888,6 +994,61 @@ describe("describe_tools", () => {
     ) as { tools: Array<{ address: string; error?: string }> };
     expect(parsed.tools[0].error).toContain("Unknown tool");
     expect(parsed.tools[1].error).toContain("Unknown address");
+  });
+
+  it("bounds the raw address list, including duplicates", async () => {
+    const mt = createMetaTools(registry(), BASE);
+    for (const count of [
+      MAX_DESCRIBE_ADDRESSES - 1,
+      MAX_DESCRIBE_ADDRESSES,
+    ]) {
+      const result = await mt.describeTools({
+        addresses: Array.from({ length: count }, () => "calc.add"),
+      });
+      expect(result.isError).toBeFalsy();
+      expect((textOf(result) as { tools: unknown[] }).tools).toHaveLength(count);
+    }
+
+    const oversized = await mt.describeTools({
+      addresses: Array.from(
+        { length: MAX_DESCRIBE_ADDRESSES + 1 },
+        () => "calc.add",
+      ),
+    });
+    expect(oversized.isError).toBe(true);
+    expect(textOf(oversized)).toMatchObject({
+      error: { code: "invalid_args", retryable: false },
+    });
+  });
+
+  it("applies the UTF-8 result ceiling to full JSON schemas", async () => {
+    const connector: Connector = {
+      id: "wide",
+      staticTools: [
+        {
+          name: "read",
+          inputSchema: {
+            type: "object",
+            description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
+          },
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const result = await createMetaTools(
+      makeRegistry([connector]),
+      BASE,
+    ).describeTools({ addresses: ["wide.read"], format: "json" });
+
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatchObject({
+      error: { code: "result_too_large", retryable: false },
+    });
   });
 });
 
