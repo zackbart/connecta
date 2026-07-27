@@ -2,7 +2,35 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.7.0 — 2026-07-27
+
+0.7.0 is the surface settlement: one release that finishes moving connecta's
+public shape so that it can stop moving. It arrives from two directions at once.
+A controlled qualification pass against 0.6.1 (issue #86) measured four ways a
+deployment could be worn down — an unbounded cache, an enumerable callback, a
+session leak, and a credential that reports itself usable and then isn't — and
+those are fixed here. Meanwhile the config surface had accumulated eleven flat
+tuning fields, the reference manual had reached 2,600 lines, and the operator UI
+was one page pretending to be three. Those are settled here too, and settling
+them breaks things, which is the argument for doing it in one release instead of
+spreading it across three.
+
+**What breaks.** Three things, and each is a compile error or a loud refusal
+rather than a behavior change you have to notice on your own. Every flat 0.6.x
+tuning option is removed in favour of four grouped ones. A connector that
+implements `finishAuth` without `verifyState` can no longer complete OAuth. And
+`/`, `/credentials`, and `/activity` are now core-owned routes, so a connector
+`handleRequest` that served any of them is shadowed. The first is mechanical:
+`createConnecta` throws once, before it reads anything else, naming every legacy
+path it found and its replacement.
+
+**What a deployment can ignore.** The defaults and runtime behavior of every
+config option are unchanged — only the paths moved. `/ui` bookmarks keep working
+through a permanent redirect, and all 17 documentation anchors still resolve
+even though the manual is now nine files. If you configure connecta with a
+literal object, do not paginate a downstream MCP server, and write your own
+connectors against `remoteMcp`/`api` rather than hand-rolling `finishAuth`, the
+whole migration is a mechanical rewrite of one config block.
 
 ### Breaking
 
@@ -56,6 +84,30 @@ All notable changes to this package are documented here.
   definitions keep their per-connector `maxResultBytes`, and structural seams
   such as `storage`, `auth`, `connectors`, `toolkits`, and `executor` remain at
   the top level.
+- **A connector implementing `finishAuth` without `verifyState` can no longer
+  complete OAuth** (issue #62). Such a connector previously exchanged the
+  authorization code with no CSRF guard at all — connecta had no way to
+  establish that it had started the flow being completed. The callback now
+  refuses with the same opaque 400 as every other refusal, exchanges no code,
+  and logs one operator-grade line naming the connector and the missing hook.
+  `verifyState` stays optional in the type system and is required in practice
+  wherever `finishAuth` is present. The shipped `remoteMcp` OAuth provider has
+  always implemented it, so this reaches hand-written connectors only.
+- **`/`, `/credentials`, and `/activity` are now core-owned routes** (issue
+  #57). They previously fell through to connector `handleRequest` and then to a
+  404, so a connector serving any of the three is now shadowed without warning.
+  `GET /` returns the operator shell where 0.6.1 returned 404, and non-GET on
+  those routes and on `/ui` returns 405 rather than falling through.
+
+### Added
+
+- **`Connector.closeScope?(ctx)`** (issue #66) — an optional, best-effort seam
+  for releasing whatever a connector opened for one scope. Called at most once,
+  inside a fixed 100 ms completion window: a hook that is absent, throws, or
+  never settles cannot replace, corrupt, or delay the result of the operation
+  that triggered it. `remoteMcp` implements it, tearing down cached and
+  half-open sessions and fencing late connection races. Connectors that do not
+  implement it are unaffected.
 
 ### Changed
 
@@ -81,9 +133,76 @@ All notable changes to this package are documented here.
   same-origin mutation boundary. Activity likewise renders an explicit
   not-configured state when `activity.store.list` is absent. OAuth result pages
   now return to `/`.
+- **The reference manual is nine documents instead of one** (issue #61).
+  `docs/documentation.md` had reached 2,600 lines; it is now a compatibility
+  index that preserves all 17 `#N-…` anchors, so every existing deep link from
+  the README, the examples, and source comments still resolves. The prose moved
+  to `architecture`, `meta-tools`, `connectors`, `auth`,
+  `storage-and-credentials`, `operations`, `code-mode`, `operator-ui`, and
+  `toolkits`. A new `npm run check:docs` validates local links, fragments,
+  heading slugs, and the legacy-anchor manifest, and runs first in
+  `npm run check`. Contributor-facing only: the published package is unchanged
+  and docs still ship in no tarball.
 
 ### Fixed
 
+- **`clerkAuth`'s identity-decision cache is bounded at 1,024 identities per
+  instance** (issue #70). It never evicted: every distinct identity that reached
+  the gate was retained for the lifetime of the isolate. `allowedDomains` made
+  that attacker-reachable on an open-signup Clerk instance, since an
+  authenticated-but-denied identity is still a cache entry — 100,000 denied
+  identities measured at roughly 11.96 MiB retained, with the oldest entry still
+  present. Eviction is LRU, so a small active set stays hot, and the only thing
+  evicting an entry can cause is a fresh check against Clerk: it can never turn
+  a denial into an admission, and it cannot extend an allow past its TTL, since
+  a cache hit re-inserts the same record rather than restamping it. The bound is
+  deliberately fixed rather than an operator knob, and the ~60 s allow / ~30 s
+  deny windows are unchanged.
+- **`/oauth/callback/<id>` no longer lets an unauthenticated caller enumerate
+  configured connector ids** (issue #62). 0.6.1 answered `404 Unknown connector
+  "<id>"` for an id it did not recognise and a distinct 400 for a state
+  mismatch, which made the callback a free directory of every connector a
+  deployment had configured. Unknown ids, non-OAuth connectors, missing or
+  mismatched state, an absent verifier, and a throwing verifier now return one
+  byte-identical 400 — same status, same body, same headers. They also cost the
+  same single storage read, so the clock cannot sort the ids the body refuses to
+  name. That is cost equalisation rather than constant time, and the
+  documentation says so and enumerates what stays distinguishable. The precise
+  diagnosis moved to the operator log, bounded and escaped.
+- **Probe-opened downstream MCP sessions are closed instead of abandoned**
+  (issue #66). Credential-health sweeps, `list_connectors({ probe: true })`, and
+  `/ui/data` each opened downstream sessions and left them for the provider to
+  age out — measured at 200 probes opening 200 sessions and explicitly closing
+  zero, made continuous by the periodic sweep. Closing now ends the session
+  rather than merely dropping the local client: `remoteMcp` issues the
+  specification's `DELETE` carrying `Mcp-Session-Id` *before* the close that
+  would otherwise abort it, feature-detected and best-effort, while a stateless
+  downstream issues none. A downstream that refuses, errors, or never answers is
+  closed anyway. One consequence worth knowing: a probing `list_connectors` now
+  runs on its own scope rather than the request's — it has to, since a request
+  scope cannot be closed — so a request that probes *and* then calls the same
+  connector opens two downstream sessions where it opened one. Per-request
+  `/mcp` scopes are unchanged.
+- **A credential stored under an older declaration no longer reports itself
+  usable and then fails** (issue #69). `/ui`, the credential Test route, and
+  credential health each interpreted the stored shape slightly differently, so a
+  credential could render as configured and testable and then answer 409 with a
+  misleading configure-first message. One pure classifier now answers for all
+  three, and it asks about *containment* rather than equality: a stored set is
+  fine as long as it holds every field the declaration currently names. A
+  missing declared field is drift — which covers every case issue #69 reported,
+  including a rename and a swap between the single-value and named shapes in
+  either direction — and drift is never auto-migrated. Credentials keeps Replace
+  and Remove and hides Test, the test route answers 409 without calling a hook,
+  and health records an explicit error rather than a fabricated verdict, checked
+  before the freshness gate so a stale `ok` cannot mask a redeploy. Leftover
+  keys are explicitly *not* drift: dropping a field from a declaration leaves
+  its secret in the vault, but every accessor keeps returning the right value
+  and every call keeps working, so calling that drift would tell an operator to
+  re-enter a credential that works and that many providers will not reissue in
+  readable form. Credentials prints one non-blocking line naming the leftovers
+  instead. A repeated drift verdict is charged to the freshness budget rather
+  than rewritten on every sweep in every isolate.
 - **A paginated downstream MCP server no longer loses everything after its
   first `tools/list` page** (issue #77). `tools/list` is cursor-paginated in the
   MCP specification and the SDK's `Client.listTools()` returns one page,
