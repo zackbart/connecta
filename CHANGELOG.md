@@ -2,6 +2,46 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.2 — 2026-07-27
+
+0.7.2 is a discovery-and-operator-safety patch. Long downstream catalogs now
+stop when the discovery deadline expires, mid-walk authorization failures lead
+back to consent instead of masquerading as connector errors, and operator tabs
+discard identity-scoped data when Clerk changes outside the page. There are no
+dependency, configuration, or breaking TypeScript changes.
+
+### Changed
+
+- **Discovery deadlines now govern the catalog work, not only the caller's
+  wait** (issue #98). `list_connectors`, `search_tools`, and `describe_tools`
+  pass `discovery.probeTimeoutMs` into a full downstream `tools/list` walk.
+  Expiry cancels the in-flight page where the transport supports it and prevents
+  another page from starting; existing tool/page bounds remain as backstops,
+  partial catalogs are never published, and the last complete stale catalog
+  remains eligible.
+- **`nextCursor: null` is accepted as end-of-pagination** (issue #99). This
+  narrow compatibility concession treats the common JSON null spelling like an
+  absent cursor while preserving empty string as a real cursor and retaining
+  the SDK's validation for every tool and other result field.
+
+### Fixed
+
+- **Authorization expiry is classified consistently across a catalog walk**
+  (issue #97). A downstream 401 on any `tools/list` page now reports
+  `auth_required` with the pending authorization URL, latches that verdict for
+  the request scope, and never publishes the prefix collected before failure.
+  Network, protocol, and malformed-page failures remain ordinary errors.
+- **Operator pages clear stale identity data when Clerk changes in another tab
+  or outside the page** (issue #92). Connector inventory, masked credential
+  metadata and notices, activity rows, and capability navigation are discarded
+  together, and the next navigation fetches under the new session rather than
+  repainting cached data.
+- **The three operator routes handle HEAD and small navigation-state edges
+  correctly** (issue #93). `/`, `/credentials`, and `/activity` return their GET
+  headers with no HEAD body; Back/Forward focus stays visible while gated;
+  credential notices clear on page changes; and credential controls use the
+  same Clerk capability predicate as the mutation API.
+
 ## 0.7.1 — 2026-07-27
 
 0.7.1 is a security-and-bounds patch. It closes both redirect paths that could
