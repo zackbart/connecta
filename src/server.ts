@@ -732,7 +732,7 @@ async function handleCredentialRequest(
               input.input.values,
               admin.userId,
             );
-      opts.registry.invalidate(connectorId);
+      await opts.registry.invalidateStored(connectorId);
       // The credential the last verdict judged is gone; judging its replacement
       // is the next check's job, not this one's.
       await opts.registry.clearCredentialHealth(connectorId);
@@ -744,7 +744,7 @@ async function handleCredentialRequest(
 
   if (request.method === "DELETE") {
     await opts.credentialVault.delete(connectorId);
-    opts.registry.invalidate(connectorId);
+    await opts.registry.invalidateStored(connectorId);
     await opts.registry.clearCredentialHealth(connectorId);
     return new Response(null, {
       status: 204,

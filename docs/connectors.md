@@ -694,6 +694,6 @@ prefix from the provider — i.e. the effective `KVStorage` keys are:
 | `conn:<id>:oauth:pending` | stored authorization URL while a flow is open |
 | `conn:<id>:oauth:generation` | monotonic counter bumped by a `force` re-auth, so an isolate holding a client from a prior generation notices it went stale |
 
-`clearPending()` wipes `pending` + `verifier` + `state` after the callback;
-`tokens` and `client` persist. This is why OAuth connectors need **durable**
-storage ([storage](./storage-and-credentials.md#storage)).
+`clearPending()` wipes one-shot flow keys; force re-authorization advances
+`generation` and deletes every other OAuth key. The retained generation stops a
+stale isolate resurrecting credentials, hence **durable** [storage](./storage-and-credentials.md#storage).

@@ -31,6 +31,8 @@ describe("fileStorage", () => {
     const store = fileStorage(path);
     await store.set("k", "v", { ttlSeconds: -1 });
     expect(await store.get("k")).toBeNull();
+    expect(JSON.parse(readFileSync(path, "utf8"))).not.toHaveProperty("k");
+    expect(await fileStorage(path).get("k")).toBeNull();
   });
 
   it("quarantines a corrupt state file instead of overwriting it", async () => {

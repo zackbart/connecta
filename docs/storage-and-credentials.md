@@ -33,6 +33,39 @@ and any **connector-private state** a custom connector chooses to store. If you
 use no OAuth connectors and no custom
 persisted state, `memoryStorage()` is fine.
 
+### Key lifecycle and hygiene
+
+Connecta owns keys by exact name or prefix; it never asks a storage backend to
+scan the deployment. That keeps `KVStorage` portable across stores whose list
+operations have very different consistency, pagination, and cost models.
+
+| Key space | Lifetime and cleanup |
+| --- | --- |
+| `conn:<id>:oauth:pending`, `:verifier`, `:state` | One OAuth attempt. Cleared after a successful callback and before a force re-authorization starts a replacement flow. |
+| `conn:<id>:oauth:client`, `:tokens` | The connector's durable downstream grant. Replaced by refresh/code exchange; cleared by force re-authorization. |
+| `conn:<id>:oauth:generation` | Intentional tombstone. Advanced before an OAuth reset and retained so other isolates cannot resurrect pre-reset credentials. |
+| `conn:<id>:credential:v1` | Until an eligible operator replaces or removes the connector credential. |
+| `credhealth:<id>` | Until its verdict expires logically or the credential changes. A change deletes it immediately. |
+| `credhealth:gen:<id>` | Intentional tombstone advanced on credential change to fence a check already in flight. |
+| `catalog:<id>` | TTL-bounded and explicitly invalidated when credential or OAuth state changes. |
+| `results:*` | TTL-bounded pages created only for oversized meta-tool results. |
+| Other `conn:<id>:*` | Owned entirely by that custom connector. |
+
+TTL is a storage contract: a backend must stop returning an expired value.
+`memoryStorage` deletes it from memory, `fileStorage` now removes it from the
+state file when a read discovers expiry, and Cloudflare KV applies its native
+expiry where its minimum TTL allows. A custom adapter may clean physical bytes
+later, but it must make the key unreadable on time.
+
+Removing a connector from TypeScript configuration does **not** automatically
+delete its namespace. There is no safe inference that a missing declaration is
+permanent rather than a bad or rolled-back deploy, and the three-method storage
+interface deliberately has no prefix scan. Disconnect or remove credentials
+while the connector is still configured when a product surface supports it;
+otherwise delete that connector's documented keys through the deployment's
+storage administration. Never delete an OAuth or credential-health generation
+key while another live instance may still hold the older generation.
+
 ### Operator-managed connector credentials
 
 Token-backed API connectors may declare either a single `credential` slot or

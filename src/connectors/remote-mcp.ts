@@ -911,15 +911,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         } catch {
           // best-effort; the connection is being discarded either way
         }
-        // Bump the shared generation FIRST so any other isolate — one mid-
-        // connect, or on its next tool call — sees the advance and drops its
-        // client instead of keeping the token we're about to revoke.
-        await p.bumpGeneration();
-        // Wipe KV before dropping in-memory state so nothing racing back in can
-        // write tokens over a half-cleared slot.
-        await p.invalidateCredentials("all");
-        await p.clearPending();
-        reset(state);
+        try {
+          // Fence other isolates first, then wipe the complete OAuth key set.
+          // The provider attempts every delete before reporting a storage
+          // failure, so a partial outage leaves as little sensitive residue as
+          // the backend permits.
+          await p.resetAuthorization();
+        } finally {
+          // The live client was closed above and KV may now be partially
+          // cleared. Never keep presenting that local state as connected,
+          // including when the storage backend reported a failed delete.
+          reset(state);
+        }
       } else {
         // A consent URL already outstanding? Re-issue it rather than re-running
         // the SDK flow, which would overwrite the PKCE verifier and invalidate

@@ -86,6 +86,10 @@ export function fileStorage(
     if (!e) return null;
     if (e.exp && Date.now() > e.exp) {
       delete data[key];
+      // Expiry is a deletion, not merely a read miss. Persist it now so a
+      // restart does not reload the same dead payload forever and the state
+      // file's size reflects the live key set.
+      persist();
       return null;
     }
     return e;

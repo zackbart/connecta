@@ -196,6 +196,50 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await p.clientInformation()).toBeDefined();
   });
 
+  it("resetAuthorization fences stale writers and attempts every state deletion", async () => {
+    const backing = memoryStorage();
+    const deleted: string[] = [];
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: (key, value, opts) => backing.set(key, value, opts),
+      async delete(key) {
+        deleted.push(key);
+        if (key === "oauth:tokens") {
+          throw new Error("token delete unavailable");
+        }
+        await backing.delete(key);
+      },
+    };
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    for (const key of [
+      "oauth:client",
+      "oauth:tokens",
+      "oauth:pending",
+      "oauth:verifier",
+      "oauth:state",
+    ]) {
+      await backing.set(key, key);
+    }
+
+    await expect(p.resetAuthorization()).rejects.toThrow(
+      "token delete unavailable",
+    );
+
+    expect(await backing.get("oauth:generation")).toBe("1");
+    expect(deleted).toEqual([
+      "oauth:client",
+      "oauth:tokens",
+      "oauth:pending",
+      "oauth:verifier",
+      "oauth:state",
+    ]);
+    expect(await backing.get("oauth:client")).toBeNull();
+    expect(await backing.get("oauth:tokens")).toBe("oauth:tokens");
+    expect(await backing.get("oauth:pending")).toBeNull();
+    expect(await backing.get("oauth:verifier")).toBeNull();
+    expect(await backing.get("oauth:state")).toBeNull();
+  });
+
   it("invalidateCredentials is scoped", async () => {
     const seed = async (p: KvOAuthProvider) => {
       await p.saveClientInformation({
@@ -388,6 +432,8 @@ describe("remoteMcp() startAuth", () => {
       JSON.stringify({ access_token: "old", token_type: "Bearer" }),
     );
     await storage.set("oauth:pending", "https://auth.example/stale");
+    await storage.set("oauth:verifier", "stale-verifier");
+    await storage.set("oauth:state", "stale-state");
 
     const freshUrl = "https://auth.example/authorize?client_id=new";
     const connector = remoteMcp("svc", {
@@ -404,6 +450,9 @@ describe("remoteMcp() startAuth", () => {
     expect(status.authorizationUrl).toBe(freshUrl);
     expect(await storage.get("oauth:client")).toBeNull();
     expect(await storage.get("oauth:tokens")).toBeNull();
+    expect(await storage.get("oauth:verifier")).toBeNull();
+    expect(await storage.get("oauth:state")).toBeNull();
+    expect(await storage.get("oauth:generation")).toBe("1");
   });
 
   it("a plain network error → error, NOT auth_required", async () => {

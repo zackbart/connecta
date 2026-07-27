@@ -186,6 +186,35 @@ export class KvOAuthProvider implements OAuthClientProvider {
     return next;
   }
 
+  /**
+   * Fence every flow that could still write, then remove all durable and
+   * one-shot authorization state. The generation is intentionally retained:
+   * it is the tombstone that tells another isolate not to resurrect credentials
+   * it read before this reset.
+   *
+   * Once the fence is durable, attempt every deletion even if one fails. A
+   * partial backend outage should not leave unrelated secrets behind merely
+   * because an earlier key happened to be the first failed delete.
+   */
+  async resetAuthorization(): Promise<void> {
+    await this.bumpGeneration();
+    let firstError: unknown;
+    for (const key of [
+      "oauth:client",
+      "oauth:tokens",
+      "oauth:pending",
+      "oauth:verifier",
+      "oauth:state",
+    ]) {
+      try {
+        await this.storage.delete(key);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError) throw firstError;
+  }
+
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
