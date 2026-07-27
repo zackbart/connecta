@@ -3,6 +3,10 @@ import {
   quickJsExecutor as createQuickJsExecutor,
   type QuickJsExecutorOptions,
 } from "../src/executors/quickjs.js";
+import {
+  MAX_QUICKJS_LOG_TRANSPORT_BYTES,
+  serializedBytes,
+} from "../src/executors/quickjs-protocol.js";
 import type { AdmittingExecutor } from "../src/types.js";
 
 const executors: AdmittingExecutor[] = [];
@@ -26,6 +30,10 @@ afterEach(async () => {
 // can't be allowed to retain multiple GB of host memory via console.log.
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const MAX_LOG_TOTAL_CHARS = 256_000;
+
+function logTransportBytes(entry: string): number {
+  return serializedBytes(JSON.stringify(JSON.stringify(entry)));
+}
 
 describe("quickJsExecutor log limits", () => {
   it("truncates a single huge log entry to the per-entry cap", async () => {
@@ -67,5 +75,28 @@ describe("quickJsExecutor log limits", () => {
       [],
     );
     expect(out.logs).toEqual(["hello {\"a\":1}", "warned"]);
+  });
+
+  it("preserves the result when escape-heavy logs reach the transport budget", async () => {
+    const ex = quickJsExecutor();
+    const out = await ex.execute(
+      `async () => {
+        const escaped = String.fromCharCode(1).repeat(8_000);
+        for (let i = 0; i < 200; i++) console.log(escaped);
+        return { value: "result survived" };
+      }`,
+      [],
+    );
+
+    expect(out.result).toEqual({ value: "result survived" });
+    expect(out.error).toBeUndefined();
+    expect(out.logs).toContain("[log truncated: size budget exceeded]");
+    const transportBytes = out.logs!.reduce(
+      (total, entry) => total + logTransportBytes(entry),
+      0,
+    );
+    expect(transportBytes).toBeLessThanOrEqual(
+      MAX_QUICKJS_LOG_TRANSPORT_BYTES,
+    );
   });
 });
