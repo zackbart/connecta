@@ -2,6 +2,33 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This change gives every runtime an explicit MCP memory-pressure boundary.
+Ordinary requests now stop at a bounded FIFO before auth and per-request server
+construction, while code mode retains a separate smaller pool and health/UI
+capacity remains reserved. Existing deployments gain conservative defaults;
+operators may tune the active count, queue, wait deadline, and retry hint.
+
+### Added
+
+- **Bounded request admission and observable backpressure** (issue #85).
+  `/mcp` defaults to 16 active requests and 32 queued for at most five seconds.
+  Overflow returns HTTP 503 plus a stable JSON-RPC `server_overloaded` error and
+  `Retry-After`; queued cancellation removes the caller immediately, response
+  completion/error/cancellation releases exactly once, and shutdown rejects
+  queued/new work before draining active requests. `/health` reports
+  payload-free bounds, active/queued counts, rejection/cancellation totals, and
+  queue-wait observations while operator routes bypass the MCP pool.
+- **Separate fallback admission for one-method code executors.** Executors that
+  do not implement `acquire()` receive a default 2-active/8-queued pool.
+  Already-bounded executors keep their own limits, and the built-in QuickJS pool
+  now exposes the same health snapshot.
+- **A split-process real-TCP load/soak harness** (`npm run load:admission`) for
+  the 100/500/1,000/5,000-call matrix and a repeated 15,000-call soak, recording
+  verified outcomes, throughput, p50/p95/p99, server-only peak/RSS-after-GC,
+  and live heap without turning host-specific numbers into CI assertions.
+
 ## 0.7.5 — 2026-07-27
 
 0.7.5 makes the deployable Cloudflare Worker starter match Connecta's

@@ -53,7 +53,9 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/.well-known/*` → auth providers' `handleMetadata` (open, no auth); 404 if
      none handle it.
    - `/health` → open JSON `{ status: "ok", connectors: <count>, server,
-     deployment? }` (`deployment` only when `deploymentInfo` is configured).
+     admission, deployment? }` (`deployment` only when `deploymentInfo` is
+     configured). Admission observations are payload-free and this route never
+     joins the MCP queue.
    - `/oauth/callback/<connectorId>` → downstream-OAuth completion (open).
    - `GET /favicon.svg` / `GET /favicon.ico` → the branding mark, or connecta's
      default ([status UI](./operator-ui.md#status-ui)).
@@ -68,10 +70,13 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    - `/ui/activity` → **auth gate** + the same toolkit-binding refusal +
      optional `activity.readGate`, then paged activity events ([activity history](./operator-ui.md#activity-history)). `GET` only;
      404 when no `activity.store.list` is configured.
-   - `/mcp` → **auth gate**, then the caller's toolkit binding + `?toolkit=`
-     resolution ([toolkits](./toolkits.md#toolkits-scoped-views)), then MCP. `POST` carries every meta-tool call; `GET` and
-     `DELETE` are not special-cased here and fall through to the transport's
-     own defaults, which under stateless mode have no session to resume or end.
+   - `/mcp` → **bounded global FIFO admission before auth**, then the auth gate,
+     caller's toolkit binding + `?toolkit=` resolution
+     ([request admission](./request-admission.md#request-admission-and-backpressure);
+     [toolkits](./toolkits.md#toolkits-scoped-views)), then MCP. `POST` carries
+     every meta-tool call; `GET` and `DELETE` are not special-cased here and
+     fall through to the transport's own defaults, which under stateless mode
+     have no session to resume or end.
    - a connector's `handleRequest` (open), in registration order — dispatched
      only after every built-in route misses, so a connector can add a route but
      never shadow one of connecta's. First non-null Response wins; a throw is a
@@ -83,7 +88,10 @@ Everything is a single Web-standard `fetch(request) => Promise<Response>` handle
    URL escaping/gates, and content-type protection; the shell source contains no
    connector, credential, activity, actor, or deployment data. MCP and metadata
    CORS headers remain unchanged.
-2. **Auth gate** (`/mcp` and private operator APIs): each provider's `authorize` runs in order
+2. **Admission and auth gate** (`/mcp` and private operator APIs): `/mcp`
+   first acquires its bounded request permit; private operator APIs bypass that
+   pool so they remain responsive during MCP saturation. Each provider's
+   `authorize` then runs in order
    (bearer before Clerk); the first `ok` admits the request. If all fail, the
    last provider's `Response` (a 401/403 challenge) is returned. No providers
    configured ⇒ open (dev only). The three canonical operator shells do not pass

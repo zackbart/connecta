@@ -35,9 +35,10 @@ dependencies, or exports.
 - [`docs/operations.md`](./docs/operations.md) — configuration, deployment,
   the suite-by-suite test map, and troubleshooting.
 - [`docs/code-mode.md`](./docs/code-mode.md),
+  [`docs/request-admission.md`](./docs/request-admission.md),
   [`docs/operator-ui.md`](./docs/operator-ui.md), and
-  [`docs/toolkits.md`](./docs/toolkits.md) — the optional sandbox, operator
-  surfaces, and scoped registry views.
+  [`docs/toolkits.md`](./docs/toolkits.md) — the optional sandbox, bounded
+  request policy, operator surfaces, and scoped registry views.
 - [`docs/decisions.md`](./docs/decisions.md) — non-goals, rejected alternatives,
   and the invariants a change must preserve. Check it before building something
   new; "we already decided not to" is a real answer there.

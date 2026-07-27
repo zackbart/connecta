@@ -191,6 +191,7 @@ endpoint, credential, and tool choices stay in your project, declared with
   downstream OAuth, storage, Clerk setup, testing, and troubleshooting. Start
   with the [meta-tools reference](https://github.com/zackbart/connecta/blob/main/docs/meta-tools.md#meta-tools-reference),
   the [config options](https://github.com/zackbart/connecta/blob/main/docs/operations.md#running-it),
+  [request admission](https://github.com/zackbart/connecta/blob/main/docs/request-admission.md#request-admission-and-backpressure),
   [code mode](https://github.com/zackbart/connecta/blob/main/docs/code-mode.md#code-mode-execute_code),
   [toolkits](https://github.com/zackbart/connecta/blob/main/docs/toolkits.md#toolkits-scoped-views),
   [operator pages](https://github.com/zackbart/connecta/blob/main/docs/operator-ui.md#status-ui),

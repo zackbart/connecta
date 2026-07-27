@@ -14,6 +14,11 @@ import {
 } from "./toolkits.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
+import {
+  AdmissionController,
+  isAdmittingExecutor,
+  withExecutorAdmission,
+} from "./executor-admission.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
   CredentialCheckResult,
@@ -108,6 +113,35 @@ export interface ConnectaCallsConfig {
   maxResultBytes?: number;
 }
 
+export interface AdmissionPoolConfig {
+  /** Simultaneous work admitted to this pool. */
+  concurrency?: number;
+  /** Callers allowed to wait behind active work. Set zero to fail fast. */
+  maxQueueSize?: number;
+  /** Maximum queue wait in milliseconds. */
+  queueTimeoutMs?: number;
+  /** Retry hint returned with overload failures, in milliseconds. */
+  retryAfterMs?: number;
+}
+
+/**
+ * Runtime-portable server-memory boundaries. `/health` and operator routes do
+ * not consume these permits, so they remain responsive during MCP saturation.
+ */
+export interface ConnectaAdmissionConfig {
+  /**
+   * The `/mcp` request boundary. Defaults to 16 active, 32 queued, and a
+   * 5-second maximum wait.
+   */
+  requests?: AdmissionPoolConfig;
+  /**
+   * Fallback pool for an `executor` that does not implement its own `acquire`.
+   * Defaults to 2 active, 8 queued, and a 5-second maximum wait. Bounded
+   * executors (including `quickJsExecutor`) keep their own tighter pool.
+   */
+  code?: AdmissionPoolConfig;
+}
+
 export interface ConnectaConfig {
   connectors: Connector[];
   /**
@@ -159,6 +193,8 @@ export interface ConnectaConfig {
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
   calls?: ConnectaCallsConfig;
+  /** Bounded MCP and fallback code-mode admission. */
+  admission?: ConnectaAdmissionConfig;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding;
   logger?: Logger;
@@ -220,6 +256,32 @@ export interface Connecta {
   }) => Promise<CredentialCheckResult[]>;
   /** Drain and release configured executor resources. Idempotent. */
   close: () => Promise<void>;
+}
+
+const REQUEST_ADMISSION_DEFAULTS = {
+  concurrency: 16,
+  maxQueueSize: 32,
+  queueTimeoutMs: 5_000,
+  retryAfterMs: 1_000,
+} as const;
+
+const CODE_ADMISSION_DEFAULTS = {
+  concurrency: 2,
+  maxQueueSize: 8,
+  queueTimeoutMs: 5_000,
+  retryAfterMs: 1_000,
+} as const;
+
+function admissionController(
+  options: AdmissionPoolConfig | undefined,
+  defaults: typeof REQUEST_ADMISSION_DEFAULTS | typeof CODE_ADMISSION_DEFAULTS,
+): AdmissionController {
+  return new AdmissionController({
+    concurrency: options?.concurrency ?? defaults.concurrency,
+    maxQueueSize: options?.maxQueueSize ?? defaults.maxQueueSize,
+    queueTimeoutMs: options?.queueTimeoutMs ?? defaults.queueTimeoutMs,
+    retryAfterMs: options?.retryAfterMs ?? defaults.retryAfterMs,
+  });
 }
 
 function defaultLogger(): Logger {
@@ -495,6 +557,26 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   // with a 403 its client reports as a transport failure. Throw here instead.
   validateToolkitBindings(inboundAuth, toolkits);
   warnInsecureConfig(config, inboundAuth, toolkits, logger);
+  const requestAdmission = admissionController(
+    config.admission?.requests,
+    REQUEST_ADMISSION_DEFAULTS,
+  );
+  const configuredCodeAdmission = admissionController(
+    config.admission?.code,
+    CODE_ADMISSION_DEFAULTS,
+  );
+  let codeAdmission: AdmissionController | undefined;
+  let executor = config.executor;
+  if (executor && !isAdmittingExecutor(executor)) {
+    codeAdmission = configuredCodeAdmission;
+    executor = withExecutorAdmission(executor, codeAdmission);
+  } else if (executor && config.admission?.code) {
+    logger.warn(
+      "[connecta] admission.code is ignored because the configured executor " +
+        "implements acquire() and owns its admission pool; configure that " +
+        "executor's concurrency and queue options instead.",
+    );
+  }
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,
@@ -508,7 +590,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     activity: config.activity?.store,
     activityReadGate: config.activity?.readGate,
     activityDeploymentId: config.activity?.deploymentId,
-    executor: config.executor,
+    executor,
+    requestAdmission,
     defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
     probeTimeoutMs: config.discovery?.probeTimeoutMs,
     credentialVault,
@@ -555,6 +638,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     },
     close: async () => {
       closePromise ??= Promise.resolve().then(async () => {
+        requestAdmission.close();
+        codeAdmission?.close();
         await config.executor?.close?.();
       });
       await closePromise;
@@ -614,6 +699,7 @@ export type {
   ConnectorStatus,
   CredentialTestResult,
   AdmittingExecutor,
+  AdmissionSnapshot,
   ExecuteResult,
   Executor,
   ExecutorLease,

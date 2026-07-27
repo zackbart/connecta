@@ -34,6 +34,12 @@ import type {
 } from "./types.js";
 import { CONNECTA_FAVICON_ICO } from "./favicon.js";
 import {
+  ExecutorAdmissionError,
+  isAdmittingExecutor,
+  type AdmissionController,
+  type AdmissionLease,
+} from "./executor-admission.js";
+import {
   buildUiData,
   CONNECTA_FAVICON_SVG,
   credentialManagementCapability,
@@ -96,6 +102,8 @@ export interface ServerOptions {
   probeTimeoutMs?: number;
   /** When set, the execute_code meta-tool is registered on top of the nine. */
   executor?: Executor;
+  /** Global FIFO boundary for all non-preflight `/mcp` requests. */
+  requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */
   credentialVault?: CredentialVault;
   /** Optional browser UI and OAuth result-page labels. */
@@ -301,12 +309,105 @@ function withMcpCors(response: Response): Response {
   }
   headers.set(
     "Access-Control-Expose-Headers",
-    "WWW-Authenticate, mcp-session-id, mcp-protocol-version",
+    "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version",
   );
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
+  });
+}
+
+function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
+  const overloaded = error.code === "executor_overloaded";
+  const data = {
+    code: overloaded ? "server_overloaded" : "server_shutting_down",
+    retryable: overloaded,
+    ...(overloaded && error.retryAfterMs !== undefined
+      ? { retryAfterMs: error.retryAfterMs }
+      : {}),
+  };
+  const headers = new Headers({
+    "Content-Type": "application/json",
+    "Cache-Control": "no-store",
+  });
+  if (overloaded && error.retryAfterMs !== undefined) {
+    headers.set(
+      "Retry-After",
+      String(Math.max(1, Math.ceil(error.retryAfterMs / 1_000))),
+    );
+  }
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: overloaded ? -32001 : -32002,
+        message: overloaded
+          ? "Server capacity is exhausted. Retry later."
+          : "Server is shutting down.",
+        data,
+      },
+    }),
+    { status: 503, headers },
+  );
+}
+
+/**
+ * A request owns its permit through the response body, not merely until the
+ * handler returns. This is what makes slow clients and response-stream failure
+ * part of the same bounded lifecycle as success, error, and cancellation.
+ */
+function releaseAdmissionWithResponse(
+  response: Response,
+  lease: AdmissionLease,
+  signal: AbortSignal,
+): Response {
+  let released = false;
+  let onAbort = () => {};
+  const release = () => {
+    if (released) return;
+    released = true;
+    signal.removeEventListener("abort", onAbort);
+    lease.release();
+  };
+  if (!response.body) {
+    release();
+    return response;
+  }
+  const reader = response.body.getReader();
+  onAbort = () => {
+    void reader.cancel(signal.reason).finally(release);
+  };
+  signal.addEventListener("abort", onAbort, { once: true });
+  if (signal.aborted) onAbort();
+  const body = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      try {
+        const next = await reader.read();
+        if (next.done) {
+          release();
+          controller.close();
+        } else {
+          controller.enqueue(next.value);
+        }
+      } catch (error) {
+        release();
+        controller.error(error);
+      }
+    },
+    async cancel(reason) {
+      try {
+        await reader.cancel(reason);
+      } finally {
+        release();
+      }
+    },
+  });
+  return new Response(body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers: response.headers,
   });
 }
 
@@ -1042,6 +1143,23 @@ export function createFetchHandler(
   runtimeContext?: RuntimeExecutionContext,
 ) => Promise<Response> {
   const { registry, auth, publicUrl, serverInfo } = opts;
+  let lastAdmissionWarningAt = 0;
+  let suppressedAdmissionWarnings = 0;
+  const warnAdmissionRejected = (error: ExecutorAdmissionError): void => {
+    const now = Date.now();
+    if (now - lastAdmissionWarningAt < 1_000) {
+      suppressedAdmissionWarnings++;
+      return;
+    }
+    opts.logger.warn("[connecta] MCP request admission rejected", {
+      retryAfterMs: error.retryAfterMs,
+      active: opts.requestAdmission.activeCount,
+      queued: opts.requestAdmission.queuedCount,
+      suppressedSinceLastWarning: suppressedAdmissionWarnings,
+    });
+    lastAdmissionWarningAt = now;
+    suppressedAdmissionWarnings = 0;
+  };
   return async function fetch(
     request: Request,
     runtimeContext?: RuntimeExecutionContext,
@@ -1154,10 +1272,29 @@ export function createFetchHandler(
       }
 
       if (path === "/health") {
+        const codeAdmission =
+          opts.executor && isAdmittingExecutor(opts.executor)
+            ? opts.executor.admissionSnapshot?.()
+            : undefined;
         return Response.json({
           status: "ok",
           connectors: registry.listConnectors().length,
           server: opts.serverInfo,
+          admission: {
+            policy: "global-fifo",
+            requests: opts.requestAdmission.snapshot(),
+            code: opts.executor
+              ? (codeAdmission ?? { managedByExecutor: true })
+              : null,
+            reservedRoutes: [
+              "/health",
+              "/",
+              "/credentials",
+              "/activity",
+              "/ui",
+              "/ui/*",
+            ],
+          },
           ...(opts.deploymentInfo ? { deployment: opts.deploymentInfo } : {}),
         });
       }
@@ -1312,34 +1449,82 @@ export function createFetchHandler(
       }
 
       if (path === "/mcp") {
-        // Authenticate BEFORE resolving ?toolkit=: an unauthenticated caller
-        // must not be able to probe which toolkit names exist.
-        const authz = await authorize(request, baseUrl, auth, opts.logger);
-        if (!authz.ok) return withMcpCors(authz.response);
-        const selected = resolveToolkitScope(
-          url,
-          registry,
-          opts.toolkits,
-          opts.logger,
-          {
-            actor: authz.actor,
-            ...(authz.toolkitBinding
-              ? { binding: authz.toolkitBinding }
-              : {}),
-          },
-        );
-        if (!selected.ok) return withMcpCors(selected.response);
-        sweepCredentials();
-        return withMcpCors(
-          await serveMcp(
-            request,
-            opts,
-            baseUrl,
-            authz.actor,
-            selected.scope,
-            runtimeContext,
-          ),
-        );
+        let admission: AdmissionLease;
+        try {
+          admission = await opts.requestAdmission.acquire({
+            signal: request.signal,
+          });
+          if (admission.waitMs > 0) {
+            opts.logger.debug("[connecta] MCP request admitted after queue wait", {
+              waitMs: admission.waitMs,
+              active: opts.requestAdmission.activeCount,
+              queued: opts.requestAdmission.queuedCount,
+            });
+          }
+        } catch (error) {
+          if (
+            error instanceof ExecutorAdmissionError &&
+            error.code === "executor_cancelled"
+          ) {
+            throw request.signal.reason ?? error;
+          }
+          if (error instanceof ExecutorAdmissionError) {
+            if (error.code === "executor_overloaded") {
+              warnAdmissionRejected(error);
+            }
+            return withMcpCors(requestAdmissionFailure(error));
+          }
+          throw error;
+        }
+        try {
+          // Authenticate BEFORE resolving ?toolkit=: an unauthenticated caller
+          // must not be able to probe which toolkit names exist.
+          const authz = await authorize(request, baseUrl, auth, opts.logger);
+          if (!authz.ok) {
+            return releaseAdmissionWithResponse(
+              withMcpCors(authz.response),
+              admission,
+              request.signal,
+            );
+          }
+          const selected = resolveToolkitScope(
+            url,
+            registry,
+            opts.toolkits,
+            opts.logger,
+            {
+              actor: authz.actor,
+              ...(authz.toolkitBinding
+                ? { binding: authz.toolkitBinding }
+                : {}),
+            },
+          );
+          if (!selected.ok) {
+            return releaseAdmissionWithResponse(
+              withMcpCors(selected.response),
+              admission,
+              request.signal,
+            );
+          }
+          sweepCredentials();
+          return releaseAdmissionWithResponse(
+            withMcpCors(
+              await serveMcp(
+                request,
+                opts,
+                baseUrl,
+                authz.actor,
+                selected.scope,
+                runtimeContext,
+              ),
+            ),
+            admission,
+            request.signal,
+          );
+        } catch (error) {
+          admission.release();
+          throw error;
+        }
       }
 
       // Connector-owned public routes, dispatched last: a connector can add a

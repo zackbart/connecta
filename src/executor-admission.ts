@@ -1,6 +1,8 @@
 import type {
   AdmittingExecutor,
+  AdmissionSnapshot,
   Executor,
+  ExecutorLease,
 } from "./types.js";
 
 export type ExecutorAdmissionErrorCode =
@@ -35,10 +37,13 @@ export class ExecutorAdmissionError extends Error {
 }
 
 export interface AdmissionLease {
+  /** Time spent waiting behind active work. Zero for immediate admission. */
+  readonly waitMs: number;
   release(): void;
 }
 
 interface Waiter {
+  queuedAt: number;
   resolve: (lease: AdmissionLease) => void;
   reject: (error: ExecutorAdmissionError) => void;
   signal?: AbortSignal;
@@ -82,6 +87,14 @@ export class AdmissionController {
   private active = 0;
   private closed = false;
   private readonly waiters: Waiter[] = [];
+  private admittedTotal = 0;
+  private queuedTotal = 0;
+  private rejectedTotal = 0;
+  private cancelledTotal = 0;
+  private closedTotal = 0;
+  private queueWaitCount = 0;
+  private queueWaitTotalMs = 0;
+  private queueWaitMaxMs = 0;
 
   constructor(options: AdmissionControllerOptions) {
     this.concurrency = positiveWhole(options.concurrency, "concurrency");
@@ -107,8 +120,33 @@ export class AdmissionController {
     return this.waiters.length;
   }
 
+  snapshot(): AdmissionSnapshot {
+    return {
+      concurrency: this.concurrency,
+      maxQueueSize: this.maxQueueSize,
+      queueTimeoutMs: this.queueTimeoutMs,
+      retryAfterMs: this.retryAfterMs,
+      active: this.active,
+      queued: this.waiters.length,
+      closed: this.closed,
+      totals: {
+        admitted: this.admittedTotal,
+        queued: this.queuedTotal,
+        rejected: this.rejectedTotal,
+        cancelled: this.cancelledTotal,
+        closed: this.closedTotal,
+      },
+      queueWaitMs: {
+        count: this.queueWaitCount,
+        total: this.queueWaitTotalMs,
+        max: this.queueWaitMaxMs,
+      },
+    };
+  }
+
   acquire(options: { signal?: AbortSignal } = {}): Promise<AdmissionLease> {
     if (this.closed) {
+      this.closedTotal++;
       return Promise.reject(
         new ExecutorAdmissionError(
           "executor_closed",
@@ -117,6 +155,7 @@ export class AdmissionController {
       );
     }
     if (options.signal?.aborted) {
+      this.cancelledTotal++;
       return Promise.reject(
         new ExecutorAdmissionError(
           "executor_cancelled",
@@ -126,14 +165,17 @@ export class AdmissionController {
     }
     if (this.active < this.concurrency) {
       this.active++;
-      return Promise.resolve(this.makeLease());
+      this.admittedTotal++;
+      return Promise.resolve(this.makeLease(0));
     }
     if (this.waiters.length >= this.maxQueueSize) {
+      this.rejectedTotal++;
       return Promise.reject(this.overloaded("Executor queue is full."));
     }
 
     return new Promise<AdmissionLease>((resolve, reject) => {
       const waiter: Waiter = {
+        queuedAt: Date.now(),
         resolve,
         reject,
         ...(options.signal ? { signal: options.signal } : {}),
@@ -141,6 +183,7 @@ export class AdmissionController {
       waiter.onAbort = () => {
         if (!this.remove(waiter)) return;
         this.cleanup(waiter);
+        this.cancelledTotal++;
         reject(
           new ExecutorAdmissionError(
             "executor_cancelled",
@@ -152,6 +195,7 @@ export class AdmissionController {
       waiter.timer = setTimeout(() => {
         if (!this.remove(waiter)) return;
         this.cleanup(waiter);
+        this.rejectedTotal++;
         reject(
           this.overloaded(
             `Executor admission timed out after ${this.queueTimeoutMs}ms.`,
@@ -159,6 +203,7 @@ export class AdmissionController {
         );
       }, this.queueTimeoutMs);
       this.waiters.push(waiter);
+      this.queuedTotal++;
     });
   }
 
@@ -167,6 +212,7 @@ export class AdmissionController {
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
       this.cleanup(waiter);
+      this.closedTotal++;
       waiter.reject(
         new ExecutorAdmissionError(
           "executor_closed",
@@ -182,9 +228,10 @@ export class AdmissionController {
     });
   }
 
-  private makeLease(): AdmissionLease {
+  private makeLease(waitMs: number): AdmissionLease {
     let released = false;
     return {
+      waitMs,
       release: () => {
         if (released) return;
         released = true;
@@ -199,8 +246,13 @@ export class AdmissionController {
     const waiter = this.waiters.shift();
     if (!waiter) return;
     this.cleanup(waiter);
+    const waitMs = Math.max(0, Date.now() - waiter.queuedAt);
+    this.admittedTotal++;
+    this.queueWaitCount++;
+    this.queueWaitTotalMs += waitMs;
+    this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
     this.active++;
-    waiter.resolve(this.makeLease());
+    waiter.resolve(this.makeLease(waitMs));
   }
 
   private remove(waiter: Waiter): boolean {
@@ -226,4 +278,39 @@ export function isAdmittingExecutor(
     "acquire" in executor &&
     typeof (executor as { acquire?: unknown }).acquire === "function"
   );
+}
+
+/**
+ * Give a structurally-compatible but otherwise unbounded executor the same
+ * admission contract as the built-in Node executor. The wrapper owns only the
+ * queue; closing the underlying runtime remains the Connecta lifecycle's job.
+ */
+export function withExecutorAdmission(
+  executor: Executor,
+  admission: AdmissionController,
+): AdmittingExecutor {
+  return {
+    async acquire(options = {}): Promise<ExecutorLease> {
+      const token = await admission.acquire(options);
+      let released = false;
+      return {
+        waitMs: token.waitMs,
+        execute: (code, providers) => executor.execute(code, providers),
+        release: () => {
+          if (released) return;
+          released = true;
+          token.release();
+        },
+      };
+    },
+    async execute(code, providers) {
+      const lease = await this.acquire();
+      try {
+        return await lease.execute(code, providers);
+      } finally {
+        lease.release();
+      }
+    },
+    admissionSnapshot: () => admission.snapshot(),
+  };
 }

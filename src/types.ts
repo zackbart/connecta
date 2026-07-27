@@ -268,6 +268,29 @@ export interface Executor {
   close?(): void | Promise<void>;
 }
 
+/** Payload-free, monotonically increasing admission observations. */
+export interface AdmissionSnapshot {
+  concurrency: number;
+  maxQueueSize: number;
+  queueTimeoutMs: number;
+  retryAfterMs: number;
+  active: number;
+  queued: number;
+  closed: boolean;
+  totals: {
+    admitted: number;
+    queued: number;
+    rejected: number;
+    cancelled: number;
+    closed: number;
+  };
+  queueWaitMs: {
+    count: number;
+    total: number;
+    max: number;
+  };
+}
+
 /**
  * Optional admission capability used by bounded executors. The acquired lease
  * carries execution so an already-admitted caller cannot accidentally acquire
@@ -275,9 +298,13 @@ export interface Executor {
  */
 export interface AdmittingExecutor extends Executor {
   acquire(options?: { signal?: AbortSignal }): Promise<ExecutorLease>;
+  /** Payload-free health/metrics view when the executor exposes one. */
+  admissionSnapshot?(): AdmissionSnapshot;
 }
 
 export interface ExecutorLease {
+  /** Time spent waiting before this lease was granted, when observed. */
+  readonly waitMs?: number;
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   /** Idempotent. Call from finally even when provider construction fails. */
   release(): void;
