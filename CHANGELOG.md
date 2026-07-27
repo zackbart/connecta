@@ -57,6 +57,31 @@ All notable changes to this package are documented here.
   such as `storage`, `auth`, `connectors`, `toolkits`, and `executor` remain at
   the top level.
 
+### Changed
+
+- **The operator UI is now a direct-linkable three-page set** (issue #57):
+  Connections at `/`, Credentials at `/credentials`, and Activity at
+  `/activity`. `GET /ui` remains as a permanent `308` compatibility redirect to
+  `/`. The pages use semantic navigation, path-specific titles, direct
+  load/refresh/bookmark and Back/Forward behavior, and the same restrained
+  responsive connector-ledger design. They are three routes over one
+  no-build-step client implementation, not copied applications.
+- **Every canonical operator route serves the same open, data-free shell.** The
+  nonce CSP, framing denial, referrer policy, HSTS behavior, content-type
+  protection, URL gates, and escaping guarantees formerly attached to `/ui`
+  apply equally to `/`, `/credentials`, and `/activity`. Deployment data remains
+  behind the unchanged private APIs: `/ui/data`, `/ui/activity`, and
+  `/ui/credentials/<connectorId>[/test]`.
+- **Vault controls moved out of connector cards and into Credentials.**
+  Connections remains read-only status; Credentials preserves Add/Replace/Test/
+  Remove, masked metadata, stored-shape recovery, and live feedback without ever
+  returning a secret. Its explicit capability states cover eligible Clerk
+  operators, bearer-only sessions, missing vaults, and deployments with no
+  credential slots without broadening the existing Clerk/user-id/toolkit/
+  same-origin mutation boundary. Activity likewise renders an explicit
+  not-configured state when `activity.store.list` is absent. OAuth result pages
+  now return to `/`.
+
 ## 0.6.1 — 2026-07-26
 
 A patch release: three bug fixes and a documentation overhaul. No new

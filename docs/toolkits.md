@@ -200,18 +200,23 @@ binding cannot narrow a view, and a view cannot admit an identity.
   **scoped** connector set. A scoped session whose connectors carry no guides
   sees the base text and never learns from a description that guides exist out
   of scope.
-- **Operator surfaces are deliberately unscoped — and closed to bound
-  identities.** `/ui`, `/ui/data`, `/ui/activity`, `/health`,
+- **Operator surfaces are deliberately unscoped — and private data is closed to
+  bound identities.** The canonical HTML routes (`/`, `/credentials`,
+  `/activity`), `/ui/data`, `/ui/activity`, `/health`,
   `/oauth/callback/<id>`, the credential API, and connector-owned
-  `handleRequest` routes ignore `?toolkit=` entirely: they are for the operator
-  running the deployment, not for a team's agent, and they keep their own gates
+  `handleRequest` routes ignore `?toolkit=` entirely. The three HTML routes are
+  open, shared, **data-free shells**; loading one reveals no connector,
+  credential, activity, actor, or deployment data. Everything displayed comes
+  from a private operator API with its own gate
   ([inbound auth](./auth.md#inbound-auth), [storage](./storage-and-credentials.md#storage), [status UI](./operator-ui.md#status-ui)). Because their payloads are deployment-wide, the three that read
   or write deployment state behind the auth gate — `/ui/data`, `/ui/activity`,
   and the credential API — **refuse a toolkit-bound identity with 403**. A
   restricted credential cannot answer with connector health for the whole org
   through the back door, and cannot overwrite a credential every toolkit shares.
   A binding that carries `unscoped: true` is not restricted and keeps them, which
-  is what an operator credential should look like. `/health` remains a public
+  is what an operator credential should look like. A bound identity may receive
+  the same inert HTML shell as anyone else, but its data request is still
+  refused. `/health` remains a public
   count with no names. The OAuth callback must also stay open so a downstream
   authorization server can redirect a browser to it, and it is not meant to
   answer "does this id exist": an unknown/non-OAuth id, a real connector with

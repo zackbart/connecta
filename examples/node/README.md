@@ -11,7 +11,9 @@ CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
 
 - MCP endpoint: `http://localhost:8787/mcp`, with
   `Authorization: Bearer dev-token`
-- Operator dashboard: `http://localhost:8787/ui` (paste the same token)
+- Operator pages: Connections at `http://localhost:8787/`, Credentials at
+  `/credentials`, and Activity at `/activity` (paste the same token; this
+  bearer-only example cannot manage credentials)
 - Health: `http://localhost:8787/health`
 
 `PORT`, `CONNECTA_TOKEN`, and `CLOCK_TOKEN` are the only env vars; all have dev

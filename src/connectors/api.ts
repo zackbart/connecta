@@ -42,9 +42,9 @@ export interface ApiOptions {
    * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
    */
   usageGuide?: string;
-  /** Optional operator-managed credential exposed through ctx.credential and /ui. */
+  /** Optional operator-managed credential exposed through ctx.credential and /credentials. */
   credential?: ConnectorCredentialConfig;
-  /** Optional validation behind /ui's Test action. */
+  /** Optional validation behind /credentials' Test action. */
   testCredential?: (
     value: string,
     ctx: ConnectorContext,

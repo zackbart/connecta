@@ -153,8 +153,8 @@ const URL_STRIPPED_CHARS = /[\t\n\r]/g;
  * default href is the relative `/favicon.svg`, which `isSafeHttpUrl` alone would
  * reject — and it is kept narrow on both ends.
  *
- * Root-relative only, because `/ui` and `/oauth/callback/<id>` sit at different
- * depths and a document-relative path would resolve differently on each.
+ * Root-relative only, because operator and OAuth callback pages sit at
+ * different depths and a document-relative path would resolve differently.
  *
  * "Root-relative" is enforced structurally: exactly one leading `/` followed by
  * a character that is neither `/` nor `\`. Both of those would make the value an
@@ -178,7 +178,7 @@ export function isSafeIconHref(href: unknown): boolean {
 
 /**
  * True only for an absolute `https:` URL — the gate every `uiAuth` URL passes:
- * `frontendApiUrl`, which becomes the `<script src>` of `/ui`'s sign-in loader,
+ * `frontendApiUrl`, which becomes the operator shell's sign-in loader source,
  * and `signInUrl`/`signUpUrl`, which ClerkJS uses as *navigation targets* when
  * the operator signs in. With those three gated, no operator-config value
  * reaches the browser in a URL position — attribute or navigation — without
@@ -187,7 +187,7 @@ export function isSafeIconHref(href: unknown): boolean {
  * Stricter than `isSafeHttpUrl` on purpose: no `http:` carve-out, no loopback
  * carve-out, and no relative form. Nobody types `frontendApiUrl` — the shipped
  * Clerk adapter derives it from the publishable key, and Clerk's Frontend API is
- * always https — and a cleartext script source on the dashboard would be a
+ * always https — and a cleartext script source on an operator page would be a
  * downgrade even where a browser's mixed-content rules had not already blocked
  * it. `signInUrl`/`signUpUrl` *are* typed by the operator, but what belongs
  * there is a hosted Account Portal address (`https://accounts.<domain>` or
@@ -297,6 +297,46 @@ export interface UiData {
   serverInfo: { name: string; version: string };
   connectors: UiConnector[];
   activityEnabled: boolean;
+  credentialManagement: CredentialManagementCapability;
+}
+
+export type CredentialManagementCapability =
+  | "available"
+  | "requires_clerk"
+  | "vault_not_configured"
+  | "no_slots";
+
+export type OperatorPage = "connections" | "credentials" | "activity";
+
+const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
+  connections: "Connections",
+  credentials: "Credentials",
+  activity: "Activity",
+};
+
+export function operatorPageForPath(path: string): OperatorPage | undefined {
+  if (path === "/") return "connections";
+  if (path === "/credentials") return "credentials";
+  if (path === "/activity") return "activity";
+  return undefined;
+}
+
+export function operatorPageTitle(
+  page: OperatorPage,
+  configuredTitle: string,
+): string {
+  return `${OPERATOR_PAGE_LABELS[page]} — ${configuredTitle}`;
+}
+
+export function credentialManagementCapability(input: {
+  eligibleClerkOperator: boolean;
+  hasCredentialSlots: boolean;
+  hasCredentialVault: boolean;
+}): CredentialManagementCapability {
+  if (!input.eligibleClerkOperator) return "requires_clerk";
+  if (!input.hasCredentialSlots) return "no_slots";
+  if (!input.hasCredentialVault) return "vault_not_configured";
+  return "available";
 }
 
 export interface FilteredUiConnector {
@@ -348,6 +388,9 @@ export async function buildUiData(
   serverInfo: { name: string; version: string },
   credentialVault?: CredentialVault,
   activityEnabled = false,
+  credentialManagement: CredentialManagementCapability = credentialVault
+    ? "available"
+    : "requires_clerk",
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -497,7 +540,12 @@ export async function buildUiData(
       ),
     );
   });
-  return { serverInfo, connectors, activityEnabled };
+  return {
+    serverInfo,
+    connectors,
+    activityEnabled,
+    credentialManagement,
+  };
 }
 
 function escapeHtmlAttr(value: string): string {
@@ -516,16 +564,15 @@ function jsonForInlineScript(value: unknown): string {
 }
 
 /**
- * The `/ui` shell carries no connector data: everything comes client-side from
- * the auth-gated `/ui/data`. A configured Clerk provider gives operators a
- * normal sign-in flow and a short-lived session token; bearer-only deployments
- * retain the manual-token fallback.
+ * Every operator page serves this same data-free shell. Connector, credential,
+ * and activity data arrives only through the authenticated `/ui/*` APIs.
  */
 export function renderUiHtml(
   uiAuth?: UiAuthConfig,
   mcpUrl = "/mcp",
   branding?: ConnectaBranding,
   nonce?: string,
+  page: OperatorPage = "connections",
 ): string {
   const clerk = uiAuth?.kind === "clerk" ? uiAuth : undefined;
   // The Clerk loader's origin. A value that fails the gate is dropped rather
@@ -557,8 +604,8 @@ export function renderUiHtml(
       }
     : (uiAuth ?? { kind: "bearer" as const });
   const brand = resolveBranding(branding);
-  const title = brand.pageTitle;
-  // When the /ui response ships a nonce-based CSP, every <script> it emits must
+  const title = operatorPageTitle(page, brand.pageTitle);
+  // When an operator shell ships a nonce-based CSP, every script it emits must
   // carry that nonce to run; without a nonce the markup is unchanged.
   const nonceAttr = nonce ? ` nonce="${nonce}"` : "";
   // Top-left corner. With an owner set it reads "<owner> <product>"; without
@@ -599,6 +646,7 @@ ${clerkScript}
     --paper: #fff;
     --rule: #ccc;
     --muted: #666;
+    --trace: #f5f5f5;
     --shell: 70rem;
     --pad: 1rem;
     --gap: 1.5rem;
@@ -645,6 +693,15 @@ ${clerkScript}
     outline: 1px solid var(--ink);
   }
   :is(a, button, summary):focus-visible { outline-offset: 2px; }
+  .skip-link {
+    background: var(--paper);
+    left: var(--pad);
+    padding: .5rem;
+    position: fixed;
+    top: -4rem;
+    z-index: 10;
+  }
+  .skip-link:focus { top: var(--pad); }
 
   .shell {
     margin: 0 auto;
@@ -663,6 +720,15 @@ ${clerkScript}
   .cap, .meta { color: var(--muted); font-size: .9em; }
   .mono { font-family: var(--mono); font-size: .78rem; }
   .hidden { display: none !important; }
+  .visually-hidden {
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    height: 1px;
+    overflow: hidden;
+    position: absolute;
+    white-space: nowrap;
+    width: 1px;
+  }
 
   .masthead {
     align-items: start;
@@ -687,6 +753,17 @@ ${clerkScript}
     justify-content: flex-end;
     min-width: 0;
   }
+  .page-nav,
+  .session-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem var(--gap);
+  }
+  .mast-actions :is(a, button) {
+    align-items: center;
+    display: inline-flex;
+    min-height: 2rem;
+  }
   .navlink,
   .linklike {
     text-decoration: underline;
@@ -696,7 +773,7 @@ ${clerkScript}
   .navlink { text-decoration-color: transparent; }
   .navlink:hover,
   .navlink:focus-visible,
-  .navlink.active { text-decoration-color: currentColor; }
+  .navlink[aria-current="page"] { text-decoration-color: currentColor; }
   .linklike { text-decoration-color: currentColor; }
   .linklike:hover,
   .linklike:focus-visible { text-decoration-color: transparent; }
@@ -744,7 +821,24 @@ ${clerkScript}
   #notice:empty { display: none; }
   #notice:not(:empty) { text-decoration: underline; }
   .error-notice, .msg { text-decoration: underline; }
-  .card { border-top: 1px solid var(--rule); padding: .75rem 0; }
+  .card,
+  .credential-card,
+  .activity-item {
+    padding-left: 1.25rem;
+    position: relative;
+  }
+  .card::before,
+  .credential-card::before,
+  .activity-item::before {
+    background: var(--rule);
+    bottom: 0;
+    content: "";
+    left: .25rem;
+    position: absolute;
+    top: 0;
+    width: 1px;
+  }
+  .card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
   .connector-head {
     display: grid;
     gap: var(--gap);
@@ -755,14 +849,25 @@ ${clerkScript}
     display: flex;
     gap: .5rem;
   }
+  .connector-title .dot,
+  .activity-stamp .dot {
+    margin-left: -1.25rem;
+  }
+  .activity-stamp {
+    align-items: baseline;
+    display: flex;
+    gap: .75rem;
+  }
   .card h2 { overflow-wrap: anywhere; }
   .connector-state { text-align: right; }
   .dot {
+    background: var(--paper);
     border: 1px solid var(--ink);
     display: inline-block;
     flex: none;
     height: .5rem;
     width: .5rem;
+    z-index: 1;
   }
   .dot.ok { background: var(--ink); }
   .dot.auth_required {
@@ -772,7 +877,8 @@ ${clerkScript}
   .connector-message,
   .connector-auth { margin-top: .75rem; }
 
-  .credential { border-top: 1px solid var(--rule); margin-top: .75rem; padding-top: .75rem; }
+  .credential-ledger { border-bottom: 1px solid var(--rule); }
+  .credential-card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
   .credential-head {
     align-items: baseline;
     display: flex;
@@ -781,7 +887,27 @@ ${clerkScript}
     justify-content: space-between;
   }
   .credential-copy { margin-top: .25rem; max-width: 40rem; }
+  .credential-field-summary {
+    border-top: 1px solid var(--rule);
+    margin-top: .75rem;
+  }
+  .credential-field-summary > div {
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem var(--gap);
+    justify-content: space-between;
+    padding: .5rem 0;
+  }
   .credential-actions { display: flex; flex-wrap: wrap; gap: var(--gap); margin-top: .75rem; }
+  .credential-actions button,
+  .credential-form button,
+  .activity-controls button,
+  .activity-more {
+    align-items: center;
+    display: inline-flex;
+    min-height: 2.75rem;
+  }
   .credential-form {
     align-items: center;
     display: flex;
@@ -825,7 +951,8 @@ ${clerkScript}
     display: grid;
     gap: .25rem var(--gap);
     grid-template-columns: minmax(9rem, .85fr) minmax(12rem, 1.4fr) minmax(8rem, .9fr);
-    padding: .75rem 0;
+    padding-bottom: .75rem;
+    padding-top: .75rem;
   }
   .activity-time,
   .activity-actor,
@@ -836,6 +963,16 @@ ${clerkScript}
   .activity-item.timeout .activity-outcome { text-decoration: underline; }
   .activity-empty { border-top: 1px solid var(--rule); padding: .75rem 0; }
   .activity-more { margin-top: .75rem; }
+  .unavailable {
+    background: var(--trace);
+    border-bottom: 1px solid var(--rule);
+    border-top: 1px solid var(--rule);
+    padding: .75rem;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html:focus-within { scroll-behavior: auto; }
+  }
 
   @media (max-width: 36.99rem) {
     .pgrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -844,7 +981,12 @@ ${clerkScript}
     .masthead .brand { grid-column: 1; }
     .mast-nav { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
     .product { display: none; }
-    .mast-actions { font-size: .875rem; gap: .5rem; white-space: nowrap; }
+    .mast-actions {
+      align-items: flex-start;
+      flex-direction: column;
+      font-size: .875rem;
+      gap: .25rem;
+    }
     .lead { margin-top: 4rem; }
     .section,
     .section + .section { margin-top: 2.5rem; }
@@ -853,49 +995,58 @@ ${clerkScript}
     .activity-item { grid-template-columns: 1fr; }
     .connector-state { text-align: left; }
     .credential-field { align-items: start; grid-template-columns: 1fr; gap: .25rem; }
+    input { min-height: 2.75rem; }
   }
 </style>
 </head>
 <body>
+<a class="skip-link" href="#operatorContent">Skip to operator page</a>
 <header class="masthead shell pgrid">
   ${owner}
   <div class="mast-nav">
     ${product}
-    <nav id="appNav" class="mast-actions hidden" aria-label="Dashboard views">
-      <button id="configTab" class="navlink active" type="button"
-        aria-pressed="true">Connections</button>
-      <button id="activityTab" class="navlink hidden" type="button"
-        aria-pressed="false">Activity</button>
-      <button id="change" class="navlink hidden" type="button">Change token</button>
-      <button id="signout" class="navlink hidden" type="button">Sign out</button>
-    </nav>
+    <div id="appNav" class="mast-actions hidden">
+      <nav class="page-nav" aria-label="Operator pages">
+        <a id="connectionsNav" class="navlink" href="/"
+          data-operator-page="connections"${page === "connections" ? ' aria-current="page"' : ""}>Connections</a>
+        <a id="credentialsNav" class="navlink hidden" href="/credentials"
+          data-operator-page="credentials"${page === "credentials" ? ' aria-current="page"' : ""}>Credentials</a>
+        <a id="activityNav" class="navlink hidden" href="/activity"
+          data-operator-page="activity"${page === "activity" ? ' aria-current="page"' : ""}>Activity</a>
+      </nav>
+      <div class="session-actions" aria-label="Session actions">
+        <button id="change" class="navlink hidden" type="button">Change token</button>
+        <button id="signout" class="navlink hidden" type="button">Sign out</button>
+      </div>
+    </div>
   </div>
 </header>
 
-<main id="gate" class="page shell hidden">
-  <section class="lead pgrid">
-    <h1 class="pcap">Tool connections</h1>
-    <div class="pbody lead-copy">
-      <p>${escapeHtmlAttr(brand.description)}</p>
-      <p id="gateCopy" class="meta"></p>
-      <div id="tokenGate" class="row gate-actions hidden">
-        <input id="token" type="password" placeholder="Bearer token" autocomplete="off"
-          aria-label="Bearer token">
-        <button id="save" class="linklike" type="button">Open dashboard</button>
+<main id="operatorContent" class="page shell" tabindex="-1">
+  <section id="gate" class="hidden">
+    <div class="lead pgrid">
+      <h1 id="gateHeading" class="pcap" tabindex="-1">${OPERATOR_PAGE_LABELS[page]}</h1>
+      <div class="pbody lead-copy">
+        <p>${escapeHtmlAttr(brand.description)}</p>
+        <p id="gateCopy" class="meta"></p>
+        <div id="tokenGate" class="row gate-actions hidden">
+          <input id="token" type="password" placeholder="Bearer token" autocomplete="off"
+            aria-label="Bearer token">
+          <button id="save" class="linklike" type="button">Open operator pages</button>
+        </div>
+        <div id="clerkGate" class="actions gate-actions hidden">
+          <button id="signin" class="linklike" type="button">Team sign in</button>
+          <button id="gateSignout" class="linklike hidden" type="button">Sign out</button>
+        </div>
+        <p id="err" role="alert"></p>
       </div>
-      <div id="clerkGate" class="actions gate-actions hidden">
-        <button id="signin" class="linklike" type="button">Team sign in</button>
-        <button id="gateSignout" class="linklike hidden" type="button">Sign out</button>
-      </div>
-      <p id="err"></p>
     </div>
   </section>
-</main>
 
-<main id="app" class="page shell hidden">
-  <section id="configView">
+  <div id="app" class="hidden">
+  <section id="connectionsView"${page === "connections" ? "" : ' class="hidden"'}>
     <div class="lead pgrid">
-      <h1 class="pcap">MCP connection</h1>
+      <h1 id="connectionsHeading" class="pcap" tabindex="-1">Connections</h1>
       <div class="pbody lead-copy">
         <p>Use this endpoint to give an MCP client access to the tools below.</p>
         <div class="endpoint">
@@ -904,50 +1055,80 @@ ${clerkScript}
             <button id="copyMcpUrl" class="linklike" type="button">Copy URL</button>
           </div>
         </div>
-        <p class="cap" id="serverInfo">${escapeHtmlAttr(brand.productName)} status dashboard</p>
+        <p class="cap" id="serverInfo">${escapeHtmlAttr(brand.productName)} operator</p>
       </div>
     </div>
-    <section class="section pgrid" aria-labelledby="connectorsHeading">
-      <h2 class="pcap" id="connectorsHeading">Connectors</h2>
+    <section class="section pgrid" aria-labelledby="connectorLedgerHeading">
+      <h2 class="pcap" id="connectorLedgerHeading">Connectors</h2>
       <div class="pbody">
         <div class="row toolbar">
           <input id="filter" type="search" placeholder="Filter connectors or tools…"
             aria-label="Filter connectors or tools">
         </div>
-        <p id="notice" role="status" aria-live="polite"></p>
-        <div id="list" class="connector-tools"></div>
+        <div id="list" class="connector-tools" aria-busy="false"></div>
       </div>
     </section>
   </section>
-  <section id="activityView" class="hidden">
+
+  <section id="credentialsView"${page === "credentials" ? "" : ' class="hidden"'}>
     <div class="lead pgrid">
-      <h1 class="pcap">Tool activity</h1>
+      <h1 id="credentialsHeading" class="pcap" tabindex="-1">Credentials</h1>
       <div class="pbody">
-        <p class="activity-copy" id="activitySummary">Arguments and results are never stored.</p>
-        <div class="row activity-controls">
-          <input id="activitySearch" type="search"
-            placeholder="Search user, tool, or outcome…"
-            aria-label="Search loaded activity">
-          <button id="refreshActivity" class="linklike" type="button">Refresh</button>
-        </div>
-        <p id="activityNotice" class="meta" role="status" aria-live="polite"></p>
-        <div id="activityList" class="activity-ledger"></div>
-        <button id="moreActivity" class="linklike activity-more hidden" type="button">Load older</button>
+        <p class="activity-copy">Rotate operator-managed connector credentials. Stored values are never returned or displayed.</p>
+        <p id="credentialNotice" class="meta" role="status" aria-live="polite"
+          tabindex="-1"></p>
+        <div id="credentialUnavailable" class="unavailable hidden"></div>
+        <div id="credentialList" class="credential-ledger" aria-busy="false"></div>
       </div>
     </div>
   </section>
+
+  <section id="activityView"${page === "activity" ? "" : ' class="hidden"'}>
+    <div class="lead pgrid">
+      <h1 id="activityHeading" class="pcap" tabindex="-1">Activity</h1>
+      <div class="pbody">
+        <p class="activity-copy" id="activitySummary">Arguments and results are never stored.</p>
+        <div id="activityUnavailable" class="unavailable hidden">
+          Activity history is not configured. Add an <span class="mono">activity.store</span>
+          with a list reader to enable this page.
+        </div>
+        <div id="activityAvailable">
+          <div class="row activity-controls">
+            <input id="activitySearch" type="search"
+              placeholder="Search user, tool, or outcome…"
+              aria-label="Search loaded activity">
+            <button id="refreshActivity" class="linklike" type="button">Refresh</button>
+          </div>
+          <p id="activityNotice" class="meta" role="status" aria-live="polite"></p>
+          <div id="activityList" class="activity-ledger" aria-busy="false"></div>
+          <button id="moreActivity" class="linklike activity-more hidden" type="button">Load older</button>
+        </div>
+      </div>
+    </div>
+  </section>
+  </div>
 </main>
 
 <script${nonceAttr}>
 const AUTH = ${jsonForInlineScript(auth)};
 const MCP_URL = ${jsonForInlineScript(mcpUrl)};
+const INITIAL_PAGE = ${jsonForInlineScript(page)};
+const TITLE_SUFFIX = ${jsonForInlineScript(brand.pageTitle)};
 const filterUiConnectors = ${filterUiConnectors.toString()};
 const KEY = "connecta:token";
 const $ = (id) => document.getElementById(id);
+const PAGE_META = {
+  connections: { path: "/", label: "Connections" },
+  credentials: { path: "/credentials", label: "Credentials" },
+  activity: { path: "/activity", label: "Activity" },
+};
 let DATA = null;
 let ACTIVITY = [];
 let ACTIVITY_CURSOR = null;
 let ACTIVITY_LOADED = false;
+let CURRENT_PAGE = INITIAL_PAGE;
+let SESSION_GENERATION = 0;
+let ACTIVITY_GENERATION = 0;
 $("mcpUrl").textContent = MCP_URL;
 
 function esc(s) {
@@ -971,8 +1152,9 @@ function formatDate(value) {
 }
 
 function setNotice(message, isError) {
-  $("notice").textContent = message || "";
-  $("notice").classList.toggle("error-notice", Boolean(isError));
+  $("credentialNotice").textContent = message || "";
+  $("credentialNotice").classList.toggle("error-notice", Boolean(isError));
+  $("credentialNotice").setAttribute("role", isError ? "alert" : "status");
 }
 
 async function sessionToken() {
@@ -981,7 +1163,45 @@ async function sessionToken() {
     : localStorage.getItem(KEY);
 }
 
+function clearActivityState() {
+  ACTIVITY_GENERATION += 1;
+  ACTIVITY = [];
+  ACTIVITY_CURSOR = null;
+  ACTIVITY_LOADED = false;
+  $("activityList").innerHTML = "";
+  $("activityList").setAttribute("aria-busy", "false");
+  $("activityNotice").textContent = "";
+  $("activityNotice").setAttribute("role", "status");
+  $("activitySummary").textContent = "Arguments and results are never stored.";
+  $("activitySearch").value = "";
+  $("refreshActivity").disabled = false;
+  $("moreActivity").disabled = false;
+  $("moreActivity").classList.add("hidden");
+}
+
+function clearIdentityState() {
+  SESSION_GENERATION += 1;
+  DATA = null;
+  clearActivityState();
+  $("list").innerHTML = "";
+  $("filter").value = "";
+  $("credentialList").innerHTML = "";
+  $("credentialList").setAttribute("aria-busy", "false");
+  $("credentialNotice").textContent = "";
+  $("credentialNotice").setAttribute("role", "status");
+  $("credentialNotice").classList.remove("error-notice");
+  $("credentialUnavailable").textContent = "";
+  $("credentialUnavailable").classList.add("hidden");
+  $("credentialList").classList.add("hidden");
+  $("activityUnavailable").classList.add("hidden");
+  $("activityAvailable").classList.add("hidden");
+  $("credentialsNav").classList.add("hidden");
+  $("activityNav").classList.add("hidden");
+  $("serverInfo").textContent = ${escapeScriptString(brand.productName + " operator")};
+}
+
 function showGate(msg) {
+  clearIdentityState();
   $("app").classList.add("hidden");
   $("appNav").classList.add("hidden");
   $("gate").classList.remove("hidden");
@@ -989,8 +1209,8 @@ function showGate(msg) {
   if (AUTH.kind === "clerk") {
     const signedIn = Boolean(window.Clerk && Clerk.user);
     $("gateCopy").textContent = signedIn
-      ? "Signed in with Clerk, but this account cannot open the dashboard."
-      : "Sign in with Clerk to open the dashboard.";
+      ? "Signed in with Clerk, but this account cannot open deployment-wide operator pages."
+      : "Sign in with Clerk to open this operator page.";
     $("signin").classList.toggle("hidden", signedIn);
     $("gateSignout").classList.toggle("hidden", !signedIn);
   } else {
@@ -998,20 +1218,87 @@ function showGate(msg) {
   }
 }
 
+function pageForPath(path) {
+  if (path === "/credentials") return "credentials";
+  if (path === "/activity") return "activity";
+  return "connections";
+}
+
+function credentialUnavailableCopy(capability) {
+  if (capability === "no_slots") {
+    return "No connectors declare operator-managed credential slots. Connector credentials remain configuration-as-code until a slot is declared.";
+  }
+  if (capability === "vault_not_configured") {
+    return "Credential storage is not configured. Set credentials.encryptionKey before managing connector credentials here.";
+  }
+  return "Credential management requires an eligible Clerk operator. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
+}
+
+function updateCapabilities() {
+  const credentialsAvailable =
+    DATA?.credentialManagement === "available";
+  $("credentialsNav").classList.toggle("hidden", !credentialsAvailable);
+  $("activityNav").classList.toggle("hidden", !DATA?.activityEnabled);
+  $("credentialUnavailable").classList.toggle("hidden", credentialsAvailable);
+  $("credentialList").classList.toggle("hidden", !credentialsAvailable);
+  $("credentialUnavailable").textContent = credentialsAvailable
+    ? ""
+    : credentialUnavailableCopy(DATA?.credentialManagement);
+  $("activityUnavailable").classList.toggle("hidden", Boolean(DATA?.activityEnabled));
+  $("activityAvailable").classList.toggle("hidden", !DATA?.activityEnabled);
+}
+
+function activatePage(page, options) {
+  const next = PAGE_META[page] ? page : "connections";
+  CURRENT_PAGE = next;
+  for (const name of Object.keys(PAGE_META)) {
+    $(name + "View").classList.toggle("hidden", name !== next);
+    const link = $(name + "Nav");
+    if (name === next) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  }
+  $("gateHeading").textContent = PAGE_META[next].label;
+  document.title = PAGE_META[next].label + " — " + TITLE_SUFFIX;
+  if (DATA) {
+    updateCapabilities();
+    if (next === "connections") renderConnections();
+    if (next === "credentials") renderCredentials();
+    if (next === "activity" && DATA.activityEnabled && !ACTIVITY_LOADED) {
+      loadActivity(true);
+    }
+  }
+  if (next !== "credentials") $("credentialList").innerHTML = "";
+  // Focus what is actually on screen. While gated the page views are hidden, so
+  // focusing their heading is a silent no-op that drops focus to <body> and
+  // restarts the next Tab from the top of the document — the gate's own h1 is
+  // the visible heading, and activatePage has just relabelled it.
+  if (options?.focus) $(DATA ? next + "Heading" : "gateHeading").focus();
+}
+
+function navigateTo(page, href) {
+  history.pushState({ operatorPage: page }, "", href);
+  activatePage(page, { focus: true });
+}
+
 async function load() {
+  const generation = SESSION_GENERATION;
   let token;
   try {
     token = await sessionToken();
   } catch (e) {
+    if (generation !== SESSION_GENERATION) return;
     return showGate("Could not read the Clerk session: " + e.message);
   }
+  if (generation !== SESSION_GENERATION) return;
   if (!token) return showGate("");
   let res;
   try {
     res = await fetch("/ui/data", { headers: { Authorization: "Bearer " + token } });
   } catch (e) {
+    if (generation !== SESSION_GENERATION) return;
     return showGate("Network error: " + e.message);
   }
+  if (generation !== SESSION_GENERATION) return;
   if (res.status === 401 || res.status === 403) {
     if (AUTH.kind === "clerk") {
       return showGate(
@@ -1024,25 +1311,22 @@ async function load() {
     return showGate("Token rejected — enter a valid bearer token.");
   }
   if (!res.ok) return showGate("Error " + res.status);
-  DATA = await res.json();
+  let data;
+  try {
+    data = await res.json();
+  } catch (e) {
+    if (generation !== SESSION_GENERATION) return;
+    return showGate("Operator data could not be read.");
+  }
+  if (generation !== SESSION_GENERATION) return;
+  DATA = data;
   $("gate").classList.add("hidden");
   $("app").classList.remove("hidden");
   $("appNav").classList.remove("hidden");
   const si = DATA.serverInfo || {};
   $("serverInfo").textContent = (si.name || ${escapeScriptString(brand.productName)}) + " v" + (si.version || "?");
-  $("activityTab").classList.toggle("hidden", !DATA.activityEnabled);
-  render();
-}
-
-function showView(view) {
-  const activity = view === "activity";
-  $("configView").classList.toggle("hidden", activity);
-  $("activityView").classList.toggle("hidden", !activity);
-  $("configTab").classList.toggle("active", !activity);
-  $("activityTab").classList.toggle("active", activity);
-  $("configTab").setAttribute("aria-pressed", String(!activity));
-  $("activityTab").setAttribute("aria-pressed", String(activity));
-  if (activity && !ACTIVITY_LOADED) loadActivity(true);
+  updateCapabilities();
+  activatePage(CURRENT_PAGE);
 }
 
 function actorLabel(actor) {
@@ -1081,12 +1365,21 @@ function renderActivity() {
   }
   for (const event of visible) {
     const item = document.createElement("article");
-    item.className = "activity-item " + esc(event.outcome);
-    const retryCopy = event.attempts > 1 ? " · " + event.attempts + " attempts" : "";
+    const outcomeClass = ["success", "error", "timeout"].includes(event.outcome)
+      ? event.outcome
+      : "error";
+    item.className = "activity-item " + outcomeClass;
+    const retryCopy = event.attempts > 1
+      ? " · " + esc(event.attempts) + " attempts"
+      : "";
     const errorCopy = event.errorCode ? " · " + esc(event.errorCode) : "";
     item.innerHTML =
-      '<div><div class="activity-time">' + esc(formatDate(event.occurredAt)) +
-      '</div><div class="activity-actor">' + esc(actorLabel(event.actor)) + '</div></div>' +
+      '<div class="activity-stamp"><span class="dot ' +
+      (outcomeClass === "success" ? "ok" : "") +
+      '" aria-hidden="true"></span><div><time class="activity-time" datetime="' +
+      esc(event.occurredAt) + '">' +
+      esc(formatDate(event.occurredAt)) +
+      '</time><div class="activity-actor">' + esc(actorLabel(event.actor)) + '</div></div></div>' +
       '<div><div class="activity-address">' + esc(event.address) +
       '</div><div class="activity-detail">' + esc(event.source) + retryCopy +
       errorCopy + '</div></div>' +
@@ -1099,22 +1392,45 @@ function renderActivity() {
 
 async function loadActivity(reset) {
   if (!DATA?.activityEnabled) return;
+  const sessionGeneration = SESSION_GENERATION;
+  if (reset) ACTIVITY_GENERATION += 1;
+  const activityGeneration = ACTIVITY_GENERATION;
+  const isCurrent = () =>
+    sessionGeneration === SESSION_GENERATION &&
+    activityGeneration === ACTIVITY_GENERATION;
   $("activityNotice").textContent = "Loading activity…";
+  $("activityNotice").setAttribute("role", "status");
+  $("activityList").setAttribute("aria-busy", "true");
   $("refreshActivity").disabled = true;
   $("moreActivity").disabled = true;
   try {
     const token = await sessionToken();
-    if (!token) throw new Error("Your session has expired.");
+    if (!isCurrent()) return;
+    if (!token) return showGate("Your session has expired.");
     const cursor = reset ? null : ACTIVITY_CURSOR;
     const params = new URLSearchParams({ limit: "50" });
     if (cursor) params.set("cursor", cursor);
     const res = await fetch("/ui/activity?" + params, {
       headers: { Authorization: "Bearer " + token },
     });
+    if (!isCurrent()) return;
     let payload = {};
     try { payload = await res.json(); } catch (e) {}
+    if (!isCurrent()) return;
+    if (res.status === 401) {
+      return showGate("Your session was not accepted. Sign in again.");
+    }
+    if (res.status === 403) {
+      clearActivityState();
+      $("activityNotice").setAttribute("role", "alert");
+      $("activityNotice").textContent =
+        "This identity may not read activity history.";
+      return;
+    }
     if (!res.ok) {
-      throw new Error(payload.error || "Activity could not be loaded (" + res.status + ").");
+      throw new Error(
+        payload.error || "Activity could not be loaded (" + res.status + ")."
+      );
     }
     ACTIVITY = reset
       ? (payload.events || [])
@@ -1124,14 +1440,19 @@ async function loadActivity(reset) {
     $("activityNotice").textContent = "";
     renderActivity();
   } catch (e) {
+    if (!isCurrent()) return;
+    $("activityNotice").setAttribute("role", "alert");
     $("activityNotice").textContent = e.message || "Activity could not be loaded.";
   } finally {
-    $("refreshActivity").disabled = false;
-    $("moreActivity").disabled = false;
+    if (isCurrent()) {
+      $("activityList").setAttribute("aria-busy", "false");
+      $("refreshActivity").disabled = false;
+      $("moreActivity").disabled = false;
+    }
   }
 }
 
-function render() {
+function renderConnections() {
   const q = $("filter").value.trim().toLowerCase();
   const list = $("list");
   list.innerHTML = "";
@@ -1179,69 +1500,8 @@ function render() {
           esc(c.authorizationUrl) + "</p>";
     }
     if (c.credential) {
-      const cred = c.credential;
-      const configured = Boolean(cred.configured);
-      const removable = configured || Boolean(cred.removable);
-      const state = configured
-        ? "configured · ••••" + esc(cred.lastFour || "")
-        : "not configured";
-      const updated = configured && cred.updatedAt
-        ? " · updated " + esc(formatDate(cred.updatedAt))
-        : "";
-      head += '<section class="credential" aria-label="' + esc(cred.label) + '">';
-      head += '<div class="credential-head"><span class="credential-label">' +
-        esc(cred.label) + '</span><span class="credential-state">' + state +
-        updated + "</span></div>";
-      if (cred.description) {
-        head += '<p class="credential-copy meta">' + esc(cred.description) + "</p>";
-      }
-      if (cred.error) {
-        head += '<div class="msg">' + esc(cred.error) + "</div>";
-      }
-      if (cred.notice) {
-        head += '<p class="credential-copy meta">' + esc(cred.notice) + "</p>";
-      }
-      if (AUTH.kind === "clerk") {
-        head += '<div class="credential-actions">';
-        head += '<button class="linklike" type="button" data-credential-action="edit" data-connector="' +
-          esc(c.id) + '">' + (removable ? "Replace" : "Add credential") + "</button>";
-        if (configured && cred.testable) {
-          head += '<button class="linklike" type="button" data-credential-action="test" data-connector="' +
-            esc(c.id) + '">Test</button>';
-        }
-        if (removable) {
-          head += '<button type="button" class="linklike danger" data-credential-action="remove" data-connector="' +
-            esc(c.id) + '">Remove</button>';
-        }
-        head += "</div>";
-        head += '<div class="credential-form hidden" data-credential-form="' +
-          esc(c.id) + '">';
-        if (cred.fields && cred.fields.length) {
-          head += '<div class="credential-fields">';
-          for (const field of cred.fields) {
-            head += '<div class="credential-field"><label>' +
-              esc(field.label) + '</label><input type="' +
-              esc(field.inputType || "password") + '" data-credential-field="' +
-              esc(field.name) + '" aria-label="' + esc(field.label) +
-              '" placeholder="' + esc(field.placeholder || field.label) +
-              '" autocomplete="' +
-              (field.inputType === "password" ? "new-password" : "off") +
-              '" autocapitalize="none" spellcheck="false"></div>';
-          }
-          head += "</div>";
-        } else {
-          head += '<input type="password" data-credential-input="' +
-            esc(c.id) + '" aria-label="' + esc(cred.label) + '" placeholder="' +
-            esc(cred.placeholder || "Paste credential") +
-            '" autocomplete="new-password" autocapitalize="none" spellcheck="false">';
-        }
-        head += '<button class="linklike" type="button" data-credential-action="save" data-connector="' +
-          esc(c.id) + '">Save</button><button class="linklike" type="button" data-credential-action="cancel" data-connector="' +
-          esc(c.id) + '">Cancel</button></div>';
-      } else {
-        head += '<p class="credential-copy meta">Team sign in is required to manage this credential.</p>';
-      }
-      head += "</section>";
+      head += '<p class="connector-auth"><a class="linklike" href="/credentials" ' +
+        'data-operator-page="credentials">Manage credential →</a></p>';
     }
     let body = "";
     if (tools.length) {
@@ -1259,12 +1519,122 @@ function render() {
     list.appendChild(el);
   }
   if (!list.children.length) {
-    list.innerHTML = '<p class="empty">No connectors or tools match this filter.</p>';
+    list.innerHTML = '<p class="empty">' +
+      (q
+        ? "No connectors or tools match this filter."
+        : "No connectors are declared in this deployment.") +
+      "</p>";
   }
 }
 
-async function credentialRequest(connector, method, action, body) {
+function renderCredentials() {
+  const list = $("credentialList");
+  list.innerHTML = "";
+  if (DATA.credentialManagement !== "available") return;
+  for (const c of DATA.connectors.filter((connector) => connector.credential)) {
+    const cred = c.credential;
+    const configured = Boolean(cred.configured);
+    const removable = configured || Boolean(cred.removable);
+    const state = configured
+      ? cred.fields?.length
+        ? "configured"
+        : "configured · ••••" + esc(cred.lastFour || "")
+      : "not configured";
+    const updated = configured && cred.updatedAt
+      ? " · updated " + esc(formatDate(cred.updatedAt))
+      : "";
+    const el = document.createElement("section");
+    el.className = "credential-card";
+    el.id = "credential-" + c.id;
+    el.setAttribute("aria-labelledby", "credential-title-" + c.id);
+    let body = '<div class="credential-head"><div class="connector-title">' +
+      '<span class="dot ' + (configured ? "ok" : "auth_required") +
+      '" aria-hidden="true"></span><h2 id="credential-title-' + esc(c.id) + '">' +
+      esc(c.title || c.id) + '</h2></div><span class="credential-state">' +
+      state + updated + "</span></div>";
+    body += '<p class="mono">' + esc(c.id) + " · " + esc(cred.label) + "</p>";
+    if (cred.description) {
+      body += '<p class="credential-copy meta">' + esc(cred.description) + "</p>";
+    }
+    if (cred.fields?.length) {
+      body += '<div class="credential-field-summary">';
+      for (const field of cred.fields) {
+        const fieldState = field.configured
+          ? "configured · ••••" + esc(field.lastFour || "") +
+            (field.updatedAt ? " · updated " + esc(formatDate(field.updatedAt)) : "")
+          : "not configured";
+        body += '<div><span>' + esc(field.label) +
+          '</span><span class="meta">' + fieldState + "</span></div>";
+      }
+      body += "</div>";
+    }
+    if (c.credentialCheck) {
+      const check = c.credentialCheck;
+      const verdict = check.state === "ok"
+        ? "healthy"
+        : check.state === "auth_required"
+          ? "needs authorization"
+          : "check failed";
+      body += '<p class="connector-check meta">Liveness: ' + esc(verdict) +
+        " · " + esc(formatDate(check.checkedAt)) +
+        (check.message ? " — " + esc(check.message) : "") + "</p>";
+    }
+    if (cred.error) body += '<div class="msg">' + esc(cred.error) + "</div>";
+    // Leftover stored fields are not an error — the credential still works, so
+    // this stays muted copy rather than the msg block an actual failure earns.
+    if (cred.notice) {
+      body += '<p class="credential-copy meta">' + esc(cred.notice) + "</p>";
+    }
+    body += '<div class="credential-actions">';
+    body += '<button class="linklike" type="button" data-credential-action="edit" data-connector="' +
+      esc(c.id) + '">' + (removable ? "Replace" : "Add credential") + "</button>";
+    if (configured && cred.testable) {
+      body += '<button class="linklike" type="button" data-credential-action="test" data-connector="' +
+        esc(c.id) + '">Test</button>';
+    }
+    if (removable) {
+      body += '<button type="button" class="linklike danger" data-credential-action="remove" data-connector="' +
+        esc(c.id) + '">Remove</button>';
+    }
+    body += "</div>";
+    body += '<div class="credential-form hidden" data-credential-form="' +
+      esc(c.id) + '">';
+    if (cred.fields && cred.fields.length) {
+      body += '<div class="credential-fields">';
+      for (let index = 0; index < cred.fields.length; index += 1) {
+        const field = cred.fields[index];
+        const inputId = "credential-input-" + c.id + "-" + index;
+        body += '<div class="credential-field"><label for="' + esc(inputId) + '">' +
+          esc(field.label) + '</label><input id="' + esc(inputId) + '" type="' +
+          esc(field.inputType || "password") + '" data-credential-field="' +
+          esc(field.name) + '" placeholder="' + esc(field.placeholder || field.label) +
+          '" autocomplete="' +
+          (field.inputType === "password" ? "new-password" : "off") +
+          '" autocapitalize="none" spellcheck="false"></div>';
+      }
+      body += "</div>";
+    } else {
+      const inputId = "credential-input-" + c.id;
+      body += '<label class="visually-hidden" for="' + esc(inputId) + '">' +
+        esc(cred.label) + '</label><input id="' + esc(inputId) +
+        '" type="password" data-credential-input="' +
+        esc(c.id) + '" aria-label="' + esc(cred.label) + '" placeholder="' +
+        esc(cred.placeholder || "Paste credential") +
+        '" autocomplete="new-password" autocapitalize="none" spellcheck="false">';
+    }
+    body += '<button class="linklike" type="button" data-credential-action="save" data-connector="' +
+      esc(c.id) + '">Save</button><button class="linklike" type="button" data-credential-action="cancel" data-connector="' +
+      esc(c.id) + '">Cancel</button></div>';
+    el.innerHTML = body;
+    list.appendChild(el);
+  }
+}
+
+async function credentialRequest(connector, method, action, body, generation) {
   const token = await sessionToken();
+  if (generation !== SESSION_GENERATION) {
+    throw new Error("The operator session changed.");
+  }
   if (!token) throw new Error("Your Clerk session has expired.");
   const suffix = action ? "/" + action : "";
   const res = await fetch(
@@ -1290,12 +1660,13 @@ function credentialForm(connector) {
     CSS.escape(connector) + '"]');
 }
 
-$("list").onclick = async (event) => {
+$("credentialList").onclick = async (event) => {
   const button = event.target.closest("[data-credential-action]");
   if (!button) return;
   const connector = button.dataset.connector;
   const action = button.dataset.credentialAction;
   const form = credentialForm(connector);
+  const generation = SESSION_GENERATION;
 
   if (action === "edit") {
     form.classList.remove("hidden");
@@ -1305,6 +1676,10 @@ $("list").onclick = async (event) => {
   if (action === "cancel") {
     form.querySelectorAll("input").forEach((input) => { input.value = ""; });
     form.classList.add("hidden");
+    document.querySelector(
+      '[data-credential-action="edit"][data-connector="' +
+      CSS.escape(connector) + '"]'
+    )?.focus();
     return;
   }
   if (action === "remove" && !window.confirm(
@@ -1312,6 +1687,7 @@ $("list").onclick = async (event) => {
   )) return;
 
   setNotice("");
+  $("credentialList").setAttribute("aria-busy", "true");
   const buttons = [...document.querySelectorAll(
     '[data-connector="' + CSS.escape(connector) + '"]'
   )];
@@ -1326,42 +1702,65 @@ $("list").onclick = async (event) => {
           if (!value) throw new Error("Complete every credential field before saving.");
           values[input.dataset.credentialField] = value;
         }
-        await credentialRequest(connector, "PUT", "", { values });
+        await credentialRequest(connector, "PUT", "", { values }, generation);
       } else {
         const input = form.querySelector("[data-credential-input]");
         const value = input.value.trim();
         if (!value) throw new Error("Paste a credential before saving.");
-        await credentialRequest(connector, "PUT", "", { value });
+        await credentialRequest(connector, "PUT", "", { value }, generation);
       }
+      if (generation !== SESSION_GENERATION) return;
       form.querySelectorAll("input").forEach((input) => { input.value = ""; });
       setNotice("Credential saved.");
       await load();
+      if (generation !== SESSION_GENERATION) return;
+      $("credentialNotice").focus();
     } else if (action === "remove") {
-      await credentialRequest(connector, "DELETE");
+      await credentialRequest(connector, "DELETE", "", null, generation);
+      if (generation !== SESSION_GENERATION) return;
       setNotice("Credential removed.");
       await load();
+      if (generation !== SESSION_GENERATION) return;
+      $("credentialNotice").focus();
     } else if (action === "test") {
-      const result = await credentialRequest(connector, "POST", "test");
+      const result = await credentialRequest(
+        connector,
+        "POST",
+        "test",
+        null,
+        generation,
+      );
+      if (generation !== SESSION_GENERATION) return;
       setNotice(
         result.message || (result.ok ? "Credential is valid." : "Credential test failed."),
         !result.ok,
       );
     }
   } catch (e) {
+    if (generation !== SESSION_GENERATION) return;
     setNotice(e.message || "Credential action failed.", true);
   } finally {
-    buttons.forEach((item) => { item.disabled = false; });
+    if (generation === SESSION_GENERATION) {
+      $("credentialList").setAttribute("aria-busy", "false");
+      buttons.forEach((item) => { item.disabled = false; });
+    }
   }
 };
 
-$("save").onclick = () => {
+$("save").onclick = async () => {
   const v = $("token").value.trim();
   if (!v) return;
+  clearIdentityState();
   localStorage.setItem(KEY, v);
   $("token").value = "";
-  load();
+  await load();
+  if (DATA) $(CURRENT_PAGE + "Heading").focus();
 };
-$("change").onclick = () => { localStorage.removeItem(KEY); showGate(""); };
+$("change").onclick = () => {
+  localStorage.removeItem(KEY);
+  showGate("");
+  $("token").focus();
+};
 $("copyMcpUrl").onclick = async () => {
   const button = $("copyMcpUrl");
   try {
@@ -1376,14 +1775,35 @@ $("signin").onclick = () => Clerk.redirectToSignIn({
   signInFallbackRedirectUrl: window.location.href,
   signUpFallbackRedirectUrl: window.location.href,
 });
-$("gateSignout").onclick = () => Clerk.signOut({ redirectUrl: window.location.href });
-$("signout").onclick = () => Clerk.signOut({ redirectUrl: window.location.href });
-$("filter").oninput = () => { if (DATA) render(); };
-$("configTab").onclick = () => showView("config");
-$("activityTab").onclick = () => showView("activity");
+function signOut() {
+  clearIdentityState();
+  return Clerk.signOut({ redirectUrl: window.location.href });
+}
+$("gateSignout").onclick = signOut;
+$("signout").onclick = signOut;
+$("filter").oninput = () => { if (DATA) renderConnections(); };
 $("refreshActivity").onclick = () => loadActivity(true);
 $("moreActivity").onclick = () => loadActivity(false);
 $("activitySearch").oninput = () => renderActivity();
+document.addEventListener("click", (event) => {
+  const link = event.target.closest("a[data-operator-page]");
+  if (
+    !link ||
+    event.defaultPrevented ||
+    event.button !== 0 ||
+    event.metaKey ||
+    event.ctrlKey ||
+    event.shiftKey ||
+    event.altKey
+  ) return;
+  const target = new URL(link.href, window.location.href);
+  if (target.origin !== window.location.origin) return;
+  event.preventDefault();
+  navigateTo(link.dataset.operatorPage, target.pathname + target.search + target.hash);
+});
+window.addEventListener("popstate", () => {
+  activatePage(pageForPath(window.location.pathname), { focus: true });
+});
 
 async function init() {
   if (AUTH.kind === "clerk") {
@@ -1407,6 +1827,7 @@ async function init() {
     $("tokenGate").classList.remove("hidden");
     $("change").classList.remove("hidden");
   }
+  activatePage(pageForPath(window.location.pathname));
   await load();
 }
 

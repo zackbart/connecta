@@ -45,8 +45,9 @@ Enable Dynamic Client Registration on the Clerk instance (OAuth Applications →
 DCR) so Claude/Cursor can self-register — full walkthrough in
 [setting up Clerk](../../docs/auth.md#setting-up-clerk-walkthrough).
 
-Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/ui` for
-the operator dashboard.
+Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
+Connections. Credentials is at `/credentials`, Activity is at `/activity`, and
+legacy `/ui` redirects to `/`.
 
 ## Toolkits (multi-team)
 

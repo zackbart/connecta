@@ -1679,6 +1679,13 @@ describe("/mcp toolkit binding", () => {
           headers: { Authorization: `Bearer ${token}` },
         }),
       );
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const shell = await c.fetch(new Request(`${BASE}${path}`));
+      expect(shell.status).toBe(200);
+      const html = await shell.text();
+      expect(html).not.toContain("zendesk");
+      expect(html).not.toContain("notion");
+    }
     for (const path of ["/ui/data", "/ui/activity"]) {
       const restricted = await get(path, SUPPORT_TOKEN);
       expect(restricted.status).toBe(403);

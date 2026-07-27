@@ -696,7 +696,7 @@ describe("server open routes", () => {
     const res = await c.fetch(new Request("http://connecta.test/ui?probe=1"));
     expect(res.status).toBe(308);
     expect(res.headers.get("location")).toBe(
-      "https://connecta.test/ui?probe=1",
+      "https://connecta.test/?probe=1",
     );
   });
 
@@ -754,6 +754,15 @@ describe("server open routes", () => {
     expect(await health.text()).toContain('"status":"ok"');
     const mcp = await c.fetch(new Request(`${BASE}/mcp`, { method: "POST" }));
     expect(mcp.status).toBe(401);
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const shell = await c.fetch(new Request(`${BASE}${path}`));
+      expect(shell.status).toBe(200);
+      expect(await shell.text()).not.toBe("hijacked");
+      const write = await c.fetch(
+        new Request(`${BASE}${path}`, { method: "POST" }),
+      );
+      expect(write.status).toBe(405);
+    }
   });
 
   it("a throwing connector route is a 500, not a 404", async () => {
@@ -806,12 +815,20 @@ describe("server open routes", () => {
 
   it("protects the UI from framing without applying UI CSP to MCP routes", async () => {
     const c = makeConnecta();
-    const ui = await c.fetch(new Request(`${BASE}/ui`));
-    // The /ui page ships a nonce-based script CSP that still forbids framing.
-    const csp = ui.headers.get("Content-Security-Policy") ?? "";
-    expect(csp).toContain("script-src 'nonce-");
-    expect(csp).toContain("frame-ancestors 'none'");
-    expect(ui.headers.get("X-Frame-Options")).toBe("DENY");
+    for (const path of ["/", "/credentials", "/activity"]) {
+      const ui = await c.fetch(new Request(`${BASE}${path}`));
+      const csp = ui.headers.get("Content-Security-Policy") ?? "";
+      expect(csp).toContain("script-src 'nonce-");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(ui.headers.get("X-Frame-Options")).toBe("DENY");
+    }
+
+    const legacy = await c.fetch(new Request(`${BASE}/ui`));
+    expect(legacy.status).toBe(308);
+    expect(legacy.headers.get("Content-Security-Policy")).toContain(
+      "frame-ancestors 'none'",
+    );
+    expect(legacy.headers.get("X-Frame-Options")).toBe("DENY");
 
     const health = await c.fetch(new Request(`${BASE}/health`));
     expect(health.headers.get("Content-Security-Policy")).toBeNull();

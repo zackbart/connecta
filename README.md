@@ -62,12 +62,13 @@ platform to administer.
 
 **Credentials stay server-side.** Downstream tokens live in an AES-GCM encrypted
 vault over the deployment's own storage, with the key held outside it. A
-connector reaches its own credential through `ctx.credential`; `/ui`, the
-meta-tools, and the code sandbox only ever see masked metadata. Rotating a token
-is an operator action rather than a redeploy — though writing to the vault is
-deliberately narrower than everything else, requiring a Clerk-authenticated
-operator on a same-origin request, so a bearer-only deployment cannot administer
-credentials from the browser. Which tools exist is still code either way.
+connector reaches its own credential through `ctx.credential`; the operator
+pages, meta-tools, and code sandbox never expose a secret value. Rotating a token
+at `/credentials` is an operator action rather than a redeploy — though writing
+to the vault is deliberately narrower than everything else, requiring a
+Clerk-authenticated operator on a same-origin request, so a bearer-only
+deployment cannot administer credentials from the browser. Which tools exist
+is still code either way.
 
 **Read-only is fail-closed.** Only tools explicitly annotated `readOnlyHint:
 true` are reachable through `call_tool`, `batch_call`, and the sandbox. Missing,
@@ -93,14 +94,16 @@ generated code, search text, or raw error messages. The exclusion is structural
 rather than a redaction pass: the event type has nowhere to put a payload, which
 is what keeps an operations log from becoming something worth stealing.
 
-**An operator dashboard that can only look.** `GET /ui` is a read-only status
-page with no build step: connector health, tool counts, downstream authorization
-links, credential controls, and an activity tab when a store is configured. It
-displays state and administers credentials; it cannot change what an agent is
-allowed to call. Credentials connecta stores are also probed for liveness
+**Operator pages that cannot administer the deployment.** Connections at `GET /`
+shows connector health, tool counts, and downstream authorization links;
+`/credentials` rotates stored secrets; and `/activity` shows the optional
+payload-free ledger. They share one data-free shell with no build step and use
+authenticated private APIs for deployment data. They cannot add a connector,
+change policy, or alter what an agent may call. Credentials connecta stores are
+also probed for liveness
 proactively — using each connector's own test or status hook, never a downstream
 tool call — so a dead token surfaces as `auth_required` with the URL to open on
-`/ui` and in `list_connectors` before an agent's real call trips over it.
+Connections and in `list_connectors` before an agent's real call trips over it.
 
 ## When not to use it
 
@@ -154,7 +157,7 @@ const connecta = createConnecta({
   ],
 });
 
-listen(connecta, 8787); // MCP at http://localhost:8787/mcp, status at /ui
+listen(connecta, 8787); // MCP at /mcp; Connections at http://localhost:8787/
 ```
 
 Point an MCP client at `http://localhost:8787/mcp` with an
@@ -186,6 +189,7 @@ endpoint, credential, and tool choices stay in your project, declared with
   the [config options](https://github.com/zackbart/connecta/blob/main/docs/operations.md#running-it),
   [code mode](https://github.com/zackbart/connecta/blob/main/docs/code-mode.md#code-mode-execute_code),
   [toolkits](https://github.com/zackbart/connecta/blob/main/docs/toolkits.md#toolkits-scoped-views),
+  [operator pages](https://github.com/zackbart/connecta/blob/main/docs/operator-ui.md#status-ui),
   or [credential health](https://github.com/zackbart/connecta/blob/main/docs/storage-and-credentials.md#credential-health-proactive-liveness-checks).
 - **[Decisions](https://github.com/zackbart/connecta/blob/main/docs/decisions.md)**
   — what connecta refuses to be, which alternatives lost and why, and the

@@ -51,8 +51,8 @@ export interface ClerkAuthOptions {
   allowedDomains?: readonly string[]; // e.g. ["acme.com"] — who may sign in
   gate?: (userId: string, clerk: ClerkClient) => boolean | Promise<boolean>;
   scopes?: string[];    // advertised scopes; default ["openid","profile","email"]
-  signInUrl?: string;   // hosted Account Portal URL used by /ui; absolute https
-  signUpUrl?: string;   // hosted Account Portal URL used by /ui; absolute https
+  signInUrl?: string;   // hosted Account Portal URL used by operator pages; absolute https
+  signUpUrl?: string;   // hosted Account Portal URL used by operator pages; absolute https
   toolkits?: readonly string[]; // toolkits every admitted user may open (toolkits.md)
   unscoped?: boolean;   // also allow a connection with no ?toolkit=
 }
@@ -73,8 +73,8 @@ export interface ClerkAuthOptions {
 - Verifies tokens with `@clerk/backend`
   `createClerkClient(...).authenticateRequest(req, { acceptsToken:
   ["oauth_token", "session_token"] })` → `toAuth().userId`. MCP clients use OAuth
-  access tokens; `/ui` uses the signed-in operator's short-lived Clerk session
-  token. The SDK's `authorizedParties` option is deliberately **not** passed —
+  access tokens; the operator pages use the signed-in operator's short-lived
+  Clerk session token. The SDK's `authorizedParties` option is deliberately **not** passed —
   an OAuth access token may be a JWT with no `azp` claim, and Clerk rejects
   `azp=undefined` whenever that option is set. The pin it would provide is
   applied by hand instead, and only to tokens that carry the claim: a

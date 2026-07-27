@@ -8,8 +8,13 @@ import type { ConnectaBranding, Logger } from "../src/types.js";
 
 const BASE = "https://connecta.test";
 
-/** Both branded HTML surfaces: the dashboard and the OAuth result page. */
-const PAGES = ["/ui", "/oauth/callback/unknown-connector"];
+/** Every branded operator shell plus the OAuth result page. */
+const PAGES = [
+  "/",
+  "/credentials",
+  "/activity",
+  "/oauth/callback/unknown-connector",
+];
 
 function make(branding?: ConnectaBranding, extra?: { logger?: Logger }) {
   return createConnecta({
@@ -134,9 +139,11 @@ describe("branding in served pages", () => {
       ownerName: "Acme Inc",
       ownerUrl: "https://acme.example",
       themeColor: "#101010",
-    }).fetch(new Request(`${BASE}/ui`));
+    }).fetch(new Request(`${BASE}/`));
     const body = await res.text();
-    expect(body).toContain("<title>Acme MCP — Acme Inc</title>");
+    expect(body).toContain(
+      "<title>Connections — Acme MCP — Acme Inc</title>",
+    );
     expect(body).toContain('content="#101010"');
     expect(body).toContain('href="https://acme.example"');
     expect(body).not.toContain("Connecta");
@@ -147,7 +154,7 @@ describe("branding in served pages", () => {
       await make({
         productName: "Acme MCP",
         productUrl: "https://acme.example/docs",
-      }).fetch(new Request(`${BASE}/ui`))
+      }).fetch(new Request(`${BASE}/`))
     ).text();
     expect(body).toContain(
       '<a class="brand navlink" href="https://acme.example/docs">Acme MCP</a>',
@@ -166,7 +173,7 @@ describe("branding in served pages", () => {
     );
     const icoRes = await c.fetch(new Request(`${BASE}/favicon.ico`));
     expect(new Uint8Array(await icoRes.arrayBuffer())).toEqual(ico);
-    const ui = await (await c.fetch(new Request(`${BASE}/ui`))).text();
+    const ui = await (await c.fetch(new Request(`${BASE}/`))).text();
     expect(ui).toContain('href="https://cdn.acme.example/icon.svg"');
   });
 
@@ -202,7 +209,7 @@ describe("branding is not an injection vector", () => {
   it("cannot break out of the dashboard's script block", async () => {
     const body = await (
       await make({ productName: '</script><img src=x onerror=alert(1)>' }).fetch(
-        new Request(`${BASE}/ui`),
+        new Request(`${BASE}/`),
       )
     ).text();
     expect(body).not.toContain("</script><img");
@@ -294,7 +301,7 @@ describe("branding is not an injection vector", () => {
       await make({
         productName: 'Acme" onload="alert(1)',
         ownerName: "<b>owner</b>",
-      }).fetch(new Request(`${BASE}/ui`))
+      }).fetch(new Request(`${BASE}/`))
     ).text();
     expect(body).not.toContain('onload="alert(1)"');
     expect(body).not.toContain("<b>owner</b>");
