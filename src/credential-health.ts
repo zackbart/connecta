@@ -17,6 +17,7 @@
 
 import {
   credentialTestRule,
+  STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
   storedCredentialShape,
 } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
@@ -627,7 +628,7 @@ export class CredentialHealthChecker {
       }
       const shape = storedCredentialShape(connector.credential, values);
       if (shape.state === "mismatch") {
-        // Drift is a persistent operator-error state, not an event: left
+        // Drift is a persistent operator-reconfiguration state, not an event:
         // outside the freshness gate it would spend a write on every sweep in
         // every isolate, forever, against exactly the deployments this feature
         // is meant to help (and on Cloudflare KV those writes are metered).
@@ -640,7 +641,7 @@ export class CredentialHealthChecker {
           const current = await this.store.get(connectorId);
           if (
             current &&
-            current.state === "error" &&
+            current.state === "auth_required" &&
             current.message === shape.message &&
             Date.now() - Date.parse(current.checkedAt) < this.intervalMs
           ) {
@@ -648,7 +649,9 @@ export class CredentialHealthChecker {
           }
         }
         return this.settle(connectorId, started, generation, {
-          state: "error",
+          // Unlike a failed check, this is a completed static classification:
+          // the current declaration cannot consume what the vault holds.
+          state: "auth_required",
           checkedAt: new Date().toISOString(),
           message: shape.message,
         });
@@ -792,9 +795,12 @@ export class CredentialHealthChecker {
  *    blip. Error verdicts stay visible in `credentialCheck` (an operator wants
  *    to know checks are failing) but the status keeps coming from observed real
  *    calls, which is evidence.
- * 2. **A successful real call retires the verdict.** Traffic beats a background
- *    probe, so a `lastSuccessAt` at or after `checkedAt` means the credential
- *    demonstrably works whatever the check concluded. The next check re-decides.
+ * 2. **A successful real call retires the verdict, except static shape drift.**
+ *    Traffic beats a background probe, so a `lastSuccessAt` at or after
+ *    `checkedAt` normally means the credential demonstrably works. Stored-shape
+ *    drift is different: a credential-independent tool can succeed without
+ *    making a missing declared field appear, so only replacement/removal clears
+ *    that verdict.
  *
  * `auth_required` deliberately outranks an observed real-call *failure*: both
  * say something is wrong, and only one of them carries the URL that fixes it.
@@ -805,6 +811,7 @@ export function credentialVerdictApplies(
   lastSuccessAt: string | undefined,
 ): boolean {
   if (!record || record.state !== "auth_required") return false;
+  if (record.message === STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR) return true;
   if (!lastSuccessAt) return true;
   const success = Date.parse(lastSuccessAt);
   return Number.isNaN(success) || success < Date.parse(record.checkedAt);

@@ -430,17 +430,25 @@ describe("credential liveness checks", () => {
     expect(outcome).toMatchObject({
       connectorId: "drift",
       record: {
-        state: "error",
+        state: "auth_required",
         message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
       },
     });
     expect(outcome.skipped).toBeUndefined();
     expect(await registry.credentialHealthFor("drift")).toMatchObject({
-      state: "error",
+      state: "auth_required",
       message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
     });
     expect(calls.test).toBe(0);
     expect(calls.status).toBe(0);
+
+    // A credential-independent tool could succeed, but it cannot make a
+    // missing declared field appear. Drift remains decisive until replacement.
+    await sleep(2);
+    registry.recordSuccess("drift", 1);
+    expect((await cachedStatus(registry, "drift")).status).toBe(
+      "auth_required",
+    );
   });
 
   it("replaces a fresh ok verdict when single storage drifts to named fields", async () => {
@@ -485,13 +493,13 @@ describe("credential liveness checks", () => {
     expect(outcome).toMatchObject({
       connectorId: "drift",
       record: {
-        state: "error",
+        state: "auth_required",
         message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
       },
     });
     expect(outcome.skipped).toBeUndefined();
     expect(await registry.credentialHealthFor("drift")).toMatchObject({
-      state: "error",
+      state: "auth_required",
       message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
     });
     expect(calls.test).toBe(0);
@@ -590,10 +598,10 @@ describe("credential liveness checks", () => {
     );
     // The drift verdict this sweep would form, already stored and stamped two
     // minutes ago: past MIN_WRITE_GAP_MS, so only the freshness gate can stop
-    // the write. Drift is a durable operator-error state; re-settling it on
+    // the write. Drift is a durable reconfiguration state; re-settling it on
     // every sweep in every isolate would bill a metered write for nothing.
     await registry.recordCredentialHealth("drift", {
-      state: "error",
+      state: "auth_required",
       checkedAt: new Date(Date.now() - 120_000).toISOString(),
       message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
     });
@@ -605,7 +613,7 @@ describe("credential liveness checks", () => {
       connectorId: "drift",
       skipped: "fresh",
       record: {
-        state: "error",
+        state: "auth_required",
         message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
       },
     });
