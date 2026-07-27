@@ -145,8 +145,9 @@ Two known implementations:
   function name, and arguments together) may be at most 256 KiB of UTF-8.
   Larger values fail that host call before entering the other process.
   The child applies the final ~24k-character result policy before sending a
-  result, and every complete parent/child IPC envelope has a 1 MiB hard
-  ceiling.
+  result. Captured logs keep their 200-entry, 8k-character-per-entry, and
+  256k-character memory caps, plus a 512 KiB budget measured after both JSON
+  encodings; every complete parent/child IPC envelope has a 1 MiB hard ceiling.
 
   ```ts
   import { quickJsExecutor } from "@zackbart/connecta/quickjs";

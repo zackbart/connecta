@@ -1,11 +1,14 @@
 import type { ExecuteResult } from "../types.js";
 import type { QuickJsRuntimeOptions } from "./quickjs-runtime.js";
 
-// The guest result is shaped to 24k characters before transport and QuickJS
-// capture already bounds logs to 256k characters. Every complete message is
-// measured against this ceiling before process.send; one MiB leaves room for
-// multibyte log text and envelope escaping while remaining a hard IPC bound.
+// An execution result is serialized once into payloadJson and again as that
+// string is embedded in ChildToParentMessage. Captured logs therefore get a
+// separate 512 KiB budget measured after both JSON encodings. The final result
+// is shaped to 24k characters; even if every character takes its worst-case
+// seven transport bytes, that leaves ample structural overhead below this hard
+// process.send ceiling.
 export const MAX_QUICKJS_IPC_BYTES = 1024 * 1024;
+export const MAX_QUICKJS_LOG_TRANSPORT_BYTES = 512 * 1024;
 /** Preserve #84's stopgap before a host value enters the child/WASM process. */
 export const MAX_QUICKJS_HOST_RPC_BYTES = 256 * 1024;
 

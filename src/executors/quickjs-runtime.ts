@@ -14,6 +14,10 @@ import {
   type QuickJSDeferredPromise,
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
+import {
+  MAX_QUICKJS_LOG_TRANSPORT_BYTES,
+  serializedBytes,
+} from "./quickjs-protocol.js";
 
 export interface QuickJsRuntimeOptions {
   timeoutMs: number;
@@ -31,11 +35,16 @@ const MAX_LOG_ENTRIES = 200;
 // Cap each entry AND the cumulative buffer at capture time so untrusted guest
 // code can't retain unbounded host memory: a single `console.log("x".repeat(N))`
 // otherwise copies the whole N-char guest string into a host array we hold for
-// the entire execution. 8k chars/entry is generous for glue-code logging (the
-// join in execute.ts trims the assembled log to 4k anyway), and 256k total
-// keeps the worst case — 200 maxed-out entries — bounded well under a MiB.
+// the entire execution. The separate transport-byte budget below accounts for
+// JSON escaping and is what keeps the result envelope below its IPC ceiling.
 const MAX_LOG_ENTRY_CHARS = 8_000;
 const MAX_LOG_TOTAL_CHARS = 256_000;
+const LOG_ENTRY_LIMIT_MARKER = `[log truncated after ${MAX_LOG_ENTRIES} entries]`;
+const LOG_SIZE_LIMIT_MARKER = "[log truncated: size budget exceeded]";
+const MAX_LOG_MARKER_TRANSPORT_BYTES = Math.max(
+  logTransportBytes(LOG_ENTRY_LIMIT_MARKER),
+  logTransportBytes(LOG_SIZE_LIMIT_MARKER),
+);
 // Keep one host result below the range where quickjs-emscripten@0.32.0 can
 // nondeterministically fail during runtime disposal under concurrent load.
 // This still lets guest code reduce data more than ten times larger than
@@ -44,6 +53,12 @@ const MAX_HOST_RESULT_BYTES = 256 * 1024;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function logTransportBytes(entry: string): number {
+  // The log is encoded into ExecutionPayload, then that payloadJson string is
+  // encoded into ChildToParentMessage. Measure the units the IPC cap sees.
+  return serializedBytes(JSON.stringify(JSON.stringify(entry)));
 }
 
 function exceedsUtf8ByteLimit(value: string, limit: number): boolean {
@@ -175,15 +190,16 @@ function installBridge(
   };
   armWake(bridge);
 
-  // Running total of chars actually retained in `logs`; once the cumulative
-  // budget is spent we push one marker and drop the rest, so a flood of large
-  // entries can't grow the host array without bound.
+  // Keep both the in-memory character budget and the twice-JSON-encoded
+  // transport budget. Reserve enough byte budget for whichever truncation
+  // marker ends the stream.
   let logTotalChars = 0;
+  let logTotalTransportBytes = 0;
   let logBudgetSpent = false;
   const logFn = ctx.newFunction("__log", (h) => {
     if (logs.length >= MAX_LOG_ENTRIES) {
       if (logs.length === MAX_LOG_ENTRIES) {
-        logs.push(`[log truncated after ${MAX_LOG_ENTRIES} entries]`);
+        logs.push(LOG_ENTRY_LIMIT_MARKER);
       }
       return;
     }
@@ -194,13 +210,19 @@ function installBridge(
     if (entry.length > MAX_LOG_ENTRY_CHARS) {
       entry = `${entry.slice(0, MAX_LOG_ENTRY_CHARS)}…[entry truncated]`;
     }
-    if (logTotalChars + entry.length > MAX_LOG_TOTAL_CHARS) {
-      logs.push("[log truncated: size budget exceeded]");
+    const entryTransportBytes = logTransportBytes(entry);
+    if (
+      logTotalChars + entry.length > MAX_LOG_TOTAL_CHARS ||
+      logTotalTransportBytes + entryTransportBytes >
+        MAX_QUICKJS_LOG_TRANSPORT_BYTES - MAX_LOG_MARKER_TRANSPORT_BYTES
+    ) {
+      logs.push(LOG_SIZE_LIMIT_MARKER);
       logBudgetSpent = true;
       return;
     }
     logs.push(entry);
     logTotalChars += entry.length;
+    logTotalTransportBytes += entryTransportBytes;
   });
   ctx.setProp(ctx.global, "__log", logFn);
   logFn.dispose();
