@@ -19,6 +19,7 @@ import type {
   CredentialCheckResult,
   CredentialHealthConfig,
 } from "./credential-health.js";
+import type { DeferredWork } from "./connector-scope.js";
 import type {
   Connector,
   ConnectaBranding,
@@ -192,7 +193,10 @@ export interface Connecta {
    *
    * ```ts
    * // Cloudflare Workers (wrangler.jsonc: "triggers": { "crons": ["*\/15 * * * *"] })
-   * async scheduled(_c, env, ctx) { ctx.waitUntil(build(env).checkCredentials()); }
+   * async scheduled(_c, env, ctx) {
+   *   const defer = ctx.waitUntil.bind(ctx);
+   *   ctx.waitUntil(build(env).checkCredentials({ defer }));
+   * }
    * // Node
    * setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
    * ```
@@ -208,6 +212,11 @@ export interface Connecta {
     baseUrl?: string;
     force?: boolean;
     ids?: string[];
+    /**
+     * Runtime continuation for bounded teardown after the check result is ready.
+     * Workers should pass `ctx.waitUntil.bind(ctx)`.
+     */
+    defer?: DeferredWork;
   }) => Promise<CredentialCheckResult[]>;
 }
 
@@ -532,10 +541,14 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           ),
         );
       }
-      return registry.checkCredentialHealth(baseUrl, {
-        ...(opts.force !== undefined ? { force: opts.force } : {}),
-        ...(opts.ids ? { ids: opts.ids } : {}),
-      });
+      return registry.checkCredentialHealth(
+        baseUrl,
+        {
+          ...(opts.force !== undefined ? { force: opts.force } : {}),
+          ...(opts.ids ? { ids: opts.ids } : {}),
+        },
+        opts.defer,
+      );
     },
   };
 }

@@ -18,6 +18,7 @@ import {
   type CredentialHealthConfig,
   type CredentialHealthRecord,
 } from "./credential-health.js";
+import type { DeferredWork } from "./connector-scope.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
@@ -618,8 +619,9 @@ export class Registry implements RegistryView {
   checkCredentialHealth(
     baseUrl: string,
     opts?: CredentialCheckOptions,
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult[]> {
-    return this.credentialHealth.check(baseUrl, opts);
+    return this.credentialHealth.check(baseUrl, opts, defer);
   }
 
   /**
@@ -630,8 +632,9 @@ export class Registry implements RegistryView {
    */
   sweepCredentialHealthIfDue(
     baseUrl: string,
+    defer?: DeferredWork,
   ): Promise<CredentialCheckResult[]> | undefined {
-    return this.credentialHealth.sweepIfDue(baseUrl);
+    return this.credentialHealth.sweepIfDue(baseUrl, defer);
   }
 
   /**

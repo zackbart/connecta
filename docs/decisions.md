@@ -202,9 +202,23 @@ session until told otherwise, so `remoteMcp` sends the spec's session-terminatin
 already fired and the request would be aborted on issue. Both steps are bounded.
 The core gives teardown a small fixed completion window — enough for the shipped
 transport's local abort, but not enough for a broken custom hook to hold a probe
-open indefinitely — and termination gets a fraction of that, so a downstream
-that stalls on the `DELETE` falls back to its own session timeout instead of
-spending the budget.
+open indefinitely. That 100 ms is only the caller-facing wait, not the network
+budget. Session termination gets one second: the connection is already
+established, so the `DELETE` pays no new DNS or TLS setup, but an ordinary
+cross-internet round trip plus modest provider scheduling can readily exceed
+50 ms. One second gives that acknowledgement a realistic best-effort window
+without pretending teardown is a general request deadline. The full close tail
+is handed to `waitUntil` when the runtime provides it, comfortably inside the
+Worker's post-response lifetime, while the caller still waits at most 100 ms.
+That deferred tail is itself capped at two seconds so a broken custom hook cannot
+occupy the whole platform allowance. A timeout is reported as "not acknowledged":
+the headers-only request has usually gone out and may still finish, but connecta
+then closes its side and cannot claim that the downstream freed the session.
+An HTTP or transport failure warns once for that termination attempt through
+the deployment logger. There is no isolate-local sampling clock: termination
+only happens on probe-owned scopes, so warning volume is already bounded by the
+operator and credential-sweep probes that created those sessions, while every
+failed attempt remains visible.
 
 Read "promise" strictly: the prohibition is on a promise a **later request could
 await**, or one closing over request-bound state (a transport, a stream, an abort

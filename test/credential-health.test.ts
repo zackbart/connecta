@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/vitest-pool-workers/types" />
+
 import { describe, expect, it } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import {
@@ -20,6 +22,9 @@ import { makeRegistry, silentLogger } from "./helpers.js";
 const BASE = "https://connecta.test";
 const TOKEN = "test-token-123";
 const KEY = Buffer.alloc(32, 9).toString("base64");
+const WORKERD =
+  typeof navigator !== "undefined" &&
+  navigator.userAgent?.includes("Cloudflare-Workers");
 
 function textOf(result: { content: { text: string }[] }): any {
   return JSON.parse(result.content[0].text);
@@ -1276,6 +1281,49 @@ describe("the traffic-triggered sweep", () => {
     expect(linear.calls.callTool).toBe(0);
   });
 
+  it.skipIf(!WORKERD)(
+    "keeps a scheduled check's teardown tail inside the Worker execution context",
+    async () => {
+      const { createExecutionContext, waitOnExecutionContext } =
+        await import("cloudflare:test");
+      let closeStarted!: () => void;
+      const started = new Promise<void>((resolve) => {
+        closeStarted = resolve;
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const linear = grantConnector();
+      linear.closeScope = async () => {
+        closeStarted();
+        await gate;
+      };
+      const connecta = deployment(linear);
+      const runtime = createExecutionContext();
+      const defer = runtime.waitUntil.bind(runtime);
+      const checking = connecta.checkCredentials({ defer });
+      runtime.waitUntil(checking);
+
+      await started;
+      await expect(
+        withTimeout(checking, 1_000, "scheduled credential check"),
+      ).resolves.toMatchObject([
+        { connectorId: "linear", record: { state: "ok" } },
+      ]);
+
+      const waiting = waitOnExecutionContext(runtime);
+      await expect(
+        Promise.race([
+          waiting.then(() => "settled"),
+          Promise.resolve("pending"),
+        ]),
+      ).resolves.toBe("pending");
+      release();
+      await expect(waiting).resolves.toBeUndefined();
+    },
+  );
+
   it("sweeps once for a burst of requests", async () => {
     const linear = grantConnector();
     const connecta = deployment(linear);
@@ -1291,6 +1339,38 @@ describe("the traffic-triggered sweep", () => {
     await ctx.settled();
 
     expect(linear.calls.status).toBe(1);
+  });
+
+  it("keeps the teardown tail inside the request's waitUntil", async () => {
+    let closeStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      closeStarted = resolve;
+    });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const linear = grantConnector();
+    linear.closeScope = async () => {
+      closeStarted();
+      await gate;
+    };
+    const connecta = deployment(linear);
+    const ctx = ctxWith();
+
+    const res = await mcpRequest(connecta, ctx);
+    expect(res.status).toBe(200);
+    await started;
+
+    const settled = ctx.settled();
+    await expect(
+      Promise.race([
+        settled.then(() => "settled"),
+        Promise.resolve("pending"),
+      ]),
+    ).resolves.toBe("pending");
+    release();
+    await expect(settled).resolves.toBeDefined();
   });
 
   it("stays out of the request when onRequest is off", async () => {

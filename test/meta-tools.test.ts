@@ -388,6 +388,50 @@ describe("list_connectors", () => {
     expect(closes).toBe(1);
   });
 
+  it("defers the bounded teardown tail without extending the probe result", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deferred: Promise<unknown>[] = [];
+    const connector: Connector = {
+      id: "slowclose",
+      kind: "mcp",
+      description: "Slow teardown",
+      async status() {
+        return { state: "ok" };
+      },
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return null;
+      },
+      async closeScope() {
+        await gate;
+      },
+    };
+
+    const result = await withTimeout(
+      createMetaTools(makeRegistry([connector]), BASE, {
+        defer: (promise) => deferred.push(promise),
+      }).listConnectors({ probe: true }),
+      1_000,
+      "list_connectors with deferred teardown",
+    );
+
+    expect(result.isError).toBeFalsy();
+    expect(deferred).toHaveLength(1);
+    await expect(
+      Promise.race([
+        deferred[0].then(() => "settled"),
+        Promise.resolve("pending"),
+      ]),
+    ).resolves.toBe("pending");
+    release();
+    await expect(deferred[0]).resolves.toBeUndefined();
+  });
+
   it("waits for every sibling probe before tearing down after a rejection", async () => {
     let slowStarted!: () => void;
     const started = new Promise<void>((resolve) => {

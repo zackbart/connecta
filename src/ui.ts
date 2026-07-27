@@ -4,7 +4,10 @@ import {
   storedCredentialShape,
 } from "./credentials.js";
 import type { CredentialVault } from "./credentials.js";
-import { closeConnectorScope } from "./connector-scope.js";
+import {
+  closeConnectorScope,
+  type DeferredWork,
+} from "./connector-scope.js";
 import type { Registry } from "./registry.js";
 import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
@@ -404,6 +407,7 @@ export async function buildUiData(
     ? "available"
     : "requires_clerk",
   toolkits?: ReadonlyMap<string, Toolkit>,
+  defer?: DeferredWork,
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -549,6 +553,7 @@ export async function buildUiData(
       closeConnectorScope(
         connector,
         registry.contextFor(connector.id, baseUrl, requestScope),
+        defer,
       ),
     ),
   );
