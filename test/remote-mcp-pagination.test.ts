@@ -1,4 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
@@ -119,6 +120,7 @@ function fixture(
     /** Downstream `tools/call` behaviour; defaults to echoing the tool name. */
     callTool?: (name: string) => CallToolResult;
     id?: string;
+    oauth?: boolean;
   } = {},
 ): Fixture {
   const cursors: Array<string | undefined> = [];
@@ -129,6 +131,7 @@ function fixture(
     connector: remoteMcp(opts.id ?? "paged", {
       url: "https://unused.example/mcp",
       description: "Paginated downstream",
+      ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
       _transportFactory: () => {
         builds++;
         const [clientTransport, serverTransport] =
@@ -338,6 +341,32 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(attempted).toEqual([OPAQUE_CURSOR]);
   });
 
+  it("latches a later-page authorization failure for the request scope", async () => {
+    const storage = memoryStorage();
+    const authUrl = "https://auth.example/authorize?client_id=paged";
+    await storage.set("oauth:pending", authUrl);
+    const { connector } = fixture(threePages(), {
+      oauth: true,
+      sendFault: (message) =>
+        isLaterPageRequest(message)
+          ? new UnauthorizedError("downstream token expired")
+          : undefined,
+    });
+    const context = {
+      ...ctx(storage),
+      requestScope: {},
+    };
+
+    const err = await connector
+      .listTools(context)
+      .then(() => null, (reason: unknown) => reason);
+    expect(err).toMatchObject({ code: "auth_required" });
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "auth_required",
+      authorizationUrl: authUrl,
+    });
+  });
+
   it("stops paging when the scope ends mid-chain instead of running on detached", async () => {
     let reachedPageTwo!: () => void;
     const atPageTwo = new Promise<void>((resolve) => {
@@ -397,6 +426,60 @@ describe("remoteMcp() tools/list pagination", () => {
       /scope ended during connection/,
     );
     expect(f.cursors).toEqual([undefined]);
+  });
+
+  it("stops a stalled catalog walk at the configured probe deadline", async () => {
+    let reachedPageTwo!: () => void;
+    const atPageTwo = new Promise<void>((resolve) => {
+      reachedPageTwo = resolve;
+    });
+    let releasePageTwo!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePageTwo = resolve;
+    });
+    const { connector, cursors } = fixture(async (cursor) => {
+      if (cursor === undefined) {
+        return { tools: [tool("alpha")], nextCursor: "p2" };
+      }
+      reachedPageTwo();
+      await gate;
+      return { tools: [tool("beta")], nextCursor: "p3" };
+    });
+
+    const pending = createMetaTools(makeRegistry([connector]), BASE, {
+      probeTimeoutMs: 25,
+    }).listConnectors({ probe: true });
+    await atPageTwo;
+    try {
+      const entry = JSON.parse((await pending).content[0].text).connectors[0];
+      expect(entry).toMatchObject({
+        status: "error",
+        toolCount: 0,
+      });
+      expect(entry.message).toMatch(
+        /list_connectors catalog refresh of "paged" timed out after 25ms/,
+      );
+      // Page two was cancelled in flight; the expired walk never starts p3.
+      expect(cursors).toEqual([undefined, "p2"]);
+    } finally {
+      releasePageTwo();
+    }
+  });
+
+  it("leaves a catalog that finishes inside the probe deadline unchanged", async () => {
+    const { connector, cursors } = fixture(() => ({
+      tools: [tool("only")],
+    }));
+
+    const listed = await createMetaTools(makeRegistry([connector]), BASE, {
+      probeTimeoutMs: 100,
+    }).listConnectors({ probe: true });
+
+    expect(JSON.parse(listed.content[0].text).connectors[0]).toMatchObject({
+      status: "ok",
+      toolCount: 1,
+    });
+    expect(cursors).toEqual([undefined]);
   });
 
   it("keeps the first definition when an unstable cursor overlaps pages", async () => {
@@ -536,17 +619,42 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(cursors).toHaveLength(MAX_TOOL_PAGES);
   });
 
-  it("names the nonconformance when a page ends pagination with a null cursor", async () => {
-    const { connector } = fixture(() => ({
+  it("accepts a null cursor on the first page as end-of-chain", async () => {
+    const { connector, cursors } = fixture(() => ({
       tools: [tool("alpha")],
       nextCursor: null as unknown as string,
     }));
 
-    // `null` is a common JSON idiom for "no more pages" and the MCP result
-    // schema does not accept it. The operator gets told which server broke
-    // which rule, rather than a raw validation dump about `nextCursor`.
+    await expect(connector.listTools(ctx())).resolves.toEqual([
+      expect.objectContaining({ name: "alpha" }),
+    ]);
+    expect(cursors).toEqual([undefined]);
+  });
+
+  it("collects a final page whose cursor is null", async () => {
+    const { connector, cursors } = fixture((cursor) =>
+      cursor === undefined
+        ? { tools: [tool("alpha")], nextCursor: "p2" }
+        : {
+            tools: [tool("beta")],
+            nextCursor: null as unknown as string,
+          },
+    );
+
+    const tools = await connector.listTools(ctx());
+
+    expect(tools.map((t) => t.name)).toEqual(["alpha", "beta"]);
+    expect(cursors).toEqual([undefined, "p2"]);
+  });
+
+  it("names a non-string, non-null cursor as a nonconformance", async () => {
+    const { connector } = fixture(() => ({
+      tools: [tool("alpha")],
+      nextCursor: 42 as unknown as string,
+    }));
+
     await expect(connector.listTools(ctx())).rejects.toThrow(
-      /nextCursor is neither a string nor absent/,
+      /nextCursor is neither a string, null, nor absent/,
     );
   });
 
@@ -767,6 +875,122 @@ describe("paginated catalogs through the discovery path", () => {
     );
 
     await connector.closeScope!({ ...ctx(), requestScope: scope });
+  });
+
+  it("serves the last complete catalog when a deadline cuts a refresh short", async () => {
+    let stall = false;
+    let reachedPageTwo!: () => void;
+    const atPageTwo = new Promise<void>((resolve) => {
+      reachedPageTwo = resolve;
+    });
+    let releasePageTwo!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePageTwo = resolve;
+    });
+    const { connector, cursors } = fixture(async (cursor) => {
+      if (cursor === undefined) {
+        return { tools: [tool("alpha")], nextCursor: "p2" };
+      }
+      if (stall) {
+        reachedPageTwo();
+        await gate;
+        return { tools: [tool("replacement")], nextCursor: "p3" };
+      }
+      return { tools: [tool("beta")] };
+    });
+    const logger = recordingLogger();
+    const registry = new Registry([connector], {
+      storage: memoryStorage(),
+      logger,
+      toolCacheTtlSeconds: 0,
+      toolCatalogStaleSeconds: 300,
+    });
+    const firstScope = {};
+    const secondScope = {};
+
+    const complete = await registry.getTools("paged", BASE, firstScope);
+    expect(complete.map((t) => t.name)).toEqual(["alpha", "beta"]);
+
+    stall = true;
+    const controller = new AbortController();
+    const pending = registry.getTools("paged", BASE, secondScope, {
+      signal: controller.signal,
+      timeoutMs: 1_000,
+    });
+    await atPageTwo;
+    controller.abort(new Error('catalog probe of "paged" timed out'));
+    try {
+      const served = await pending;
+      expect(served.map((t) => t.name)).toEqual(["alpha", "beta"]);
+      expect(registry.peekTools("paged")?.map((t) => t.name)).toEqual([
+        "alpha",
+        "beta",
+      ]);
+      expect(cursors).toEqual([undefined, "p2", undefined, "p2"]);
+      expect(
+        logger.warnings.some((warning) =>
+          /catalog refresh failed; serving stale catalog/.test(warning),
+        ),
+      ).toBe(true);
+    } finally {
+      releasePageTwo();
+      await connector.closeScope!({
+        ...ctx(),
+        requestScope: firstScope,
+      });
+      await connector.closeScope!({
+        ...ctx(),
+        requestScope: secondScope,
+      });
+    }
+  });
+
+  it("reports a later-page authorization failure with its recovery URL", async () => {
+    const authUrl = "https://auth.example/authorize?client_id=paged";
+    const storage = memoryStorage();
+    await storage.set("conn:paged:oauth:pending", authUrl);
+    const { connector } = fixture(threePages(), {
+      oauth: true,
+      sendFault: (message) =>
+        isLaterPageRequest(message)
+          ? new UnauthorizedError("downstream token expired")
+          : undefined,
+    });
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+
+    const listed = await createMetaTools(registry, BASE).listConnectors({
+      probe: true,
+    });
+    const entry = JSON.parse(listed.content[0].text).connectors[0];
+
+    expect(entry).toMatchObject({
+      status: "auth_required",
+      authorizationUrl: authUrl,
+      toolCount: 0,
+    });
+    expect(registry.peekTools("paged")).toBeUndefined();
+  });
+
+  it("keeps a later-page non-auth failure classified as error", async () => {
+    const { connector } = fixture(threePages(), {
+      sendFault: (message) =>
+        isLaterPageRequest(message)
+          ? new Error("page two transport failed")
+          : undefined,
+    });
+
+    const listed = await createMetaTools(
+      makeRegistry([connector]),
+      BASE,
+    ).listConnectors({ probe: true });
+    const entry = JSON.parse(listed.content[0].text).connectors[0];
+
+    expect(entry.status).toBe("error");
+    expect(entry.authorizationUrl).toBeUndefined();
+    expect(entry.message).toContain("page two transport failed");
   });
 
   it("surfaces a non-terminating downstream as a connector error, not a truncated catalog", async () => {

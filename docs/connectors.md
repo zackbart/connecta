@@ -331,11 +331,13 @@ Four rules the implementation is built around:
   never parsed, rewritten, or persisted past the request that received it. The
   first request sends no `cursor` at all, so a non-paginated downstream still
   costs exactly one round trip and returns exactly what it returned before.
-- **Absent ends the chain, not falsy.** An empty-string `nextCursor` is
-  *present* and means keep going; a truthiness check there would silently
-  truncate that server's catalog. A `nextCursor: null` — a common JSON idiom
-  for "no more pages" that the MCP result schema does not accept — is reported
-  as a named nonconformance rather than a raw validation dump.
+- **Absent or null ends the chain, not falsy.** The spec says absence; connecta
+  also accepts `nextCursor: null`, the common and behaviorally unambiguous JSON
+  spelling of the same answer. An empty string is still *present* and means
+  keep going, so a truthiness check there would silently truncate that
+  server's catalog. Values other than string, null, or absence remain a named
+  nonconformance, and the rest of the page still uses the SDK's full result
+  schema.
 - **Tools are first-wins and deduplicated by name.** An unstable cursor can
   serve the same tool on two pages. Counting it twice would inflate
   `list_connectors` counts, double its `search_tools` row, and make the
@@ -344,6 +346,12 @@ Four rules the implementation is built around:
   so nothing caches or persists a prefix — the registry's stale-catalog
   fallback keeps serving the last *complete* catalog where it is still
   eligible.
+- **Authorization is classified wherever it expires.** A downstream 401 on
+  page one or page seven produces the same `auth_required` verdict and pending
+  authorization URL as a 401 during connect or `tools/call`; a network or
+  protocol failure remains `error`. The verdict is latched for the request
+  scope so a later operation cannot report the already-revoked connection as
+  healthy.
 
 **The walk is bounded — on tools, not pages.** A page ceiling is the wrong
 dimension: the *server* chooses the page size, so N pages is really N × an
@@ -361,14 +369,14 @@ a well-behaved 10,000-tool server paging at 100 spends 101 requests, and a
   accumulates, which is the actual memory bound;
 - and `MAX_TOOL_PAGES` (10,000) survives only as a runaway backstop.
 
-To be precise about what those bounds buy: they make an unterminating walk
-*finite*, and they surface it as a connector error instead of a
-plausible-looking partial catalog. They do **not** stop a loop that a probe
-deadline has already abandoned. `withTimeout` bounds the caller's wait, not the
-work — the catalog read runs on the request scope with no teardown behind it,
-so an abandoned walk keeps paging with nobody waiting until it terminates on
-its own. Giving the walk a real deadline is a separate, deferred problem
-([`src/timeout.ts`](../src/timeout.ts), issue #98).
+Those bounds make every walk finite even on a path with no discovery deadline.
+The catalog fan-out behind `list_connectors`, `search_tools`, and
+`describe_tools` additionally carries the configured
+`discovery.probeTimeoutMs` deadline into the walk itself. Expiry aborts an
+in-flight page where the transport supports cancellation, and the loop checks
+the same signal before issuing another page. The refresh fails as a whole —
+never publishing its prefix — while an eligible last complete catalog remains
+available through the ordinary stale fallback.
 
 Every page rides the one request-scoped client, and the cursor lives only in
 that loop: a later inbound request reconnects and starts again from page one.

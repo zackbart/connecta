@@ -30,7 +30,7 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
-  withTimeout,
+  withAbortableTimeout,
 } from "./timeout.js";
 import { credentialVerdictApplies } from "./credential-health.js";
 import type { ConnectorStatus, KVStorage, ToolDef } from "./types.js";
@@ -917,8 +917,12 @@ export function createMetaTools(
             | { state: "ok" | "error" | "unknown"; message?: string };
           if (probe) {
             try {
-              status = await withTimeout(
-                registry.statusFor(c.id, baseUrl, scope),
+              status = await withAbortableTimeout(
+                (signal) =>
+                  registry.statusFor(c.id, baseUrl, scope, {
+                    signal,
+                    timeoutMs: probeTimeoutMs,
+                  }),
                 probeTimeoutMs,
                 `list_connectors probe of "${c.id}"`,
               );
@@ -1004,14 +1008,53 @@ export function createMetaTools(
           // the first (now stale) authorization URL.
           if (probe && status.state === "ok") {
             try {
-              tools = await withTimeout(
-                registry.refreshTools(c.id, baseUrl, scope),
+              tools = await withAbortableTimeout(
+                (signal) =>
+                  registry.refreshTools(c.id, baseUrl, scope, {
+                    signal,
+                    timeoutMs: probeTimeoutMs,
+                  }),
                 probeTimeoutMs,
                 `list_connectors catalog refresh of "${c.id}"`,
               );
               registry.recordSuccess(c.id, Date.now() - statusStarted);
             } catch (err) {
-              status = { state: "error" as const, message: msg(err) };
+              const details = classifyCallError(err);
+              if (details.code === "auth_required") {
+                let authStatus: ConnectorStatus | undefined;
+                try {
+                  authStatus = await withAbortableTimeout(
+                    (signal) =>
+                      registry.statusFor(c.id, baseUrl, scope, {
+                        signal,
+                        timeoutMs: probeTimeoutMs,
+                      }),
+                    probeTimeoutMs,
+                    `list_connectors authorization status of "${c.id}"`,
+                  );
+                } catch {
+                  // The typed auth verdict is still authoritative; this second
+                  // read exists only to recover the connector's pending URL.
+                }
+                status =
+                  authStatus?.state === "auth_required"
+                    ? authStatus
+                    : {
+                        state: "auth_required" as const,
+                        message: details.message,
+                      };
+                await registry.recordCredentialHealth(c.id, {
+                  state: "auth_required",
+                  checkedAt,
+                  ...(status.message ? { message: status.message } : {}),
+                  ...("authorizationUrl" in status &&
+                  status.authorizationUrl
+                    ? { authorizationUrl: status.authorizationUrl }
+                    : {}),
+                });
+              } else {
+                status = { state: "error" as const, message: msg(err) };
+              }
               registry.recordFailure(c.id, Date.now() - statusStarted, err);
             }
           }
@@ -1079,8 +1122,12 @@ export function createMetaTools(
       }> = [];
       const catalogs = await Promise.allSettled(
         conns.map((c) =>
-          withTimeout(
-            registry.getTools(c.id, baseUrl, requestScope),
+          withAbortableTimeout(
+            (signal) =>
+              registry.getTools(c.id, baseUrl, requestScope, {
+                signal,
+                timeoutMs: probeTimeoutMs,
+              }),
             probeTimeoutMs,
             `search_tools probe of "${c.id}"`,
           ),
@@ -1208,8 +1255,12 @@ export function createMetaTools(
       ];
       const loaded = await Promise.allSettled(
         connectorIds.map((id) =>
-          withTimeout(
-            registry.getTools(id, baseUrl, requestScope),
+          withAbortableTimeout(
+            (signal) =>
+              registry.getTools(id, baseUrl, requestScope, {
+                signal,
+                timeoutMs: probeTimeoutMs,
+              }),
             probeTimeoutMs,
             `describe_tools probe of "${id}"`,
           ),

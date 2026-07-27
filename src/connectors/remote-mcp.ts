@@ -5,7 +5,9 @@ import type {
   FetchLike,
   Transport,
 } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
+import { z } from "zod";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
 import { ConnectorCallError } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
@@ -115,8 +117,8 @@ const MAX_TOOLS = 100_000;
  * is a definite loop, two consecutive pages that add no new tools are a server
  * going nowhere, and MAX_TOOLS caps what any of it can accumulate. This exists
  * only so the loop is finite even if a downstream somehow satisfies all three
- * forever, because the caller's probe deadline abandons the *caller*, not the
- * loop. Set high enough that no honest server reaches it.
+ * forever on a path with no discovery deadline. Set high enough that no honest
+ * server reaches it.
  */
 const MAX_TOOL_PAGES = 10_000;
 
@@ -124,18 +126,24 @@ const MAX_TOOL_PAGES = 10_000;
 type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
 
 /**
+ * Compatibility concession for hand-rolled servers that serialize
+ * end-of-pagination as `null`. Only the cursor is widened; every tool and every
+ * other result field still passes through the SDK's pinned schema.
+ */
+const CompatibleListToolsResultSchema = ListToolsResultSchema.extend({
+  nextCursor: z.string().nullable().optional(),
+});
+
+/**
  * Re-prime an SDK client's tool-metadata cache from the *full* walked catalog.
  *
- * `Client.listTools()` ends by calling its private `cacheToolMetadata`, which
- * **clears** the output-schema validators and the task-support sets before
- * repopulating them from the page it just received. Call it once per page —
- * which walking the chain necessarily does — and the request-scoped client is
- * left holding metadata for the *last* page alone. `callTool` then finds no
- * validator for every earlier-page tool and silently skips both the "declared
- * an outputSchema but returned no structuredContent" check and the
- * structured-content validation, and finds no task requirement so a
- * required-task tool is dispatched as a plain `tools/call`. Enforcement would
- * depend on which page a tool happened to land on, which is not enforcement.
+ * The SDK's `Client.listTools()` caches one page at a time and **clears** the
+ * output-schema validators and task-support sets before each replacement.
+ * This walk uses `Client.request()` so it can make the narrow null-cursor
+ * compatibility concession above, then primes the metadata exactly once from
+ * the complete chain. Otherwise `callTool` would find no validator or task
+ * requirement for earlier-page tools and enforcement would depend on where a
+ * tool happened to land, which is not enforcement.
  *
  * So hand the whole aggregated list back deliberately, once, at the end. The
  * SDK types the method `private`, hence the cast; the SDK version is pinned
@@ -154,9 +162,9 @@ function primeToolMetadata(client: Client, tools: ListedTool[]): void {
 }
 
 /**
- * True for a result-parse failure caused by the page's `nextCursor` itself —
- * in practice `nextCursor: null`, a very common JSON idiom for "no more pages"
- * that the MCP schema does not accept (the chain ends on an *absent* cursor).
+ * True for a result-parse failure caused by the page's `nextCursor` itself.
+ * `null` is accepted deliberately; other non-string values remain a named
+ * downstream nonconformance instead of surfacing as a raw validation dump.
  * Duck-typed rather than `instanceof ZodError`: the SDK may parse with its own
  * zod instance, and cross-instance `instanceof` is a coin flip.
  */
@@ -407,22 +415,33 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     new Error(`Connector "${id}" scope ended during connection.`);
 
   /**
-   * One `tools/list` request. The only thing wrapped here is the diagnosis of a
-   * `nextCursor` the MCP result schema refuses — overwhelmingly `null`, which
-   * plenty of servers use to mean "no more pages" but the spec spells as an
-   * *absent* cursor. The SDK surfaces that as a raw validation dump about a
-   * field the operator never sees; say which server broke which rule instead.
-   * Accepting `null` as end-of-chain outright is issue #99.
+   * One `tools/list` request. The SDK schema is retained wholesale except for
+   * accepting `null` as the common, unambiguous end-of-chain spelling. Other
+   * cursor shapes still get a useful connector-level diagnosis.
    */
-  const listPage = async (client: Client, cursor: string | undefined) => {
+  const listPage = async (
+    client: Client,
+    cursor: string | undefined,
+    ctx: ConnectorContext,
+  ) => {
     try {
-      return await client.listTools(
-        cursor === undefined ? undefined : { cursor },
+      return await client.request(
+        {
+          method: "tools/list",
+          ...(cursor === undefined ? {} : { params: { cursor } }),
+        },
+        CompatibleListToolsResultSchema,
+        ctx.timeoutMs || ctx.signal
+          ? {
+              ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
+              ...(ctx.signal ? { signal: ctx.signal } : {}),
+            }
+          : undefined,
       );
     } catch (err) {
       if (!isCursorShapeError(err)) throw err;
       throw new Error(
-        `Connector "${id}" returned a tools/list page whose nextCursor is neither a string nor absent (a null cursor is the usual culprit) — MCP ends pagination on an absent nextCursor, so this catalog cannot be walked.`,
+        `Connector "${id}" returned a tools/list page whose nextCursor is neither a string, null, nor absent — this catalog cannot be walked.`,
         { cause: err },
       );
     }
@@ -495,6 +514,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ctx: ConnectorContext,
     state: ConnectionState,
   ): Promise<void> => {
+    // A 401 after connect is a verdict for the whole request scope, not merely
+    // for the one call that observed it. Do not let the still-cached client make
+    // a later status or call in the same scope report healthy.
+    if (state.authRequired) {
+      throw authRequiredError(
+        new UnauthorizedError("Downstream authorization is no longer valid."),
+      );
+    }
     // Cross-isolate force re-auth: another isolate bumped the KV generation and
     // wiped credentials. This request's cached client still speaks the old
     // token — drop it so the next connect runs against current state.
@@ -626,64 +653,76 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       /** Consecutive pages that advertised a successor but added nothing. */
       let barren = 0;
       let complete = false;
-      for (let page = 0; page < MAX_TOOL_PAGES; page++) {
-        // The scope can end between pages (probe timeout, teardown). Stop
-        // rather than keep paging into a transport that is being closed.
-        if (state.closed) throw scopeEndedError();
-        // Page one sends no params at all, so a non-paginated server sees
-        // exactly the request it saw before pagination existed.
-        const res = await listPage(client, cursor);
-        let added = 0;
-        for (const t of res.tools) {
-          // First page wins. An unstable cursor can serve the same tool on two
-          // pages — a failure mode that did not exist while only page one was
-          // read — and a duplicate would inflate `toolCount`, double the tool's
-          // `search_tools` row, and churn the registry's catalog-changed
-          // comparison into a persistence write on every refresh.
-          if (names.has(t.name)) continue;
-          names.add(t.name);
-          listed.push(t);
-          added++;
+      try {
+        for (let page = 0; page < MAX_TOOL_PAGES; page++) {
+          // The scope can end between pages (probe timeout, teardown). Stop
+          // rather than keep paging into a transport that is being closed.
+          if (state.closed) throw scopeEndedError();
+          // A discovery deadline uses the same signal for the whole chain.
+          // Check it before issuing each page as well as passing it to the
+          // in-flight SDK request, so expiry never starts one more round trip.
+          if (ctx.signal?.aborted) {
+            throw ctx.signal.reason instanceof Error
+              ? ctx.signal.reason
+              : new Error(`Connector "${id}" catalog deadline expired.`);
+          }
+          // Page one sends no params at all, so a non-paginated server sees
+          // exactly the request it saw before pagination existed.
+          const res = await listPage(client, cursor, ctx);
+          let added = 0;
+          for (const t of res.tools) {
+            // First page wins. An unstable cursor can serve the same tool on
+            // two pages — a duplicate would inflate `toolCount`, double the
+            // `search_tools` row, and churn catalog persistence.
+            if (names.has(t.name)) continue;
+            names.add(t.name);
+            listed.push(t);
+            added++;
+          }
+          // Pagination ends when `nextCursor` is absent or null — never merely
+          // falsy. Empty string is present and means "keep going".
+          const next = res.nextCursor;
+          if (next === undefined || next === null) {
+            complete = true;
+            break;
+          }
+          // A page that adds nothing and still claims a successor made no
+          // progress. Allow exactly one: the widespread idiom is to advertise
+          // a cursor whenever a page came back full and then serve one empty
+          // page to terminate. Two in a row is a downstream going nowhere.
+          if (added === 0 && ++barren > 1) {
+            throw new Error(
+              `Connector "${id}" returned two consecutive tools/list pages that added no tools and still advertised another — the catalog is not advancing.`,
+            );
+          }
+          if (added > 0) barren = 0;
+          // A cursor handed back a second time is a loop, not a slow server.
+          if (spent.has(next)) {
+            throw new Error(
+              `Connector "${id}" handed back a tools/list cursor it had already issued — the pagination chain loops.`,
+            );
+          }
+          // Checked here rather than on arrival: this bounds what a *walk* may
+          // accumulate; a one-page server was always free to send its page.
+          if (listed.length > MAX_TOOLS) {
+            throw new Error(
+              `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_TOOLS}-tool ceiling one catalog refresh will collect.`,
+            );
+          }
+          // Opaque by contract: handed straight back, never parsed, rewritten,
+          // or persisted.
+          spent.add(next);
+          cursor = next;
         }
-        // Pagination ends when `nextCursor` is ABSENT — not when it is falsy.
-        // An empty string is a legal cursor and means "keep going"; `if
-        // (!next)` here would silently truncate that server's catalog.
-        const next = res.nextCursor;
-        if (typeof next !== "string") {
-          complete = true;
-          break;
+      } catch (err) {
+        // A grant can be revoked after connect and after any earlier page.
+        // Classify that exactly like connect-time and call-time authorization
+        // failures, and latch it for the rest of this request scope.
+        if (err instanceof UnauthorizedError) {
+          state.authRequired = true;
+          throw authRequiredError(err);
         }
-        // A page that adds nothing and still claims a successor made no
-        // progress. Allow exactly one: the widespread idiom is to advertise a
-        // cursor whenever a page came back full and then serve one empty page
-        // to terminate, and that server is conformant. Two in a row is a
-        // downstream going nowhere, and this kills a "fresh cursor forever, no
-        // tools" adversary in a couple of round trips instead of thousands.
-        if (added === 0 && ++barren > 1) {
-          throw new Error(
-            `Connector "${id}" returned two consecutive tools/list pages that added no tools and still advertised another — the catalog is not advancing.`,
-          );
-        }
-        if (added > 0) barren = 0;
-        // A cursor handed back a second time is not a slow server, it is a
-        // loop. Fail now rather than walking it until a ceiling notices.
-        if (spent.has(next)) {
-          throw new Error(
-            `Connector "${id}" handed back a tools/list cursor it had already issued — the pagination chain loops.`,
-          );
-        }
-        // Checked here rather than on arrival: this bounds what a *walk* may
-        // accumulate, and a server that answers in one page was always free to
-        // send whatever it sends.
-        if (listed.length > MAX_TOOLS) {
-          throw new Error(
-            `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_TOOLS}-tool ceiling one catalog refresh will collect.`,
-          );
-        }
-        // Opaque by contract: handed straight back, never parsed, rewritten,
-        // or persisted.
-        spent.add(next);
-        cursor = next;
+        throw err;
       }
       // Fail the refresh outright. Returning what we have would publish a
       // partial catalog that looks complete; throwing lets the registry keep

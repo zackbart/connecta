@@ -178,11 +178,13 @@ export interface RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<ToolDef[]>;
   refreshTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<ToolDef[]>;
   peekTools(id: string): ToolDef[] | undefined;
   contextFor(
@@ -209,6 +211,7 @@ export interface RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions?: { signal?: AbortSignal; timeoutMs?: number },
   ): Promise<ConnectorStatus>;
   invalidateStored(id: string): Promise<void>;
 }
@@ -441,13 +444,14 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     const tools = connector.staticTools
       ? connector.staticTools
       : await connector.listTools(
-          this.contextFor(id, baseUrl, requestScope),
+          this.contextFor(id, baseUrl, requestScope, callOptions),
         );
     const now = Date.now();
     const previous = this.cache.get(id);
@@ -479,6 +483,7 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
@@ -512,7 +517,7 @@ export class Registry implements RegistryView {
     }
 
     try {
-      return await this.refreshTools(id, baseUrl, requestScope);
+      return await this.refreshTools(id, baseUrl, requestScope, callOptions);
     } catch (err) {
       if (stale) {
         this.opts.logger.warn(
@@ -626,10 +631,11 @@ export class Registry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope: object = {},
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ConnectorStatus> {
     const connector = this.connectors.get(id);
     if (!connector) return { state: "error", message: "Unknown connector" };
-    const ctx = this.contextFor(id, baseUrl, requestScope);
+    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
     if (connector.status) {
       try {
         return await connector.status(ctx);
@@ -638,7 +644,7 @@ export class Registry implements RegistryView {
       }
     }
     try {
-      await this.getTools(id, baseUrl, requestScope);
+      await this.getTools(id, baseUrl, requestScope, callOptions);
       return { state: "ok" };
     } catch (err) {
       return { state: "error", message: msg(err) };
@@ -782,11 +788,12 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ToolDef[]> {
     if (!this.visible(id)) throw this.unknownConnector(id);
     return this.inScopeTools(
       id,
-      await this.base.getTools(id, baseUrl, requestScope),
+      await this.base.getTools(id, baseUrl, requestScope, callOptions),
     );
   }
 
@@ -794,11 +801,12 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope?: object,
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ToolDef[]> {
     if (!this.visible(id)) throw this.unknownConnector(id);
     return this.inScopeTools(
       id,
-      await this.base.refreshTools(id, baseUrl, requestScope),
+      await this.base.refreshTools(id, baseUrl, requestScope, callOptions),
     );
   }
 
@@ -897,12 +905,13 @@ export class ScopedRegistry implements RegistryView {
     id: string,
     baseUrl: string,
     requestScope: object = {},
+    callOptions: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<ConnectorStatus> {
     // Same shape the unscoped registry returns for an unregistered id.
     if (!this.visible(id)) {
       return { state: "error", message: "Unknown connector" };
     }
-    return this.base.statusFor(id, baseUrl, requestScope);
+    return this.base.statusFor(id, baseUrl, requestScope, callOptions);
   }
 
   async invalidateStored(id: string): Promise<void> {
