@@ -1,7 +1,5 @@
-// The deadline vocabulary shared by every non-call downstream probe: the
-// discovery meta-tools' catalog fan-out (src/meta-tools.ts) and the credential
-// liveness checks (src/credential-health.ts). One definition so a "probe" means
-// the same thing, and is bounded the same way, wherever one is issued.
+// The deadline vocabulary shared by downstream discovery probes and tool calls.
+// One definition keeps those waits bounded consistently.
 
 /**
  * Generous default bound for a single downstream probe/catalog call. High enough

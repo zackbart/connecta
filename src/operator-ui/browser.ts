@@ -517,19 +517,6 @@ function renderConnections(): void {
     if (c.message) {
       head += '<p class="connector-message msg">' + esc(c.message) + "</p>";
     }
-    if (c.credentialCheck) {
-      const check = c.credentialCheck;
-      const verdict = check.state === "ok"
-        ? "credential verified"
-        : check.state === "auth_required"
-          ? "credential needs authorization"
-          : "credential check failed";
-      head += '<p class="connector-check meta">Credential check: ' +
-        esc(verdict) + " · " + esc(formatDate(check.checkedAt)) +
-        (check.message && check.message !== c.message
-          ? " — " + esc(check.message)
-          : "") + "</p>";
-    }
     if (c.authorizationUrl) {
       const safe = safeHttp(c.authorizationUrl);
       head += safe
@@ -706,17 +693,6 @@ function renderCredentials(): void {
           '</span><span class="meta">' + fieldState + "</span></div>";
       }
       body += "</div>";
-    }
-    if (c.credentialCheck) {
-      const check = c.credentialCheck;
-      const verdict = check.state === "ok"
-        ? "healthy"
-        : check.state === "auth_required"
-          ? "needs authorization"
-          : "check failed";
-      body += '<p class="connector-check meta">Liveness: ' + esc(verdict) +
-        " · " + esc(formatDate(check.checkedAt)) +
-        (check.message ? " — " + esc(check.message) : "") + "</p>";
     }
     if (cred.error) body += '<div class="msg">' + esc(cred.error) + "</div>";
     // Leftover stored fields are not an error — the credential still works, so

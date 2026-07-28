@@ -6,6 +6,6 @@
 > [ethos.md](../ethos.md) settle. The prior text lives in git history as
 > `docs/storage-and-credentials.md`.
 
-Proactive credential liveness probing is **retired** by ethos decision
-([#179](https://github.com/zackbart/connecta/issues/179)); the vault and
-operator credential rotation remain.
+Proactive credential liveness probing was **removed in 0.9** by ethos decision
+([#179](https://github.com/zackbart/connecta/issues/179)). The vault, local
+credential-shape drift detection, and operator-triggered credential tests remain.

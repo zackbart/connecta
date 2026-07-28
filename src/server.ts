@@ -29,7 +29,7 @@ export function createFetchHandler(
   request: Request,
   runtimeContext?: RuntimeExecutionContext,
 ) => Promise<Response> {
-  const { registry, auth, publicUrl } = opts;
+  const { auth, publicUrl, registry } = opts;
   const routeMcp = createMcpRoute(opts);
 
   return async function fetch(
@@ -42,35 +42,6 @@ export function createFetchHandler(
     const defer = runtimeContext
       ? runtimeContext.waitUntil.bind(runtimeContext)
       : undefined;
-
-    /**
-     * Piggyback a DUE credential liveness sweep on traffic that has already been
-     * authenticated (issue #24). Started beside the request and never awaited by
-     * it: it must not add latency or change a result, so it is handed to
-     * `ctx.waitUntil` where the runtime has one (Workers, and the Node adapter's
-     * shim) to settle after the response. The registry answers `undefined`
-     * unless a sweep is actually due, so the ordinary request pays nothing.
-     */
-    const sweepCredentials = (): void => {
-      // Belt and braces: a rejected sweep is already absorbed below, and this
-      // catches the synchronous half — arming the gate, or a connector list that
-      // throws while deciding whether anything is due. Nothing about a
-      // background health check may turn a served request into a 500.
-      try {
-        const sweep = registry.sweepCredentialHealthIfDue(baseUrl, defer);
-        if (!sweep) return;
-        const settled = sweep.then(
-          () => {},
-          (err) => {
-            opts.logger.warn("[connecta] credential health sweep failed", err);
-          },
-        );
-        if (defer) defer(settled);
-        else void settled;
-      } catch (err) {
-        opts.logger.warn("[connecta] credential health sweep failed", err);
-      }
-    };
 
     // Container and orchestrator probes reach /health over plain HTTP on
     // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to
@@ -113,7 +84,6 @@ export function createFetchHandler(
       opts,
       defer,
       runtimeContext,
-      sweepCredentials,
     };
 
     const route = async (): Promise<Response> => {

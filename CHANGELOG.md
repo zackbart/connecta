@@ -7,9 +7,11 @@ All notable changes to this package are documented here.
 0.9.0 makes deployment boundaries the audience-scoping model. Toolkits are
 removed: one deployment now exposes one deliberate connector surface to every
 identity it admits, and serving another audience means deploying another
-instance. Deployments that never configured toolkits need no change. A
-deployment still passing the retired config refuses to start and points to
-issue #178 and `ethos.md`.
+instance. It also removes proactive credential liveness probing: credentials
+now fail at use, while cheap local shape-drift checks and the operator's
+explicit Test action remain. Deployments that configured neither retired
+feature need no change. A deployment still passing either retired config
+refuses to start and points to the relevant issue and `ethos.md`.
 
 ### Changed
 
@@ -22,6 +24,16 @@ issue #178 and `ethos.md`.
   silent widening to the full registry.
 - **Activity events no longer carry `toolkitId`.** The Worker D1 example drops
   its `toolkit_id` column; existing columns may be left in place unused.
+- **Proactive credential liveness is removed** (#179), reverting the feature
+  introduced in #24. `credentials.health`, legacy `credentialHealth`,
+  `Connecta.checkCredentials`, scheduled sweep wiring, persisted verdict reads
+  and writes, and `credentialCheck` response/UI fields no longer exist.
+  Operator-triggered credential tests and local stored-shape drift detection
+  remain. A drifted connector now reports `auth_required` directly from the
+  drift check — `list_connectors` with `probe: true` and `/ui/data` no longer
+  live-probe a connector whose stored credential cannot be consumed anyway.
+  Existing `credhealth:*` KV records are harmless orphaned data: they are
+  never read or rewritten, and no cleanup migration runs.
 
 ## 0.8.0 — 2026-07-28
 

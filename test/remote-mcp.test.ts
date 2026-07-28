@@ -481,22 +481,6 @@ describe("probe scope teardown", () => {
     expect(counts).toEqual({ connect: 1, close: 1 });
   });
 
-  it("closes the remote session opened by a credential-health sweep", async () => {
-    const storage = memoryStorage();
-    await storage.set(
-      "conn:down:oauth:tokens",
-      JSON.stringify({ access_token: "at", token_type: "bearer" }),
-    );
-    const { connector, counts } = await makeTrackedConnector({
-      oauth: true,
-    });
-    const registry = makeRegistry([connector], { storage });
-
-    await expect(registry.checkCredentialHealth(BASE)).resolves.toMatchObject([
-      { connectorId: "down", record: { state: "ok" } },
-    ]);
-    expect(counts).toEqual({ connect: 1, close: 1 });
-  });
 });
 
 describe("downstream session termination", () => {
@@ -533,26 +517,22 @@ describe("downstream session termination", () => {
     expect(requests.some((r) => r.method === "DELETE")).toBe(false);
   });
 
-  it("keeps the probe verdict when the downstream refuses to terminate", async () => {
-    const storage = memoryStorage();
+  it("keeps the status verdict when the downstream refuses to terminate", async () => {
     const warn = vi.fn();
-    await storage.set(
-      "conn:down:oauth:tokens",
-      JSON.stringify({ access_token: "at", token_type: "bearer" }),
-    );
     const { connector, requests } = makeHttpDownstream({
       sessionId: "sess-1",
-      oauth: true,
       onDelete: async () => new Response("no", { status: 500 }),
     });
-    const registry = makeRegistry([connector], {
-      storage,
+    const context = {
+      ...ctx(),
       logger: { ...silentLogger, warn },
-    });
+      requestScope: {},
+    };
 
-    await expect(registry.checkCredentialHealth(BASE)).resolves.toMatchObject([
-      { connectorId: "down", record: { state: "ok" } },
-    ]);
+    await expect(connector.status!(context)).resolves.toMatchObject({
+      state: "ok",
+    });
+    await connector.closeScope!(context);
     expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
     expect(required(warn.mock.calls[0])[0]).toContain(

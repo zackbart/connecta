@@ -48,7 +48,6 @@ import {
   normalizeTimeoutMs,
   withAbortableTimeout,
 } from "./timeout.js";
-import { credentialVerdictApplies } from "./credential-health.js";
 import type { ConnectorStatus, KVStorage } from "./types.js";
 
 export {
@@ -683,11 +682,13 @@ export function createMetaTools(
       const inspect = async (c: (typeof connectors)[number]) => {
         const statusStarted = Date.now();
         const observed = registry.healthFor(c.id);
-        const verdict = await registry.credentialHealthFor(c.id);
+        const drift = await registry.credentialDriftFor(c.id);
         let status:
           | ConnectorStatus
           | { state: "ok" | "error" | "unknown"; message?: string };
-        if (probe) {
+        if (drift) {
+          status = { state: "auth_required", message: drift };
+        } else if (probe) {
           try {
             status = await withProbeDeadline(
               `list_connectors probe of "${c.id}"`,
@@ -700,21 +701,6 @@ export function createMetaTools(
             // hanging the whole list_connectors call.
             status = { state: "error", message: msg(err) };
           }
-        } else if (
-          verdict &&
-          credentialVerdictApplies(verdict, registry.observedSuccessAt(c.id))
-        ) {
-          // The proactive layer (issue #24): a liveness check already found
-          // the stored credential dead, so say so on the cheap path instead of
-          // waiting for an agent's real call to discover it. Only while it is
-          // the freshest evidence — a successful call since then retires it.
-          status = {
-            state: verdict.state,
-            ...(verdict.message ? { message: verdict.message } : {}),
-            ...(verdict.authorizationUrl
-              ? { authorizationUrl: verdict.authorizationUrl }
-              : {}),
-          };
         } else {
           const derived =
             observed?.consecutiveFailures && observed.consecutiveFailures > 0
@@ -723,43 +709,13 @@ export function createMetaTools(
                 ? ("ok" as const)
                 : ("unknown" as const);
           status = {
-            // A successful liveness check upgrades "unknown" — nothing has
-            // been called yet, but the credential was verified, which is how
-            // re-authorization shows up here as ok rather than as an absence
-            // of evidence. It never DOWNgrades an observed failure: a real
-            // call that failed is stronger evidence than a background check.
-            state:
-              derived === "unknown" && verdict?.state === "ok"
-                ? ("ok" as const)
-                : derived,
+            state: derived,
             ...(observed?.lastError ? { message: observed.lastError } : {}),
           };
         }
-        // Stamped where the observation actually happened — after the status
-        // probe, not before it. A 30-second probe stamped at its start would
-        // report a verdict older than it is, and would lose the race against a
-        // real call that succeeded WHILE it ran (that success must retire the
-        // verdict, and only an honest timestamp says so).
+        // Stamped after any live probe so the response reports when its
+        // observation completed, not when a potentially slow request began.
         const checkedAt = new Date().toISOString();
-        // A live status probe IS a liveness observation of the stored
-        // credential, so it updates the same verdict a background check
-        // writes: the cached read afterwards agrees with what the operator
-        // just saw, and they are not swept again moments later. Recorded from
-        // the STATUS phase only, and only when the connector actually answered
-        // — a catalog refresh below is not a credential check (the sweep never
-        // fetches one), it is already counted in the health log, and letting
-        // its failure land here would spend the freshness budget on it. The
-        // registry ignores this for connectors storing no credential of ours.
-        if (probe && (status.state === "ok" || status.state === "auth_required")) {
-          await registry.recordCredentialHealth(c.id, {
-            state: status.state,
-            checkedAt,
-            ...(status.message ? { message: status.message } : {}),
-            ...("authorizationUrl" in status && status.authorizationUrl
-              ? { authorizationUrl: status.authorizationUrl }
-              : {}),
-          });
-        }
         let tools = registry.peekTools(c.id);
         // An auth_required status may have just started OAuth. A second
         // listTools probe would overwrite its state/verifier while returning
@@ -793,15 +749,6 @@ export function createMetaTools(
                       state: "auth_required" as const,
                       message: details.message,
                     };
-              await registry.recordCredentialHealth(c.id, {
-                state: "auth_required",
-                checkedAt,
-                ...(status.message && { message: status.message }),
-                ...("authorizationUrl" in status &&
-                status.authorizationUrl
-                  ? { authorizationUrl: status.authorizationUrl }
-                  : {}),
-              });
             } else {
               status = { state: "error" as const, message: msg(err) };
             }
@@ -810,9 +757,6 @@ export function createMetaTools(
         }
         const latencyMs = Date.now() - statusStarted;
         const latestObserved = registry.healthFor(c.id);
-        const credentialCheck = probe
-          ? await registry.credentialHealthFor(c.id)
-          : verdict;
         return {
           id: c.id,
           ...(c.title ? { title: c.title } : {}),
@@ -823,7 +767,6 @@ export function createMetaTools(
           latencyMs,
           probe,
           ...(latestObserved ?? observed),
-          ...(credentialCheck ? { credentialCheck } : {}),
           ...("authorizationUrl" in status &&
             status.authorizationUrl && {
               authorizationUrl: status.authorizationUrl,
@@ -1090,17 +1033,6 @@ export function createMetaTools(
           ctx,
           args.force !== undefined ? { force: args.force } : {},
         );
-        // startAuth just spoke to the downstream about this exact credential, so
-        // its answer replaces any older liveness verdict — including the stale
-        // `auth_required` that sent the agent here, once it reports ok.
-        await registry.recordCredentialHealth(connector.id, {
-          state: status.state,
-          checkedAt: new Date().toISOString(),
-          ...(status.message ? { message: status.message } : {}),
-          ...(status.authorizationUrl
-            ? { authorizationUrl: status.authorizationUrl }
-            : {}),
-        });
         if (status.state === "auth_required" && !status.authorizationUrl) {
           // auth_required with nothing to open is a dead end for the operator.
           return errorResult(

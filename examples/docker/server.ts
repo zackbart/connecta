@@ -102,21 +102,6 @@ const connecta = createConnecta({
 
 listen(connecta, port);
 
-// Credential health: probe stored downstream credentials on a timer so a revoked
-// or expired token flips the connector to auth_required before an agent's call
-// fails on it. Needs PUBLIC_URL (connector contexts need an origin), which is
-// also what the OAuth callbacks require; without it, only the opportunistic
-// checks inbound traffic triggers run. Checks are rate-limited per connector, so
-// a tighter interval does not multiply downstream requests.
-if (publicUrl) {
-  const credentialCheck = setInterval(() => {
-    void connecta.checkCredentials().catch((err: unknown) => {
-      console.error("[connecta] credential check failed", err);
-    });
-  }, 15 * 60_000);
-  credentialCheck.unref();
-}
-
 const mode =
   auth.length === 0 ? "OPEN (no auth)" : `${auth.length} auth provider(s)`;
 console.log(

@@ -193,13 +193,6 @@ async function handleCredentialRequest(
               storedValues.value!,
               ctx,
             );
-      // The operator just ran the very check the liveness sweep runs; record it
-      // so cached status surfaces agree with what the operator page showed.
-      await opts.registry.recordCredentialHealth(connectorId, {
-        state: result.ok ? "ok" : "auth_required",
-        checkedAt: new Date().toISOString(),
-        ...(result.message ? { message: result.message } : {}),
-      });
       return privateJson(result);
     } catch (err) {
       return privateJson({ ok: false, message: msg(err) });
@@ -226,9 +219,6 @@ async function handleCredentialRequest(
               admin.userId,
             );
       await opts.registry.invalidateStored(connectorId);
-      // The credential the last verdict judged is gone; judging its replacement
-      // is the next check's job, not this one's.
-      await opts.registry.clearCredentialHealth(connectorId);
       return privateJson({ credential: metadata });
     } catch (err) {
       return privateJson({ error: msg(err) }, { status: 400 });
@@ -237,7 +227,6 @@ async function handleCredentialRequest(
   if (request.method === "DELETE") {
     await opts.credentialVault.delete(connectorId);
     await opts.registry.invalidateStored(connectorId);
-    await opts.registry.clearCredentialHealth(connectorId);
     return new Response(null, {
       status: 204,
       headers: {

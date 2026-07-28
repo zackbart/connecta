@@ -174,7 +174,7 @@ export interface ConnectorContext {
   timeoutMs?: number;
 }
 
-export type ConnectorStatusState = "ok" | "auth_required" | "error";
+type ConnectorStatusState = "ok" | "auth_required" | "error";
 
 export interface ConnectorStatus {
   state: ConnectorStatusState;
@@ -226,19 +226,6 @@ export interface Connector {
     values: ConnectorCredentialValues,
     ctx: ConnectorContext,
   ): Promise<CredentialTestResult>;
-  /**
-   * Optional: whether this connector currently holds a stored downstream
-   * credential — an OAuth grant it persisted, typically. Read only by the
-   * credential liveness checks: a connector with nothing stored has no
-   * credential whose liveness could be in question, and probing it anyway would
-   * start an authorization flow nobody asked for.
-   *
-   * Implement it on connectors that manage their own credential storage (the
-   * shipped `remoteMcp` does, for `auth: { type: "oauth" }`). Connectors whose
-   * credential lives in connecta's vault (`credential` above) need not: the
-   * vault answers for them. Must not perform downstream I/O.
-   */
-  hasStoredCredential?(ctx: ConnectorContext): Promise<boolean>;
   /**
    * Statically-known tool defs, exposed by in-code connectors (`api()`) for
    * startup convention checks. Remote connectors omit this — their tools are

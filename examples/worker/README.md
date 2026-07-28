@@ -152,6 +152,8 @@ Events carry no arguments, results, generated code, or raw error messages — se
 The Worker entrypoint already forwards `ctx` to `connecta.fetch`, which lets
 async activity writes settle on `waitUntil`.
 
-For retention, call `pruneActivity(env.ACTIVITY_DB, retentionDays)` from a
+For retention, add a
 [Cron Trigger](https://developers.cloudflare.com/workers/configuration/cron-triggers/)
-`scheduled` handler.
+(`triggers.crons` in `wrangler.jsonc` plus a `scheduled` handler — this example
+no longer ships one) and call `pruneActivity(env.ACTIVITY_DB, retentionDays)`
+from it.

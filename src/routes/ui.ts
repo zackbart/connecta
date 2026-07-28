@@ -52,8 +52,7 @@ function uiScriptNonce(): string {
 export async function routeUi(
   context: RouteContext,
 ): Promise<Response | null> {
-  const { request, url, path, baseUrl, opts, defer, sweepCredentials } =
-    context;
+  const { request, url, path, baseUrl, opts, defer } = context;
   if (request.method === "GET" && path === "/favicon.svg") {
     return new Response(opts.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
       headers: {
@@ -119,7 +118,6 @@ export async function routeUi(
 
   const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
   if (!authz.ok) return authz.response;
-  sweepCredentials();
   const eligibleClerkOperator = authz.uiAdminEligible === true;
   const credentialManagement = credentialManagementCapability({
     eligibleClerkOperator,

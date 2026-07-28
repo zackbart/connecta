@@ -747,31 +747,6 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
   });
 });
 
-describe("remoteMcp() hasStoredCredential", () => {
-  it("is absent unless auth is oauth, and reports whether tokens are stored", async () => {
-    const headers = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "headers", headers: { Authorization: "Bearer x" } },
-    });
-    // A static-token connector stores nothing of ours, so the credential
-    // liveness checks (issue #24) must never probe it on a timer.
-    expect(headers.hasStoredCredential).toBeUndefined();
-
-    const storage = memoryStorage();
-    const c = ctx(storage);
-    const oauth = remoteMcp("svc", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-    });
-    expect(await oauth.hasStoredCredential!(c)).toBe(false);
-    await storage.set(
-      "oauth:tokens",
-      JSON.stringify({ access_token: "at", token_type: "bearer" }),
-    );
-    expect(await oauth.hasStoredCredential!(c)).toBe(true);
-  });
-});
-
 describe("remoteMcp() startAuth", () => {
   it("OAuth lifecycle hooks are absent unless auth is oauth", () => {
     const headers = remoteMcp("svc", {
@@ -809,7 +784,6 @@ describe("remoteMcp() startAuth", () => {
     await connector.disconnectAuth!(c);
 
     expect(builds).toBe(0);
-    expect(await connector.hasStoredCredential!(c)).toBe(false);
     expect(await storage.get("oauth:tokens")).toBeNull();
     expect(await storage.get("oauth:pending")).toBeNull();
     expect(await storage.get("oauth:generation")).toMatch(/^disconnected:/);
@@ -1304,26 +1278,6 @@ describe("/oauth/callback/<id> route", () => {
     const body = await res.text();
     expect(body).toContain("Connected");
     expect(spy).toHaveBeenCalledWith("abc");
-  });
-
-  it("clears the credential-liveness verdict so recovery needs no restart", async () => {
-    const { connecta, storage } = makeConnecta(() => {});
-    await storage.set(STATE_KEY, "s3cr3t-state");
-    await connecta.registry.recordCredentialHealth("svc", {
-      state: "auth_required",
-      checkedAt: new Date().toISOString(),
-      message: "Authorization required — open the URL to connect.",
-    });
-    expect(await connecta.registry.credentialHealthFor("svc")).toMatchObject({
-      state: "auth_required",
-    });
-
-    const res = await connecta.fetch(
-      new Request(`${BASE}/oauth/callback/svc?code=abc&state=s3cr3t-state`),
-    );
-
-    expect(res.status).toBe(200);
-    expect(await connecta.registry.credentialHealthFor("svc")).toBeUndefined();
   });
 
   it("every unverifiable callback failure is indistinguishable", async () => {

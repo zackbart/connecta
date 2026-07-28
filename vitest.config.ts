@@ -14,7 +14,6 @@ export const WORKERS_SUITES = [
   "test/clerk.test.ts",
   "test/codemode-compat.test.ts",
   "test/config.test.ts",
-  "test/credential-health.test.ts",
   "test/credentials.test.ts",
   "test/d1-activity-example.test.ts",
   "test/downstream-oauth.test.ts",

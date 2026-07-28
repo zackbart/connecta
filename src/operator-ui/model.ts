@@ -46,17 +46,6 @@ export interface UiConnector {
   tools: UiTool[];
   /** This connector exposes operator-managed downstream OAuth lifecycle hooks. */
   oauth?: boolean;
-  /**
-   * Verdict of the last proactive credential liveness check (issue #24), for the
-   * connectors that hold a credential connecta stores. Shown beside the live
-   * status so an operator can tell "checked just now" from "last verified an
-   * hour ago", and see a dead credential the page's own probe may not reach.
-   */
-  credentialCheck?: {
-    state: "ok" | "auth_required" | "error";
-    checkedAt: string;
-    message?: string;
-  };
   credential?: UiCredential;
 }
 
