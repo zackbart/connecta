@@ -78,15 +78,17 @@ revision-addressed chunks at
 `catalog:<id>:chunk:<sha256-fingerprint>:<zero-based-index>`. The manifest
 records the revision, tool count, UTF-8 byte count, chunk count, and fresh/stale
 timestamps. Each chunk is at most **1 MiB** of valid UTF-8. Connecta writes all
-chunks first and publishes the manifest last, so a partial write is never
-advertised as a smaller catalog.
+chunks under a fixed four-operation I/O bound and publishes the manifest only
+after every write succeeds, so a partial write is never advertised as a smaller
+catalog.
 
-On read, every named chunk must exist and the reconstructed array must match all
-three manifest claims: tool count, byte count, and SHA-256 revision. A missing
-or torn chunk, invalid tool array, or fingerprint mismatch is treated as no
-persisted catalog. Connecta warns and attempts an ordinary live refresh; it
-never exposes a prefix. An eligible complete catalog already held in memory may
-still serve as the existing stale fallback.
+On read, chunks use the same fixed four-operation bound. Every named chunk must
+exist and the reconstructed array must match all three manifest claims: tool
+count, byte count, and SHA-256 revision. A missing or torn chunk, invalid tool
+array, or fingerprint mismatch is treated as no persisted catalog. Connecta
+warns and attempts an ordinary live refresh; it never exposes a prefix. An
+eligible complete catalog already held in memory may still serve as the existing
+stale fallback.
 
 One dynamically listed catalog may contain at most **100,000 tools** and at most
 **32 MiB (33,554,432 bytes)** of serialized UTF-8 JSON. Values exactly at either

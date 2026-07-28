@@ -573,6 +573,154 @@ describe("tool cache TTL", () => {
     expect(calls).toBe(1);
   });
 
+  it("reads persisted catalog chunks with a fixed concurrency bound", async () => {
+    const backing = memoryStorage();
+    const tools: ToolDef[] = [
+      {
+        name: "large",
+        description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 5),
+      },
+    ];
+    let calls = 0;
+    const connector: Connector = {
+      id: "bounded_reads",
+      kind: "mcp",
+      async listTools() {
+        calls++;
+        return tools;
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const first = new Registry([connector], {
+      storage: backing,
+      logger: silentLogger,
+    });
+    await first.getTools("bounded_reads", BASE);
+    const manifest = await readManifest(backing, "bounded_reads");
+    expect(manifest.chunkCount).toBeGreaterThan(4);
+
+    let active = 0;
+    let maxActive = 0;
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const storage: KVStorage = {
+      async get(key) {
+        if (key.startsWith("catalog:bounded_reads:chunk:")) {
+          active++;
+          started++;
+          maxActive = Math.max(maxActive, active);
+          try {
+            await gate;
+            return await backing.get(key);
+          } finally {
+            active--;
+          }
+        }
+        return backing.get(key);
+      },
+      set: (key, value, options) => backing.set(key, value, options),
+      delete: (key) => backing.delete(key),
+    };
+    const cold = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    const pending = cold.getTools("bounded_reads", BASE);
+    try {
+      await vi.waitFor(() => expect(started).toBe(4));
+      expect(maxActive).toBe(4);
+      expect(started).toBeLessThan(manifest.chunkCount);
+    } finally {
+      release();
+    }
+
+    await expect(pending).resolves.toEqual(tools);
+    expect(calls).toBe(1);
+  });
+
+  it("withholds the manifest when a parallel chunk write fails", async () => {
+    const backing = memoryStorage();
+    let active = 0;
+    let maxActive = 0;
+    let chunkWrites = 0;
+    let manifestWrites = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      async set(key, value, options) {
+        if (key.startsWith("catalog:parallel_write_failure:chunk:")) {
+          active++;
+          chunkWrites++;
+          maxActive = Math.max(maxActive, active);
+          try {
+            await gate;
+            if (key.endsWith(":1")) throw new Error("chunk write failed");
+            return await backing.set(key, value, options);
+          } finally {
+            active--;
+          }
+        }
+        if (key === "catalog:parallel_write_failure") manifestWrites++;
+        return backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    const warnings: string[] = [];
+    const connector: Connector = {
+      id: "parallel_write_failure",
+      kind: "mcp",
+      async listTools() {
+        return [
+          {
+            name: "large",
+            description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 2),
+          },
+        ];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+    });
+    const pending = registry.getTools("parallel_write_failure", BASE);
+    try {
+      await vi.waitFor(() => expect(active).toBeGreaterThan(1));
+      expect(manifestWrites).toBe(0);
+    } finally {
+      release();
+    }
+
+    await expect(pending).resolves.toEqual([
+      {
+        name: "large",
+        description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 2),
+      },
+    ]);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(chunkWrites).toBe(3);
+    expect(manifestWrites).toBe(0);
+    expect(await backing.get("catalog:parallel_write_failure")).toBeNull();
+    expect(
+      warnings.some((warning) =>
+        warning.includes("catalog persistence failed: chunk write failed"),
+      ),
+    ).toBe(true);
+  });
+
   it("treats a missing persisted chunk as no catalog", async () => {
     const storage = memoryStorage();
     const warnings: string[] = [];
