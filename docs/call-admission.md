@@ -81,6 +81,9 @@ sandbox-unwrapping, and result-shaping machinery otherwise stays separate.
   reports the resulting success or refusal and attempt count.
 - Concurrency may queue within the configured bounds. A queued cancellation is
   removed without consuming a rolling-window entry.
+- Caller cancellation before or during an active attempt is non-retryable,
+  releases its permit, records a `cancelled` Activity outcome, and does not
+  count as connector-health failure.
 - Budget exhaustion fails immediately as `rate_limited`, `retryable: true`,
   with exact `retryAfterMs`; concurrency overflow uses the configured retry
   hint.
@@ -89,6 +92,13 @@ sandbox-unwrapping, and result-shaping machinery otherwise stays separate.
 
 Only tool execution is covered. Catalog `getTools`/`listTools`, status probes,
 credential checks, and authorization operations remain outside the call budget.
+
+Queue admission and connector execution have separate clocks. `queueTimeoutMs`
+bounds only the wait for a permit; the per-attempt `call_tool.timeoutMs` starts
+after admission. A saturated call can therefore take up to their sum before
+result processing and other small overheads. With diagnostics enabled,
+`admissionMs` reports the permit wait and `connectorMs` reports the admitted
+attempt.
 
 ## Enforcement scope
 

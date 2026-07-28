@@ -470,7 +470,7 @@ describe("connector call admission integration", () => {
 
     expect(JSON.parse((await queued).content[0].text)).toMatchObject({
       ok: false,
-      error: { code: "timeout", retryable: true },
+      error: { code: "cancelled", retryable: false },
       attempts: 1,
     });
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({
@@ -480,6 +480,116 @@ describe("connector call admission integration", () => {
     });
     release();
     await active;
+  });
+
+  it("does not dispatch, retry, or poison health after caller cancellation", async () => {
+    let calls = 0;
+    let connectorSignal: AbortSignal | undefined;
+    const events: Array<{
+      outcome: string;
+      attempts: number;
+      errorCode?: string;
+    }> = [];
+    const connector: Connector = {
+      id: "limited",
+      kind: "api",
+      description: "Limited",
+      staticTools: [READ_TOOL],
+      callAdmission: policy({ maxConcurrency: 1 }),
+      async listTools() {
+        return [READ_TOOL];
+      },
+      async callTool(_name, _args, ctx) {
+        calls++;
+        connectorSignal = ctx.signal;
+        await new Promise<never>((_, reject) => {
+          const cancelled = () =>
+            reject(ctx.signal?.reason ?? new Error("caller left"));
+          ctx.signal?.addEventListener("abort", cancelled, { once: true });
+          if (ctx.signal?.aborted) cancelled();
+        });
+      },
+    };
+    const registry = makeRegistry([connector]);
+    const activity = {
+      sink: {
+        record(event: (typeof events)[number]) {
+          events.push(event);
+        },
+      },
+      actor: { kind: "test" },
+      requestId: "request",
+      serverInfo: { name: "connecta", version: "test" },
+      logger: silentLogger,
+    };
+    const controller = new AbortController();
+    const pending = createMetaTools(registry, BASE, {
+      requestSignal: controller.signal,
+      activity,
+    }).callTool({
+      address: "limited.read",
+      maxRetries: 2,
+      resultMode: "value",
+    });
+    await waitFor(() => calls === 1);
+    controller.abort(new Error("caller left"));
+
+    expect(JSON.parse((await pending).content[0].text)).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", retryable: false },
+      attempts: 1,
+    });
+    expect(calls).toBe(1);
+    expect(connectorSignal?.aborted).toBe(true);
+    expect(registry.healthFor("limited")).toBeUndefined();
+    expect(registry.callAdmissionSnapshot().limited).toMatchObject({
+      active: 0,
+      queued: 0,
+      totals: { admitted: 1 },
+    });
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      outcome: "cancelled",
+      attempts: 1,
+      errorCode: "cancelled",
+    });
+  });
+
+  it("refuses an already-cancelled call before connector dispatch", async () => {
+    let calls = 0;
+    const connector: Connector = {
+      id: "limited",
+      kind: "api",
+      description: "Limited",
+      staticTools: [READ_TOOL],
+      callAdmission: policy({ maxConcurrency: 1 }),
+      async listTools() {
+        return [READ_TOOL];
+      },
+      async callTool() {
+        calls++;
+        return {};
+      },
+    };
+    const registry = makeRegistry([connector]);
+    const controller = new AbortController();
+    controller.abort(new Error("caller already left"));
+
+    const result = await createMetaTools(registry, BASE, {
+      requestSignal: controller.signal,
+    }).callTool({
+      address: "limited.read",
+      maxRetries: 2,
+      resultMode: "value",
+    });
+
+    expect(JSON.parse(result.content[0].text)).toMatchObject({
+      ok: false,
+      error: { code: "cancelled", retryable: false },
+      attempts: 1,
+    });
+    expect(calls).toBe(0);
+    expect(registry.healthFor("limited")).toBeUndefined();
   });
 
   it("exposes payload-free connector aggregates on health", async () => {

@@ -1064,7 +1064,8 @@ ${clerkScript}
   .activity-address { font-family: var(--mono); font-size: .78rem; overflow-wrap: anywhere; }
   .activity-outcome { font-size: .9em; }
   .activity-item.error .activity-outcome,
-  .activity-item.timeout .activity-outcome { text-decoration: underline; }
+  .activity-item.timeout .activity-outcome,
+  .activity-item.cancelled .activity-outcome { text-decoration: underline; }
   .activity-empty { border-top: 1px solid var(--rule); padding: .75rem 0; }
   .activity-more { margin-top: .75rem; }
   .unavailable {
@@ -1498,9 +1499,12 @@ function renderActivity() {
   }
   for (const event of visible) {
     const item = document.createElement("article");
-    const outcomeClass = ["success", "error", "timeout"].includes(event.outcome)
-      ? event.outcome
-      : "error";
+    const outcomeClass = [
+      "success",
+      "error",
+      "timeout",
+      "cancelled",
+    ].includes(event.outcome) ? event.outcome : "error";
     item.className = "activity-item " + outcomeClass;
     const retryCopy = event.attempts > 1
       ? " · " + esc(event.attempts) + " attempts"

@@ -229,6 +229,24 @@ function errorDetails(code: string, message: string): ErrorDetails {
   return { code, message, retryable: messageLooksRetryable(message) };
 }
 
+function callerCancelledDetails(): ErrorDetails {
+  return {
+    code: "cancelled",
+    message: "Tool call was cancelled by the caller.",
+    retryable: false,
+  };
+}
+
+function isCallerCancellation(
+  error: unknown,
+  signal: AbortSignal | undefined,
+): boolean {
+  return (
+    signal?.aborted === true ||
+    (isCallAdmissionError(error) && error.admissionKind === "cancelled")
+  );
+}
+
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number): boolean {
   return (b & 0xc0) === 0x80;
@@ -657,7 +675,7 @@ export function createMetaTools(
     });
     const resolved = registry.resolveAddress(call.address);
     const record = (
-      outcome: "success" | "error" | "timeout",
+      outcome: "success" | "error" | "timeout" | "cancelled",
       errorCode?: string,
     ) => {
       if (!resolved) return;
@@ -675,7 +693,14 @@ export function createMetaTools(
     const failed = (error: ErrorDetails): RunCallOutcome => {
       const durationMs = Date.now() - started;
       const diagnostics = timing();
-      record(error.code === "timeout" ? "timeout" : "error", error.code);
+      record(
+        error.code === "timeout"
+          ? "timeout"
+          : error.code === "cancelled"
+            ? "cancelled"
+            : "error",
+        error.code,
+      );
       return {
         toolResult:
           call.resultMode === "value"
@@ -725,6 +750,9 @@ export function createMetaTools(
       ).find((tool) => tool.name === resolved.toolName);
     } catch (err) {
       catalogMs += Date.now() - catalogStarted;
+      if (opts.requestSignal?.aborted) {
+        return failed(callerCancelledDetails());
+      }
       // A connector whose catalog cannot be fetched is as unusable as one whose
       // execution fails, so it feeds health accounting the same way the
       // execution catch below does — otherwise a connector every call_tool
@@ -816,6 +844,7 @@ export function createMetaTools(
         };
         controller?.signal.addEventListener("abort", onAbort, { once: true });
         if (controller?.signal.aborted) onAbort();
+        if (controller?.signal.aborted) await cancelled;
         if (timeoutMs) {
           timer = setTimeout(() => {
             controller?.abort(
@@ -861,22 +890,51 @@ export function createMetaTools(
         permit?.release();
       }
       if (attemptFailed) {
-        const details = classifyCallError(attemptError);
-        if (attempts <= maxRetries && retrySafe && details.retryable) {
+        const callerCancelled = isCallerCancellation(
+          attemptError,
+          opts.requestSignal,
+        );
+        const details = callerCancelled
+          ? callerCancelledDetails()
+          : classifyCallError(attemptError);
+        if (
+          !callerCancelled &&
+          attempts <= maxRetries &&
+          retrySafe &&
+          details.retryable
+        ) {
           const wait = retryBackoffMs(attempts, details.retryAfterMs);
           if (wait !== undefined) {
             const backoffStarted = Date.now();
             if (wait > 0) {
-              await new Promise((resolve) => setTimeout(resolve, wait));
+              const completed = await new Promise<boolean>((resolve) => {
+                let settled = false;
+                const finish = (value: boolean) => {
+                  if (settled) return;
+                  settled = true;
+                  clearTimeout(timer);
+                  opts.requestSignal?.removeEventListener("abort", cancel);
+                  resolve(value);
+                };
+                const timer = setTimeout(() => finish(true), wait);
+                const cancel = () => finish(false);
+                opts.requestSignal?.addEventListener("abort", cancel, {
+                  once: true,
+                });
+                if (opts.requestSignal?.aborted) cancel();
+              });
+              backoffMs += Date.now() - backoffStarted;
+              if (!completed) return failed(callerCancelledDetails());
+            } else {
+              backoffMs += Date.now() - backoffStarted;
             }
-            backoffMs += Date.now() - backoffStarted;
             continue;
           }
           // The reported window is longer than the engine will park a
           // synchronous request for. Fall through to failure with
           // retryAfterMs reported verbatim so the agent can re-issue.
         }
-        if (!isCallAdmissionError(attemptError)) {
+        if (!callerCancelled && !isCallAdmissionError(attemptError)) {
           registry.recordFailure(
             resolved.connector.id,
             Date.now() - started,

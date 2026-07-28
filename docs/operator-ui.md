@@ -312,7 +312,7 @@ interface ToolCallActivityEvent {
   toolName: string;
   address: string;            // `${connectorId}.${toolName}`
   source: "call_tool" | "call_destructive_tool" | "batch_call" | "execute_code";
-  outcome: "success" | "error" | "timeout";
+  outcome: "success" | "error" | "timeout" | "cancelled";
   durationMs: number;
   attempts: number;
   errorCode?: string;         // the ConnectorCallError code, never its message
