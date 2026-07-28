@@ -124,7 +124,6 @@ try {
     "    deploymentId?: string;",
     "export interface ConnectaCredentialsConfig {",
     "    encryptionKey?: string;",
-    "    health?: CredentialHealthConfig;",
     "export interface ConnectaDiscoveryConfig {",
     "    catalogTtlSeconds?: number;",
     "    persistCatalog?: boolean;",
@@ -145,6 +144,19 @@ try {
     if (!coreDeclarations.includes(declaration)) {
       throw new Error(
         `Packed core declarations are missing: ${declaration.trim()}`,
+      );
+    }
+  }
+  for (const removedDeclaration of [
+    "health?: CredentialHealthConfig",
+    "checkCredentials:",
+    "CredentialCheckResult",
+    "CredentialHealthConfig",
+    "CredentialHealthRecord",
+  ]) {
+    if (coreDeclarations.includes(removedDeclaration)) {
+      throw new Error(
+        `Packed core declarations still expose removed credential liveness API: ${removedDeclaration}`,
       );
     }
   }

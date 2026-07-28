@@ -16,7 +16,7 @@ export const USAGE_SKILL = `# Connecta usage
 - Truncated result: retry with \`fields\` when possible; otherwise page it with \`get_result\`.
 - \`auth_required\`: use \`authorize_connector\`, have the operator complete consent, then confirm with \`list_connectors\`.
 
-Use \`list_connectors({ probe: false })\` for a fast inventory. Use \`probe: true\` only when diagnosing live health or authorization. The fast inventory already reports a connector whose stored credential failed a proactive check as \`auth_required\` (with \`credentialCheck\` and the URL to open), so trust it and authorize up front rather than probing to confirm.
+Use \`list_connectors({ probe: false })\` for a fast inventory based on recent call observations and local credential-shape drift. Use \`probe: true\` only when diagnosing live health or authorization.
 
 ## Code mode
 

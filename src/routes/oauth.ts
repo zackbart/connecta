@@ -61,11 +61,10 @@ async function handleOAuthManagementRequest(
       operationError = error;
     }
 
-    // The old grant and its catalog verdict are invalid after either operation,
+    // The old grant and its cached catalog are invalid after either operation,
     // including a partially failed physical cleanup whose epoch fence succeeded.
     try {
       await opts.registry.invalidateStored(connectorId);
-      await opts.registry.clearCredentialHealth(connectorId);
     } catch (error) {
       operationError ??= error;
     }
@@ -313,10 +312,6 @@ export async function routeOAuthCallback(
   try {
     await connector.finishAuth(code, connectorContext);
     await opts.registry.invalidateStored(id);
-    // Recovery, without a restart: the grant this connector was reported dead
-    // for has just been replaced, so drop the verdict rather than let a stale
-    // `auth_required` survive until the next scheduled check.
-    await opts.registry.clearCredentialHealth(id);
     return html(
       `Connected "${id}". You can close this window.`,
       200,

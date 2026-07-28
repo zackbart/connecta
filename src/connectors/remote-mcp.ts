@@ -190,8 +190,7 @@ function msg(err: unknown): string {
  * `Client.close()` only unwinds our side — it aborts the transport's controller
  * and fires `onclose`. Spec session termination is a separate DELETE carrying
  * `Mcp-Session-Id`, and without it a stateful provider keeps the session alive
- * until its own (often hour-long) timeout, which a periodic probe would then
- * accumulate several of per connector.
+ * until its own (often hour-long) timeout, accumulating abandoned sessions.
  *
  * Ordering is load-bearing: the SDK sends that DELETE on the transport's
  * AbortSignal, so calling this *after* close would abort the request on issue
@@ -998,15 +997,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   };
 
   if (opts.auth?.type === "oauth") {
-    // The credential liveness checks (issue #24) probe only connectors that
-    // actually hold a stored grant: with no tokens there is nothing whose
-    // liveness could have lapsed, and a `status()` probe would kick off DCR +
-    // consent on a timer for a connector nobody has authorized yet.
-    connector.hasStoredCredential = async (ctx) => {
-      const state = stateFor(ctx);
-      return (await getProvider(ctx, state).tokens()) !== undefined;
-    };
-
     connector.verifyState = async (oauthState, ctx) => {
       const state = stateFor(ctx);
       return getProvider(ctx, state).verifyState(oauthState);

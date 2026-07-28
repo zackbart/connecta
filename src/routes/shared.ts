@@ -52,7 +52,6 @@ export interface RouteContext {
   opts: ServerOptions;
   defer: DeferredWork | undefined;
   runtimeContext: RuntimeExecutionContext | undefined;
-  sweepCredentials(): void;
 }
 
 export function msg(err: unknown): string {

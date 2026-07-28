@@ -25,7 +25,6 @@ const EXPECTED_ALL_MIGRATIONS = [
   "- activityReadGate -> activity.readGate",
   "- activityDeploymentId -> activity.deploymentId",
   "- credentialEncryptionKey -> credentials.encryptionKey",
-  "- credentialHealth -> credentials.health",
   "- toolCacheTtlSeconds -> discovery.catalogTtlSeconds",
   "- persistToolCatalog -> discovery.persistCatalog",
   "- toolCatalogStaleSeconds -> discovery.staleCatalogSeconds",
@@ -41,9 +40,7 @@ describe("ConnectaConfig v0.7 shape", () => {
       readGate: () => true,
       deploymentId: "test",
     };
-    const credentials: ConnectaCredentialsConfig = {
-      health: { onRequest: false },
-    };
+    const credentials: ConnectaCredentialsConfig = {};
     const discovery: ConnectaDiscoveryConfig = {
       concurrency: 4,
       catalogTtlSeconds: 10,
@@ -164,7 +161,6 @@ describe("ConnectaConfig v0.7 shape", () => {
         activityReadGate: () => true,
         activityDeploymentId: secret,
         credentialEncryptionKey: secret,
-        credentialHealth: {},
         toolCacheTtlSeconds: 1,
         persistToolCatalog: false,
         toolCatalogStaleSeconds: 1,
@@ -193,13 +189,19 @@ describe("ConnectaConfig v0.7 shape", () => {
     );
   });
 
-  it("treats an own legacy flat key as unsupported even when undefined", () => {
-    expect(() =>
-      unsafeCreateConnecta({
-        connectors: [],
-        credentialHealth: undefined,
-      }),
-    ).toThrow("- credentialHealth -> credentials.health");
+  it("rejects removed credential-health config at either path", () => {
+    for (const config of [
+      { credentialHealth: undefined },
+      { credentials: { health: undefined } },
+      { credentials: { health: { onRequest: false } } },
+    ]) {
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], ...config }),
+      ).toThrow("removed in issue #179");
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], ...config }),
+      ).toThrow("ethos.md");
+    }
   });
 
   it("rejects retired toolkit config even when undefined", () => {
@@ -275,8 +277,15 @@ if (false) {
   });
   createConnecta({
     connectors: [],
-    // @ts-expect-error removed in v0.7
+    // @ts-expect-error removed in v0.9
     credentialHealth: {},
+  });
+  createConnecta({
+    connectors: [],
+    credentials: {
+      // @ts-expect-error removed in v0.9
+      health: {},
+    },
   });
   createConnecta({
     connectors: [],

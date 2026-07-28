@@ -24,9 +24,6 @@
     // Loaded by the QuickJS parent when it forks a source-tree child and used
     // directly by the runnable Node and Docker examples.
     "tsx",
-    // Package name behind the virtual cloudflare:test module supplied by
-    // @cloudflare/vitest-pool-workers.
-    "cloudflare",
     // Deployment CLI and the schema provider for examples/worker/wrangler.jsonc.
     "wrangler"
   ]

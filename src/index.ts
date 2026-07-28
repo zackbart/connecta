@@ -15,11 +15,6 @@ import {
 } from "./executor-admission.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
-  CredentialCheckResult,
-  CredentialHealthConfig,
-} from "./credential-health.js";
-import type { DeferredWork } from "./connector-scope.js";
-import type {
   Connector,
   ConnectaBranding,
   Executor,
@@ -44,24 +39,13 @@ export interface ConnectaActivityConfig {
   deploymentId?: string;
 }
 
-/** Operator-vault encryption and proactive credential-health tuning. */
+/** Operator-vault encryption. */
 export interface ConnectaCredentialsConfig {
   /**
    * Base64-encoded 32-byte AES key for credentials managed on /credentials.
    * Keep this in the runtime's secret store, never in KV or source control.
    */
   encryptionKey?: string;
-  /**
-   * Tuning for proactive credential liveness checks that let a connector's
-   * status flip to `auth_required` before an agent's call fails. Defaults: one
-   * check per connector per 15 minutes, four in flight, 30 seconds each,
-   * triggered opportunistically by inbound authenticated traffic.
-   *
-   * Optional even without an encryption key because downstream OAuth connectors
-   * manage their own grants. `Connecta.checkCredentials()` runs the same checks
-   * on demand for a Worker cron trigger or Node interval.
-   */
-  health?: CredentialHealthConfig;
 }
 
 /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
@@ -197,37 +181,6 @@ export interface Connecta {
   /** Web-standard fetch handler. Usable as `export default { fetch: connecta.fetch }`. */
   fetch: (request: Request, env?: unknown, ctx?: unknown) => Promise<Response>;
   registry: Registry;
-  /**
-   * Check the stored downstream credentials now — the scheduler-facing half of
-   * credential health (issue #24). Wire it to whatever timer the runtime has:
-   *
-   * ```ts
-   * // Cloudflare Workers (wrangler.jsonc: "triggers": { "crons": ["*\/15 * * * *"] })
-   * async scheduled(_c, env, ctx) {
-   *   const defer = ctx.waitUntil.bind(ctx);
-   *   ctx.waitUntil(build(env).checkCredentials({ defer }));
-   * }
-   * // Node
-   * setInterval(() => void connecta.checkCredentials(), 15 * 60_000).unref();
-   * ```
-   *
-   * Returns one outcome per connector considered, including why a connector was
-   * skipped (`fresh` is the rate limit: a connector checked less than
-   * `credentials.health.intervalSeconds` ago is not re-checked unless `force`).
-   * Never rejects on a connector failure — a broken connector becomes an `error`
-   * verdict. Needs a base URL for connector contexts: `publicUrl` supplies it,
-   * or pass one.
-   */
-  checkCredentials: (opts?: {
-    baseUrl?: string;
-    force?: boolean;
-    ids?: string[];
-    /**
-     * Runtime continuation for bounded teardown after the check result is ready.
-     * Workers should pass `ctx.waitUntil.bind(ctx)`.
-     */
-    defer?: DeferredWork;
-  }) => Promise<CredentialCheckResult[]>;
   /** Drain and release configured executor resources. Idempotent. */
   close: () => Promise<void>;
 }
@@ -280,7 +233,6 @@ const LEGACY_CONFIG_MIGRATIONS = [
   ["activityReadGate", "activity.readGate"],
   ["activityDeploymentId", "activity.deploymentId"],
   ["credentialEncryptionKey", "credentials.encryptionKey"],
-  ["credentialHealth", "credentials.health"],
   ["toolCacheTtlSeconds", "discovery.catalogTtlSeconds"],
   ["persistToolCatalog", "discovery.persistCatalog"],
   ["toolCatalogStaleSeconds", "discovery.staleCatalogSeconds"],
@@ -303,6 +255,17 @@ function assertNoLegacyConfig(config: ConnectaConfig): void {
     throw new Error(
       "ConnectaConfig.toolkits was removed in issue #178. Deploy one " +
         "connecta instance per audience instead; see ethos.md.",
+    );
+  }
+  const credentials = candidate.credentials;
+  const hasNestedHealth =
+    typeof credentials === "object" &&
+    credentials !== null &&
+    hasOwn(credentials, "health");
+  if (hasOwn(candidate, "credentialHealth") || hasNestedHealth) {
+    throw new Error(
+      "`credentials.health` and legacy `credentialHealth` were removed in " +
+        "issue #179. Credentials now fail at use; see ethos.md.",
     );
   }
   const found: Array<readonly [string, string]> = [];
@@ -476,9 +439,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     ...(config.calls?.maxBatchResultBytes !== undefined
       ? { maxBatchResultBytes: config.calls.maxBatchResultBytes }
       : {}),
-    ...(config.credentials?.health !== undefined
-      ? { credentialHealth: config.credentials.health }
-      : {}),
   });
   const inboundAuth = normalizeAuth(config.auth);
   warnInsecureConfig(config, inboundAuth, logger);
@@ -548,33 +508,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
           : undefined,
       ),
     registry,
-    checkCredentials: (opts = {}) => {
-      // A scheduled check has no inbound request to derive an origin from, and
-      // a connector context without one would mint OAuth redirect URIs against
-      // a guess. Say so instead: the fix is one config line.
-      const baseUrl = opts.baseUrl ?? config.publicUrl;
-      if (!baseUrl) {
-        // Rejected, not thrown: the callers this is written for are
-        // `ctx.waitUntil(...)` and `.catch(...)` on the returned promise, and a
-        // synchronous throw escapes both — it would take down a scheduled
-        // handler instead of being reported by it.
-        return Promise.reject(
-          new Error(
-            "checkCredentials() needs a base URL: set `publicUrl` on the " +
-              "config (recommended — it is also what downstream OAuth " +
-              "callbacks use) or pass checkCredentials({ baseUrl }).",
-          ),
-        );
-      }
-      return registry.checkCredentialHealth(
-        baseUrl,
-        {
-          ...(opts.force !== undefined ? { force: opts.force } : {}),
-          ...(opts.ids ? { ids: opts.ids } : {}),
-        },
-        opts.defer,
-      );
-    },
     close: async () => {
       closePromise ??= Promise.resolve().then(async () => {
         requestAdmission.close();
@@ -604,15 +537,6 @@ export { CONNECTA_VERSION } from "./version.js";
 // the class itself, the credential vault, and the meta-tool/sandbox factories
 // are internal factoring and are deliberately not part of the API surface.
 export type { Registry } from "./registry.js";
-// Credential health: the config shape, and the result shape a scheduled
-// `checkCredentials()` returns. The checker itself is internal factoring.
-export type {
-  CredentialCheckResult,
-  CredentialCheckSkip,
-  CredentialCheckState,
-  CredentialHealthConfig,
-  CredentialHealthRecord,
-} from "./credential-health.js";
 
 export type {
   RemoteMcpOptions,

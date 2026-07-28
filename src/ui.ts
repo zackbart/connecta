@@ -23,7 +23,11 @@ import {
   OPERATOR_UI_SCRIPT,
 } from "./operator-ui/generated.js";
 import type { Registry } from "./registry.js";
-import type { ConnectaBranding, UiAuthConfig } from "./types.js";
+import type {
+  ConnectaBranding,
+  ConnectorStatus,
+  UiAuthConfig,
+} from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
 
 export {
@@ -319,8 +323,10 @@ export async function buildUiData(
     connectorSet,
     concurrency,
     async (c): Promise<UiConnector> => {
-      const status = await registry.statusFor(c.id, baseUrl, requestScope);
-      const credentialCheck = await registry.credentialHealthFor(c.id);
+      const drift = await registry.credentialDriftFor(c.id);
+      const status: ConnectorStatus = drift
+        ? { state: "auth_required", message: drift }
+        : await registry.statusFor(c.id, baseUrl, requestScope);
       let tools: UiTool[] = [];
       // `status()` on an unauthenticated remote connector starts OAuth and
       // stores its state + PKCE verifier. Probing listTools immediately
@@ -444,17 +450,6 @@ export async function buildUiData(
         toolCount: tools.length,
         tools,
         ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
-        ...(credentialCheck
-          ? {
-              credentialCheck: {
-                state: credentialCheck.state,
-                checkedAt: credentialCheck.checkedAt,
-                ...(credentialCheck.message
-                  ? { message: credentialCheck.message }
-                  : {}),
-              },
-            }
-          : {}),
         ...(credential ? { credential } : {}),
       };
     },

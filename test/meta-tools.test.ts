@@ -506,10 +506,10 @@ describe("list_connectors", () => {
       },
     };
     const registry = makeRegistry([rejecting, slow]);
-    const credentialHealthFor = registry.credentialHealthFor.bind(registry);
-    registry.credentialHealthFor = async (id) => {
+    const credentialDriftFor = registry.credentialDriftFor.bind(registry);
+    registry.credentialDriftFor = async (id) => {
       if (id === "rejecting") throw new Error("future unguarded rejection");
-      return credentialHealthFor(id);
+      return credentialDriftFor(id);
     };
 
     const listing = createMetaTools(registry, BASE).listConnectors({
@@ -648,21 +648,17 @@ describe("list_connectors", () => {
       storage,
       credentialVault: vault,
     });
-    await registry.checkCredentialHealth(BASE);
     const mt = createMetaTools(registry, BASE);
 
     const listed = textOf(await mt.listConnectors({ probe: false })) as {
       connectors: Array<{
         status: string;
-        credentialCheck?: { state: string; message?: string };
+        message?: string;
       }>;
     };
     expect(listed.connectors[0]).toMatchObject({
       status: "auth_required",
-      credentialCheck: {
-        state: "auth_required",
-        message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-      },
+      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
     });
     expect(tests).toBe(0);
 

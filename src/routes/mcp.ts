@@ -272,7 +272,6 @@ export function createMcpRoute(
       request,
       baseUrl,
       runtimeContext,
-      sweepCredentials,
     } = context;
     if (path !== "/mcp") return null;
     let admission: AdmissionLease;
@@ -318,7 +317,6 @@ export function createMcpRoute(
           request.signal,
         );
       }
-      sweepCredentials();
       return releaseAdmissionWithResponse(
         withMcpCors(
           await serveMcp(

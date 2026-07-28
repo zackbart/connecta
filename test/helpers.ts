@@ -1,6 +1,5 @@
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { CredentialHealthConfig } from "../src/credential-health.js";
 import type { CredentialVault } from "../src/credentials.js";
 import type { Connector, KVStorage, Logger } from "../src/types.js";
 
@@ -38,8 +37,7 @@ export function makeRegistry(
     toolCacheTtlSeconds?: number;
     maxResultBytes?: number;
     maxBatchResultBytes?: number;
-    credentialHealth?: CredentialHealthConfig;
-    /** Share one store between a registry and a vault (credential-health tests). */
+    /** Share one store between a registry and a credential vault. */
     storage?: KVStorage;
     credentialVault?: CredentialVault;
     logger?: Logger;

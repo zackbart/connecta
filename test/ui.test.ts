@@ -382,7 +382,6 @@ function makeShapeDriftConnecta(
     publicUrl: BASE,
     credentials: {
       encryptionKey: CREDENTIAL_KEY,
-      health: { onRequest: false },
     },
   });
   return { connecta, testCredential, testCredentials };
@@ -1551,10 +1550,6 @@ describe("status UI", () => {
     expect(clerk.connectors[0].oauth).toBe(true);
 
     await storage.set("catalog:oauth", "stale catalog");
-    await connecta.registry.recordCredentialHealth("oauth", {
-      state: "auth_required",
-      checkedAt: new Date().toISOString(),
-    });
     const disconnected = await credentialRequest(
       connecta,
       "/ui/oauth/oauth",
@@ -1563,9 +1558,6 @@ describe("status UI", () => {
     expect(disconnected.status).toBe(204);
     expect(disconnectAuth).toHaveBeenCalledOnce();
     expect(await storage.get("catalog:oauth")).toBeNull();
-    expect(
-      await connecta.registry.credentialHealthFor("oauth"),
-    ).toBeUndefined();
 
     const restarted = await credentialRequest(
       connecta,
@@ -1608,10 +1600,6 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
     await storage.set("catalog:oauth", "stale catalog");
-    await connecta.registry.recordCredentialHealth("oauth", {
-      state: "ok",
-      checkedAt: new Date().toISOString(),
-    });
 
     const disconnected = await credentialRequest(
       connecta,
@@ -1624,9 +1612,6 @@ describe("status UI", () => {
       error: "provider cleanup failed",
     });
     expect(await storage.get("catalog:oauth")).toBeNull();
-    expect(
-      await connecta.registry.credentialHealthFor("oauth"),
-    ).toBeUndefined();
   });
 
   it("keeps OAuth mutation same-origin, Clerk-only, and connector-scoped", async () => {
@@ -2009,10 +1994,10 @@ describe("status UI", () => {
       },
     };
     const registry = makeRegistry([rejecting, slow]);
-    const credentialHealthFor = registry.credentialHealthFor.bind(registry);
-    registry.credentialHealthFor = async (id) => {
+    const credentialDriftFor = registry.credentialDriftFor.bind(registry);
+    registry.credentialDriftFor = async (id) => {
       if (id === "rejecting") throw new Error("future unguarded rejection");
-      return credentialHealthFor(id);
+      return credentialDriftFor(id);
     };
 
     const loading = buildUiData(registry, BASE, {
@@ -2556,7 +2541,6 @@ describe("status UI credential management", () => {
       publicUrl: BASE,
       credentials: {
         encryptionKey: CREDENTIAL_KEY,
-        health: { onRequest: false },
       },
     });
 
@@ -2604,13 +2588,6 @@ describe("status UI credential management", () => {
       expect.anything(),
     );
 
-    // And the sweep agrees: a superset is not drift, so the Test verdict stands.
-    const [health] = await connecta.registry.checkCredentialHealth(BASE);
-    expect(health).toMatchObject({
-      connectorId: "superset",
-      skipped: "fresh",
-      record: { state: "ok" },
-    });
   });
 
   it("keeps a single-value credential usable when an old named field lingers", async () => {
@@ -2635,7 +2612,6 @@ describe("status UI credential management", () => {
       publicUrl: BASE,
       credentials: {
         encryptionKey: CREDENTIAL_KEY,
-        health: { onRequest: false },
       },
     });
 
@@ -2686,7 +2662,6 @@ describe("status UI credential management", () => {
       publicUrl: BASE,
       credentials: {
         encryptionKey: CREDENTIAL_KEY,
-        health: { onRequest: false },
       },
     });
 
@@ -2733,15 +2708,6 @@ describe("status UI credential management", () => {
       expect.anything(),
     );
 
-    // The manual Test recorded a fresh ok. Health still runs its local shape
-    // classifier before the freshness shortcut, so this proves that classifier
-    // sees the declaration as the same key set rather than false drift.
-    const [health] = await connecta.registry.checkCredentialHealth(BASE);
-    expect(health).toMatchObject({
-      connectorId: "duplicate",
-      skipped: "fresh",
-      record: { state: "ok" },
-    });
     expect(testCredentials).toHaveBeenCalledTimes(1);
   });
 
@@ -3011,38 +2977,6 @@ describe("status UI credential management", () => {
       { method: "POST" },
     );
     await expect(test.json()).resolves.toEqual({ ok: true });
-  });
-
-  it("feeds the credential Test action into the liveness verdict, and resets it on change", async () => {
-    const { connecta } = makeCredentialConnecta();
-    await credentialRequest(connecta, "/ui/credentials/vaulted", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ value: "valid-secret-9876" }),
-    });
-    // A PUT replaces the credential a verdict would have judged, so it starts
-    // from no verdict rather than carrying the previous one forward.
-    expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
-
-    const test = await credentialRequest(
-      connecta,
-      "/ui/credentials/vaulted/test",
-      { method: "POST" },
-    );
-    await expect(test.json()).resolves.toMatchObject({ ok: true });
-    // The operator just ran the same check the sweep runs — record it once, so
-    // the cached status surfaces agree with what /ui showed.
-    expect(await connecta.registry.credentialHealthFor("vaulted")).toMatchObject(
-      { state: "ok", message: "Credential is valid." },
-    );
-
-    const remove = await credentialRequest(
-      connecta,
-      "/ui/credentials/vaulted",
-      { method: "DELETE" },
-    );
-    expect(remove.status).toBe(204);
-    expect(await connecta.registry.credentialHealthFor("vaulted")).toBeUndefined();
   });
 
   it("runs testCredential for a single value that declares both hooks", async () => {
