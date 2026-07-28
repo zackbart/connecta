@@ -300,7 +300,7 @@ real OAuth server.
   context is the package root; run compose commands referencing
   `examples/docker/docker-compose.yml` from the package root.
 - **Upgrade Zod / the MCP SDK together and run the full release check.**
-  `@modelcontextprotocol/sdk` is pinned to **1.29.0** and paired with
+  `@modelcontextprotocol/sdk` is pinned to **1.30.0** and paired with
   **Zod 4** (`^4.4.3`). The SDK accepts Zod 3 or 4; Connecta uses Zod 4 to keep
   the optional code-mode peer graph valid without legacy npm resolution.
 - **No server-push / sessions — by design.** The transport is stateless (no
