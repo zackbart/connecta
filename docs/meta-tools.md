@@ -81,8 +81,12 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
   `query` browses everything; page with `offset` rather than raising `limit`
   past the maximum.
 - **Ranking:** exact and prefix tool-name matches rank above name substrings,
-  which rank above description-only matches. Multi-word queries require every
-  term to occur across the name and description.
+  which rank above description-only matches. Multi-word queries first require
+  every term to occur across the name and description. When that stage has no
+  matches, dependency-free lexical fallback returns tools covering at least
+  one term, ranked by term coverage, then tool-name coverage, then stable
+  catalog order. A fallback response includes `matchMode: "partial"`; no-overlap
+  searches remain empty.
 - **Output:** `{ connectors: [{ id, title?, description?, guide?, tools: [{ name,
   address, description? }] }], total, offset, limit, hasMore, nextOffset? }`.
   `total` is

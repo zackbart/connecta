@@ -369,20 +369,33 @@ export async function buildSandboxProviders(
           score: number;
           order: number;
         }> = [];
-        let orderBase = 0;
-        for (const connector of connectors) {
-          if (args.connector && connector.id !== args.connector) continue;
-          const tools = catalogs.get(connector.id);
-          if (!tools) continue;
-          for (const ranked of rankTools(tools, args.query ?? "")) {
-            matches.push({
-              connector: connector.id,
-              tool: ranked.tool,
-              score: ranked.score,
-              order: orderBase + ranked.order,
-            });
+        let matchMode: "all" | "partial" = "all";
+        const collectMatches = (mode: "all" | "partial") => {
+          matches.length = 0;
+          let orderBase = 0;
+          for (const connector of connectors) {
+            if (args.connector && connector.id !== args.connector) continue;
+            const tools = catalogs.get(connector.id);
+            if (!tools) continue;
+            for (const ranked of rankTools(
+              tools,
+              args.query ?? "",
+              mode,
+            )) {
+              matches.push({
+                connector: connector.id,
+                tool: ranked.tool,
+                score: ranked.score,
+                order: orderBase + ranked.order,
+              });
+            }
+            orderBase += tools.length;
           }
-          orderBase += tools.length;
+        };
+        collectMatches("all");
+        if ((args.query ?? "").trim() && matches.length === 0) {
+          matchMode = "partial";
+          collectMatches(matchMode);
         }
         matches.sort((a, b) => b.score - a.score || a.order - b.order);
         const offset = Math.max(0, Math.trunc(args.offset ?? 0));
@@ -428,6 +441,9 @@ export async function buildSandboxProviders(
           limit,
           hasMore: nextOffset !== undefined,
           ...(nextOffset !== undefined ? { nextOffset } : {}),
+          ...(matchMode === "partial" && matches.length > 0
+            ? { matchMode }
+            : {}),
         };
         assertDiscoveryResultSize(
           result,

@@ -367,6 +367,15 @@ describe("buildSandboxProviders", () => {
       inputSchema: "{ a: number, b: number }",
     });
 
+    const partial = (await connecta.fns.search({
+      query: "add numbers operands result metadata",
+    })) as {
+      matchMode?: string;
+      tools: Array<{ address: string }>;
+    };
+    expect(partial.matchMode).toBe("partial");
+    expect(partial.tools[0].address).toBe("calc.add");
+
     const described = (await connecta.fns.describe({
       addresses: ["calc.add", "remote.echo"],
     })) as { tools: Array<{ address: string }> };

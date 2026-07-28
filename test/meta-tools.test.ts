@@ -818,6 +818,7 @@ interface SearchResult {
   limit: number;
   hasMore: boolean;
   nextOffset?: number;
+  matchMode?: "partial";
 }
 
 describe("search_tools", () => {
@@ -1013,6 +1014,94 @@ describe("search_tools", () => {
       "article-fetch",
       "article-search",
     ]);
+    expect(parsed.matchMode).toBeUndefined();
+  });
+
+  it("falls back to deterministic partial-term ranking only when all-term search is empty", async () => {
+    const conn: Connector = {
+      id: "experiments",
+      description: "Experiment service",
+      async listTools() {
+        return [
+          {
+            name: "list_experiments",
+            description: "List experiments and their configuration.",
+          },
+          {
+            name: "get_experiment",
+            description:
+              "Get experiment details including metrics and variants.",
+          },
+          {
+            name: "get_results",
+            description: "Get experiment results.",
+          },
+        ];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([conn]), BASE);
+    const query =
+      "get experiment details metrics variants results configuration";
+    const first = textOf(
+      await mt.searchTools({ query, limit: 2 }),
+    ) as SearchResult;
+
+    expect(first.matchMode).toBe("partial");
+    expect(first.connectors.flatMap((group) => group.tools).map((t) => t.name))
+      .toEqual(["get_experiment", "get_results"]);
+    expect(first.total).toBe(3);
+    expect(first.nextOffset).toBe(2);
+
+    const second = textOf(
+      await mt.searchTools({
+        query,
+        limit: 2,
+        offset: first.nextOffset,
+      }),
+    ) as SearchResult;
+    expect(second.matchMode).toBe("partial");
+    expect(second.connectors[0].tools.map((tool) => tool.name)).toEqual([
+      "list_experiments",
+    ]);
+  });
+
+  it("keeps partial fallback connector-scoped and returns no mode without overlap", async () => {
+    const connector = (id: string, name: string): Connector => ({
+      id,
+      async listTools() {
+        return [{ name, description: `${name} records` }];
+      },
+      async callTool() {
+        return null;
+      },
+    });
+    const mt = createMetaTools(
+      makeRegistry([
+        connector("wanted", "get_experiment"),
+        connector("other", "get_results"),
+      ]),
+      BASE,
+    );
+    const partial = textOf(
+      await mt.searchTools({
+        connector: "wanted",
+        query: "get experiment metrics variants results",
+      }),
+    ) as SearchResult;
+    expect(partial.matchMode).toBe("partial");
+    expect(partial.connectors.map((group) => group.id)).toEqual(["wanted"]);
+
+    const none = textOf(
+      await mt.searchTools({
+        connector: "wanted",
+        query: "calendar availability",
+      }),
+    ) as SearchResult;
+    expect(none).toMatchObject({ connectors: [], total: 0, hasMore: false });
+    expect(none.matchMode).toBeUndefined();
   });
 
   it("returns concise descriptions by default and full text on request", async () => {
