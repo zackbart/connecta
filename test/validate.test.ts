@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import { precompileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema, Logger } from "../src/types.js";
-import { silentLogger } from "./helpers.js";
+import { required, silentLogger } from "./helpers.js";
 
 const OPTS = { address: "acme.create_note", logger: silentLogger };
 
@@ -67,7 +67,7 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { anything: true }, opts)).toBeNull();
     expect(validateToolInput(schema, { anything: true }, opts)).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("acme.dup_id");
+    expect(required(warn.mock.calls[0])[0]).toContain("acme.dup_id");
   });
 
   it("a schema that only fails on first validate warns once and passes through", () => {
@@ -82,7 +82,7 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { x: 1 }, opts)).toBeNull();
     expect(validateToolInput(schema, { x: 2 }, opts)).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("acme.broken_ref");
+    expect(required(warn.mock.calls[0])[0]).toContain("acme.broken_ref");
   });
 
   it("caches the compiled validator per schema object", () => {
@@ -174,7 +174,7 @@ describe("precompileValidator", () => {
       precompileValidator(schema, { address: "acme.precompile_bad", logger }),
     ).not.toThrow();
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("acme.precompile_bad");
+    expect(required(warn.mock.calls[0])[0]).toContain("acme.precompile_bad");
     // The disabled schema is cached: the runtime path passes through (default)
     // rather than recompiling and warning a second time.
     expect(

@@ -20,7 +20,7 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -176,7 +176,12 @@ function makeHttpDownstream(
     description: "Downstream",
     ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
     _transportFactory: () =>
-      new StreamableHTTPClientTransport(new URL(url), { fetch: fetchStub }),
+      // See remote-mcp.ts: exact optional types exposes an SDK declaration
+      // mismatch for sessionId, but the class implements this transport at
+      // runtime and is the production transport under test.
+      new StreamableHTTPClientTransport(new URL(url), {
+        fetch: fetchStub,
+      }) as unknown as Transport,
   });
   return { connector, requests };
 }
@@ -200,14 +205,14 @@ describe("remoteMcp() connector", () => {
     const tools = await c.listTools(ctx());
     const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
     expect(Object.keys(byName).sort()).toEqual(["echo", "fail"]);
-    expect(byName.echo.description).toBe("Echo text back");
-    expect((byName.echo.inputSchema as any).properties.text.type).toBe(
+    expect(required(byName.echo).description).toBe("Echo text back");
+    expect((required(byName.echo).inputSchema as any).properties.text.type).toBe(
       "string",
     );
-    expect((byName.echo.outputSchema as any).properties.echoed.type).toBe(
+    expect((required(byName.echo).outputSchema as any).properties.echoed.type).toBe(
       "string",
     );
-    expect(byName.echo.annotations).toMatchObject({
+    expect(required(byName.echo).annotations).toMatchObject({
       readOnlyHint: true,
       idempotentHint: true,
     });
@@ -263,7 +268,7 @@ describe("remoteMcp() connector", () => {
       isError?: boolean;
     };
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("downstream boom");
+    expect(required(result.content[0]).text).toContain("downstream boom");
   });
 
   it("reports ok status once connected", async () => {
@@ -334,7 +339,7 @@ describe("remoteMcp() connector", () => {
       args: { text: "next request" },
     });
 
-    expect(result.content[0].text).toBe("echo:next request");
+    expect(required(result.content[0]).text).toBe("echo:next request");
     expect(builds).toBe(2);
   });
 
@@ -445,7 +450,7 @@ describe("probe scope teardown", () => {
     }).listConnectors({ probe: true });
 
     expect(result.isError).toBeFalsy();
-    expect(result.content[0].text).toContain("timed out");
+    expect(required(result.content[0]).text).toContain("timed out");
     expect(counts).toEqual({ connect: 1, close: 1 });
   });
 
@@ -506,12 +511,12 @@ describe("downstream session termination", () => {
 
     const deletes = requests.filter((r) => r.method === "DELETE");
     expect(deletes).toHaveLength(1);
-    expect(deletes[0].sessionId).toBe("sess-1");
+    expect(required(deletes[0]).sessionId).toBe("sess-1");
     // Load-bearing: the DELETE rides the transport's AbortSignal, so a
     // termination issued after the close would be aborted on arrival and free
     // nothing server-side while still looking like it worked.
-    expect(deletes[0].abortedWhenIssued).toBe(false);
-    expect(deletes[0].signal!.aborted).toBe(true);
+    expect(required(deletes[0]).abortedWhenIssued).toBe(false);
+    expect(required(deletes[0]).signal!.aborted).toBe(true);
   });
 
   it("sends no DELETE for a stateless downstream", async () => {
@@ -550,10 +555,10 @@ describe("downstream session termination", () => {
     ]);
     expect(requests.filter((r) => r.method === "DELETE")).toHaveLength(1);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain(
+    expect(required(warn.mock.calls[0])[0]).toContain(
       'connector "down" session termination was refused or failed',
     );
-    expect(String(warn.mock.calls[0][1])).toContain(
+    expect(String(required(warn.mock.calls[0])[1])).toContain(
       "Failed to terminate session",
     );
   });
@@ -586,10 +591,10 @@ describe("downstream session termination", () => {
     expect(pending!.signal!.aborted).toBe(true);
     expect(elapsed).toBeLessThan(2_000);
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain(
+    expect(required(warn.mock.calls[0])[0]).toContain(
       "session termination was not acknowledged within 1000 ms",
     );
-    expect(warn.mock.calls[0][0]).toContain(
+    expect(required(warn.mock.calls[0])[0]).toContain(
       "downstream may still finish the headers-only DELETE",
     );
   });
@@ -609,8 +614,8 @@ describe("remoteMcp() destination guard", () => {
       logger,
     });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("cleartext");
-    expect(warn.mock.calls[0][0]).toMatch(/http:\/\/example\.com/);
+    expect(required(warn.mock.calls[0])[0]).toContain("cleartext");
+    expect(required(warn.mock.calls[0])[0]).toMatch(/http:\/\/example\.com/);
   });
 
   it("does not warn for headers auth over https://", () => {
@@ -699,7 +704,7 @@ describe("remoteMcp() redirect policy", () => {
     expect((err as Error).message).not.toContain("redirect-secret");
     expect((err as Error).message).not.toContain("static-secret");
     expect(calls).toHaveLength(1);
-    expect(calls[0].init.redirect).toBe("manual");
+    expect(required(calls[0]).init.redirect).toBe("manual");
   });
 
   it.each([
@@ -744,14 +749,14 @@ describe("remoteMcp() redirect policy", () => {
       ).resolves.toBeInstanceOf(Response);
 
       expect(calls).toHaveLength(2);
-      expect(calls[1].url).toBe("https://downstream.test/next");
-      expect(calls[1].init.method).toBe(expectedMethod);
-      expect(calls[1].init.body).toBe(expectedBody);
-      expect(new Headers(calls[1].init.headers).get("x-api-key")).toBe(
+      expect(required(calls[1]).url).toBe("https://downstream.test/next");
+      expect(required(calls[1]).init.method).toBe(expectedMethod);
+      expect(required(calls[1]).init.body).toBe(expectedBody);
+      expect(new Headers(required(calls[1]).init.headers).get("x-api-key")).toBe(
         "static-secret",
       );
       expect(
-        new Headers(calls[1].init.headers).get("content-type"),
+        new Headers(required(calls[1]).init.headers).get("content-type"),
       ).toBe(expectedBody ? "application/json" : null);
       expect(calls.every((call) => call.init.redirect === "manual")).toBe(true);
     },
@@ -794,7 +799,7 @@ describe("remoteMcp() redirect policy", () => {
     expect((err as Error).message).not.toContain("redirect-secret");
     expect((err as Error).message).not.toContain(target);
     expect(calls).toHaveLength(1);
-    expect(calls[0].headers.get("x-api-key")).toBe("static-secret");
+    expect(required(calls[0]).headers.get("x-api-key")).toBe("static-secret");
   });
 
   it("never sends an OAuth bearer token across an origin boundary", async () => {
@@ -827,7 +832,7 @@ describe("remoteMcp() redirect policy", () => {
       message: expect.stringContaining("cross-origin redirect"),
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].get("authorization")).toBe("Bearer oauth-secret");
+    expect(required(calls[0]).get("authorization")).toBe("Bearer oauth-secret");
   });
 
   it("fails redirect loops and chains beyond the hard hop limit", async () => {
@@ -887,7 +892,7 @@ describe("remoteMcp() redirect policy", () => {
       message: expect.stringContaining("redirect policy rejected"),
     });
     expect(calls).toHaveLength(1);
-    expect(calls[0].get("x-api-key")).toBe("static-secret");
+    expect(required(calls[0]).get("x-api-key")).toBe("static-secret");
   });
 });
 

@@ -43,7 +43,9 @@ function data(): UiData {
           label: "API token",
           configured: Boolean(credentialValue),
           removable: Boolean(credentialValue),
-          lastFour: credentialValue?.slice(-4),
+          ...(credentialValue
+            ? { lastFour: credentialValue.slice(-4) }
+            : {}),
           testable: true,
         },
       },
@@ -109,7 +111,9 @@ test.beforeAll(async () => {
     requests.push({
       method,
       path: url.pathname + url.search,
-      authorization: request.headers.authorization,
+      ...(request.headers.authorization !== undefined
+        ? { authorization: request.headers.authorization }
+        : {}),
       body,
     });
     if (request.headers.authorization !== `Bearer ${TOKEN}`) {

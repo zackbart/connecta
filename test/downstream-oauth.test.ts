@@ -22,7 +22,7 @@ import type {
   KVStorage,
   Logger,
 } from "../src/types.js";
-import { silentLogger } from "./helpers.js";
+import { required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
@@ -919,7 +919,7 @@ describe("remoteMcp() startAuth", () => {
       status: "auth_required",
       toolCount: 0,
     });
-    expect(data.connectors[0].authorizationUrl).toBeUndefined();
+    expect(required(data.connectors[0]).authorizationUrl).toBeUndefined();
     expect(builds).toBe(0);
     expect(await storage.get("conn:svc:oauth:pending")).toBeNull();
     expect(await storage.get("conn:svc:oauth:generation")).toMatch(
@@ -1440,7 +1440,7 @@ describe("/oauth/callback/<id> route", () => {
     );
 
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain(
+    expect(required(warn.mock.calls[0])[0]).toContain(
       "state did not match the pending authorization flow",
     );
   });
@@ -1457,7 +1457,7 @@ describe("/oauth/callback/<id> route", () => {
     await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc`));
 
     expect(warn).toHaveBeenCalledTimes(1);
-    const diagnostic = String(warn.mock.calls[0][0]);
+    const diagnostic = String(required(warn.mock.calls[0])[0]);
     expect(diagnostic).toContain("the state parameter was missing");
     expect(diagnostic).not.toContain("did not match");
   });
@@ -1575,7 +1575,7 @@ describe("/oauth/callback/<id> route", () => {
     expect(res.status).toBe(400);
     expect(finishAuth).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalledTimes(1);
-    const diagnostic = String(warn.mock.calls[0][0]);
+    const diagnostic = String(required(warn.mock.calls[0])[0]);
     expect(diagnostic).toContain("verifyState threw");
     expect(diagnostic).toContain("\\n");
     expect(diagnostic).not.toContain("\n");

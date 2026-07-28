@@ -297,7 +297,9 @@ function redirectedInit(init: RequestInit, status: number): RequestInit {
   if (!becomesGet) return init;
   const headers = new Headers(init.headers);
   for (const name of BODY_HEADERS) headers.delete(name);
-  return { ...init, method: "GET", body: undefined, headers };
+  const redirected = { ...init, method: "GET", headers };
+  delete redirected.body;
+  return redirected;
 }
 
 /**
@@ -545,10 +547,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
+      // The SDK class declares `sessionId` as an own `string | undefined`
+      // property while its Transport interface declares it optional. They are
+      // runtime-compatible; exact optional types only exposes that declaration
+      // mismatch at this boundary.
       return new StreamableHTTPClientTransport(url, {
         authProvider: provider ?? newProvider(ctx),
         fetch: guardedFetch,
-      });
+      }) as unknown as Transport;
     }
     const headers =
       opts.auth?.type === "headers" ? opts.auth.headers : undefined;
@@ -558,7 +564,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         ...(headers ? { requestInit: { headers } } : {}),
         fetch: guardedFetch,
       },
-    );
+    ) as unknown as Transport;
   };
 
   const reset = (state: ConnectionState) => {
@@ -741,12 +747,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
   const connector: Connector = {
     id,
-    title: opts.title,
+    ...(opts.title !== undefined ? { title: opts.title } : {}),
     kind: "mcp",
-    description: opts.description,
-    maxResultBytes: opts.maxResultBytes,
-    callAdmission: opts.callAdmission,
-    usageGuide: opts.usageGuide,
+    ...(opts.description !== undefined
+      ? { description: opts.description }
+      : {}),
+    ...(opts.maxResultBytes !== undefined
+      ? { maxResultBytes: opts.maxResultBytes }
+      : {}),
+    ...(opts.callAdmission !== undefined
+      ? { callAdmission: opts.callAdmission }
+      : {}),
+    ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
 
     // `tools/list` is cursor-paginated: the server chooses the page size and
     // signals "there is more" with a `nextCursor`, which the SDK's
@@ -862,10 +874,28 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       primeToolMetadata(client, listed);
       return listed.map((t) => ({
         name: t.name,
-        description: t.description,
-        inputSchema: t.inputSchema as ToolDef["inputSchema"],
-        outputSchema: t.outputSchema as ToolDef["outputSchema"],
-        annotations: t.annotations as ToolDef["annotations"],
+        ...(t.description !== undefined ? { description: t.description } : {}),
+        ...(t.inputSchema !== undefined
+          ? {
+              inputSchema: t.inputSchema as NonNullable<
+                ToolDef["inputSchema"]
+              >,
+            }
+          : {}),
+        ...(t.outputSchema !== undefined
+          ? {
+              outputSchema: t.outputSchema as NonNullable<
+                ToolDef["outputSchema"]
+              >,
+            }
+          : {}),
+        ...(t.annotations !== undefined
+          ? {
+              annotations: t.annotations as NonNullable<
+                ToolDef["annotations"]
+              >,
+            }
+          : {}),
       }));
     },
 
@@ -941,7 +971,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           const url = await getProvider(ctx, state).pendingAuthorizationUrl();
           return {
             state: "auth_required",
-            authorizationUrl: url,
+            ...(url !== undefined ? { authorizationUrl: url } : {}),
             message: "Authorization required — open the URL to connect.",
           };
         }
@@ -1012,9 +1042,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         };
       } catch (err) {
         if (state.authRequired) {
+          const authorizationUrl = await p.pendingAuthorizationUrl();
           return {
             state: "auth_required",
-            authorizationUrl: await p.pendingAuthorizationUrl(),
+            ...(authorizationUrl !== undefined ? { authorizationUrl } : {}),
             message: "Authorization required — open the URL to connect.",
           };
         }

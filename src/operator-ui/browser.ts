@@ -818,8 +818,7 @@ function renderCredentials(): void {
       esc(c.id) + '">';
     if (cred.fields && cred.fields.length) {
       body += '<div class="credential-fields">';
-      for (let index = 0; index < cred.fields.length; index += 1) {
-        const field = cred.fields[index];
+      for (const [index, field] of cred.fields.entries()) {
         const inputId = "credential-input-" + c.id + "-" + index;
         body += '<div class="credential-field"><label for="' + esc(inputId) + '">' +
           esc(field.label) + '</label><input id="' + esc(inputId) + '" type="' +

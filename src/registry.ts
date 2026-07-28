@@ -147,13 +147,14 @@ export class HealthLog {
 
   recordSuccess(id: string, latencyMs: number): void {
     const previous = this.observations.get(id);
-    this.observations.set(id, {
+    const observation: HealthObservation = {
       ...previous,
       lastSuccessAt: new Date().toISOString(),
       lastLatencyMs: latencyMs,
       consecutiveFailures: 0,
-      lastError: undefined,
-    });
+    };
+    delete observation.lastError;
+    this.observations.set(id, observation);
   }
 
   recordFailure(id: string, latencyMs: number, error: unknown): void {
@@ -394,7 +395,9 @@ export class Registry implements RegistryView {
           this.contextFor(id, baseUrl, requestScope),
         storage: opts.storage,
         logger: opts.logger,
-        credentialVault: opts.credentialVault,
+        ...(opts.credentialVault !== undefined
+          ? { credentialVault: opts.credentialVault }
+          : {}),
       },
       opts.credentialHealth,
     );
@@ -656,7 +659,7 @@ export class Registry implements RegistryView {
       // the next character start. Every stored string then remains valid UTF-8.
       while (
         end < snapshot.serializedBytes.byteLength &&
-        (snapshot.serializedBytes[end] & 0xc0) === 0x80
+        ((snapshot.serializedBytes[end] ?? 0) & 0xc0) === 0x80
       ) {
         end--;
       }

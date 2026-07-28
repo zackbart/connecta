@@ -15,16 +15,18 @@ export async function mapSettledWithConcurrency<T, R>(
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<PromiseSettledResult<R>[]> {
   const settled = Array<PromiseSettledResult<R>>(items.length);
-  let next = 0;
+  const remaining = items.entries();
   const workers = Array.from(
     { length: Math.min(limit, items.length) },
     async () => {
-      while (next < items.length) {
-        const index = next++;
+      for (;;) {
+        const next = remaining.next();
+        if (next.done) return;
+        const [index, item] = next.value;
         try {
           settled[index] = {
             status: "fulfilled",
-            value: await fn(items[index], index),
+            value: await fn(item, index),
           };
         } catch (reason) {
           settled[index] = { status: "rejected", reason };

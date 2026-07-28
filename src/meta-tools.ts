@@ -127,8 +127,8 @@ function discoveryResult(value: unknown, hint: string): ToolResult {
 
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
-function isContinuationByte(b: number): boolean {
-  return (b & 0xc0) === 0x80;
+function isContinuationByte(b: number | undefined): boolean {
+  return b !== undefined && (b & 0xc0) === 0x80;
 }
 
 /** Smallest accepted `get_result` byte offset. */
@@ -212,8 +212,9 @@ export function alignEndToCharBoundary(
 
 /** Resolve a dot-path (segments) against a value; `key[]` maps the tail over an array. */
 function resolvePath(value: unknown, segments: string[]): unknown {
-  if (segments.length === 0) return value;
-  const [seg, ...rest] = segments;
+  const seg = segments[0];
+  if (seg === undefined) return value;
+  const rest = segments.slice(1);
   const isArr = seg.endsWith("[]");
   const key = isArr ? seg.slice(0, -2) : seg;
   let next: unknown = value;
@@ -564,10 +565,16 @@ export function createMetaTools(
       call.args ?? {},
       {
         source,
-        allowDestructive: options.allowDestructive,
-        timeoutMs,
-        maxRetries: call.maxRetries,
-        requestSignal: opts.requestSignal,
+        ...(options.allowDestructive !== undefined
+          ? { allowDestructive: options.allowDestructive }
+          : {}),
+        ...(timeoutMs !== undefined ? { timeoutMs } : {}),
+        ...(call.maxRetries !== undefined
+          ? { maxRetries: call.maxRetries }
+          : {}),
+        ...(opts.requestSignal !== undefined
+          ? { requestSignal: opts.requestSignal }
+          : {}),
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
           // Result-size cap for THIS call: the connector's own override wins,
@@ -962,17 +969,29 @@ export function createMetaTools(
           runCall(
             {
               ...c,
-              resultMode: c.resultMode ?? args.resultMode,
-              timeoutMs: c.timeoutMs ?? args.timeoutMs,
-              maxRetries: c.maxRetries ?? args.maxRetries,
-              diagnostics: c.diagnostics ?? args.diagnostics,
+              ...((c.resultMode ?? args.resultMode) !== undefined
+                ? { resultMode: c.resultMode ?? args.resultMode }
+                : {}),
+              ...((c.timeoutMs ?? args.timeoutMs) !== undefined
+                ? { timeoutMs: c.timeoutMs ?? args.timeoutMs }
+                : {}),
+              ...((c.maxRetries ?? args.maxRetries) !== undefined
+                ? { maxRetries: c.maxRetries ?? args.maxRetries }
+                : {}),
+              ...((c.diagnostics ?? args.diagnostics) !== undefined
+                ? { diagnostics: c.diagnostics ?? args.diagnostics }
+                : {}),
             },
             "batch_call",
           ),
         ),
       );
       const results = settled.map((s, i) => {
-        const address = args.calls[i].address;
+        const call = args.calls[i];
+        if (!call) {
+          throw new Error("Batch result has no corresponding call");
+        }
+        const { address } = call;
         if (s.status === "rejected") {
           return {
             address,
@@ -990,19 +1009,19 @@ export function createMetaTools(
             errorDetails: r.error,
             durationMs: r.durationMs,
             attempts: r.attempts,
-            ...((args.calls[i].diagnostics ?? args.diagnostics)
+            ...((call.diagnostics ?? args.diagnostics)
               ? { timing: r.timing }
               : {}),
           };
         }
-        if ((args.calls[i].resultMode ?? args.resultMode) === "value") {
+        if ((call.resultMode ?? args.resultMode) === "value") {
           return {
             address,
             ok: true,
             data: r.value,
             durationMs: r.durationMs,
             attempts: r.attempts,
-            ...((args.calls[i].diagnostics ?? args.diagnostics)
+            ...((call.diagnostics ?? args.diagnostics)
               ? { timing: r.timing }
               : {}),
           };
@@ -1013,7 +1032,7 @@ export function createMetaTools(
           result: r.toolResult.content,
           durationMs: r.durationMs,
           attempts: r.attempts,
-          ...((args.calls[i].diagnostics ?? args.diagnostics)
+          ...((call.diagnostics ?? args.diagnostics)
             ? { timing: r.timing }
             : {}),
         };
@@ -1077,7 +1096,10 @@ export function createMetaTools(
       }
       const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
       try {
-        const status = await connector.startAuth(ctx, { force: args.force });
+        const status = await connector.startAuth(
+          ctx,
+          args.force !== undefined ? { force: args.force } : {},
+        );
         // startAuth just spoke to the downstream about this exact credential, so
         // its answer replaces any older liveness verdict — including the stale
         // `auth_required` that sent the agent here, once it reports ok.
@@ -1201,12 +1223,20 @@ export function registerMetaTools(
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
-    defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
-    probeTimeoutMs: ctx.probeTimeoutMs,
-    discoveryConcurrency: ctx.discoveryConcurrency,
-    activity: ctx.activity,
-    requestSignal: ctx.requestSignal,
-    defer: ctx.defer,
+    ...(ctx.defaultToolTimeoutMs !== undefined
+      ? { defaultToolTimeoutMs: ctx.defaultToolTimeoutMs }
+      : {}),
+    ...(ctx.probeTimeoutMs !== undefined
+      ? { probeTimeoutMs: ctx.probeTimeoutMs }
+      : {}),
+    ...(ctx.discoveryConcurrency !== undefined
+      ? { discoveryConcurrency: ctx.discoveryConcurrency }
+      : {}),
+    ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
+    ...(ctx.requestSignal !== undefined
+      ? { requestSignal: ctx.requestSignal }
+      : {}),
+    ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
   });
 
   server.registerTool(

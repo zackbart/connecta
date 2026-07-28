@@ -21,7 +21,7 @@ import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import type { Connector } from "../src/types.js";
-import {
+import { required,
   authConnector,
   brokenConnector,
   calcConnector,
@@ -34,7 +34,7 @@ const BASE = "https://connecta.test";
 const CREDENTIAL_KEY = Buffer.alloc(32, 11).toString("base64");
 
 function textOf(result: { content: { text: string }[] }): unknown {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(required(result.content[0]).text);
 }
 
 function registry() {
@@ -71,7 +71,7 @@ Prefer \`notion.search\` over listing databases.
   }
 
   function textFrom(result: { content: { text: string }[] }): string {
-    return result.content[0].text;
+    return required(result.content[0]).text;
   }
 
   it("lists the built-in usage guide plus one entry per guided connector", async () => {
@@ -273,13 +273,13 @@ Prefer \`notion.search\` over listing databases.
       connectors: Array<{ id: string; guide?: string }>;
     };
     const byId = Object.fromEntries(searched.connectors.map((c) => [c.id, c]));
-    expect(byId.notion.guide).toBe("connector:notion");
+    expect(required(byId.notion).guide).toBe("connector:notion");
     expect(byId.plain).not.toHaveProperty("guide");
 
     const described = textOf(
       await mt.describeTools({ addresses: ["notion.search", "plain.search"] }),
     ) as { tools: Array<{ address: string; guide?: string }> };
-    expect(described.tools[0].guide).toBe("connector:notion");
+    expect(required(described.tools[0]).guide).toBe("connector:notion");
     expect(described.tools[1]).not.toHaveProperty("guide");
   });
 });
@@ -333,15 +333,15 @@ describe("list_connectors", () => {
     };
     const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
 
-    expect(byId.calc.status).toBe("ok");
-    expect(byId.calc.toolCount).toBe(1);
-    expect(Number.isNaN(Date.parse(byId.calc.checkedAt))).toBe(false);
-    expect(byId.calc.latencyMs).toBeGreaterThanOrEqual(0);
-    expect(byId.remote.status).toBe("ok");
-    expect(byId.broken.status).toBe("error");
-    expect(byId.broken.toolCount).toBe(0);
-    expect(byId.needsauth.status).toBe("auth_required");
-    expect(byId.needsauth.authorizationUrl).toContain("auth.example");
+    expect(required(byId.calc).status).toBe("ok");
+    expect(required(byId.calc).toolCount).toBe(1);
+    expect(Number.isNaN(Date.parse(required(byId.calc).checkedAt))).toBe(false);
+    expect(required(byId.calc).latencyMs).toBeGreaterThanOrEqual(0);
+    expect(required(byId.remote).status).toBe("ok");
+    expect(required(byId.broken).status).toBe("error");
+    expect(required(byId.broken).toolCount).toBe(0);
+    expect(required(byId.needsauth).status).toBe("auth_required");
+    expect(required(byId.needsauth).authorizationUrl).toContain("auth.example");
   });
 
   it("keeps probe results when best-effort scope teardown throws", async () => {
@@ -457,7 +457,7 @@ describe("list_connectors", () => {
     expect(deferred).toHaveLength(1);
     await expect(
       Promise.race([
-        deferred[0].then(() => "settled"),
+        required(deferred[0]).then(() => "settled"),
         Promise.resolve("pending"),
       ]),
     ).resolves.toBe("pending");
@@ -575,8 +575,8 @@ describe("list_connectors", () => {
       }>;
     };
 
-    expect(parsed.connectors[0].authorizationUrl).toContain("state=first");
-    expect(parsed.connectors[0].toolCount).toBe(0);
+    expect(required(parsed.connectors[0]).authorizationUrl).toContain("state=first");
+    expect(required(parsed.connectors[0]).toolCount).toBe(0);
     expect(listToolsCalls).toBe(0);
   });
 
@@ -694,9 +694,9 @@ describe("list_connectors", () => {
         consecutiveFailures: number;
       }>;
     };
-    expect(parsed.connectors[0].status).toBe("ok");
-    expect(parsed.connectors[0].lastSuccessAt).toBeTruthy();
-    expect(parsed.connectors[0].consecutiveFailures).toBe(0);
+    expect(required(parsed.connectors[0]).status).toBe("ok");
+    expect(required(parsed.connectors[0]).lastSuccessAt).toBeTruthy();
+    expect(required(parsed.connectors[0]).consecutiveFailures).toBe(0);
   });
 });
 
@@ -759,12 +759,12 @@ describe("catalog-lookup health accounting", () => {
       await mt.callTool({ address: "execution.read", resultMode: "value" });
     }
     const observed = await observe(mt);
-    expect(observed.catalog.consecutiveFailures).toBe(
-      observed.execution.consecutiveFailures,
+    expect(required(observed.catalog).consecutiveFailures).toBe(
+      required(observed.execution).consecutiveFailures,
     );
-    expect(observed.catalog.consecutiveFailures).toBe(2);
-    expect(observed.catalog.status).toBe("error");
-    expect(observed.catalog.message).toContain("catalog unavailable");
+    expect(required(observed.catalog).consecutiveFailures).toBe(2);
+    expect(required(observed.catalog).status).toBe("error");
+    expect(required(observed.catalog).message).toContain("catalog unavailable");
   });
 
   it("records a typed auth_required from the catalog without changing its code", async () => {
@@ -789,15 +789,15 @@ describe("catalog-lookup health accounting", () => {
     expect(parsed.error.code).toBe("auth_required");
     expect(parsed.error.message).toContain("authorize_connector");
     const observed = await observe(mt);
-    expect(observed.expired.status).toBe("error");
-    expect(observed.expired.consecutiveFailures).toBe(1);
+    expect(required(observed.expired).status).toBe("error");
+    expect(required(observed.expired).consecutiveFailures).toBe(1);
   });
 
   it("returns to healthy once the catalog answers again", async () => {
     const state = { failing: true, listCalls: 0 };
     const mt = createMetaTools(makeRegistry([catalogFlaky(state)]), BASE);
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
-    expect((await observe(mt)).catalog.status).toBe("error");
+    expect(required((await observe(mt)).catalog).status).toBe("error");
 
     state.failing = false;
     const parsed = textOf(
@@ -805,9 +805,9 @@ describe("catalog-lookup health accounting", () => {
     ) as { ok: boolean };
     expect(parsed.ok).toBe(true);
     const recovered = (await observe(mt)).catalog;
-    expect(recovered.status).toBe("ok");
-    expect(recovered.consecutiveFailures).toBe(0);
-    expect(recovered.lastSuccessAt).toBeTruthy();
+    expect(required(recovered).status).toBe("ok");
+    expect(required(recovered).consecutiveFailures).toBe(0);
+    expect(required(recovered).lastSuccessAt).toBeTruthy();
   });
 
   it("leaves health alone for static catalogs and warm-cache hits", async () => {
@@ -898,8 +898,8 @@ describe("search_tools", () => {
     ) as SearchResult;
     // A single matching tool → a single connector group.
     expect(parsed.connectors).toHaveLength(1);
-    expect(parsed.connectors[0].id).toBe("remote");
-    expect(parsed.connectors[0].tools.map((t) => t.address)).toEqual([
+    expect(required(parsed.connectors[0]).id).toBe("remote");
+    expect(required(parsed.connectors[0]).tools.map((t) => t.address)).toEqual([
       "remote.echo",
     ]);
     expect(parsed.total).toBe(1);
@@ -914,8 +914,8 @@ describe("search_tools", () => {
       "remote",
     ]);
     const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
-    expect(byId.calc.tools.map((t) => t.address)).toEqual(["calc.add"]);
-    expect(byId.remote.tools.map((t) => t.address)).toEqual(["remote.echo"]);
+    expect(required(byId.calc).tools.map((t) => t.address)).toEqual(["calc.add"]);
+    expect(required(byId.remote).tools.map((t) => t.address)).toEqual(["remote.echo"]);
     expect(parsed.total).toBe(2);
   });
 
@@ -925,8 +925,8 @@ describe("search_tools", () => {
       await mt.searchTools({ connector: "calc" }),
     ) as SearchResult;
     expect(parsed.connectors).toHaveLength(1);
-    expect(parsed.connectors[0].id).toBe("calc");
-    expect(parsed.connectors[0].tools.map((t) => t.address)).toEqual([
+    expect(required(parsed.connectors[0]).id).toBe("calc");
+    expect(required(parsed.connectors[0]).tools.map((t) => t.address)).toEqual([
       "calc.add",
     ]);
     expect(parsed.total).toBe(1);
@@ -942,7 +942,10 @@ describe("search_tools", () => {
     expect(shown).toHaveLength(1);
 
     const next = textOf(
-      await mt.searchTools({ limit: 1, offset: parsed.nextOffset }),
+      await mt.searchTools({
+        limit: 1,
+        offset: required(parsed.nextOffset),
+      }),
     ) as SearchResult;
     expect(next.total).toBe(2);
     expect(next.offset).toBe(1);
@@ -1013,8 +1016,8 @@ describe("search_tools", () => {
       ) as SearchResult;
       expect(page.total).toBe(total);
       expect(page.offset).toBe(offset);
-      expect(page.connectors[0].tools).toHaveLength(MAX_SEARCH_LIMIT);
-      for (const tool of page.connectors[0].tools) {
+      expect(required(page.connectors[0]).tools).toHaveLength(MAX_SEARCH_LIMIT);
+      for (const tool of required(page.connectors[0]).tools) {
         expect(seen.has(tool.address)).toBe(false);
         seen.add(tool.address);
       }
@@ -1079,7 +1082,7 @@ describe("search_tools", () => {
       await mt.searchTools({ query: "fetch article document" }),
     ) as SearchResult;
 
-    expect(parsed.connectors[0].tools.map((t) => t.name)).toEqual([
+    expect(required(parsed.connectors[0]).tools.map((t) => t.name)).toEqual([
       "article-fetch",
       "article-search",
     ]);
@@ -1128,11 +1131,11 @@ describe("search_tools", () => {
       await mt.searchTools({
         query,
         limit: 2,
-        offset: first.nextOffset,
+        offset: required(first.nextOffset),
       }),
     ) as SearchResult;
     expect(second.matchMode).toBe("partial");
-    expect(second.connectors[0].tools.map((tool) => tool.name)).toEqual([
+    expect(required(second.connectors[0]).tools.map((tool) => tool.name)).toEqual([
       "list_experiments",
     ]);
   });
@@ -1191,11 +1194,11 @@ describe("search_tools", () => {
       await mt.searchTools({ fullDescriptions: true }),
     ) as SearchResult;
 
-    expect(concise.connectors[0].tools[0].description!.length).toBeLessThan(
+    expect(required(required(concise.connectors[0]).tools[0]).description!.length).toBeLessThan(
       longDescription.length,
     );
-    expect(concise.connectors[0].tools[0].description).toMatch(/…$/);
-    expect(full.connectors[0].tools[0].description).toBe(longDescription);
+    expect(required(required(concise.connectors[0]).tools[0]).description).toMatch(/…$/);
+    expect(required(required(full.connectors[0]).tools[0]).description).toBe(longDescription);
   });
 
   it("optionally includes compact schemas and annotations for API and MCP tools", async () => {
@@ -1255,13 +1258,13 @@ describe("search_tools", () => {
       }>;
     };
     const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
-    expect(byId.weather.tools[0].inputSchema).toBe("{ city: string }");
-    expect(byId.weather.tools[0].outputSchema).toContain("temperature");
-    expect(byId.weather.tools[0].annotations).toEqual({
+    expect(required(required(byId.weather).tools[0]).inputSchema).toBe("{ city: string }");
+    expect(required(required(byId.weather).tools[0]).outputSchema).toContain("temperature");
+    expect(required(required(byId.weather).tools[0]).annotations).toEqual({
       readOnlyHint: true,
     });
-    expect(byId.crm.tools[0].inputSchema).toBe("{ id: string }");
-    expect(byId.crm.tools[0].annotations).toMatchObject({
+    expect(required(required(byId.crm).tools[0]).inputSchema).toBe("{ id: string }");
+    expect(required(required(byId.crm).tools[0]).annotations).toMatchObject({
       readOnlyHint: true,
       openWorldHint: false,
     });
@@ -1311,8 +1314,8 @@ describe("describe_tools", () => {
     const parsed = textOf(
       await mt.describeTools({ addresses: ["calc.add"], format: "json" }),
     ) as { tools: Array<{ address: string; inputSchema: any }> };
-    expect(parsed.tools[0].address).toBe("calc.add");
-    expect(parsed.tools[0].inputSchema.properties.a.type).toBe("number");
+    expect(required(parsed.tools[0]).address).toBe("calc.add");
+    expect(required(parsed.tools[0]).inputSchema.properties.a.type).toBe("number");
   });
 
   it("renders a compact TypeScript-like shape by default", async () => {
@@ -1321,7 +1324,7 @@ describe("describe_tools", () => {
       await mt.describeTools({ addresses: ["calc.add"] }),
     ) as { tools: Array<{ address: string; inputSchema: string }> };
     // a and b are required numbers → no `?`.
-    expect(parsed.tools[0].inputSchema).toBe("{ a: number, b: number }");
+    expect(required(parsed.tools[0]).inputSchema).toBe("{ a: number, b: number }");
   });
 
   it("returns an error entry for unknown addresses without throwing", async () => {
@@ -1329,8 +1332,8 @@ describe("describe_tools", () => {
     const parsed = textOf(
       await mt.describeTools({ addresses: ["calc.nope", "ghost.x"] }),
     ) as { tools: Array<{ address: string; error?: string }> };
-    expect(parsed.tools[0].error).toContain("Unknown tool");
-    expect(parsed.tools[1].error).toContain("Unknown address");
+    expect(required(parsed.tools[0]).error).toContain("Unknown tool");
+    expect(required(parsed.tools[1]).error).toContain("Unknown address");
   });
 
   it("bounds the raw address list, including duplicates", async () => {
@@ -1404,7 +1407,7 @@ describe("compact schema rendering", () => {
     };
     const mt = createMetaTools(makeRegistry([conn]), BASE);
     const r = await mt.describeTools({ addresses: ["shape.t"] });
-    return (JSON.parse(r.content[0].text) as { tools: any[] }).tools[0]
+    return (JSON.parse(required(r.content[0]).text) as { tools: any[] }).tools[0]
       .inputSchema as string;
   }
 
@@ -1445,7 +1448,7 @@ describe("call_tool", () => {
       args: { a: 2, b: 3 },
     });
     expect(result.isError).toBeFalsy();
-    expect(JSON.parse(result.content[0].text)).toEqual({ sum: 5 });
+    expect(JSON.parse(required(result.content[0]).text)).toEqual({ sum: 5 });
   });
 
   it("passes an mcp connector's content array through as-is", async () => {
@@ -1477,14 +1480,14 @@ describe("call_tool", () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.callTool({ address: "calc.bogus", args: {} });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown tool");
+    expect(required(result.content[0]).text).toContain("Unknown tool");
   });
 
   it("returns an isError result for an unknown address", async () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.callTool({ address: "ghost.x" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown address");
+    expect(required(result.content[0]).text).toContain("Unknown address");
   });
 
   it("returns structured errors in value mode", async () => {
@@ -1527,7 +1530,7 @@ describe("call_tool", () => {
 
     const ordinary = await mt.callTool({ address: "danger.erase" });
     expect(ordinary.isError).toBe(true);
-    expect(ordinary.content[0].text).toContain("call_destructive_tool");
+    expect(required(ordinary.content[0]).text).toContain("call_destructive_tool");
     expect(calls).toBe(0);
 
     const batch = textOf(
@@ -1579,7 +1582,7 @@ describe("call_tool", () => {
     ]) {
       const ordinary = await mt.callTool({ address });
       expect(ordinary.isError).toBe(true);
-      expect(ordinary.content[0].text).toContain("not explicitly read-only");
+      expect(required(ordinary.content[0]).text).toContain("not explicitly read-only");
     }
     expect(calls).toEqual([]);
 
@@ -1777,7 +1780,9 @@ describe("call_tool", () => {
           annotations: { readOnlyHint: true },
           handler: (_args, ctx) => {
             seen.push({
-              timeoutMs: ctx.timeoutMs,
+              ...(ctx.timeoutMs !== undefined
+                ? { timeoutMs: ctx.timeoutMs }
+                : {}),
               hasSignal: Boolean(ctx.signal),
             });
             return { ok: true };
@@ -1874,7 +1879,7 @@ describe("call_tool", () => {
         resultMode: "value",
       }),
     ) as { results: Array<{ errorDetails: { retryAfterMs?: number } }> };
-    expect(batched.results[0].errorDetails.retryAfterMs).toBe(3_600_000);
+    expect(required(batched.results[0]).errorDetails.retryAfterMs).toBe(3_600_000);
   });
 
   it("omits retryAfterMs when the connector reports no window", async () => {
@@ -2288,7 +2293,7 @@ describe("call_tool fields selection", () => {
   it("applies fields to a JSON mcp text block", async () => {
     const mt = createMetaTools(makeRegistry([jsonMcpConnector]), BASE);
     const result = await mt.callTool({ address: "jm.rec", fields: ["a"] });
-    expect(JSON.parse(result.content[0].text)).toEqual({ a: 1 });
+    expect(JSON.parse(required(result.content[0]).text)).toEqual({ a: 1 });
   });
 });
 
@@ -2299,8 +2304,8 @@ describe("call_tool size guard + get_result", () => {
     });
     const mt = createMetaTools(registryWithData, BASE);
     const result = await mt.callTool({ address: "data.big" });
-    const lines = result.content[0].text.split("\n");
-    const notice = JSON.parse(lines[lines.length - 1]) as {
+    const lines = required(result.content[0]).text.split("\n");
+    const notice = JSON.parse(required(lines[lines.length - 1])) as {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
@@ -2326,7 +2331,7 @@ describe("call_tool size guard + get_result", () => {
     const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
     const result = await mt.getResult({ id: "nope" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown or expired");
+    expect(required(result.content[0]).text).toContain("Unknown or expired");
   });
 
   it("replaces oversized value-mode data with a page handle", async () => {
@@ -2380,8 +2385,8 @@ describe("call_tool size guard + get_result", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "mb.get" });
-    const lines = call.content[0].text.split("\n");
-    const notice = JSON.parse(lines[lines.length - 1]) as { resultId: string };
+    const lines = required(call.content[0]).text.split("\n");
+    const notice = JSON.parse(required(lines[lines.length - 1])) as { resultId: string };
 
     const expected = JSON.stringify(JSON.parse(original), null, 2);
     let offset = 0;
@@ -2422,11 +2427,11 @@ describe("call_tool size guard + get_result", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "mb2.get" });
-    const head = call.content[0].text.split("\n")[0];
+    const head = required(call.content[0]).text.split("\n")[0];
     expect(head).not.toContain("�");
     // Head is a byte-exact prefix of the original (JSON-encoded) string.
     const full = JSON.stringify("abc😀defghijklmnop", null, 2);
-    expect(full.startsWith(head)).toBe(true);
+    expect(full.startsWith(required(head))).toBe(true);
   });
 });
 
@@ -2442,7 +2447,7 @@ describe("per-connector maxResultBytes override", () => {
       id,
       kind: "api",
       description: "Capped",
-      maxResultBytes,
+      ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
       async listTools() {
         return [
           {
@@ -2469,8 +2474,11 @@ describe("per-connector maxResultBytes override", () => {
     head: string;
     notice: Notice;
   } {
-    const [head, notice] = result.content[0].text.split("\n");
-    return { head, notice: JSON.parse(notice) as Notice };
+    const [head, notice] = required(result.content[0]).text.split("\n");
+    return {
+      head: required(head),
+      notice: JSON.parse(required(notice)) as Notice,
+    };
   }
 
   it("truncates at a connector cap lower than the global one", async () => {
@@ -2492,7 +2500,7 @@ describe("per-connector maxResultBytes override", () => {
       BASE,
     );
     const result = await mt.callTool({ address: "wide.big" });
-    expect(result.content[0].text).toBe(FULL);
+    expect(required(result.content[0]).text).toBe(FULL);
   });
 
   it("falls back to the global cap when a connector declares no override", async () => {
@@ -2511,7 +2519,7 @@ describe("per-connector maxResultBytes override", () => {
     // 502 bytes is far below the built-in 50_000, so nothing truncates.
     const mt = createMetaTools(makeRegistry([capped("plain")]), BASE);
     const result = await mt.callTool({ address: "plain.big" });
-    expect(result.content[0].text).toBe(FULL);
+    expect(required(result.content[0]).text).toBe(FULL);
   });
 
   it("applies each connector's own cap within one batch_call", async () => {
@@ -2531,10 +2539,10 @@ describe("per-connector maxResultBytes override", () => {
         ],
       }),
     ) as { results: Array<{ address: string; result: { text: string }[] }> };
-    const [tight, plain, wide] = parsed.results.map((r) => r.result[0].text);
+    const [tight, plain, wide] = parsed.results.map((r) => required(r.result[0]).text);
 
-    expect(tight.split("\n")[0]).toBe(FULL.slice(0, 100));
-    expect(plain.split("\n")[0]).toBe(FULL.slice(0, 300));
+    expect(required(tight).split("\n")[0]).toBe(FULL.slice(0, 100));
+    expect(required(plain).split("\n")[0]).toBe(FULL.slice(0, 300));
     expect(wide).toBe(FULL);
   });
 
@@ -2627,7 +2635,7 @@ describe("maxResultBytes validation", () => {
       id,
       kind: "api",
       description: "Capped",
-      maxResultBytes,
+      ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
       async listTools() {
         return [
           {
@@ -2653,7 +2661,7 @@ describe("maxResultBytes validation", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "c.big" });
-    const notice = JSON.parse(call.content[0].text.split("\n")[1]) as {
+    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[1])) as {
       resultId: string;
     };
     return { mt, resultId: notice.resultId };
@@ -2665,7 +2673,7 @@ describe("maxResultBytes validation", () => {
     const { mt, resultId } = await stash();
     const result = await mt.getResult({ id: resultId, offset: 0, maxBytes: 0 });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Invalid maxBytes 0");
+    expect(required(result.content[0]).text).toContain("Invalid maxBytes 0");
   });
 
   it("rejects every get_result maxBytes that is not a whole positive byte count", async () => {
@@ -2673,7 +2681,7 @@ describe("maxResultBytes validation", () => {
     for (const maxBytes of BAD_CAPS) {
       const result = await mt.getResult({ id: resultId, maxBytes });
       expect(result.isError, `maxBytes ${String(maxBytes)}`).toBe(true);
-      expect(result.content[0].text).toContain("Invalid maxBytes");
+      expect(required(result.content[0]).text).toContain("Invalid maxBytes");
     }
   });
 
@@ -2717,7 +2725,7 @@ describe("maxResultBytes validation", () => {
       const result = await mt.callTool({ address: "c.big" });
       // Falls back to the built-in 50_000, so 502 bytes stay inline whole —
       // never an empty head (0/NaN) or an over-long one (negatives).
-      expect(result.content[0].text, `cap ${String(maxResultBytes)}`).toBe(FULL);
+      expect(required(result.content[0]).text, `cap ${String(maxResultBytes)}`).toBe(FULL);
     }
   });
 
@@ -2728,7 +2736,7 @@ describe("maxResultBytes validation", () => {
         BASE,
       );
       const result = await mt.callTool({ address: "c.big" });
-      const [head] = result.content[0].text.split("\n");
+      const [head] = required(result.content[0]).text.split("\n");
       // Inherits the deployment-wide 400 exactly as an unset override would.
       expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
     }
@@ -2753,7 +2761,7 @@ describe("maxResultBytes validation", () => {
     const result = await createMetaTools(registry, BASE).callTool({
       address: "c.big",
     });
-    expect(result.content[0].text.split("\n")[0]).toBe(FULL.slice(0, warned));
+    expect(required(result.content[0]).text.split("\n")[0]).toBe(FULL.slice(0, warned));
   });
 
   it("leaves valid caps byte-identical at every level", async () => {
@@ -2769,11 +2777,11 @@ describe("maxResultBytes validation", () => {
         BASE,
       ).callTool({ address: "c.big" });
       const expected = cap >= FULL.length ? FULL : FULL.slice(0, cap);
-      expect(viaGlobal.content[0].text.split("\n")[0], `global ${cap}`).toBe(
+      expect(required(viaGlobal.content[0]).text.split("\n")[0], `global ${cap}`).toBe(
         expected,
       );
       expect(
-        viaOverride.content[0].text.split("\n")[0],
+        required(viaOverride.content[0]).text.split("\n")[0],
         `override ${cap}`,
       ).toBe(expected);
     }
@@ -2869,7 +2877,7 @@ describe("handler returns JSON cannot represent", () => {
   it("leaves a serializable return byte-identical", async () => {
     const value = { user: { name: "Ada" }, ids: [1, 2, 3] };
     const result = await callFor(value);
-    expect(result.content[0].text).toBe(JSON.stringify(value, null, 2));
+    expect(required(result.content[0]).text).toBe(JSON.stringify(value, null, 2));
   });
 
   it("stashes an oversized undefined-adjacent return under the same text", async () => {
@@ -2881,7 +2889,7 @@ describe("handler returns JSON cannot represent", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "ret.get" });
-    const notice = JSON.parse(call.content[0].text.split("\n")[1]) as {
+    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[1])) as {
       resultId: string;
       totalBytes: number;
     };
@@ -2918,7 +2926,10 @@ describe("mcp-mode content size guard", () => {
 
   function metaTools(content: unknown[], maxResultBytes?: number) {
     return createMetaTools(
-      makeRegistry([downstream(content)], { maxResultBytes }),
+      makeRegistry(
+        [downstream(content)],
+        maxResultBytes !== undefined ? { maxResultBytes } : {},
+      ),
       BASE,
     );
   }
@@ -2953,8 +2964,8 @@ describe("mcp-mode content size guard", () => {
     const result = await metaTools(content, cap).callTool({
       address: "down.fetch",
     });
-    const lines = result.content[0].text.split("\n");
-    const notice = JSON.parse(lines[lines.length - 1]) as Notice;
+    const lines = required(result.content[0]).text.split("\n");
+    const notice = JSON.parse(required(lines[lines.length - 1])) as Notice;
     const head = lines.slice(0, -1).join("\n");
     expect(notice.truncated).toBe(true);
     // One unit for all three: the cap, the head served, and totalBytes.
@@ -2976,12 +2987,12 @@ describe("mcp-mode content size guard", () => {
     const result = await mt.callTool({ address: "down.fetch" });
 
     expect(overTheWire(result).content).toHaveLength(1);
-    const notice = JSON.parse(result.content[0].text) as Notice;
+    const notice = JSON.parse(required(result.content[0]).text) as Notice;
     expect(notice.truncated).toBe(true);
     expect(notice.totalBytes).toBe(byteLength(full));
-    expect(byteLength(result.content[0].text)).toBeLessThan(cap);
+    expect(byteLength(required(result.content[0]).text)).toBeLessThan(cap);
     // The notice alone — no prefix of a base64 image, which no client could use.
-    expect(result.content[0].text).not.toContain("AAAA");
+    expect(required(result.content[0]).text).not.toContain("AAAA");
 
     let offset = 0;
     let assembled = "";
@@ -3009,7 +3020,7 @@ describe("mcp-mode content size guard", () => {
     const result = await metaTools(content, 1_000).callTool({
       address: "down.fetch",
     });
-    const notice = JSON.parse(result.content[0].text) as Notice;
+    const notice = JSON.parse(required(result.content[0]).text) as Notice;
     expect(notice.truncated).toBe(true);
     expect(notice.totalBytes).toBe(byteLength(envelope(content)));
   });
@@ -3024,14 +3035,14 @@ describe("mcp-mode content size guard", () => {
     const circular: Record<string, unknown>[] = [
       { type: "text", text: "small" },
     ];
-    circular[0].self = circular[0];
+    required(circular[0]).self = circular[0];
     for (const content of [withBigInt, circular]) {
       const result = await metaTools(content).callTool({
         address: "down.fetch",
       });
       expect(result.isError).toBeUndefined();
       expect(result.content).toHaveLength(1);
-      expect(result.content[0].text).toBe("small");
+      expect(required(result.content[0]).text).toBe("small");
     }
     // The block reaches the client exactly as the downstream produced it.
     const result = await metaTools(withBigInt).callTool({
@@ -3083,8 +3094,8 @@ describe("get_result offset validation and alignment", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "mb.get" });
-    const lines = call.content[0].text.split("\n");
-    const notice = JSON.parse(lines[lines.length - 1]) as { resultId: string };
+    const lines = required(call.content[0]).text.split("\n");
+    const notice = JSON.parse(required(lines[lines.length - 1])) as { resultId: string };
     return { mt, resultId: notice.resultId };
   }
 
@@ -3104,7 +3115,7 @@ describe("get_result offset validation and alignment", () => {
     ]) {
       const result = await mt.getResult({ id: resultId, offset });
       expect(result.isError, `offset ${String(offset)}`).toBe(true);
-      expect(result.content[0].text).toContain("Invalid offset");
+      expect(required(result.content[0]).text).toContain("Invalid offset");
     }
   });
 
@@ -3208,13 +3219,13 @@ describe("batch_call", () => {
       "data.get",
       "calc.bogus",
     ]);
-    expect(JSON.parse(parsed.results[0].result![0].text)).toEqual({ sum: 3 });
-    expect(JSON.parse(parsed.results[1].result![0].text)).toEqual({
+    expect(JSON.parse(required(required(parsed.results[0]).result![0]).text)).toEqual({ sum: 3 });
+    expect(JSON.parse(required(required(parsed.results[1]).result![0]).text)).toEqual({
       "user.name": "Ada",
     });
-    expect(parsed.results[2].ok).toBe(false);
-    expect(parsed.results[2].error).toContain("Unknown tool");
-    expect(parsed.results[2].errorDetails?.code).toBe("unknown_tool");
+    expect(required(parsed.results[2]).ok).toBe(false);
+    expect(required(parsed.results[2]).error).toContain("Unknown tool");
+    expect(required(parsed.results[2]).errorDetails?.code).toBe("unknown_tool");
     expect(parsed.results.every((r) => r.durationMs >= 0)).toBe(true);
     expect(parsed.durationMs).toBeGreaterThanOrEqual(0);
   });
@@ -3241,8 +3252,8 @@ describe("batch_call", () => {
       }>;
     };
 
-    expect(parsed.results[0].data).toEqual({ sum: 6 });
-    expect(parsed.results[1].data).toEqual({ b: 2 });
+    expect(required(parsed.results[0]).data).toEqual({ sum: 6 });
+    expect(required(parsed.results[1]).data).toEqual({ b: 2 });
   });
 
   it("stashes an oversized final envelope and keeps ordered failures inline", async () => {
@@ -3338,10 +3349,10 @@ describe("batch_call", () => {
       }>;
     };
     expect(full.results.map((result) => result.address)).toEqual(addresses);
-    expect(full.results[0].result?.[0].text).toContain('"truncated":true');
-    expect(full.results[1].result?.[0].text).toContain("界");
-    expect(full.results[1].result?.[0].text).not.toContain('"truncated":true');
-    expect(full.results[5].errorDetails?.code).toBe("unknown_tool");
+    expect(required(required(full.results[0]).result?.[0]).text).toContain('"truncated":true');
+    expect(required(required(full.results[1]).result?.[0]).text).toContain("界");
+    expect(required(required(full.results[1]).result?.[0]).text).not.toContain('"truncated":true');
+    expect(required(full.results[5]).errorDetails?.code).toBe("unknown_tool");
   });
 
   it("preserves the existing envelope below the aggregate cap", async () => {
@@ -3364,7 +3375,7 @@ describe("batch_call", () => {
 
     expect(parsed.truncated).toBeUndefined();
     expect(parsed.resultId).toBeUndefined();
-    expect(parsed.results.map((result) => JSON.parse(result.result[0].text)))
+    expect(parsed.results.map((result) => JSON.parse(required(result.result[0]).text)))
       .toEqual([{ sum: 3 }, { sum: 7 }]);
   });
 });
@@ -3399,14 +3410,14 @@ describe("authorize_connector", () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.authorizeConnector({ connector: "calc" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("does not use downstream OAuth");
+    expect(required(result.content[0]).text).toContain("does not use downstream OAuth");
   });
 
   it("errors for an unknown connector", async () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.authorizeConnector({ connector: "ghost" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("Unknown connector");
+    expect(required(result.content[0]).text).toContain("Unknown connector");
   });
 
   it("errors when startAuth reports auth_required without a URL", async () => {
@@ -3426,7 +3437,7 @@ describe("authorize_connector", () => {
     const mt = createMetaTools(makeRegistry([noUrl]), BASE);
     const result = await mt.authorizeConnector({ connector: "nourl" });
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("no URL is available");
+    expect(required(result.content[0]).text).toContain("no URL is available");
   });
 
   it("surfaces a startAuth error state as a structured error status (not isError)", async () => {
@@ -3446,7 +3457,7 @@ describe("authorize_connector", () => {
     const mt = createMetaTools(makeRegistry([errConn]), BASE);
     const result = await mt.authorizeConnector({ connector: "erroauth" });
     expect(result.isError).toBeFalsy();
-    const parsed = JSON.parse(result.content[0].text) as {
+    const parsed = JSON.parse(required(result.content[0]).text) as {
       status: string;
       message?: string;
     };
@@ -3522,7 +3533,7 @@ describe("probe timeout", () => {
     };
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(parsed.connectors[0]).toMatchObject({ id: "hang", status: "error" });
-    expect(parsed.connectors[0].message).toContain("timed out");
+    expect(required(parsed.connectors[0]).message).toContain("timed out");
   });
 
   it("describe_tools reports a hung connector's tool as errored within the timeout", async () => {
@@ -3534,7 +3545,7 @@ describe("probe timeout", () => {
       tools: Array<{ address: string; error?: string }>;
     };
     expect(Date.now() - started).toBeLessThan(2_000);
-    expect(parsed.tools[0].address).toBe("hang.read");
-    expect(parsed.tools[0].error).toContain("timed out");
+    expect(required(parsed.tools[0]).address).toBe("hang.read");
+    expect(required(parsed.tools[0]).error).toContain("timed out");
   });
 });

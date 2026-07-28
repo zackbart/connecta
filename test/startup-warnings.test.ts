@@ -235,7 +235,7 @@ describe("toolkit-selection warning", () => {
       createConnecta({
         connectors: [credentialConnector],
         credentials: { encryptionKey: CREDENTIAL_KEY },
-        toolkits,
+        ...(toolkits !== undefined ? { toolkits } : {}),
         logger,
       });
       expect(warnings(logger)).toContain("no inbound authentication");
@@ -575,25 +575,27 @@ describe("credential test-hook mismatch warning", () => {
 
   it("stays quiet for matched shapes and for a credential with no test hook", () => {
     const logger = spyLogger();
+    const matchedFields: Connector = {
+      ...fieldsWithSingleHook,
+      id: "matchedfields",
+      async testCredentials() {
+        return { ok: true };
+      },
+    };
+    delete matchedFields.testCredential;
+    const matchedSingle: Connector = {
+      ...singleWithFieldsHook,
+      id: "matchedsingle",
+      async testCredential() {
+        return { ok: true };
+      },
+    };
+    delete matchedSingle.testCredentials;
     createConnecta({
       connectors: [
         credentialConnector,
-        {
-          ...fieldsWithSingleHook,
-          id: "matchedfields",
-          testCredential: undefined,
-          async testCredentials() {
-            return { ok: true };
-          },
-        },
-        {
-          ...singleWithFieldsHook,
-          id: "matchedsingle",
-          testCredentials: undefined,
-          async testCredential() {
-            return { ok: true };
-          },
-        },
+        matchedFields,
+        matchedSingle,
       ],
       auth: bearerToken("secret"),
       publicUrl: BASE,

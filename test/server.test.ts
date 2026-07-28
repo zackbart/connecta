@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import { describe, expect, it } from "vitest";
 import { createConnecta } from "../src/index.js";
 import {
@@ -354,8 +355,8 @@ describe("server /mcp end-to-end", () => {
     };
     expect(payload.connectors).toHaveLength(1);
     expect(body.result.structuredContent).toEqual(payload);
-    expect(payload.connectors[0].id).toBe("calc");
-    expect(payload.connectors[0].tools.map((t) => t.address)).toEqual([
+    expect(required(payload.connectors[0]).id).toBe("calc");
+    expect(required(payload.connectors[0]).tools.map((t) => t.address)).toEqual([
       "calc.add",
     ]);
     expect(payload.total).toBe(1);
@@ -479,7 +480,7 @@ describe("server /mcp end-to-end", () => {
       { token: TOKEN },
     );
 
-    expect(events[0].actor).toEqual({
+    expect(required(events[0]).actor).toEqual({
       kind: "oidc",
       id: "local-user-1",
       namespace: "https://identity.example",
@@ -655,7 +656,7 @@ describe("server /mcp end-to-end", () => {
     );
     const body = await readBody(res);
     const lines = (body.result.content[0].text as string).split("\n");
-    const notice = JSON.parse(lines[lines.length - 1]) as {
+    const notice = JSON.parse(required(lines[lines.length - 1])) as {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
@@ -693,7 +694,9 @@ describe("server /mcp end-to-end", () => {
               inputSchema: { type: "object" },
               handler: (_args, ctx) => {
                 seen.push({
-                  timeoutMs: ctx.timeoutMs,
+                  ...(ctx.timeoutMs !== undefined
+                    ? { timeoutMs: ctx.timeoutMs }
+                    : {}),
                   hasSignal: Boolean(ctx.signal),
                 });
                 return { ok: true };
@@ -753,7 +756,7 @@ describe("server /mcp end-to-end", () => {
 
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(payload.connectors[0]).toMatchObject({ status: "error" });
-    expect(payload.connectors[0].message).toContain("timed out after 10ms");
+    expect(required(payload.connectors[0]).message).toContain("timed out after 10ms");
   });
 
   it("forwards discovery.concurrency to catalog fan-out", async () => {

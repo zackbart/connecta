@@ -393,6 +393,9 @@ export class CatalogService {
       let orderBase = 0;
       catalogs.forEach((catalog, connectorIndex) => {
         const connector = connectors[connectorIndex];
+        if (!connector) {
+          throw new Error("Catalog result has no corresponding connector");
+        }
         if (catalog.status === "fulfilled") {
           for (const ranked of rankTools(catalog.value, query, mode)) {
             matches.push({
@@ -415,6 +418,10 @@ export class CatalogService {
     matches.sort((a, b) => b.score - a.score || a.order - b.order);
     const entries = matches.slice(offset, offset + limit).map((match) => {
       const input = match.tool.inputSchema ?? { type: "object" };
+      const description = summarizeDescription(
+        match.tool.description,
+        args.fullDescriptions === true,
+      );
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -423,10 +430,7 @@ export class CatalogService {
         tool: {
           name: match.tool.name,
           address: `${match.connector.id}.${match.tool.name}`,
-          description: summarizeDescription(
-            match.tool.description,
-            args.fullDescriptions === true,
-          ),
+          ...(description !== undefined ? { description } : {}),
           ...(args.includeSchemas
             ? {
                 inputSchema:
@@ -488,8 +492,12 @@ export class CatalogService {
     );
     const catalogs = new Map<string, ToolDef[] | Error>();
     loaded.forEach((result, index) => {
+      const connectorId = connectorIds[index];
+      if (connectorId === undefined) {
+        throw new Error("Catalog result has no corresponding connector id");
+      }
       catalogs.set(
-        connectorIds[index],
+        connectorId,
         result.status === "fulfilled"
           ? result.value
           : result.reason instanceof Error
@@ -515,13 +523,14 @@ export class CatalogService {
         };
       }
       const input = tool.inputSchema ?? { type: "object" };
+      const description = summarizeDescription(
+        tool.description,
+        args.fullDescriptions === true,
+      );
       return {
         address,
         name: tool.name,
-        description: summarizeDescription(
-          tool.description,
-          args.fullDescriptions === true,
-        ),
+        ...(description !== undefined ? { description } : {}),
         ...(connectorGuide(addressResolution.connector)
           ? { guide: connectorSkillName(addressResolution.connector.id) }
           : {}),
@@ -550,19 +559,23 @@ export function groupedSearchResult(page: CatalogSearchPage) {
   }> = [];
   const byConnector = new Map<string, (typeof groups)[number]>();
   for (const entry of page.entries) {
-    let group = byConnector.get(entry.connector.id);
-    if (!group) {
-      group = {
+    const existing = byConnector.get(entry.connector.id);
+    if (existing) {
+      existing.tools.push(entry.tool);
+    } else {
+      const group: (typeof groups)[number] = {
         id: entry.connector.id,
         ...(entry.connector.title ? { title: entry.connector.title } : {}),
-        description: entry.connector.description,
+        ...(entry.connector.description !== undefined
+          ? { description: entry.connector.description }
+          : {}),
         ...(entry.guide ? { guide: entry.guide } : {}),
         tools: [],
       };
       byConnector.set(entry.connector.id, group);
       groups.push(group);
+      group.tools.push(entry.tool);
     }
-    group.tools.push(entry.tool);
   }
   return {
     connectors: groups,

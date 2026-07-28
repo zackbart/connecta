@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -32,7 +33,7 @@ function relativeSpecifiers(source: string): string[] {
   for (const re of patterns) {
     let m: RegExpExecArray | null;
     while ((m = re.exec(source)) !== null) {
-      if (m[1].startsWith(".")) specs.push(m[1]);
+      if (required(m[1]).startsWith(".")) specs.push(required(m[1]));
     }
   }
   return specs;

@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import { describe, expect, it } from "vitest";
 import {
   CredentialVault,
@@ -205,12 +206,12 @@ describe("CredentialVault", () => {
 
     const long = await vault.set("long", "abcdefghijklmnop1234", "user_123");
     expect(long.lastFour).toBe("1234");
-    expect(long.fields?.value.lastFour).toBe("1234");
+    expect(required(long.fields?.value).lastFour).toBe("1234");
 
     const short = await vault.set("short", "abcd1234", "user_123");
     expect(short).not.toHaveProperty("lastFour");
     expect(short.fields?.value).not.toHaveProperty("lastFour");
-    expect(short.fields?.value.configured).toBe(true);
+    expect(required(short.fields?.value).configured).toBe(true);
   });
 
   it("encrypts and retrieves named multi-field credentials", async () => {

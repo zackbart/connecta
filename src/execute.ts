@@ -172,7 +172,9 @@ export async function buildSandboxProviders(
   const requestScope = {};
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
-    concurrency: limits.discoveryConcurrency,
+    ...(limits.discoveryConcurrency !== undefined
+      ? { concurrency: limits.discoveryConcurrency }
+      : {}),
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -206,7 +208,7 @@ export async function buildSandboxProviders(
   const invocationContext = () => ({
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
-    requestSignal: limits.signal,
+    ...(limits.signal !== undefined ? { requestSignal: limits.signal } : {}),
     unwrapResult: true,
     beforeDispatch: () => {
       hostCalls++;
@@ -348,7 +350,9 @@ export function createExecuteTool(
         activity,
         {
           signal: controller.signal,
-          discoveryConcurrency: config.discoveryConcurrency,
+          ...(config.discoveryConcurrency !== undefined
+            ? { discoveryConcurrency: config.discoveryConcurrency }
+            : {}),
         },
       );
       if (controller.signal.aborted) {
@@ -451,7 +455,9 @@ export function registerExecuteTool(
     ctx.executor,
     ctx.logger,
     ctx.activity,
-    { discoveryConcurrency: ctx.discoveryConcurrency },
+    ctx.discoveryConcurrency !== undefined
+      ? { discoveryConcurrency: ctx.discoveryConcurrency }
+      : {},
   );
   server.registerTool(
     "execute_code",

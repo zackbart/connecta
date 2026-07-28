@@ -15,7 +15,7 @@ function timingSafeEqual(a: Uint8Array, b: Uint8Array): boolean {
     return false;
   }
   let r = 0;
-  for (let i = 0; i < a.length; i++) r |= a[i] ^ b[i];
+  for (let i = 0; i < a.length; i++) r |= (a[i] ?? 0) ^ (b[i] ?? 0);
   return r === 0;
 }
 

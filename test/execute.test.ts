@@ -25,7 +25,7 @@ import type {
   Executor,
   ExecutorProvider,
 } from "../src/types.js";
-import {
+import { required,
   brokenConnector,
   calcConnector,
   makeRegistry,
@@ -67,8 +67,8 @@ function fakeExecutor(
       seen.push({ code, providers });
       return {
         result: outcome.result,
-        error: outcome.error,
-        logs: outcome.logs,
+        ...(outcome.error !== undefined ? { error: outcome.error } : {}),
+        ...(outcome.logs !== undefined ? { logs: outcome.logs } : {}),
       };
     },
   };
@@ -84,7 +84,7 @@ function callNamespace(
   toolAlias: string,
   args: unknown = {},
 ): Promise<unknown> {
-  return connectaProvider(providers).fns.__callNamespace(
+  return required(connectaProvider(providers).fns.__callNamespace)(
     connectorId,
     toolAlias,
     args,
@@ -163,8 +163,8 @@ describe("buildSandboxProviders", () => {
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     expect(providers.map((provider) => provider.name)).toEqual(["connecta"]);
     expect(catalogCalls.size).toBe(0);
-    expect(providers[0].prelude).toContain('globalThis["calc"]');
-    expect(providers[0].prelude).toContain('globalThis["broken"]');
+    expect(required(providers[0]).prelude).toContain('globalThis["calc"]');
+    expect(required(providers[0]).prelude).toContain('globalThis["broken"]');
 
     expect(await callNamespace(providers, "calc", "add", { a: 2, b: 3 })).toEqual(
       { sum: 5 },
@@ -184,10 +184,10 @@ describe("buildSandboxProviders", () => {
     );
 
     const connecta = connectaProvider(providers);
-    expect(await connecta.fns.call("calc.add", { a: 1, b: 1 })).toEqual({
+    expect(await required(connecta.fns.call)("calc.add", { a: 1, b: 1 })).toEqual({
       sum: 2,
     });
-    await expect(connecta.fns.call("nope.add", {})).rejects.toThrow(
+    await expect(required(connecta.fns.call)("nope.add", {})).rejects.toThrow(
       'Unknown address "nope.add"',
     );
   });
@@ -265,7 +265,7 @@ describe("buildSandboxProviders", () => {
       silentLogger,
     );
     const connecta = connectaProvider(providers);
-    const directError = await connecta.fns.call("danger.erase", {}).then(
+    const directError = await required(connecta.fns.call)("danger.erase", {}).then(
       () => undefined,
       (error: unknown) => error as InvocationFailure,
     );
@@ -310,10 +310,10 @@ describe("buildSandboxProviders", () => {
     );
     const connecta = connectaProvider(providers);
     await expect(
-      connecta.fns.call("ambiguous.missing_annotations", {}),
+      required(connecta.fns.call)("ambiguous.missing_annotations", {}),
     ).rejects.toThrow("not explicitly read-only");
     await expect(
-      connecta.fns.call("ambiguous.contradictory", {}),
+      required(connecta.fns.call)("ambiguous.contradictory", {}),
     ).rejects.toThrow("not explicitly read-only");
     expect(calls).toBe(0);
   });
@@ -378,7 +378,7 @@ describe("buildSandboxProviders", () => {
       ),
     });
     await expect(
-      connectaProvider(providers).fns.call("colliding.get.thing", {}),
+      required(connectaProvider(providers).fns.call)("colliding.get.thing", {}),
     ).resolves.toEqual({ called: "get.thing" });
   });
 
@@ -502,7 +502,7 @@ describe("buildSandboxProviders", () => {
       silentLogger,
     );
     const connecta = providers.find((p) => p.name === "connecta")!;
-    const search = (await connecta.fns.search({
+    const search = (await required(connecta.fns.search)({
       query: "add",
       includeSchemas: "compact",
     })) as {
@@ -513,16 +513,16 @@ describe("buildSandboxProviders", () => {
       inputSchema: "{ a: number, b: number }",
     });
 
-    const partial = (await connecta.fns.search({
+    const partial = (await required(connecta.fns.search)({
       query: "add numbers operands result metadata",
     })) as {
       matchMode?: string;
       tools: Array<{ address: string }>;
     };
     expect(partial.matchMode).toBe("partial");
-    expect(partial.tools[0].address).toBe("calc.add");
+    expect(required(partial.tools[0]).address).toBe("calc.add");
 
-    const described = (await connecta.fns.describe({
+    const described = (await required(connecta.fns.describe)({
       addresses: ["calc.add", "remote.echo"],
     })) as { tools: Array<{ address: string }> };
     expect(described.tools.map((tool) => tool.address)).toEqual([
@@ -530,7 +530,7 @@ describe("buildSandboxProviders", () => {
       "remote.echo",
     ]);
 
-    const batch = (await connecta.fns.batch([
+    const batch = (await required(connecta.fns.batch)([
       { address: "calc.add", args: { a: 1, b: 2 } },
       { address: "remote.echo", args: { text: "hello" } },
     ])) as Array<{ ok: boolean; data: unknown }>;
@@ -567,7 +567,7 @@ describe("buildSandboxProviders", () => {
       undefined,
       { discoveryConcurrency: 2 },
     );
-    const result = (await connectaProvider(providers).fns.search({
+    const result = (await required(connectaProvider(providers).fns.search)({
       query: "sandbox",
       limit: 20,
     })) as { total: number };
@@ -600,10 +600,10 @@ describe("buildSandboxProviders", () => {
     const connecta = providers.find((p) => p.name === "connecta")!;
 
     await expect(
-      connecta.fns.search({ limit: MAX_SEARCH_LIMIT + 1 }),
+      required(connecta.fns.search)({ limit: MAX_SEARCH_LIMIT + 1 }),
     ).rejects.toThrow(`through ${MAX_SEARCH_LIMIT}`);
     await expect(
-      connecta.fns.describe({
+      required(connecta.fns.describe)({
         addresses: Array.from(
           { length: MAX_DESCRIBE_ADDRESSES + 1 },
           () => "calc.add",
@@ -611,7 +611,7 @@ describe("buildSandboxProviders", () => {
       }),
     ).rejects.toThrow(`at most ${MAX_DESCRIBE_ADDRESSES}`);
     await expect(
-      connecta.fns.search({
+      required(connecta.fns.search)({
         connector: "verbose",
         fullDescriptions: true,
       }),
@@ -651,7 +651,7 @@ describe("buildSandboxProviders", () => {
       (provider) => provider.name === "connecta",
     )!;
     await expect(
-      connecta.fns.batch(
+      required(connecta.fns.batch)(
         Array.from({ length: EXECUTE_MAX_BATCH_CALLS + 1 }, () => ({
           address: "safe.read",
         })),
@@ -719,8 +719,8 @@ describe("MCP and code-mode invocation parity", () => {
         : undefined,
     );
     const connecta = providers.find((provider) => provider.name === "connecta")!;
-    const codeError = await connecta.fns
-      .call(address, {})
+    const codeError = await required(connecta.fns
+      .call)(address, {})
       .then(() => undefined, (error: unknown) => error);
     expect(codeError).toBeInstanceOf(InvocationFailure);
     return {
@@ -924,7 +924,7 @@ describe("execute_code handler", () => {
       executor,
       silentLogger,
     )({ code: "async () => null" });
-    const parsed = JSON.parse(out.content[0].text) as {
+    const parsed = JSON.parse(required(out.content[0]).text) as {
       error: {
         code: string;
         retryable: boolean;
@@ -971,7 +971,7 @@ describe("execute_code handler", () => {
     )({ code: "async () => null" }, { signal: controller.signal });
     controller.abort();
     const out = await result;
-    const parsed = JSON.parse(out.content[0].text) as {
+    const parsed = JSON.parse(required(out.content[0]).text) as {
       error: { code: string; retryable: boolean };
     };
     expect(parsed.error).toMatchObject({
@@ -1044,18 +1044,18 @@ describe("execute_code handler", () => {
     const handler = createExecuteTool(registry, BASE, executor, silentLogger);
     const out = await handler({ code: "async () => 1" });
     expect(out.isError).toBeUndefined();
-    const parsed = JSON.parse(out.content[0].text) as {
+    const parsed = JSON.parse(required(out.content[0]).text) as {
       result: { picked: number[] };
       logs?: string;
     };
     expect(parsed.result).toEqual({ picked: [1, 2] });
     expect(out.structuredContent).toEqual(parsed);
     expect(parsed.logs).toBe("hi");
-    expect(executor.seen[0].code).toBe("async () => 1");
-    expect(executor.seen[0].providers.map((p) => p.name)).toEqual([
+    expect(required(executor.seen[0]).code).toBe("async () => 1");
+    expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual([
       "connecta",
     ]);
-    expect(executor.seen[0].providers[0].prelude).toContain(
+    expect(required(required(executor.seen[0]).providers[0]).prelude).toContain(
       'globalThis["calc"]',
     );
   });
@@ -1066,8 +1066,8 @@ describe("execute_code handler", () => {
     const handler = createExecuteTool(registry, BASE, executor, silentLogger);
     const out = await handler({ code: "async () => 1" });
     expect(out.isError).toBe(true);
-    expect(out.content[0].text).toContain("kaboom");
-    expect(out.content[0].text).toContain("step 1");
+    expect(required(out.content[0]).text).toContain("kaboom");
+    expect(required(out.content[0]).text).toContain("step 1");
   });
 
   it("turns an unserializable result into a structured error, keeping logs", async () => {
@@ -1076,8 +1076,8 @@ describe("execute_code handler", () => {
     const handler = createExecuteTool(registry, BASE, executor, silentLogger);
     const out = await handler({ code: "async () => 1" });
     expect(out.isError).toBe(true);
-    expect(out.content[0].text).toContain("not JSON-serializable");
-    expect(out.content[0].text).toContain("computed");
+    expect(required(out.content[0]).text).toContain("not JSON-serializable");
+    expect(required(out.content[0]).text).toContain("computed");
   });
 
   it("keeps a program that returns nothing well-formed", async () => {
@@ -1094,7 +1094,7 @@ describe("execute_code handler", () => {
     );
     const out = await handler({ code: "async () => {}" });
     expect(out.isError).toBeUndefined();
-    const parsed = JSON.parse(out.content[0].text) as Record<string, unknown>;
+    const parsed = JSON.parse(required(out.content[0]).text) as Record<string, unknown>;
     expect("result" in parsed).toBe(false);
 
     const nulled = await createExecuteTool(
@@ -1103,7 +1103,7 @@ describe("execute_code handler", () => {
       fakeExecutor({ result: null }),
       silentLogger,
     )({ code: "async () => null" });
-    expect(JSON.parse(nulled.content[0].text)).toEqual({ result: null });
+    expect(JSON.parse(required(nulled.content[0]).text)).toEqual({ result: null });
   });
 
   it("truncates oversized results", async () => {
@@ -1111,7 +1111,7 @@ describe("execute_code handler", () => {
     const executor = fakeExecutor({ result: "x".repeat(100_000) });
     const handler = createExecuteTool(registry, BASE, executor, silentLogger);
     const out = await handler({ code: "async () => 1" });
-    const parsed = JSON.parse(out.content[0].text) as {
+    const parsed = JSON.parse(required(out.content[0]).text) as {
       result: { truncated: boolean; preview: string; totalChars: number };
     };
     expect(parsed.result.truncated).toBe(true);

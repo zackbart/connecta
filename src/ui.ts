@@ -337,7 +337,9 @@ export async function buildUiData(
           ).map((t) => ({
             name: t.name,
             address: `${c.id}.${t.name}`,
-            description: t.description,
+            ...(t.description !== undefined
+              ? { description: t.description }
+              : {}),
           }));
         } catch {
           // broken connector: reported via status "error", tools stay empty
@@ -434,7 +436,9 @@ export async function buildUiData(
       return {
         id: c.id,
         ...(c.title ? { title: c.title } : {}),
-        description: c.description,
+        ...(c.description !== undefined
+          ? { description: c.description }
+          : {}),
         status: status.state,
         ...(status.message ? { message: status.message } : {}),
         ...(isSafeHttpUrl(status.authorizationUrl)

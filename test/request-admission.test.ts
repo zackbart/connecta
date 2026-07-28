@@ -26,7 +26,7 @@ function mcpRequest(
             params: { name, arguments: args },
           },
     ),
-    signal,
+    ...(signal !== undefined ? { signal } : {}),
   });
 }
 

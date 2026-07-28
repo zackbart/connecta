@@ -408,8 +408,9 @@ function testHookFor(
   }
   // A single-value shape with nothing under the reserved field is still nothing
   // to test, so the stored value gets the last word even when the rule fits.
-  if (mode === "single" && typeof storedValues.value === "string") {
-    return (ctx) => connector.testCredential!(storedValues.value, ctx);
+  const storedValue = storedValues.value;
+  if (mode === "single" && typeof storedValue === "string") {
+    return (ctx) => connector.testCredential!(storedValue, ctx);
   }
   return undefined;
 }
@@ -421,13 +422,15 @@ async function mapWithConcurrency<T, R>(
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
   const out = Array<R>(items.length);
-  let next = 0;
+  const remaining = items.entries();
   const workers = Array.from(
     { length: Math.min(limit, items.length) },
     async () => {
-      while (next < items.length) {
-        const index = next++;
-        out[index] = await fn(items[index]);
+      for (;;) {
+        const next = remaining.next();
+        if (next.done) return;
+        const [index, item] = next.value;
+        out[index] = await fn(item);
       }
     },
   );

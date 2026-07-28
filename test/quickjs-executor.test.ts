@@ -11,7 +11,7 @@ import type {
   Connector,
   ExecutorProvider,
 } from "../src/types.js";
-import {
+import { required,
   calcConnector,
   makeRegistry,
   silentLogger,
@@ -493,7 +493,7 @@ describe("quickJsExecutor", () => {
     );
     setTimeout(() => controller.abort(), 50);
     const out = await pending;
-    const payload = JSON.parse(out.content[0].text) as {
+    const payload = JSON.parse(required(out.content[0]).text) as {
       error: { code: string; retryable: boolean };
     };
     expect(payload.error).toMatchObject({

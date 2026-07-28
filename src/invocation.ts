@@ -154,7 +154,7 @@ export interface InvocationContext<T> {
 export class InvocationFailure extends Error {
   readonly code: string;
   readonly retryable: boolean;
-  readonly retryAfterMs?: number;
+  readonly retryAfterMs: number | undefined;
 
   constructor(readonly details: CallErrorDetails) {
     super(details.message);
@@ -183,9 +183,12 @@ export class InvocationService {
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
     return this.invokeWithResolution(address, args, context, () =>
-      this.catalog.resolveTool(address, {
-        signal: context.requestSignal,
-      }),
+      this.catalog.resolveTool(
+        address,
+        context.requestSignal !== undefined
+          ? { signal: context.requestSignal }
+          : {},
+      ),
     );
   }
 
@@ -205,9 +208,14 @@ export class InvocationService {
       args,
       context,
       () =>
-        this.catalog.resolveToolAlias(connectorId, toolAlias, aliasFor, {
-          signal: context.requestSignal,
-        }),
+        this.catalog.resolveToolAlias(
+          connectorId,
+          toolAlias,
+          aliasFor,
+          context.requestSignal !== undefined
+            ? { signal: context.requestSignal }
+            : {},
+        ),
     );
   }
 
@@ -355,7 +363,9 @@ export class InvocationService {
           permit = await this.registry.admitCall(resolved.connector.id, {
             toolName: resolved.toolName,
             args: args ?? {},
-            signal: context.requestSignal,
+            ...(context.requestSignal !== undefined
+              ? { signal: context.requestSignal }
+              : {}),
           });
         } finally {
           admissionMs += Date.now() - admissionStarted;
@@ -364,7 +374,14 @@ export class InvocationService {
           resolved.connector.id,
           this.catalog.baseUrl,
           this.catalog.requestScope,
-          { signal: controller?.signal, timeoutMs: context.timeoutMs },
+          {
+            ...(controller?.signal !== undefined
+              ? { signal: controller.signal }
+              : {}),
+            ...(context.timeoutMs !== undefined
+              ? { timeoutMs: context.timeoutMs }
+              : {}),
+          },
         );
         let rejectCancelled!: (reason: unknown) => void;
         const cancelled = controller

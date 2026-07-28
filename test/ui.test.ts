@@ -31,7 +31,7 @@ import type {
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
-import { makeRegistry } from "./helpers.js";
+import { required, makeRegistry } from "./helpers.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -463,7 +463,7 @@ describe("status UI filtering", () => {
     expect(filterUiConnectors(connectors, "invoices")).toEqual([
       {
         connector: connectors[1],
-        tools: [connectors[1].tools[0]],
+        tools: [required(connectors[1]).tools[0]],
       },
     ]);
   });
@@ -1128,7 +1128,7 @@ describe("status UI", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
 
     const secondPayload = payload("identity-b");
-    secondPayload.connectors[0].status = "error";
+    required(secondPayload.connectors[0]).status = "error";
     resolveSecond?.(Response.json(secondPayload));
     await vi.waitFor(() => {
       expect(element("list").children[0]?.innerHTML).toContain("identity-b");
@@ -1454,18 +1454,18 @@ describe("status UI", () => {
     await vi.waitFor(() => {
       expect(element("activityList").children).toHaveLength(3);
     });
-    expect(element("activityList").children[0].innerHTML).toContain(
+    expect(required(element("activityList").children[0]).innerHTML).toContain(
       "clerk · Ada Lovelace",
     );
-    expect(element("activityList").children[0].innerHTML).toContain("user_1");
-    expect(element("activityList").children[0].innerHTML).toContain(
+    expect(required(element("activityList").children[0]).innerHTML).toContain("user_1");
+    expect(required(element("activityList").children[0]).innerHTML).toContain(
       "https://tenant-a.example · user_1",
     );
-    expect(element("activityList").children[1].innerHTML).toContain("user_2");
-    expect(element("activityList").children[1].innerHTML).toContain(
+    expect(required(element("activityList").children[1]).innerHTML).toContain("user_2");
+    expect(required(element("activityList").children[1]).innerHTML).toContain(
       "https://tenant-b.example · user_2",
     );
-    expect(element("activityList").children[2].innerHTML).toContain(
+    expect(required(element("activityList").children[2]).innerHTML).toContain(
       "clerk · user_fallback",
     );
 
@@ -1475,11 +1475,11 @@ describe("status UI", () => {
     element("activitySearch").value = "user_1";
     await (element("activitySearch") as any).oninput();
     expect(element("activityList").children).toHaveLength(1);
-    expect(element("activityList").children[0].innerHTML).toContain("user_1");
+    expect(required(element("activityList").children[0]).innerHTML).toContain("user_1");
     element("activitySearch").value = "tenant-b.example";
     await (element("activitySearch") as any).oninput();
     expect(element("activityList").children).toHaveLength(1);
-    expect(element("activityList").children[0].innerHTML).toContain("user_2");
+    expect(required(element("activityList").children[0]).innerHTML).toContain("user_2");
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -2029,7 +2029,7 @@ describe("status UI", () => {
     expect(deferred).toHaveLength(1);
     await expect(
       Promise.race([
-        deferred[0].then(() => "settled"),
+        required(deferred[0]).then(() => "settled"),
         Promise.resolve("pending"),
       ]),
     ).resolves.toBe("pending");
@@ -2262,17 +2262,17 @@ describe("status UI", () => {
 
     expect(response.status).toBe(200);
     const page = (await response.json()) as ActivityReadPage;
-    expect(page.events[0].actor).toEqual({
+    expect(required(page.events[0]).actor).toEqual({
       kind: "clerk",
       id: "user_123",
       label: "Ada Lovelace",
     });
-    expect(page.events[1].actor.label).toBe("Ada Lovelace");
-    expect(page.events[2].actor).toEqual({
+    expect(required(page.events[1]).actor.label).toBe("Ada Lovelace");
+    expect(required(page.events[2]).actor).toEqual({
       kind: "clerk",
       id: "user_offline",
     });
-    expect(page.events[3].actor).toEqual({
+    expect(required(page.events[3]).actor).toEqual({
       kind: "bearer",
       id: "ci-runner",
     });
@@ -2365,13 +2365,13 @@ describe("status UI", () => {
     );
     const page = (await response.json()) as ActivityReadPage;
 
-    expect(page.events[0].actor).toEqual({
+    expect(required(page.events[0]).actor).toEqual({
       kind: "oidc",
       id: "local-user-1",
       namespace: "https://id-b.example",
       label: "Right Person",
     });
-    expect(page.events[1].actor).toEqual({
+    expect(required(page.events[1]).actor).toEqual({
       kind: "oidc",
       id: "legacy-local-id",
     });
@@ -2444,7 +2444,7 @@ describe("status UI", () => {
       );
       const page = (await response.json()) as ActivityReadPage;
 
-      expect(page.events[0].actor).toEqual(event.actor);
+      expect(required(page.events[0]).actor).toEqual(event.actor);
       expect(wrongDirectory).not.toHaveBeenCalled();
     }
   });
@@ -2500,7 +2500,7 @@ describe("status UI", () => {
       await vi.advanceTimersByTimeAsync(1_500);
       const response = await pending;
       const page = (await response.json()) as ActivityReadPage;
-      expect(page.events[0].actor).toEqual(event.actor);
+      expect(required(page.events[0]).actor).toEqual(event.actor);
     } finally {
       vi.useRealTimers();
     }
