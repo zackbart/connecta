@@ -13,15 +13,15 @@ export const silentLogger: Logger = {
 
 /**
  * A registry over `connectors`. `opts` carries the flat internal settings that
- * `ConnectaConfig` adapts into — including `ConnectaConfig.calls.maxResultBytes`,
- * the only deployment-wide result cap (issue #44), so cap tests configure it
- * exactly the way production does.
+ * `ConnectaConfig` adapts into — including both `ConnectaConfig.calls` result
+ * caps — so cap tests configure them exactly the way production does.
  */
 export function makeRegistry(
   connectors: Connector[],
   opts: {
     toolCacheTtlSeconds?: number;
     maxResultBytes?: number;
+    maxBatchResultBytes?: number;
     credentialHealth?: CredentialHealthConfig;
     /** Share one store between a registry and a vault (credential-health tests). */
     storage?: KVStorage;

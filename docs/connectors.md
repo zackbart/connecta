@@ -210,10 +210,10 @@ Connectors have very different result profiles, so the deployment-wide
 set a tighter value on a chatty search connector, or a looser one on a
 document-fetch connector whose payloads are legitimately large. Precedence is
 **per-connector → `ConnectaConfig.calls.maxResultBytes` → 50 000**, resolved per call.
-Those two are the only places a cap is set: there is no server-level knob and no
-meta-tool parameter behind them. What a cap counts is the serialization that
+Those two are the only places a **child-call** cap is set; no meta-tool parameter changes them. What a cap counts is the serialization that
 would be stashed — for a `kind: "mcp"` connector the whole content envelope,
 non-text blocks included ([meta-tools](./meta-tools.md#meta-tools-reference)).
+The deployment-wide `calls.maxBatchResultBytes` applies after all child guards assemble the final `batch_call` envelope.
 
 A cap — global or per-connector — must be a **whole number of bytes >= 1**.
 Anything else logs a startup warning and is dropped in favour of the next value
@@ -233,11 +233,11 @@ result carries no connector identity). Both factories accept it, and so does any
 custom connector, since it is a plain field on the interface.
 
 Two consequences are worth stating outright. First, one `batch_call` may mix a
-connector on its own cap with siblings on the global one, so a batch's total
-inline size is the **sum of the participating connectors' caps** rather than the
-`10 × ConnectaConfig.calls.maxResultBytes` it was before — widen a connector's cap
-knowing it also widens every batch that connector takes part in. Second,
-`execute_code` host-call results are **not** bounded by `maxResultBytes` at all,
+connector on its own cap with siblings on the global one. Each child is guarded
+at its own effective cap, then the complete envelope is independently bounded
+by `calls.maxBatchResultBytes`; widening one connector no longer widens the
+final inline batch without limit. Second, `execute_code` host-call results are
+**not** bounded by `maxResultBytes` at all,
 global or per-connector: the sandbox hands tool results to the guest as plain
 unwrapped values and guards only the program's final return, with its own
 ~24k-char limit ([code mode](./code-mode.md#behavior-details)).

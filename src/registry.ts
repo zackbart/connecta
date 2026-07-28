@@ -25,6 +25,8 @@ const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
 export const DEFAULT_MAX_RESULT_BYTES = 50_000;
+/** Independent final-envelope boundary for `batch_call`. */
+export const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
 
 /**
  * Smallest accepted inline-result cap. One byte is pathological but harmless:
@@ -143,6 +145,11 @@ export interface RegistryOptions {
    * to the default 50_000.
    */
   maxResultBytes?: number;
+  /**
+   * Cap on the complete serialized batch_call envelope. Must be a whole number
+   * of bytes >= 1; anything else warns and falls back to 100_000.
+   */
+  maxBatchResultBytes?: number;
   /** Tuning for the credential liveness checks (issue #24). */
   credentialHealth?: CredentialHealthConfig;
 }
@@ -179,6 +186,8 @@ type ConnectorOperationOptions = Pick<
 export interface RegistryView {
   /** Deployment-wide result-size cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  /** Independent cap for the complete serialized batch_call envelope. */
+  readonly maxBatchResultBytes: number;
   listConnectors(): Connector[];
   getConnector(id: string): Connector | undefined;
   resolveAddress(
@@ -246,6 +255,8 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  /** Final batch envelope cap threaded to the meta-tools. */
+  readonly maxBatchResultBytes: number;
   /** Proactive liveness checks over stored downstream credentials (issue #24). */
   private readonly credentialHealth: CredentialHealthChecker;
 
@@ -262,6 +273,10 @@ export class Registry implements RegistryView {
       opts.maxResultBytes,
       DEFAULT_MAX_RESULT_BYTES,
     );
+    this.maxBatchResultBytes = resolveMaxResultBytes(
+      opts.maxBatchResultBytes,
+      DEFAULT_MAX_BATCH_RESULT_BYTES,
+    );
     for (const c of connectors) {
       if (!ID_RE.test(c.id)) {
         throw new Error(
@@ -274,7 +289,11 @@ export class Registry implements RegistryView {
       this.connectors.set(c.id, c);
     }
     this.checkConventions(opts.logger);
-    this.checkResultCaps(opts.logger, opts.maxResultBytes);
+    this.checkResultCaps(
+      opts.logger,
+      opts.maxResultBytes,
+      opts.maxBatchResultBytes,
+    );
     this.credentialHealth = new CredentialHealthChecker(
       {
         listConnectors: () => this.listConnectors(),
@@ -300,6 +319,7 @@ export class Registry implements RegistryView {
   private checkResultCaps(
     logger: Logger,
     configured: number | undefined,
+    configuredBatch: number | undefined,
   ): void {
     if (configured !== undefined && !isValidMaxResultBytes(configured)) {
       logger.warn(
@@ -307,6 +327,17 @@ export class Registry implements RegistryView {
           `bytes >= ${MIN_MAX_RESULT_BYTES}: it would serve an empty, ` +
           "oversized, or unguarded result instead of truncating. Using the " +
           `default ${DEFAULT_MAX_RESULT_BYTES} instead.`,
+      );
+    }
+    if (
+      configuredBatch !== undefined &&
+      !isValidMaxResultBytes(configuredBatch)
+    ) {
+      logger.warn(
+        `[connecta] calls.maxBatchResultBytes ${configuredBatch} is not a whole ` +
+          `number of bytes >= ${MIN_MAX_RESULT_BYTES}: it would leave the final ` +
+          "batch envelope unbounded or serve an unusable page. Using the " +
+          `default ${DEFAULT_MAX_BATCH_RESULT_BYTES} instead.`,
       );
     }
     for (const c of this.connectors.values()) {
@@ -829,6 +860,10 @@ export class ScopedRegistry implements RegistryView {
 
   get maxResultBytes(): number {
     return this.base.maxResultBytes;
+  }
+
+  get maxBatchResultBytes(): number {
+    return this.base.maxBatchResultBytes;
   }
 
   /** In scope AND actually registered. */

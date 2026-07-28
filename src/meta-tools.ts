@@ -406,6 +406,15 @@ async function stashResult(
   };
 }
 
+/** Keep an oversized batch's inline outcome summary at fixed string overhead. */
+function batchSummaryString(value: string): string {
+  const bytes = enc.encode(value);
+  const maxBytes = 512;
+  if (bytes.length <= maxBytes) return value;
+  const end = alignEndToCharBoundary(bytes, 0, maxBytes, bytes.length);
+  return `${dec.decode(bytes.slice(0, end))}…`;
+}
+
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return the first `cap` bytes followed by a JSON truncation
@@ -575,10 +584,10 @@ export interface SkillArgs {
  * supplies a deadline for calls that don't carry one. (execute_code, the
  * optional tenth tool, is registered separately by registerExecuteTool.)
  *
- * The deployment-wide result-size cap is read off the registry view rather than
- * passed in: `ConnectaConfig.calls.maxResultBytes` and the per-connector
- * override are the only places a cap is set, so there is one answer to where a
- * deployment sets it (issue #44).
+ * Deployment-wide result-size caps are read off the registry view rather than
+ * passed in: `ConnectaConfig.calls.maxResultBytes`, its per-connector override,
+ * and the independent `calls.maxBatchResultBytes` final-envelope boundary each
+ * have one runtime source of truth.
  */
 export function createMetaTools(
   registry: RegistryView,
@@ -595,6 +604,7 @@ export function createMetaTools(
 ) {
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
+  const batchCap = registry.maxBatchResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -1470,9 +1480,50 @@ export function createMetaTools(
             : {}),
         };
       });
-      return jsonResult({
+      const envelope = {
         results,
         durationMs: Date.now() - batchStarted,
+      };
+      const text = serializeResultText(envelope);
+      const bytes = enc.encode(text);
+      if (bytes.length <= batchCap) return jsonResult(envelope);
+
+      const notice = await stashResult(
+        text,
+        registry.resultsStorage(),
+        bytes.length,
+      );
+      return jsonResult({
+        results: results.map((result) => {
+          const common = {
+            address: batchSummaryString(result.address),
+            ok: !("error" in result),
+            ...("durationMs" in result
+              ? { durationMs: result.durationMs }
+              : {}),
+            ...("attempts" in result ? { attempts: result.attempts } : {}),
+            ...("timing" in result ? { timing: result.timing } : {}),
+          };
+          if (!("error" in result)) return common;
+          const error = result.error ?? "Batch call failed";
+          const details =
+            result.errorDetails ??
+            errorDetails("batch_call_failed", error);
+          return {
+            ...common,
+            error: batchSummaryString(error),
+            errorDetails: {
+              code: batchSummaryString(details.code),
+              message: batchSummaryString(details.message),
+              retryable: details.retryable,
+              ...(details.retryAfterMs !== undefined
+                ? { retryAfterMs: details.retryAfterMs }
+                : {}),
+            },
+          };
+        }),
+        durationMs: envelope.durationMs,
+        ...notice,
       });
     },
 
@@ -1540,7 +1591,7 @@ const CALL_DESTRUCTIVE_DESC =
 const GET_RESULT_DESC =
   "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 const BATCH_DESC =
-  "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call.";
+  "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call. An oversized final envelope returns ordered outcome summaries plus a get_result page handle.";
 const AUTHORIZE_DESC =
   "Use after a connector reports auth_required. Starts downstream OAuth and returns an authorizationUrl for the operator to open. force=true wipes stored credentials first and restarts consent.";
 const SKILLS_DESC =

@@ -94,7 +94,7 @@ export interface ConnectaDiscoveryConfig {
   probeTimeoutMs?: number;
 }
 
-/** Deployment-wide call deadlines and inline-result paging threshold. */
+/** Deployment-wide call deadlines and inline-result paging thresholds. */
 export interface ConnectaCallsConfig {
   /**
    * Deadline (ms) for `call_tool`/`batch_call` calls that pass no `timeoutMs`.
@@ -111,6 +111,13 @@ export interface ConnectaCallsConfig {
    * 50_000. Connectors may override it individually.
    */
   maxResultBytes?: number;
+  /**
+   * Max serialized `batch_call` envelope size (bytes) before the full batch is
+   * stashed for `get_result` and only an ordered outcome summary is returned
+   * inline. Must be a finite whole number >= 1; invalid values warn and fall
+   * back to 100_000. This cap is independent of per-connector child caps.
+   */
+  maxBatchResultBytes?: number;
 }
 
 export interface AdmissionPoolConfig {
@@ -544,6 +551,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     persistToolCatalog: config.discovery?.persistCatalog,
     toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
     maxResultBytes: config.calls?.maxResultBytes,
+    maxBatchResultBytes: config.calls?.maxBatchResultBytes,
     credentialHealth: config.credentials?.health,
   });
   // Throws on every structural mistake it can see (see resolveToolkits): a

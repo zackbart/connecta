@@ -53,6 +53,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     const calls: ConnectaCallsConfig = {
       defaultTimeoutMs: 1_000,
       maxResultBytes: 123,
+      maxBatchResultBytes: 456,
     };
     const admission: ConnectaAdmissionConfig = {
       requests: {
@@ -78,6 +79,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     const connecta = createConnecta(config);
 
     expect(connecta.registry.maxResultBytes).toBe(123);
+    expect(connecta.registry.maxBatchResultBytes).toBe(456);
   });
 
   it("rejects malformed admission bounds at construction", () => {
