@@ -231,6 +231,123 @@ describe("address resolution", () => {
 });
 
 describe("tool cache TTL", () => {
+  it("coalesces concurrent cold loads within one request scope", async () => {
+    const backing = memoryStorage();
+    let storageReads = 0;
+    let storageWrites = 0;
+    const storage: KVStorage = {
+      async get(key) {
+        storageReads++;
+        return backing.get(key);
+      },
+      async set(key, value, options) {
+        storageWrites++;
+        return backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let started!: () => void;
+    const firstStarted = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    let catalogLoads = 0;
+    const connector: Connector = {
+      id: "coalesced",
+      kind: "mcp",
+      async listTools() {
+        catalogLoads++;
+        started();
+        await gate;
+        return [{ name: "read" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    const requestScope = {};
+    const pending = Array.from({ length: 25 }, () =>
+      registry.getTools("coalesced", BASE, requestScope),
+    );
+    await firstStarted;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(catalogLoads).toBe(1);
+    expect(storageReads).toBe(1);
+    release();
+    await expect(Promise.all(pending)).resolves.toHaveLength(25);
+    expect(catalogLoads).toBe(1);
+    expect(storageWrites).toBe(1);
+  });
+
+  it("does not share an in-flight catalog across request scopes", async () => {
+    let catalogLoads = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const connector: Connector = {
+      id: "request_bound",
+      kind: "mcp",
+      async listTools() {
+        catalogLoads++;
+        await gate;
+        return [{ name: "read" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage: memoryStorage(),
+      logger: silentLogger,
+      persistToolCatalog: false,
+      toolCacheTtlSeconds: 0,
+    });
+    const pending = [
+      registry.getTools("request_bound", BASE, {}),
+      registry.getTools("request_bound", BASE, {}),
+    ];
+    await vi.waitFor(() => expect(catalogLoads).toBe(2));
+    release();
+    await Promise.all(pending);
+  });
+
+  it("removes a failed request-local load so the same request can retry", async () => {
+    let catalogLoads = 0;
+    const connector: Connector = {
+      id: "retry_load",
+      kind: "mcp",
+      async listTools() {
+        catalogLoads++;
+        if (catalogLoads === 1) throw new Error("temporary failure");
+        return [{ name: "read" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage: memoryStorage(),
+      logger: silentLogger,
+      persistToolCatalog: false,
+    });
+    const scope = {};
+    await expect(
+      registry.getTools("retry_load", BASE, scope),
+    ).rejects.toThrow("temporary failure");
+    await expect(
+      registry.getTools("retry_load", BASE, scope),
+    ).resolves.toEqual([{ name: "read" }]);
+    expect(catalogLoads).toBe(2);
+  });
+
   it("caches within the TTL and refetches after it expires", async () => {
     let calls = 0;
     const counting: Connector = {
@@ -369,6 +486,88 @@ describe("tool cache TTL", () => {
     });
     expect((await cold.getTools("persisted", BASE))[0].name).toBe("read");
     expect(calls).toBe(1);
+  });
+
+  it("persists only when the complete catalog fingerprint changes", async () => {
+    const backing = memoryStorage();
+    let writes = 0;
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      async set(key, value, options) {
+        writes++;
+        return backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    let tools: ToolDef[] = [
+      {
+        name: "read",
+        inputSchema: { type: "object" },
+        annotations: { readOnlyHint: true },
+      },
+    ];
+    const connector: Connector = {
+      id: "fingerprinted",
+      kind: "mcp",
+      async listTools() {
+        return tools;
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+
+    await registry.refreshTools("fingerprinted", BASE);
+    expect(writes).toBe(1);
+    await registry.refreshTools("fingerprinted", BASE);
+    expect(writes).toBe(1);
+
+    const mutations: ToolDef[][] = [
+      [...tools, { name: "second" }],
+      [{ ...tools[0], name: "renamed" }],
+      [{ ...tools[0], inputSchema: { type: "string" } }],
+      [{ ...tools[0], annotations: { readOnlyHint: false } }],
+      [],
+    ];
+    for (const mutation of mutations) {
+      tools = mutation;
+      await registry.refreshTools("fingerprinted", BASE);
+      expect(writes).toBeGreaterThan(1);
+      const persisted = JSON.parse(
+        (await backing.get("catalog:fingerprinted"))!,
+      ) as { fingerprint?: string; tools: ToolDef[] };
+      expect(persisted.fingerprint).toMatch(/^sha256:/);
+      expect(persisted.tools).toEqual(mutation);
+    }
+    expect(writes).toBe(1 + mutations.length);
+  });
+
+  it("serializes a refreshed tool array once for fingerprint and persistence", async () => {
+    let serializations = 0;
+    const serializable = {
+      name: "read",
+      toJSON() {
+        serializations++;
+        return { name: "read", annotations: { readOnlyHint: true } };
+      },
+    } as unknown as ToolDef;
+    const connector: Connector = {
+      id: "serialize_once",
+      kind: "mcp",
+      async listTools() {
+        return [serializable];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = makeRegistry([connector]);
+    await registry.refreshTools("serialize_once", BASE);
+    expect(serializations).toBe(1);
   });
 
   it("falls back to a stale persisted catalog when live refresh fails", async () => {

@@ -1,4 +1,8 @@
 import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
+import {
+  mapSettledWithConcurrency,
+  resolveDiscoveryConcurrency,
+} from "./concurrency.js";
 import { classifyCallError, messageLooksRetryable } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
@@ -176,6 +180,7 @@ function framingError(code: string, message: string): CallErrorDetails {
 export class CatalogService {
   readonly requestScope: object;
   private readonly probeTimeoutMs: number;
+  private readonly concurrency: number;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -185,11 +190,13 @@ export class CatalogService {
     options: {
       requestScope?: object;
       probeTimeoutMs?: number;
+      concurrency?: number;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
+    this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
   }
 
   async loadConnector(
@@ -365,13 +372,14 @@ export class CatalogService {
           (connector): connector is Connector => Boolean(connector),
         )
       : this.registry.listConnectors();
-    const catalogs = await Promise.allSettled(
-      connectors.map((connector) =>
+    const catalogs = await mapSettledWithConcurrency(
+      connectors,
+      this.concurrency,
+      (connector) =>
         this.loadForDiscovery(
           connector.id,
           `search_tools probe of "${connector.id}"`,
         ),
-      ),
     );
     const matches: Array<{
       connector: Connector;
@@ -472,10 +480,11 @@ export class CatalogService {
           .filter((id): id is string => Boolean(id)),
       ),
     ];
-    const loaded = await Promise.allSettled(
-      connectorIds.map((id) =>
+    const loaded = await mapSettledWithConcurrency(
+      connectorIds,
+      this.concurrency,
+      (id) =>
         this.loadForDiscovery(id, `describe_tools probe of "${id}"`),
-      ),
     );
     const catalogs = new Map<string, ToolDef[] | Error>();
     loaded.forEach((result, index) => {

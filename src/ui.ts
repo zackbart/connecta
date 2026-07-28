@@ -8,6 +8,10 @@ import {
   closeConnectorScope,
   type DeferredWork,
 } from "./connector-scope.js";
+import {
+  mapSettledWithConcurrency,
+  resolveDiscoveryConcurrency,
+} from "./concurrency.js";
 import type { Registry } from "./registry.js";
 import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
@@ -416,11 +420,15 @@ export async function buildUiData(
   toolkits?: ReadonlyMap<string, Toolkit>,
   defer?: DeferredWork,
   oauthManagement = false,
+  discoveryConcurrency?: number,
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
-  const settled = await Promise.allSettled(
-    connectorSet.map(async (c): Promise<UiConnector> => {
+  const concurrency = resolveDiscoveryConcurrency(discoveryConcurrency);
+  const settled = await mapSettledWithConcurrency(
+    connectorSet,
+    concurrency,
+    async (c): Promise<UiConnector> => {
       const status = await registry.statusFor(c.id, baseUrl, requestScope);
       const credentialCheck = await registry.credentialHealthFor(c.id);
       let tools: UiTool[] = [];
@@ -555,16 +563,17 @@ export async function buildUiData(
           : {}),
         ...(credential ? { credential } : {}),
       };
-    }),
+    },
   );
-  await Promise.all(
-    connectorSet.map((connector) =>
+  await mapSettledWithConcurrency(
+    connectorSet,
+    concurrency,
+    (connector) =>
       closeConnectorScope(
         connector,
         registry.contextFor(connector.id, baseUrl, requestScope),
         defer,
       ),
-    ),
   );
   const connectors = settled.map((result) => {
     if (result.status === "rejected") throw result.reason;

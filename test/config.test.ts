@@ -45,6 +45,7 @@ describe("ConnectaConfig v0.7 shape", () => {
       health: { onRequest: false },
     };
     const discovery: ConnectaDiscoveryConfig = {
+      concurrency: 4,
       catalogTtlSeconds: 10,
       persistCatalog: false,
       staleCatalogSeconds: 30,

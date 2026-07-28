@@ -109,6 +109,8 @@ export interface ServerOptions {
   defaultToolTimeoutMs?: number;
   /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
   probeTimeoutMs?: number;
+  /** Maximum simultaneous connector discovery operations. Default 4. */
+  discoveryConcurrency?: number;
   /** When set, the execute_code meta-tool is registered on top of the nine. */
   executor?: Executor;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
@@ -1273,6 +1275,7 @@ async function serveMcp(
     activity,
     defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
     probeTimeoutMs: opts.probeTimeoutMs,
+    discoveryConcurrency: opts.discoveryConcurrency,
     requestSignal: request.signal,
     ...(runtimeContext
       ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
@@ -1285,6 +1288,7 @@ async function serveMcp(
       logger: opts.logger,
       activity,
       requestSignal: request.signal,
+      discoveryConcurrency: opts.discoveryConcurrency,
     });
   }
   const transport = new WebStandardStreamableHTTPServerTransport({
@@ -1698,6 +1702,7 @@ export function createFetchHandler(
           opts.toolkits,
           defer,
           eligibleClerkOperator,
+          opts.discoveryConcurrency,
         );
         return privateJson(data);
       }

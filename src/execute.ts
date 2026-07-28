@@ -164,12 +164,16 @@ export async function buildSandboxProviders(
     signal?: AbortSignal;
     maxHostCalls?: number;
     hostCallTimeoutMs?: number;
+    discoveryConcurrency?: number;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const requestScope = {};
-  const catalog = new CatalogService(registry, baseUrl, { requestScope });
+  const catalog = new CatalogService(registry, baseUrl, {
+    requestScope,
+    concurrency: limits.discoveryConcurrency,
+  });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
     1,
@@ -312,6 +316,7 @@ export function createExecuteTool(
   executor: Executor,
   logger: Logger,
   activity?: ActivityRequestContext,
+  config: { discoveryConcurrency?: number } = {},
 ) {
   return async (
     { code }: { code: string },
@@ -341,7 +346,10 @@ export function createExecuteTool(
         baseUrl,
         logger,
         activity,
-        { signal: controller.signal },
+        {
+          signal: controller.signal,
+          discoveryConcurrency: config.discoveryConcurrency,
+        },
       );
       if (controller.signal.aborted) {
         throw new ExecutorAdmissionError(
@@ -434,6 +442,7 @@ export function registerExecuteTool(
     logger: Logger;
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
+    discoveryConcurrency?: number;
   },
 ): void {
   const handler = createExecuteTool(
@@ -442,6 +451,7 @@ export function registerExecuteTool(
     ctx.executor,
     ctx.logger,
     ctx.activity,
+    { discoveryConcurrency: ctx.discoveryConcurrency },
   );
   server.registerTool(
     "execute_code",
