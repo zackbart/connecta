@@ -1,4 +1,4 @@
-/** Complete-catalog ceiling shared by every connector kind. */
+/** Complete-catalog ceiling shared by dynamically listed connector catalogs. */
 export const MAX_CATALOG_TOOLS = 100_000;
 
 /**

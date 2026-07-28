@@ -116,11 +116,10 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
  *
  * The walk terminates on its own well before this: a cursor handed back twice
  * is a definite loop, two consecutive pages that add no new tools are a server
- * going nowhere, and MAX_CATALOG_TOOLS caps what any of it can accumulate. This
- * exists
- * only so the loop is finite even if a downstream somehow satisfies all three
- * forever on a path with no discovery deadline. Set high enough that no honest
- * server reaches it.
+ * going nowhere, and MAX_CATALOG_TOOLS caps what any of it can accumulate.
+ * This exists only so the loop is finite even if a downstream somehow
+ * satisfies all three forever on a path with no discovery deadline. Set high
+ * enough that no honest server reaches it.
  */
 const MAX_TOOL_PAGES = 10_000;
 
