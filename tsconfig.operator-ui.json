@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": [],
+    "noEmit": true
+  },
+  "include": [
+    "src/operator-ui/browser.ts",
+    "src/operator-ui/model.ts"
+  ],
+  "exclude": ["node_modules"]
+}

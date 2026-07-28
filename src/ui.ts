@@ -12,10 +12,28 @@ import {
   mapSettledWithConcurrency,
   resolveDiscoveryConcurrency,
 } from "./concurrency.js";
+import {
+  filterUiConnectors,
+  type CredentialManagementCapability,
+  type UiConnector,
+  type UiData,
+  type UiToolkit,
+  type UiTool,
+} from "./operator-ui/model.js";
 import type { Registry } from "./registry.js";
 import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
+
+export {
+  filterUiConnectors,
+  type CredentialManagementCapability,
+  type FilteredUiConnector,
+  type UiConnector,
+  type UiData,
+  type UiToolkit,
+  type UiTool,
+} from "./operator-ui/model.js";
 
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
@@ -246,92 +264,6 @@ export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   ];
 }
 
-export interface UiTool {
-  name: string;
-  address: string;
-  description?: string;
-}
-
-export interface UiConnector {
-  id: string;
-  title?: string;
-  description?: string;
-  status: "ok" | "auth_required" | "error";
-  message?: string;
-  authorizationUrl?: string;
-  toolCount: number;
-  tools: UiTool[];
-  /** This connector exposes operator-managed downstream OAuth lifecycle hooks. */
-  oauth?: boolean;
-  /**
-   * Verdict of the last proactive credential liveness check (issue #24), for the
-   * connectors that hold a credential connecta stores. Shown beside the live
-   * status so an operator can tell "checked just now" from "last verified an
-   * hour ago", and see a dead credential the page's own probe may not reach.
-   */
-  credentialCheck?: {
-    state: "ok" | "auth_required" | "error";
-    checkedAt: string;
-    message?: string;
-  };
-  credential?: {
-    label: string;
-    description?: string;
-    placeholder?: string;
-    fields?: Array<{
-      name: string;
-      label: string;
-      description?: string;
-      placeholder?: string;
-      inputType: "email" | "password" | "text";
-      configured: boolean;
-      lastFour?: string;
-      updatedAt?: string;
-    }>;
-    configured: boolean;
-    /** A stored value exists and may be deleted even if it cannot be decrypted. */
-    removable?: boolean;
-    lastFour?: string;
-    updatedAt?: string;
-    testable: boolean;
-    error?: string;
-    /**
-     * Something true and non-blocking about a working credential — today, that
-     * the vault still holds fields the connector has stopped declaring.
-     * Distinct from `error`, which means the credential cannot be used.
-     */
-    notice?: string;
-  };
-}
-
-export interface UiData {
-  serverInfo: { name: string; version: string };
-  /** Version of the installed @zackbart/connecta package. */
-  connectaVersion: string;
-  connectors: UiConnector[];
-  /** Read-only projection of the validated deployment config. */
-  toolkits: UiToolkit[];
-  activityEnabled: boolean;
-  credentialManagement: CredentialManagementCapability;
-  /** True only for an eligible, unrestricted Clerk operator. */
-  oauthManagement: boolean;
-}
-
-export interface UiToolkit {
-  name: string;
-  connectors: string[];
-  includeTools: string[];
-  excludeTools: string[];
-  /** Tools currently loaded through healthy connectors and visible in this view. */
-  toolCount: number;
-}
-
-export type CredentialManagementCapability =
-  | "available"
-  | "requires_clerk"
-  | "vault_not_configured"
-  | "no_slots";
-
 export type OperatorPage = "connections" | "credentials" | "activity";
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
@@ -363,44 +295,6 @@ export function credentialManagementCapability(input: {
   if (!input.hasCredentialSlots) return "no_slots";
   if (!input.hasCredentialVault) return "vault_not_configured";
   return "available";
-}
-
-export interface FilteredUiConnector {
-  connector: UiConnector;
-  tools: UiTool[];
-}
-
-/**
- * Filter by connector identity/description or tool name/description. A
- * connector-level match stays visible even when it currently exposes no tools
- * (for example while authorization is required).
- */
-export function filterUiConnectors(
-  connectors: UiConnector[],
-  query: string,
-): FilteredUiConnector[] {
-  const q = query.trim().toLowerCase();
-  const filtered: FilteredUiConnector[] = [];
-  for (const connector of connectors) {
-    const connectorText = [
-      connector.id,
-      connector.title,
-      connector.description,
-      connector.status,
-    ]
-      .join(" ")
-      .toLowerCase();
-    const connectorMatches = Boolean(q && connectorText.includes(q));
-    const tools = connector.tools.filter(
-      (tool) =>
-        !q ||
-        connectorMatches ||
-        `${tool.name} ${tool.description ?? ""}`.toLowerCase().includes(q),
-    );
-    if (q && tools.length === 0 && !connectorMatches) continue;
-    filtered.push({ connector, tools });
-  }
-  return filtered;
 }
 
 /**
