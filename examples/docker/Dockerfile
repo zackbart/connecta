@@ -17,6 +17,8 @@ RUN npm ci
 # --- build: create the same dist/ consumed by package exports ----------------
 FROM deps AS build
 COPY tsconfig.json tsconfig.build.json ./
+# npm run build regenerates the embedded operator UI asset first.
+COPY scripts ./scripts
 COPY src ./src
 RUN npm run build
 

@@ -1,5 +1,7 @@
 node_modules/
 dist*/
+playwright-report/
+test-results/
 .dev.vars
 .env
 .connecta-state.json

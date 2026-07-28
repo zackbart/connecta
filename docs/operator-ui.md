@@ -3,7 +3,8 @@
 ## Status UI
 
 Connecta serves one lightweight operator application through three canonical,
-direct-linkable pages. It has no frontend build step:
+direct-linkable pages. Its browser TypeScript and CSS are bundled at package
+build time, then embedded into the server-rendered shell:
 
 | Route | Page | Responsibility |
 | --- | --- | --- |
@@ -20,7 +21,12 @@ and each page has a path-specific title such as
 in the masthead rather than pages.
 
 All three canonical routes serve the **same open, data-free HTML shell**
-(`src/ui.ts`, routed by `src/server.ts`). Choosing a route changes only the
+(`src/ui.ts`, routed by `src/server.ts`). The checked browser sources live at
+`src/operator-ui/browser.ts` and `src/operator-ui/browser.css`;
+`scripts/build-operator-ui.mjs` bundles them into the committed
+`src/operator-ui/generated.ts` constants. This is build-time tooling only: the
+published runtime still embeds one script and one stylesheet, makes no asset
+request, and adds no runtime dependency. Choosing a route changes only the
 initial page and title. The response contains no connector, credential,
 activity, actor, or deployment data; it is safe to serve before authentication.
 It receives the same nonce CSP, framing denial, no-referrer policy,
