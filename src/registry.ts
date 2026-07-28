@@ -24,15 +24,22 @@ import {
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
 import {
+  fingerprintSerializedCatalog,
   snapshotCatalog,
   type CatalogSnapshot,
 } from "./catalog-fingerprint.js";
+import {
+  MAX_CATALOG_CHUNK_BYTES,
+  MAX_CATALOG_TOOLS,
+  MAX_SERIALIZED_CATALOG_BYTES,
+} from "./catalog-limits.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
+const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
 export const DEFAULT_MAX_RESULT_BYTES = 50_000;
 /** Independent final-envelope boundary for `batch_call`. */
 export const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
@@ -85,10 +92,29 @@ interface CacheEntry {
   staleUntil: number;
 }
 
-interface PersistedCatalog {
+interface LegacyPersistedCatalog {
   tools: ToolDef[];
   /** Optional only for catalogs written before fingerprints were introduced. */
   fingerprint?: string;
+  fetchedAt: number;
+  expiresAt: number;
+  staleUntil: number;
+}
+
+interface PersistedCatalogManifest {
+  version: 2;
+  revision: string;
+  toolCount: number;
+  byteCount: number;
+  chunkCount: number;
+  fetchedAt: number;
+  expiresAt: number;
+  staleUntil: number;
+}
+
+interface PersistedCatalog {
+  tools: ToolDef[];
+  fingerprint: string;
   fetchedAt: number;
   expiresAt: number;
   staleUntil: number;
@@ -176,6 +202,34 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+/** WHATWG TextEncoder byte length without allocating another full buffer. */
+function utf8ByteLength(value: string): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x7f) {
+      bytes++;
+    } else if (code <= 0x7ff) {
+      bytes += 2;
+    } else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      index + 1 < value.length
+    ) {
+      const next = value.charCodeAt(index + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4;
+        index++;
+      } else {
+        bytes += 3;
+      }
+    } else {
+      bytes += 3;
+    }
+  }
+  return bytes;
 }
 
 export type ConnectorOperationOptions = Pick<
@@ -512,30 +566,221 @@ export class Registry implements RegistryView {
     return `catalog:${id}`;
   }
 
-  private validCatalog(raw: string | null): PersistedCatalog | null {
+  private catalogChunkKey(id: string, revision: string, index: number): string {
+    return `${this.catalogKey(id)}:chunk:${revision}:${index}`;
+  }
+
+  private validLegacyCatalog(value: unknown): LegacyPersistedCatalog | null {
+    if (!value || typeof value !== "object") return null;
+    const catalog = value as Partial<LegacyPersistedCatalog>;
+    if (
+      !Array.isArray(catalog.tools) ||
+      typeof catalog.fetchedAt !== "number" ||
+      typeof catalog.expiresAt !== "number" ||
+      typeof catalog.staleUntil !== "number" ||
+      (catalog.fingerprint !== undefined &&
+        typeof catalog.fingerprint !== "string") ||
+      !this.validCatalogTools(catalog.tools)
+    ) {
+      return null;
+    }
+    return catalog as LegacyPersistedCatalog;
+  }
+
+  private validCatalogTools(value: unknown[]): value is ToolDef[] {
+    return value.every(
+      (tool) =>
+        tool !== null &&
+        typeof tool === "object" &&
+        typeof (tool as ToolDef).name === "string",
+    );
+  }
+
+  private validCatalogManifest(
+    value: unknown,
+  ): PersistedCatalogManifest | null {
+    if (!value || typeof value !== "object") return null;
+    const manifest = value as Partial<PersistedCatalogManifest>;
+    const maxChunks =
+      Math.ceil(MAX_SERIALIZED_CATALOG_BYTES / MAX_CATALOG_CHUNK_BYTES) + 1;
+    if (
+      manifest.version !== 2 ||
+      typeof manifest.revision !== "string" ||
+      !/^sha256:[0-9]{1,8}:[0-9a-f]{64}$/.test(manifest.revision) ||
+      !Number.isInteger(manifest.toolCount) ||
+      manifest.toolCount! < 0 ||
+      manifest.toolCount! > MAX_CATALOG_TOOLS ||
+      !Number.isInteger(manifest.byteCount) ||
+      manifest.byteCount! < 2 ||
+      manifest.byteCount! > MAX_SERIALIZED_CATALOG_BYTES ||
+      !manifest.revision.startsWith(`sha256:${manifest.byteCount}:`) ||
+      !Number.isInteger(manifest.chunkCount) ||
+      manifest.chunkCount! < 1 ||
+      manifest.chunkCount! > maxChunks ||
+      typeof manifest.fetchedAt !== "number" ||
+      typeof manifest.expiresAt !== "number" ||
+      typeof manifest.staleUntil !== "number"
+    ) {
+      return null;
+    }
+    return manifest as PersistedCatalogManifest;
+  }
+
+  private parseCatalogManifest(
+    raw: string | null,
+  ): PersistedCatalogManifest | null {
     if (!raw) return null;
     try {
-      const value = JSON.parse(raw) as Partial<PersistedCatalog>;
-      if (
-        !Array.isArray(value.tools) ||
-        typeof value.fetchedAt !== "number" ||
-        typeof value.expiresAt !== "number" ||
-        typeof value.staleUntil !== "number" ||
-        (value.fingerprint !== undefined &&
-          typeof value.fingerprint !== "string") ||
-        !value.tools.every(
-          (tool) =>
-            tool !== null &&
-            typeof tool === "object" &&
-            typeof (tool as ToolDef).name === "string",
-        )
-      ) {
-        return null;
-      }
-      return value as PersistedCatalog;
+      return this.validCatalogManifest(JSON.parse(raw));
     } catch {
       return null;
     }
+  }
+
+  private splitCatalogChunks(snapshot: CatalogSnapshot): string[] {
+    const chunks: string[] = [];
+    const decoder = new TextDecoder("utf-8", {
+      fatal: true,
+      ignoreBOM: true,
+    });
+    let offset = 0;
+    while (offset < snapshot.serializedBytes.byteLength) {
+      let end = Math.min(
+        offset + MAX_CATALOG_CHUNK_BYTES,
+        snapshot.serializedBytes.byteLength,
+      );
+      // Move a boundary that landed inside a multibyte UTF-8 sequence back to
+      // the next character start. Every stored string then remains valid UTF-8.
+      while (
+        end < snapshot.serializedBytes.byteLength &&
+        (snapshot.serializedBytes[end] & 0xc0) === 0x80
+      ) {
+        end--;
+      }
+      chunks.push(
+        decoder.decode(snapshot.serializedBytes.subarray(offset, end)),
+      );
+      offset = end;
+    }
+    return chunks;
+  }
+
+  private async readCatalog(
+    id: string,
+    raw: string | null,
+    now: number,
+  ): Promise<PersistedCatalog | null> {
+    if (!raw) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      (parsed as { version?: unknown }).version !== 2
+    ) {
+      const legacy = this.validLegacyCatalog(parsed);
+      if (!legacy || legacy.staleUntil <= now) return null;
+      const snapshot = await snapshotCatalog(legacy.tools);
+      if (
+        legacy.tools.length > MAX_CATALOG_TOOLS ||
+        snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES ||
+        (legacy.fingerprint !== undefined &&
+          legacy.fingerprint !== snapshot.fingerprint)
+      ) {
+        this.opts.logger.warn(
+          `[connecta] connector "${id}" legacy catalog is oversized or has a fingerprint mismatch; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      return {
+        tools: legacy.tools,
+        fingerprint: snapshot.fingerprint,
+        fetchedAt: legacy.fetchedAt,
+        expiresAt: legacy.expiresAt,
+        staleUntil: legacy.staleUntil,
+      };
+    }
+
+    const manifest = this.validCatalogManifest(parsed);
+    if (!manifest) {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" catalog manifest is invalid; ignoring persisted catalog.`,
+      );
+      return null;
+    }
+    if (manifest.staleUntil <= now) return null;
+
+    const chunks: string[] = [];
+    let chunkBytes = 0;
+    for (let index = 0; index < manifest.chunkCount; index++) {
+      const chunk = await this.opts.storage.get(
+        this.catalogChunkKey(id, manifest.revision, index),
+      );
+      if (chunk === null) {
+        this.opts.logger.warn(
+          `[connecta] connector "${id}" catalog chunk ${index + 1}/${manifest.chunkCount} is missing; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      const byteLength = utf8ByteLength(chunk);
+      chunkBytes += byteLength;
+      if (
+        byteLength > MAX_CATALOG_CHUNK_BYTES ||
+        chunkBytes > manifest.byteCount
+      ) {
+        this.opts.logger.warn(
+          `[connecta] connector "${id}" catalog chunk bounds do not match its manifest; ignoring persisted catalog.`,
+        );
+        return null;
+      }
+      chunks.push(chunk);
+    }
+
+    const serializedTools = chunks.join("");
+    const stored = await fingerprintSerializedCatalog(serializedTools);
+    if (
+      stored.byteLength !== manifest.byteCount ||
+      stored.fingerprint !== manifest.revision
+    ) {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" catalog fingerprint mismatch; ignoring persisted catalog.`,
+      );
+      return null;
+    }
+
+    let tools: unknown;
+    try {
+      tools = JSON.parse(serializedTools);
+    } catch {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" catalog chunks are torn; ignoring persisted catalog.`,
+      );
+      return null;
+    }
+    if (!Array.isArray(tools) || !this.validCatalogTools(tools)) {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" catalog chunks contain invalid tools; ignoring persisted catalog.`,
+      );
+      return null;
+    }
+    if (tools.length !== manifest.toolCount) {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" catalog tool count does not match its manifest; ignoring persisted catalog.`,
+      );
+      return null;
+    }
+    return {
+      tools,
+      fingerprint: stored.fingerprint,
+      fetchedAt: manifest.fetchedAt,
+      expiresAt: manifest.expiresAt,
+      staleUntil: manifest.staleUntil,
+    };
   }
 
   private async storeCatalog(
@@ -546,19 +791,64 @@ export class Registry implements RegistryView {
     const fetchedAt = Date.now();
     const expiresAt = fetchedAt + this.ttlMs;
     const staleUntil = expiresAt + this.staleMs;
-    // Reuse the tool-array serialization that produced the fingerprint. This
-    // avoids another full catalog walk merely to wrap it in persistence fields.
-    const serialized =
-      `{"tools":${snapshot.serializedTools},` +
-      `"fingerprint":${JSON.stringify(snapshot.fingerprint)},` +
-      `"fetchedAt":${fetchedAt},"expiresAt":${expiresAt},` +
-      `"staleUntil":${staleUntil}}`;
-    await this.opts.storage.set(this.catalogKey(id), serialized, {
-      ttlSeconds: Math.max(
-        60,
-        Math.ceil((this.ttlMs + this.staleMs) / 1000),
-      ),
+    const ttlSeconds = Math.max(
+      60,
+      Math.ceil((this.ttlMs + this.staleMs) / 1000),
+    );
+    const chunks = this.splitCatalogChunks(snapshot);
+    for (let index = 0; index < chunks.length; index++) {
+      await this.opts.storage.set(
+        this.catalogChunkKey(id, snapshot.fingerprint, index),
+        chunks[index],
+        { ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS },
+      );
+    }
+    // The manifest is the only publication point. A failed/partial chunk write
+    // therefore leaves the previous manifest authoritative (or no catalog);
+    // unreachable chunks carry a bounded TTL and require no prefix scan.
+    const manifest: PersistedCatalogManifest = {
+      version: 2,
+      revision: snapshot.fingerprint,
+      toolCount: snapshot.tools.length,
+      byteCount: snapshot.serializedBytes.byteLength,
+      chunkCount: chunks.length,
+      fetchedAt,
+      expiresAt,
+      staleUntil,
+    };
+    await this.opts.storage.set(this.catalogKey(id), JSON.stringify(manifest), {
+      ttlSeconds,
     });
+  }
+
+  private async deleteCatalog(id: string): Promise<void> {
+    let raw: string | null = null;
+    let readError: unknown;
+    try {
+      raw = await this.opts.storage.get(this.catalogKey(id));
+    } catch (err) {
+      readError = err;
+    }
+    const manifest = this.parseCatalogManifest(raw);
+    // The root is authoritative, so attempt its deletion even when the
+    // best-effort read needed for physical chunk cleanup failed.
+    await this.opts.storage.delete(this.catalogKey(id));
+    if (!manifest) {
+      if (readError) throw readError;
+      return;
+    }
+    let firstError: unknown;
+    for (let index = 0; index < manifest.chunkCount; index++) {
+      try {
+        await this.opts.storage.delete(
+          this.catalogChunkKey(id, manifest.revision, index),
+        );
+      } catch (err) {
+        firstError ??= err;
+      }
+    }
+    if (readError) throw readError;
+    if (firstError) throw firstError;
   }
 
   private catalogGeneration(id: string): number {
@@ -605,12 +895,27 @@ export class Registry implements RegistryView {
     const tools = await connector.listTools(
       this.contextFor(id, baseUrl, requestScope, callOptions),
     );
+    if (tools.length > MAX_CATALOG_TOOLS) {
+      const message =
+        `Connector "${id}" returned ${tools.length} tools, over the ` +
+        `${MAX_CATALOG_TOOLS}-tool catalog ceiling; refusing the complete catalog.`;
+      this.opts.logger.warn(`[connecta] ${message}`);
+      throw new Error(message);
+    }
     // The caller that began this refresh may still use its result, but a
     // credential/OAuth change that landed while listTools was in flight means
     // the listing must not enter either shared cache layer.
     if (generation !== this.catalogGeneration(id)) return tools;
     const previous = this.cache.get(id);
     const snapshot = await snapshotCatalog(tools);
+    if (snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
+      const message =
+        `Connector "${id}" returned a ${snapshot.serializedBytes.byteLength}-byte ` +
+        `serialized catalog, over the ${MAX_SERIALIZED_CATALOG_BYTES}-byte ceiling; ` +
+        "refusing the complete catalog.";
+      this.opts.logger.warn(`[connecta] ${message}`);
+      throw new Error(message);
+    }
     if (generation !== this.catalogGeneration(id)) return tools;
     const now = Date.now();
     const catalogChanged =
@@ -662,8 +967,10 @@ export class Registry implements RegistryView {
       const generation = this.catalogGeneration(id);
       let persisted: PersistedCatalog | null = null;
       try {
-        persisted = this.validCatalog(
+        persisted = await this.readCatalog(
+          id,
           await this.opts.storage.get(this.catalogKey(id)),
+          now,
         );
       } catch (err) {
         this.opts.logger.warn(
@@ -675,12 +982,9 @@ export class Registry implements RegistryView {
         stale = undefined;
       }
       if (persisted && persisted.staleUntil > now) {
-        const fingerprint =
-          persisted.fingerprint ??
-          (await snapshotCatalog(persisted.tools)).fingerprint;
         this.cache.set(id, {
           tools: persisted.tools,
-          fingerprint,
+          fingerprint: persisted.fingerprint,
           exp: persisted.expiresAt,
           staleUntil: persisted.staleUntil,
         });
@@ -873,7 +1177,7 @@ export class Registry implements RegistryView {
     if (this.persistToolCatalog) {
       void this.enqueueCatalogMutation(id, async () => {
         try {
-          await this.opts.storage.delete(this.catalogKey(id));
+          await this.deleteCatalog(id);
         } catch (err) {
           this.opts.logger.warn(
             `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
@@ -891,7 +1195,7 @@ export class Registry implements RegistryView {
     if (this.persistToolCatalog) {
       await this.enqueueCatalogMutation(id, async () => {
         try {
-          await this.opts.storage.delete(this.catalogKey(id));
+          await this.deleteCatalog(id);
         } catch (err) {
           this.opts.logger.warn(
             `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,

@@ -130,10 +130,14 @@ describe("ConnectaConfig v0.7 shape", () => {
     const raw = await storage.get("catalog:catalog");
     expect(raw).toBeTruthy();
     const catalog = JSON.parse(raw!) as {
+      version: number;
+      chunkCount: number;
       fetchedAt: number;
       expiresAt: number;
       staleUntil: number;
     };
+    expect(catalog.version).toBe(2);
+    expect(catalog.chunkCount).toBe(1);
     expect(catalog.expiresAt - catalog.fetchedAt).toBe(10_000);
     expect(catalog.staleUntil - catalog.expiresAt).toBe(30_000);
 
