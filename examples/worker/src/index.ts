@@ -36,9 +36,9 @@ import { cloudflareKvStorage } from "./cloudflare-kv.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;
-  /** Bearer token for the support team, bound to the `support` toolkit. */
+  /** Bearer token for one headless client in this deployment's audience. */
   SUPPORT_TOKEN: string;
-  /** Bearer token for the exec team, bound to the `exec` toolkit. */
+  /** Bearer token for another headless client in the same audience. */
   EXEC_TOKEN: string;
   CLERK_PUBLISHABLE_KEY: string;
   CLERK_SECRET_KEY: string;
@@ -62,57 +62,23 @@ function build(env: Env) {
       ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
       : {}),
     auth: [
-      // One credential per team, each BOUND to that team's toolkit: the support
-      // token can open ?toolkit=support and nothing else — not the exec view,
-      // and not an unscoped session over the whole registry. Enforced at connect
-      // time, before any scoped registry exists.
+      // Multiple credentials may identify callers in one deployment. Every
+      // admitted caller reaches this deployment's deliberate connector set.
       bearerToken(env.SUPPORT_TOKEN, {
         subjectId: "support-team",
-        toolkits: ["support"],
       }),
       bearerToken(env.EXEC_TOKEN, {
         subjectId: "exec-team",
-        toolkits: ["exec"],
       }),
-      // The operator signs in with Clerk. `unscoped: true` keeps the full
-      // registry, operator pages, and the deployment-wide activity log. Saying
-      // so explicitly (rather than leaving the provider unbound) is what tells
-      // connecta the exemption is deliberate, so it stops warning that one
-      // credential still opens every view. Restrict WHO may sign in with
-      // `allowedDomains` (or a `gate`, for anything a domain cannot express);
-      // for per-team Clerk users, add one clerkAuth per team, each with its own
-      // admission rule and its own `toolkits`.
+      // The operator signs in with Clerk. Restrict who may sign in with
+      // `allowedDomains` (or a `gate`, for anything a domain cannot express).
       clerkAuth({
         publishableKey: env.CLERK_PUBLISHABLE_KEY,
         secretKey: env.CLERK_SECRET_KEY,
         publicUrl: env.PUBLIC_URL,
         // allowedDomains: ["acme.com"],
-        toolkits: ["support", "exec"],
-        unscoped: true,
       }),
     ],
-    // Multi-team setup: one deployment for the org, one scoped view per group
-    // of team members. A client picks its view at connect time with a query
-    // parameter on the MCP URL — and its credential decides whether it may:
-    //
-    //   support team → <PUBLIC_URL>/mcp?toolkit=support   (SUPPORT_TOKEN)
-    //   exec team    → <PUBLIC_URL>/mcp?toolkit=exec      (EXEC_TOKEN)
-    //   operators    → <PUBLIC_URL>/mcp                   (Clerk ⇒ everything)
-    //
-    // Inside a scoped session the meta-tools behave as if out-of-scope
-    // connectors and tools do not exist, and an out-of-scope address fails
-    // exactly like a nonexistent one. Unknown toolkit names are rejected, never
-    // silently widened; a toolkit a credential is not bound to is refused with a
-    // 403 that looks exactly like the refusal for a name that does not exist.
-    // See documentation/toolkits.md.
-    toolkits: {
-      support: { connectors: ["notion"] },
-      exec: {
-        connectors: ["notion", "echo"],
-        // Finer grain than a connector id — hide one address from this view.
-        excludeTools: ["echo.shout"],
-      },
-    },
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",

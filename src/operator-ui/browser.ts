@@ -185,7 +185,6 @@ function clearIdentityState(): void {
   clearActivityState();
   $("list").innerHTML = "";
   setOauthNotice("");
-  $("toolkitList").innerHTML = "";
   $("filter").value = "";
   $("credentialList").innerHTML = "";
   $("credentialList").setAttribute("aria-busy", "false");
@@ -490,73 +489,6 @@ async function loadActivity(reset: boolean): Promise<void> {
   }
 }
 
-function toolkitMcpUrl(name: string): string {
-  const url = new URL(MCP_URL, window.location.href);
-  url.searchParams.set("toolkit", name);
-  return url.toString();
-}
-
-function renderToolkits(): void {
-  const data = DATA;
-  if (!data) return;
-  const list = $("toolkitList");
-  const toolkits = data.toolkits || [];
-  list.innerHTML = "";
-  if (!toolkits.length) {
-    list.innerHTML =
-      '<p class="empty">No toolkits are configured. Unscoped clients see the full connector registry.</p>';
-    return;
-  }
-  const connectors = new Map(
-    data.connectors.map((connector) => [connector.id, connector]),
-  );
-  for (const toolkit of toolkits) {
-    const el = document.createElement("article");
-    el.className = "toolkit-card";
-    const connectorCount = toolkit.connectors.length;
-    const toolCount = toolkit.toolCount || 0;
-    let body =
-      '<div class="toolkit-head"><div><div class="toolkit-name">' +
-      '<h3 class="mono">' + esc(toolkit.name) + "</h3>" +
-      '<span class="cap">configured view</span></div>';
-    body += '</div><div class="toolkit-state cap">' +
-      connectorCount + (connectorCount === 1 ? " connector" : " connectors") +
-      " · " + toolCount + (toolCount === 1 ? " loaded tool" : " loaded tools") +
-      "</div></div>";
-    body += '<ul class="toolkit-connectors" aria-label="Included connectors">';
-    for (const id of toolkit.connectors) {
-      const connector = connectors.get(id);
-      body += '<li class="toolkit-connector"><span>' +
-        esc(connector?.title || id) + '</span><code class="mono">' +
-        esc(id) + "</code></li>";
-    }
-    body += "</ul>";
-    body += '<div class="toolkit-rules meta">';
-    if (toolkit.includeTools.length) {
-      body += '<p>Per-connector allowlist: <span class="mono">' +
-        toolkit.includeTools.map(esc).join('</span>, <span class="mono">') +
-        "</span>. Connectors without an allowlist keep all tools.</p>";
-    }
-    if (toolkit.excludeTools.length) {
-      body += '<p>Hidden: <span class="mono">' +
-        toolkit.excludeTools.map(esc).join('</span>, <span class="mono">') +
-        "</span></p>";
-    }
-    if (!toolkit.includeTools.length && !toolkit.excludeTools.length) {
-      body += "<p>All tools on the included connectors are visible.</p>";
-    }
-    body += "</div>";
-    const endpoint = toolkitMcpUrl(toolkit.name);
-    body += '<div class="endpoint toolkit-endpoint"><div class="endpoint-row">' +
-      '<code class="mono">' + esc(endpoint) + "</code>" +
-      '<button class="linklike" type="button" data-toolkit-copy="' +
-      esc(toolkit.name) + '" aria-label="Copy endpoint for ' +
-      esc(toolkit.name) + '">Copy URL</button></div></div>';
-    el.innerHTML = body;
-    list.appendChild(el);
-  }
-}
-
 function renderConnections(): void {
   const data = DATA;
   if (!data) return;
@@ -578,15 +510,6 @@ function renderConnections(): void {
       '<h2>' + esc(c.title || c.id) + "</h2></div>";
     if (c.description) {
       head += '<p class="connector-description meta">' + esc(c.description) + "</p>";
-    }
-    const memberships = (data.toolkits || [])
-      .filter((toolkit) => toolkit.connectors.includes(c.id))
-      .map((toolkit) => toolkit.name);
-    if (memberships.length) {
-      head += '<div class="connector-toolkits meta"><span>Toolkits</span>' +
-        memberships.map((name) =>
-          '<span class="scope-label">' + esc(name) + "</span>"
-        ).join("") + "</div>";
     }
     head += '</div><div class="connector-state cap">' + esc(status) + " · " +
       c.toolCount + (c.toolCount === 1 ? " tool" : " tools") +
@@ -655,7 +578,6 @@ function renderConnections(): void {
         : "No connectors are declared in this deployment.") +
       "</p>";
   }
-  renderToolkits();
 }
 
 async function oauthRequest(
@@ -1007,24 +929,6 @@ $("copyMcpUrl").onclick = async () => {
   const button = $("copyMcpUrl");
   try {
     await navigator.clipboard.writeText(MCP_URL);
-    button.textContent = "Copied";
-  } catch {
-    button.textContent = "Copy failed";
-  }
-  window.setTimeout(() => { button.textContent = "Copy URL"; }, 1600);
-};
-$("toolkitList").onclick = async (event) => {
-  const button = closestElement<HTMLButtonElement>(
-    event.target,
-    "[data-toolkit-copy]",
-  );
-  if (!button) return;
-  const toolkit = button.dataset.toolkitCopy;
-  if (!toolkit) return;
-  try {
-    await navigator.clipboard.writeText(
-      toolkitMcpUrl(toolkit),
-    );
     button.textContent = "Copied";
   } catch {
     button.textContent = "Copy failed";

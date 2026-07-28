@@ -3,31 +3,12 @@ import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
 import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { Connector, InboundAuth, Logger } from "../src/types.js";
+import type { Connector } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
-const SUPPORT_TOKEN = "support-route-contract-token";
 const CREDENTIAL_KEY = btoa("0123456789abcdef0123456789abcdef");
-
-const TOOLKIT_FORBIDDEN_BODY = JSON.stringify({
-  jsonrpc: "2.0",
-  id: null,
-  error: {
-    code: -32600,
-    message:
-      "Not permitted to use the requested toolkit. This credential is bound " +
-      "to a specific toolkit — check the ?toolkit= value in this deployment's " +
-      "MCP endpoint URL with the operator.",
-  },
-});
-
-const RESTRICTED_OPERATOR_BODY = JSON.stringify({
-  error:
-    "this credential is bound to a toolkit and may not read " +
-    "deployment-wide operator data",
-});
 
 function testConnector(id: string): Connector {
   return api(id, {
@@ -65,39 +46,6 @@ function surfaceConnector(
   };
 }
 
-function fakeClerk(binding?: {
-  toolkits: readonly string[];
-  unscoped?: boolean;
-}): InboundAuth {
-  return {
-    kind: "clerk",
-    uiAuth: {
-      kind: "clerk",
-      publishableKey: "pk_test_route_contracts",
-      frontendApiUrl: "https://clerk.example.com",
-    },
-    ...(binding ? { toolkitBinding: binding } : {}),
-    authorize(request) {
-      if (
-        binding ||
-        request.headers.get("authorization") === "Bearer clerk-token"
-      ) {
-        return { ok: true, userId: "user_route_contracts" };
-      }
-      return {
-        ok: false,
-        response: Response.json(
-          { error: "unauthorized" },
-          {
-            status: 401,
-            headers: { "WWW-Authenticate": "Bearer" },
-          },
-        ),
-      };
-    },
-  };
-}
-
 function expectGlobalSecurityHeaders(response: Response): void {
   expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
   expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
@@ -124,7 +72,7 @@ function expectMcpCors(response: Response): void {
 let requestId = 0;
 function mcpRequest(
   connecta: { fetch(request: Request): Promise<Response> },
-  options: { token?: string; toolkit?: string } = {},
+  options: { token?: string; query?: string } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: "application/json, text/event-stream",
@@ -133,12 +81,8 @@ function mcpRequest(
   if (options.token) {
     headers.Authorization = `Bearer ${options.token}`;
   }
-  const toolkit =
-    options.toolkit === undefined
-      ? ""
-      : `?toolkit=${encodeURIComponent(options.toolkit)}`;
   return connecta.fetch(
-    new Request(`${BASE}/mcp${toolkit}`, {
+    new Request(`${BASE}/mcp${options.query ?? ""}`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -152,27 +96,6 @@ function mcpRequest(
       }),
     }),
   );
-}
-
-async function readMcpBody(response: Response): Promise<any> {
-  const contentType = response.headers.get("Content-Type") ?? "";
-  const text = await response.text();
-  if (!contentType.includes("text/event-stream")) {
-    return text ? JSON.parse(text) : null;
-  }
-  const data = text
-    .split("\n")
-    .filter((line) => line.startsWith("data:"))
-    .pop();
-  return data ? JSON.parse(data.slice("data:".length).trim()) : null;
-}
-
-function connectorIds(mcpBody: any): string[] {
-  const content = mcpBody.result.content[0];
-  const payload = JSON.parse(content.text) as {
-    connectors: Array<{ id: string }>;
-  };
-  return payload.connectors.map((connector) => connector.id);
 }
 
 async function responseShape(response: Response) {
@@ -408,119 +331,48 @@ describe("server route contracts", () => {
     }
   });
 
-  it("uses one exact 403 for every deployment-wide surface denied to a bound identity", async () => {
+  it("refuses ?toolkit= on /mcp with an explicit 404 after the retirement", async () => {
+    const warn = vi.fn();
     const connecta = createConnecta({
-      connectors: [surfaceConnector()],
-      toolkits: {
-        support: { connectors: ["surface"] },
-      },
-      auth: fakeClerk({ toolkits: ["support"] }),
+      connectors: [testConnector("alpha")],
+      auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      logger: silentLogger,
+      logger: { ...silentLogger, warn },
       credentials: { encryptionKey: CREDENTIAL_KEY },
     });
-    const requests = [
-      new Request(`${BASE}/ui/data`),
-      new Request(`${BASE}/ui/activity`),
-      new Request(`${BASE}/ui/credentials/surface`, {
-        method: "PUT",
-        headers: { Origin: BASE },
-      }),
-      new Request(`${BASE}/ui/oauth/surface`, {
-        method: "POST",
-        headers: { Origin: BASE },
-      }),
-    ];
 
-    for (const request of requests) {
-      const response = await connecta.fetch(request);
-      expect(response.status).toBe(403);
-      expectPrivateJson(response);
-      expect(await response.text()).toBe(RESTRICTED_OPERATOR_BODY);
+    // Every ?toolkit= value — a formerly configured name, garbage, or empty —
+    // gets the same 404: an endpoint URL minted before the retirement (#178)
+    // must not silently widen into the full registry.
+    for (const value of ["support", "no-such-toolkit", ""]) {
+      const response = await mcpRequest(connecta, {
+        token: TOKEN,
+        query: `?toolkit=${value}`,
+      });
+      expect(response.status, `?toolkit=${value}`).toBe(404);
+      expectMcpCors(response);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      const body = (await response.json()) as {
+        error: { message: string };
+      };
+      expect(body.error.message).toContain("#178");
     }
-  });
+    // The client-facing body is discarded by SDK transports, so the reason
+    // must also reach the operator log (#47).
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls[0]?.[0]).toContain("#178");
 
-  it("authenticates before toolkit lookup, then refuses every disallowed selection byte-identically", async () => {
-    const warn = vi.fn();
-    const logger: Logger = { ...silentLogger, warn };
-    const connecta = createConnecta({
-      connectors: [testConnector("support"), testConnector("exec")],
-      toolkits: {
-        support: { connectors: ["support"] },
-        exec: { connectors: ["exec"] },
-      },
-      auth: bearerToken(SUPPORT_TOKEN, {
-        subjectId: "support-team",
-        toolkits: ["support"],
-      }),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger,
+    // Auth still runs first: an unauthenticated ?toolkit= request is a plain
+    // 401, revealing nothing about the retirement.
+    const unauthenticated = await mcpRequest(connecta, {
+      query: "?toolkit=support",
     });
-    warn.mockClear();
+    expect(unauthenticated.status).toBe(401);
 
-    const unauthenticated = await Promise.all(
-      ["support", "invented"].map(async (toolkit) => {
-        const response = await mcpRequest(connecta, { toolkit });
-        expectMcpCors(response);
-        return responseShape(response);
-      }),
-    );
-    expect(unauthenticated[0]).toEqual(unauthenticated[1]);
-    expect(unauthenticated[0]).toMatchObject({
-      status: 401,
-      body: '{"error":"unauthorized"}',
-    });
-    expect(warn).not.toHaveBeenCalled();
-
-    const refusals = await Promise.all(
-      [
-        { toolkit: "exec" },
-        { toolkit: "invented" },
-        { toolkit: "" },
-        {},
-      ].map(async (selection) => {
-        const response = await mcpRequest(connecta, {
-          token: SUPPORT_TOKEN,
-          ...selection,
-        });
-        expectMcpCors(response);
-        return responseShape(response);
-      }),
-    );
-    for (const refusal of refusals) {
-      expect(refusal.status).toBe(403);
-      expect(refusal.body).toBe(TOOLKIT_FORBIDDEN_BODY);
-    }
-    expect(new Set(refusals.map(({ status, body }) => `${status} ${body}`))).toEqual(
-      new Set([`403 ${TOOLKIT_FORBIDDEN_BODY}`]),
-    );
-  });
-
-  it("hands an admitted toolkit request to a ScopedRegistry view", async () => {
-    const connecta = createConnecta({
-      connectors: [testConnector("support"), testConnector("exec")],
-      toolkits: {
-        support: { connectors: ["support"] },
-        exec: { connectors: ["exec"] },
-      },
-      auth: bearerToken(SUPPORT_TOKEN, {
-        subjectId: "support-team",
-        toolkits: ["support"],
-      }),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: silentLogger,
-    });
-
-    const response = await mcpRequest(connecta, {
-      token: SUPPORT_TOKEN,
-      toolkit: "support",
-    });
-    expect(response.status).toBe(200);
-    expectMcpCors(response);
-    expect(connectorIds(await readMcpBody(response))).toEqual(["support"]);
+    // The same credential without the param reaches the endpoint normally.
+    const clean = await mcpRequest(connecta, { token: TOKEN });
+    expect(clean.status).toBe(200);
   });
 
   it("verifies OAuth callback state before exchange and keeps all unverifiable callbacks opaque", async () => {

@@ -52,27 +52,6 @@ function calc() {
   });
 }
 
-function notes() {
-  return api("notes", {
-    title: "Notes",
-    description: "Team notes",
-    tools: [
-      {
-        name: "list",
-        description: "List notes",
-        inputSchema: { type: "object" },
-        handler: () => ({ notes: [] }),
-      },
-      {
-        name: "get",
-        description: "Get a note",
-        inputSchema: { type: "object" },
-        handler: () => ({ note: null }),
-      },
-    ],
-  });
-}
-
 /** A connector whose listTools always throws — exercises broken-connector isolation. */
 function broken(): Connector {
   return {
@@ -538,11 +517,6 @@ describe("status UI", () => {
       expect(body).toContain('href="/activity"');
       expect(body).toContain("history.pushState");
       expect(body).toContain('addEventListener("popstate"');
-      expect(body).toContain('id="toolkitLedgerHeading">Toolkits</h2>');
-      expect(body).toContain('id="toolkitList"');
-      expect(body).toContain("Read-only views from deployment config.");
-      expect(body).toContain("function renderToolkits()");
-      expect(body).toContain('data-toolkit-copy="');
       // Gated, the page views are hidden and their headings cannot take focus:
       // the gate's own h1 is the only visible heading, so Back/Forward while
       // signed out must target it rather than dropping focus to <body>.
@@ -600,20 +574,10 @@ describe("status UI", () => {
           tools: [],
         }),
       ],
-      auth: bearerToken(TOKEN, {
-        subjectId: "SENTINEL_ACTOR",
-        toolkits: ["sentinel_toolkit"],
-        unscoped: true,
-      }),
+      auth: bearerToken(TOKEN, { subjectId: "SENTINEL_ACTOR" }),
       storage: memoryStorage(),
       publicUrl: BASE,
       deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
-      toolkits: {
-        sentinel_toolkit: {
-          connectors: ["sentinel_connector"],
-          description: "SENTINEL_TOOLKIT_DESCRIPTION",
-        },
-      },
     });
     for (const path of ["/", "/credentials", "/activity"]) {
       const body = await (
@@ -623,8 +587,6 @@ describe("status UI", () => {
       expect(body).not.toContain("SENTINEL_CONNECTOR_DESCRIPTION");
       expect(body).not.toContain("SENTINEL_ACTOR");
       expect(body).not.toContain("SENTINEL_DEPLOYMENT");
-      expect(body).not.toContain("sentinel_toolkit");
-      expect(body).not.toContain("SENTINEL_TOOLKIT_DESCRIPTION");
     }
   });
 
@@ -1021,15 +983,6 @@ describe("status UI", () => {
           oauth: true,
         },
       ],
-      toolkits: [
-        {
-          name: `view-${id}`,
-          connectors: [id],
-          includeTools: [`${id}.read`],
-          excludeTools: [],
-          toolCount: 0,
-        },
-      ],
     });
     let resolveSecond: ((response: Response) => void) | undefined;
     const fetch = vi
@@ -1081,12 +1034,6 @@ describe("status UI", () => {
     expect(element("serverInfo").textContent).toBe(
       "identity-a vpackage-7.8.9",
     );
-    expect(element("toolkitList").children[0]?.innerHTML).toContain(
-      "view-identity-a",
-    );
-    expect(element("toolkitList").children[0]?.innerHTML).toContain(
-      "Connectors without an allowlist keep all tools.",
-    );
 
     const navigate = (page: string, path: string) =>
       documentListeners.get("click")?.({
@@ -1119,7 +1066,6 @@ describe("status UI", () => {
     await Promise.resolve();
 
     expect(element("list").children).toEqual([]);
-    expect(element("toolkitList").children).toEqual([]);
     expect(element("credentialList").children).toEqual([]);
     expect(element("credentialNotice").textContent).toBe("");
     expect(element("activityList").children).toEqual([]);
@@ -1137,9 +1083,6 @@ describe("status UI", () => {
       );
       expect(element("list").children[0]?.innerHTML).toContain(
         "Restart authorization",
-      );
-      expect(element("toolkitList").children[0]?.innerHTML).toContain(
-        "view-identity-b",
       );
     });
   });
@@ -1216,7 +1159,6 @@ describe("status UI", () => {
           oauth: true,
         },
       ],
-      toolkits: [],
     });
     const fetch = vi
       .fn()
@@ -1412,7 +1354,6 @@ describe("status UI", () => {
           oauthManagement: false,
           activityEnabled: true,
           connectors: [],
-          toolkits: [],
         }),
       )
       .mockResolvedValueOnce(Response.json({ events }));
@@ -1502,7 +1443,6 @@ describe("status UI", () => {
     expect(body.connectaVersion).toBe(CONNECTA_VERSION);
     expect(body.activityEnabled).toBe(false);
     expect(body.credentialManagement).toBe("requires_clerk");
-    expect(body.toolkits).toEqual([]);
 
     const byId = Object.fromEntries(
       body.connectors.map((x: any) => [x.id, x]),
@@ -1520,57 +1460,6 @@ describe("status UI", () => {
     expect(byId.broken.status).toBe("error");
     expect(byId.broken.tools).toEqual([]);
     expect(byId.broken.toolCount).toBe(0);
-  });
-
-  it("/ui/data explains validated toolkit config without making it mutable", async () => {
-    const c = createConnecta({
-      connectors: [calc(), notes()],
-      auth: bearerToken(TOKEN, {
-        subjectId: "operator",
-        toolkits: ["calculator", "no_add"],
-        unscoped: true,
-      }),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      toolkits: {
-        calculator: {
-          connectors: ["calc", "notes"],
-          includeTools: ["calc.add"],
-          description: "PRIVATE_OPERATOR_NOTE",
-        },
-        no_add: {
-          connectors: ["calc"],
-          excludeTools: ["calc.add"],
-        },
-      },
-    });
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${TOKEN}` },
-      }),
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as any;
-    expect(body.toolkits).toEqual([
-      {
-        name: "calculator",
-        connectors: ["calc", "notes"],
-        includeTools: ["calc.add"],
-        excludeTools: [],
-        // includeTools narrows calc only; notes has no allowlist and keeps both.
-        toolCount: 3,
-      },
-      {
-        name: "no_add",
-        connectors: ["calc"],
-        includeTools: [],
-        excludeTools: ["calc.add"],
-        toolCount: 0,
-      },
-    ]);
-    expect(JSON.stringify(body.toolkits)).not.toContain(
-      "PRIVATE_OPERATOR_NOTE",
-    );
   });
 
   it("/ui/data exposes only the credential capability allowed for this identity", async () => {

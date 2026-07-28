@@ -173,10 +173,7 @@ export interface SkillListing {
 /**
  * Every fetchable skill: the built-in guides plus one entry per connector that
  * carries a usage guide. Derived from the connector list passed in — the single
- * place guide visibility is decided. The `skills` meta-tool passes its
- * connection's `registry.listConnectors()`, so a toolkit-scoped session lists
- * only in-scope guides, and `resolveSkill` below reports an out-of-scope
- * `connector:<id>` exactly as it reports an unknown connector.
+ * place guide visibility is decided.
  */
 export function listSkills(connectors: readonly Connector[]): SkillListing[] {
   const listing: SkillListing[] = AVAILABLE_SKILLS.map((skill) => ({

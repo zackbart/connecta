@@ -26,7 +26,6 @@ export interface ActivityEvent {
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
-  toolkitId?: string;
 }
 
 export interface ActivityRow {
@@ -46,7 +45,6 @@ export interface ActivityRow {
   server_name: string;
   server_version: string;
   deployment_id: string | null;
-  toolkit_id: string | null;
 }
 
 export function activityEventToRow(
@@ -69,7 +67,6 @@ export function activityEventToRow(
     server_name: event.serverName,
     server_version: event.serverVersion,
     deployment_id: event.deploymentId ?? null,
-    toolkit_id: event.toolkitId ?? null,
   };
 }
 
@@ -99,7 +96,5 @@ export function activityRowToEvent(
     ...(row.deployment_id
       ? { deploymentId: row.deployment_id }
       : {}),
-    // Which toolkit-scoped view the call came through, when one was selected.
-    ...(row.toolkit_id ? { toolkitId: row.toolkit_id } : {}),
   };
 }

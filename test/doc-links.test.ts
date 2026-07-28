@@ -51,7 +51,7 @@ describe("documentation link checker", () => {
         "",
         "```md",
         "[not active](./missing.md)",
-        "See docs/documentation.md#16-toolkits-scoped-views",
+        "See docs/documentation.md#16-scoped-views",
         "See (§16).",
         "```",
         "",
@@ -113,13 +113,13 @@ describe("documentation link checker", () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
       "src/example.ts":
-        "// See docs/documentation.md#16-toolkits-scoped-views.\n",
+        "// See docs/documentation.md#16-scoped-views.\n",
     });
 
     expect(check(root)).toMatchObject({
       status: 1,
       output: expect.stringContaining(
-        'src/example.ts:1: stale documentation reference "docs/documentation.md#16-toolkits-scoped-views"',
+        'src/example.ts:1: stale documentation reference "docs/documentation.md#16-scoped-views"',
       ),
     });
   });

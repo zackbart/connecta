@@ -8,9 +8,7 @@ import type { InboundAuth } from "../types.js";
 import {
   activityActorNamespace,
   authorize,
-  isToolkitRestricted,
   privateJson,
-  restrictedOperatorSurface,
   type RouteContext,
 } from "./shared.js";
 
@@ -178,9 +176,6 @@ export async function routeActivity(
   }
   const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
   if (!authz.ok) return authz.response;
-  if (isToolkitRestricted(authz.toolkitBinding)) {
-    return restrictedOperatorSurface();
-  }
   if (
     opts.activityReadGate &&
     !(await opts.activityReadGate(authz.actor))

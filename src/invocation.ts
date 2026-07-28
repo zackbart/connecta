@@ -299,12 +299,9 @@ export class InvocationService {
         // against (a revoked downstream grant, say) still reads clean from the
         // cheap `list_connectors({ probe: false })` signal.
         //
-        // Recorded HERE rather than inside the registry's catalog fetch on
-        // purpose: `registry` is this connection's VIEW, so a toolkit-scoped
-        // session records into its own log as well as the deployment-wide one,
-        // which `Registry.refreshTools` could not reach. A cache hit that
-        // avoids a live listTools call records nothing either way — it is not
-        // evidence of health, and success stays what it has always been: an
+        // Recorded HERE rather than inside the registry's catalog fetch because
+        // a cache hit that avoids a live listTools call records nothing — it is
+        // not evidence of health. Success stays what it has always been: an
         // actual downstream call that returned.
         this.registry.recordFailure(
           resolution.connector.id,

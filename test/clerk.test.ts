@@ -240,26 +240,26 @@ describe("clerkAuth inbound auth", () => {
     expect(mocks.getUser).toHaveBeenCalledTimes(1);
   });
 
-  // One clerkAuth per team — same keys, that team's `gate`, that team's
-  // toolkits — is how a Clerk deployment binds users to views (documentation/toolkits.md).
-  it("declares the toolkit binding for the users it admits", () => {
-    const bound = clerkAuth({
-      publishableKey,
-      secretKey: "sk_test_fake",
-      gate: (userId) => userId === "user_support",
-      toolkits: ["support"],
-    });
-    expect(bound.toolkitBinding).toEqual({ toolkits: ["support"] });
-    expect(
-      clerkAuth({ publishableKey, secretKey: "sk_test_fake" }).toolkitBinding,
-    ).toBeUndefined();
-    expect(() =>
-      clerkAuth({
-        publishableKey,
-        secretKey: "sk_test_fake",
-        unscoped: true,
-      }),
-    ).toThrow("clerkAuth: `unscoped` only means something beside `toolkits`");
+  it("throws instead of silently ignoring toolkit-era options", () => {
+    for (const options of [
+      { toolkits: ["support"] },
+      { unscoped: true },
+    ]) {
+      expect(() =>
+        clerkAuth({
+          publishableKey,
+          secretKey: "sk_test_fake",
+          ...options,
+        } as never),
+      ).toThrow("removed in issue #178");
+      expect(() =>
+        clerkAuth({
+          publishableKey,
+          secretKey: "sk_test_fake",
+          ...options,
+        } as never),
+      ).toThrow("ethos.md");
+    }
   });
 
   it("accepts Clerk OAuth and browser session tokens for the connecta origin", async () => {
@@ -334,9 +334,7 @@ describe("clerkAuth inbound auth", () => {
     if (!result.ok) expect(result.response.status).toBe(401);
   });
 
-  // allowedDomains decides WHO is admitted to the org (documentation/auth.md); a
-  // toolkit binding decides WHICH view they get once admitted
-  // (documentation/toolkits.md).
+  // allowedDomains decides who this deployment admits (documentation/auth.md).
   describe("allowedDomains", () => {
     /** A Clerk user with one primary email, verified unless told otherwise. */
     const userWithEmail = (

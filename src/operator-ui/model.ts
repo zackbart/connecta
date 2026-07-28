@@ -60,15 +60,6 @@ export interface UiConnector {
   credential?: UiCredential;
 }
 
-export interface UiToolkit {
-  name: string;
-  connectors: string[];
-  includeTools: string[];
-  excludeTools: string[];
-  /** Tools currently loaded through healthy connectors and visible in this view. */
-  toolCount: number;
-}
-
 export type CredentialManagementCapability =
   | "available"
   | "requires_clerk"
@@ -80,11 +71,9 @@ export interface UiData {
   /** Version of the installed @zackbart/connecta package. */
   connectaVersion: string;
   connectors: UiConnector[];
-  /** Read-only projection of the validated deployment config. */
-  toolkits: UiToolkit[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
-  /** True only for an eligible, unrestricted Clerk operator. */
+  /** True only for an eligible Clerk operator. */
   oauthManagement: boolean;
 }
 

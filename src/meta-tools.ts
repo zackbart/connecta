@@ -702,11 +702,6 @@ export function createMetaTools(
           }
         } else if (
           verdict &&
-          // Deployment-wide, deliberately, like `hasObservedSuccess` beside
-          // it: a sibling toolkit's successful call proves the shared
-          // credential works, and a verdict retired for one view but not
-          // another would make the same connector read differently per scope
-          // for a reason that has nothing to do with scope.
           credentialVerdictApplies(verdict, registry.observedSuccessAt(c.id))
         ) {
           // The proactive layer (issue #24): a liveness check already found
@@ -721,11 +716,6 @@ export function createMetaTools(
               : {}),
           };
         } else {
-          // "error" comes from THIS view's own observations — a sibling
-          // toolkit's failure is not this session's experience — while
-          // ok/unknown may lean on the deployment-wide success signal, since
-          // "the connector answers at all" is a fact about the connector.
-          // Unscoped, the two are the same log, so this is unchanged there.
           const derived =
             observed?.consecutiveFailures && observed.consecutiveFailures > 0
               ? ("error" as const)
@@ -1163,10 +1153,7 @@ const SKILLS_DESC =
  * so a deployment with no guides gets every base description unchanged rather
  * than paying for text about a feature it does not use.
  *
- * Registration is per connection and reads the connection's own registry view,
- * so under a toolkit these sentences reflect the SCOPED connector set: a scoped
- * session whose connectors carry no guides sees the base descriptions, and
- * never learns from a tool description that guides exist out of scope.
+ * Registration is per connection and reads the configured connector set.
  */
 const GUIDE_NOTES = {
   skills:

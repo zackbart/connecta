@@ -16,7 +16,6 @@ import {
   type CredentialManagementCapability,
   type UiConnector,
   type UiData,
-  type UiToolkit,
   type UiTool,
 } from "./operator-ui/model.js";
 import {
@@ -24,7 +23,6 @@ import {
   OPERATOR_UI_SCRIPT,
 } from "./operator-ui/generated.js";
 import type { Registry } from "./registry.js";
-import type { Toolkit } from "./toolkits.js";
 import type { ConnectaBranding, UiAuthConfig } from "./types.js";
 import { CONNECTA_VERSION } from "./version.js";
 
@@ -310,7 +308,6 @@ export async function buildUiData(
   credentialManagement: CredentialManagementCapability = credentialVault
     ? "available"
     : "requires_clerk",
-  toolkits?: ReadonlyMap<string, Toolkit>,
   defer?: DeferredWork,
   oauthManagement = false,
   discoveryConcurrency?: number,
@@ -476,29 +473,10 @@ export async function buildUiData(
     if (result.status === "rejected") throw result.reason;
     return result.value;
   });
-  const toolkitData: UiToolkit[] = [...(toolkits?.values() ?? [])].map(
-    (toolkit) => ({
-      name: toolkit.name,
-      connectors: [...toolkit.connectors],
-      includeTools: [...toolkit.includeTools],
-      excludeTools: [...toolkit.excludeTools],
-      toolCount: connectors.reduce(
-        (count, connector) =>
-          count +
-          (toolkit.hasConnector(connector.id)
-            ? connector.tools.filter((tool) =>
-                toolkit.hasTool(connector.id, tool.name),
-              ).length
-            : 0),
-        0,
-      ),
-    }),
-  );
   return {
     serverInfo,
     connectaVersion: CONNECTA_VERSION,
     connectors,
-    toolkits: toolkitData,
     activityEnabled,
     credentialManagement,
     oauthManagement,
@@ -666,16 +644,6 @@ ${clerkScript}
             aria-label="Filter connectors or tools">
         </div>
         <div id="list" class="connector-tools" aria-busy="false"></div>
-      </div>
-    </section>
-    <section class="section pgrid" aria-labelledby="toolkitLedgerHeading">
-      <h2 class="pcap" id="toolkitLedgerHeading">Toolkits</h2>
-      <div class="pbody">
-        <p class="toolkit-copy meta">
-          Read-only views from deployment config. Change the config and redeploy
-          to update them.
-        </p>
-        <div id="toolkitList" class="toolkit-ledger"></div>
       </div>
     </section>
   </section>

@@ -1,8 +1,8 @@
 # connecta — Node example
 
 The smallest useful deployment: two in-code `api()` connectors behind the nine
-meta-tools plus `execute_code` (QuickJS/WASM sandbox), static bearer tokens for
-inbound auth — one of them bound to a toolkit — and state on disk.
+meta-tools plus `execute_code` (QuickJS/WASM sandbox), static bearer-token
+inbound auth, and state on disk.
 
 ```sh
 npm install                                    # from the package root
@@ -16,24 +16,7 @@ CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
   bearer-only example cannot manage credentials)
 - Health: `http://localhost:8787/health`
 
-`PORT`, `CONNECTA_TOKEN`, and `CLOCK_TOKEN` are the only env vars; all have dev
-defaults.
-
-## Toolkit binding
-
-`src/index.ts` declares one scoped view, `clock`, and binds `CLOCK_TOKEN` to it:
-
-| Credential | May connect to | Sees |
-| --- | --- | --- |
-| `CLOCK_TOKEN` (bound to `clock`) | `…/mcp?toolkit=clock` only | `time` |
-| `CONNECTA_TOKEN` (unbound) | `…/mcp`, or any declared toolkit | `time`, `text` |
-
-The bound token on `…/mcp` (no `?toolkit=`), on an undeclared toolkit name, or on
-a toolkit it is not bound to gets the same 403 in every case — it cannot tell
-which views the deployment has — and it cannot read the deployment-wide operator
-surfaces (`/ui/data`, `/ui/activity`) either. Drop the `toolkits: [...]` option
-and the token goes back to selecting any view. Reference:
-[toolkits](../../documentation/toolkits.md).
+`PORT` and `CONNECTA_TOKEN` are the only env vars; both have dev defaults.
 
 ## What to change
 
