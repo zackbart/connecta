@@ -213,11 +213,15 @@ Tests run as two vitest projects (`vitest.config.ts`):
   `@cloudflare/vitest-pool-workers` (matching the Worker example's
   `compatibility_date` + `nodejs_compat`), so a Workers-only regression — the
   class of bug the `CfWorkerJsonSchemaValidator` workaround in `remote-mcp.ts`
-  exists for, previously only findable by hand — fails CI. The list is explicit
-  (`WORKERS_SUITES` in `vitest.config.ts`): Node-only surfaces (`fileStorage`,
-  the QuickJS executor, and the fs-walking guardrail suites)
-  stay Node-project-only, and the two code-mode tests in `server.test.ts` that
-  execute QuickJS WASM skip under workerd.
+  exists for, previously only findable by hand — fails CI.
+
+The partition is explicit: `WORKERS_SUITES` holds portable suites and
+`NODE_ONLY_SUITES` holds each Node-bound suite with its reason. The Node project
+runs their union. `suite-partition.test.ts` walks `test/` and requires every
+`*.test.ts` file to appear in exactly one list, so adding a portable suite
+without Workers coverage or leaving a stale entry cannot pass silently. The two
+code-mode tests in `server.test.ts` that execute QuickJS WASM still skip under
+workerd.
 
 Test suites (`test/`) and what they cover:
 
@@ -233,6 +237,7 @@ Test suites (`test/`) and what they cover:
 | `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → exactly 9 base tools → usage skill → call_tool), open `/health`, CORS preflight, Clerk `.well-known` metadata (no network); plus `execute_code` presence-gated-on-executor and an end-to-end code-mode run |
 | `request-admission.test.ts` | runtime-portable FIFO request bounds before auth, stable 503/Retry-After MCP overload, health/operator responsiveness during saturation, payload-free counters and waits, queued cancellation, shutdown rejection/drain, and the separate fallback code pool |
 | `node.test.ts` | Node `listen()` adapter propagation of an HTTP client disconnect through the Web Request and MCP handler into an `execute_code` connector call, including release of both admission permits (Node project only) |
+| `suite-partition.test.ts` | Node-only filesystem guard requiring every `test/*.test.ts` suite to belong to exactly one of `WORKERS_SUITES` or reason-bearing `NODE_ONLY_SUITES`, with stale entries and empty reasons refused |
 | `toolkits.test.ts` | the toolkit scope boundary ([toolkits](./toolkits.md#toolkits-scoped-views)) — construction-time validation, and scoping across every meta-tool: `list_connectors`, `search_tools`, `describe_tools`, `call_tool`, `call_destructive_tool`, `batch_call`, `authorize_connector`, `skills`/guides, per-toolkit `get_result` stashes and health observations, `execute_code` sandbox globals, shared-cache non-corruption, plus `?toolkit=` selection end-to-end (disjoint tool sets, unknown/empty name, unscoped default, scoped tool descriptions, activity `toolkitId`, and the operator-side warn a rejected selection logs — bounded and escaped, silent for known/absent/unauthenticated). Every out-of-scope error is asserted equal to the error a nonexistent connector/tool produces. Then the **identity binding** ([toolkits](./toolkits.md#toolkits-scoped-views)): a bound token opening its own view, refused on another team's view, on an undeclared name, and on an unscoped connection — with all three refusals asserted byte-identical so a team credential cannot enumerate the org — plus two bound tokens staying disjoint, the deployment-wide surfaces (`/ui/data`, `/ui/activity`, credential API) closed to a restricted identity and open to an `unscoped: true` one, refusals logged with identity and reason (and the rejected name still bounded/escaped), nothing logged for a caller the auth gate rejected, and unbound parity — an unbound token beside bound ones, and an unbound deployment, behaving exactly as before #37. The `AuthResult` seam is covered in both regimes: accepted as given when the provider declares nothing, and **capped by the declaration** when it does (a per-identity binding cannot add a toolkit or `unscoped`), plus the malformed shapes that must refuse rather than unbind — `toolkits` as a string, `unscoped: "false"`, `{}`, null, an array, a bad name — and the credential API admitting through a *later* Clerk provider in either ordering |
 | `catalog.test.ts` | `compactSchema` rendering — `const` literals, `allOf` intersection beside sibling `properties`/`$ref`/`enum`/`items`, union grouping, enum unions |
 | `config.test.ts` | the grouped `ConnectaConfig` boundary — all five groups forward to their flat internals, malformed admission bounds fail construction, every v0.6 path fails TypeScript, and JavaScript legacy own-properties produce one complete old→new migration error |

@@ -1,12 +1,10 @@
 import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 
-// Suites that also run inside workerd (Cloudflare's runtime) via
-// @cloudflare/vitest-pool-workers, catching Workers-only regressions — e.g.
-// anything relying on dynamic code generation, which workerd prohibits and
-// Node happily allows. Excluded are the Node-only surfaces (fileStorage, the
-// quickjs executor, and the fs-walking purity/package/version guardrails).
-const WORKERS_SUITES = [
+// Every test/*.test.ts suite belongs to exactly one of these lists. The Node
+// project runs both; the Workers project runs only the portable list.
+// test/suite-partition.test.ts guards the partition, including itself.
+export const WORKERS_SUITES = [
   "test/activity.test.ts",
   "test/api-connector.test.ts",
   "test/bearer.test.ts",
@@ -29,9 +27,62 @@ const WORKERS_SUITES = [
   "test/remote-mcp-pagination.test.ts",
   "test/remote-mcp.test.ts",
   "test/server.test.ts",
+  "test/startup-warnings.test.ts",
   "test/toolkits.test.ts",
   "test/ui.test.ts",
   "test/validate.test.ts",
+] as const;
+
+export const NODE_ONLY_SUITES = [
+  {
+    file: "test/doc-links.test.ts",
+    reason: "spawns the Node documentation checker against filesystem fixtures",
+  },
+  {
+    file: "test/file-storage.test.ts",
+    reason: "exercises the Node filesystem storage adapter",
+  },
+  {
+    file: "test/node.test.ts",
+    reason: "exercises the Node HTTP adapter over real TCP sockets",
+  },
+  {
+    file: "test/package-surface.test.ts",
+    reason: "walks the package tree with Node filesystem APIs",
+  },
+  {
+    file: "test/purity.test.ts",
+    reason: "walks the source import graph with Node filesystem APIs",
+  },
+  {
+    file: "test/quickjs-child-entry.test.ts",
+    reason: "mocks Node child-process and filesystem APIs",
+  },
+  {
+    file: "test/quickjs-child-stderr.test.ts",
+    reason: "mocks Node child-process streams",
+  },
+  {
+    file: "test/quickjs-executor.test.ts",
+    reason: "runs the Node QuickJS child-process executor",
+  },
+  {
+    file: "test/quickjs-log-limits.test.ts",
+    reason: "runs the Node QuickJS child-process executor",
+  },
+  {
+    file: "test/suite-partition.test.ts",
+    reason: "walks the test directory to guard this partition",
+  },
+  {
+    file: "test/version.test.ts",
+    reason: "reads package.json with Node filesystem APIs",
+  },
+] as const;
+
+const NODE_SUITES = [
+  ...WORKERS_SUITES,
+  ...NODE_ONLY_SUITES.map(({ file }) => file),
 ];
 
 export default defineConfig({
@@ -40,7 +91,7 @@ export default defineConfig({
       {
         test: {
           name: "node",
-          include: ["test/**/*.test.ts"],
+          include: NODE_SUITES,
         },
       },
       {
@@ -55,7 +106,7 @@ export default defineConfig({
         ],
         test: {
           name: "workers",
-          include: WORKERS_SUITES,
+          include: [...WORKERS_SUITES],
         },
       },
     ],
