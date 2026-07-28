@@ -590,6 +590,11 @@ for **3600 s** (`discovery.staleCatalogSeconds`).
 definitions remain static and are never persisted.
 OAuth completion/reauthorization invalidates both cache layers.
 
+Persisted catalogs use bounded manifest/chunk storage and complete-catalog
+integrity checks. Listings above 100,000 tools or 32 MiB of serialized JSON are
+refused rather than truncated; see
+[Persisted tool catalogs](./storage-and-credentials.md#persisted-tool-catalogs).
+
 ---
 
 ## Downstream OAuth

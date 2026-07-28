@@ -48,7 +48,8 @@ operations have very different consistency, pagination, and cost models.
 | `conn:<id>:credential:v1` | Until an eligible operator replaces or removes the connector credential. |
 | `credhealth:<id>` | Latest verdict. A credential change drops the in-memory mirror and attempts a best-effort persisted deletion; an eventually consistent or failed store may temporarily serve the prior verdict again. |
 | `credhealth:gen:<id>` | Retained counter used to discard a check that observed a credential change on a consistent store. |
-| `catalog:<id>` | TTL-bounded. Credential/OAuth changes serialize a best-effort deletion after older writes in the current isolate. |
+| `catalog:<id>` | TTL-bounded tool-catalog manifest. Credential/OAuth changes serialize a best-effort deletion after older writes in the current isolate. |
+| `catalog:<id>:chunk:<revision>:<index>` | Immutable, revision-addressed tool-catalog chunks whose TTL extends five minutes past the manifest. Superseded or unpublished chunks become unreachable and expire without a prefix scan. |
 | `results:*` | TTL-bounded pages created only for oversized meta-tool results. |
 | Other `conn:<id>:*` | Owned entirely by that custom connector. |
 
@@ -69,6 +70,38 @@ OAuth/credential coordination in a strongly consistent store (for example a
 Durable Object) while still implementing the same `KVStorage` seam. Catalog and
 credential-health invalidation are operational hints, not authorization
 boundaries, and remain best-effort across stores and isolates.
+
+### Persisted tool catalogs
+
+Serializable tool catalogs use a versioned manifest at `catalog:<id>` and
+revision-addressed chunks at
+`catalog:<id>:chunk:<sha256-fingerprint>:<zero-based-index>`. The manifest
+records the revision, tool count, UTF-8 byte count, chunk count, and fresh/stale
+timestamps. Each chunk is at most **1 MiB** of valid UTF-8. Connecta writes all
+chunks first and publishes the manifest last, so a partial write is never
+advertised as a smaller catalog.
+
+On read, every named chunk must exist and the reconstructed array must match all
+three manifest claims: tool count, byte count, and SHA-256 revision. A missing
+or torn chunk, invalid tool array, or fingerprint mismatch is treated as no
+persisted catalog. Connecta warns and attempts an ordinary live refresh; it
+never exposes a prefix. An eligible complete catalog already held in memory may
+still serve as the existing stale fallback.
+
+One dynamically listed catalog may contain at most **100,000 tools** and at most
+**32 MiB (33,554,432 bytes)** of serialized UTF-8 JSON. Values exactly at either
+bound are accepted. A live listing above either bound is refused and warned,
+never truncated, cached, or persisted; an eligible earlier complete stale
+catalog may still be served after that failed refresh. `api()` definitions are
+static and never enter this persistence path.
+
+Deployments upgrading from the former single-value `catalog:<id>` format can
+read it until its existing expiry or an invalidation. The next persisted live
+refresh publishes the manifest/chunk format. Revision-addressed chunk keys keep
+old and new listings from being mixed during rollover. Because `KVStorage` has
+no scan or transaction, chunks left by an interrupted write (and chunks from a
+superseded revision not seen by the writing isolate) remain unreachable until
+their bounded TTL expires.
 
 The OAuth cleanup lineage is also a hygiene aid, not an authorization boundary.
 Because `KVStorage` has no list or compare-and-swap, concurrent sibling resets

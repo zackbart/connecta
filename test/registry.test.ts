@@ -1,4 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
+import {
+  MAX_CATALOG_CHUNK_BYTES,
+  MAX_CATALOG_TOOLS,
+  MAX_SERIALIZED_CATALOG_BYTES,
+} from "../src/catalog-limits.js";
 import { api } from "../src/connectors/api.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -17,6 +22,35 @@ import {
 } from "./helpers.js";
 
 const BASE = "https://connecta.test";
+
+interface CatalogManifest {
+  version: 2;
+  revision: string;
+  toolCount: number;
+  byteCount: number;
+  chunkCount: number;
+}
+
+async function readManifest(
+  storage: KVStorage,
+  id: string,
+): Promise<CatalogManifest> {
+  return JSON.parse((await storage.get(`catalog:${id}`))!) as CatalogManifest;
+}
+
+async function readPersistedTools(
+  storage: KVStorage,
+  id: string,
+): Promise<ToolDef[]> {
+  const manifest = await readManifest(storage, id);
+  const chunks: string[] = [];
+  for (let index = 0; index < manifest.chunkCount; index++) {
+    chunks.push(
+      (await storage.get(`catalog:${id}:chunk:${manifest.revision}:${index}`))!,
+    );
+  }
+  return JSON.parse(chunks.join("")) as ToolDef[];
+}
 
 describe("Registry construction", () => {
   it("rejects invalid connector ids", () => {
@@ -283,7 +317,7 @@ describe("tool cache TTL", () => {
     release();
     await expect(Promise.all(pending)).resolves.toHaveLength(25);
     expect(catalogLoads).toBe(1);
-    expect(storageWrites).toBe(1);
+    expect(storageWrites).toBe(2);
   });
 
   it("does not share an in-flight catalog across request scopes", async () => {
@@ -444,9 +478,9 @@ describe("tool cache TTL", () => {
     expect((await registry.getTools("racing", BASE))[0].name).toBe(
       "new_credential_tool",
     );
-    expect(await storage.get("catalog:racing")).toContain(
-      "new_credential_tool",
-    );
+    expect(await readPersistedTools(storage, "racing")).toEqual([
+      { name: "new_credential_tool" },
+    ]);
   });
 
   it("reuses a persisted serializable catalog in a cold registry", async () => {
@@ -488,13 +522,306 @@ describe("tool cache TTL", () => {
     expect(calls).toBe(1);
   });
 
+  it("round-trips a multichunk catalog without splitting UTF-8", async () => {
+    const storage = memoryStorage();
+    let calls = 0;
+    const tools: ToolDef[] = [
+      {
+        name: "large",
+        description: "é".repeat(700_000),
+        annotations: { readOnlyHint: true },
+      },
+      { name: "tail", description: "complete" },
+    ];
+    const connector: Connector = {
+      id: "chunked",
+      kind: "mcp",
+      async listTools() {
+        calls++;
+        return tools;
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const first = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    await first.getTools("chunked", BASE);
+
+    const manifest = await readManifest(storage, "chunked");
+    expect(manifest).toMatchObject({
+      version: 2,
+      toolCount: 2,
+      chunkCount: 2,
+    });
+    for (let index = 0; index < manifest.chunkCount; index++) {
+      const chunk = await storage.get(
+        `catalog:chunked:chunk:${manifest.revision}:${index}`,
+      );
+      expect(new TextEncoder().encode(chunk!).byteLength).toBeLessThanOrEqual(
+        MAX_CATALOG_CHUNK_BYTES,
+      );
+    }
+
+    const cold = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    await expect(cold.getTools("chunked", BASE)).resolves.toEqual(tools);
+    expect(calls).toBe(1);
+  });
+
+  it("treats a missing persisted chunk as no catalog", async () => {
+    const storage = memoryStorage();
+    const warnings: string[] = [];
+    let fail = false;
+    const connector: Connector = {
+      id: "torn",
+      kind: "mcp",
+      async listTools() {
+        if (fail) throw new Error("live unavailable");
+        return [{ name: "large", description: "x".repeat(1_100_000) }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const first = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    await first.getTools("torn", BASE);
+    const manifest = await readManifest(storage, "torn");
+    await storage.delete(
+      `catalog:torn:chunk:${manifest.revision}:${manifest.chunkCount - 1}`,
+    );
+    fail = true;
+
+    const cold = new Registry([connector], {
+      storage,
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+    });
+    await expect(cold.getTools("torn", BASE)).rejects.toThrow(
+      "live unavailable",
+    );
+    expect(cold.peekTools("torn")).toBeUndefined();
+    expect(
+      warnings.some((warning) => warning.includes("chunk 2/2 is missing")),
+    ).toBe(true);
+  });
+
+  it("treats a persisted fingerprint mismatch as no catalog", async () => {
+    const storage = memoryStorage();
+    const warnings: string[] = [];
+    let fail = false;
+    const connector: Connector = {
+      id: "mismatch",
+      kind: "mcp",
+      async listTools() {
+        if (fail) throw new Error("live unavailable");
+        return [{ name: "read" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const first = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+    await first.getTools("mismatch", BASE);
+    const manifest = await readManifest(storage, "mismatch");
+    const chunkKey = `catalog:mismatch:chunk:${manifest.revision}:0`;
+    await storage.set(
+      chunkKey,
+      (await storage.get(chunkKey))!.replace('"read"', '"reed"'),
+    );
+    fail = true;
+
+    const cold = new Registry([connector], {
+      storage,
+      logger: {
+        ...silentLogger,
+        warn: (...args: unknown[]) => warnings.push(String(args[0])),
+      },
+    });
+    await expect(cold.getTools("mismatch", BASE)).rejects.toThrow(
+      "live unavailable",
+    );
+    expect(cold.peekTools("mismatch")).toBeUndefined();
+    expect(
+      warnings.some((warning) => warning.includes("fingerprint mismatch")),
+    ).toBe(true);
+  });
+
+  it("refuses complete catalogs over the tool or serialized-byte ceiling", async () => {
+    const warnings: string[] = [];
+    const logger: Logger = {
+      ...silentLogger,
+      warn: (...args: unknown[]) => warnings.push(String(args[0])),
+    };
+    const tooMany: Connector = {
+      id: "too_many",
+      kind: "mcp",
+      async listTools() {
+        return Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const tooLarge: Connector = {
+      id: "too_large",
+      kind: "mcp",
+      async listTools() {
+        return [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([tooMany, tooLarge], {
+      storage: memoryStorage(),
+      logger,
+      persistToolCatalog: false,
+    });
+
+    await expect(registry.getTools("too_many", BASE)).rejects.toThrow(
+      `${MAX_CATALOG_TOOLS}-tool catalog ceiling`,
+    );
+    await expect(registry.getTools("too_large", BASE)).rejects.toThrow(
+      `${MAX_SERIALIZED_CATALOG_BYTES}-byte ceiling`,
+    );
+    expect(registry.peekTools("too_many")).toBeUndefined();
+    expect(registry.peekTools("too_large")).toBeUndefined();
+    expect(
+      warnings.filter((warning) => warning.includes("catalog ceiling")),
+    ).toHaveLength(1);
+    expect(
+      warnings.filter((warning) => warning.includes("serialized catalog")),
+    ).toHaveLength(1);
+  });
+
+  it("reads legacy single-value catalogs and retires them on invalidation", async () => {
+    const storage = memoryStorage();
+    const now = Date.now();
+    await storage.set(
+      "catalog:legacy",
+      JSON.stringify({
+        tools: [{ name: "old" }],
+        fetchedAt: now,
+        expiresAt: now + 60_000,
+        staleUntil: now + 120_000,
+      }),
+    );
+    let calls = 0;
+    const connector: Connector = {
+      id: "legacy",
+      kind: "mcp",
+      async listTools() {
+        calls++;
+        return [{ name: "new" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+
+    await expect(registry.getTools("legacy", BASE)).resolves.toEqual([
+      { name: "old" },
+    ]);
+    expect(calls).toBe(0);
+    await registry.invalidateStored("legacy");
+    await expect(registry.getTools("legacy", BASE)).resolves.toEqual([
+      { name: "new" },
+    ]);
+    expect(calls).toBe(1);
+    expect(await readPersistedTools(storage, "legacy")).toEqual([
+      { name: "new" },
+    ]);
+  });
+
+  it("does not resurrect a legacy read across a generation change", async () => {
+    const backing = memoryStorage();
+    const now = Date.now();
+    await backing.set(
+      "catalog:legacy_race",
+      JSON.stringify({
+        tools: [{ name: "old" }],
+        fetchedAt: now,
+        expiresAt: now + 60_000,
+        staleUntil: now + 120_000,
+      }),
+    );
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let reached!: () => void;
+    const started = new Promise<void>((resolve) => {
+      reached = resolve;
+    });
+    let firstRootRead = true;
+    const storage: KVStorage = {
+      async get(key) {
+        if (key === "catalog:legacy_race" && firstRootRead) {
+          firstRootRead = false;
+          const value = await backing.get(key);
+          reached();
+          await gate;
+          return value;
+        }
+        return backing.get(key);
+      },
+      set: (key, value, options) => backing.set(key, value, options),
+      delete: (key) => backing.delete(key),
+    };
+    let calls = 0;
+    const connector: Connector = {
+      id: "legacy_race",
+      kind: "mcp",
+      async listTools() {
+        calls++;
+        return [{ name: "new" }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage,
+      logger: silentLogger,
+    });
+
+    const pending = registry.getTools("legacy_race", BASE);
+    await started;
+    await registry.invalidateStored("legacy_race");
+    release();
+
+    await expect(pending).resolves.toEqual([{ name: "new" }]);
+    expect(calls).toBe(1);
+    expect(registry.peekTools("legacy_race")).toEqual([{ name: "new" }]);
+    expect(await readPersistedTools(storage, "legacy_race")).toEqual([
+      { name: "new" },
+    ]);
+  });
+
   it("persists only when the complete catalog fingerprint changes", async () => {
     const backing = memoryStorage();
-    let writes = 0;
+    let manifestWrites = 0;
     const storage: KVStorage = {
       get: (key) => backing.get(key),
       async set(key, value, options) {
-        writes++;
+        if (key === "catalog:fingerprinted") manifestWrites++;
         return backing.set(key, value, options);
       },
       delete: (key) => backing.delete(key),
@@ -522,9 +849,9 @@ describe("tool cache TTL", () => {
     });
 
     await registry.refreshTools("fingerprinted", BASE);
-    expect(writes).toBe(1);
+    expect(manifestWrites).toBe(1);
     await registry.refreshTools("fingerprinted", BASE);
-    expect(writes).toBe(1);
+    expect(manifestWrites).toBe(1);
 
     const mutations: ToolDef[][] = [
       [...tools, { name: "second" }],
@@ -536,14 +863,14 @@ describe("tool cache TTL", () => {
     for (const mutation of mutations) {
       tools = mutation;
       await registry.refreshTools("fingerprinted", BASE);
-      expect(writes).toBeGreaterThan(1);
-      const persisted = JSON.parse(
-        (await backing.get("catalog:fingerprinted"))!,
-      ) as { fingerprint?: string; tools: ToolDef[] };
-      expect(persisted.fingerprint).toMatch(/^sha256:/);
-      expect(persisted.tools).toEqual(mutation);
+      expect(manifestWrites).toBeGreaterThan(1);
+      const persisted = await readManifest(backing, "fingerprinted");
+      expect(persisted.revision).toMatch(/^sha256:/);
+      expect(await readPersistedTools(backing, "fingerprinted")).toEqual(
+        mutation,
+      );
     }
-    expect(writes).toBe(1 + mutations.length);
+    expect(manifestWrites).toBe(1 + mutations.length);
   });
 
   it("serializes a refreshed tool array once for fingerprint and persistence", async () => {
@@ -605,6 +932,7 @@ describe("tool cache TTL", () => {
 
   it("keeps discovery and invalidation working when catalog storage fails", async () => {
     const warnings: string[] = [];
+    let deletes = 0;
     const unavailableStorage: KVStorage = {
       async get() {
         throw new Error("storage read unavailable");
@@ -613,6 +941,7 @@ describe("tool cache TTL", () => {
         throw new Error("storage write unavailable");
       },
       async delete() {
+        deletes++;
         throw new Error("storage delete unavailable");
       },
     };
@@ -640,6 +969,7 @@ describe("tool cache TTL", () => {
     expect((await registry.getTools("resilient", BASE))[0].name).toBe("read");
     expect(calls).toBe(1);
     await expect(registry.invalidateStored("resilient")).resolves.toBeUndefined();
+    expect(deletes).toBe(1);
     expect((await registry.getTools("resilient", BASE))[0].name).toBe("read");
     expect(calls).toBe(2);
     expect(warnings.some((warning) => warning.includes("catalog read failed"))).toBe(
