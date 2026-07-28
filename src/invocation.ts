@@ -55,7 +55,7 @@ export function retryBackoffMs(
 }
 
 /** The one fail-closed admission predicate for every invocation adapter. */
-export function isExplicitlyReadOnly(definition: ToolDef): boolean {
+function isExplicitlyReadOnly(definition: ToolDef): boolean {
   return (
     definition.annotations?.readOnlyHint === true &&
     definition.annotations?.destructiveHint !== true

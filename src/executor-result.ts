@@ -1,14 +1,14 @@
 import type { ExecuteResult } from "./types.js";
 
 /** ~6k tokens. Sandbox code should filter data down before returning. */
-export const MAX_EXECUTE_RESULT_CHARS = 24_000;
+const MAX_EXECUTE_RESULT_CHARS = 24_000;
 export const MAX_EXECUTE_LOG_CHARS = 4_000;
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function serializeExecuteValue(value: unknown): string {
+function serializeExecuteValue(value: unknown): string {
   const serialized = JSON.stringify(value, null, 2);
   return serialized === undefined ? String(value) : serialized;
 }

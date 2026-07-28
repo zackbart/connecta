@@ -641,7 +641,7 @@ describe("status UI", () => {
     expect(ico.headers.get("content-type")).toContain("image/x-icon");
     expect(ico.headers.get("cache-control")).toContain("max-age=86400");
     const bytes = new Uint8Array(await ico.arrayBuffer());
-    expect([...bytes.slice(0, 4)]).toEqual([0, 0, 1, 0]);
+    expect(Array.from(bytes.slice(0, 4))).toEqual([0, 0, 1, 0]);
   });
 
   it("serves both favicon routes inertly and byte-identically", async () => {
@@ -932,8 +932,8 @@ describe("status UI", () => {
       /function showGate\(msg\) \{\s+clearIdentityState\(\);/,
     );
     expect(html).toContain("DATA = null;");
-    expect(html).toContain('$(\"credentialList\").innerHTML = \"\";');
-    expect(html).toContain('$(\"activityList\").innerHTML = \"\";');
+    expect(html).toContain('$("credentialList").innerHTML = "";');
+    expect(html).toContain('$("activityList").innerHTML = "";');
     expect(
       html.match(/generation !== SESSION_GENERATION/g)?.length,
     ).toBeGreaterThanOrEqual(5);

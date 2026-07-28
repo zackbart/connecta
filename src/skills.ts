@@ -75,13 +75,13 @@ export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
 }
 
 /** The built-in usage guide, plus the guides section when there is one to point at. */
-export function usageSkill(connectors: readonly Connector[]): string {
+function usageSkill(connectors: readonly Connector[]): string {
   return hasConnectorGuides(connectors)
     ? USAGE_SKILL + CONNECTOR_GUIDES_SECTION
     : USAGE_SKILL;
 }
 
-export const AVAILABLE_SKILLS = [
+const AVAILABLE_SKILLS = [
   {
     name: "usage",
     description:
@@ -97,7 +97,7 @@ export const AVAILABLE_SKILLS = [
  * The prefixed form is the ONLY way to reach a connector guide: a bare
  * connector id is never resolved, so nothing shadows anything silently.
  */
-export const CONNECTOR_SKILL_PREFIX = "connector:";
+const CONNECTOR_SKILL_PREFIX = "connector:";
 
 /** The skill name that fetches `connector`'s guide. */
 export function connectorSkillName(connectorId: string): string {

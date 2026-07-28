@@ -31,11 +31,8 @@ import { CONNECTA_VERSION } from "./version.js";
 export {
   filterUiConnectors,
   type CredentialManagementCapability,
-  type FilteredUiConnector,
   type UiConnector,
   type UiData,
-  type UiToolkit,
-  type UiTool,
 } from "./operator-ui/model.js";
 
 /** Connecta's default monochrome "C" mark. */
@@ -60,7 +57,7 @@ interface ResolvedBranding {
   themeColor: string;
 }
 
-export const DEFAULT_FAVICON_HREF = "/favicon.svg";
+const DEFAULT_FAVICON_HREF = "/favicon.svg";
 
 /**
  * Branding arrives from operator config, which is untyped at a JS call site, so

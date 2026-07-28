@@ -30,9 +30,9 @@ import type {
 } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
-export const EXECUTE_MAX_HOST_CALLS = 20;
+const EXECUTE_MAX_HOST_CALLS = 20;
 export const EXECUTE_MAX_BATCH_CALLS = 10;
-export const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
 
 // deno-fmt-ignore
 const RESERVED = new Set([

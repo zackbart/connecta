@@ -136,7 +136,7 @@ function safeHttp(u: string): string | null {
   try {
     const p = new URL(u).protocol;
     return p === "http:" || p === "https:" ? u : null;
-  } catch (e) { return null; }
+  } catch { return null; }
 }
 
 function formatDate(value?: string): string {
@@ -1009,7 +1009,7 @@ $("copyMcpUrl").onclick = async () => {
   try {
     await navigator.clipboard.writeText(MCP_URL);
     button.textContent = "Copied";
-  } catch (e) {
+  } catch {
     button.textContent = "Copy failed";
   }
   window.setTimeout(() => { button.textContent = "Copy URL"; }, 1600);
@@ -1027,7 +1027,7 @@ $("toolkitList").onclick = async (event) => {
       toolkitMcpUrl(toolkit),
     );
     button.textContent = "Copied";
-  } catch (e) {
+  } catch {
     button.textContent = "Copy failed";
   }
   window.setTimeout(() => { button.textContent = "Copy URL"; }, 1600);
