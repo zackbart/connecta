@@ -1014,6 +1014,11 @@ export class Registry implements RegistryView {
    * Coalesce one connector's cold load inside one inbound request. The WeakMap
    * neither roots the request scope nor lets its connector context escape into
    * another request; settled entries are also removed eagerly.
+   *
+   * The first caller's `callOptions` govern the shared load: a later caller's
+   * signal or timeout neither cancels nor extends it, and an abort by the
+   * first caller rejects every coalesced caller. Within one request that is
+   * the deal being made — one fetch, one deadline.
    */
   async getTools(
     id: string,
