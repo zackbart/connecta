@@ -154,7 +154,8 @@ connecta/
     types.ts              # Connector, ToolDef, KVStorage, InboundAuth, ...
     validate.ts           # validateToolInput() — shared by api() and custom connectors
     json-schema.ts        # Validator re-export ("@zackbart/connecta/json-schema")
-    server.ts             # fetch handler: routing, auth gate, toolkit binding, MCP transport, OAuth + credential routes
+    server.ts             # fetch handler composition root: route ordering, HTTPS upgrade, security wrapper
+    routes/               # one surface per module: mcp (auth gate, toolkit binding, transport), credentials, oauth, activity, ui; shared.ts holds the single auth/refusal/header enforcement points
     meta-tools.ts         # the nine meta-tools over the registry
     execute.ts            # the optional execute_code meta-tool + sandbox host bridge
     skills.ts             # initialize instructions + the usage skill and per-connector guide lookup
