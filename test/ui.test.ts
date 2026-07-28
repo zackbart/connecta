@@ -928,8 +928,8 @@ describe("status UI", () => {
     expect(html).toMatch(/\b(?:let|var) ACTIVITY_GENERATION = 0;/);
     expect(html).toContain("function clearIdentityState()");
     expect(html).toContain("SESSION_GENERATION += 1;");
-    expect(html).toContain(
-      "function showGate(msg) {\n  clearIdentityState();",
+    expect(html).toMatch(
+      /function showGate\(msg\) \{\s+clearIdentityState\(\);/,
     );
     expect(html).toContain("DATA = null;");
     expect(html).toContain('$(\"credentialList\").innerHTML = \"\";');

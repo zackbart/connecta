@@ -1,5 +1,5 @@
 import { readFile, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { basename, dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
@@ -16,7 +16,7 @@ const result = await build({
     script: "src/operator-ui/browser.ts",
     styles: "src/operator-ui/browser.css",
   },
-  format: "esm",
+  format: "iife",
   legalComments: "none",
   logLevel: "silent",
   minify: false,
@@ -29,7 +29,7 @@ const result = await build({
 
 const output = new Map(
   result.outputFiles.map((file) => [
-    file.path.slice(file.path.lastIndexOf("/") + 1),
+    basename(file.path),
     file.text,
   ]),
 );
