@@ -24,7 +24,7 @@ interface CredentialPlaintext {
   updatedBy: string;
 }
 
-export interface CredentialFieldMetadata {
+interface CredentialFieldMetadata {
   configured: true;
   /** Only emitted when the value is long enough that four chars don't leak much. */
   lastFour?: string;
@@ -41,7 +41,7 @@ export interface CredentialMetadata {
 }
 
 /** Which hook a testable credential is checked with. */
-export type CredentialTestMode = "single" | "multiple";
+type CredentialTestMode = "single" | "multiple";
 
 /** Operator-safe explanation shared by every surface that detects shape drift. */
 export const STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR =

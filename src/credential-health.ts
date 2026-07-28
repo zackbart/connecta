@@ -117,8 +117,8 @@ export interface CredentialHealthConfig {
   onRequest?: boolean;
 }
 
-export const DEFAULT_CREDENTIAL_CHECK_INTERVAL_SECONDS = 900;
-export const DEFAULT_CREDENTIAL_CHECK_CONCURRENCY = 4;
+const DEFAULT_CREDENTIAL_CHECK_INTERVAL_SECONDS = 900;
+const DEFAULT_CREDENTIAL_CHECK_CONCURRENCY = 4;
 
 /**
  * How long a read of one connector's record is served from memory before going
@@ -362,7 +362,7 @@ export interface CredentialCheckOptions {
  * their back. A connector whose only hook cannot test its declared shape is
  * checkable only if it also implements `status()`.
  */
-export function isCheckableConnector(connector: Connector): boolean {
+function isCheckableConnector(connector: Connector): boolean {
   const hasCredentialStore = Boolean(
     connector.credential || connector.hasStoredCredential,
   );
@@ -420,7 +420,7 @@ async function mapWithConcurrency<T, R>(
   limit: number,
   fn: (item: T) => Promise<R>,
 ): Promise<R[]> {
-  const out = new Array<R>(items.length);
+  const out = Array<R>(items.length);
   let next = 0;
   const workers = Array.from(
     { length: Math.min(limit, items.length) },

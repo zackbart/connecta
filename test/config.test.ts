@@ -234,6 +234,7 @@ describe("ConnectaConfig v0.7 shape", () => {
 
 // Compile-time clean-break coverage. These branches never run, but tsc must
 // prove every removed v0.6 path is rejected at the public call site.
+// oxlint-disable-next-line no-constant-condition -- This branch exists only for tsc.
 if (false) {
   const store: ActivityStore = { record() {} };
 

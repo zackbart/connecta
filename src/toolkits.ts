@@ -331,7 +331,7 @@ export function resolveToolkitBinding(
  * Returns a frozen, deduplicated copy: nothing downstream can be mutated by the
  * adapter after the check, and every name is known to fit the grammar.
  */
-export function normalizeToolkitBinding(value: unknown): ToolkitBinding | null {
+function normalizeToolkitBinding(value: unknown): ToolkitBinding | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return null;
   }

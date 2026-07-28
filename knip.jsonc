@@ -1,0 +1,33 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/index.ts",
+    "src/node.ts",
+    "src/json-schema.ts",
+    "src/executors/quickjs.ts",
+    "src/executors/quickjs-child.ts",
+    "src/auth/clerk.ts",
+    "src/operator-ui/browser.ts",
+    "examples/*/server.ts",
+    "examples/*/src/index.ts",
+    "scripts/*.mjs",
+    "test/**/*.test.ts"
+  ],
+  "project": [
+    "src/**/*.ts",
+    "examples/**/*.ts",
+    "scripts/**/*.mjs",
+    "test/**/*.ts",
+    "*.ts"
+  ],
+  "ignoreDependencies": [
+    // Loaded by the QuickJS parent when it forks a source-tree child and used
+    // directly by the runnable Node and Docker examples.
+    "tsx",
+    // Package name behind the virtual cloudflare:test module supplied by
+    // @cloudflare/vitest-pool-workers.
+    "cloudflare",
+    // Deployment CLI and the schema provider for examples/worker/wrangler.jsonc.
+    "wrangler"
+  ]
+}

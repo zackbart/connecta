@@ -5,14 +5,10 @@ import type {
   ActivityRequestContext,
 } from "./activity.js";
 import {
-  assertDiscoveryResultSize,
   boundedDiscoveryText,
   CatalogService,
   DiscoveryPolicyError,
-  discoveryAddresses,
-  discoverySearchLimit,
   groupedSearchResult,
-  DEFAULT_SEARCH_LIMIT,
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
@@ -56,15 +52,11 @@ import { credentialVerdictApplies } from "./credential-health.js";
 import type { ConnectorStatus, KVStorage } from "./types.js";
 
 export {
-  DEFAULT_SEARCH_LIMIT,
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_RETRY_BACKOFF_MS,
   MAX_SEARCH_LIMIT,
   DiscoveryPolicyError,
-  assertDiscoveryResultSize,
-  discoveryAddresses,
-  discoverySearchLimit,
   retryBackoffMs,
 };
 
@@ -140,7 +132,7 @@ function isContinuationByte(b: number): boolean {
 }
 
 /** Smallest accepted `get_result` byte offset. */
-export const MIN_RESULT_OFFSET = 0;
+const MIN_RESULT_OFFSET = 0;
 
 /**
  * The one definition of a usable `get_result` offset: a whole number of bytes
@@ -156,7 +148,7 @@ export const MIN_RESULT_OFFSET = 0;
  * error. An offset past the end of the payload stays legal: it is a whole
  * number of bytes, and it answers with an empty final page.
  */
-export function isValidResultOffset(value: number): boolean {
+function isValidResultOffset(value: number): boolean {
   return Number.isInteger(value) && value >= MIN_RESULT_OFFSET;
 }
 
@@ -283,7 +275,7 @@ function applyFieldsToContent(
  * the three give one answer to the same question. A value JSON cannot serialize
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
-export function serializeResultText(value: unknown): string {
+function serializeResultText(value: unknown): string {
   const serialized = JSON.stringify(value, null, 2);
   return serialized === undefined ? String(value) : serialized;
 }
@@ -438,7 +430,7 @@ export interface ListArgs {
   /** When false, return cached/observed health without downstream I/O. */
   probe?: boolean;
 }
-export type ResultMode = "mcp" | "value";
+type ResultMode = "mcp" | "value";
 export interface CallArgs {
   address: string;
   args?: Record<string, unknown>;
@@ -807,7 +799,7 @@ export function createMetaTools(
               await registry.recordCredentialHealth(c.id, {
                 state: "auth_required",
                 checkedAt,
-                ...(status.message ? { message: status.message } : {}),
+                ...(status.message && { message: status.message }),
                 ...("authorizationUrl" in status &&
                 status.authorizationUrl
                   ? { authorizationUrl: status.authorizationUrl }
@@ -833,12 +825,13 @@ export function createMetaTools(
           checkedAt,
           latencyMs,
           probe,
-          ...(latestObserved ?? observed ?? {}),
+          ...(latestObserved ?? observed),
           ...(credentialCheck ? { credentialCheck } : {}),
-          ...("authorizationUrl" in status && status.authorizationUrl
-            ? { authorizationUrl: status.authorizationUrl }
-            : {}),
-          ...(status.message ? { message: status.message } : {}),
+          ...("authorizationUrl" in status &&
+            status.authorizationUrl && {
+              authorizationUrl: status.authorizationUrl,
+            }),
+          ...(status.message && { message: status.message }),
         };
       };
       const settled = await mapSettledWithConcurrency(

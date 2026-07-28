@@ -4,7 +4,7 @@ export interface UiTool {
   description?: string;
 }
 
-export interface UiCredentialField {
+interface UiCredentialField {
   name: string;
   label: string;
   description?: string;
@@ -15,7 +15,7 @@ export interface UiCredentialField {
   updatedAt?: string;
 }
 
-export interface UiCredential {
+interface UiCredential {
   label: string;
   description?: string;
   placeholder?: string;

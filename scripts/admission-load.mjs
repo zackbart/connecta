@@ -107,7 +107,7 @@ async function snapshot(server, { gc = false, resetPeak = false } = {}) {
 
 async function runCase(server, calls, inFlight) {
   const before = await snapshot(server, { gc: true, resetPeak: true });
-  const latencies = new Array(calls);
+  const latencies = Array(calls);
   let next = 0;
   const started = performance.now();
   await Promise.all(

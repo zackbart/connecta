@@ -14,10 +14,11 @@ One fetch-native core, running on both Node and Cloudflare Workers.
 ## Verification
 
 `npm run check` must pass before you claim anything is done — `check:docs` →
-`typecheck` → `test` (both vitest projects) → `build` → `check:examples`. It is
-also the `prepack` hook. `npm run release:check` adds `check:security` and
-`check:package` and is what CI runs on publish; use it when touching packaging,
-dependencies, or exports.
+`check:operator-ui` → `check:lint` → `check:unused` → `typecheck` → `test`
+(both vitest projects) → `build` → `check:examples`. It is also the `prepack`
+hook. `npm run release:check` adds `check:security` and `check:package` and is
+what CI runs on publish; use it when touching packaging, dependencies, or
+exports.
 
 ## The map
 
@@ -76,9 +77,13 @@ also gets a row in
 
 ## Conventions
 
-- **Style.** There is no linter or formatter. Match the surrounding code. The
-  docs voice is precise, occasionally wry, and always explains *why* — don't
-  flatten it into boilerplate.
+- **Static analysis.** `npm run check:lint` runs Oxlint's correctness category
+  only; it does not enforce style. `npm run check:unused` runs Knip's
+  unused-export and dependency gate. Keep both clean, and prefer removing dead
+  declarations over suppressing a finding.
+- **Style.** There is no formatter. Match the surrounding code. The docs voice
+  is precise, occasionally wry, and always explains *why* — don't flatten it
+  into boilerplate.
 - **Commits.** Imperative summary naming the behavior change, with issue refs in
   parens: `Normalize maxResultBytes at every intake point (#32) (#39)`.
 - **CHANGELOG.** Each release opens with a narrative paragraph — what this

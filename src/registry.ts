@@ -40,9 +40,9 @@ const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
 const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
-export const DEFAULT_MAX_RESULT_BYTES = 50_000;
+const DEFAULT_MAX_RESULT_BYTES = 50_000;
 /** Independent final-envelope boundary for `batch_call`. */
-export const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
+const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
 
 /**
  * Smallest accepted inline-result cap. One byte is pathological but harmless:

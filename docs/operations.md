@@ -206,7 +206,12 @@ npm scripts (`package.json`):
   rather than in someone's deployment.
 - `npm run check:docs` — validates local Markdown targets and fragments, the
   compatibility index, canonical document sizes, and stale manual references.
-- `npm run check` — typecheck + test + build + examples. Also the `prepack` hook.
+- `npm run check:lint` — Oxlint's correctness category only. Style remains a
+  human-reviewed convention; there is deliberately no formatter.
+- `npm run check:unused` — Knip's unused-export and dependency gate.
+- `npm run check` — docs + operator bundle freshness + correctness lint +
+  unused exports/dependencies + typecheck + test + build + examples. Also the
+  `prepack` hook.
 - `npm run load:admission` — opt-in split-process real-TCP capacity matrix and
   three-round soak, recording latency, throughput, live heap, and server-only
   RSS ([method and current baseline](./request-admission.md#node-capacity-measurement)).

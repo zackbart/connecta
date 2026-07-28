@@ -233,8 +233,8 @@ export function compactSchema(schema: JsonSchema): string {
   const cached = compactSchemas.get(schema);
   if (cached) return cached;
   const defs = {
-    ...((schema.$defs as Record<string, unknown>) ?? {}),
-    ...((schema.definitions as Record<string, unknown>) ?? {}),
+    ...(schema.$defs as Record<string, unknown>),
+    ...(schema.definitions as Record<string, unknown>),
   };
   let rendered: string;
   try {

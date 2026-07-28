@@ -1,4 +1,4 @@
-export const DEFAULT_DISCOVERY_CONCURRENCY = 4;
+const DEFAULT_DISCOVERY_CONCURRENCY = 4;
 
 export function resolveDiscoveryConcurrency(
   value: number | undefined,
@@ -14,7 +14,7 @@ export async function mapSettledWithConcurrency<T, R>(
   limit: number,
   fn: (item: T, index: number) => Promise<R>,
 ): Promise<PromiseSettledResult<R>[]> {
-  const settled = new Array<PromiseSettledResult<R>>(items.length);
+  const settled = Array<PromiseSettledResult<R>>(items.length);
   let next = 0;
   const workers = Array.from(
     { length: Math.min(limit, items.length) },

@@ -23,7 +23,7 @@ import type {
   ToolDef,
 } from "./types.js";
 
-export const DEFAULT_SEARCH_LIMIT = 25;
+const DEFAULT_SEARCH_LIMIT = 25;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
@@ -41,7 +41,7 @@ export class DiscoveryPolicyError extends Error {
 }
 
 /** Validate before ranking so a huge page request does no proportional work. */
-export function discoverySearchLimit(value: unknown): number {
+function discoverySearchLimit(value: unknown): number {
   if (value === undefined) return DEFAULT_SEARCH_LIMIT;
   if (
     typeof value !== "number" ||
@@ -58,7 +58,7 @@ export function discoverySearchLimit(value: unknown): number {
 }
 
 /** Validate the raw list so duplicate addresses consume the same bound. */
-export function discoveryAddresses(value: unknown): unknown[] {
+function discoveryAddresses(value: unknown): unknown[] {
   if (!Array.isArray(value)) {
     throw new DiscoveryPolicyError(
       "invalid_args",
@@ -113,7 +113,7 @@ export interface CatalogDescribeArgs {
   fullDescriptions?: boolean;
 }
 
-export interface CatalogSearchEntry {
+interface CatalogSearchEntry {
   connector: Connector;
   guide?: string;
   tool: {
