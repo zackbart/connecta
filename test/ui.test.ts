@@ -2735,6 +2735,11 @@ describe("status UI credential management", () => {
       testable: false,
       error: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
     });
+    // Drift is the connector's /ui/data status, not just a credential sidecar.
+    expect(payload.connectors[0]).toMatchObject({
+      status: "auth_required",
+      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    });
 
     const driftedTest = await credentialRequest(
       connecta,
@@ -2771,6 +2776,7 @@ describe("status UI credential management", () => {
     expect(recoveredPayload.connectors[0].credential).not.toHaveProperty(
       "error",
     );
+    expect(recoveredPayload.connectors[0].status).not.toBe("auth_required");
     const recoveredTest = await credentialRequest(
       connecta,
       "/ui/credentials/drift/test",

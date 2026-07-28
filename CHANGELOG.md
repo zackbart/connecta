@@ -29,8 +29,11 @@ refuses to start and points to the relevant issue and `ethos.md`.
   `Connecta.checkCredentials`, scheduled sweep wiring, persisted verdict reads
   and writes, and `credentialCheck` response/UI fields no longer exist.
   Operator-triggered credential tests and local stored-shape drift detection
-  remain. Existing `credhealth:*` KV records are harmless orphaned data: they
-  are never read or rewritten, and no cleanup migration runs.
+  remain. A drifted connector now reports `auth_required` directly from the
+  drift check — `list_connectors` with `probe: true` and `/ui/data` no longer
+  live-probe a connector whose stored credential cannot be consumed anyway.
+  Existing `credhealth:*` KV records are harmless orphaned data: they are
+  never read or rewritten, and no cleanup migration runs.
 
 ## 0.8.0 — 2026-07-28
 
