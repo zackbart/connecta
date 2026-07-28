@@ -434,10 +434,11 @@ export class ConnectorCallAdmissionController {
     const budget = this.budget;
     if (!budget || state.admittedAt.length === 0) return;
     let expired = 0;
-    while (
-      expired < state.admittedAt.length &&
-      state.admittedAt[expired] + budget.windowMs <= now
-    ) {
+    while (expired < state.admittedAt.length) {
+      const admittedAt = state.admittedAt[expired];
+      if (admittedAt === undefined || admittedAt + budget.windowMs > now) {
+        break;
+      }
       expired++;
     }
     if (expired > 0) state.admittedAt.splice(0, expired);
@@ -451,7 +452,9 @@ export class ConnectorCallAdmissionController {
     if (!budget || state.admittedAt.length < budget.maxCalls) {
       return undefined;
     }
-    return Math.max(0, state.admittedAt[0] + budget.windowMs - now);
+    const oldestAdmission = state.admittedAt[0];
+    if (oldestAdmission === undefined) return undefined;
+    return Math.max(0, oldestAdmission + budget.windowMs - now);
   }
 
   private evictIdlePartitions(now: number): void {

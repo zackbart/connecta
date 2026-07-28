@@ -88,7 +88,8 @@ function exceedsUtf8ByteLimit(value: string, limit: number): boolean {
 export function normalizeCode(code: string): string {
   let c = code.trim();
   const fence = /^```[\w-]*\s*\n([\s\S]*?)\n?```$/.exec(c);
-  if (fence) c = fence[1].trim();
+  const fencedCode = fence?.[1];
+  if (fencedCode !== undefined) c = fencedCode.trim();
   // Sniff for an existing function expression past any leading comments/blank
   // lines — models routinely prefix their code with a `//` or `/* */` note,
   // which would otherwise defeat the detection and wrap the whole thing.

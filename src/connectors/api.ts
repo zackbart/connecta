@@ -92,10 +92,10 @@ export interface ApiOptions {
 export function api(id: string, opts: ApiOptions): Connector {
   const defs: ToolDef[] = opts.tools.map((t) => ({
     name: t.name,
-    description: t.description,
-    inputSchema: t.inputSchema,
-    outputSchema: t.outputSchema,
-    annotations: t.annotations,
+    ...(t.description !== undefined ? { description: t.description } : {}),
+    ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
+    ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
+    ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
   }));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
@@ -110,15 +110,25 @@ export function api(id: string, opts: ApiOptions): Connector {
   }
   return {
     id,
-    title: opts.title,
+    ...(opts.title !== undefined ? { title: opts.title } : {}),
     kind: "api",
-    description: opts.description,
-    maxResultBytes: opts.maxResultBytes,
-    callAdmission: opts.callAdmission,
-    usageGuide: opts.usageGuide,
-    credential: opts.credential,
-    testCredential: opts.testCredential,
-    testCredentials: opts.testCredentials,
+    ...(opts.description !== undefined
+      ? { description: opts.description }
+      : {}),
+    ...(opts.maxResultBytes !== undefined
+      ? { maxResultBytes: opts.maxResultBytes }
+      : {}),
+    ...(opts.callAdmission !== undefined
+      ? { callAdmission: opts.callAdmission }
+      : {}),
+    ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
+    ...(opts.credential !== undefined ? { credential: opts.credential } : {}),
+    ...(opts.testCredential !== undefined
+      ? { testCredential: opts.testCredential }
+      : {}),
+    ...(opts.testCredentials !== undefined
+      ? { testCredentials: opts.testCredentials }
+      : {}),
     staticTools: defs,
     async listTools() {
       return defs;

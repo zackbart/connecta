@@ -128,8 +128,9 @@ const NOT_SUMMARY_RE = /^\s*(?:<!--|\|)|^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 /** Drop a leading YAML frontmatter block — metadata, not summary text. */
 function withoutFrontmatter(lines: string[]): string[] {
   let start = 0;
-  while (start < lines.length && lines[start].trim() === "") start++;
-  if (start >= lines.length || !RULE_RE.test(lines[start])) return lines;
+  while (start < lines.length && (lines[start] ?? "").trim() === "") start++;
+  const openingRule = lines[start];
+  if (openingRule === undefined || !RULE_RE.test(openingRule)) return lines;
   const close = lines.findIndex((line, i) => i > start && RULE_RE.test(line));
   return close === -1 ? lines : lines.slice(close + 1);
 }

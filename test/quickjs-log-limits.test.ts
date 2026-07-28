@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   quickJsExecutor as createQuickJsExecutor,
@@ -45,10 +46,10 @@ describe("quickJsExecutor log limits", () => {
     expect(out.error).toBeUndefined();
     expect(out.logs).toHaveLength(1);
     const [entry] = out.logs!;
-    expect(entry.startsWith("x".repeat(MAX_LOG_ENTRY_CHARS))).toBe(true);
-    expect(entry.endsWith("…[entry truncated]")).toBe(true);
+    expect(required(entry).startsWith("x".repeat(MAX_LOG_ENTRY_CHARS))).toBe(true);
+    expect(required(entry).endsWith("…[entry truncated]")).toBe(true);
     // Bounded: the cap plus the short marker, nowhere near 25M chars.
-    expect(entry.length).toBeLessThan(MAX_LOG_ENTRY_CHARS + 64);
+    expect(required(entry).length).toBeLessThan(MAX_LOG_ENTRY_CHARS + 64);
   });
 
   it("does not accumulate log characters beyond the cumulative budget", async () => {

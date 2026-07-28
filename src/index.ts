@@ -551,13 +551,25 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const registry = new Registry(config.connectors, {
     storage,
     logger,
-    credentialVault,
-    toolCacheTtlSeconds: config.discovery?.catalogTtlSeconds,
-    persistToolCatalog: config.discovery?.persistCatalog,
-    toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
-    maxResultBytes: config.calls?.maxResultBytes,
-    maxBatchResultBytes: config.calls?.maxBatchResultBytes,
-    credentialHealth: config.credentials?.health,
+    ...(credentialVault !== undefined ? { credentialVault } : {}),
+    ...(config.discovery?.catalogTtlSeconds !== undefined
+      ? { toolCacheTtlSeconds: config.discovery.catalogTtlSeconds }
+      : {}),
+    ...(config.discovery?.persistCatalog !== undefined
+      ? { persistToolCatalog: config.discovery.persistCatalog }
+      : {}),
+    ...(config.discovery?.staleCatalogSeconds !== undefined
+      ? { toolCatalogStaleSeconds: config.discovery.staleCatalogSeconds }
+      : {}),
+    ...(config.calls?.maxResultBytes !== undefined
+      ? { maxResultBytes: config.calls.maxResultBytes }
+      : {}),
+    ...(config.calls?.maxBatchResultBytes !== undefined
+      ? { maxBatchResultBytes: config.calls.maxBatchResultBytes }
+      : {}),
+    ...(config.credentials?.health !== undefined
+      ? { credentialHealth: config.credentials.health }
+      : {}),
   });
   // Throws on every structural mistake it can see (see resolveToolkits): a
   // typo must not become a scope the operator never wrote. Note this is about
@@ -593,24 +605,38 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,
-    publicUrl: config.publicUrl,
+    ...(config.publicUrl !== undefined ? { publicUrl: config.publicUrl } : {}),
     serverInfo: {
       ...config.serverInfo,
       name: config.serverInfo?.name ?? "connecta",
       version: config.serverInfo?.version ?? CONNECTA_VERSION,
     },
     logger,
-    activity: config.activity?.store,
-    activityReadGate: config.activity?.readGate,
-    activityDeploymentId: config.activity?.deploymentId,
-    executor,
+    ...(config.activity?.store !== undefined
+      ? { activity: config.activity.store }
+      : {}),
+    ...(config.activity?.readGate !== undefined
+      ? { activityReadGate: config.activity.readGate }
+      : {}),
+    ...(config.activity?.deploymentId !== undefined
+      ? { activityDeploymentId: config.activity.deploymentId }
+      : {}),
+    ...(executor !== undefined ? { executor } : {}),
     requestAdmission,
-    defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
-    probeTimeoutMs: config.discovery?.probeTimeoutMs,
-    discoveryConcurrency: config.discovery?.concurrency,
-    credentialVault,
-    deploymentInfo: config.deploymentInfo,
-    branding: config.branding,
+    ...(config.calls?.defaultTimeoutMs !== undefined
+      ? { defaultToolTimeoutMs: config.calls.defaultTimeoutMs }
+      : {}),
+    ...(config.discovery?.probeTimeoutMs !== undefined
+      ? { probeTimeoutMs: config.discovery.probeTimeoutMs }
+      : {}),
+    ...(config.discovery?.concurrency !== undefined
+      ? { discoveryConcurrency: config.discovery.concurrency }
+      : {}),
+    ...(credentialVault !== undefined ? { credentialVault } : {}),
+    ...(config.deploymentInfo !== undefined
+      ? { deploymentInfo: config.deploymentInfo }
+      : {}),
+    ...(config.branding !== undefined ? { branding: config.branding } : {}),
     ...(toolkits ? { toolkits } : {}),
   });
   let closePromise: Promise<void> | undefined;

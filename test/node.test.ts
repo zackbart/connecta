@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import { request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -86,9 +87,9 @@ describe("Node listen adapter", () => {
     });
     const executor: Executor = {
       async execute(_code, providers) {
-        const value = await providers
+        const value = await required(providers
           .find((provider) => provider.name === "connecta")!
-          .fns.__callNamespace("slow", "wait", {});
+          .fns.__callNamespace)("slow", "wait", {});
         return { result: value };
       },
     };

@@ -40,7 +40,7 @@ if (clerkPublishableKey && clerkSecretKey) {
     clerkAuth({
       publishableKey: clerkPublishableKey,
       secretKey: clerkSecretKey,
-      publicUrl,
+      ...(publicUrl !== undefined ? { publicUrl } : {}),
     }),
   );
 }
@@ -60,7 +60,7 @@ const connecta = createConnecta({
   // fileStorage persists downstream-OAuth/cache state on the mounted volume.
   storage: fileStorage(stateFile),
   auth,
-  publicUrl,
+  ...(publicUrl !== undefined ? { publicUrl } : {}),
   connectors: [
     api("time", {
       description: "Time — current timestamp",

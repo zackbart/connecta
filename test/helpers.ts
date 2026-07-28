@@ -12,6 +12,22 @@ export const silentLogger: Logger = {
 };
 
 /**
+ * Return an expected test fixture value or fail with a useful message.
+ *
+ * This keeps indexed fixture access honest under `noUncheckedIndexedAccess`:
+ * an unexpectedly missing item fails the test instead of being asserted away.
+ */
+export function required<T>(
+  value: T | undefined,
+  label = "test fixture value",
+): T {
+  if (value === undefined) {
+    throw new Error(`Expected ${label} to be defined`);
+  }
+  return value;
+}
+
+/**
  * A registry over `connectors`. `opts` carries the flat internal settings that
  * `ConnectaConfig` adapts into — including both `ConnectaConfig.calls` result
  * caps — so cap tests configure them exactly the way production does.

@@ -41,8 +41,8 @@ function buildIco(): Uint8Array {
       const pixel = pixels + (row * size + x) * 4;
       ico[pixel + 3] = opaque ? 255 : 0;
       if (!opaque) {
-        ico[mask + row * maskRowLength + Math.floor(x / 8)] |=
-          0x80 >> (x % 8);
+        const maskIndex = mask + row * maskRowLength + Math.floor(x / 8);
+        ico[maskIndex] = (ico[maskIndex] ?? 0) | (0x80 >> (x % 8));
       }
     }
   }

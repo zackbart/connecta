@@ -18,7 +18,7 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -188,13 +188,16 @@ function fixture(
         Object.defineProperty(tapped, "onmessage", {
           get: () => clientTransport.onmessage,
           set: (value: Transport["onmessage"]) => {
-            clientTransport.onmessage =
-              value && opts.afterInbound
-                ? (message, extra) => {
-                    value(message, extra);
-                    opts.afterInbound!(message);
-                  }
-                : value;
+            if (!value) {
+              delete clientTransport.onmessage;
+              return;
+            }
+            clientTransport.onmessage = opts.afterInbound
+              ? (message, extra) => {
+                  value(message, extra);
+                  opts.afterInbound!(message);
+                }
+              : value;
           },
         });
         return tapped;
@@ -246,8 +249,8 @@ function threePages(): (cursor: string | undefined) => PageResult {
     }
     const page = pages[index];
     return {
-      tools: page.tools,
-      ...(page.nextCursor !== undefined ? { nextCursor: page.nextCursor } : {}),
+      tools: required(page).tools,
+      ...(required(page).nextCursor !== undefined ? { nextCursor: required(page).nextCursor } : {}),
     };
   };
 }
@@ -268,10 +271,10 @@ describe("remoteMcp() tools/list pagination", () => {
     // only on the page that omitted it.
     expect(cursors).toEqual([undefined, OPAQUE_CURSOR, EMPTY_CURSOR]);
     const gamma = tools[2];
-    expect(gamma.description).toBe("Only reachable on the last page");
-    expect((gamma.inputSchema as any).properties.text.type).toBe("string");
-    expect((gamma.outputSchema as any).properties.ran.type).toBe("string");
-    expect(gamma.annotations).toMatchObject({
+    expect(required(gamma).description).toBe("Only reachable on the last page");
+    expect((required(gamma).inputSchema as any).properties.text.type).toBe("string");
+    expect((required(gamma).outputSchema as any).properties.ran.type).toBe("string");
+    expect(required(gamma).annotations).toMatchObject({
       readOnlyHint: true,
       idempotentHint: true,
       title: "Gamma",
@@ -451,7 +454,7 @@ describe("remoteMcp() tools/list pagination", () => {
     }).listConnectors({ probe: true });
     await atPageTwo;
     try {
-      const entry = JSON.parse((await pending).content[0].text).connectors[0];
+      const entry = JSON.parse(required((await pending).content[0]).text).connectors[0];
       expect(entry).toMatchObject({
         status: "error",
         toolCount: 0,
@@ -475,7 +478,7 @@ describe("remoteMcp() tools/list pagination", () => {
       probeTimeoutMs: 100,
     }).listConnectors({ probe: true });
 
-    expect(JSON.parse(listed.content[0].text).connectors[0]).toMatchObject({
+    expect(JSON.parse(required(listed.content[0]).text).connectors[0]).toMatchObject({
       status: "ok",
       toolCount: 1,
     });
@@ -498,13 +501,13 @@ describe("remoteMcp() tools/list pagination", () => {
     // the tool's search_tools row, and make the registry's catalog-changed
     // comparison see churn where the catalog never moved.
     expect(tools.map((t) => t.name)).toEqual(["alpha", "beta", "gamma"]);
-    expect(tools[1].description).toBe("first");
+    expect(required(tools[1]).description).toBe("first");
 
     const listed = await createMetaTools(
       makeRegistry([connector]),
       BASE,
     ).listConnectors({ probe: true });
-    expect(JSON.parse(listed.content[0].text).connectors[0].toolCount).toBe(3);
+    expect(JSON.parse(required(listed.content[0]).text).connectors[0].toolCount).toBe(3);
   });
 
   it("fails immediately when a cursor is handed back a second time", async () => {
@@ -805,7 +808,7 @@ describe("paginated catalogs through the discovery path", () => {
     const listed = await createMetaTools(registry, BASE).listConnectors({
       probe: true,
     });
-    expect(JSON.parse(listed.content[0].text).connectors[0]).toMatchObject({
+    expect(JSON.parse(required(listed.content[0]).text).connectors[0]).toMatchObject({
       id: "paged",
       status: "ok",
       toolCount: 3,
@@ -813,7 +816,7 @@ describe("paginated catalogs through the discovery path", () => {
 
     const meta = createMetaTools(registry, BASE);
     const searched = await meta.searchTools({ query: "gamma" });
-    const searchPayload = JSON.parse(searched.content[0].text);
+    const searchPayload = JSON.parse(required(searched.content[0]).text);
     expect(
       searchPayload.connectors[0].tools.map(
         (t: { address: string }) => t.address,
@@ -821,7 +824,7 @@ describe("paginated catalogs through the discovery path", () => {
     ).toContain("paged.gamma");
 
     const described = await meta.describeTools({ addresses: ["paged.gamma"] });
-    const describePayload = JSON.parse(described.content[0].text);
+    const describePayload = JSON.parse(required(described.content[0]).text);
     expect(describePayload.tools[0]).toMatchObject({
       address: "paged.gamma",
       name: "gamma",
@@ -833,7 +836,7 @@ describe("paginated catalogs through the discovery path", () => {
       args: { text: "hi" },
     });
     expect(called.isError).toBeFalsy();
-    expect(called.content[0].text).toBe("ran:gamma");
+    expect(required(called.content[0]).text).toBe("ran:gamma");
   });
 
   it("never exposes a partial catalog when a later page fails, and keeps the stale fallback", async () => {
@@ -964,7 +967,7 @@ describe("paginated catalogs through the discovery path", () => {
     const listed = await createMetaTools(registry, BASE).listConnectors({
       probe: true,
     });
-    const entry = JSON.parse(listed.content[0].text).connectors[0];
+    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
 
     expect(entry).toMatchObject({
       status: "auth_required",
@@ -986,7 +989,7 @@ describe("paginated catalogs through the discovery path", () => {
       makeRegistry([connector]),
       BASE,
     ).listConnectors({ probe: true });
-    const entry = JSON.parse(listed.content[0].text).connectors[0];
+    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
 
     expect(entry.status).toBe("error");
     expect(entry.authorizationUrl).toBeUndefined();
@@ -1003,7 +1006,7 @@ describe("paginated catalogs through the discovery path", () => {
     const listed = await createMetaTools(registry, BASE).listConnectors({
       probe: true,
     });
-    const entry = JSON.parse(listed.content[0].text).connectors[0];
+    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
 
     expect(entry.status).toBe("error");
     expect(entry.message).toMatch(/pagination chain loops/);

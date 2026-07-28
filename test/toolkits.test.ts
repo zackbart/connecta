@@ -19,7 +19,7 @@ import type {
   InboundAuth,
   Logger,
 } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "test-token-123";
@@ -130,11 +130,11 @@ function ghostMetaTools(connectors: Connector[]) {
 }
 
 function textOf(result: { content: { text: string }[] }): any {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(required(result.content[0]).text);
 }
 
 function rawText(result: { content: { text: string }[] }): string {
-  return result.content[0].text;
+  return required(result.content[0]).text;
 }
 
 describe("toolkit config validation", () => {
@@ -319,7 +319,7 @@ describe("toolkit config validation", () => {
 
 describe("toolkit scoping: list_connectors", () => {
   it("lists only in-scope connectors", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const out = textOf(await mt.listConnectors({ probe: false }));
     expect(out.connectors.map((c: { id: string }) => c.id)).toEqual([
       "zendesk",
@@ -340,7 +340,7 @@ describe("toolkit scoping: list_connectors", () => {
 
 describe("toolkit scoping: search_tools", () => {
   it("returns only in-scope connectors and tools", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const out = textOf(await mt.searchTools({}));
     expect(out.connectors.map((c: { id: string }) => c.id).sort()).toEqual([
       "notion",
@@ -372,7 +372,7 @@ describe("toolkit scoping: search_tools", () => {
   });
 
   it("answers an out-of-scope connector filter exactly as an unknown one", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const scopedOut = await mt.searchTools({ connector: "gmail" });
     const ghostOut = await ghostMetaTools([zendesk(), notion()]).searchTools({
       connector: "gmail",
@@ -382,7 +382,7 @@ describe("toolkit scoping: search_tools", () => {
   });
 
   it("omits the guide pointer for an out-of-scope guided connector", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const out = textOf(await mt.searchTools({}));
     expect(JSON.stringify(out)).not.toContain("connector:gmail");
     // The in-scope guide is still advertised.
@@ -392,7 +392,7 @@ describe("toolkit scoping: search_tools", () => {
 
 describe("toolkit scoping: describe_tools", () => {
   it("errors on an out-of-scope address exactly as on an unknown connector", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const scopedOut = await mt.describeTools({
       addresses: ["gmail.list_messages"],
     });
@@ -425,7 +425,7 @@ describe("toolkit scoping: describe_tools", () => {
   });
 
   it("still describes in-scope tools", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const out = textOf(
       await mt.describeTools({ addresses: ["zendesk.search_tickets"] }),
     );
@@ -435,7 +435,7 @@ describe("toolkit scoping: describe_tools", () => {
 
 describe("toolkit scoping: call_tool and call_destructive_tool", () => {
   it("fails an out-of-scope connector call exactly as an unknown address", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const scopedOut = await mt.callTool({ address: "gmail.list_messages" });
     const ghostOut = await ghostMetaTools([zendesk(), notion()]).callTool({
       address: "gmail.list_messages",
@@ -446,7 +446,7 @@ describe("toolkit scoping: call_tool and call_destructive_tool", () => {
   });
 
   it("reports the same error code for out-of-scope and unknown addresses", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const hidden = textOf(
       await mt.callTool({
         address: "gmail.list_messages",
@@ -497,7 +497,7 @@ describe("toolkit scoping: call_tool and call_destructive_tool", () => {
   });
 
   it("still calls in-scope tools, including destructive ones", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     expect(
       textOf(
         await mt.callTool({
@@ -519,7 +519,7 @@ describe("toolkit scoping: call_tool and call_destructive_tool", () => {
 
 describe("toolkit scoping: batch_call", () => {
   it("mixes in-scope success with out-of-scope failures that look unknown", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const out = textOf(
       await mt.batchCall({
         calls: [
@@ -556,7 +556,7 @@ describe("toolkit scoping: batch_call", () => {
 
 describe("toolkit scoping: authorize_connector", () => {
   it("errors on an out-of-scope connector exactly as on an unknown one", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const scopedOut = await mt.authorizeConnector({ connector: "gmail" });
     const ghostOut = await ghostMetaTools([
       zendesk(),
@@ -570,14 +570,14 @@ describe("toolkit scoping: authorize_connector", () => {
 
 describe("toolkit scoping: skills", () => {
   it("lists only in-scope connector guides", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const listed = rawText(await mt.skills({}));
     expect(listed).toContain("connector:zendesk");
     expect(listed).not.toContain("connector:gmail");
   });
 
   it("errors on an out-of-scope guide exactly as on an unknown connector", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     const scopedOut = await mt.skills({ name: "connector:gmail" });
     const ghostOut = await ghostMetaTools([zendesk(), notion()]).skills({
       name: "connector:gmail",
@@ -595,7 +595,7 @@ describe("toolkit scoping: skills", () => {
   });
 
   it("keeps the guides section when an in-scope connector has a guide", async () => {
-    const { mt } = scopedMetaTools("support", TOOLKITS.support);
+    const { mt } = scopedMetaTools("support", required(TOOLKITS.support));
     expect(rawText(await mt.skills({ name: "usage" }))).toContain(
       "## Per-connector guides",
     );
@@ -688,12 +688,12 @@ describe("toolkit scoping: execute_code host calls", () => {
   }
 
   it("declares lazy globals only for in-scope connectors", async () => {
-    const { view } = scopedMetaTools("support", TOOLKITS.support);
+    const { view } = scopedMetaTools("support", required(TOOLKITS.support));
     const list = await providers(view);
     expect(list.map((provider) => provider.name)).toEqual(["connecta"]);
-    expect(list[0].prelude).toContain('globalThis["zendesk"]');
-    expect(list[0].prelude).toContain('globalThis["notion"]');
-    expect(list[0].prelude).not.toContain('globalThis["gmail"]');
+    expect(required(list[0]).prelude).toContain('globalThis["zendesk"]');
+    expect(required(list[0]).prelude).toContain('globalThis["notion"]');
+    expect(required(list[0]).prelude).not.toContain('globalThis["gmail"]');
   });
 
   it("rejects out-of-scope tools through an in-scope lazy global", async () => {
@@ -703,21 +703,21 @@ describe("toolkit scoping: execute_code host calls", () => {
     });
     const connecta = connectaOf(await providers(view));
     await expect(
-      connecta.fns.__callNamespace("zendesk", "search_tickets", {}),
+      required(connecta.fns.__callNamespace)("zendesk", "search_tickets", {}),
     ).resolves.toEqual({ tickets: ["t-1"] });
     await expect(
-      connecta.fns.__callNamespace("zendesk", "get_ticket", {}),
+      required(connecta.fns.__callNamespace)("zendesk", "get_ticket", {}),
     ).rejects.toThrow('Unknown tool "get_ticket" on connector "zendesk"');
   });
 
   it("throws the unknown-address error for an out-of-scope address", async () => {
-    const { view } = scopedMetaTools("support", TOOLKITS.support);
+    const { view } = scopedMetaTools("support", required(TOOLKITS.support));
     const call = (await providers(view)).find((p) => p.name === "connecta")!.fns
       .call;
-    await expect(call("gmail.list_messages", {})).rejects.toThrow(
+    await expect(required(call)("gmail.list_messages", {})).rejects.toThrow(
       'Unknown address "gmail.list_messages"',
     );
-    await expect(call("nope.at_all", {})).rejects.toThrow(
+    await expect(required(call)("nope.at_all", {})).rejects.toThrow(
       'Unknown address "nope.at_all"',
     );
   });
@@ -729,37 +729,37 @@ describe("toolkit scoping: execute_code host calls", () => {
     });
     const call = (await providers(view)).find((p) => p.name === "connecta")!.fns
       .call;
-    await expect(call("zendesk.get_ticket", {})).rejects.toThrow(
+    await expect(required(call)("zendesk.get_ticket", {})).rejects.toThrow(
       'Unknown tool "get_ticket" on connector "zendesk"',
     );
-    await expect(call("zendesk.no_such_tool", {})).rejects.toThrow(
+    await expect(required(call)("zendesk.no_such_tool", {})).rejects.toThrow(
       'Unknown tool "no_such_tool" on connector "zendesk"',
     );
   });
 
   it("keeps in-scope host calls working", async () => {
-    const { view } = scopedMetaTools("support", TOOLKITS.support);
+    const { view } = scopedMetaTools("support", required(TOOLKITS.support));
     const connecta = connectaOf(await providers(view));
     await expect(
-      connecta.fns.__callNamespace("zendesk", "search_tickets", {}),
+      required(connecta.fns.__callNamespace)("zendesk", "search_tickets", {}),
     ).resolves.toEqual({ tickets: ["t-1"] });
   });
 
   it("hides out-of-scope tools from connecta.search and connecta.describe", async () => {
-    const { view } = scopedMetaTools("support", TOOLKITS.support);
+    const { view } = scopedMetaTools("support", required(TOOLKITS.support));
     const connecta = (await providers(view)).find(
       (p) => p.name === "connecta",
     )!;
-    const searched = (await connecta.fns.search({})) as {
+    const searched = (await required(connecta.fns.search)({})) as {
       tools: { address: string }[];
     };
     expect(searched.tools.every((t) => !t.address.startsWith("gmail."))).toBe(
       true,
     );
-    const described = (await connecta.fns.describe({
+    const described = (await required(connecta.fns.describe)({
       addresses: ["gmail.list_messages"],
     })) as { tools: { error?: string }[] };
-    expect(described.tools[0].error).toBe(
+    expect(required(described.tools[0]).error).toBe(
       'Unknown address "gmail.list_messages"',
     );
   });
@@ -1028,7 +1028,7 @@ describe("toolkit scoping: shared catalog cache", () => {
   });
 
   it("treats an out-of-scope connector as unregistered on every registry read", async () => {
-    const { view, registry } = scopedMetaTools("support", TOOLKITS.support);
+    const { view, registry } = scopedMetaTools("support", required(TOOLKITS.support));
     await expect(view.getTools("gmail", BASE)).rejects.toThrow(
       'Unknown connector "gmail"',
     );
@@ -1424,10 +1424,10 @@ describe("/mcp toolkit selection", () => {
       { token: TOKEN },
     );
     expect(events).toHaveLength(2);
-    expect(events[0].address).toBe("zendesk.search_tickets");
-    expect(events[0].outcome).toBe("success");
-    expect(events[0].toolkitId).toBe("support");
-    expect(events[1].toolkitId).toBeUndefined();
+    expect(required(events[0]).address).toBe("zendesk.search_tickets");
+    expect(required(events[0]).outcome).toBe("success");
+    expect(required(events[0]).toolkitId).toBe("support");
+    expect(required(events[1]).toolkitId).toBeUndefined();
   });
 
   it("hands execute_code the scoped view when an executor is configured", async () => {
@@ -1457,14 +1457,14 @@ describe("/mcp toolkit selection", () => {
       ["connecta"],
       ["connecta"],
     ]);
-    expect(seen[0][0].prelude).toContain('globalThis["zendesk"]');
-    expect(seen[0][0].prelude).toContain('globalThis["notion"]');
-    expect(seen[0][0].prelude).not.toContain('globalThis["gmail"]');
-    expect(seen[1][0].prelude).toContain('globalThis["gmail"]');
-    expect(seen[1][0].prelude).not.toContain('globalThis["zendesk"]');
-    expect(seen[2][0].prelude).toContain('globalThis["zendesk"]');
-    expect(seen[2][0].prelude).toContain('globalThis["notion"]');
-    expect(seen[2][0].prelude).toContain('globalThis["gmail"]');
+    expect(required(required(seen[0])[0]).prelude).toContain('globalThis["zendesk"]');
+    expect(required(required(seen[0])[0]).prelude).toContain('globalThis["notion"]');
+    expect(required(required(seen[0])[0]).prelude).not.toContain('globalThis["gmail"]');
+    expect(required(required(seen[1])[0]).prelude).toContain('globalThis["gmail"]');
+    expect(required(required(seen[1])[0]).prelude).not.toContain('globalThis["zendesk"]');
+    expect(required(required(seen[2])[0]).prelude).toContain('globalThis["zendesk"]');
+    expect(required(required(seen[2])[0]).prelude).toContain('globalThis["notion"]');
+    expect(required(required(seen[2])[0]).prelude).toContain('globalThis["gmail"]');
   });
 
   it("leaves /health and /ui/data unscoped operator surfaces", async () => {
@@ -1892,8 +1892,8 @@ describe("/mcp toolkit binding", () => {
       { token: SUPPORT_TOKEN, toolkit: "support" },
     );
     expect(events).toHaveLength(1);
-    expect(events[0].toolkitId).toBe("support");
-    expect(events[0].actor).toEqual({ kind: "bearer", id: "support-team" });
+    expect(required(events[0]).toolkitId).toBe("support");
+    expect(required(events[0]).actor).toEqual({ kind: "bearer", id: "support-team" });
   });
 
   it("leaves an unbound identity in the same deployment self-service", async () => {
@@ -2183,7 +2183,7 @@ describe("toolkit startup validation through createConnecta", () => {
       expect(() =>
         createConnecta({
           connectors: ORG_CONNECTORS(),
-          toolkits,
+          ...(toolkits !== undefined ? { toolkits } : {}),
           auth: bearerToken(TOKEN, { toolkits: ["support"] }),
           storage: memoryStorage(),
           logger: silentLogger,

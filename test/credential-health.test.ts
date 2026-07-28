@@ -17,7 +17,7 @@ import type {
   ConnectorStatus,
   ConnectorStatusState,
 } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "test-token-123";
@@ -27,7 +27,7 @@ const WORKERD =
   navigator.userAgent?.includes("Cloudflare-Workers");
 
 function textOf(result: { content: { text: string }[] }): any {
-  return JSON.parse(result.content[0].text);
+  return JSON.parse(required(result.content[0]).text);
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -216,7 +216,7 @@ describe("credential liveness checks", () => {
     const [outcome] = await registry.checkCredentialHealth(BASE, {
       force: true,
     });
-    expect(outcome.record).toMatchObject({
+    expect(required(outcome).record).toMatchObject({
       state: "auth_required",
       authorizationUrl: "https://auth.example/authorize?x=1",
     });
@@ -279,7 +279,7 @@ describe("credential liveness checks", () => {
 
     expect(linear.calls.status).toBe(1);
     expect(second[0]).toMatchObject({ skipped: "fresh" });
-    expect(second[0].record).toMatchObject({ state: "ok" });
+    expect(required(second[0]).record).toMatchObject({ state: "ok" });
     expect(third[0]).toMatchObject({ skipped: "fresh" });
 
     // Repeated status READS never probe either, however many there are.
@@ -376,18 +376,18 @@ describe("credential liveness checks", () => {
 
     await vault.set("resend", "token-abcdefghij", "user_1");
     const [ok] = await registry.checkCredentialHealth(BASE);
-    expect(ok.record).toMatchObject({ state: "ok", message: "Token accepted." });
+    expect(required(ok).record).toMatchObject({ state: "ok", message: "Token accepted." });
 
     resend.valid = false;
     const [revoked] = await registry.checkCredentialHealth(BASE, {
       force: true,
     });
-    expect(revoked.record).toMatchObject({
+    expect(required(revoked).record).toMatchObject({
       state: "auth_required",
       message: "Token was revoked.",
     });
     // No consent URL exists for a vault credential — /ui's form replaces it.
-    expect(revoked.record?.authorizationUrl).toBeUndefined();
+    expect(required(revoked).record?.authorizationUrl).toBeUndefined();
     expect(resend.calls.callTool).toBe(0);
 
     const entry = await cachedStatus(registry, "resend");
@@ -439,7 +439,7 @@ describe("credential liveness checks", () => {
         message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
       },
     });
-    expect(outcome.skipped).toBeUndefined();
+    expect(required(outcome).skipped).toBeUndefined();
     expect(await registry.credentialHealthFor("drift")).toMatchObject({
       state: "auth_required",
       message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -502,7 +502,7 @@ describe("credential liveness checks", () => {
         message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
       },
     });
-    expect(outcome.skipped).toBeUndefined();
+    expect(required(outcome).skipped).toBeUndefined();
     expect(await registry.credentialHealthFor("drift")).toMatchObject({
       state: "auth_required",
       message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -627,7 +627,7 @@ describe("credential liveness checks", () => {
     const [forced] = await registry.checkCredentialHealth(BASE, {
       force: true,
     });
-    expect(forced.skipped).toBeUndefined();
+    expect(required(forced).skipped).toBeUndefined();
     expect(writes.filter((k) => k.startsWith("credhealth:"))).toEqual([
       "credhealth:drift",
     ]);
@@ -648,8 +648,8 @@ describe("credential liveness checks", () => {
 
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
-    expect(outcome.record).toMatchObject({ state: "auth_required" });
-    expect(outcome.record?.message).toMatch(/could not be decrypted/);
+    expect(required(outcome).record).toMatchObject({ state: "auth_required" });
+    expect(required(outcome).record?.message).toMatch(/could not be decrypted/);
     expect(resend.calls.test).toBe(0);
   });
 
@@ -663,11 +663,11 @@ describe("credential liveness checks", () => {
 
     const results = await registry.checkCredentialHealth(BASE);
 
-    expect(results[0].record).toMatchObject({ state: "error" });
-    expect(results[0].record?.message).toMatch(
+    expect(required(results[0]).record).toMatchObject({ state: "error" });
+    expect(required(results[0]).record?.message).toMatch(
       /credential check of "slow" timed out after 10ms/,
     );
-    expect(results[1].record).toMatchObject({ state: "ok" });
+    expect(required(results[1]).record).toMatchObject({ state: "ok" });
   });
 
   it("records a thrown check as an error verdict instead of rejecting", async () => {
@@ -679,7 +679,7 @@ describe("credential liveness checks", () => {
 
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
-    expect(outcome.record).toMatchObject({ state: "error", message: "kaboom" });
+    expect(required(outcome).record).toMatchObject({ state: "error", message: "kaboom" });
   });
 
   it("bounds the fan-out to `concurrency` checks at a time", async () => {
@@ -769,7 +769,7 @@ describe("credential liveness checks", () => {
     // not flip a working connector to error for a whole interval.
     slow.status = () => new Promise<ConnectorStatus>(() => {});
     const [outcome] = await registry.checkCredentialHealth(BASE);
-    expect(outcome.record).toMatchObject({ state: "error" });
+    expect(required(outcome).record).toMatchObject({ state: "error" });
 
     const entry = await cachedStatus(registry, "slow");
 
@@ -826,8 +826,8 @@ describe("credential liveness checks", () => {
     // The verdict it formed is about a credential that no longer exists, so it
     // is reported to the caller but never stored: no stale auth_required, and
     // no stale consent URL, surviving the re-authorization that fixed it.
-    expect(outcome.discarded).toBe(true);
-    expect(outcome.record).toMatchObject({ state: "auth_required" });
+    expect(required(outcome).discarded).toBe(true);
+    expect(required(outcome).record).toMatchObject({ state: "auth_required" });
     expect(await registry.credentialHealthFor("linear")).toBeUndefined();
     expect((await cachedStatus(registry, "linear")).status).toBe("unknown");
   });
@@ -839,7 +839,7 @@ describe("credential liveness checks", () => {
 
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
-    expect(outcome.discarded).toBeUndefined();
+    expect(required(outcome).discarded).toBeUndefined();
     expect(await registry.credentialHealthFor("linear")).toMatchObject({
       state: "auth_required",
     });
@@ -940,7 +940,7 @@ describe("credential liveness checks", () => {
 
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
-    expect(outcome.record).toMatchObject({
+    expect(required(outcome).record).toMatchObject({
       state: "ok",
       message: "Both fields accepted.",
     });
@@ -1008,7 +1008,7 @@ describe("credential liveness checks", () => {
 
     const [outcome] = await registry.checkCredentialHealth(BASE);
 
-    expect(outcome.record).toMatchObject({ state: "ok" });
+    expect(required(outcome).record).toMatchObject({ state: "ok" });
     expect(seen).toEqual(["token-abcdefghij"]);
     expect(named).toBe(0);
   });
@@ -1049,7 +1049,7 @@ describe("credential liveness checks", () => {
 
     // The unusable hook is skipped, not the connector: `status()` is a question
     // the connector answers about itself, and never involves the shape mismatch.
-    expect(outcome.record).toMatchObject({
+    expect(required(outcome).record).toMatchObject({
       state: "auth_required",
       message: "Grant expired.",
     });

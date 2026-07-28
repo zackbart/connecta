@@ -67,13 +67,13 @@ interface ActiveRun {
 }
 
 interface ChildSlot {
-  child?: ChildProcess;
-  ready?: Promise<void>;
-  resolveReady?: () => void;
-  rejectReady?: (error: Error) => void;
-  readyTimer?: ReturnType<typeof setTimeout>;
-  active?: ActiveRun;
-  expectedExit?: ChildProcess;
+  child?: ChildProcess | undefined;
+  ready?: Promise<void> | undefined;
+  resolveReady?: (() => void) | undefined;
+  rejectReady?: ((error: Error) => void) | undefined;
+  readyTimer?: ReturnType<typeof setTimeout> | undefined;
+  active?: ActiveRun | undefined;
+  expectedExit?: ChildProcess | undefined;
   consecutiveCrashes: number;
   notBefore: number;
 }

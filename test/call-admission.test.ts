@@ -13,7 +13,7 @@ import type {
   ConnectorCallAdmissionPolicy,
   ToolDef,
 } from "../src/types.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const READ_TOOL: ToolDef = {
@@ -199,7 +199,9 @@ describe("connector call admission controller", () => {
       "limited",
       configured,
     );
-    const mutable = configured.rules[0] as {
+    // Deliberately violate the readonly config surface to prove the controller
+    // took a defensive snapshot rather than retaining caller-owned objects.
+    const mutable = required(configured.rules[0]) as unknown as {
       maxConcurrency?: number;
       budget?: { maxCalls: number; windowMs: number };
       partitionKey?: () => string;
@@ -334,7 +336,7 @@ describe("connector call admission integration", () => {
     await waitFor(() => releases.length === 2);
     releases.splice(0, 2).forEach((release) => release());
 
-    const result = JSON.parse((await batch).content[0].text) as {
+    const result = JSON.parse(required((await batch).content[0]).text) as {
       results: Array<{ data: { index: number } }>;
     };
     expect(maxActive).toBe(2);
@@ -377,13 +379,13 @@ describe("connector call admission integration", () => {
       silentLogger,
     );
     const connecta = providers.find(({ name }) => name === "connecta")!;
-    const codeMode = connecta.fns.__callNamespace(
+    const codeMode = required(connecta.fns.__callNamespace)(
       "limited",
       "read",
       { source: "code" },
     );
     await waitFor(
-      () => registry.callAdmissionSnapshot().limited.queued === 1,
+      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
     );
 
     releases.shift()!();
@@ -424,7 +426,7 @@ describe("connector call admission integration", () => {
     });
 
     await waitFor(
-      () => registry.callAdmissionSnapshot().limited.queued === 1,
+      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
     );
     basePermit.release();
     (await scopedPermit).release();
@@ -458,7 +460,7 @@ describe("connector call admission integration", () => {
       address: "limited.read",
     });
     await waitFor(
-      () => registry.callAdmissionSnapshot().limited.active === 1,
+      () => required(registry.callAdmissionSnapshot().limited).active === 1,
     );
     const controller = new AbortController();
     const queued = createMetaTools(registry, BASE, {
@@ -468,11 +470,11 @@ describe("connector call admission integration", () => {
       resultMode: "value",
     });
     await waitFor(
-      () => registry.callAdmissionSnapshot().limited.queued === 1,
+      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
     );
     controller.abort(new Error("caller left"));
 
-    expect(JSON.parse((await queued).content[0].text)).toMatchObject({
+    expect(JSON.parse(required((await queued).content[0]).text)).toMatchObject({
       ok: false,
       error: { code: "cancelled", retryable: false },
       attempts: 1,
@@ -538,7 +540,7 @@ describe("connector call admission integration", () => {
     await waitFor(() => calls === 1);
     controller.abort(new Error("caller left"));
 
-    expect(JSON.parse((await pending).content[0].text)).toMatchObject({
+    expect(JSON.parse(required((await pending).content[0]).text)).toMatchObject({
       ok: false,
       error: { code: "cancelled", retryable: false },
       attempts: 1,
@@ -587,7 +589,7 @@ describe("connector call admission integration", () => {
       resultMode: "value",
     });
 
-    expect(JSON.parse(result.content[0].text)).toMatchObject({
+    expect(JSON.parse(required(result.content[0]).text)).toMatchObject({
       ok: false,
       error: { code: "cancelled", retryable: false },
       attempts: 1,
@@ -699,7 +701,7 @@ describe("connector call admission integration", () => {
         resultMode: "value",
       });
       await vi.advanceTimersByTimeAsync(50);
-      const body = JSON.parse((await retried).content[0].text) as {
+      const body = JSON.parse(required((await retried).content[0]).text) as {
         ok: boolean;
         attempts: number;
       };
@@ -714,7 +716,7 @@ describe("connector call admission integration", () => {
         address: "budgeted.read",
         resultMode: "value",
       });
-      expect(JSON.parse(refused.content[0].text)).toMatchObject({
+      expect(JSON.parse(required(refused.content[0]).text)).toMatchObject({
         ok: false,
         error: {
           code: "rate_limited",

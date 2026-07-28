@@ -13,7 +13,7 @@ import type {
   Logger,
   ToolDef,
 } from "../src/types.js";
-import {
+import { required,
   brokenConnector,
   calcConnector,
   makeRegistry,
@@ -471,11 +471,11 @@ describe("tool cache TTL", () => {
     await registry.invalidateStored("racing");
     release();
 
-    expect((await oldRefresh)[0].name).toBe("old_credential_tool");
+    expect(required((await oldRefresh)[0]).name).toBe("old_credential_tool");
     expect(registry.peekTools("racing")).toBeUndefined();
     expect(await storage.get("catalog:racing")).toBeNull();
 
-    expect((await registry.getTools("racing", BASE))[0].name).toBe(
+    expect(required((await registry.getTools("racing", BASE))[0]).name).toBe(
       "new_credential_tool",
     );
     expect(await readPersistedTools(storage, "racing")).toEqual([
@@ -509,7 +509,7 @@ describe("tool cache TTL", () => {
       logger: silentLogger,
       toolCacheTtlSeconds: 300,
     });
-    expect((await first.getTools("persisted", BASE))[0].annotations).toEqual({
+    expect(required((await first.getTools("persisted", BASE))[0]).annotations).toEqual({
       readOnlyHint: true,
     });
 
@@ -518,7 +518,7 @@ describe("tool cache TTL", () => {
       logger: silentLogger,
       toolCacheTtlSeconds: 300,
     });
-    expect((await cold.getTools("persisted", BASE))[0].name).toBe("read");
+    expect(required((await cold.getTools("persisted", BASE))[0]).name).toBe("read");
     expect(calls).toBe(1);
   });
 
@@ -1003,9 +1003,9 @@ describe("tool cache TTL", () => {
 
     const mutations: ToolDef[][] = [
       [...tools, { name: "second" }],
-      [{ ...tools[0], name: "renamed" }],
-      [{ ...tools[0], inputSchema: { type: "string" } }],
-      [{ ...tools[0], annotations: { readOnlyHint: false } }],
+      [{ ...required(tools[0]), name: "renamed" }],
+      [{ ...required(tools[0]), inputSchema: { type: "string" } }],
+      [{ ...required(tools[0]), annotations: { readOnlyHint: false } }],
       [],
     ];
     for (const mutation of mutations) {
@@ -1070,7 +1070,7 @@ describe("tool cache TTL", () => {
       await registry.getTools("stale", BASE);
       fail = true;
       vi.advanceTimersByTime(2_000);
-      expect((await registry.getTools("stale", BASE))[0].name).toBe(
+      expect(required((await registry.getTools("stale", BASE))[0]).name).toBe(
         "still_here",
       );
     } finally {
@@ -1113,12 +1113,12 @@ describe("tool cache TTL", () => {
       },
     });
 
-    expect((await registry.getTools("resilient", BASE))[0].name).toBe("read");
-    expect((await registry.getTools("resilient", BASE))[0].name).toBe("read");
+    expect(required((await registry.getTools("resilient", BASE))[0]).name).toBe("read");
+    expect(required((await registry.getTools("resilient", BASE))[0]).name).toBe("read");
     expect(calls).toBe(1);
     await expect(registry.invalidateStored("resilient")).resolves.toBeUndefined();
     expect(deletes).toBe(1);
-    expect((await registry.getTools("resilient", BASE))[0].name).toBe("read");
+    expect(required((await registry.getTools("resilient", BASE))[0]).name).toBe("read");
     expect(calls).toBe(2);
     expect(warnings.some((warning) => warning.includes("catalog read failed"))).toBe(
       true,

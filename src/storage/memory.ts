@@ -24,7 +24,9 @@ export function memoryStorage(): KVStorage {
     async set(key, value, opts) {
       map.set(key, {
         value,
-        exp: opts?.ttlSeconds ? Date.now() + opts.ttlSeconds * 1000 : undefined,
+        ...(opts?.ttlSeconds
+          ? { exp: Date.now() + opts.ttlSeconds * 1000 }
+          : {}),
       });
     },
     async delete(key) {

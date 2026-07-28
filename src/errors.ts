@@ -49,7 +49,7 @@ export class ConnectorCallError extends Error {
    * the assignment would not keep it off the instance. Keeping the window out
    * of the wire format is `classifyCallError`'s job, not this constructor's.
    */
-  readonly retryAfterMs?: number;
+  readonly retryAfterMs: number | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,

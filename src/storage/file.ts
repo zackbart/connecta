@@ -104,7 +104,9 @@ export function fileStorage(
     async set(key, value, opts) {
       data[key] = {
         value,
-        exp: opts?.ttlSeconds ? Date.now() + opts.ttlSeconds * 1000 : undefined,
+        ...(opts?.ttlSeconds
+          ? { exp: Date.now() + opts.ttlSeconds * 1000 }
+          : {}),
       };
       persist();
     },

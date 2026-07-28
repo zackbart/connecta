@@ -3,7 +3,7 @@ import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
 import type { ConnectorContext, Logger } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
+import { required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -213,7 +213,7 @@ describe("api() argument validation", () => {
       got: 2,
     });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0][0]).toContain("refy.broken_schema");
+    expect(required(warn.mock.calls[0])[0]).toContain("refy.broken_schema");
   });
 
   it("strictValidation rejects a call whose schema the validator cannot evaluate", async () => {

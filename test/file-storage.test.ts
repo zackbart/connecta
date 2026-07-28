@@ -1,3 +1,4 @@
+import { required } from "./helpers.js";
 import {
   chmodSync,
   mkdtempSync,
@@ -71,7 +72,7 @@ describe("fileStorage", () => {
       f.includes(".corrupt-"),
     );
     expect(quarantined).toHaveLength(1);
-    expect(readFileSync(join(dir, quarantined[0]), "utf8")).toBe("{ not json");
+    expect(readFileSync(join(dir, required(quarantined[0])), "utf8")).toBe("{ not json");
 
     // And the instance still works, from empty state.
     await store.set("k", "v");
@@ -117,7 +118,7 @@ describe("fileStorage", () => {
     });
 
     expect(error).toHaveBeenCalledOnce();
-    expect(error.mock.calls[0][0]).toContain("not valid JSON");
+    expect(required(error.mock.calls[0])[0]).toContain("not valid JSON");
     expect(consoleError).not.toHaveBeenCalled();
   });
 });

@@ -6,6 +6,8 @@
     "lib": ["ES2022"],
     "types": ["@cloudflare/workers-types", "node"],
     "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
     "noUnusedLocals": true,
     "noImplicitOverride": true,
     "noFallthroughCasesInSwitch": true,
