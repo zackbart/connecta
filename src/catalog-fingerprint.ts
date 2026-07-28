@@ -6,8 +6,29 @@ export interface CatalogSnapshot {
   tools: ToolDef[];
   /** SHA-256 over the exact serialized tool array, prefixed with its size. */
   fingerprint: string;
-  /** Reused by persistence so the full catalog is serialized only once. */
-  serializedTools: string;
+  /** UTF-8 form reused by hashing, size enforcement, and chunking. */
+  serializedBytes: Uint8Array;
+}
+
+async function fingerprintBytes(bytes: Uint8Array): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", bytes),
+  );
+  const hex = [...digest]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+  return `sha256:${bytes.byteLength}:${hex}`;
+}
+
+/** Fingerprint an already serialized catalog without parsing/reserializing it. */
+export async function fingerprintSerializedCatalog(
+  serializedTools: string,
+): Promise<{ fingerprint: string; byteLength: number }> {
+  const bytes = encoder.encode(serializedTools);
+  return {
+    fingerprint: await fingerprintBytes(bytes),
+    byteLength: bytes.byteLength,
+  };
 }
 
 /**
@@ -23,15 +44,9 @@ export async function snapshotCatalog(
     throw new TypeError("Tool catalog is not JSON-serializable.");
   }
   const bytes = encoder.encode(serializedTools);
-  const digest = new Uint8Array(
-    await crypto.subtle.digest("SHA-256", bytes),
-  );
-  const hex = [...digest]
-    .map((byte) => byte.toString(16).padStart(2, "0"))
-    .join("");
   return {
     tools,
-    fingerprint: `sha256:${bytes.byteLength}:${hex}`,
-    serializedTools,
+    fingerprint: await fingerprintBytes(bytes),
+    serializedBytes: bytes,
   };
 }

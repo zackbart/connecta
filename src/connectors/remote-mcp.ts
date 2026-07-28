@@ -9,6 +9,7 @@ import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
 import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
 import { z } from "zod";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
+import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { ConnectorCallError } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
@@ -109,18 +110,16 @@ const TERMINATE_SESSION_BUDGET_MS = 1_000;
  * cap the bytes a caller can be made to hold, not the number of round trips it
  * took to get them.
  */
-const MAX_TOOLS = 100_000;
-
 /**
  * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
  * the primary defense.
  *
  * The walk terminates on its own well before this: a cursor handed back twice
  * is a definite loop, two consecutive pages that add no new tools are a server
- * going nowhere, and MAX_TOOLS caps what any of it can accumulate. This exists
- * only so the loop is finite even if a downstream somehow satisfies all three
- * forever on a path with no discovery deadline. Set high enough that no honest
- * server reaches it.
+ * going nowhere, and MAX_CATALOG_TOOLS caps what any of it can accumulate.
+ * This exists only so the loop is finite even if a downstream somehow
+ * satisfies all three forever on a path with no discovery deadline. Set high
+ * enough that no honest server reaches it.
  */
 const MAX_TOOL_PAGES = 10_000;
 
@@ -830,9 +829,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           }
           // Checked here rather than on arrival: this bounds what a *walk* may
           // accumulate; a one-page server was always free to send its page.
-          if (listed.length > MAX_TOOLS) {
+          if (listed.length > MAX_CATALOG_TOOLS) {
             throw new Error(
-              `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_TOOLS}-tool ceiling one catalog refresh will collect.`,
+              `Connector "${id}" advertised further tools/list pages past ${listed.length} tools, over the ${MAX_CATALOG_TOOLS}-tool ceiling one catalog refresh will collect.`,
             );
           }
           // Opaque by contract: handed straight back, never parsed, rewritten,
