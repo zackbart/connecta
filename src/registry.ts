@@ -895,6 +895,10 @@ export class Registry implements RegistryView {
     const tools = await connector.listTools(
       this.contextFor(id, baseUrl, requestScope, callOptions),
     );
+    // The caller that began this refresh may still use its result, but a
+    // credential/OAuth change that landed while listTools was in flight means
+    // the listing must not enter either shared cache layer.
+    if (generation !== this.catalogGeneration(id)) return tools;
     if (tools.length > MAX_CATALOG_TOOLS) {
       const message =
         `Connector "${id}" returned ${tools.length} tools, over the ` +
@@ -902,12 +906,9 @@ export class Registry implements RegistryView {
       this.opts.logger.warn(`[connecta] ${message}`);
       throw new Error(message);
     }
-    // The caller that began this refresh may still use its result, but a
-    // credential/OAuth change that landed while listTools was in flight means
-    // the listing must not enter either shared cache layer.
-    if (generation !== this.catalogGeneration(id)) return tools;
     const previous = this.cache.get(id);
     const snapshot = await snapshotCatalog(tools);
+    if (generation !== this.catalogGeneration(id)) return tools;
     if (snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
       const message =
         `Connector "${id}" returned a ${snapshot.serializedBytes.byteLength}-byte ` +
@@ -916,7 +917,6 @@ export class Registry implements RegistryView {
       this.opts.logger.warn(`[connecta] ${message}`);
       throw new Error(message);
     }
-    if (generation !== this.catalogGeneration(id)) return tools;
     const now = Date.now();
     const catalogChanged =
       !previous || previous.fingerprint !== snapshot.fingerprint;
