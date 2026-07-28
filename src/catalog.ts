@@ -23,6 +23,14 @@ interface SearchDocument {
   description: string;
 }
 
+export type LexicalMatchMode = "all" | "partial";
+
+export interface RankedTool {
+  tool: ToolDef;
+  score: number;
+  order: number;
+}
+
 const searchDocuments = new WeakMap<ToolDef[], SearchDocument[]>();
 
 function documentsFor(tools: ToolDef[]): SearchDocument[] {
@@ -42,10 +50,21 @@ function scoreDocument(
   doc: SearchDocument,
   phrase: string,
   terms: string[],
+  mode: LexicalMatchMode,
 ): number | null {
   if (!phrase) return 0;
   const haystack = `${doc.name} ${doc.description}`;
-  if (!terms.every((term) => haystack.includes(term))) return null;
+  const matchedTerms = terms.filter((term) => haystack.includes(term));
+  if (mode === "all" && matchedTerms.length !== terms.length) return null;
+  if (mode === "partial") {
+    if (matchedTerms.length === 0) return null;
+    const nameMatches = matchedTerms.filter((term) =>
+      doc.name.includes(term),
+    ).length;
+    // Coverage wins first, then the number of those terms found in the tool
+    // name. Catalog order breaks the remaining ties at the caller.
+    return matchedTerms.length * 1_000 + nameMatches;
+  }
 
   let score = 0;
   if (doc.name === phrase) score += 1_000;
@@ -64,12 +83,13 @@ function scoreDocument(
 export function rankTools(
   tools: ToolDef[],
   query: string,
-): Array<{ tool: ToolDef; score: number; order: number }> {
+  mode: LexicalMatchMode = "all",
+): RankedTool[] {
   const phrase = normalized(query);
   const terms = phrase.split(/\s+/).filter(Boolean);
-  const ranked: Array<{ tool: ToolDef; score: number; order: number }> = [];
+  const ranked: RankedTool[] = [];
   documentsFor(tools).forEach((doc, order) => {
-    const score = scoreDocument(doc, phrase, terms);
+    const score = scoreDocument(doc, phrase, terms, mode);
     if (score !== null) ranked.push({ tool: doc.tool, score, order });
   });
   return ranked;

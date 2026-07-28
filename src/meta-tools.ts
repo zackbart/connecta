@@ -1141,26 +1141,36 @@ export function createMetaTools(
           ),
         ),
       );
-      let orderBase = 0;
-      catalogs.forEach((catalog, connectorIndex) => {
-        const c = conns[connectorIndex];
-        if (catalog.status === "fulfilled") {
-          for (const ranked of rankTools(catalog.value, q)) {
-            matches.push({
-              connectorId: c.id,
-              connectorTitle: c.title,
-              connectorDescription: c.description,
-              ...(connectorGuide(c)
-                ? { connectorGuideSkill: connectorSkillName(c.id) }
-                : {}),
-              tool: ranked.tool,
-              score: ranked.score,
-              order: orderBase + ranked.order,
-            });
+      let matchMode: "all" | "partial" = "all";
+      const collectMatches = (mode: "all" | "partial") => {
+        matches.length = 0;
+        let orderBase = 0;
+        catalogs.forEach((catalog, connectorIndex) => {
+          const c = conns[connectorIndex];
+          if (catalog.status === "fulfilled") {
+            for (const ranked of rankTools(catalog.value, q, mode)) {
+              matches.push({
+                connectorId: c.id,
+                connectorTitle: c.title,
+                connectorDescription: c.description,
+                ...(connectorGuide(c)
+                  ? { connectorGuideSkill: connectorSkillName(c.id) }
+                  : {}),
+                tool: ranked.tool,
+                score: ranked.score,
+                order: orderBase + ranked.order,
+              });
+            }
           }
-        }
-        orderBase += catalog.status === "fulfilled" ? catalog.value.length : 1;
-      });
+          orderBase +=
+            catalog.status === "fulfilled" ? catalog.value.length : 1;
+        });
+      };
+      collectMatches("all");
+      if (q.trim() && matches.length === 0) {
+        matchMode = "partial";
+        collectMatches(matchMode);
+      }
       matches.sort((a, b) => b.score - a.score || a.order - b.order);
       const page = matches.slice(offset, offset + limit);
       const groups: {
@@ -1235,6 +1245,9 @@ export function createMetaTools(
           limit,
           hasMore: nextOffset !== undefined,
           ...(nextOffset !== undefined ? { nextOffset } : {}),
+          ...(matchMode === "partial" && matches.length > 0
+            ? { matchMode }
+            : {}),
         },
         "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
       );
