@@ -922,8 +922,10 @@ describe("status UI", () => {
 
   it("fences identity-scoped UI state by session and activity generation", () => {
     const html = renderUiHtml();
-    expect(html).toContain("let SESSION_GENERATION = 0;");
-    expect(html).toContain("let ACTIVITY_GENERATION = 0;");
+    // esbuild may lower module-scoped `let` to `var` while preserving the
+    // bundle's one-script lexical boundary.
+    expect(html).toMatch(/\b(?:let|var) SESSION_GENERATION = 0;/);
+    expect(html).toMatch(/\b(?:let|var) ACTIVITY_GENERATION = 0;/);
     expect(html).toContain("function clearIdentityState()");
     expect(html).toContain("SESSION_GENERATION += 1;");
     expect(html).toContain(

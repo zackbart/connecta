@@ -63,6 +63,7 @@
     "build": "npm run build:operator-ui && npm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.operator-ui.json --noEmit",
     "test": "vitest run",
+    "test:browser:install": "playwright install chromium",
     "test:browser": "playwright test",
     "test:node": "vitest run --project node",
     "test:workers": "vitest run --project workers",

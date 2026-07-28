@@ -16,7 +16,7 @@ const result = await build({
     script: "src/operator-ui/browser.ts",
     styles: "src/operator-ui/browser.css",
   },
-  format: "iife",
+  format: "esm",
   legalComments: "none",
   logLevel: "silent",
   minify: false,
