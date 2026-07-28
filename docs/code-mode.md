@@ -21,22 +21,25 @@ The model's code runs where the ONLY capabilities are:
 
 - **One global per connector** — every `<connectorId>.<toolName>` address is
   callable as `<connectorId>.<toolName>(args)` with a single args object.
+  These globals are lazy proxies: provider setup uses connector ids from the
+  registry but does not load any connector catalog. The catalog is resolved
+  only when code calls a property on that connector (and `Object.keys()` on a
+  connector global is consequently empty).
   Names are sanitized into JS identifiers: characters outside `[A-Za-z0-9_$]`
   become `_` (`my-service.get.thing` → `my_service.get_thing`), leading digits
   get a `_` prefix, reserved words a `_` suffix.
-  Only tools explicitly annotated `readOnlyHint: true` without a contradictory
-  `destructiveHint` are included in these globals.
+  A resolved tool still must be explicitly annotated `readOnlyHint: true`
+  without a contradictory `destructiveHint`.
 - **`connecta.call(address, args)` / `connecta.batch(calls)`** — raw-address
   read-only calls, with batch failures isolated per entry. One execution may
   make at most **20** host calls, a batch accepts at most **10**, and each host
   call has a **15-second** deadline. Ending or timing out the sandbox aborts
   outstanding host waits and signals cooperative connectors to cancel.
 - **`connecta.search(args)` / `connecta.describe(args)`** — inspect the
-  already-loaded catalog inside the same inbound request, so discovery and
-  execution can be orchestrated without extra MCP round trips. They use the
-  ordinary discovery policy: search pages contain at most 100 tools, describe
-  accepts at most 100 addresses, and either generated result is capped at
-  256,000 UTF-8 bytes.
+  request-local catalog on demand, so discovery and execution can be
+  orchestrated without extra MCP round trips. They use the ordinary discovery
+  policy: search pages contain at most 100 tools, describe accepts at most 100
+  addresses, and either generated result is capped at 256,000 UTF-8 bytes.
 - **`console.*`** — captured and returned as `logs`.
 
 No `fetch`, filesystem, env, timers, or imports. Tool calls return plain
@@ -66,7 +69,18 @@ interface Executor {
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   close?(): void | Promise<void>;
 }
+
+interface ExecutorProvider {
+  name: string;
+  fns: Record<string, (...args: unknown[]) => unknown>;
+  prelude?: string; // trusted, host-authored sandbox setup
+}
 ```
+
+Code mode passes one fixed `connecta` provider. Its optional trusted `prelude`
+creates the lazy connector globals before model-written code runs. This keeps
+the public `execute(code, providers)` shape structurally compatible with both
+known executors while avoiding one provider function per catalog tool.
 
 A bounded executor may additionally implement `acquire({ signal })` and return
 an `ExecutorLease`. The lease carries its own `execute()`; callers that already
@@ -151,12 +165,6 @@ Two known implementations:
   is why the executor can notice a promise that can never settle and fail fast
   with "execution stalled" instead of burning the whole timeout.
 
-  Direct connector namespaces are lazy Proxies, so setup creates one object per
-  connector rather than one generated closure per visible tool. Consequently
-  `Object.keys(github)` is empty, and an unknown function crosses the bridge
-  before failing with `Unknown function github.name`; neither behavior grants
-  authority. Both executors still forward arguments positionally.
-
   One serialized host result or complete guest call payload (namespace,
   function name, and arguments together) may be at most 256 KiB of UTF-8.
   Larger values fail that host call before entering the other process.
@@ -187,12 +195,19 @@ model-written and must be treated as hostile.
 
 ### Behavior details
 
-- Providers are built per call from the live registry: broken connectors are
-  skipped (same isolation as `search_tools`), and name collisions after
-  sanitization are logged and skipped (first wins). `connecta` is a reserved
-  namespace.
-- Bounded executors acquire before those providers are built, so queued calls
-  retain no catalogs or request-scoped connector closures.
+- Providers are built per call from the live registry, but setup performs no
+  connector catalog I/O. Broken connectors affect health only if code,
+  `connecta.search`, or `connecta.describe` actually exercises them.
+- Connector globals and their tool properties are lazy Proxies in both known
+  executors. `Object.keys(github)` is empty; an unknown property crosses the
+  fixed host bridge and fails with the ordinary unknown-tool error.
+- A connector namespace that collides with a reserved sandbox global, or two
+  connector ids that sanitize to the same global, fails setup with an explicit
+  error instead of silently dropping a connector. If two tool names sanitize
+  to the same property, that property fails with `ambiguous_tool_alias`;
+  `connecta.call()` with either exact address remains available.
+- Bounded executors acquire before providers are built, so queued calls retain
+  no catalogs or request-scoped invocation state.
 - Results are JSON-serialized and truncated at ~24k chars with an explicit
   marker telling the model to reduce data in code; logs are capped too.
 - A guest that awaits something that can never settle fails fast with an

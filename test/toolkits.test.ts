@@ -683,29 +683,31 @@ describe("toolkit scoping: execute_code host calls", () => {
     return buildSandboxProviders(view, BASE, silentLogger);
   }
 
-  function fnsOf(list: ExecutorProvider[], name: string) {
-    const provider = list.find((p) => p.name === name);
-    return provider ? Object.keys(provider.fns).sort() : undefined;
+  function connectaOf(list: ExecutorProvider[]) {
+    return list.find((provider) => provider.name === "connecta")!;
   }
 
-  it("exposes a global only for in-scope connectors", async () => {
+  it("declares lazy globals only for in-scope connectors", async () => {
     const { view } = scopedMetaTools("support", TOOLKITS.support);
     const list = await providers(view);
-    expect(list.map((p) => p.name).sort()).toEqual([
-      "connecta",
-      "notion",
-      "zendesk",
-    ]);
+    expect(list.map((provider) => provider.name)).toEqual(["connecta"]);
+    expect(list[0].prelude).toContain('globalThis["zendesk"]');
+    expect(list[0].prelude).toContain('globalThis["notion"]');
+    expect(list[0].prelude).not.toContain('globalThis["gmail"]');
   });
 
-  it("omits out-of-scope tools from an in-scope connector's global", async () => {
+  it("rejects out-of-scope tools through an in-scope lazy global", async () => {
     const { view } = scopedMetaTools("tickets", {
       connectors: ["zendesk"],
       includeTools: ["zendesk.search_tickets"],
     });
-    expect(fnsOf(await providers(view), "zendesk")).toEqual([
-      "search_tickets",
-    ]);
+    const connecta = connectaOf(await providers(view));
+    await expect(
+      connecta.fns.__callNamespace("zendesk", "search_tickets", {}),
+    ).resolves.toEqual({ tickets: ["t-1"] });
+    await expect(
+      connecta.fns.__callNamespace("zendesk", "get_ticket", {}),
+    ).rejects.toThrow('Unknown tool "get_ticket" on connector "zendesk"');
   });
 
   it("throws the unknown-address error for an out-of-scope address", async () => {
@@ -737,11 +739,10 @@ describe("toolkit scoping: execute_code host calls", () => {
 
   it("keeps in-scope host calls working", async () => {
     const { view } = scopedMetaTools("support", TOOLKITS.support);
-    const list = await providers(view);
-    const zendeskNs = list.find((p) => p.name === "zendesk")!;
-    await expect(zendeskNs.fns.search_tickets({})).resolves.toEqual({
-      tickets: ["t-1"],
-    });
+    const connecta = connectaOf(await providers(view));
+    await expect(
+      connecta.fns.__callNamespace("zendesk", "search_tickets", {}),
+    ).resolves.toEqual({ tickets: ["t-1"] });
   });
 
   it("hides out-of-scope tools from connecta.search and connecta.describe", async () => {
@@ -1451,18 +1452,19 @@ describe("/mcp toolkit selection", () => {
     await run("support");
     await run("exec");
     await run();
-    expect(seen[0].map((p) => p.name).sort()).toEqual([
-      "connecta",
-      "notion",
-      "zendesk",
+    expect(seen.map((providers) => providers.map((p) => p.name))).toEqual([
+      ["connecta"],
+      ["connecta"],
+      ["connecta"],
     ]);
-    expect(seen[1].map((p) => p.name).sort()).toEqual(["connecta", "gmail"]);
-    expect(seen[2].map((p) => p.name).sort()).toEqual([
-      "connecta",
-      "gmail",
-      "notion",
-      "zendesk",
-    ]);
+    expect(seen[0][0].prelude).toContain('globalThis["zendesk"]');
+    expect(seen[0][0].prelude).toContain('globalThis["notion"]');
+    expect(seen[0][0].prelude).not.toContain('globalThis["gmail"]');
+    expect(seen[1][0].prelude).toContain('globalThis["gmail"]');
+    expect(seen[1][0].prelude).not.toContain('globalThis["zendesk"]');
+    expect(seen[2][0].prelude).toContain('globalThis["zendesk"]');
+    expect(seen[2][0].prelude).toContain('globalThis["notion"]');
+    expect(seen[2][0].prelude).toContain('globalThis["gmail"]');
   });
 
   it("leaves /health and /ui/data unscoped operator surfaces", async () => {

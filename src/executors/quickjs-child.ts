@@ -37,7 +37,11 @@ function send(message: ChildToParentMessage): void {
   process.send(message);
 }
 
-function provider(name: string, jobId: number): ExecutorProvider {
+function provider(
+  name: string,
+  jobId: number,
+  prelude?: string,
+): ExecutorProvider {
   const functions = new Proxy(
     Object.create(null) as ExecutorProvider["fns"],
     {
@@ -72,7 +76,7 @@ function provider(name: string, jobId: number): ExecutorProvider {
           : undefined,
     },
   );
-  return { name, fns: functions };
+  return { name, fns: functions, ...(prelude ? { prelude } : {}) };
 }
 
 function fixedTransportFailure(message: string): ExecutionPayload {
@@ -90,8 +94,8 @@ async function run(payload: RunPayload): Promise<void> {
   }
   activeJobId = payload.id;
   try {
-    const providers = payload.providerNames.map((name) =>
-      provider(name, payload.id),
+    const providers = payload.providers.map(({ name, prelude }) =>
+      provider(name, payload.id, prelude),
     );
     const raw = await executeQuickJs(
       payload.code,

@@ -6,6 +6,7 @@ import {
 import { isCallAdmissionError } from "./call-admission.js";
 import {
   CatalogService,
+  type CatalogResolution,
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import {
@@ -181,6 +182,41 @@ export class InvocationService {
     args: unknown,
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
+    return this.invokeWithResolution(address, args, context, () =>
+      this.catalog.resolveTool(address, {
+        signal: context.requestSignal,
+      }),
+    );
+  }
+
+  /**
+   * Code-mode namespace dispatch preserves JavaScript-safe tool aliases while
+   * still feeding the resolved catalog entry through the one invocation path.
+   */
+  async invokeToolAlias<T = unknown>(
+    connectorId: string,
+    toolAlias: string,
+    aliasFor: (toolName: string) => string,
+    args: unknown,
+    context: InvocationContext<T>,
+  ): Promise<InvocationOutcome<T>> {
+    return this.invokeWithResolution(
+      `${connectorId}.${toolAlias}`,
+      args,
+      context,
+      () =>
+        this.catalog.resolveToolAlias(connectorId, toolAlias, aliasFor, {
+          signal: context.requestSignal,
+        }),
+    );
+  }
+
+  private async invokeWithResolution<T>(
+    address: string,
+    args: unknown,
+    context: InvocationContext<T>,
+    resolve: () => Promise<CatalogResolution>,
+  ): Promise<InvocationOutcome<T>> {
     const started = Date.now();
     let catalogMs = 0;
     let admissionMs = 0;
@@ -236,9 +272,7 @@ export class InvocationService {
       };
     };
 
-    const resolution = await this.catalog.resolveTool(address, {
-      signal: context.requestSignal,
-    });
+    const resolution = await resolve();
     catalogMs += resolution.catalogMs;
     if (!resolution.ok) {
       if (resolution.connector && resolution.toolName) {
@@ -276,10 +310,11 @@ export class InvocationService {
     activityTarget = resolved;
 
     if (!isExplicitlyReadOnly(resolved.definition) && !context.allowDestructive) {
+      const canonicalAddress = `${resolved.connector.id}.${resolved.toolName}`;
       return failed(
         framingError(
           "destructive_tool_requires_approval",
-          `Tool "${address}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+          `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
         ),
       );
     }

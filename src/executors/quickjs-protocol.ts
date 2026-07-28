@@ -15,7 +15,7 @@ export const MAX_QUICKJS_HOST_RPC_BYTES = 256 * 1024;
 export interface RunPayload {
   id: number;
   code: string;
-  providerNames: string[];
+  providers: Array<{ name: string; prelude?: string }>;
   options: QuickJsRuntimeOptions;
 }
 

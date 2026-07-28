@@ -12,7 +12,6 @@ import {
   MAX_EXECUTE_LOG_CHARS,
   truncateExecuteText,
 } from "./executor-result.js";
-import { classifyCallError } from "./errors.js";
 import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
@@ -21,7 +20,6 @@ import { unwrapMcpResult } from "./mcp-result.js";
 import {
   InvocationFailure,
   InvocationService,
-  isExplicitlyReadOnly,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import type {
@@ -89,8 +87,51 @@ export function sanitizeIdentifier(name: string): string {
   return id;
 }
 
+const SANDBOX_RESERVED_NAMES = new Set([
+  "connecta",
+  "console",
+  "setTimeout",
+  "Promise",
+  "Error",
+  "WorkerEntrypoint",
+  "CodeExecutor",
+  "__invoke",
+  "__namespace",
+  "__call",
+  "__log",
+  "__dispatchers",
+  "__connectors",
+  "__logs",
+  "__CODEMODE_BINARY_TAG",
+  "__bytesToBase64",
+  "__base64ToBytes",
+  "__encodeCodemodeValue",
+  "__decodeCodemodeValue",
+  "__stringifyForCodemode",
+  "__parseForCodemode",
+]);
+
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+function lazyNamespacePrelude(
+  connectors: Array<{ id: string; namespace: string }>,
+): string {
+  const declarations = connectors
+    .map(
+      ({ id, namespace }) =>
+        `globalThis[${JSON.stringify(namespace)}] = __makeConnectaNamespace(${JSON.stringify(id)});`,
+    )
+    .join("\n");
+  return `(() => {
+  const __makeConnectaNamespace = (connectorId) => Object.freeze(new Proxy(Object.create(null), {
+    get: (_target, toolName) => typeof toolName === "string"
+      ? (args) => connecta.__callNamespace(connectorId, toolName, args)
+      : undefined
+  }));
+${declarations}
+})();`;
 }
 
 /**
@@ -107,9 +148,9 @@ export function unwrapForSandbox(
 }
 
 /**
- * Expose the registry to a sandbox: one provider (global namespace) per
- * connector with a function per tool, plus `connecta.call(address, args)` as
- * the raw-address escape hatch. Broken connectors are skipped, not fatal.
+ * Expose one fixed host provider plus trusted sandbox setup that creates a
+ * lazy proxy global per connector. No connector catalog is touched until code
+ * calls that namespace or explicitly asks search/describe.
  */
 export async function buildSandboxProviders(
   registry: RegistryView,
@@ -122,7 +163,6 @@ export async function buildSandboxProviders(
     hostCallTimeoutMs?: number;
   } = {},
 ): Promise<ExecutorProvider[]> {
-  const providers: ExecutorProvider[] = [];
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const requestScope = {};
@@ -137,176 +177,129 @@ export async function buildSandboxProviders(
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
   let hostCalls = 0;
-  // Reserve the `connecta` namespace plus every global the sandbox bridge
-  // installs (see setupScript/installBridge in quickjs.ts) — a connector id
-  // sanitizing to one of these would clobber log capture or the call bridge.
-  const used = new Set<string>([
-    "connecta",
-    "console",
-    "__invoke",
-    "__namespace",
-    "__call",
-    "__log",
-  ]);
   const connectors = registry.listConnectors();
-  const catalogStarted = Date.now();
-  const loaded = await Promise.allSettled(
-    connectors.map((connector) =>
-      catalog.loadConnector(connector.id, {
-        signal: limits.signal,
-      }),
-    ),
-  );
-  if (limits.signal?.aborted) {
-    throw new ExecutorAdmissionError(
-      "executor_cancelled",
-      "Execution was cancelled during catalog construction.",
-    );
+  const namespaces: Array<{ id: string; namespace: string }> = [];
+  const namespaceOwners = new Map<string, string>();
+  for (const connector of connectors) {
+    const namespace = sanitizeIdentifier(connector.id);
+    const owner = namespaceOwners.get(namespace);
+    const problem = SANDBOX_RESERVED_NAMES.has(namespace)
+      ? `Connector "${connector.id}" sanitizes to reserved execute_code namespace "${namespace}". Rename or exclude the connector before using execute_code.`
+      : owner
+        ? `Connector ids "${owner}" and "${connector.id}" both sanitize to execute_code namespace "${namespace}". Rename or exclude one connector before using execute_code.`
+        : undefined;
+    if (problem) {
+      logger.warn(`[connecta] execute_code: ${problem}`);
+      throw new Error(problem);
+    }
+    namespaceOwners.set(namespace, connector.id);
+    namespaces.push({ id: connector.id, namespace });
   }
+
+  const invocationContext = () => ({
+    source: "execute_code" as const,
+    timeoutMs: hostCallTimeoutMs,
+    requestSignal: limits.signal,
+    unwrapResult: true,
+    beforeDispatch: () => {
+      hostCalls++;
+      if (hostCalls > maxHostCalls) {
+        throw new Error(
+          `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+        );
+      }
+    },
+  });
   const callAddress = async (address: unknown, args: unknown) => {
     const outcome = await invocation.invoke(
       String(address),
       args ?? {},
-      {
-        source: "execute_code",
-        timeoutMs: hostCallTimeoutMs,
-        requestSignal: limits.signal,
-        unwrapResult: true,
-        beforeDispatch: () => {
-          hostCalls++;
-          if (hostCalls > maxHostCalls) {
-            throw new Error(
-              `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
-            );
-          }
-        },
-      },
+      invocationContext(),
+    );
+    if (!outcome.ok) throw new InvocationFailure(outcome.error);
+    return outcome.value;
+  };
+  const callNamespace = async (
+    connectorId: unknown,
+    toolAlias: unknown,
+    args: unknown,
+  ) => {
+    const outcome = await invocation.invokeToolAlias(
+      String(connectorId),
+      String(toolAlias),
+      sanitizeIdentifier,
+      args ?? {},
+      invocationContext(),
     );
     if (!outcome.ok) throw new InvocationFailure(outcome.error);
     return outcome.value;
   };
 
-  for (let i = 0; i < connectors.length; i++) {
-    const connector = connectors[i];
-    const ns = sanitizeIdentifier(connector.id);
-    if (used.has(ns)) {
-      logger.warn(
-        `[connecta] execute_code: namespace "${ns}" (connector "${connector.id}") collides with a reserved name or an earlier connector — connector skipped`,
-      );
-      continue;
-    }
-    const loadedTools = loaded[i];
-    if (loadedTools.status === "rejected") {
-      // Same health accounting as the call_tool catalog catch: a connector whose
-      // catalog cannot be fetched is unusable, and dropping its namespace with
-      // only a warn would leave the cheap `list_connectors({ probe: false })`
-      // signal clean for a code-mode deployment whose downstream grant was
-      // revoked. Recorded through `registry` — this run's view — so a
-      // toolkit-scoped execute_code lands in that toolkit's log as well.
-      registry.recordFailure(
-        connector.id,
-        Date.now() - catalogStarted,
-        loadedTools.reason,
-      );
-      // classifyCallError so a typed auth_required thrown while listing tools
-      // keeps its code where an operator can see it; health stores the message.
-      const details = classifyCallError(
-        loadedTools.reason,
-        "catalog_lookup_failed",
-      );
-      logger.warn(
-        `[connecta] execute_code: connector "${connector.id}" skipped (${details.code}): ${msg(loadedTools.reason)}`,
-      );
-      continue;
-    }
-    const tools = loadedTools.value;
-    // Null-prototype map: tools named `toString`/`hasOwnProperty`/`constructor`
-    // are legitimate and must not collide with inherited Object members.
-    const fns: ExecutorProvider["fns"] = Object.create(null);
-    for (const t of tools) {
-      if (!isExplicitlyReadOnly(t)) {
-        continue;
-      }
-      const key = sanitizeIdentifier(t.name);
-      if (Object.hasOwn(fns, key)) {
-        logger.warn(
-          `[connecta] execute_code: tool "${connector.id}.${t.name}" sanitizes to duplicate "${key}" — skipped`,
-        );
-        continue;
-      }
-      // `await` (not a bare promise return) so a synchronous throw inside
-      // callAddress never sits handler-less for the thenable-adoption
-      // microtask — workerd reports that gap as an unhandled rejection.
-      fns[key] = async (args: unknown) =>
-        await callAddress(`${connector.id}.${t.name}`, args);
-    }
-    if (Object.keys(fns).length > 0) {
-      providers.push({ name: ns, fns });
-      used.add(ns);
-    }
-  }
-  providers.push({
-    name: "connecta",
-    fns: {
-      call: callAddress,
-      batch: async (calls: unknown) => {
-        if (!Array.isArray(calls)) throw new Error("calls must be an array");
-        if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
-          throw new Error(
-            `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
+  return [
+    {
+      name: "connecta",
+      prelude: lazyNamespacePrelude(namespaces),
+      fns: {
+        __callNamespace: callNamespace,
+        call: callAddress,
+        batch: async (calls: unknown) => {
+          if (!Array.isArray(calls)) throw new Error("calls must be an array");
+          if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
+            throw new Error(
+              `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
+            );
+          }
+          return await Promise.all(
+            calls.map(async (call) => {
+              const item = call as { address?: unknown; args?: unknown };
+              try {
+                return {
+                  address: String(item.address),
+                  ok: true,
+                  data: await callAddress(item.address, item.args),
+                };
+              } catch (err) {
+                return {
+                  address: String(item.address),
+                  ok: false,
+                  error: msg(err),
+                };
+              }
+            }),
           );
-        }
-        return await Promise.all(
-          calls.map(async (call) => {
-            const item = call as { address?: unknown; args?: unknown };
-            try {
-              return {
-                address: String(item.address),
-                ok: true,
-                data: await callAddress(item.address, item.args),
-              };
-            } catch (err) {
-              return {
-                address: String(item.address),
-                ok: false,
-                error: msg(err),
-              };
-            }
-          }),
-        );
-      },
-      search: async (raw: unknown) => {
-        const args = (raw ?? {}) as {
-          query?: string;
-          connector?: string;
-          limit?: number;
-          offset?: number;
-          fullDescriptions?: boolean;
-          includeSchemas?: "compact" | "json";
-        };
-        const result = flatSearchResult(await catalog.search(args));
-        assertDiscoveryResultSize(
-          result,
-          "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-        );
-        return result;
-      },
-      describe: async (raw: unknown) => {
-        const args = (raw ?? {}) as {
-          addresses?: unknown;
-          format?: "compact" | "json";
-          fullDescriptions?: boolean;
-        };
-        const result = { tools: await catalog.describe(args) };
-        assertDiscoveryResultSize(
-          result,
-          'Split the address list or use format: "compact".',
-        );
-        return result;
+        },
+        search: async (raw: unknown) => {
+          const args = (raw ?? {}) as {
+            query?: string;
+            connector?: string;
+            limit?: number;
+            offset?: number;
+            fullDescriptions?: boolean;
+            includeSchemas?: "compact" | "json";
+          };
+          const result = flatSearchResult(await catalog.search(args));
+          assertDiscoveryResultSize(
+            result,
+            "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+          );
+          return result;
+        },
+        describe: async (raw: unknown) => {
+          const args = (raw ?? {}) as {
+            addresses?: unknown;
+            format?: "compact" | "json";
+            fullDescriptions?: boolean;
+          };
+          const result = { tools: await catalog.describe(args) };
+          assertDiscoveryResultSize(
+            result,
+            'Split the address list or use format: "compact".',
+          );
+          return result;
+        },
       },
     },
-  });
-  return providers;
+  ];
 }
 
 /** The execute_code handler. Exported for direct testing. */
@@ -420,7 +413,7 @@ const EXECUTE_DESC = `Use for dependent multi-step calls, loops, joins, branchin
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from describe_tools. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
-- connecta.search(args) and connecta.describe(args) — inspect the loaded catalog inside the same request.
+- connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand.
 - console.log(...) — captured and returned alongside the result.
 
 Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
