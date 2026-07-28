@@ -12,9 +12,11 @@ missing its `description` or `inputSchema`; remote-MCP tool defs are fetched
 lazily and aren't checked at construction time.
 
 - **Connector id** — a short lowercase service slug (`notion`, `stripe`,
-  `github`). One connector **per service/domain**, not per endpoint. When
-  condensing several small internal MCPs, group them **by domain** (e.g. one
-  `billing` connector), not one connector per endpoint.
+  `github`). One connector **per service/domain and configured account**, not
+  per endpoint. When two auth contexts reach the same service, give each
+  [an explicit instance](#multiple-instances-of-one-downstream). When condensing
+  several small internal MCPs, group them **by domain** (e.g. one `billing`
+  connector), not one connector per endpoint.
 - **Connector description** — **required**; format `<Service> — <top
   capabilities, comma-separated>` (e.g. `Notion — pages, databases, comments`).
   This is what shows in `list_connectors` and the grouped `search_tools`
@@ -26,80 +28,74 @@ lazily and aren't checked at construction time.
 - **inputSchema** — always `{ type: "object" }`; **every** property carries a
   `description`, and `required` accurately lists the mandatory properties.
 
-### Per-connector usage guides
+### Multiple instances of one downstream
 
-Descriptions and schemas say *what* a connector's tools are. They don't say
-which tool to prefer, which id format an address quirk expects, how the
-service paginates, or how hard you may hammer it. Operators know those things;
-without somewhere to put them, every agent session rediscovers them.
+One deployment still has one tenant, but it may configure the same downstream
+more than once when the accounts or credentials differ. The instance is the
+account boundary: use distinct connector ids such as `linear_personal` and
+`linear_work`, then route each audience to the instance it should see with a
+toolkit binding.
 
-A connector may therefore carry an optional **`usageGuide`** — a markdown
-string, authored in config alongside the connector, like everything else:
+A plain factory keeps the shared service definition in one place without
+sharing account state:
 
 ```ts
-export const notion = remoteMcp("notion", {
-  url: "https://mcp.notion.com/mcp",
-  description: "Notion — pages, databases, comments",
-  auth: { type: "oauth" },
-  usageGuide: `# Notion usage
+import { bearerToken, createConnecta, remoteMcp } from "@zackbart/connecta";
 
-Search before listing: \`notion.search\` covers pages and databases in one call.
+function linearInstance(id: string, title: string) {
+  return remoteMcp(id, {
+    title,
+    url: "https://mcp.linear.app/mcp",
+    description: "Linear — issues, projects, comments",
+    auth: { type: "oauth" },
+  });
+}
 
-- Page ids are dashed UUIDs. Strip the trailing slug from a pasted URL first.
-- Paginate with \`start_cursor\`; \`page_size\` is capped at 100.
-- Writes replace blocks wholesale — read the block, merge, then write.
-`,
+const linearPersonal = linearInstance("linear_personal", "Linear (personal)");
+const linearWork = linearInstance("linear_work", "Linear (work)");
+
+createConnecta({
+  connectors: [linearPersonal, linearWork],
+  auth: [
+    bearerToken(env.PERSONAL_TOKEN, {
+      subjectId: "personal", toolkits: ["personal"],
+    }),
+    bearerToken(env.WORK_TOKEN, {
+      subjectId: "work", toolkits: ["work"],
+    }),
+  ],
+  toolkits: {
+    personal: { connectors: ["linear_personal"] },
+    work: { connectors: ["linear_work"] },
+  },
+  // storage and other deployment options omitted
 });
 ```
 
-It works the same on `api()` and on a hand-written `Connector`; the field is on
-the interface, not on the factories.
+Each id receives its own `conn:<id>:` storage namespace, downstream OAuth grant,
+operator-managed credential slot (when declared), catalog cache, health record,
+activity trail, and address namespace. The separation is not a shared-catalog
+optimization: each instance fetches and caches the catalog independently, and
+`linear_personal.search_issues` and `linear_work.search_issues` remain different
+addresses even when both came from the same server. OAuth callbacks are per id:
+`/oauth/callback/linear_personal` and `/oauth/callback/linear_work`. A shared
+downstream OAuth application or redirect allowlist must register every
+instance's complete redirect URI.
 
-The guide is served by the [`skills`](./meta-tools.md#skills) meta-tool:
+This idiom is the configuration-first answer for a small, explicit set of
+accounts. It does not add runtime connector registration or an account model.
+If a deployment needs many accounts per service, owner-scoped connections, or
+runtime account creation, that is a change to the
+[single-tenant product decision](./decisions.md#single-tenant), not a reason to
+add optional owner ids to connector or vault calls.
 
-- `skills({})` lists the built-in `usage` guide plus one entry per connector
-  that has a guide, named **`connector:<connectorId>`** and summarized by the
-  guide's first meaningful line (heading marks and bullets stripped, capped at
-  120 characters). A connector without a guide adds no entry, so listing stays
-  cheap with many connectors.
-- `skills({ name: "connector:notion" })` returns the markdown **verbatim**.
-- The `connector:` prefix is the *only* address for a guide. Built-in skill
-  names are bare identifiers, so a guide can never shadow or be shadowed by
-  `usage` — a connector whose id is literally `usage` is listed as
-  `connector:usage`, and `skills({ name: "usage" })` still returns the built-in
-  guide.
-- Every miss is an error result: an unknown skill name, an unknown connector,
-  or a connector that has no guide. Nothing silently falls back to the generic
-  guide.
+### Per-connector usage guides
 
-`search_tools` and `describe_tools` set a `guide` field on matches whose
-connector has one, holding the skill name to fetch — so an agent that never
-called `skills({})` still discovers the guide at the moment it matters.
-
-Discovery text is **conditional on the deployment actually having a guide**.
-The built-in `usage` skill gains a short "Per-connector guides" section, and
-the `skills`, `search_tools`, and `describe_tools` tool descriptions each gain
-one sentence, only when at least one connector declares a `usageGuide`. The
-connector set is fixed at construction, so this is stable per deployment — and
-a deployment with no guides serves every one of those strings exactly as it
-always has, paying no always-loaded context for a feature it does not use.
-
-Guides follow the connection's scope. In a toolkit-scoped session
-([toolkits](./toolkits.md#toolkits-scoped-views)) `skills({})` lists only in-scope connectors'
-guides, `skills({ name: "connector:<id>" })` for an out-of-scope connector
-returns the same error as an unknown connector, and the conditional discovery
-text above is computed from the **scoped** connector set — so a scoped session
-never learns from a tool description that guides exist outside its view.
-
-**Style.** Write for the agent, not the operator — the built-in `usage` skill
-(`src/skills.ts`) is the model. Concise and imperative; lead with the decision
-("Search before listing"), not with background. Prefer short bullets over
-prose, name exact tool addresses and argument names, and state the constraint
-with its number (`page_size` is capped at 100). Cover what descriptions and
-schemas cannot: tool preference, id/address quirks, pagination conventions,
-rate-limit etiquette, query patterns that work. Skip anything the agent can
-read off the schema, and keep it short — it is fetched into a live context
-window.
+A connector may carry an optional agent-facing `usageGuide`, served through the
+[`skills`](./meta-tools.md#skills) meta-tool and surfaced by search/describe
+only when the scoped deployment has one. See
+[per-connector usage guides](./connector-guides.md#per-connector-usage-guides)
+for the worked example, lookup and scoping rules, and authoring style.
 
 ### The `Connector` interface
 

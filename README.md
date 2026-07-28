@@ -118,12 +118,11 @@ fixed ones connecta already knows how to answer (is this tool read-only, may
 this credential open this toolkit), not rules you author. There is **no runtime
 administration** — you cannot add a connector from a browser or an API. It
 aggregates **tools only**, not MCP resources or prompts, and it will not ingest
-a **GraphQL** schema, because generating hundreds of low-quality tool
-definitions is the problem the nine meta-tools exist to solve. OpenAPI is a
-softer no: not built in today, not refused either, and tracked as
-[issue #26](https://github.com/zackbart/connecta/issues/26). If you want a
-hosted multi-tenant integration platform with an approval workflow, this is the
-wrong shape; the
+a **GraphQL or OpenAPI** schema, because generating hundreds of low-quality tool
+definitions is the problem the nine meta-tools exist to solve. Hand-write an
+`api()` connector, or use an external generator whose output is reviewed
+`api()` config. If you want a hosted multi-tenant integration platform with an
+approval workflow, this is the wrong shape; the
 [non-goals](https://github.com/zackbart/connecta/blob/main/docs/decisions.md#non-goals)
 say so at more length.
 
