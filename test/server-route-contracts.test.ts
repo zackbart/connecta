@@ -315,6 +315,20 @@ describe("server route contracts", () => {
     expect(mcp.headers.get("WWW-Authenticate")).toBe("Bearer");
     expect(await mcp.text()).toBe('{"error":"unauthorized"}');
 
+    // Auth guards /mcp before the transport sees the request for EVERY
+    // method, not just POST — session semantics belong to the transport, but
+    // reaching it unauthenticated would be a routing bug the extraction could
+    // introduce silently.
+    for (const method of ["GET", "DELETE"]) {
+      const nonPost = await connecta.fetch(
+        new Request(`${BASE}/mcp`, { method }),
+      );
+      expect(nonPost.status, `${method} /mcp`).toBe(401);
+      expectMcpCors(nonPost);
+      expect(nonPost.headers.get("WWW-Authenticate")).toBe("Bearer");
+      expect(await nonPost.text()).toBe('{"error":"unauthorized"}');
+    }
+
     const offOriginCredential = await connecta.fetch(
       new Request(`${BASE}/ui/credentials/surface`, {
         method: "PUT",
