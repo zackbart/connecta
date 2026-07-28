@@ -2,6 +2,52 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.9 — 2026-07-28
+
+0.7.9 adds opt-in, connector-scoped admission for downstream tool calls. Direct
+calls, batch children, and code-mode host calls to the same connector now share
+one per-runtime limiter, including through toolkit-scoped views. Connectors
+without a `callAdmission` policy behave as before. Dependencies, storage
+formats, and package entrypoints are unchanged.
+
+The policy is exact within one Node process or Worker isolate. Concurrency
+limits fully contain one request's fan-out; rolling budgets remain best-effort
+across multiple isolates, replicas, or restarts. This release deliberately
+does not add a distributed coordinator.
+
+### Added
+
+- **Connector-scoped downstream admission** (issue #138, PR #143).
+  `api()`, `remoteMcp()`, and custom connectors accept a plural-ready
+  `callAdmission.rules` policy. The single rule supported today can bound
+  concurrency, queue size and wait, and rolling-window calls, optionally
+  partitioned by a bounded operator-derived key.
+- **Payload-free admission telemetry.** `/health` reports connector aggregates
+  for live partitions, active and queued calls, admission outcomes, and queue
+  waits without exposing partition keys, arguments, or results.
+- **Explicit cancelled Activity outcomes.** Caller cancellation is represented
+  separately from provider errors and timeouts in the public Activity event
+  union, the operator UI, and the Worker D1 example.
+
+### Changed
+
+- **Retries reacquire admission per attempt.** Backoff does not retain a
+  concurrency permit, and each actual retry consumes a fresh rolling-budget
+  entry. Short proactive `rate_limited` windows continue to use the existing
+  safe retry contract.
+- **Queue and connector deadlines are separate.** `queueTimeoutMs` bounds only
+  permit wait; the per-attempt tool deadline begins after admission.
+  `diagnostics: true` reports the phases separately as `admissionMs` and
+  `connectorMs`.
+
+### Fixed
+
+- **Caller cancellation no longer retries an abandoned attempt or degrades
+  connector health.** A call already cancelled avoids connector dispatch.
+  Queued cancellation still releases its place without spending a
+  rolling-budget entry, while active cancellation releases its permit and
+  records a non-retryable `cancelled` result.
+
 ## 0.7.8 — 2026-07-28
 
 0.7.8 makes dependency-free tool discovery recover from natural-language
