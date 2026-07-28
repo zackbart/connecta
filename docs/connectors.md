@@ -40,7 +40,7 @@ A plain factory keeps the shared service definition in one place without
 sharing account state:
 
 ```ts
-import { bearerToken, createConnecta, remoteMcp } from "@zackbart/connecta";
+import { createConnecta, remoteMcp } from "@zackbart/connecta";
 
 function linearInstance(id: string, title: string) {
   return remoteMcp(id, {
@@ -51,24 +51,18 @@ function linearInstance(id: string, title: string) {
   });
 }
 
-const linearPersonal = linearInstance("linear_personal", "Linear (personal)");
-const linearWork = linearInstance("linear_work", "Linear (work)");
-
 createConnecta({
-  connectors: [linearPersonal, linearWork],
-  auth: [
-    bearerToken(env.PERSONAL_TOKEN, {
-      subjectId: "personal", toolkits: ["personal"],
-    }),
-    bearerToken(env.WORK_TOKEN, {
-      subjectId: "work", toolkits: ["work"],
-    }),
+  connectors: [
+    linearInstance("linear_personal", "Linear (personal)"),
+    linearInstance("linear_work", "Linear (work)"),
   ],
   toolkits: {
     personal: { connectors: ["linear_personal"] },
     work: { connectors: ["linear_work"] },
   },
-  // storage and other deployment options omitted
+  // auth: one adapter per audience, each bound to its toolkit — the
+  // binding-on-the-adapter example in toolkits.md is exactly this shape.
+  // Storage and other deployment options omitted.
 });
 ```
 
