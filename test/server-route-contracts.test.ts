@@ -72,7 +72,7 @@ function expectMcpCors(response: Response): void {
 let requestId = 0;
 function mcpRequest(
   connecta: { fetch(request: Request): Promise<Response> },
-  options: { token?: string } = {},
+  options: { token?: string; query?: string } = {},
 ): Promise<Response> {
   const headers: Record<string, string> = {
     Accept: "application/json, text/event-stream",
@@ -82,7 +82,7 @@ function mcpRequest(
     headers.Authorization = `Bearer ${options.token}`;
   }
   return connecta.fetch(
-    new Request(`${BASE}/mcp`, {
+    new Request(`${BASE}/mcp${options.query ?? ""}`, {
       method: "POST",
       headers,
       body: JSON.stringify({
@@ -329,6 +329,50 @@ describe("server route contracts", () => {
         '{"error":"method not allowed"}',
       );
     }
+  });
+
+  it("refuses ?toolkit= on /mcp with an explicit 404 after the retirement", async () => {
+    const warn = vi.fn();
+    const connecta = createConnecta({
+      connectors: [testConnector("alpha")],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: { ...silentLogger, warn },
+      credentials: { encryptionKey: CREDENTIAL_KEY },
+    });
+
+    // Every ?toolkit= value — a formerly configured name, garbage, or empty —
+    // gets the same 404: an endpoint URL minted before the retirement (#178)
+    // must not silently widen into the full registry.
+    for (const value of ["support", "no-such-toolkit", ""]) {
+      const response = await mcpRequest(connecta, {
+        token: TOKEN,
+        query: `?toolkit=${value}`,
+      });
+      expect(response.status, `?toolkit=${value}`).toBe(404);
+      expectMcpCors(response);
+      expect(response.headers.get("Cache-Control")).toBe("no-store");
+      const body = (await response.json()) as {
+        error: { message: string };
+      };
+      expect(body.error.message).toContain("#178");
+    }
+    // The client-facing body is discarded by SDK transports, so the reason
+    // must also reach the operator log (#47).
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(warn.mock.calls[0]?.[0]).toContain("#178");
+
+    // Auth still runs first: an unauthenticated ?toolkit= request is a plain
+    // 401, revealing nothing about the retirement.
+    const unauthenticated = await mcpRequest(connecta, {
+      query: "?toolkit=support",
+    });
+    expect(unauthenticated.status).toBe(401);
+
+    // The same credential without the param reaches the endpoint normally.
+    const clean = await mcpRequest(connecta, { token: TOKEN });
+    expect(clean.status).toBe(200);
   });
 
   it("verifies OAuth callback state before exchange and keeps all unverifiable callbacks opaque", async () => {

@@ -9,6 +9,7 @@ import {
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import { CONNECTA_INSTRUCTIONS } from "../skills.js";
+import type { Logger } from "../types.js";
 import {
   authorize,
   type RouteContext,
@@ -138,6 +139,47 @@ function releaseAdmissionWithResponse(
   });
 }
 
+/**
+ * 404 for any `?toolkit=` value, kept after the feature's retirement (#178).
+ *
+ * Toolkits are gone, but the URLs that named them are not: clients were handed
+ * MCP endpoint URLs with `?toolkit=` baked in, and nothing about upgrading the
+ * server rotates them. Silently serving those clients the full registry would
+ * turn a former scoping boundary into fail-open — so a request still sending
+ * the param gets the same explicit 404 an unknown toolkit got before, plus an
+ * operator-side log line, which (as ever — issue #47) is the channel that
+ * actually reaches a human.
+ */
+function toolkitRetired(logger: Logger): Response {
+  logger.warn(
+    "[connecta] rejected an /mcp connection carrying ?toolkit= with 404: " +
+      "toolkits were retired in issue #178 (see ethos.md) — one deployment " +
+      "serves one audience. The client sees a transport-level failure and " +
+      "never the reason, so remove the ?toolkit= value from its MCP endpoint " +
+      "URL, or point it at the deployment for its audience.",
+  );
+  return new Response(
+    JSON.stringify({
+      jsonrpc: "2.0",
+      id: null,
+      error: {
+        code: -32600,
+        message:
+          "This deployment does not accept ?toolkit=. Toolkits were retired " +
+          "in issue #178 — remove the ?toolkit= value from the MCP endpoint " +
+          "URL, or ask the operator for the deployment serving this audience.",
+      },
+    }),
+    {
+      status: 404,
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": "no-store",
+      },
+    },
+  );
+}
+
 async function serveMcp(
   request: Request,
   opts: ServerOptions,
@@ -265,6 +307,13 @@ export function createMcpRoute(
       if (!authz.ok) {
         return releaseAdmissionWithResponse(
           withMcpCors(authz.response),
+          admission,
+          request.signal,
+        );
+      }
+      if (new URL(request.url).searchParams.has("toolkit")) {
+        return releaseAdmissionWithResponse(
+          withMcpCors(toolkitRetired(opts.logger)),
           admission,
           request.signal,
         );

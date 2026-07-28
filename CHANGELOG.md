@@ -17,7 +17,9 @@ issue #178 and `ethos.md`.
   on `bearerToken` and `clerkAuth`, `?toolkit=` routing, scoped registries, and
   the operator UI's toolkit projection no longer exist. Passing `toolkits` or
   `unscoped` to any of those construction surfaces throws instead of silently
-  widening access.
+  widening access, and an `/mcp` request still carrying `?toolkit=` — a URL
+  minted before the retirement — gets an explicit 404 naming #178, never a
+  silent widening to the full registry.
 - **Activity events no longer carry `toolkitId`.** The Worker D1 example drops
   its `toolkit_id` column; existing columns may be left in place unused.
 
