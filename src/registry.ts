@@ -33,6 +33,7 @@ import {
   MAX_CATALOG_TOOLS,
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
+import { mapSettledWithConcurrency } from "./concurrency.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
@@ -119,6 +120,8 @@ interface PersistedCatalog {
   expiresAt: number;
   staleUntil: number;
 }
+
+const CATALOG_CHUNK_IO_CONCURRENCY = 4;
 
 export interface HealthObservation {
   lastSuccessAt?: string;
@@ -715,12 +718,19 @@ export class Registry implements RegistryView {
     }
     if (manifest.staleUntil <= now) return null;
 
+    const chunkReads = await mapSettledWithConcurrency(
+      Array.from({ length: manifest.chunkCount }, (_, index) => index),
+      CATALOG_CHUNK_IO_CONCURRENCY,
+      (index) =>
+        this.opts.storage.get(
+          this.catalogChunkKey(id, manifest.revision, index),
+        ),
+    );
     const chunks: string[] = [];
     let chunkBytes = 0;
-    for (let index = 0; index < manifest.chunkCount; index++) {
-      const chunk = await this.opts.storage.get(
-        this.catalogChunkKey(id, manifest.revision, index),
-      );
+    for (const [index, result] of chunkReads.entries()) {
+      if (result.status === "rejected") throw result.reason;
+      const chunk = result.value;
       if (chunk === null) {
         this.opts.logger.warn(
           `[connecta] connector "${id}" catalog chunk ${index + 1}/${manifest.chunkCount} is missing; ignoring persisted catalog.`,
@@ -796,12 +806,18 @@ export class Registry implements RegistryView {
       Math.ceil((this.ttlMs + this.staleMs) / 1000),
     );
     const chunks = this.splitCatalogChunks(snapshot);
-    for (let index = 0; index < chunks.length; index++) {
-      await this.opts.storage.set(
-        this.catalogChunkKey(id, snapshot.fingerprint, index),
-        chunks[index],
-        { ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS },
-      );
+    const chunkWrites = await mapSettledWithConcurrency(
+      chunks,
+      CATALOG_CHUNK_IO_CONCURRENCY,
+      (chunk, index) =>
+        this.opts.storage.set(
+          this.catalogChunkKey(id, snapshot.fingerprint, index),
+          chunk,
+          { ttlSeconds: ttlSeconds + CATALOG_CHUNK_TTL_GRACE_SECONDS },
+        ),
+    );
+    for (const result of chunkWrites) {
+      if (result.status === "rejected") throw result.reason;
     }
     // The manifest is the only publication point. A failed/partial chunk write
     // therefore leaves the previous manifest authoritative (or no catalog);
