@@ -360,7 +360,10 @@ class QuickJsChildPool implements AdmittingExecutor {
         {
           id,
           code,
-          providerNames: providers.map((item) => item.name),
+          providers: providers.map((item) => ({
+            name: item.name,
+            ...(item.prelude ? { prelude: item.prelude } : {}),
+          })),
           options: this.runtimeOptions,
         } satisfies RunPayload,
         "QuickJS run payload",

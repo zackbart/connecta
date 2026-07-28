@@ -376,8 +376,12 @@ describe("connector call admission integration", () => {
       BASE,
       silentLogger,
     );
-    const provider = providers.find(({ name }) => name === "limited")!;
-    const codeMode = provider.fns.read({ source: "code" });
+    const connecta = providers.find(({ name }) => name === "connecta")!;
+    const codeMode = connecta.fns.__callNamespace(
+      "limited",
+      "read",
+      { source: "code" },
+    );
     await waitFor(
       () => registry.callAdmissionSnapshot().limited.queued === 1,
     );

@@ -87,8 +87,8 @@ describe("Node listen adapter", () => {
     const executor: Executor = {
       async execute(_code, providers) {
         const value = await providers
-          .find((provider) => provider.name === "slow")!
-          .fns.wait({});
+          .find((provider) => provider.name === "connecta")!
+          .fns.__callNamespace("slow", "wait", {});
         return { result: value };
       },
     };

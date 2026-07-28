@@ -8,6 +8,7 @@ import {
 } from "../src/executors/quickjs.js";
 import type {
   AdmittingExecutor,
+  Connector,
   ExecutorProvider,
 } from "../src/types.js";
 import {
@@ -272,6 +273,32 @@ describe("quickJsExecutor", () => {
     expect(out).toEqual({ result: { keys: [], sum: 5 } });
   });
 
+  it("runs a trusted provider prelude before user code", async () => {
+    const ex = quickJsExecutor();
+    const out = await ex.execute(
+      `async () => ({
+        keys: Object.keys(calc),
+        sum: (await calc.add({ a: 2, b: 3 })).sum
+      })`,
+      [
+        {
+          name: "connecta",
+          prelude: `globalThis.calc = Object.freeze(new Proxy(Object.create(null), {
+            get: (_target, toolName) => (args) =>
+              connecta.__callNamespace("calc", toolName, args)
+          }));`,
+          fns: {
+            __callNamespace: async (_connectorId, toolName, args) => {
+              const { a, b } = args as { a: number; b: number };
+              return toolName === "add" ? { sum: a + b } : null;
+            },
+          },
+        },
+      ],
+    );
+    expect(out).toEqual({ result: { keys: [], sum: 5 } });
+  });
+
   it("maps a runaway synchronous loop to the guest CPU budget", async () => {
     // Wall budget far above the 250ms CPU default: a slow CI tick past a tight
     // wall deadline would otherwise let wallInterrupted win the race.
@@ -494,6 +521,51 @@ describe("quickJsExecutor", () => {
     await expect(ex.execute("async () => 9", [])).resolves.toEqual({
       result: 9,
     });
+  });
+
+  it("executes a lazily resolved connector namespace end to end", async () => {
+    const catalogs: string[] = [];
+    const countedCalc: Connector = {
+      ...calcConnector,
+      async listTools(ctx) {
+        catalogs.push("calc");
+        return calcConnector.listTools(ctx);
+      },
+    };
+    const unused = Array.from(
+      { length: 20 },
+      (_, index): Connector => ({
+        id: `unused_${index}`,
+        kind: "api",
+        async listTools() {
+          catalogs.push(`unused_${index}`);
+          return [
+            { name: "read", annotations: { readOnlyHint: true } },
+          ];
+        },
+        async callTool() {
+          return index;
+        },
+      }),
+    );
+    const registry = makeRegistry([countedCalc, ...unused]);
+    const ex = quickJsExecutor();
+    const out = await createExecuteTool(
+      registry,
+      "https://connecta.test",
+      ex,
+      silentLogger,
+    )({
+      code: `async () => ({
+        keys: Object.keys(calc),
+        sum: (await calc.add({ a: 20, b: 22 })).sum
+      })`,
+    });
+    expect(out.isError).toBeUndefined();
+    expect(out.structuredContent).toEqual({
+      result: { keys: [], sum: 42 },
+    });
+    expect(catalogs).toEqual(["calc"]);
   });
 
   it("bounds the final guest result before child-to-parent IPC", async () => {

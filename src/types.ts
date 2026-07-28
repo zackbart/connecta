@@ -320,6 +320,13 @@ export interface ExecuteResult {
 export interface ExecutorProvider {
   name: string;
   fns: Record<string, (...args: unknown[]) => Promise<unknown>>;
+  /**
+   * Optional trusted sandbox-side setup run after provider globals exist.
+   * Connecta uses this to install lazy connector namespace proxies without
+   * materializing one host closure per tool. This is host-authored code, never
+   * model input.
+   */
+  prelude?: string;
 }
 
 /**

@@ -122,6 +122,9 @@ function setupScript(providers: ExecutorProvider[]): string {
     const ns = JSON.stringify(p.name);
     lines.push(`globalThis[${ns}] = __namespace(${ns});`);
   }
+  for (const p of providers) {
+    if (p.prelude) lines.push(p.prelude);
+  }
   lines.push(`delete globalThis.__namespace;`);
   return lines.join("\n");
 }

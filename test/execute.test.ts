@@ -74,6 +74,23 @@ function fakeExecutor(
   };
 }
 
+function connectaProvider(providers: ExecutorProvider[]): ExecutorProvider {
+  return providers.find((provider) => provider.name === "connecta")!;
+}
+
+function callNamespace(
+  providers: ExecutorProvider[],
+  connectorId: string,
+  toolAlias: string,
+  args: unknown = {},
+): Promise<unknown> {
+  return connectaProvider(providers).fns.__callNamespace(
+    connectorId,
+    toolAlias,
+    args,
+  );
+}
+
 describe("sanitizeIdentifier", () => {
   it("maps names onto valid JS identifiers", () => {
     expect(sanitizeIdentifier("my-tool")).toBe("my_tool");
@@ -128,24 +145,45 @@ describe("unwrapForSandbox", () => {
 });
 
 describe("buildSandboxProviders", () => {
-  it("builds one namespace per connector plus connecta.call, skipping broken ones", async () => {
-    const registry = makeRegistry([
-      calcConnector,
-      remoteConnector,
-      brokenConnector,
-    ]);
+  it("touches no catalog at setup and only the requested connector at call time", async () => {
+    const catalogCalls = new Map<string, number>();
+    const counted = (connector: Connector): Connector => ({
+      ...connector,
+      async listTools(ctx) {
+        catalogCalls.set(
+          connector.id,
+          (catalogCalls.get(connector.id) ?? 0) + 1,
+        );
+        return connector.listTools(ctx);
+      },
+    });
+    const registry = makeRegistry(
+      [calcConnector, remoteConnector, brokenConnector].map(counted),
+    );
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    const names = providers.map((p) => p.name);
-    expect(names).toEqual(["calc", "remote", "connecta"]);
+    expect(providers.map((provider) => provider.name)).toEqual(["connecta"]);
+    expect(catalogCalls.size).toBe(0);
+    expect(providers[0].prelude).toContain('globalThis["calc"]');
+    expect(providers[0].prelude).toContain('globalThis["broken"]');
 
-    const calc = providers.find((p) => p.name === "calc")!;
-    expect(await calc.fns.add({ a: 2, b: 3 })).toEqual({ sum: 5 });
+    expect(await callNamespace(providers, "calc", "add", { a: 2, b: 3 })).toEqual(
+      { sum: 5 },
+    );
+    expect(catalogCalls).toEqual(new Map([["calc", 1]]));
+    expect(registry.healthFor("broken")).toBeUndefined();
 
-    // MCP results are unwrapped to plain values for sandbox code.
-    const remote = providers.find((p) => p.name === "remote")!;
-    expect(await remote.fns.echo({ text: "hi" })).toBe("echo:hi");
+    // MCP results are still unwrapped to plain values for sandbox code.
+    expect(
+      await callNamespace(providers, "remote", "echo", { text: "hi" }),
+    ).toBe("echo:hi");
+    expect(catalogCalls).toEqual(
+      new Map([
+        ["calc", 1],
+        ["remote", 1],
+      ]),
+    );
 
-    const connecta = providers.find((p) => p.name === "connecta")!;
+    const connecta = connectaProvider(providers);
     expect(await connecta.fns.call("calc.add", { a: 1, b: 1 })).toEqual({
       sum: 2,
     });
@@ -154,13 +192,13 @@ describe("buildSandboxProviders", () => {
     );
   });
 
-  it("records a health failure for a connector whose catalog cannot load", async () => {
+  it("records health only after a broken connector is exercised", async () => {
     const registry = makeRegistry([calcConnector, brokenConnector]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    // The namespace is still dropped rather than fatal...
-    expect(providers.map((p) => p.name)).toEqual(["calc", "connecta"]);
-    // ...but the drop no longer hides from the cheap health signal an operator
-    // consults, the same as a failing call_tool catalog lookup.
+    expect(registry.healthFor("broken")).toBeUndefined();
+    await expect(
+      callNamespace(providers, "broken", "anything"),
+    ).rejects.toThrow("boom");
     expect(registry.healthFor("broken")).toMatchObject({
       consecutiveFailures: 1,
       lastError: "boom",
@@ -169,7 +207,7 @@ describe("buildSandboxProviders", () => {
     expect(registry.healthFor("calc")).toBeUndefined();
   });
 
-  it("keeps a typed auth_required's code in the skip it logs and records", async () => {
+  it("keeps a typed auth_required's code when the lazy namespace is used", async () => {
     const expired: Connector = {
       id: "expired",
       kind: "mcp",
@@ -183,16 +221,20 @@ describe("buildSandboxProviders", () => {
         return null;
       },
     };
-    const warnings: string[] = [];
-    const logger = {
-      ...silentLogger,
-      warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
-    };
     const registry = makeRegistry([expired]);
-    await buildSandboxProviders(registry, BASE, logger);
-    expect(warnings.join("\n")).toContain(
-      'skipped (auth_required): Connector "expired" requires authorization',
+    const providers = await buildSandboxProviders(
+      registry,
+      BASE,
+      silentLogger,
     );
+    const error = await callNamespace(providers, "expired", "read").then(
+      () => undefined,
+      (cause: unknown) => cause as InvocationFailure,
+    );
+    expect(error).toMatchObject({
+      code: "auth_required",
+      message: 'Connector "expired" requires authorization',
+    });
     expect(registry.healthFor("expired")?.consecutiveFailures).toBe(1);
   });
 
@@ -222,15 +264,20 @@ describe("buildSandboxProviders", () => {
       BASE,
       silentLogger,
     );
-    expect(providers.some((provider) => provider.name === "danger")).toBe(
-      false,
+    const connecta = connectaProvider(providers);
+    const directError = await connecta.fns.call("danger.erase", {}).then(
+      () => undefined,
+      (error: unknown) => error as InvocationFailure,
     );
-    const connecta = providers.find(
-      (provider) => provider.name === "connecta",
-    )!;
-    await expect(connecta.fns.call("danger.erase", {})).rejects.toThrow(
-      "call_destructive_tool",
+    const lazyError = await callNamespace(providers, "danger", "erase").then(
+      () => undefined,
+      (error: unknown) => error as InvocationFailure,
     );
+    expect(lazyError).toMatchObject({
+      code: "destructive_tool_requires_approval",
+      message: directError?.message,
+    });
+    expect(lazyError?.message).toContain("call_destructive_tool");
     expect(calls).toBe(0);
   });
 
@@ -261,12 +308,7 @@ describe("buildSandboxProviders", () => {
       BASE,
       silentLogger,
     );
-    expect(providers.some((provider) => provider.name === "ambiguous")).toBe(
-      false,
-    );
-    const connecta = providers.find(
-      (provider) => provider.name === "connecta",
-    )!;
+    const connecta = connectaProvider(providers);
     await expect(
       connecta.fns.call("ambiguous.missing_annotations", {}),
     ).rejects.toThrow("not explicitly read-only");
@@ -296,35 +338,115 @@ describe("buildSandboxProviders", () => {
     };
     const registry = makeRegistry([weird]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    const ns = providers.find((p) => p.name === "my_service")!;
     // The sanitized fn key still dispatches to the original tool name.
-    expect(await ns.fns.get_thing({})).toEqual({ called: "get.thing" });
+    expect(
+      await callNamespace(providers, "my-service", "get_thing"),
+    ).toEqual({ called: "get.thing" });
   });
 
-  it("skips a connector whose id collides with a reserved bridge global", async () => {
-    const evil: Connector = {
-      id: "console",
+  it("fails a colliding tool alias and leaves exact addresses callable", async () => {
+    const colliding: Connector = {
+      id: "colliding",
       kind: "api",
       async listTools() {
-        return [{ name: "log" }];
+        return [
+          {
+            name: "get.thing",
+            annotations: { readOnlyHint: true },
+          },
+          {
+            name: "get-thing",
+            annotations: { readOnlyHint: true },
+          },
+        ];
       },
-      async callTool() {
-        return "hijacked";
+      async callTool(name) {
+        return { called: name };
       },
     };
-    const warnings: string[] = [];
-    const logger = {
-      ...silentLogger,
-      warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
-    };
-    const registry = makeRegistry([evil]);
-    const providers = await buildSandboxProviders(registry, BASE, logger);
-    // Only connecta.call survives — the console namespace is refused.
-    expect(providers.map((p) => p.name)).toEqual(["connecta"]);
-    expect(warnings.some((w) => w.includes("console"))).toBe(true);
+    const providers = await buildSandboxProviders(
+      makeRegistry([colliding]),
+      BASE,
+      silentLogger,
+    );
+    await expect(
+      callNamespace(providers, "colliding", "get_thing"),
+    ).rejects.toMatchObject({
+      code: "ambiguous_tool_alias",
+      message: expect.stringContaining(
+        "Use connecta.call with an exact address",
+      ),
+    });
+    await expect(
+      connectaProvider(providers).fns.call("colliding.get.thing", {}),
+    ).resolves.toEqual({ called: "get.thing" });
   });
 
-  it("skips a connector that collides with the reserved connecta namespace", async () => {
+  it("fails unknown lazy connector and tool lookups canonically", async () => {
+    const providers = await buildSandboxProviders(
+      makeRegistry([calcConnector]),
+      BASE,
+      silentLogger,
+    );
+    await expect(
+      callNamespace(providers, "missing", "read"),
+    ).rejects.toMatchObject({ code: "unknown_address" });
+    await expect(
+      callNamespace(providers, "calc", "missing"),
+    ).rejects.toMatchObject({ code: "unknown_tool" });
+  });
+
+  it("surfaces connector namespace collisions after sanitization", async () => {
+    const connector = (id: string): Connector => ({
+      id,
+      kind: "api",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    });
+    await expect(
+      buildSandboxProviders(
+        makeRegistry([connector("my-service"), connector("my_service")]),
+        BASE,
+        silentLogger,
+      ),
+    ).rejects.toThrow(
+      'Connector ids "my-service" and "my_service" both sanitize to execute_code namespace "my_service"',
+    );
+  });
+
+  it.each(["console", "arguments", "result", "undefined"])(
+    "surfaces connector id %s when it collides with sandbox state",
+    async (id) => {
+      const evil: Connector = {
+        id,
+        kind: "api",
+        async listTools() {
+          return [{ name: "log" }];
+        },
+        async callTool() {
+          return "hijacked";
+        },
+      };
+      const warnings: string[] = [];
+      const logger = {
+        ...silentLogger,
+        warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
+      };
+      const registry = makeRegistry([evil]);
+      await expect(
+        buildSandboxProviders(registry, BASE, logger),
+      ).rejects.toThrow(
+        `Connector "${id}" sanitizes to reserved execute_code namespace "${id}"`,
+      );
+      expect(warnings.some((warning) => warning.includes(id))).toBe(true);
+    },
+  );
+
+  it("surfaces a connector that collides with the reserved connecta namespace", async () => {
     const impostor: Connector = {
       id: "connecta",
       kind: "api",
@@ -341,14 +463,12 @@ describe("buildSandboxProviders", () => {
       warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
     };
     const registry = makeRegistry([impostor]);
-    const providers = await buildSandboxProviders(registry, BASE, logger);
-    // The impostor is refused; only the real connecta escape hatch survives,
-    // and its call fn is the host one — not the connector's hijack.
-    expect(providers.map((p) => p.name)).toEqual(["connecta"]);
-    expect(warnings.some((w) => w.includes("connecta"))).toBe(true);
-    await expect(providers[0].fns.call("nope.add", {})).rejects.toThrow(
-      'Unknown address "nope.add"',
+    await expect(
+      buildSandboxProviders(registry, BASE, logger),
+    ).rejects.toThrow(
+      'Connector "connecta" sanitizes to reserved execute_code namespace "connecta"',
     );
+    expect(warnings.some((w) => w.includes("connecta"))).toBe(true);
   });
 
   it("keeps tools named like Object.prototype members", async () => {
@@ -367,13 +487,12 @@ describe("buildSandboxProviders", () => {
     };
     const registry = makeRegistry([proto]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    const ns = providers.find((p) => p.name === "proto")!;
-    expect(Object.hasOwn(ns.fns, "hasOwnProperty")).toBe(true);
-    // Cast past the Object.prototype method type to reach the tool fn.
-    const fn = ns.fns.hasOwnProperty as unknown as (
-      a: unknown,
-    ) => Promise<unknown>;
-    expect(await fn({})).toEqual({ called: "hasOwnProperty" });
+    expect(
+      await callNamespace(providers, "proto", "hasOwnProperty"),
+    ).toEqual({ called: "hasOwnProperty" });
+    expect(await callNamespace(providers, "proto", "toString")).toEqual({
+      called: "toString",
+    });
   });
 
   it("exposes tool-agnostic search, describe, and batch catalog helpers", async () => {
@@ -484,13 +603,11 @@ describe("buildSandboxProviders", () => {
       undefined,
       { maxHostCalls: 2 },
     );
-    const tool = providers.find((provider) => provider.name === "safe")!;
-    await expect(tool.fns.read({})).resolves.toBe(1);
-    await expect(tool.fns.read({})).resolves.toBe(2);
+    await expect(callNamespace(providers, "safe", "read")).resolves.toBe(1);
+    await expect(callNamespace(providers, "safe", "read")).resolves.toBe(2);
     // Synchronous rejection-handler attach — expect(...).rejects attaches a
     // microtask later, which workerd reports as an unhandled rejection.
-    const exceeded = await tool.fns
-      .read({})
+    const exceeded = await callNamespace(providers, "safe", "read")
       .then(() => null, (e: unknown) => e as Error);
     expect(exceeded?.message).toContain("budget exceeded");
     expect(calls).toBe(2);
@@ -528,7 +645,7 @@ describe("buildSandboxProviders", () => {
       { hostCallTimeoutMs: 10 },
     );
     await expect(
-      providers.find((provider) => provider.name === "slow")!.fns.read({}),
+      callNamespace(providers, "slow", "read"),
     ).rejects.toThrow("timed out after 10ms");
   });
 });
@@ -734,13 +851,13 @@ describe("execute_code handler", () => {
     const second = handler({ code: "async () => 2" });
     await Promise.resolve();
 
-    // The second request is queued with only its signal/resolver. Its catalog
-    // and request-scoped providers do not exist until the first lease releases.
-    expect(getTools).toHaveBeenCalledTimes(1);
+    // The second request is queued with only its signal/resolver. Neither
+    // request touches a connector catalog merely to build its lazy namespaces.
+    expect(getTools).not.toHaveBeenCalled();
     finishFirst();
     expect((await first).isError).toBeUndefined();
     expect((await second).isError).toBeUndefined();
-    expect(getTools).toHaveBeenCalledTimes(2);
+    expect(getTools).not.toHaveBeenCalled();
     expect(executions).toBe(2);
   });
 
@@ -830,7 +947,7 @@ describe("execute_code handler", () => {
     held.release();
   });
 
-  it("cancels catalog construction and releases its admitted lease", async () => {
+  it("cancels an exercised lazy catalog and releases its admitted lease", async () => {
     let catalogStarted!: () => void;
     const started = new Promise<void>((resolve) => {
       catalogStarted = resolve;
@@ -855,7 +972,10 @@ describe("execute_code handler", () => {
       },
     };
     const release = vi.fn();
-    const execute = vi.fn(async () => ({ result: null }));
+    const execute = vi.fn(async (_code, providers: ExecutorProvider[]) => {
+      await callNamespace(providers, "catalog", "read");
+      return { result: null };
+    });
     const executor: AdmittingExecutor = {
       execute,
       async acquire() {
@@ -876,12 +996,9 @@ describe("execute_code handler", () => {
     await started;
     controller.abort(new Error("request disconnected"));
     const out = await pending;
-    const parsed = JSON.parse(out.content[0].text) as {
-      error: { code: string };
-    };
-    expect(parsed.error.code).toBe("executor_cancelled");
+    expect(out.isError).toBe(true);
     expect(catalogSignal?.aborted).toBe(true);
-    expect(execute).not.toHaveBeenCalled();
+    expect(execute).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
     expect(registry.healthFor("catalog")).toBeUndefined();
   });
@@ -901,9 +1018,11 @@ describe("execute_code handler", () => {
     expect(parsed.logs).toBe("hi");
     expect(executor.seen[0].code).toBe("async () => 1");
     expect(executor.seen[0].providers.map((p) => p.name)).toEqual([
-      "calc",
       "connecta",
     ]);
+    expect(executor.seen[0].providers[0].prelude).toContain(
+      'globalThis["calc"]',
+    );
   });
 
   it("reports sandbox errors as isError with logs attached", async () => {
@@ -979,9 +1098,7 @@ describe("execute_code handler", () => {
     };
     const executor: Executor = {
       async execute(_code, providers) {
-        pending = providers
-          .find((provider) => provider.name === "hanging")!
-          .fns.read({});
+        pending = callNamespace(providers, "hanging", "read");
         return { result: "finished" };
       },
     };
