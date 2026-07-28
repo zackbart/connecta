@@ -418,30 +418,33 @@ describe("buildSandboxProviders", () => {
     );
   });
 
-  it("surfaces a connector id that collides with a reserved bridge global", async () => {
-    const evil: Connector = {
-      id: "console",
-      kind: "api",
-      async listTools() {
-        return [{ name: "log" }];
-      },
-      async callTool() {
-        return "hijacked";
-      },
-    };
-    const warnings: string[] = [];
-    const logger = {
-      ...silentLogger,
-      warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
-    };
-    const registry = makeRegistry([evil]);
-    await expect(
-      buildSandboxProviders(registry, BASE, logger),
-    ).rejects.toThrow(
-      'Connector "console" sanitizes to reserved execute_code namespace "console"',
-    );
-    expect(warnings.some((w) => w.includes("console"))).toBe(true);
-  });
+  it.each(["console", "arguments", "result", "undefined"])(
+    "surfaces connector id %s when it collides with sandbox state",
+    async (id) => {
+      const evil: Connector = {
+        id,
+        kind: "api",
+        async listTools() {
+          return [{ name: "log" }];
+        },
+        async callTool() {
+          return "hijacked";
+        },
+      };
+      const warnings: string[] = [];
+      const logger = {
+        ...silentLogger,
+        warn: (...a: unknown[]) => warnings.push(a.map(String).join(" ")),
+      };
+      const registry = makeRegistry([evil]);
+      await expect(
+        buildSandboxProviders(registry, BASE, logger),
+      ).rejects.toThrow(
+        `Connector "${id}" sanitizes to reserved execute_code namespace "${id}"`,
+      );
+      expect(warnings.some((warning) => warning.includes(id))).toBe(true);
+    },
+  );
 
   it("surfaces a connector that collides with the reserved connecta namespace", async () => {
     const impostor: Connector = {

@@ -90,6 +90,9 @@ export function sanitizeIdentifier(name: string): string {
 const SANDBOX_RESERVED_NAMES = new Set([
   "connecta",
   "console",
+  "arguments",
+  "result",
+  "undefined",
   "setTimeout",
   "Promise",
   "Error",

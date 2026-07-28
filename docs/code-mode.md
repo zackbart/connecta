@@ -72,7 +72,7 @@ interface Executor {
 
 interface ExecutorProvider {
   name: string;
-  fns: Record<string, (...args: unknown[]) => unknown>;
+  fns: Record<string, (...args: unknown[]) => Promise<unknown>>;
   prelude?: string; // trusted, host-authored sandbox setup
 }
 ```
