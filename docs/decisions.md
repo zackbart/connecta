@@ -122,6 +122,34 @@ handler merely produced a `Response` would let slow clients consume uncounted
 memory and sockets. Code mode remains a second, smaller pool rather than
 borrowing ordinary capacity as permission to create sandboxes.
 
+Connector call admission is a third, narrower boundary. The base `Registry`
+owns each connector's partitioned policy and exposes an async `admitCall()`
+lease; direct/batch and code-mode paths keep their different retry, timeout,
+unwrapping, and result-shaping machinery and acquire only immediately before
+their existing `Connector.callTool`. Scoped registries delegate to the base so
+a toolkit never receives independent capacity. A lease is acquired per
+attempt, then released before retry backoff, so concurrency and rolling budgets
+count provider attempts rather than MCP envelopes.
+
+That policy is intentionally **per runtime**, not a distributed provider quota.
+One inbound request and all of its batch/code fan-out execute in one runtime, so
+the in-memory concurrency bound fully contains the motivating burst on Node and
+Workers. Rolling-window history is exact within one process/isolate and
+best-effort across isolates, replicas, and restarts. KV cannot safely coordinate
+the invariant without atomic operations, and a Durable-Object coordinator would
+turn this portable sandbox into platform machinery — the same boundary behind
+the rejected Durable-Object code runtime above. The async typed permit seam
+leaves room for a separately designed coordinator later; issue #138 does not
+implement or promise one.
+
+The public policy is plural-ready (`rules: [...]`) but this release accepts
+exactly one rule. Multiple partition dimensions require atomic all-rule
+admission: consuming one rolling token before a later rule refuses would charge
+a call that never reached the provider. Rejecting multi-rule configuration is
+more honest than sequential leases with that bug. Catalog, status, credential,
+and authorization operations stay outside this policy; it accounts only
+`Connector.callTool` attempts.
+
 A newly forked child sends a ready handshake only after the trusted QuickJS
 WASM module is loaded. Guest wall time starts after that handshake, while a
 separate fixed startup ceiling contains a child that never becomes ready.

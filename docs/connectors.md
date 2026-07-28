@@ -4,13 +4,12 @@
 
 ### Conventions
 
-Connectors and their tools are what the agent *browses* — through
-`list_connectors` and the grouped `search_tools` results — so a few naming and
-description conventions keep that surface legible. connecta **warns at startup**
-(a `logger.warn` per violation, static checks only) when a connector has no
-`description`, or when an `api()` tool is missing its `description` or
-`inputSchema`; remote-MCP tool defs are fetched lazily and aren't checked at
-construction time.
+Connectors and their tools are what the agent *browses* — through `list_connectors`
+and grouped `search_tools` results — so naming and description conventions keep
+that surface legible. connecta **warns at startup** (a `logger.warn` per violation,
+static checks only) when a connector has no `description`, or an `api()` tool is
+missing its `description` or `inputSchema`; remote-MCP tool defs are fetched
+lazily and aren't checked at construction time.
 
 - **Connector id** — a short lowercase service slug (`notion`, `stripe`,
   `github`). One connector **per service/domain**, not per endpoint. When
@@ -113,6 +112,7 @@ interface Connector {
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap (see below)
+  callAdmission?: ConnectorCallAdmissionPolicy; // see call-admission.md
   usageGuide?: string;           // agent-facing markdown served by `skills`
   credential?: {
     label: string;

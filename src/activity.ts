@@ -6,7 +6,11 @@ export type ActivityCallSource =
   | "batch_call"
   | "execute_code";
 
-export type ActivityOutcome = "success" | "error" | "timeout";
+export type ActivityOutcome =
+  | "success"
+  | "error"
+  | "timeout"
+  | "cancelled";
 
 /**
  * Authenticated identity attached to an activity event. `id` is intentionally

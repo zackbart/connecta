@@ -19,7 +19,7 @@ export interface ActivityEvent {
     | "call_destructive_tool"
     | "batch_call"
     | "execute_code";
-  outcome: "success" | "error" | "timeout";
+  outcome: "success" | "error" | "timeout" | "cancelled";
   durationMs: number;
   attempts: number;
   errorCode?: string;

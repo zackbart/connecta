@@ -18,6 +18,11 @@ import {
   type CredentialHealthConfig,
   type CredentialHealthRecord,
 } from "./credential-health.js";
+import {
+  ConnectorCallAdmissionController,
+  type CallAdmissionPermit,
+  type ConnectorCallAdmissionSnapshot,
+} from "./call-admission.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
@@ -212,6 +217,14 @@ export interface RegistryView {
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
   ): ConnectorContext;
+  /**
+   * Acquire the connector's shared downstream-call permit. Scoped views
+   * delegate to the base registry so every toolkit contends on the same pool.
+   */
+  admitCall(
+    id: string,
+    input: { toolName: string; args: unknown; signal?: AbortSignal },
+  ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
   recordSuccess(id: string, latencyMs: number): void;
   recordFailure(id: string, latencyMs: number, error: unknown): void;
@@ -242,6 +255,10 @@ export interface RegistryView {
  */
 export class Registry implements RegistryView {
   private readonly connectors = new Map<string, Connector>();
+  private readonly callAdmission = new Map<
+    string,
+    ConnectorCallAdmissionController
+  >();
   private readonly cache = new Map<string, CacheEntry>();
   private readonly invalidated = new Set<string>();
   /** Per-connector epoch preventing a pre-invalidation refresh from publishing. */
@@ -287,6 +304,12 @@ export class Registry implements RegistryView {
         throw new Error(`Duplicate connector id "${c.id}"`);
       }
       this.connectors.set(c.id, c);
+      if (c.callAdmission) {
+        this.callAdmission.set(
+          c.id,
+          new ConnectorCallAdmissionController(c.id, c.callAdmission),
+        );
+      }
     }
     this.checkConventions(opts.logger);
     this.checkResultCaps(
@@ -428,6 +451,30 @@ export class Registry implements RegistryView {
       requestScope,
       ...callOptions,
     };
+  }
+
+  admitCall(
+    id: string,
+    input: { toolName: string; args: unknown; signal?: AbortSignal },
+  ): Promise<CallAdmissionPermit> {
+    const admission = this.callAdmission.get(id);
+    if (admission) return admission.acquire(input);
+    return Promise.resolve({ waitMs: 0, release() {} });
+  }
+
+  /** Payload-free aggregate state for the open health endpoint. */
+  callAdmissionSnapshot(): Record<string, ConnectorCallAdmissionSnapshot> {
+    return Object.fromEntries(
+      [...this.callAdmission].map(([id, admission]) => [
+        id,
+        admission.snapshot(),
+      ]),
+    );
+  }
+
+  /** Reject queued/future downstream admission; active permits release safely. */
+  closeCallAdmission(): void {
+    for (const admission of this.callAdmission.values()) admission.close();
   }
 
   /**
@@ -944,6 +991,14 @@ export class ScopedRegistry implements RegistryView {
     // credentials to a scope that may not see the connector.
     if (!this.visible(id)) throw this.unknownConnector(id);
     return this.base.contextFor(id, baseUrl, requestScope, callOptions);
+  }
+
+  admitCall(
+    id: string,
+    input: { toolName: string; args: unknown; signal?: AbortSignal },
+  ): Promise<CallAdmissionPermit> {
+    if (!this.visible(id)) return Promise.reject(this.unknownConnector(id));
+    return this.base.admitCall(id, input);
   }
 
   /**

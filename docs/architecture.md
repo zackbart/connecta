@@ -142,6 +142,7 @@ connecta/
     architecture.md       # product shape, request lifecycle, package boundaries
     meta-tools.md          # the fixed agent-facing tool surface
     connectors.md         # connector contracts, factories, downstream OAuth
+    call-admission.md      # connector-partitioned downstream call bounds
     auth.md               # inbound auth and Clerk setup
     storage-and-credentials.md # state, vault credentials, proactive liveness
     operations.md         # config, deployment, tests, troubleshooting
@@ -165,6 +166,7 @@ connecta/
     timeout.ts            # the shared probe deadline vocabulary (withTimeout, 30 s default)
     activity.ts           # payload-free activity contracts + best-effort recorder
     errors.ts             # ConnectorCallError + error classification
+    call-admission.ts     # connector-partitioned downstream call permits + rolling budgets
     executor-admission.ts # portable bounded queue + admitted lease contract
     executor-result.ts    # execute_code result/log transport shaping
     mcp-result.ts         # result wrapping, fields selection, truncation/paging

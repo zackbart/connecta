@@ -16,6 +16,7 @@ import {
   truncateExecuteText,
 } from "./executor-result.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
+import { isCallAdmissionError } from "./call-admission.js";
 import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
@@ -192,27 +193,37 @@ export async function buildSandboxProviders(
     const controller = new AbortController();
     const cancel = () => controller.abort(limits.signal?.reason);
     limits.signal?.addEventListener("abort", cancel, { once: true });
+    if (limits.signal?.aborted) cancel();
     let timer: ReturnType<typeof setTimeout> | undefined;
-    let rejectCancelled!: (reason: Error) => void;
-    const cancelled = new Promise<never>((_, reject) => {
-      rejectCancelled = reject;
-    });
-    const onAbort = () => {
-      rejectCancelled(
-        controller.signal.reason instanceof Error
-          ? controller.signal.reason
-          : new Error("execute_code host call cancelled"),
-      );
-    };
-    controller.signal.addEventListener("abort", onAbort, { once: true });
-    const ctx = registry.contextFor(
-      resolved.connector.id,
-      baseUrl,
-      requestScope,
-      { signal: controller.signal, timeoutMs: hostCallTimeoutMs },
-    );
+    let onAbort: (() => void) | undefined;
     const started = Date.now();
+    let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
     try {
+      permit = await registry.admitCall(resolved.connector.id, {
+        toolName: resolved.toolName,
+        args: args ?? {},
+        signal: controller.signal,
+      });
+      let rejectCancelled!: (reason: Error) => void;
+      const cancelled = new Promise<never>((_, reject) => {
+        rejectCancelled = reject;
+      });
+      onAbort = () => {
+        rejectCancelled(
+          controller.signal.reason instanceof Error
+            ? controller.signal.reason
+            : new Error("execute_code host call cancelled"),
+        );
+      };
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      if (controller.signal.aborted) onAbort();
+      if (controller.signal.aborted) await cancelled;
+      const ctx = registry.contextFor(
+        resolved.connector.id,
+        baseUrl,
+        requestScope,
+        { signal: controller.signal, timeoutMs: hostCallTimeoutMs },
+      );
       timer = setTimeout(() => {
         controller.abort(
           new ConnectorCallError(
@@ -242,14 +253,34 @@ export async function buildSandboxProviders(
       });
       return value;
     } catch (err) {
-      registry.recordFailure(resolved.connector.id, Date.now() - started, err);
-      const details = classifyCallError(err);
+      const callerCancelled =
+        limits.signal?.aborted === true ||
+        (isCallAdmissionError(err) && err.admissionKind === "cancelled");
+      if (!callerCancelled && !isCallAdmissionError(err)) {
+        registry.recordFailure(
+          resolved.connector.id,
+          Date.now() - started,
+          err,
+        );
+      }
+      const details = callerCancelled
+        ? {
+            code: "cancelled",
+            message: "Tool call was cancelled by the caller.",
+            retryable: false,
+          }
+        : classifyCallError(err);
       recordToolActivity(activity, {
         connectorId: resolved.connector.id,
         toolName: resolved.toolName,
         address: `${resolved.connector.id}.${resolved.toolName}`,
         source: "execute_code",
-        outcome: details.code === "timeout" ? "timeout" : "error",
+        outcome:
+          details.code === "timeout"
+            ? "timeout"
+            : details.code === "cancelled"
+              ? "cancelled"
+              : "error",
         durationMs: Date.now() - started,
         attempts: 1,
         errorCode: details.code,
@@ -257,8 +288,9 @@ export async function buildSandboxProviders(
       throw err;
     } finally {
       if (timer) clearTimeout(timer);
-      controller.signal.removeEventListener("abort", onAbort);
+      if (onAbort) controller.signal.removeEventListener("abort", onAbort);
       limits.signal?.removeEventListener("abort", cancel);
+      permit?.release();
     }
   };
   for (let i = 0; i < connectors.length; i++) {

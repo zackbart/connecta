@@ -1,6 +1,7 @@
 import { precompileValidator, validateToolInput } from "../validate.js";
 import type {
   Connector,
+  ConnectorCallAdmissionPolicy,
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
   ConnectorContext,
@@ -37,6 +38,8 @@ export interface ApiOptions {
    * and is ignored.
    */
   maxResultBytes?: number;
+  /** Optional per-runtime downstream call-admission policy. */
+  callAdmission?: ConnectorCallAdmissionPolicy;
   /**
    * Optional agent-facing usage guide (markdown) served by the `skills`
    * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
@@ -111,6 +114,7 @@ export function api(id: string, opts: ApiOptions): Connector {
     kind: "api",
     description: opts.description,
     maxResultBytes: opts.maxResultBytes,
+    callAdmission: opts.callAdmission,
     usageGuide: opts.usageGuide,
     credential: opts.credential,
     testCredential: opts.testCredential,

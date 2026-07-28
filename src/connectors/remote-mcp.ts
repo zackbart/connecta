@@ -13,6 +13,7 @@ import { ConnectorCallError } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
+  ConnectorCallAdmissionPolicy,
   ConnectorContext,
   ConnectorStatus,
   Logger,
@@ -38,6 +39,8 @@ export interface RemoteMcpOptions {
    * and is ignored.
    */
   maxResultBytes?: number;
+  /** Optional per-runtime downstream call-admission policy. */
+  callAdmission?: ConnectorCallAdmissionPolicy;
   /**
    * Optional agent-facing usage guide (markdown) served by the `skills`
    * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
@@ -743,6 +746,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     kind: "mcp",
     description: opts.description,
     maxResultBytes: opts.maxResultBytes,
+    callAdmission: opts.callAdmission,
     usageGuide: opts.usageGuide,
 
     // `tools/list` is cursor-paginated: the server chooses the page size and

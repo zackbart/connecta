@@ -1273,6 +1273,7 @@ async function serveMcp(
     activity,
     defaultToolTimeoutMs: opts.defaultToolTimeoutMs,
     probeTimeoutMs: opts.probeTimeoutMs,
+    requestSignal: request.signal,
     ...(runtimeContext
       ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
       : {}),
@@ -1577,6 +1578,10 @@ export function createFetchHandler(
             code: opts.executor
               ? (codeAdmission ?? { managedByExecutor: true })
               : null,
+            downstreamCalls: {
+              policy: "connector-partitioned-per-runtime",
+              connectors: registry.callAdmissionSnapshot(),
+            },
             reservedRoutes: [
               "/health",
               "/",

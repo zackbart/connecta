@@ -153,15 +153,18 @@ including for direct internal callers. Count-limit failures are non-retryable
   (`args` defaults to `{}`). Deadlines are best-effort and propagated to custom
   connectors as `ctx.signal`/`ctx.timeoutMs`. When the caller passes no
   `timeoutMs`, the deployment's `calls.defaultTimeoutMs` applies if one is
-  configured; there is no deadline otherwise. Retries occur only when the tool
-  declares `readOnlyHint: true` or `idempotentHint: true` and the error is
-  classified retryable. The call itself is allowed only when
-  `readOnlyHint: true` and `destructiveHint` is not true. Missing, false, or
-  contradictory safety annotations fail closed and require
+  configured; there is no deadline otherwise. The per-attempt deadline starts
+  after downstream call admission, so total wall time may also include
+  `queueTimeoutMs`. Retries occur only when the tool declares
+  `readOnlyHint: true` or `idempotentHint: true` and the error is classified
+  retryable. Caller cancellation is non-retryable. The call itself is allowed
+  only when `readOnlyHint: true` and `destructiveHint` is not true. Missing,
+  false, or contradictory safety annotations fail closed and require
   `call_destructive_tool`.
-- **Diagnostics.** `diagnostics: true` adds `{ catalogMs, connectorMs,
-  backoffMs, resultProcessingMs, totalMs }` without changing the default compact
-  response.
+- **Diagnostics.** `diagnostics: true` adds `{ catalogMs, admissionMs,
+  connectorMs, backoffMs, resultProcessingMs, totalMs }` without changing the
+  default compact response. `admissionMs` is time awaiting downstream permits;
+  `connectorMs` starts only once a permit has been acquired.
 - **`fields` (dot-path selection).** When present, it is applied to a
   JSON-parseable result **before** the size guard. Grammar: `a.b.c` descends
   objects; a `[]` suffix maps the remaining path over an array

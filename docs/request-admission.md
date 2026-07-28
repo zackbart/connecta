@@ -38,6 +38,13 @@ other value is a finite whole number; concurrency and timeout must be positive,
 while queue size and the retry hint may be zero. Invalid bounds throw at
 construction rather than silently removing the deployment's memory boundary.
 
+This request pool is not the only admission layer. A connector may also declare
+per-runtime downstream call concurrency and rolling-window budgets, shared by
+direct, batch, and code-mode calls
+([connector call admission](./call-admission.md#downstream-call-admission)). Request
+admission bounds the whole MCP envelope; connector admission bounds individual
+`Connector.callTool` attempts fanned out inside that envelope.
+
 `admission.code` is the fallback for a one-method `Executor`. An executor that
 implements `acquire()` already owns a bounded pool, so its own settings win and
 Connecta warns if `admission.code` was also supplied. The built-in
@@ -99,14 +106,18 @@ All non-MCP routes bypass the request pool. In particular, `/health` and the
 operator shell/data routes retain capacity while MCP is saturated; an operator
 can see and diagnose overload instead of joining its queue.
 
-`/health` exposes payload-free snapshots under `admission.requests` and
-`admission.code`: configured bounds, current active/queued counts, cumulative
-admitted/queued/rejected/cancelled/closed totals, and queue-wait
-count/total/max. It labels the policy `global-fifo` and names the reserved
-operator routes. Queue waits are logged at debug level; rejection warnings are
+`/health` exposes payload-free snapshots under `admission.requests`,
+`admission.code`, and `admission.downstreamCalls`. The first two include
+configured bounds, current active/queued counts, cumulative
+admitted/queued/rejected/cancelled/closed totals, and queue-wait count/total/max.
+Downstream calls aggregate the corresponding call-admission gauges and totals
+per connector without partition keys. The request policy is labelled
+`global-fifo`; downstream policy is labelled
+`connector-partitioned-per-runtime`; reserved operator routes are named. Queue
+waits are logged at debug level; request-admission rejection warnings are
 rate-limited and report how many were suppressed while the health total counts
-every one. Neither path records request bodies, tool arguments, identities, or
-results.
+every one. No path records or exposes request bodies, tool arguments,
+partition keys, identities, or results.
 
 ## Node capacity measurement
 
