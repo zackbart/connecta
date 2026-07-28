@@ -2,6 +2,54 @@
 
 All notable changes to this package are documented here.
 
+## 0.8.0 — 2026-07-28
+
+0.8.0 is consolidation before capability growth (#157): the semantics that were
+independently implemented across call paths — invocation, catalog access,
+discovery bounds, timeouts — now live in shared services, the oversized modules
+(`server.ts`, the operator UI) are split into typed, tested units, and the dev
+loop gained correctness-only linting, an unused-code gate, strict indexed and
+optional property checks, and an automated Workers test-partition guard. A
+deployment can take this release without touching its config: entrypoints,
+options, storage formats, and the tool surface are unchanged. The docs were
+restructured — the old numbered manual is retired in favor of a terse
+[`ethos.md`](./ethos.md) and stub guides in `documentation/` — and the
+temporary `@hono/node-server` override is gone now that the SDK (1.30.0)
+depends on a patched version upstream.
+
+### Added
+
+- **`ethos.md`** — what connecta is, what it refuses to be, a decisions table,
+  and the invariants, each enforced or reviewer-owned (#175, PR #180). CI caps
+  its length; terseness is the point.
+- **Route-contract and operator-UI browser tests** pinning server behavior
+  before extraction (#148 PR #168, #149 PR #169).
+- **Automated Workers test-partition guard** — every suite must be classified
+  portable or Node-bound, with a reason (#150, PR #161).
+
+### Changed
+
+- **Tool invocation and catalog access are shared services** used by direct,
+  batch, and code-mode paths alike (#144, PR #162); code-mode dispatch is lazy
+  (#145, PR #163); catalog discovery is deduplicated and bounded (#146,
+  PR #164); persisted catalogs are chunked with bounded I/O (#147/#167,
+  PRs #166/#172).
+- **`server.ts` is a composition root** over extracted route modules (#148,
+  PR #170); the operator UI is typed, bundled browser source (#149, PR #169).
+- **Strict indexed access and exact optional property types** are on across
+  src and tests (#151, PR #181); Oxlint correctness and Knip unused-code gates
+  run in `npm run check` (#155, PR #171).
+- **`@modelcontextprotocol/sdk` 1.30.0** with the `@hono/node-server` override
+  removed (#40, PR #174).
+- **Docs restructure** — `docs/` retired; `README.md` is a short overview and
+  per-subsystem guides will be rewritten in `documentation/` (#175, PR #180).
+  Toolkits (#178) and proactive credential liveness (#179) are recorded as
+  retired decisions; their code remains in this release pending removal.
+
+### Fixed
+
+- Nothing user-visible; behavior-preserving consolidation throughout.
+
 ## 0.7.9 — 2026-07-28
 
 0.7.9 adds opt-in, connector-scoped admission for downstream tool calls. Direct
