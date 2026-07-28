@@ -241,7 +241,7 @@ describe("clerkAuth inbound auth", () => {
   });
 
   // One clerkAuth per team — same keys, that team's `gate`, that team's
-  // toolkits — is how a Clerk deployment binds users to views (docs/toolkits.md).
+  // toolkits — is how a Clerk deployment binds users to views (documentation/toolkits.md).
   it("declares the toolkit binding for the users it admits", () => {
     const bound = clerkAuth({
       publishableKey,
@@ -334,9 +334,9 @@ describe("clerkAuth inbound auth", () => {
     if (!result.ok) expect(result.response.status).toBe(401);
   });
 
-  // allowedDomains decides WHO is admitted to the org (docs/auth.md); a
+  // allowedDomains decides WHO is admitted to the org (documentation/auth.md); a
   // toolkit binding decides WHICH view they get once admitted
-  // (docs/toolkits.md).
+  // (documentation/toolkits.md).
   describe("allowedDomains", () => {
     /** A Clerk user with one primary email, verified unless told otherwise. */
     const userWithEmail = (

@@ -188,7 +188,7 @@ function identityLabel(actor: ActivityActor): string {
 
 /**
  * Resolve `?toolkit=<name>` into the registry view this connection may see,
- * enforcing the caller's toolkit binding (docs/toolkits.md) on the way.
+ * enforcing the caller's toolkit binding (documentation/toolkits.md) on the way.
  *
  * For an UNBOUND identity (no binding configured — the pre-#37 shape):
  *

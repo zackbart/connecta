@@ -9,7 +9,7 @@ deploys without it and is compatible with the Workers Free plan.
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
 owns only its connector configuration, auth policy, domain, bindings,
-migrations, and secrets. See [deployment architecture](../../docs/operations.md#deployment-architecture).
+migrations, and secrets. See [deployment architecture](../../documentation/operations.md).
 
 ## Files
 
@@ -47,7 +47,7 @@ wrangler deploy
 `PUBLIC_URL` and `CLERK_PUBLISHABLE_KEY` are plain vars in `wrangler.jsonc`.
 Enable Dynamic Client Registration on the Clerk instance (OAuth Applications →
 DCR) so Claude/Cursor can self-register — full walkthrough in
-[setting up Clerk](../../docs/auth.md#setting-up-clerk-walkthrough).
+[setting up Clerk](../../documentation/auth.md).
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, Activity is at `/activity`, and
@@ -74,7 +74,7 @@ exist gets, so a team token is not a directory of the org's other teams. It also
 cannot read the deployment-wide operator surfaces (`/ui/data`, `/ui/activity`).
 Drop the `toolkits: [...]` option from a `bearerToken(...)` call and that
 credential goes back to selecting any view. Full reference:
-[toolkits](../../docs/toolkits.md#toolkits-scoped-views).
+[toolkits](../../documentation/toolkits.md).
 
 ## Code mode
 
@@ -173,7 +173,7 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
    ```
 
 Events carry no arguments, results, generated code, or raw error messages — see
-[activity history](../../docs/operator-ui.md#activity-history).
+[activity history](../../documentation/operator-ui.md).
 `toolkit_id` records which of the scoped views above a call came through, so an
 operator can tell the support team's traffic from the exec team's. The
 Worker entrypoint already forwards `ctx` to `connecta.fetch`, which is what lets
