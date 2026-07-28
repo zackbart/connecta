@@ -65,13 +65,13 @@ Two boundaries CI enforces that are not obvious from reading a file:
 
 ## Where new tests go
 
-Suites live in `test/` and run as two vitest projects (`vitest.config.ts`): the
-`node` project runs everything; the `workers` project re-runs an explicit
-`WORKERS_SUITES` allowlist inside workerd. When adding a suite: if it is
-runtime-portable, **add it to `WORKERS_SUITES`** — being an allowlist, a
-portable suite left out silently never runs on Workers. Leave it out only for
-Node-only surfaces (`fileStorage`, the QuickJS executor, the Clerk adapter, the
-fs-walking guardrails). New behavior also gets a row in
+Suites live in `test/` and run as two vitest projects (`vitest.config.ts`).
+Every `*.test.ts` belongs to exactly one explicit list: runtime-portable suites
+in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
+`node` project runs both lists; the `workers` project re-runs the portable list
+inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
+an unclassified, double-classified, stale, or reasonless entry. New behavior
+also gets a row in
 [`docs/operations.md`](./docs/operations.md#testing--development).
 
 ## Conventions
