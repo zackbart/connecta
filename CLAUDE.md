@@ -1,9 +1,19 @@
 # Working on connecta
 
 A single MCP endpoint aggregating downstream connectors (remote MCP servers and
-plain HTTP APIs) behind nine meta-tools, plus an optional tenth for code mode.
-One fetch-native core, running on both Node and Cloudflare Workers.
+plain HTTP APIs) behind a small fixed set of meta-tools — nine today, plus an
+optional tenth for code mode. One fetch-native core, running on both Node and
+Cloudflare Workers.
 
+- **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
+  and isn't, and its decisions table carries a verdict for every shape already
+  considered — refused, retired, provisional, or gated. Check the table before
+  designing or building anything: a `refused` row is a "no" with the reason
+  attached, and a `retired` row (toolkits
+  [#178](https://github.com/zackbart/connecta/issues/178), proactive credential
+  liveness [#179](https://github.com/zackbart/connecta/issues/179)) means the
+  code still in the tree is condemned — never extend it or make new code depend
+  on it while its removal is pending.
 - There is no TODO.md — the roadmap lives in
   [GitHub issues](https://github.com/zackbart/connecta/issues). When you find
   TODO items (in code comments, docs, or conversation), don't accumulate them
@@ -22,29 +32,20 @@ exports.
 
 ## The map
 
-- [`docs/documentation.md`](./docs/documentation.md) — compatibility index for
-  the old numbered manual anchors. New links belong in the canonical subsystem
-  documents, not the index.
-- [`docs/architecture.md`](./docs/architecture.md) — product shape, request
-  lifecycle, import purity, and package layout.
-- [`docs/meta-tools.md`](./docs/meta-tools.md) and
-  [`docs/connectors.md`](./docs/connectors.md) — the fixed tool surface and the
-  connector contracts behind it.
-- [`docs/auth.md`](./docs/auth.md) and
-  [`docs/storage-and-credentials.md`](./docs/storage-and-credentials.md) —
-  inbound identity, downstream state, and credential liveness.
-- [`docs/operations.md`](./docs/operations.md) — configuration, deployment,
-  the suite-by-suite test map, and troubleshooting.
-- [`docs/code-mode.md`](./docs/code-mode.md),
-  [`docs/request-admission.md`](./docs/request-admission.md),
-  [`docs/operator-ui.md`](./docs/operator-ui.md), and
-  [`docs/toolkits.md`](./docs/toolkits.md) — the optional sandbox, bounded
-  request policy, operator surfaces, and scoped registry views.
-- [`docs/decisions.md`](./docs/decisions.md) — non-goals, rejected alternatives,
-  and the invariants a change must preserve. Check it before building something
-  new; "we already decided not to" is a real answer there.
+- [`ethos.md`](./ethos.md) — what connecta is, what it refuses to be, the
+  decisions table, and the invariants every change must preserve. Check it
+  before building something new; "we already decided not to" is a real answer
+  there, and its retired/provisional verdicts override anything staler.
+- [`documentation/`](./documentation/) — per-subsystem guides for agents
+  working on the repo. **Currently stubs**: the old manual (`docs/`) was
+  retired in the phase-1 docs restructure and each guide is being rewritten as
+  the ideas settle. Until a guide is filled in, the subsystem's prior manual
+  text lives in git history (`docs/<name>.md`) — consult it there when you need
+  the old rationale, but treat `ethos.md` as the authority where they disagree.
+- [`README.md`](./README.md) — the human-facing overview.
 
-**Read the canonical document for a subsystem before changing it.**
+**Read `ethos.md` and the subsystem's guide (or its git-history predecessor)
+before changing a subsystem.**
 
 ## Where new code goes
 
@@ -72,8 +73,9 @@ in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
 `node` project runs both lists; the `workers` project re-runs the portable list
 inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
 an unclassified, double-classified, stale, or reasonless entry. New behavior
-also gets a row in
-[`docs/operations.md`](./docs/operations.md#testing--development).
+also gets a row in the test map in
+[`documentation/operations.md`](./documentation/operations.md) once that guide
+is rewritten; until then the row waits with the guide.
 
 ## Conventions
 

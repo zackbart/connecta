@@ -218,7 +218,7 @@ function emailDomain(email: string): string | null {
  * `toolkits` decides WHICH view the admitted user gets.
  *
  * `toolkits` binds every user this provider admits to those toolkits
- * (docs/toolkits.md). For a per-team split, configure one `clerkAuth(...)` per
+ * (documentation/toolkits.md). For a per-team split, configure one `clerkAuth(...)` per
  * team — the same keys, a `gate` naming that team's users, and that team's
  * `toolkits`. The server tries providers in order and the first that admits the
  * user supplies the binding, so a user one gate rejects falls through to the

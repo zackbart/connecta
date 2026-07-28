@@ -10,111 +10,16 @@ const ignoredDirectories = new Set([
   "dist",
   "node_modules",
 ]);
-// Historical release notes quote the section-number syntax that existed when
-// those releases shipped. They are records, not live documentation pointers.
+// Historical release notes quote the section-number syntax and documentation
+// paths that existed when those releases shipped. They are records, not live
+// documentation pointers, so neither stale-reference nor link checking applies.
 const staleReferenceAllowlist = new Set(["CHANGELOG.md"]);
-const staleReferenceDirectoryPrefixes = ["src/", "docs/", "examples/"];
+const historicalLinkAllowlist = new Set(["CHANGELOG.md"]);
+const staleReferenceDirectoryPrefixes = ["src/", "documentation/", "examples/"];
 
-const legacySections = [
-  {
-    heading: "1. What connecta is & why",
-    anchor: "1-what-connecta-is--why",
-    href: "./architecture.md#what-connecta-is--why",
-  },
-  {
-    heading: "2. Architecture",
-    anchor: "2-architecture",
-    href: "./architecture.md#architecture",
-  },
-  {
-    heading: "3. Meta-tools reference",
-    anchor: "3-meta-tools-reference",
-    href: "./meta-tools.md#meta-tools-reference",
-  },
-  {
-    heading: "4. Connectors",
-    anchor: "4-connectors",
-    href: "./connectors.md#connectors",
-  },
-  {
-    heading: "5. Inbound auth",
-    anchor: "5-inbound-auth",
-    href: "./auth.md#inbound-auth",
-  },
-  {
-    heading: "6. Downstream OAuth",
-    anchor: "6-downstream-oauth",
-    href: "./connectors.md#downstream-oauth",
-  },
-  {
-    heading: "7. Storage",
-    anchor: "7-storage",
-    href: "./storage-and-credentials.md#storage",
-  },
-  {
-    heading: "8. Running it",
-    anchor: "8-running-it",
-    href: "./operations.md#running-it",
-  },
-  {
-    heading: "9. Setting up Clerk (walkthrough)",
-    anchor: "9-setting-up-clerk-walkthrough",
-    href: "./auth.md#setting-up-clerk-walkthrough",
-  },
-  {
-    heading: "10. Deployment architecture",
-    anchor: "10-deployment-architecture",
-    href: "./operations.md#deployment-architecture",
-  },
-  {
-    heading: "11. Testing & development",
-    anchor: "11-testing--development",
-    href: "./operations.md#testing--development",
-  },
-  {
-    heading: "12. Troubleshooting",
-    anchor: "12-troubleshooting",
-    href: "./operations.md#troubleshooting",
-  },
-  {
-    heading: "13. Code mode (`execute_code`)",
-    anchor: "13-code-mode-execute_code",
-    href: "./code-mode.md#code-mode-execute_code",
-  },
-  {
-    heading: "14. Status UI",
-    anchor: "14-status-ui",
-    href: "./operator-ui.md#status-ui",
-  },
-  {
-    heading: "15. Activity history",
-    anchor: "15-activity-history",
-    href: "./operator-ui.md#activity-history",
-  },
-  {
-    heading: "16. Toolkits (scoped views)",
-    anchor: "16-toolkits-scoped-views",
-    href: "./toolkits.md#toolkits-scoped-views",
-  },
-  {
-    heading: "17. Credential health (proactive liveness checks)",
-    anchor: "17-credential-health-proactive-liveness-checks",
-    href:
-      "./storage-and-credentials.md#credential-health-proactive-liveness-checks",
-  },
-];
-
-const canonicalDocuments = [
-  "docs/architecture.md",
-  "docs/meta-tools.md",
-  "docs/connectors.md",
-  "docs/auth.md",
-  "docs/storage-and-credentials.md",
-  "docs/operations.md",
-  "docs/code-mode.md",
-  "docs/operator-ui.md",
-  "docs/toolkits.md",
-];
+// The ethos is deliberately terse — the cap is the point, not a formality.
+const ethosLineLimit = 150;
+const guideLineLimit = 700;
 
 function usage(message) {
   if (message) console.error(message);
@@ -381,6 +286,7 @@ function addError(errors, root, path, line, message) {
 
 async function checkLinks(root, markdownPaths, markdownCache, errors) {
   for (const path of markdownPaths) {
+    if (historicalLinkAllowlist.has(displayPath(root, path))) continue;
     let source = markdownCache.get(path);
     if (!source) {
       source = await readFile(path, "utf8");
@@ -436,108 +342,92 @@ async function checkStaleReferences(root, paths, errors) {
 }
 
 async function checkStructure(root, markdownCache, errors) {
-  const landingPath = resolve(root, "docs/documentation.md");
-  let landing;
+  // The retired manual must stay retired: a resurrected docs/ directory is
+  // drift back toward the pre-restructure shape, not a new document set.
   try {
-    landing = await readFile(landingPath, "utf8");
-    markdownCache.set(landingPath, landing);
+    const retired = await stat(resolve(root, "docs"));
+    if (retired.isDirectory()) {
+      addError(
+        errors,
+        root,
+        resolve(root, "docs"),
+        1,
+        'retired "docs/" directory exists; guides belong in "documentation/"',
+      );
+    }
   } catch {
+    // absent, as it should be
+  }
+
+  for (const required of ["README.md", "ethos.md"]) {
+    const path = resolve(root, required);
+    try {
+      const source = await readFile(path, "utf8");
+      markdownCache.set(path, source);
+    } catch {
+      addError(errors, root, path, 1, `missing ${required}`);
+    }
+  }
+
+  const ethosPath = resolve(root, "ethos.md");
+  const ethos = markdownCache.get(ethosPath);
+  if (ethos !== undefined && lineCount(ethos) >= ethosLineLimit) {
     addError(
       errors,
       root,
-      landingPath,
+      ethosPath,
       1,
-      "missing compatibility index",
+      `ethos.md has ${lineCount(ethos)} lines; expected fewer than ${ethosLineLimit} — terseness is the point`,
     );
+  }
+
+  const guidesDirectory = resolve(root, "documentation");
+  let guideEntries;
+  try {
+    guideEntries = await readdir(guidesDirectory, { withFileTypes: true });
+  } catch {
+    addError(errors, root, guidesDirectory, 1, 'missing "documentation/" directory');
     return;
   }
 
-  if (lineCount(landing) >= 200) {
-    addError(
-      errors,
-      root,
-      landingPath,
-      1,
-      `compatibility index has ${lineCount(landing)} lines; expected fewer than 200`,
-    );
-  }
-
-  const landingHeadings = headingsFor(landing);
-  const levelTwoHeadings = landingHeadings.filter(
-    (heading) => heading.level === 2,
-  );
-  if (levelTwoHeadings.length !== legacySections.length) {
-    addError(
-      errors,
-      root,
-      landingPath,
-      1,
-      `compatibility index has ${levelTwoHeadings.length} level-two headings; expected ${legacySections.length}`,
-    );
-  }
-
-  const active = activeLines(landing);
-  for (const section of legacySections) {
-    const matches = levelTwoHeadings.filter(
-      (heading) => heading.text === section.heading,
-    );
-    if (matches.length !== 1) {
-      addError(
-        errors,
-        root,
-        landingPath,
-        matches[0]?.line ?? 1,
-        `legacy heading "${section.heading}" appears ${matches.length} times; expected once`,
-      );
-      continue;
-    }
-    if (matches[0].slug !== section.anchor) {
-      addError(
-        errors,
-        root,
-        landingPath,
-        matches[0].line,
-        `legacy heading "${section.heading}" generates "#${matches[0].slug}", expected "#${section.anchor}"`,
-      );
-    }
-    const nextHeading = levelTwoHeadings.find(
-      (heading) => heading.line > matches[0].line,
-    );
-    const targets = active
-      .filter(
-        ({ number }) =>
-          number > matches[0].line &&
-          (!nextHeading || number < nextHeading.line),
-      )
-      .flatMap(({ text }) => markdownTargets(text));
-    if (!targets.includes(section.href)) {
-      addError(
-        errors,
-        root,
-        landingPath,
-        matches[0].line,
-        `legacy heading "${section.heading}" must point to "${section.href}"`,
-      );
-    }
-  }
-
-  for (const document of canonicalDocuments) {
-    const path = resolve(root, document);
-    let source;
-    try {
-      source = await readFile(path, "utf8");
-      markdownCache.set(path, source);
-    } catch {
-      addError(errors, root, path, 1, "missing canonical document");
-      continue;
-    }
-    if (lineCount(source) >= 700) {
+  const guides = [];
+  for (const entry of guideEntries) {
+    const path = resolve(guidesDirectory, entry.name);
+    if (!entry.isFile() || extname(entry.name).toLowerCase() !== ".md") {
       addError(
         errors,
         root,
         path,
         1,
-        `canonical document has ${lineCount(source)} lines; expected fewer than 700`,
+        'non-Markdown entry in "documentation/"; guides are Markdown files only',
+      );
+      continue;
+    }
+    guides.push(path);
+  }
+  if (guides.length === 0) {
+    addError(
+      errors,
+      root,
+      guidesDirectory,
+      1,
+      '"documentation/" contains no guides',
+    );
+  }
+
+  for (const path of guides) {
+    let source = markdownCache.get(path);
+    if (!source) {
+      source = await readFile(path, "utf8");
+      markdownCache.set(path, source);
+    }
+    if (lineCount(source) >= guideLineLimit) {
+      addError(
+        errors,
+        root,
+        path,
+        1,
+        `guide has ${lineCount(source)} lines; expected fewer than ${guideLineLimit}`,
       );
     }
     const headings = headingsFor(source);
@@ -554,23 +444,8 @@ async function checkStructure(root, markdownCache, errors) {
         root,
         path,
         duplicate.line,
-        `duplicate canonical heading anchor "#${duplicate.baseSlug}"`,
+        `duplicate guide heading anchor "#${duplicate.baseSlug}"`,
       );
-    }
-    for (const section of legacySections) {
-      const legacy = headings.find(
-        (heading) =>
-          heading.level === 2 && heading.text === section.heading,
-      );
-      if (legacy) {
-        addError(
-          errors,
-          root,
-          path,
-          legacy.line,
-          `canonical document retained numbered legacy heading "${section.heading}"`,
-        );
-      }
     }
   }
 }
@@ -606,7 +481,7 @@ if (errors.length > 0) {
 } else {
   console.log(
     `documentation check passed (${markdownPaths.length} Markdown files${
-      shouldCheckStructure ? `, ${legacySections.length} legacy anchors` : ""
+      shouldCheckStructure ? ", structure verified" : ""
     })`,
   );
 }

@@ -132,7 +132,7 @@ export async function authorize(
       actor: ActivityActor;
       /** True only when the admitting provider can also authorize UI mutation. */
       uiAdminEligible?: boolean;
-      /** The admitting identity's toolkit binding (docs/toolkits.md). */
+      /** The admitting identity's toolkit binding (documentation/toolkits.md). */
       toolkitBinding?: ToolkitBinding;
     }
   | { ok: false; response: Response }
@@ -233,7 +233,7 @@ export async function authorizeUiAdmin(
   //
   // EVERY Clerk provider gets a turn, the way the /mcp gate does, because the
   // documented per-team pattern is several `clerkAuth(...)`s that differ only in
-  // `gate` and `toolkits` (docs/toolkits.md). Stopping at the first would make
+  // `gate` and `toolkits` (documentation/toolkits.md). Stopping at the first would make
   // admission depend on config order: the team-bound provider listed first
   // would refuse the operator outright, and a refusal here — a failed gate, a
   // missing user, a toolkit-bound identity — is exactly the case where a later

@@ -104,7 +104,7 @@ function build(env: Env) {
     // exactly like a nonexistent one. Unknown toolkit names are rejected, never
     // silently widened; a toolkit a credential is not bound to is refused with a
     // 403 that looks exactly like the refusal for a name that does not exist.
-    // See docs/toolkits.md.
+    // See documentation/toolkits.md.
     toolkits: {
       support: { connectors: ["notion"] },
       exec: {

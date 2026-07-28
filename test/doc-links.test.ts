@@ -141,7 +141,7 @@ describe("documentation link checker", () => {
   it.each([
     "README.md",
     "src/example.ts",
-    "docs/guide.md",
+    "documentation/guide.md",
     "examples/Dockerfile",
   ])("reports a bare numbered citation in %s", async (path) => {
     const root = await fixture({
@@ -167,59 +167,96 @@ describe("documentation link checker", () => {
     });
   });
 
-  it("rejects a compatibility heading that no longer points to its canonical document", async () => {
+  it("accepts the full expected structure", async () => {
     const root = await fixture({
-      "docs/documentation.md": "## 1. What connecta is & why\n",
+      "README.md": "# Fixture\n",
+      "ethos.md": "# Ethos\n",
+      "documentation/architecture.md": "# Architecture\n",
+    });
+
+    expect(check(root, true)).toMatchObject({
+      status: 0,
+      output: expect.stringContaining("structure verified"),
+    });
+  });
+
+  it("requires README.md, ethos.md, and a documentation/ directory", async () => {
+    const root = await fixture({
+      "CHANGELOG.md": "history\n",
+    });
+    const result = check(root, true);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("README.md:1: missing README.md");
+    expect(result.output).toContain("ethos.md:1: missing ethos.md");
+    expect(result.output).toContain(
+      'documentation:1: missing "documentation/" directory',
+    );
+  });
+
+  it("rejects a resurrected docs/ directory", async () => {
+    const root = await fixture({
+      "README.md": "# Fixture\n",
+      "ethos.md": "# Ethos\n",
+      "documentation/architecture.md": "# Architecture\n",
+      "docs/old.md": "# Retired manual\n",
     });
 
     expect(check(root, true)).toMatchObject({
       status: 1,
       output: expect.stringContaining(
-        'legacy heading "1. What connecta is & why" must point to "./architecture.md#what-connecta-is--why"',
+        'docs:1: retired "docs/" directory exists; guides belong in "documentation/"',
       ),
     });
   });
 
-  it("enforces both compatibility-index and canonical-document length limits", async () => {
+  it("enforces the ethos and guide length limits", async () => {
     const root = await fixture({
-      "docs/documentation.md": Array(200).fill("index line").join("\n"),
-      "docs/architecture.md": Array(700).fill("architecture line").join("\n"),
+      "README.md": "# Fixture\n",
+      "ethos.md": Array(150).fill("ethos line").join("\n"),
+      "documentation/architecture.md": Array(700)
+        .fill("architecture line")
+        .join("\n"),
     });
     const result = check(root, true);
 
     expect(result.status).toBe(1);
     expect(result.output).toContain(
-      "docs/documentation.md:1: compatibility index has 200 lines; expected fewer than 200",
+      "ethos.md:1: ethos.md has 150 lines; expected fewer than 150 — terseness is the point",
     );
     expect(result.output).toContain(
-      "docs/architecture.md:1: canonical document has 700 lines; expected fewer than 700",
+      "documentation/architecture.md:1: guide has 700 lines; expected fewer than 700",
     );
   });
 
-  it("rejects duplicate canonical heading slugs", async () => {
+  it("rejects non-Markdown entries and an otherwise-empty documentation/", async () => {
     const root = await fixture({
-      "docs/documentation.md": "# Compatibility index\n",
-      "docs/architecture.md": "# Repeat\n\n# Repeat\n",
+      "README.md": "# Fixture\n",
+      "ethos.md": "# Ethos\n",
+      "documentation/notes.txt": "not a guide\n",
     });
+    const result = check(root, true);
 
-    expect(check(root, true)).toMatchObject({
-      status: 1,
-      output: expect.stringContaining(
-        'docs/architecture.md:3: duplicate canonical heading anchor "#repeat"',
-      ),
-    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'documentation/notes.txt:1: non-Markdown entry in "documentation/"; guides are Markdown files only',
+    );
+    expect(result.output).toContain(
+      'documentation:1: "documentation/" contains no guides',
+    );
   });
 
-  it("rejects numbered legacy headings retained in canonical documents", async () => {
+  it("rejects duplicate guide heading slugs", async () => {
     const root = await fixture({
-      "docs/documentation.md": "# Compatibility index\n",
-      "docs/architecture.md": "## 1. What connecta is & why\n",
+      "README.md": "# Fixture\n",
+      "ethos.md": "# Ethos\n",
+      "documentation/architecture.md": "# Repeat\n\n# Repeat\n",
     });
 
     expect(check(root, true)).toMatchObject({
       status: 1,
       output: expect.stringContaining(
-        'docs/architecture.md:1: canonical document retained numbered legacy heading "1. What connecta is & why"',
+        'documentation/architecture.md:3: duplicate guide heading anchor "#repeat"',
       ),
     });
   });

@@ -386,7 +386,7 @@ export interface ExecutorLease {
 
 /**
  * Which toolkits one inbound identity may open — the membership half of the
- * deployment=org / toolkit=team framing (docs/toolkits.md). A mapping, never a
+ * deployment=org / toolkit=team framing (documentation/toolkits.md). A mapping, never a
  * policy engine: one identity → the toolkit names it may select, plus whether
  * it may connect with no `?toolkit=` at all.
  *
@@ -529,7 +529,7 @@ export interface InboundAuth {
   uiAuth?: UiAuthConfig;
   /**
    * Optional toolkit binding for every identity this provider admits
-   * (docs/toolkits.md). Declared statically so `createConnecta` can validate the
+   * (documentation/toolkits.md). Declared statically so `createConnecta` can validate the
    * names against `ConnectaConfig.toolkits` and throw on a typo — a binding
    * nobody wrote is not one an operator can reason about. An `authorize` result
    * may narrow it per identity with its own `toolkitBinding`.
