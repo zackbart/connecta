@@ -133,6 +133,7 @@ try {
     "export interface ConnectaCallsConfig {",
     "    defaultTimeoutMs?: number;",
     "    maxResultBytes?: number;",
+    "    maxBatchResultBytes?: number;",
     "    activity?: ConnectaActivityConfig;",
     "    credentials?: ConnectaCredentialsConfig;",
     "    discovery?: ConnectaDiscoveryConfig;",

@@ -2,6 +2,48 @@
 
 All notable changes to this package are documented here.
 
+## 0.7.8 — 2026-07-28
+
+0.7.8 makes dependency-free tool discovery recover from natural-language
+queries that contain more related terms than one catalog entry covers, and
+closes the aggregate result-size gap in `batch_call`. Small batches, exact and
+all-term search ranking, empty-query browsing, dependencies, storage formats,
+and package entrypoints are unchanged.
+
+Existing deployments gain an independent 100,000-byte final batch-envelope
+boundary. Set `calls.maxBatchResultBytes` to another whole positive byte count
+when needed. When the boundary is crossed, successful payloads move behind the
+existing `get_result` page handle while ordered success/failure outcomes and
+bounded failure details remain inline.
+
+### Added
+
+- **An independent aggregate batch-result cap** (issue #139, PR #141).
+  `calls.maxBatchResultBytes` defaults to 100,000 bytes, is validated with the
+  ordinary result-cap rules, and applies after every child's global or
+  connector-level guard. The exact serialized `{ results, durationMs }`
+  envelope is stashed in the existing toolkit-aware result store and pages with
+  the same byte offsets and UTF-8 invariants as ordinary guarded results.
+
+### Changed
+
+- **Lexical tool search recovers from over-specified queries** (issue #137,
+  PR #140). Exact, prefix, and all-term ranking remains the first stage. Only
+  when an entire scoped search has no match does dependency-free fallback rank
+  partial matches by term coverage, tool-name coverage, and stable catalog
+  order, marking the response with `matchMode: "partial"`. The behavior is
+  shared by `search_tools` and code mode's `connecta.search`; no-overlap
+  searches remain empty.
+
+### Fixed
+
+- **`batch_call` can no longer multiply the inline result boundary by child
+  count** (issue #139, PR #141). The complete final envelope is measured before
+  emission. Oversized batches return a compact ordered outcome summary plus a
+  `get_result` handle, with partial failures still visible inline and successful
+  data available through paging. Below-cap batches retain their prior response
+  shape.
+
 ## 0.7.7 — 2026-07-27
 
 0.7.7 gives operators explicit downstream OAuth lifecycle controls, makes
