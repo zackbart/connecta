@@ -640,8 +640,22 @@ describe("unusable calls.maxResultBytes warning", () => {
       auth: bearerToken("secret"),
       publicUrl: BASE,
       logger,
-      calls: { maxResultBytes: 10_000 },
+      calls: { maxResultBytes: 10_000, maxBatchResultBytes: 20_000 },
     });
     expect(warnings(logger)).not.toContain("maxResultBytes");
+  });
+
+  it("warns that an unusable aggregate batch cap fell back independently", () => {
+    const logger = spyLogger();
+    createConnecta({
+      connectors: [plainConnector],
+      auth: bearerToken("secret"),
+      publicUrl: BASE,
+      logger,
+      calls: { maxResultBytes: 400, maxBatchResultBytes: 0 },
+    });
+    const text = warnings(logger);
+    expect(text).toContain("calls.maxBatchResultBytes 0");
+    expect(text).toContain("100000");
   });
 });

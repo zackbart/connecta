@@ -222,6 +222,16 @@ including for direct internal callers. Count-limit failures are non-retryable
   cycle), which the guard cannot measure and passes through rather than failing
   the call, since it could never be stashed or paged either.
 
+`batch_call` additionally measures its complete serialized
+`{ results, durationMs }` envelope after every child guard has run. If that
+envelope exceeds `calls.maxBatchResultBytes` (default **100 000 bytes**), the
+full envelope is stashed and pageable through the same `get_result` path. The
+inline response keeps input order and reports each address and `ok` outcome;
+failed children also retain bounded error details, while successful result data
+is available through the page handle. This aggregate cap is independent of the
+global and per-connector child caps, so adding calls cannot multiply the final
+inline boundary.
+
 ### `call_destructive_tool`
 
 Uses the same input and output shape as `call_tool`, but is itself registered

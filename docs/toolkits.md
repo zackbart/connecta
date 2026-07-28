@@ -245,7 +245,9 @@ binding cannot narrow a view, and a view cannot admit an identity.
 - **Result caps are a property of the connector, not of the view.** The
   per-connector → `calls.maxResultBytes` → default chain
   ([connectors](./connectors.md#the-connector-interface)) resolves identically in every scope, and
-  `get_result`'s default page size stays on the deployment-wide value
+  the deployment-wide `calls.maxBatchResultBytes` final-envelope boundary is
+  inherited identically as well. `get_result`'s default page size stays on the
+  deployment-wide value
   everywhere. A toolkit narrows *which* stashed results a session may page,
   never how large a page or an inline result is.
 - **Connector health details are per view.** `list_connectors` returns recent

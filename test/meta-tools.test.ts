@@ -3097,6 +3097,129 @@ describe("batch_call", () => {
     expect(parsed.results[0].data).toEqual({ sum: 6 });
     expect(parsed.results[1].data).toEqual({ b: 2 });
   });
+
+  it("stashes an oversized final envelope and keeps ordered failures inline", async () => {
+    const payload = `start-${"界".repeat(280)}-end`;
+    const connector = (id: string, maxResultBytes: number): Connector => ({
+      id,
+      kind: "api",
+      maxResultBytes,
+      async listTools() {
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return { payload };
+      },
+    });
+    const mt = createMetaTools(
+      makeRegistry(
+        [connector("tight", 500), connector("wide", 900)],
+        {
+          maxResultBytes: 1_000,
+          maxBatchResultBytes: 2_000,
+        },
+      ),
+      BASE,
+    );
+    const addresses = [
+      "tight.read",
+      "wide.read",
+      "wide.read",
+      "wide.read",
+      "wide.read",
+      "tight.missing",
+    ];
+    const inline = textOf(
+      await mt.batchCall({
+        calls: addresses.map((address) => ({ address })),
+      }),
+    ) as {
+      truncated: true;
+      resultId: string;
+      totalBytes: number;
+      results: Array<{
+        address: string;
+        ok: boolean;
+        result?: unknown;
+        data?: unknown;
+        error?: string;
+        errorDetails?: { code: string; message: string };
+      }>;
+    };
+
+    expect(inline.truncated).toBe(true);
+    expect(inline.totalBytes).toBeGreaterThan(2_000);
+    expect(inline.results.map((result) => result.address)).toEqual(addresses);
+    expect(inline.results.slice(0, 5).every((result) => result.ok)).toBe(true);
+    expect(inline.results.slice(0, 5).every((result) => {
+      return result.result === undefined && result.data === undefined;
+    })).toBe(true);
+    expect(inline.results[5]).toMatchObject({
+      ok: false,
+      errorDetails: { code: "unknown_tool" },
+    });
+
+    let offset = 0;
+    let fullText = "";
+    for (;;) {
+      const page = textOf(
+        await mt.getResult({
+          id: inline.resultId,
+          offset,
+          maxBytes: 37,
+        }),
+      ) as { text: string; nextOffset?: number; totalBytes: number };
+      expect(page.text).not.toContain("�");
+      expect(page.totalBytes).toBe(inline.totalBytes);
+      fullText += page.text;
+      if (page.nextOffset === undefined) break;
+      offset = page.nextOffset;
+    }
+
+    expect(new TextEncoder().encode(fullText)).toHaveLength(inline.totalBytes);
+    const full = JSON.parse(fullText) as {
+      results: Array<{
+        address: string;
+        ok: boolean;
+        result?: Array<{ text: string }>;
+        errorDetails?: { code: string };
+      }>;
+    };
+    expect(full.results.map((result) => result.address)).toEqual(addresses);
+    expect(full.results[0].result?.[0].text).toContain('"truncated":true');
+    expect(full.results[1].result?.[0].text).toContain("界");
+    expect(full.results[1].result?.[0].text).not.toContain('"truncated":true');
+    expect(full.results[5].errorDetails?.code).toBe("unknown_tool");
+  });
+
+  it("preserves the existing envelope below the aggregate cap", async () => {
+    const mt = createMetaTools(
+      makeRegistry([calcConnector], { maxBatchResultBytes: 10_000 }),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.batchCall({
+        calls: [
+          { address: "calc.add", args: { a: 1, b: 2 } },
+          { address: "calc.add", args: { a: 3, b: 4 } },
+        ],
+      }),
+    ) as {
+      truncated?: boolean;
+      resultId?: string;
+      results: Array<{ result: Array<{ text: string }> }>;
+    };
+
+    expect(parsed.truncated).toBeUndefined();
+    expect(parsed.resultId).toBeUndefined();
+    expect(parsed.results.map((result) => JSON.parse(result.result[0].text)))
+      .toEqual([{ sum: 3 }, { sum: 7 }]);
+  });
 });
 
 describe("authorize_connector", () => {
