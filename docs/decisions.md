@@ -22,15 +22,16 @@ Not "not yet" unless it says so. These are shapes connecta declines because
 taking them on would make it a different product — the whole premise is that a
 deployment is a small config-as-code file, not a platform.
 
-- **GraphQL ingestion.** Connector kinds are `remoteMcp` (proxy a downstream MCP
-  server) and `api` (hand-written tool defs + fetch handler). Generating tool
-  defs from a schema produces hundreds of low-quality tools — exactly the
-  problem the nine meta-tools exist to solve. *OpenAPI* is a different case: it
-  is not built in today, but it is not refused either — an `openApi(id, opts)`
-  factory is tracked as
-  [issue #26](https://github.com/zackbart/connecta/issues/26), where the hard
-  part is conservative safety annotations (GET → `readOnlyHint`, everything else
-  routed to `call_destructive_tool`) rather than the mapping.
+- **GraphQL and OpenAPI ingestion.** Connector kinds are `remoteMcp` (proxy a
+  downstream MCP server) and `api` (hand-written tool defs + fetch handler).
+  Generating tool defs from a schema produces hundreds of low-quality tools —
+  exactly the problem the nine meta-tools exist to solve. OpenAPI has the
+  additional unsolved problem that an HTTP method does not determine whether an
+  operation is safe: GET is not a promise of read-only behavior and POST is not
+  a promise of destruction. Hand-write the deliberate surface as an `api()`
+  connector, or use an external one-time generator whose output is reviewed
+  `api()` config. Connecta will not ingest either schema at runtime or expose an
+  `openApi()` factory.
 - **Multi-tenancy.** One deployment is one tenant: one registry, one connector
   set, one downstream credential store, one operator surface. Toolkits
   ([toolkits](./toolkits.md#toolkits-scoped-views)) are
@@ -80,6 +81,61 @@ deployment is a small config-as-code file, not a platform.
 
 Things that were on the table and are not in the tree. Proposing one again is
 allowed; proposing one without reading why it lost is not.
+
+### A connection-oriented account model
+
+Multiple accounts for one downstream remain multiple explicit connector
+instances — `linear_personal`, `linear_work` — with each audience routed to the
+right instance through toolkits. The
+[multi-instance connector idiom](./connectors.md#multiple-instances-of-one-downstream)
+keeps the configured account, credential state, catalog, activity, and
+two-segment address in the same reviewable config-as-code unit.
+
+The rejected alternative splits an immutable integration definition from
+persisted, owner-scoped connections, adding an account dimension to addresses,
+credentials, catalogs, authorization, activity, and lifecycle. That is a
+coherent product, but it is a connection platform rather than this package's
+one-deployment/one-tenant premise. If a deployment needs many accounts per
+service or runtime account creation, revisit that premise as a whole.
+
+The middle ground is worse than either model: optional `userId` or `accountId`
+parameters on the current vault or connector APIs would create hidden
+multitenancy without coherent addressing, authorization, or lifecycle rules.
+Reviewers should refuse that shape rather than gradually weakening code that is
+correct only under the single-tenant invariant.
+
+### Capability-grouped connectors
+
+Grouping the public `Connector` contract into cohesive `credentials`, `oauth`,
+and `routes` capability objects could make some invalid combinations harder to
+express. It was declined because the existing flat interface is the package's
+one open seam, and reshaping it would break every hand-written connector for
+structural elegance rather than a missing capability. The factories and
+construction-time checks already catch invalid combinations at construction or
+boot; internal services may absorb the complexity without exporting it.
+Keeping the flat contract does not relax the
+[construction-time validation](#structural-mistakes-throw-at-construction)
+invariant — those checks must not get weaker.
+
+### Failing `api()` closed when its schema cannot compile
+
+`api()` argument validation remains on by default, and arguments that do not
+match a usable schema fail closed. The narrower validator-cannot-compile edge
+keeps passing arguments through after one warning unless the operator sets
+`strictValidation: true`. Making that edge fail closed by default was declined:
+breaking a working tool because connecta's validator cannot evaluate its schema
+is the same cure-worse-than-disease shape as refusing a working credential over
+harmless extra stored fields. The read-only safety boundary is independent and
+remains fail-closed either way. Operators who require every schema to be
+enforceable can opt into the stricter behavior explicitly.
+
+### A repository formatter
+
+The no-formatter convention was deliberately reaffirmed. Correctness-only
+linting and an unused-code/dependency gate are welcome; style remains authored
+and reviewed by hand. The working convention and commands live in
+[`CLAUDE.md`](../CLAUDE.md); [issue #155](https://github.com/zackbart/connecta/issues/155)
+owns the tooling implementation.
 
 ### From executor and Cloudflare's code-mode runtime
 
@@ -358,6 +414,15 @@ connection per connector. Several code paths are correct *only* under this
 assumption — most visibly the absence of a concurrent-refresh lock in downstream
 OAuth. Instances must not share KV namespaces, D1 databases, secrets, or
 encryption keys ([deployment architecture](./operations.md#deployment-architecture)).
+
+Two accounts for the same service do not add an owner dimension. They are two
+explicit connector instances with distinct ids, each owning its own OAuth
+grant, credential slot, catalog, health, activity identity, and address
+namespace. Toolkits route identities to the instance they should see. See the
+[multi-instance connector idiom](./connectors.md#multiple-instances-of-one-downstream).
+Many accounts per service or adding accounts at runtime would require reopening
+the rejected connection-oriented account model above, not optional owner
+parameters on the current APIs.
 
 ### Import-graph purity
 

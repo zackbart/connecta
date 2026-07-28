@@ -286,6 +286,12 @@ adapter that mints the identity, next to the secret it applies to, rather than i
 a separate table keyed by an id you could typo — a typo in such a key would
 silently mean *unbound*, which fails open.
 
+When two audiences use different accounts on the same downstream, declare
+[one connector instance per account](./connectors.md#multiple-instances-of-one-downstream)
+and place only the intended instance in each toolkit. The binding then selects
+both the audience's view and, through that view, its configured downstream
+account without adding an owner dimension to addresses or storage.
+
 ```ts
 bearerToken(env.SUPPORT_TOKEN, {
   subjectId: "support-team",
