@@ -12,6 +12,30 @@ Every meta-tool below describes the **full registry**. A connection made with
 `?toolkit=<name>` ([toolkits](./toolkits.md#toolkits-scoped-views)) sees the same nine tools over a narrowed connector and
 tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 
+### Shared catalog and invocation boundary
+
+`search_tools`, `describe_tools`, direct calls, batches, and code mode all use
+the same request-local catalog service. It owns catalog loading, ranking,
+schema rendering, address resolution, and the stable unknown-address/tool
+errors. It memoizes successful loads within that inbound request and does not
+retain failed loads; the registry's configured catalog cache remains the
+underlying cross-request cache. The service accepts a `RegistryView`, so a
+toolkit-scoped request cannot escape its narrowed registry.
+
+Downstream calls then pass through one invocation service. It is the single
+owner of fail-closed read-only admission, downstream permits, cancellation,
+per-attempt deadlines, annotation-gated retries, health accounting, error
+classification, timing, and payload-free activity events. The MCP handlers and
+code mode are presentation adapters around that engine rather than independent
+call implementations.
+
+Caller-specific policy remains explicit at those adapters. MCP calls may retry,
+select fields, preserve raw MCP content, add diagnostics, and stash/page large
+results. Code mode makes no automatic retries, uses its fixed host-call deadline
+and per-program call budget, unwraps results to plain values, and records
+`source: "execute_code"`. These are intentional interface differences; address,
+safety, timeout classification, health, and common activity fields are shared.
+
 ### `list_connectors`
 
 - **Input:** `{ probe?: boolean }`. `probe: true` (default) performs live
@@ -36,12 +60,13 @@ tool set, with out-of-scope addresses failing exactly as nonexistent ones do.
 - **Observed health** (the `lastSuccessAt` / `lastFailureAt` /
   `consecutiveFailures` / `lastError` fields, and the `error` state `probe:
   false` derives from them) comes from real calls made through `call_tool`,
-  `call_destructive_tool`, and `batch_call`, plus the live checks a `probe: true`
-  call performs. A call that fails while fetching the connector's **tool
-  catalog** — a revoked downstream grant, an unreachable remote — counts as a
-  failure exactly as a failed execution does, so a connector nothing can be
-  called on never reads clean. A call served from the catalog cache records
-  nothing on its own: a cache hit is not evidence of health.
+  `call_destructive_tool`, `batch_call`, and `execute_code`, plus the live
+  checks a `probe: true` call performs. A call that fails while fetching the
+  connector's **tool catalog** — a revoked downstream grant, an unreachable
+  remote — counts as a failure exactly as a failed execution does, so a
+  connector nothing can be called on never reads clean. A call served from the
+  catalog cache records nothing on its own: a cache hit is not evidence of
+  health.
 
 ```json
 { "connectors": [

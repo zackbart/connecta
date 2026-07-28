@@ -1,23 +1,37 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
-import {
-  recordToolActivity,
-  type ActivityCallSource,
-  type ActivityRequestContext,
+import type {
+  ActivityCallSource,
+  ActivityRequestContext,
 } from "./activity.js";
+import {
+  assertDiscoveryResultSize,
+  boundedDiscoveryText,
+  CatalogService,
+  DiscoveryPolicyError,
+  discoveryAddresses,
+  discoverySearchLimit,
+  groupedSearchResult,
+  DEFAULT_SEARCH_LIMIT,
+  MAX_DESCRIBE_ADDRESSES,
+  MAX_DISCOVERY_RESULT_BYTES,
+  MAX_SEARCH_LIMIT,
+} from "./catalog-service.js";
 import {
   closeConnectorScope,
   type DeferredWork,
 } from "./connector-scope.js";
-import { unwrapMcpResult } from "./mcp-result.js";
 import {
   classifyCallError,
-  ConnectorCallError,
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
-import { isCallAdmissionError } from "./call-admission.js";
+import {
+  InvocationService,
+  MAX_RETRY_BACKOFF_MS,
+  retryBackoffMs,
+  type InvocationTiming,
+} from "./invocation.js";
 import {
   isValidMaxResultBytes,
   MIN_MAX_RESULT_BYTES,
@@ -25,8 +39,6 @@ import {
   type RegistryView,
 } from "./registry.js";
 import {
-  connectorGuide,
-  connectorSkillName,
   hasConnectorGuides,
   listSkills,
   resolveSkill,
@@ -37,7 +49,20 @@ import {
   withAbortableTimeout,
 } from "./timeout.js";
 import { credentialVerdictApplies } from "./credential-health.js";
-import type { ConnectorStatus, KVStorage, ToolDef } from "./types.js";
+import type { ConnectorStatus, KVStorage } from "./types.js";
+
+export {
+  DEFAULT_SEARCH_LIMIT,
+  MAX_DESCRIBE_ADDRESSES,
+  MAX_DISCOVERY_RESULT_BYTES,
+  MAX_RETRY_BACKOFF_MS,
+  MAX_SEARCH_LIMIT,
+  DiscoveryPolicyError,
+  assertDiscoveryResultSize,
+  discoveryAddresses,
+  discoverySearchLimit,
+  retryBackoffMs,
+};
 
 interface TextContent {
   type: "text";
@@ -51,6 +76,8 @@ export interface ToolResult {
 }
 
 const RESULT_TTL_SECONDS = 900;
+const enc = new TextEncoder();
+const dec = new TextDecoder();
 
 export function jsonResult(obj: unknown): ToolResult {
   return {
@@ -69,95 +96,8 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export const DEFAULT_SEARCH_LIMIT = 25;
-/**
- * A discovery page is for choosing the next tool, not exporting the catalog.
- * One hundred leaves room for broad browsing while keeping each deliberate
- * page far below the catalog sizes Connecta supports.
- */
-export const MAX_SEARCH_LIMIT = 100;
-/** Same one-request work bound for address-based discovery. */
-export const MAX_DESCRIBE_ADDRESSES = 100;
-/**
- * Final UTF-8 ceiling for a generated search/describe response. The count
- * limits are the ordinary guard; this catches unusually large full schemas or
- * descriptions that make even a bounded page expensive.
- */
-export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-const enc = new TextEncoder();
-const dec = new TextDecoder();
-
-type ErrorDetails = CallErrorDetails;
-
-export class DiscoveryPolicyError extends Error {
-  constructor(
-    readonly code: "invalid_args" | "result_too_large",
-    message: string,
-  ) {
-    super(message);
-    this.name = "DiscoveryPolicyError";
-  }
-}
-
-/** Validate before ranking so a huge page request does no proportional work. */
-export function discoverySearchLimit(value: unknown): number {
-  if (value === undefined) return DEFAULT_SEARCH_LIMIT;
-  if (
-    typeof value !== "number" ||
-    !Number.isInteger(value) ||
-    value < 1 ||
-    value > MAX_SEARCH_LIMIT
-  ) {
-    throw new DiscoveryPolicyError(
-      "invalid_args",
-      `limit must be a whole number from 1 through ${MAX_SEARCH_LIMIT}. Page through larger catalogs with offset.`,
-    );
-  }
-  return value;
-}
-
-/** Validate the raw list so duplicate addresses consume the same bound. */
-export function discoveryAddresses(value: unknown): unknown[] {
-  if (!Array.isArray(value)) {
-    throw new DiscoveryPolicyError(
-      "invalid_args",
-      "addresses must be an array.",
-    );
-  }
-  if (value.length > MAX_DESCRIBE_ADDRESSES) {
-    throw new DiscoveryPolicyError(
-      "invalid_args",
-      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across describe_tools calls.`,
-    );
-  }
-  return value;
-}
-
-/** Serialize once and count the exact bytes jsonResult would emit. */
-function boundedDiscoveryText(
-  value: unknown,
-  hint: string,
-): string {
-  const text = JSON.stringify(value, null, 2);
-  if (text === undefined) {
-    throw new TypeError("Discovery result is not JSON-serializable.");
-  }
-  const bytes = enc.encode(text).length;
-  if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
-    throw new DiscoveryPolicyError(
-      "result_too_large",
-      `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
-    );
-  }
-  return text;
-}
-
-/** Apply the same final result guard to code-mode discovery helpers. */
-export function assertDiscoveryResultSize(
-  value: unknown,
-  hint: string,
-): void {
-  boundedDiscoveryText(value, hint);
+function errorDetails(code: string, message: string): CallErrorDetails {
+  return { code, message, retryable: messageLooksRetryable(message) };
 }
 
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
@@ -189,63 +129,6 @@ function discoveryResult(value: unknown, hint: string): ToolResult {
   }
 }
 
-/**
- * The longest the engine will park a synchronous inbound request in *waiting
- * alone*. The engine already treats ~15 s as the outer bound of one reasonable
- * connector call (EXECUTE_HOST_CALL_TIMEOUT_MS), so sleeping for minutes trades
- * a fast, informative failure for a hung one. A connector-reported window this
- * long isn't truncated — it's declined (see `retryBackoffMs`) and reported
- * verbatim as `error.retryAfterMs`, so the agent, which can afford to wait,
- * decides when to re-issue.
- */
-export const MAX_RETRY_BACKOFF_MS = 10_000;
-
-/**
- * How long to wait before the next attempt, or `undefined` for "don't retry".
- *
- * A connector that read a `Retry-After` header knows the window exactly, so it
- * is honoured **exactly or not at all**: truncating an exponential *guess* is
- * harmless, but truncating a *known* window means deliberately retrying inside
- * a rate limit — the harm this channel exists to prevent. A window longer than
- * `MAX_RETRY_BACKOFF_MS` therefore declines the retry rather than shortening
- * it. (`retryAfterMs` is normalized non-negative, so `0` means "retry now".)
- * Connectors that report no window keep the historical exponential guess.
- *
- * Waits are per attempt, matching the per-attempt `timeoutMs` race in
- * `runCall`. Exported for direct testing.
- */
-export function retryBackoffMs(
-  attempt: number,
-  retryAfterMs: number | undefined,
-): number | undefined {
-  if (retryAfterMs === undefined) {
-    return Math.min(250 * 2 ** (attempt - 1), 1_000);
-  }
-  return retryAfterMs <= MAX_RETRY_BACKOFF_MS ? retryAfterMs : undefined;
-}
-
-/** Details for failures that never reached a connector (no thrown value). */
-function errorDetails(code: string, message: string): ErrorDetails {
-  return { code, message, retryable: messageLooksRetryable(message) };
-}
-
-function callerCancelledDetails(): ErrorDetails {
-  return {
-    code: "cancelled",
-    message: "Tool call was cancelled by the caller.",
-    retryable: false,
-  };
-}
-
-function isCallerCancellation(
-  error: unknown,
-  signal: AbortSignal | undefined,
-): boolean {
-  return (
-    signal?.aborted === true ||
-    (isCallAdmissionError(error) && error.admissionKind === "cancelled")
-  );
-}
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number): boolean {
@@ -633,6 +516,11 @@ export function createMetaTools(
   // identity lets remote connectors reuse one downstream client inside that
   // request without leaking request-bound I/O into the next one.
   const requestScope = {};
+  const catalog = new CatalogService(registry, baseUrl, {
+    requestScope,
+    probeTimeoutMs,
+  });
+  const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(
     label: string,
     operation: (options: {
@@ -650,370 +538,109 @@ export function createMetaTools(
     toolResult: ToolResult;
     durationMs: number;
     attempts: number;
-    timing: {
-      catalogMs: number;
-      admissionMs: number;
-      connectorMs: number;
-      backoffMs: number;
-      resultProcessingMs: number;
-      totalMs: number;
-    };
+    timing: InvocationTiming;
     value?: unknown;
-    error?: ErrorDetails;
+    error?: CallErrorDetails;
   }
 
-  /** Shared call path used by call tools and batch_call: safety → fields → size guard. */
+  interface ProcessedCallResult {
+    toolResult: ToolResult;
+    value?: unknown;
+  }
+
+  /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
   async function runCall(
     call: BatchCall,
     source: ActivityCallSource,
     options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
-    const started = Date.now();
-    let catalogMs = 0;
-    let admissionMs = 0;
-    let connectorMs = 0;
-    let backoffMs = 0;
-    let resultProcessingMs = 0;
-    let attempts = 0;
-    const timing = () => ({
-      catalogMs,
-      admissionMs,
-      connectorMs,
-      backoffMs,
-      resultProcessingMs,
-      totalMs: Date.now() - started,
-    });
-    const resolved = registry.resolveAddress(call.address);
-    const record = (
-      outcome: "success" | "error" | "timeout" | "cancelled",
-      errorCode?: string,
-    ) => {
-      if (!resolved) return;
-      recordToolActivity(opts.activity, {
-        connectorId: resolved.connector.id,
-        toolName: resolved.toolName,
-        address: `${resolved.connector.id}.${resolved.toolName}`,
+    const results = registry.resultsStorage();
+    const fields = call.fields && call.fields.length > 0 ? call.fields : null;
+    const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
+    const outcome = await invocation.invoke<ProcessedCallResult>(
+      call.address,
+      call.args ?? {},
+      {
         source,
-        outcome,
-        durationMs: Date.now() - started,
-        attempts,
-        ...(errorCode ? { errorCode } : {}),
-      });
-    };
-    const failed = (error: ErrorDetails): RunCallOutcome => {
-      const durationMs = Date.now() - started;
-      const diagnostics = timing();
-      record(
-        error.code === "timeout"
-          ? "timeout"
-          : error.code === "cancelled"
-            ? "cancelled"
-            : "error",
-        error.code,
-      );
+        allowDestructive: options.allowDestructive,
+        timeoutMs,
+        maxRetries: call.maxRetries,
+        requestSignal: opts.requestSignal,
+        unwrapResult: call.resultMode === "value",
+        processResult: async (result, resolved) => {
+          // Result-size cap for THIS call: the connector's own override wins,
+          // then the deployment-wide value, then the built-in default (already
+          // folded into `globalCap`). Resolved per call so one batch_call can
+          // mix a tight-capped connector with siblings on the global cap. An
+          // override the registry already warned about at startup is dropped
+          // here, so the connector simply inherits `globalCap`.
+          const cap = resolveMaxResultBytes(
+            resolved.connector.maxResultBytes,
+            globalCap,
+          );
+          if (call.resultMode === "value") {
+            let value = fields ? applyFields(result, fields) : result;
+            value = await guardValue(value, results, cap);
+            return {
+              toolResult: jsonResult({ ok: true, data: value }),
+              value,
+            };
+          }
+          if (resolved.connector.kind === "mcp") {
+            const mcpResult = result as { content?: TextContent[] };
+            let content = mcpResult?.content ?? [];
+            if (fields) content = applyFieldsToContent(content, fields);
+            return { toolResult: await guardContent(content, results, cap) };
+          }
+          const value = fields ? applyFields(result, fields) : result;
+          return {
+            toolResult: await guardText(
+              serializeResultText(value),
+              results,
+              cap,
+            ),
+            value,
+          };
+        },
+      },
+    );
+    if (!outcome.ok) {
       return {
         toolResult:
           call.resultMode === "value"
             ? jsonResult({
                 ok: false,
-                error,
-                durationMs,
-                attempts,
-                ...(call.diagnostics ? { timing: diagnostics } : {}),
+                error: outcome.error,
+                durationMs: outcome.durationMs,
+                attempts: outcome.attempts,
+                ...(call.diagnostics ? { timing: outcome.timing } : {}),
               })
-            : errorResult(error.message),
-        durationMs,
-        attempts,
-        timing: diagnostics,
-        error,
+            : errorResult(outcome.error.message),
+        durationMs: outcome.durationMs,
+        attempts: outcome.attempts,
+        timing: outcome.timing,
+        error: outcome.error,
       };
-    };
-    if (!resolved) {
-      return failed(
-        errorDetails("unknown_address", `Unknown address "${call.address}"`),
-      );
     }
-    const results = registry.resultsStorage();
-    // Result-size cap for THIS call: the connector's own override wins, then
-    // the deployment-wide value, then the built-in default (already folded
-    // into `globalCap`). Resolved per call so one batch_call can mix a
-    // tight-capped connector with siblings on the global cap. An override the
-    // registry already warned about at startup is dropped here, so the
-    // connector simply inherits `globalCap`.
-    const cap = resolveMaxResultBytes(
-      resolved.connector.maxResultBytes,
-      globalCap,
-    );
-    const fields = call.fields && call.fields.length > 0 ? call.fields : null;
-    // An explicit per-call deadline always wins; the config default only fills
-    // the gap, and stays off entirely when the deployment sets none.
-    const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
-    const maxRetries = Math.min(
-      2,
-      Math.max(0, Math.trunc(call.maxRetries ?? 0)),
-    );
-    const catalogStarted = Date.now();
-    let definition: ToolDef | undefined;
-    try {
-      definition = (
-        await registry.getTools(resolved.connector.id, baseUrl, requestScope)
-      ).find((tool) => tool.name === resolved.toolName);
-    } catch (err) {
-      catalogMs += Date.now() - catalogStarted;
-      if (opts.requestSignal?.aborted) {
-        return failed(callerCancelledDetails());
-      }
-      // A connector whose catalog cannot be fetched is as unusable as one whose
-      // execution fails, so it feeds health accounting the same way the
-      // execution catch below does — otherwise a connector every call_tool
-      // fails against (a revoked downstream grant, say) still reads clean from
-      // the cheap `list_connectors({ probe: false })` signal.
-      //
-      // Recorded HERE rather than inside the registry's catalog fetch on
-      // purpose: `registry` is this connection's VIEW, so a toolkit-scoped
-      // session records into its own log as well as the deployment-wide one,
-      // which `Registry.refreshTools` could not reach. A cache hit that avoids
-      // a live listTools call therefore records nothing either way — it is not
-      // evidence of health, and success stays what it has always been: an
-      // actual downstream call that returned.
-      registry.recordFailure(resolved.connector.id, Date.now() - started, err);
-      // classifyCallError so a typed auth_required thrown while listing tools
-      // (e.g. a revoked downstream OAuth grant) keeps its code.
-      return failed(classifyCallError(err, "catalog_lookup_failed"));
-    }
-    catalogMs += Date.now() - catalogStarted;
-    if (!definition) {
-      return failed(
-        errorDetails(
-          "unknown_tool",
-          `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
-        ),
-      );
-    }
-    const explicitlyReadOnly =
-      definition.annotations?.readOnlyHint === true &&
-      definition.annotations?.destructiveHint !== true;
-    if (!explicitlyReadOnly && !options.allowDestructive) {
-      return failed(
-        errorDetails(
-          "destructive_tool_requires_approval",
-          `Tool "${call.address}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
-        ),
-      );
-    }
-    const retrySafe =
-      definition.annotations?.readOnlyHint === true ||
-      definition.annotations?.idempotentHint === true;
-
-    let result: unknown;
-    while (true) {
-      attempts++;
-      let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-      const controller =
-        timeoutMs || opts.requestSignal ? new AbortController() : undefined;
-      const forwardAbort = () =>
-        controller?.abort(opts.requestSignal?.reason);
-      if (opts.requestSignal?.aborted) forwardAbort();
-      else {
-        opts.requestSignal?.addEventListener("abort", forwardAbort, {
-          once: true,
-        });
-      }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let onAbort: (() => void) | undefined;
-      let attemptFailed = false;
-      let attemptError: unknown;
-      try {
-        const admissionStarted = Date.now();
-        try {
-          permit = await registry.admitCall(resolved.connector.id, {
-            toolName: resolved.toolName,
-            args: call.args ?? {},
-            signal: opts.requestSignal,
-          });
-        } finally {
-          admissionMs += Date.now() - admissionStarted;
-        }
-        const ctx = registry.contextFor(
-          resolved.connector.id,
-          baseUrl,
-          requestScope,
-          { signal: controller?.signal, timeoutMs },
-        );
-        let rejectCancelled!: (reason: unknown) => void;
-        const cancelled = controller
-          ? new Promise<never>((_, reject) => {
-              rejectCancelled = reject;
-            })
-          : undefined;
-        onAbort = () => {
-          rejectCancelled(
-            controller?.signal.reason ??
-              new ConnectorCallError("timeout", "Tool call was cancelled"),
-          );
-        };
-        controller?.signal.addEventListener("abort", onAbort, { once: true });
-        if (controller?.signal.aborted) onAbort();
-        if (controller?.signal.aborted) await cancelled;
-        if (timeoutMs) {
-          timer = setTimeout(() => {
-            controller?.abort(
-              new ConnectorCallError(
-                "timeout",
-                `Tool call timed out after ${timeoutMs}ms`,
-              ),
-            );
-          }, timeoutMs);
-        }
-        const connectorStarted = Date.now();
-        try {
-          const pending = resolved.connector.callTool(
-            resolved.toolName,
-            call.args ?? {},
-            ctx,
-          );
-          result = cancelled
-            ? await Promise.race([pending, cancelled])
-            : await pending;
-        } finally {
-          connectorMs += Date.now() - connectorStarted;
-        }
-        const mcpResult = result as {
-          content?: TextContent[];
-          isError?: boolean;
-        };
-        if (resolved.connector.kind === "mcp" && mcpResult?.isError) {
-          throw new Error(
-            mcpResult.content?.map((block) => block.text).join("") ||
-              "Downstream tool call failed",
-          );
-        }
-      } catch (err) {
-        attemptFailed = true;
-        attemptError = err;
-      } finally {
-        if (timer) clearTimeout(timer);
-        if (onAbort) {
-          controller?.signal.removeEventListener("abort", onAbort);
-        }
-        opts.requestSignal?.removeEventListener("abort", forwardAbort);
-        permit?.release();
-      }
-      if (attemptFailed) {
-        const callerCancelled = isCallerCancellation(
-          attemptError,
-          opts.requestSignal,
-        );
-        const details = callerCancelled
-          ? callerCancelledDetails()
-          : classifyCallError(attemptError);
-        if (
-          !callerCancelled &&
-          attempts <= maxRetries &&
-          retrySafe &&
-          details.retryable
-        ) {
-          const wait = retryBackoffMs(attempts, details.retryAfterMs);
-          if (wait !== undefined) {
-            const backoffStarted = Date.now();
-            if (wait > 0) {
-              const completed = await new Promise<boolean>((resolve) => {
-                let settled = false;
-                const finish = (value: boolean) => {
-                  if (settled) return;
-                  settled = true;
-                  clearTimeout(timer);
-                  opts.requestSignal?.removeEventListener("abort", cancel);
-                  resolve(value);
-                };
-                const timer = setTimeout(() => finish(true), wait);
-                const cancel = () => finish(false);
-                opts.requestSignal?.addEventListener("abort", cancel, {
-                  once: true,
-                });
-                if (opts.requestSignal?.aborted) cancel();
-              });
-              backoffMs += Date.now() - backoffStarted;
-              if (!completed) return failed(callerCancelledDetails());
-            } else {
-              backoffMs += Date.now() - backoffStarted;
-            }
-            continue;
-          }
-          // The reported window is longer than the engine will park a
-          // synchronous request for. Fall through to failure with
-          // retryAfterMs reported verbatim so the agent can re-issue.
-        }
-        if (!callerCancelled && !isCallAdmissionError(attemptError)) {
-          registry.recordFailure(
-            resolved.connector.id,
-            Date.now() - started,
-            attemptError,
-          );
-        }
-        return failed(details);
-      }
-      break;
-    }
-
-    registry.recordSuccess(resolved.connector.id, Date.now() - started);
-    const processingStarted = Date.now();
-    try {
-      const mr = result as { content?: TextContent[]; isError?: boolean };
-      if (call.resultMode === "value") {
-        let value = unwrapMcpResult(resolved.connector.kind, result);
-        if (fields) value = applyFields(value, fields);
-        value = await guardValue(value, results, cap);
-        resultProcessingMs += Date.now() - processingStarted;
-        const durationMs = Date.now() - started;
-        const diagnostics = timing();
-        record("success");
-        return {
-          toolResult: jsonResult({
+    const valueModeResult =
+      call.resultMode === "value"
+        ? jsonResult({
             ok: true,
-            data: value,
-            durationMs,
-            attempts,
-            ...(call.diagnostics ? { timing: diagnostics } : {}),
-          }),
-          durationMs,
-          attempts,
-          timing: diagnostics,
-          value,
-        };
-      }
-      if (resolved.connector.kind === "mcp") {
-        let content = mr?.content ?? [];
-        if (fields) content = applyFieldsToContent(content, fields);
-        const toolResult = await guardContent(content, results, cap);
-        resultProcessingMs += Date.now() - processingStarted;
-        record("success");
-        return {
-          toolResult,
-          durationMs: Date.now() - started,
-          attempts,
-          timing: timing(),
-        };
-      }
-      const value = fields ? applyFields(result, fields) : result;
-      const toolResult = await guardText(
-        serializeResultText(value),
-        results,
-        cap,
-      );
-      resultProcessingMs += Date.now() - processingStarted;
-      record("success");
-      return {
-        toolResult,
-        durationMs: Date.now() - started,
-        attempts,
-        timing: timing(),
-        value,
-      };
-    } catch (err) {
-      resultProcessingMs += Date.now() - processingStarted;
-      return failed(errorDetails("result_processing_failed", msg(err)));
-    }
+            data: outcome.value.value,
+            durationMs: outcome.durationMs,
+            attempts: outcome.attempts,
+            ...(call.diagnostics ? { timing: outcome.timing } : {}),
+          })
+        : outcome.value.toolResult;
+    return {
+      toolResult: valueModeResult,
+      durationMs: outcome.durationMs,
+      attempts: outcome.attempts,
+      timing: outcome.timing,
+      ...(Object.prototype.hasOwnProperty.call(outcome.value, "value")
+        ? { value: outcome.value.value }
+        : {}),
+    };
   }
 
   return {
@@ -1227,235 +854,31 @@ export function createMetaTools(
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
-      const q = args.query ?? "";
-      let limit: number;
       try {
-        limit = discoverySearchLimit(args.limit);
+        return discoveryResult(
+          groupedSearchResult(await catalog.search(args)),
+          "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+        );
       } catch (err) {
         if (err instanceof DiscoveryPolicyError) {
           return discoveryErrorResult(err);
         }
         throw err;
       }
-      const offset = Math.max(0, Math.trunc(args.offset ?? 0));
-      const conns = args.connector
-        ? [registry.getConnector(args.connector)].filter(
-            (c): c is NonNullable<typeof c> => Boolean(c),
-          )
-        : registry.listConnectors();
-      const matches: Array<{
-        connectorId: string;
-        connectorTitle?: string;
-        connectorDescription?: string;
-        connectorGuideSkill?: string;
-        tool: ToolDef;
-        score: number;
-        order: number;
-      }> = [];
-      const catalogs = await Promise.allSettled(
-        conns.map((c) =>
-          withProbeDeadline(
-            `search_tools probe of "${c.id}"`,
-            (options) =>
-              registry.getTools(c.id, baseUrl, requestScope, options),
-          ),
-        ),
-      );
-      let matchMode: "all" | "partial" = "all";
-      const collectMatches = (mode: "all" | "partial") => {
-        matches.length = 0;
-        let orderBase = 0;
-        catalogs.forEach((catalog, connectorIndex) => {
-          const c = conns[connectorIndex];
-          if (catalog.status === "fulfilled") {
-            for (const ranked of rankTools(catalog.value, q, mode)) {
-              matches.push({
-                connectorId: c.id,
-                connectorTitle: c.title,
-                connectorDescription: c.description,
-                ...(connectorGuide(c)
-                  ? { connectorGuideSkill: connectorSkillName(c.id) }
-                  : {}),
-                tool: ranked.tool,
-                score: ranked.score,
-                order: orderBase + ranked.order,
-              });
-            }
-          }
-          orderBase +=
-            catalog.status === "fulfilled" ? catalog.value.length : 1;
-        });
-      };
-      collectMatches("all");
-      if (q.trim() && matches.length === 0) {
-        matchMode = "partial";
-        collectMatches(matchMode);
-      }
-      matches.sort((a, b) => b.score - a.score || a.order - b.order);
-      const page = matches.slice(offset, offset + limit);
-      const groups: {
-        id: string;
-        title?: string;
-        description?: string;
-        /** Skill name of this connector's usage guide, when it has one. */
-        guide?: string;
-        tools: Array<{
-          name: string;
-          address: string;
-          description?: string;
-          inputSchema?: unknown;
-          outputSchema?: unknown;
-          annotations?: ToolDef["annotations"];
-        }>;
-      }[] = [];
-      const byConnector = new Map<string, (typeof groups)[number]>();
-      for (const match of page) {
-        let group = byConnector.get(match.connectorId);
-        if (!group) {
-          group = {
-            id: match.connectorId,
-            ...(match.connectorTitle ? { title: match.connectorTitle } : {}),
-            description: match.connectorDescription,
-            ...(match.connectorGuideSkill
-              ? { guide: match.connectorGuideSkill }
-              : {}),
-            tools: [],
-          };
-          byConnector.set(match.connectorId, group);
-          groups.push(group);
-        }
-        const schema = match.tool.inputSchema ?? { type: "object" };
-        group.tools.push({
-          name: match.tool.name,
-          address: `${match.connectorId}.${match.tool.name}`,
-          description: summarizeDescription(
-            match.tool.description,
-            args.fullDescriptions === true,
-          ),
-          ...(args.includeSchemas
-            ? {
-                inputSchema:
-                  args.includeSchemas === "json"
-                    ? schema
-                    : compactSchema(schema),
-              }
-            : {}),
-          ...(args.includeSchemas && match.tool.outputSchema
-            ? {
-                outputSchema:
-                  args.includeSchemas === "json"
-                    ? match.tool.outputSchema
-                    : compactSchema(match.tool.outputSchema),
-              }
-            : {}),
-          ...(match.tool.annotations
-            ? { annotations: match.tool.annotations }
-            : {}),
-        });
-      }
-      const nextOffset =
-        offset + page.length < matches.length
-          ? offset + page.length
-          : undefined;
-      return discoveryResult(
-        {
-          connectors: groups,
-          total: matches.length,
-          offset,
-          limit,
-          hasMore: nextOffset !== undefined,
-          ...(nextOffset !== undefined ? { nextOffset } : {}),
-          ...(matchMode === "partial" && matches.length > 0
-            ? { matchMode }
-            : {}),
-        },
-        "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-      );
     },
 
     async describeTools(args: DescribeArgs): Promise<ToolResult> {
       try {
-        discoveryAddresses(args.addresses);
+        return discoveryResult(
+          { tools: await catalog.describe(args) },
+          'Split the address list or use format: "compact".',
+        );
       } catch (err) {
         if (err instanceof DiscoveryPolicyError) {
           return discoveryErrorResult(err);
         }
         throw err;
       }
-      const format = args.format ?? "compact";
-      const resolved = args.addresses.map((address) => ({
-        address,
-        resolved: registry.resolveAddress(address),
-      }));
-      const connectorIds = [
-        ...new Set(
-          resolved
-            .map((entry) => entry.resolved?.connector.id)
-            .filter((id): id is string => Boolean(id)),
-        ),
-      ];
-      const loaded = await Promise.allSettled(
-        connectorIds.map((id) =>
-          withProbeDeadline(
-            `describe_tools probe of "${id}"`,
-            (options) =>
-              registry.getTools(id, baseUrl, requestScope, options),
-          ),
-        ),
-      );
-      const catalogs = new Map<string, ToolDef[] | Error>();
-      loaded.forEach((result, index) => {
-        catalogs.set(
-          connectorIds[index],
-          result.status === "fulfilled"
-            ? result.value
-            : result.reason instanceof Error
-              ? result.reason
-              : new Error(String(result.reason)),
-        );
-      });
-      const out = resolved.map(({ address, resolved }) => {
-        if (!resolved) {
-          return { address, error: `Unknown address "${address}"` };
-        }
-        const catalog = catalogs.get(resolved.connector.id);
-        if (catalog instanceof Error) {
-          return { address, error: catalog.message };
-        }
-        const tool = catalog?.find((t) => t.name === resolved.toolName);
-        if (!tool) {
-          return {
-            address,
-            error: `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
-          };
-        }
-        const schema = tool.inputSchema ?? { type: "object" };
-        return {
-          address,
-          name: tool.name,
-          description: summarizeDescription(
-            tool.description,
-            args.fullDescriptions === true,
-          ),
-          ...(connectorGuide(resolved.connector)
-            ? { guide: connectorSkillName(resolved.connector.id) }
-            : {}),
-          inputSchema: format === "json" ? schema : compactSchema(schema),
-          ...(tool.outputSchema
-            ? {
-                outputSchema:
-                  format === "json"
-                    ? tool.outputSchema
-                    : compactSchema(tool.outputSchema),
-              }
-            : {}),
-          ...(tool.annotations ? { annotations: tool.annotations } : {}),
-        };
-      });
-      return discoveryResult(
-        { tools: out },
-        'Split the address list or use format: "compact".',
-      );
     },
 
     async callTool(args: CallArgs): Promise<ToolResult> {
