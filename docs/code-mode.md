@@ -46,6 +46,17 @@ Downstream credentials stay host-side — sandboxed code can do nothing that a
 sequence of explicitly read-only `call_tool` calls could not. Every other
 operation must leave the sandbox and use `call_destructive_tool`.
 
+Catalog discovery and downstream invocation are shared with the MCP
+meta-tools, not reimplemented in the sandbox adapter. Consequently code mode
+uses the same address resolution, unknown-tool wording, fail-closed safety
+predicate, admission, cancellation, timeout classification, health recording,
+and payload-free activity fields. The adapter deliberately keeps the parts
+that are specific to code mode: results are unwrapped to plain values, there is
+no automatic retry, paging and `fields` remain MCP-call features, every host
+call uses the fixed 15-second deadline, the program owns a 20-call budget, and
+activity uses `source: "execute_code"`. All catalog and call access still goes
+through the request's `RegistryView`.
+
 ### Executors
 
 The seam is deliberately tiny (`src/types.ts`):

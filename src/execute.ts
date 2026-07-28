@@ -1,34 +1,34 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
-import { recordToolActivity, type ActivityRequestContext } from "./activity.js";
+import type { ActivityRequestContext } from "./activity.js";
 import {
   assertDiscoveryResultSize,
-  discoveryAddresses,
-  discoverySearchLimit,
-  errorResult,
-  jsonResult,
-  type ToolResult,
-} from "./meta-tools.js";
+  CatalogService,
+  flatSearchResult,
+} from "./catalog-service.js";
+import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
 import {
   guardExecuteResultValue,
   MAX_EXECUTE_LOG_CHARS,
   truncateExecuteText,
 } from "./executor-result.js";
-import { classifyCallError, ConnectorCallError } from "./errors.js";
-import { isCallAdmissionError } from "./call-admission.js";
+import { classifyCallError } from "./errors.js";
 import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
 import { unwrapMcpResult } from "./mcp-result.js";
+import {
+  InvocationFailure,
+  InvocationService,
+  isExplicitlyReadOnly,
+} from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import type {
   Connector,
   Executor,
   ExecutorProvider,
   Logger,
-  ToolDef,
 } from "./types.js";
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
@@ -126,6 +126,8 @@ export async function buildSandboxProviders(
   // All host calls made by one execute_code invocation share a downstream
   // connection, while a later invocation receives a fresh request scope.
   const requestScope = {};
+  const catalog = new CatalogService(registry, baseUrl, { requestScope });
+  const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
     1,
     Math.trunc(limits.maxHostCalls ?? EXECUTE_MAX_HOST_CALLS),
@@ -150,7 +152,7 @@ export async function buildSandboxProviders(
   const catalogStarted = Date.now();
   const loaded = await Promise.allSettled(
     connectors.map((connector) =>
-      registry.getTools(connector.id, baseUrl, requestScope, {
+      catalog.loadConnector(connector.id, {
         signal: limits.signal,
       }),
     ),
@@ -161,138 +163,29 @@ export async function buildSandboxProviders(
       "Execution was cancelled during catalog construction.",
     );
   }
-  const catalogs = new Map<string, ToolDef[]>();
   const callAddress = async (address: unknown, args: unknown) => {
-    const resolved = registry.resolveAddress(String(address));
-    if (!resolved) throw new Error(`Unknown address "${String(address)}"`);
-    const definition = catalogs
-      .get(resolved.connector.id)
-      ?.find((tool) => tool.name === resolved.toolName);
-    if (!definition) {
-      throw new Error(
-        `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
-      );
-    }
-    if (
-      definition.annotations?.readOnlyHint !== true ||
-      definition.annotations?.destructiveHint === true
-    ) {
-      throw new Error(
-        `Tool "${String(address)}" is not explicitly read-only and cannot run inside execute_code. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
-      );
-    }
-    hostCalls++;
-    if (hostCalls > maxHostCalls) {
-      throw new Error(
-        `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
-      );
-    }
-    if (limits.signal?.aborted) {
-      throw new Error("execute_code host call cancelled");
-    }
-    const controller = new AbortController();
-    const cancel = () => controller.abort(limits.signal?.reason);
-    limits.signal?.addEventListener("abort", cancel, { once: true });
-    if (limits.signal?.aborted) cancel();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    let onAbort: (() => void) | undefined;
-    const started = Date.now();
-    let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-    try {
-      permit = await registry.admitCall(resolved.connector.id, {
-        toolName: resolved.toolName,
-        args: args ?? {},
-        signal: controller.signal,
-      });
-      let rejectCancelled!: (reason: Error) => void;
-      const cancelled = new Promise<never>((_, reject) => {
-        rejectCancelled = reject;
-      });
-      onAbort = () => {
-        rejectCancelled(
-          controller.signal.reason instanceof Error
-            ? controller.signal.reason
-            : new Error("execute_code host call cancelled"),
-        );
-      };
-      controller.signal.addEventListener("abort", onAbort, { once: true });
-      if (controller.signal.aborted) onAbort();
-      if (controller.signal.aborted) await cancelled;
-      const ctx = registry.contextFor(
-        resolved.connector.id,
-        baseUrl,
-        requestScope,
-        { signal: controller.signal, timeoutMs: hostCallTimeoutMs },
-      );
-      timer = setTimeout(() => {
-        controller.abort(
-          new ConnectorCallError(
-            "timeout",
-            `Tool call timed out after ${hostCallTimeoutMs}ms`,
-          ),
-        );
-      }, hostCallTimeoutMs);
-      const pending = resolved.connector.callTool(
-        resolved.toolName,
-        args ?? {},
-        ctx,
-      );
-      const value = unwrapForSandbox(
-        resolved.connector.kind,
-        await Promise.race([pending, cancelled]),
-      );
-      registry.recordSuccess(resolved.connector.id, Date.now() - started);
-      recordToolActivity(activity, {
-        connectorId: resolved.connector.id,
-        toolName: resolved.toolName,
-        address: `${resolved.connector.id}.${resolved.toolName}`,
+    const outcome = await invocation.invoke(
+      String(address),
+      args ?? {},
+      {
         source: "execute_code",
-        outcome: "success",
-        durationMs: Date.now() - started,
-        attempts: 1,
-      });
-      return value;
-    } catch (err) {
-      const callerCancelled =
-        limits.signal?.aborted === true ||
-        (isCallAdmissionError(err) && err.admissionKind === "cancelled");
-      if (!callerCancelled && !isCallAdmissionError(err)) {
-        registry.recordFailure(
-          resolved.connector.id,
-          Date.now() - started,
-          err,
-        );
-      }
-      const details = callerCancelled
-        ? {
-            code: "cancelled",
-            message: "Tool call was cancelled by the caller.",
-            retryable: false,
+        timeoutMs: hostCallTimeoutMs,
+        requestSignal: limits.signal,
+        unwrapResult: true,
+        beforeDispatch: () => {
+          hostCalls++;
+          if (hostCalls > maxHostCalls) {
+            throw new Error(
+              `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+            );
           }
-        : classifyCallError(err);
-      recordToolActivity(activity, {
-        connectorId: resolved.connector.id,
-        toolName: resolved.toolName,
-        address: `${resolved.connector.id}.${resolved.toolName}`,
-        source: "execute_code",
-        outcome:
-          details.code === "timeout"
-            ? "timeout"
-            : details.code === "cancelled"
-              ? "cancelled"
-              : "error",
-        durationMs: Date.now() - started,
-        attempts: 1,
-        errorCode: details.code,
-      });
-      throw err;
-    } finally {
-      if (timer) clearTimeout(timer);
-      if (onAbort) controller.signal.removeEventListener("abort", onAbort);
-      limits.signal?.removeEventListener("abort", cancel);
-      permit?.release();
-    }
+        },
+      },
+    );
+    if (!outcome.ok) throw new InvocationFailure(outcome.error);
+    return outcome.value;
   };
+
   for (let i = 0; i < connectors.length; i++) {
     const connector = connectors[i];
     const ns = sanitizeIdentifier(connector.id);
@@ -327,15 +220,11 @@ export async function buildSandboxProviders(
       continue;
     }
     const tools = loadedTools.value;
-    catalogs.set(connector.id, tools);
     // Null-prototype map: tools named `toString`/`hasOwnProperty`/`constructor`
     // are legitimate and must not collide with inherited Object members.
     const fns: ExecutorProvider["fns"] = Object.create(null);
     for (const t of tools) {
-      if (
-        t.annotations?.readOnlyHint !== true ||
-        t.annotations?.destructiveHint === true
-      ) {
+      if (!isExplicitlyReadOnly(t)) {
         continue;
       }
       const key = sanitizeIdentifier(t.name);
@@ -395,88 +284,7 @@ export async function buildSandboxProviders(
           fullDescriptions?: boolean;
           includeSchemas?: "compact" | "json";
         };
-        const matches: Array<{
-          connector: string;
-          tool: ToolDef;
-          score: number;
-          order: number;
-        }> = [];
-        let matchMode: "all" | "partial" = "all";
-        const collectMatches = (mode: "all" | "partial") => {
-          matches.length = 0;
-          let orderBase = 0;
-          for (const connector of connectors) {
-            if (args.connector && connector.id !== args.connector) continue;
-            const tools = catalogs.get(connector.id);
-            if (!tools) continue;
-            for (const ranked of rankTools(
-              tools,
-              args.query ?? "",
-              mode,
-            )) {
-              matches.push({
-                connector: connector.id,
-                tool: ranked.tool,
-                score: ranked.score,
-                order: orderBase + ranked.order,
-              });
-            }
-            orderBase += tools.length;
-          }
-        };
-        collectMatches("all");
-        if ((args.query ?? "").trim() && matches.length === 0) {
-          matchMode = "partial";
-          collectMatches(matchMode);
-        }
-        matches.sort((a, b) => b.score - a.score || a.order - b.order);
-        const offset = Math.max(0, Math.trunc(args.offset ?? 0));
-        const limit = discoverySearchLimit(args.limit);
-        const page = matches.slice(offset, offset + limit).map((match) => {
-          const input = match.tool.inputSchema ?? { type: "object" };
-          return {
-            name: match.tool.name,
-            address: `${match.connector}.${match.tool.name}`,
-            description: summarizeDescription(
-              match.tool.description,
-              args.fullDescriptions === true,
-            ),
-            ...(args.includeSchemas
-              ? {
-                  inputSchema:
-                    args.includeSchemas === "json"
-                      ? input
-                      : compactSchema(input),
-                }
-              : {}),
-            ...(args.includeSchemas && match.tool.outputSchema
-              ? {
-                  outputSchema:
-                    args.includeSchemas === "json"
-                      ? match.tool.outputSchema
-                      : compactSchema(match.tool.outputSchema),
-                }
-              : {}),
-            ...(match.tool.annotations
-              ? { annotations: match.tool.annotations }
-              : {}),
-          };
-        });
-        const nextOffset =
-          offset + page.length < matches.length
-            ? offset + page.length
-            : undefined;
-        const result = {
-          tools: page,
-          total: matches.length,
-          offset,
-          limit,
-          hasMore: nextOffset !== undefined,
-          ...(nextOffset !== undefined ? { nextOffset } : {}),
-          ...(matchMode === "partial" && matches.length > 0
-            ? { matchMode }
-            : {}),
-        };
+        const result = flatSearchResult(await catalog.search(args));
         assertDiscoveryResultSize(
           result,
           "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
@@ -489,42 +297,7 @@ export async function buildSandboxProviders(
           format?: "compact" | "json";
           fullDescriptions?: boolean;
         };
-        const addresses = discoveryAddresses(args.addresses);
-        const format = args.format ?? "compact";
-        const result = {
-          tools: addresses.map((rawAddress) => {
-            const address = String(rawAddress);
-            const resolved = registry.resolveAddress(address);
-            if (!resolved) {
-              return { address, error: `Unknown address "${address}"` };
-            }
-            const tool = catalogs
-              .get(resolved.connector.id)
-              ?.find((item) => item.name === resolved.toolName);
-            if (!tool) {
-              return { address, error: `Unknown tool "${address}"` };
-            }
-            const input = tool.inputSchema ?? { type: "object" };
-            return {
-              address,
-              name: tool.name,
-              description: summarizeDescription(
-                tool.description,
-                args.fullDescriptions === true,
-              ),
-              inputSchema: format === "json" ? input : compactSchema(input),
-              ...(tool.outputSchema
-                ? {
-                    outputSchema:
-                      format === "json"
-                        ? tool.outputSchema
-                        : compactSchema(tool.outputSchema),
-                  }
-                : {}),
-              ...(tool.annotations ? { annotations: tool.annotations } : {}),
-            };
-          }),
-        };
+        const result = { tools: await catalog.describe(args) };
         assertDiscoveryResultSize(
           result,
           'Split the address list or use format: "compact".',

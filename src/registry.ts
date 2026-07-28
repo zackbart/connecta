@@ -171,7 +171,7 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-type ConnectorOperationOptions = Pick<
+export type ConnectorOperationOptions = Pick<
   ConnectorContext,
   "signal" | "timeoutMs"
 >;

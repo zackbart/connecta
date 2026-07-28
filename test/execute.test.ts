@@ -12,7 +12,13 @@ import {
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
+  createMetaTools,
 } from "../src/meta-tools.js";
+import { InvocationFailure } from "../src/invocation.js";
+import type {
+  ActivityRequestContext,
+  ToolCallActivityEvent,
+} from "../src/activity.js";
 import type {
   AdmittingExecutor,
   Connector,
@@ -28,6 +34,27 @@ import {
 } from "./helpers.js";
 
 const BASE = "https://connecta.test";
+
+function activityRecorder(requestId: string): {
+  activity: ActivityRequestContext;
+  events: ToolCallActivityEvent[];
+} {
+  const events: ToolCallActivityEvent[] = [];
+  return {
+    events,
+    activity: {
+      sink: {
+        record: (event) => {
+          events.push(event);
+        },
+      },
+      actor: { kind: "test" },
+      requestId,
+      serverInfo: { name: "connecta-test", version: "0" },
+      logger: silentLogger,
+    },
+  };
+}
 
 /** Records the providers it was handed; returns a canned outcome. */
 function fakeExecutor(
@@ -503,6 +530,149 @@ describe("buildSandboxProviders", () => {
     await expect(
       providers.find((provider) => provider.name === "slow")!.fns.read({}),
     ).rejects.toThrow("timed out after 10ms");
+  });
+});
+
+describe("MCP and code-mode invocation parity", () => {
+  async function failuresFor(
+    connector: Connector,
+    address: string,
+    options: { timeoutMs?: number } = {},
+  ) {
+    const mcpRegistry = makeRegistry([connector]);
+    const mcpActivity = activityRecorder("mcp-request");
+    const mcpResult = await createMetaTools(mcpRegistry, BASE, {
+      activity: mcpActivity.activity,
+    }).callTool({
+      address,
+      args: {},
+      resultMode: "value",
+      ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+    });
+    const mcpError = (
+      mcpResult.structuredContent as {
+        error: { code: string; message: string; retryable: boolean };
+      }
+    ).error;
+
+    const codeRegistry = makeRegistry([connector]);
+    const codeActivity = activityRecorder("code-request");
+    const providers = await buildSandboxProviders(
+      codeRegistry,
+      BASE,
+      silentLogger,
+      codeActivity.activity,
+      options.timeoutMs
+        ? { hostCallTimeoutMs: options.timeoutMs }
+        : undefined,
+    );
+    const connecta = providers.find((provider) => provider.name === "connecta")!;
+    const codeError = await connecta.fns
+      .call(address, {})
+      .then(() => undefined, (error: unknown) => error);
+    expect(codeError).toBeInstanceOf(InvocationFailure);
+    return {
+      mcpError,
+      codeError: codeError as InvocationFailure,
+      mcpRegistry,
+      codeRegistry,
+      mcpEvents: mcpActivity.events,
+      codeEvents: codeActivity.events,
+    };
+  }
+
+  it.each([
+    {
+      label: "unknown address",
+      address: "missing.read",
+      expectedCode: "unknown_address",
+    },
+    {
+      label: "unknown tool",
+      address: "parity.missing",
+      expectedCode: "unknown_tool",
+    },
+    {
+      label: "non-read-only refusal",
+      address: "parity.write",
+      expectedCode: "destructive_tool_requires_approval",
+    },
+  ])(
+    "uses the same code and wording for $label",
+    async ({ address, expectedCode }) => {
+      const connector: Connector = {
+        id: "parity",
+        kind: "api",
+        async listTools() {
+          return [
+            {
+              name: "read",
+              annotations: { readOnlyHint: true },
+            },
+            { name: "write" },
+          ];
+        },
+        async callTool() {
+          throw new Error("should not dispatch");
+        },
+      };
+      const { mcpError, codeError } = await failuresFor(connector, address);
+      expect(codeError.code).toBe(expectedCode);
+      expect(codeError.message).toBe(mcpError.message);
+      expect(codeError.retryable).toBe(mcpError.retryable);
+    },
+  );
+
+  it("classifies timeouts and records matching health and activity fields", async () => {
+    const connector: Connector = {
+      id: "parity",
+      kind: "api",
+      async listTools() {
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return await new Promise<never>(() => {});
+      },
+    };
+    const result = await failuresFor(connector, "parity.read", {
+      timeoutMs: 10,
+    });
+    expect(result.codeError).toMatchObject({
+      code: "timeout",
+      message: result.mcpError.message,
+      retryable: result.mcpError.retryable,
+    });
+    expect(result.mcpRegistry.healthFor("parity")).toMatchObject({
+      consecutiveFailures: 1,
+      lastError: result.mcpError.message,
+    });
+    expect(result.codeRegistry.healthFor("parity")).toMatchObject({
+      consecutiveFailures: 1,
+      lastError: result.mcpError.message,
+    });
+    const sharedFields = {
+      connectorId: "parity",
+      toolName: "read",
+      address: "parity.read",
+      outcome: "timeout",
+      attempts: 1,
+      errorCode: "timeout",
+    };
+    expect(result.mcpEvents).toHaveLength(1);
+    expect(result.codeEvents).toHaveLength(1);
+    expect(result.mcpEvents[0]).toMatchObject({
+      ...sharedFields,
+      source: "call_tool",
+    });
+    expect(result.codeEvents[0]).toMatchObject({
+      ...sharedFields,
+      source: "execute_code",
+    });
   });
 });
 

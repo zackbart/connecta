@@ -1521,6 +1521,84 @@ describe("call_tool", () => {
     expect(calls).toEqual(["unannotated"]);
   });
 
+  it("deduplicates concurrent request-local catalog loads", async () => {
+    let catalogLoads = 0;
+    const connector: Connector = {
+      id: "shared",
+      kind: "api",
+      async listTools() {
+        catalogLoads++;
+        await Promise.resolve();
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return { ok: true };
+      },
+    };
+    const result = await createMetaTools(
+      makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
+      BASE,
+    ).batchCall({
+      calls: [
+        { address: "shared.read", resultMode: "value" },
+        { address: "shared.read", resultMode: "value" },
+      ],
+    });
+    expect(result.isError).toBeFalsy();
+    expect(catalogLoads).toBe(1);
+  });
+
+  it("does not retain failed request-local catalog loads", async () => {
+    let catalogLoads = 0;
+    const connector: Connector = {
+      id: "recovering",
+      kind: "api",
+      async listTools() {
+        catalogLoads++;
+        if (catalogLoads === 1) throw new Error("catalog temporarily down");
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return { ok: true };
+      },
+    };
+    const mt = createMetaTools(
+      makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
+      BASE,
+    );
+    expect(
+      (
+        textOf(
+          await mt.callTool({
+            address: "recovering.read",
+            resultMode: "value",
+          }),
+        ) as { ok: boolean }
+      ).ok,
+    ).toBe(false);
+    expect(
+      (
+        textOf(
+          await mt.callTool({
+            address: "recovering.read",
+            resultMode: "value",
+          }),
+        ) as { ok: boolean }
+      ).ok,
+    ).toBe(true);
+    expect(catalogLoads).toBe(2);
+  });
+
   it("retries transient failures only for safely annotated API tools", async () => {
     let safeCalls = 0;
     let unsafeCalls = 0;
