@@ -105,12 +105,17 @@ function nonNegativeWhole(value: number, name: string): number {
  * tool arguments never enter the controller.
  */
 export class ConnectorCallAdmissionController {
-  private readonly rule: ConnectorCallAdmissionRule;
   private readonly maxConcurrency: number | undefined;
   private readonly maxQueueSize: number;
   private readonly queueTimeoutMs: number;
   private readonly retryAfterMs: number;
   private readonly maxPartitions: number;
+  private readonly budget:
+    | { maxCalls: number; windowMs: number }
+    | undefined;
+  private readonly partitionKey:
+    | ConnectorCallAdmissionRule["partitionKey"]
+    | undefined;
   private readonly partitions = new Map<string, PartitionState>();
   private closed = false;
   private admittedTotal = 0;
@@ -131,63 +136,67 @@ export class ConnectorCallAdmissionController {
         `connector "${connectorId}" callAdmission.rules must contain exactly one rule in this release.`,
       );
     }
-    this.rule = policy.rules[0];
+    const rule = policy.rules[0];
     if (
-      this.rule.maxConcurrency === undefined &&
-      this.rule.budget === undefined
+      rule.maxConcurrency === undefined &&
+      rule.budget === undefined
     ) {
       throw new TypeError(
         `connector "${connectorId}" callAdmission rule must declare maxConcurrency or budget.`,
       );
     }
     this.maxConcurrency =
-      this.rule.maxConcurrency === undefined
+      rule.maxConcurrency === undefined
         ? undefined
         : positiveWhole(
-            this.rule.maxConcurrency,
+            rule.maxConcurrency,
             `connector "${connectorId}" callAdmission maxConcurrency`,
           );
     if (
       this.maxConcurrency === undefined &&
-      (this.rule.maxQueueSize !== undefined ||
-        this.rule.queueTimeoutMs !== undefined ||
-        this.rule.retryAfterMs !== undefined)
+      (rule.maxQueueSize !== undefined ||
+        rule.queueTimeoutMs !== undefined ||
+        rule.retryAfterMs !== undefined)
     ) {
       throw new TypeError(
         `connector "${connectorId}" callAdmission queue settings require maxConcurrency.`,
       );
     }
     this.maxQueueSize = nonNegativeWhole(
-      this.rule.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
+      rule.maxQueueSize ?? DEFAULT_MAX_QUEUE_SIZE,
       `connector "${connectorId}" callAdmission maxQueueSize`,
     );
     this.queueTimeoutMs = positiveWhole(
-      this.rule.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
+      rule.queueTimeoutMs ?? DEFAULT_QUEUE_TIMEOUT_MS,
       `connector "${connectorId}" callAdmission queueTimeoutMs`,
     );
     this.retryAfterMs = nonNegativeWhole(
-      this.rule.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS,
+      rule.retryAfterMs ?? DEFAULT_RETRY_AFTER_MS,
       `connector "${connectorId}" callAdmission retryAfterMs`,
     );
     this.maxPartitions = positiveWhole(
       policy.maxPartitions ?? DEFAULT_MAX_PARTITIONS,
       `connector "${connectorId}" callAdmission maxPartitions`,
     );
-    if (this.rule.budget) {
-      if (this.rule.budget.kind !== "rolling-window") {
+    if (rule.budget) {
+      if (rule.budget.kind !== "rolling-window") {
         throw new TypeError(
           `connector "${connectorId}" callAdmission budget kind must be "rolling-window".`,
         );
       }
-      positiveWhole(
-        this.rule.budget.maxCalls,
+      const maxCalls = positiveWhole(
+        rule.budget.maxCalls,
         `connector "${connectorId}" callAdmission budget.maxCalls`,
       );
-      positiveWhole(
-        this.rule.budget.windowMs,
+      const windowMs = positiveWhole(
+        rule.budget.windowMs,
         `connector "${connectorId}" callAdmission budget.windowMs`,
       );
+      this.budget = { maxCalls, windowMs };
+    } else {
+      this.budget = undefined;
     }
+    this.partitionKey = rule.partitionKey;
   }
 
   acquire(
@@ -213,8 +222,8 @@ export class ConnectorCallAdmissionController {
 
     let key: string;
     try {
-      key = this.rule.partitionKey
-        ? this.rule.partitionKey({
+      key = this.partitionKey
+        ? this.partitionKey({
             toolName: input.toolName,
             args: input.args,
           })
@@ -242,6 +251,13 @@ export class ConnectorCallAdmissionController {
           `Connector "${this.connectorId}" call-admission partitionKey must return a string of at most ${MAX_PARTITION_KEY_BYTES} UTF-8 bytes.`,
         ),
       );
+    }
+    // A partition callback is operator code and may synchronously abort the
+    // caller. Recheck after it returns so that cancellation cannot consume a
+    // budget entry or concurrency slot.
+    if (signal?.aborted) {
+      this.cancelledTotal++;
+      return Promise.reject(this.cancelled(signal));
     }
 
     const now = Date.now();
@@ -297,7 +313,6 @@ export class ConnectorCallAdmissionController {
         reject(this.cancelled(signal!));
         this.maybeDeletePartition(key, state!, Date.now());
       };
-      signal?.addEventListener("abort", waiter.onAbort, { once: true });
       waiter.timer = setTimeout(() => {
         if (!this.removeWaiter(state!, waiter)) return;
         this.cleanupWaiter(waiter);
@@ -311,6 +326,11 @@ export class ConnectorCallAdmissionController {
       }, this.queueTimeoutMs);
       state!.waiters.push(waiter);
       this.queuedTotal++;
+      signal?.addEventListener("abort", waiter.onAbort, { once: true });
+      // Close the check-to-listener race: an abort before registration is not
+      // replayed by AbortSignal, so inspect it once after the waiter is fully
+      // removable and its timer is installed.
+      if (signal?.aborted) waiter.onAbort();
     });
   }
 
@@ -365,7 +385,7 @@ export class ConnectorCallAdmissionController {
     waitMs: number,
   ): CallAdmissionPermit {
     state.active++;
-    if (this.rule.budget) state.admittedAt.push(now);
+    if (this.budget) state.admittedAt.push(now);
     this.admittedTotal++;
     if (waitMs > 0) {
       this.queueWaitCount++;
@@ -411,7 +431,7 @@ export class ConnectorCallAdmissionController {
   }
 
   private pruneBudget(state: PartitionState, now: number): void {
-    const budget = this.rule.budget;
+    const budget = this.budget;
     if (!budget || state.admittedAt.length === 0) return;
     let expired = 0;
     while (
@@ -427,7 +447,7 @@ export class ConnectorCallAdmissionController {
     state: PartitionState,
     now: number,
   ): number | undefined {
-    const budget = this.rule.budget;
+    const budget = this.budget;
     if (!budget || state.admittedAt.length < budget.maxCalls) {
       return undefined;
     }

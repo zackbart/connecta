@@ -153,6 +153,72 @@ describe("connector call admission controller", () => {
     });
   });
 
+  it("does not admit when partition derivation synchronously cancels", async () => {
+    const controller = new AbortController();
+    const admission = new ConnectorCallAdmissionController(
+      "limited",
+      policy({
+        maxConcurrency: 1,
+        budget: {
+          kind: "rolling-window",
+          maxCalls: 1,
+          windowMs: 60_000,
+        },
+        partitionKey() {
+          controller.abort(new Error("cancelled during partitioning"));
+          return "project";
+        },
+      }),
+    );
+
+    await expect(
+      admission.acquire({
+        toolName: "read",
+        args: { privatePayload: true },
+        signal: controller.signal,
+      }),
+    ).rejects.toMatchObject({ admissionKind: "cancelled" });
+    expect(admission.snapshot()).toMatchObject({
+      active: 0,
+      partitions: 0,
+      totals: { admitted: 0, cancelled: 1 },
+    });
+  });
+
+  it("snapshots validated rule values instead of retaining mutable config", async () => {
+    const configured = policy({
+      maxConcurrency: 2,
+      budget: {
+        kind: "rolling-window",
+        maxCalls: 2,
+        windowMs: 60_000,
+      },
+      partitionKey: () => "original",
+    });
+    const admission = new ConnectorCallAdmissionController(
+      "limited",
+      configured,
+    );
+    const mutable = configured.rules[0] as {
+      maxConcurrency?: number;
+      budget?: { maxCalls: number; windowMs: number };
+      partitionKey?: () => string;
+    };
+    mutable.maxConcurrency = 1;
+    mutable.budget!.maxCalls = 1;
+    mutable.partitionKey = () => "mutated";
+
+    const first = await admission.acquire({ toolName: "read", args: {} });
+    const second = await admission.acquire({ toolName: "read", args: {} });
+    expect(admission.snapshot()).toMatchObject({
+      partitions: 1,
+      active: 2,
+      totals: { admitted: 2, rateLimited: 0 },
+    });
+    first.release();
+    second.release();
+  });
+
   it("bounds partition state and contains partition-key failures", async () => {
     vi.useFakeTimers();
     try {
