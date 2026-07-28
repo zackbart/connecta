@@ -202,6 +202,21 @@ describe("ConnectaConfig v0.7 shape", () => {
     ).toThrow("- credentialHealth -> credentials.health");
   });
 
+  it("rejects retired toolkit config even when undefined", () => {
+    for (const toolkits of [
+      undefined,
+      {},
+      { support: { connectors: ["notes"] } },
+    ]) {
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], toolkits }),
+      ).toThrow("removed in issue #178");
+      expect(() =>
+        unsafeCreateConnecta({ connectors: [], toolkits }),
+      ).toThrow("ethos.md");
+    }
+  });
+
   it("ignores inherited legacy names because only own properties are config", () => {
     const config = Object.assign(
       Object.create({ maxResultBytes: 1 }),
@@ -292,5 +307,10 @@ if (false) {
     connectors: [],
     // @ts-expect-error removed in v0.7
     maxResultBytes: 1,
+  });
+  createConnecta({
+    connectors: [],
+    // @ts-expect-error removed in v0.9
+    toolkits: {},
   });
 }

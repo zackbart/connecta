@@ -27,7 +27,6 @@ describe("Worker D1 activity example", () => {
       serverName: "connecta",
       serverVersion: "0.7.6",
       deploymentId: "production",
-      toolkitId: "support",
     };
 
     const row = activityEventToRow(event);

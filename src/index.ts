@@ -6,12 +6,6 @@ import {
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedUiAuthUrls } from "./ui.js";
-import {
-  resolveToolkits,
-  validateToolkitBindings,
-  type Toolkit,
-  type ToolkitConfig,
-} from "./toolkits.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import {
@@ -156,38 +150,6 @@ export interface ConnectaAdmissionConfig {
 
 export interface ConnectaConfig {
   connectors: Connector[];
-  /**
-   * Named scoped views over `connectors`, selected per client connection with
-   * `?toolkit=<name>` on the `/mcp` URL. One deployment belongs to one org;
-   * a toolkit is the slice of it a group of team members sees.
-   *
-   * ```ts
-   * toolkits: {
-   *   support: { connectors: ["zendesk", "notion"] },
-   *   exec: {
-   *     connectors: ["zendesk", "notion", "gmail"],
-   *     excludeTools: ["gmail.send_message"],
-   *   },
-   * }
-   * ```
-   *
-   * Inside a toolkit-scoped session every meta-tool behaves as if out-of-scope
-   * connectors and tools do not exist, and an out-of-scope address fails
-   * exactly as a nonexistent one does. No `?toolkit=` ⇒ the full registry, so
-   * adding toolkits changes nothing for connections that don't ask for one; an
-   * unknown name is an error, never a silent fallback.
-   *
-   * Selection is self-service until a toolkit is BOUND to an inbound identity:
-   * pass `toolkits` to an auth adapter — `bearerToken(secret, { toolkits:
-   * ["support"] })` — and that credential may open only those toolkits, and may
-   * not connect unscoped unless it also passes `unscoped: true`. An unbound
-   * identity keeps the self-service behavior.
-   *
-   * Definitions are validated at construction: an unknown connector id, an
-   * empty connector selection, an empty `includeTools`, a malformed tool
-   * address, or an address naming no tool on an in-code connector all throw.
-   */
-  toolkits?: ToolkitConfig;
   /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
   /** KVStorage impl. Defaults to memoryStorage(). */
@@ -337,6 +299,12 @@ const hasOwn = (value: object, key: PropertyKey): boolean =>
  */
 function assertNoLegacyConfig(config: ConnectaConfig): void {
   const candidate = config as unknown as Record<PropertyKey, unknown>;
+  if (hasOwn(candidate, "toolkits")) {
+    throw new Error(
+      "ConnectaConfig.toolkits was removed in issue #178. Deploy one " +
+        "connecta instance per audience instead; see ethos.md.",
+    );
+  }
   const found: Array<readonly [string, string]> = [];
   if (hasOwn(candidate, "activity")) {
     const activity = candidate.activity;
@@ -376,7 +344,6 @@ function assertNoLegacyConfig(config: ConnectaConfig): void {
 function warnInsecureConfig(
   config: ConnectaConfig,
   inboundAuth: InboundAuth[],
-  toolkits: ReadonlyMap<string, Toolkit> | undefined,
   logger: Logger,
 ): void {
   const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
@@ -405,64 +372,6 @@ function warnInsecureConfig(
         "it at their own host and capture the authorization code. Set " +
         "`publicUrl` to a fixed https origin.",
     );
-  }
-
-  // Toolkits that nothing binds to an identity: selection is then self-service,
-  // and the boundary organizes the surface rather than protecting it. Three
-  // distinct shapes, so three distinct warnings — an operator can only act on
-  // the one they are actually in.
-  //
-  // All are keyed off the RESOLVED toolkits, which is the same map `?toolkit=`
-  // resolves against, rather than the presence of the config key: `toolkits: {}`
-  // is a truthy object that resolves to nothing selectable, so warning about a
-  // choice no caller can make would name a risk that does not exist.
-  if (toolkits) {
-    const unbound = inboundAuth.filter((provider) => !provider.toolkitBinding);
-    if (inboundAuth.length === 0) {
-      // No auth at all ⇒ no identity exists to bind, so binding is not even the
-      // fix here. The open-mode warning above covers the wider exposure.
-      logger.warn(
-        "[connecta] toolkits are configured but there is no inbound " +
-          "authentication: with no identity to bind a toolkit to, any caller " +
-          "can choose any toolkit or omit ?toolkit= and see every connector. " +
-          "Configure `auth` (for example bearerToken(...) or Clerk), then bind " +
-          "each credential with `toolkits: [...]`.",
-      );
-    } else if (unbound.length === inboundAuth.length) {
-      // Authenticated, but every credential may still select every view. This is
-      // the shape issue #37 exists to close, and it is invisible without a line
-      // saying so: nothing fails, the teams are simply not separated.
-      logger.warn(
-        "[connecta] toolkits are configured but no inbound identity is bound " +
-          "to one: every credential `auth` admits can select any toolkit, or " +
-          "omit ?toolkit= and see the whole deployment, so a token handed to " +
-          "one team also opens the others' views. Bind each credential with " +
-          "`toolkits: [...]` on its auth adapter (add `unscoped: true` for an " +
-          "operator credential that should still see everything).",
-      );
-    } else if (unbound.length > 0) {
-      // The dangerous middle: SOME credentials are bound, which is exactly when
-      // an operator believes the deployment is separated — while one forgotten
-      // provider still opens every view and the whole deployment-wide surface.
-      // Naming the unbound providers is the point; an intentionally unrestricted
-      // credential says so with `unscoped: true` and stops appearing here.
-      const counted = new Map<string, number>();
-      for (const provider of unbound) {
-        counted.set(provider.kind, (counted.get(provider.kind) ?? 0) + 1);
-      }
-      const named = [...counted]
-        .map(([kind, count]) => (count > 1 ? `${kind} x${count}` : kind))
-        .join(", ");
-      logger.warn(
-        `[connecta] toolkits are bound on some inbound auth providers but not ` +
-          `all: ${named} ${unbound.length === 1 ? "declares" : "declare"} no ` +
-          "binding, so a caller that provider admits can still select any " +
-          "toolkit, connect unscoped, and read the deployment-wide operator " +
-          "surfaces — whatever the bound credentials beside it allow. Bind it " +
-          "too, or declare the exemption with `toolkits: [...], unscoped: true` " +
-          "if it is meant to be an operator credential.",
-      );
-    }
   }
 
   // Branding URLs that failed their scheme gate. Rendering silently falls back
@@ -571,17 +480,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? { credentialHealth: config.credentials.health }
       : {}),
   });
-  // Throws on every structural mistake it can see (see resolveToolkits): a
-  // typo must not become a scope the operator never wrote. Note this is about
-  // the scope being *intended*, not about it being an access check — a toolkit
-  // scopes visibility, and `auth` remains the thing deciding who gets in.
-  const toolkits = resolveToolkits(config.toolkits, config.connectors);
   const inboundAuth = normalizeAuth(config.auth);
-  // Same contract for the identity half: a binding that names a toolkit this
-  // deployment does not declare would deny that credential every connection,
-  // with a 403 its client reports as a transport failure. Throw here instead.
-  validateToolkitBindings(inboundAuth, toolkits);
-  warnInsecureConfig(config, inboundAuth, toolkits, logger);
+  warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
     REQUEST_ADMISSION_DEFAULTS,
@@ -637,7 +537,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? { deploymentInfo: config.deploymentInfo }
       : {}),
     ...(config.branding !== undefined ? { branding: config.branding } : {}),
-    ...(toolkits ? { toolkits } : {}),
   });
   let closePromise: Promise<void> | undefined;
   return {
@@ -705,14 +604,6 @@ export { CONNECTA_VERSION } from "./version.js";
 // the class itself, the credential vault, and the meta-tool/sandbox factories
 // are internal factoring and are deliberately not part of the API surface.
 export type { Registry } from "./registry.js";
-// Config-as-code shapes for `ConnectaConfig.toolkits` and the identity bindings
-// that gate them. The resolved `Toolkit` and the `ScopedRegistry` that enforces
-// it are internal factoring.
-export type {
-  ToolkitBindingOptions,
-  ToolkitConfig,
-  ToolkitDefinition,
-} from "./toolkits.js";
 // Credential health: the config shape, and the result shape a scheduled
 // `checkCredentials()` returns. The checker itself is internal factoring.
 export type {
@@ -750,7 +641,6 @@ export type {
   ExecutorLease,
   ExecutorProvider,
   InboundAuth,
-  ToolkitBinding,
   UiAuthConfig,
   AuthResult,
   JsonSchema,

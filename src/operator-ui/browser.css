@@ -236,57 +236,6 @@
   .connector-description { margin-top: .25rem; max-width: 40rem; }
   .connector-message,
   .connector-auth { margin-top: .75rem; }
-  .connector-toolkits {
-    align-items: baseline;
-    display: flex;
-    flex-wrap: wrap;
-    gap: .25rem .5rem;
-    margin-top: .5rem;
-  }
-  .scope-label {
-    border: 1px solid var(--rule);
-    display: inline-block;
-    font-family: var(--mono);
-    font-size: .72rem;
-    padding: .05rem .35rem;
-  }
-
-  .toolkit-copy { margin-bottom: 1rem; max-width: 42rem; }
-  .toolkit-ledger { border-bottom: 1px solid var(--rule); }
-  .toolkit-card {
-    border-top: 1px solid var(--rule);
-    padding: .9rem 0 1rem;
-  }
-  .toolkit-head {
-    display: grid;
-    gap: var(--gap);
-    grid-template-columns: minmax(0, 2fr) minmax(10rem, 1fr);
-  }
-  .toolkit-name {
-    align-items: baseline;
-    display: flex;
-    flex-wrap: wrap;
-    gap: .5rem;
-  }
-  .toolkit-name h3 { overflow-wrap: anywhere; }
-  .toolkit-state { text-align: right; }
-  .toolkit-connectors {
-    display: flex;
-    flex-wrap: wrap;
-    gap: .5rem;
-    margin-top: .75rem;
-  }
-  .toolkit-connector {
-    border-left: 1px solid var(--ink);
-    display: inline-flex;
-    flex-wrap: wrap;
-    gap: .4rem;
-    padding-left: .5rem;
-  }
-  .toolkit-rules { margin-top: .75rem; }
-  .toolkit-rules > * + * { margin-top: .25rem; }
-  .toolkit-endpoint { margin-top: .75rem; }
-
   .credential-ledger { border-bottom: 1px solid var(--rule); }
   .credential-card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
   .credential-head {
@@ -403,11 +352,9 @@
     .section,
     .section + .section { margin-top: 2.5rem; }
     .connector-head,
-    .toolkit-head,
     .tool,
     .activity-item { grid-template-columns: 1fr; }
-    .connector-state,
-    .toolkit-state { text-align: left; }
+    .connector-state { text-align: left; }
     .credential-field { align-items: start; grid-template-columns: 1fr; gap: .25rem; }
     input { min-height: 2.75rem; }
   }

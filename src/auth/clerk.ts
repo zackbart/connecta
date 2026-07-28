@@ -3,16 +3,13 @@
 // ~60s identity caching.
 
 import { createClerkClient } from "@clerk/backend";
-import {
-  resolveToolkitBinding,
-  type ToolkitBindingOptions,
-} from "../toolkits.js";
+import { assertNoRetiredToolkitOptions } from "../retired-toolkits.js";
 import type { AuthResult, InboundAuth } from "../types.js";
 
 type ClerkClient = ReturnType<typeof createClerkClient>;
 type ClerkUser = Awaited<ReturnType<ClerkClient["users"]["getUser"]>>;
 
-export interface ClerkAuthOptions extends ToolkitBindingOptions {
+export interface ClerkAuthOptions {
   publishableKey: string;
   secretKey: string;
   /** Public base URL of this deployment. Defaults to the request origin. */
@@ -177,7 +174,7 @@ function normalizeAllowedDomains(
 
 /**
  * Bounded, escaped form of the denied domain for the operator log — the same
- * treatment `src/server.ts` gives a rejected toolkit name. An email domain is
+ * treatment server logs give other caller-controlled values. An email domain is
  * caller-influenced (anyone who controls a mailbox controls its domain): the
  * bound is what a 253-byte domain needs, and the escaping — JSON.stringify plus
  * the hand-rolled U+2028/U+2029 pass it leaves raw — is defense in depth behind
@@ -214,22 +211,14 @@ function emailDomain(email: string): string | null {
 /**
  * Clerk inbound auth.
  *
- * `allowedDomains` and `gate` decide WHO is admitted (both must pass);
- * `toolkits` decides WHICH view the admitted user gets.
- *
- * `toolkits` binds every user this provider admits to those toolkits
- * (documentation/toolkits.md). For a per-team split, configure one `clerkAuth(...)` per
- * team — the same keys, a `gate` naming that team's users, and that team's
- * `toolkits`. The server tries providers in order and the first that admits the
- * user supplies the binding, so a user one gate rejects falls through to the
- * next.
+ * `allowedDomains` and `gate` decide who is admitted; both must pass.
  */
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
+  assertNoRetiredToolkitOptions("clerkAuth", opts);
   const clerk = createClerkClient({
     secretKey: opts.secretKey,
     publishableKey: opts.publishableKey,
   });
-  const toolkitBinding = resolveToolkitBinding("clerkAuth", opts);
   const allowedDomains = normalizeAllowedDomains(opts.allowedDomains);
   const scopes = opts.scopes ?? ["openid", "profile", "email"];
   const gateCache = new Map<string, { allowed: boolean; exp: number }>();
@@ -439,7 +428,6 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   return {
     kind: "clerk",
     activityActorNamespace: fapiUrl(opts.publishableKey),
-    ...(toolkitBinding ? { toolkitBinding } : {}),
     activityActorLabel: resolveActivityLabel,
     uiAuth: {
       kind: "clerk",

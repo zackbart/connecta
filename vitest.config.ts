@@ -29,7 +29,6 @@ export const WORKERS_SUITES = [
   "test/server-route-contracts.test.ts",
   "test/server.test.ts",
   "test/startup-warnings.test.ts",
-  "test/toolkits.test.ts",
   "test/ui.test.ts",
   "test/validate.test.ts",
 ] as const;

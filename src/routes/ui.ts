@@ -8,9 +8,7 @@ import {
 } from "../ui.js";
 import {
   authorize,
-  isToolkitRestricted,
   privateJson,
-  restrictedOperatorSurface,
   type RouteContext,
 } from "./shared.js";
 
@@ -121,11 +119,6 @@ export async function routeUi(
 
   const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
   if (!authz.ok) return authz.response;
-  if (isToolkitRestricted(authz.toolkitBinding)) {
-    return restrictedOperatorSurface();
-  }
-  // After the restriction check, not before: an identity that may not
-  // read this surface should not get to trigger background work from it.
   sweepCredentials();
   const eligibleClerkOperator = authz.uiAdminEligible === true;
   const credentialManagement = credentialManagementCapability({
@@ -144,7 +137,6 @@ export async function routeUi(
     eligibleClerkOperator ? opts.credentialVault : undefined,
     Boolean(opts.activity?.list),
     credentialManagement,
-    opts.toolkits,
     defer,
     eligibleClerkOperator,
     opts.discoveryConcurrency,

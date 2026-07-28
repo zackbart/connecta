@@ -8,9 +8,8 @@ import {
 } from "../src/credentials.js";
 import { createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { Registry, ScopedRegistry } from "../src/registry.js";
+import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { resolveToolkits } from "../src/toolkits.js";
 import { withTimeout } from "../src/timeout.js";
 import type {
   Connector,
@@ -1188,33 +1187,6 @@ describe("liveness verdicts and the live probe", () => {
     const entry = await cachedStatus(registry, "linear");
     expect(entry.status).toBe("ok");
     expect(entry.credentialCheck).toMatchObject({ state: "ok" });
-  });
-});
-
-describe("credential health across a toolkit scope", () => {
-  it("shows a shared connector's verdict inside the scope and hides it outside", async () => {
-    const linear = grantConnector();
-    const other = grantConnector("gmail");
-    linear.state = "auth_required";
-    other.state = "auth_required";
-    const base = makeRegistry([linear, other]);
-    await base.checkCredentialHealth(BASE);
-    const toolkits = resolveToolkits(
-      { support: { connectors: ["linear"] } },
-      [linear, other],
-    )!;
-    const scoped = new ScopedRegistry(base, toolkits.get("support")!);
-
-    expect(await scoped.credentialHealthFor("linear")).toMatchObject({
-      state: "auth_required",
-    });
-    expect(await scoped.credentialHealthFor("gmail")).toBeUndefined();
-
-    const entry = cachedEntry(
-      textOf(await createMetaTools(scoped, BASE).listConnectors({ probe: false })),
-      "linear",
-    );
-    expect(entry.status).toBe("auth_required");
   });
 });
 

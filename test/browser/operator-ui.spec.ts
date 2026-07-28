@@ -29,7 +29,6 @@ function data(): UiData {
     credentialManagement: "available",
     oauthManagement: true,
     activityEnabled: true,
-    toolkits: [],
     connectors: [
       {
         id: "vaulted",

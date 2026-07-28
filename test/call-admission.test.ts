@@ -6,8 +6,6 @@ import {
 import { buildSandboxProviders } from "../src/execute.js";
 import { createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { ScopedRegistry } from "../src/registry.js";
-import { resolveToolkits } from "../src/toolkits.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -394,47 +392,6 @@ describe("connector call admission integration", () => {
     releases.shift()!();
     await expect(codeMode).resolves.toEqual({ source: "code" });
     expect(maxActive).toBe(1);
-  });
-
-  it("makes toolkit views contend on the base registry's limiter", async () => {
-    const connector: Connector = {
-      id: "limited",
-      kind: "api",
-      description: "Limited",
-      staticTools: [READ_TOOL],
-      callAdmission: policy({ maxConcurrency: 1, maxQueueSize: 1 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool() {
-        return {};
-      },
-    };
-    const registry = makeRegistry([connector]);
-    const toolkit = resolveToolkits(
-      { team: { connectors: ["limited"] } },
-      [connector],
-    )!.get("team")!;
-    const scoped = new ScopedRegistry(registry, toolkit);
-    const basePermit = await registry.admitCall("limited", {
-      toolName: "read",
-      args: {},
-    });
-    const scopedPermit = scoped.admitCall("limited", {
-      toolName: "read",
-      args: {},
-    });
-
-    await waitFor(
-      () => required(registry.callAdmissionSnapshot().limited).queued === 1,
-    );
-    basePermit.release();
-    (await scopedPermit).release();
-    expect(registry.callAdmissionSnapshot().limited).toMatchObject({
-      active: 0,
-      queued: 0,
-      totals: { admitted: 2, queued: 1 },
-    });
   });
 
   it("threads direct-call cancellation into the shared admission queue", async () => {

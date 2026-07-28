@@ -2,6 +2,25 @@
 
 All notable changes to this package are documented here.
 
+## 0.9.0 — Unreleased
+
+0.9.0 makes deployment boundaries the audience-scoping model. Toolkits are
+removed: one deployment now exposes one deliberate connector surface to every
+identity it admits, and serving another audience means deploying another
+instance. Deployments that never configured toolkits need no change. A
+deployment still passing the retired config refuses to start and points to
+issue #178 and `ethos.md`.
+
+### Changed
+
+- **Toolkits are removed** (#178). `ConnectaConfig.toolkits`, toolkit bindings
+  on `bearerToken` and `clerkAuth`, `?toolkit=` routing, scoped registries, and
+  the operator UI's toolkit projection no longer exist. Passing `toolkits` or
+  `unscoped` to any of those construction surfaces throws instead of silently
+  widening access.
+- **Activity events no longer carry `toolkitId`.** The Worker D1 example drops
+  its `toolkit_id` column; existing columns may be left in place unused.
+
 ## 0.8.0 — 2026-07-28
 
 0.8.0 is consolidation before capability growth (#157): the semantics that were

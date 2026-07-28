@@ -72,10 +72,8 @@ Edit [`server.ts`](./server.ts) and rebuild. It ships one demo `time` connector
 and a commented-out `remoteMcp` block showing both downstream-auth variants
 (static `headers` and full `oauth`). Options this entrypoint does not wire —
 code mode (`executor`), the credential vault (`credentials.encryptionKey`),
-activity history (`activity.store`), scoped views for several teams in the org
-(`toolkits`, see
-[toolkits](../../documentation/toolkits.md)),
-and `branding` — are ordinary `createConnecta` config; add them there. See the
+activity history (`activity.store`), and `branding` — are ordinary
+`createConnecta` config; add them there. See the
 package [README](../../README.md) and
 [documentation](../../documentation/) for the subsystem
 references, or [ethos.md](../../ethos.md) for the rationale.
