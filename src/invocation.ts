@@ -18,8 +18,31 @@ import { unwrapMcpResult } from "./mcp-result.js";
 import type { RegistryView } from "./registry.js";
 import type { ToolDef } from "./types.js";
 
+/**
+ * The longest the engine will park a synchronous inbound request in *waiting
+ * alone*. The engine already treats ~15 s as the outer bound of one reasonable
+ * connector call (EXECUTE_HOST_CALL_TIMEOUT_MS), so sleeping for minutes trades
+ * a fast, informative failure for a hung one. A connector-reported window this
+ * long isn't truncated — it's declined (see `retryBackoffMs`) and reported
+ * verbatim as `error.retryAfterMs`, so the agent, which can afford to wait,
+ * decides when to re-issue.
+ */
 export const MAX_RETRY_BACKOFF_MS = 10_000;
 
+/**
+ * How long to wait before the next attempt, or `undefined` for "don't retry".
+ *
+ * A connector that read a `Retry-After` header knows the window exactly, so it
+ * is honoured **exactly or not at all**: truncating an exponential *guess* is
+ * harmless, but truncating a *known* window means deliberately retrying inside
+ * a rate limit — the harm this channel exists to prevent. A window longer than
+ * `MAX_RETRY_BACKOFF_MS` therefore declines the retry rather than shortening
+ * it. (`retryAfterMs` is normalized non-negative, so `0` means "retry now".)
+ * Connectors that report no window keep the historical exponential guess.
+ *
+ * Waits are per attempt, matching the per-attempt `timeoutMs` race in
+ * `InvocationService.invoke`. Exported for direct testing.
+ */
 export function retryBackoffMs(
   attempt: number,
   retryAfterMs: number | undefined,
@@ -228,6 +251,19 @@ export class InvocationService {
         if (context.requestSignal?.aborted) {
           return failed(callerCancelledDetails());
         }
+        // A connector whose catalog cannot be fetched is as unusable as one
+        // whose execution fails, so it feeds health accounting the same way the
+        // attempt catch below does — otherwise a connector every call fails
+        // against (a revoked downstream grant, say) still reads clean from the
+        // cheap `list_connectors({ probe: false })` signal.
+        //
+        // Recorded HERE rather than inside the registry's catalog fetch on
+        // purpose: `registry` is this connection's VIEW, so a toolkit-scoped
+        // session records into its own log as well as the deployment-wide one,
+        // which `Registry.refreshTools` could not reach. A cache hit that
+        // avoids a live listTools call records nothing either way — it is not
+        // evidence of health, and success stays what it has always been: an
+        // actual downstream call that returned.
         this.registry.recordFailure(
           resolution.connector.id,
           Date.now() - started,
@@ -330,12 +366,13 @@ export class InvocationService {
           const raw = cancelled
             ? await Promise.race([pending, cancelled])
             : await pending;
-          if (context.unwrapResult) {
-            result = unwrapMcpResult(resolved.connector.kind, raw);
-          } else {
-            assertRawMcpSuccess(resolved.connector.kind, raw);
-            result = raw;
-          }
+          // isError is checked here for BOTH result shapes so every adapter
+          // reports the same downstream-failure wording, and the throw lands
+          // inside the attempt where it stays retry-eligible and feeds health.
+          assertRawMcpSuccess(resolved.connector.kind, raw);
+          result = context.unwrapResult
+            ? unwrapMcpResult(resolved.connector.kind, raw)
+            : raw;
         } finally {
           connectorMs += Date.now() - connectorStarted;
         }
@@ -392,6 +429,9 @@ export class InvocationService {
             }
             continue;
           }
+          // The reported window is longer than the engine will park a
+          // synchronous request for. Fall through to failure with
+          // retryAfterMs reported verbatim so the agent can re-issue.
         }
         if (!callerCancelled && !isCallAdmissionError(attemptError)) {
           this.registry.recordFailure(

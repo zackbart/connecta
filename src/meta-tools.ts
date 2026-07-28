@@ -6,6 +6,7 @@ import type {
 } from "./activity.js";
 import {
   assertDiscoveryResultSize,
+  boundedDiscoveryText,
   CatalogService,
   DiscoveryPolicyError,
   discoveryAddresses,
@@ -113,11 +114,7 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
 
 function discoveryResult(value: unknown, hint: string): ToolResult {
   try {
-    assertDiscoveryResultSize(value, hint);
-    const text = JSON.stringify(value, null, 2);
-    if (text === undefined) {
-      throw new TypeError("Discovery result is not JSON-serializable.");
-    }
+    const text = boundedDiscoveryText(value, hint);
     return {
       content: [{ type: "text", text }],
       ...(value !== null && typeof value === "object" && !Array.isArray(value)
@@ -571,6 +568,12 @@ export function createMetaTools(
         requestSignal: opts.requestSignal,
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
+          // Result-size cap for THIS call: the connector's own override wins,
+          // then the deployment-wide value, then the built-in default (already
+          // folded into `globalCap`). Resolved per call so one batch_call can
+          // mix a tight-capped connector with siblings on the global cap. An
+          // override the registry already warned about at startup is dropped
+          // here, so the connector simply inherits `globalCap`.
           const cap = resolveMaxResultBytes(
             resolved.connector.maxResultBytes,
             globalCap,

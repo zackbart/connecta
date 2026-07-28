@@ -70,11 +70,8 @@ export function discoveryAddresses(value: unknown): unknown[] {
   return value;
 }
 
-/** Apply one final UTF-8 result boundary to both discovery adapters. */
-export function assertDiscoveryResultSize(
-  value: unknown,
-  hint: string,
-): void {
+/** Serialize once and count the exact bytes the MCP adapter would emit. */
+export function boundedDiscoveryText(value: unknown, hint: string): string {
   const text = JSON.stringify(value, null, 2);
   if (text === undefined) {
     throw new TypeError("Discovery result is not JSON-serializable.");
@@ -86,6 +83,15 @@ export function assertDiscoveryResultSize(
       `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
     );
   }
+  return text;
+}
+
+/** Apply the same final UTF-8 boundary where only the check is needed. */
+export function assertDiscoveryResultSize(
+  value: unknown,
+  hint: string,
+): void {
+  boundedDiscoveryText(value, hint);
 }
 
 export interface CatalogSearchArgs {

@@ -674,6 +674,28 @@ describe("MCP and code-mode invocation parity", () => {
       source: "execute_code",
     });
   });
+
+  it("reports downstream isError failures with one wording in both adapters", async () => {
+    const connector: Connector = {
+      id: "parity",
+      kind: "mcp",
+      async listTools() {
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return { content: [], isError: true };
+      },
+    };
+    const { mcpError, codeError } = await failuresFor(connector, "parity.read");
+    expect(mcpError.message).toBe("Downstream tool call failed");
+    expect(codeError.message).toBe(mcpError.message);
+    expect(codeError.retryable).toBe(mcpError.retryable);
+  });
 });
 
 describe("execute_code handler", () => {
