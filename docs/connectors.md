@@ -656,7 +656,7 @@ then the active epoch's `oauth:state` key, while an id naming nothing used to
 touch no I/O. The free refusals (unknown/non-OAuth, or `finishAuth` without
 `verifyState`) now perform the same generation-then-state reads in that id's
 namespace, where an unconfigured id gets misses
-(`equalizeRefusalCost`, `src/server.ts`).
+(`equalizeRefusalCost`, `src/routes/oauth.ts`).
 
 That is cost equalization, not constant time, and the difference is worth
 stating plainly:

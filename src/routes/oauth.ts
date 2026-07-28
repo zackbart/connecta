@@ -60,6 +60,9 @@ async function handleOAuthManagementRequest(
     } catch (error) {
       operationError = error;
     }
+
+    // The old grant and its catalog verdict are invalid after either operation,
+    // including a partially failed physical cleanup whose epoch fence succeeded.
     try {
       await opts.registry.invalidateStored(connectorId);
       await opts.registry.clearCredentialHealth(connectorId);
@@ -129,6 +132,7 @@ function escapeHtml(value: string): string {
     .replaceAll('"', "&quot;");
 }
 
+/** `body` is escaped — callback params and error messages are attacker-influenced. */
 function html(
   body: string,
   status = 200,
@@ -204,6 +208,28 @@ function html(
   );
 }
 
+/**
+ * Pay the storage read a real downstream-OAuth refusal pays, on the refusal
+ * paths that would otherwise pay nothing.
+ *
+ * Identical bodies do not hide a connector id if the clock still sorts them.
+ * `KvOAuthProvider.verifyState` reads `oauth:state` and its generation before
+ * it can reject a mismatched value, so a configured id costs two storage round
+ * trips on the ordinary path while an id naming nothing used to touch no I/O.
+ * That gap is an oracle: sample the two and a wordlist recovers the connector
+ * list the flat 400 was meant to withhold. So zero-I/O refusals read the same
+ * keys in the same `conn:<id>:` namespace, where an unconfigured id gets misses.
+ *
+ * This is deliberately *not* a constant-time claim, and docs/connectors.md says
+ * so in prose: a hit and a miss are not identical in a KV store, and a connector
+ * shipping its own `verifyState` may do more or less work. What it
+ * removes is the order-of-magnitude "no I/O versus a round trip" difference,
+ * which is the only part of the signal that makes enumeration cheap.
+ *
+ * A throwing read is swallowed: the refusal is the answer either way, and
+ * turning it into a 500 would hand back exactly the distinguishable response
+ * this whole path exists to deny.
+ */
 async function equalizeRefusalCost(
   context: ConnectorContext,
 ): Promise<void> {
@@ -213,7 +239,7 @@ async function equalizeRefusalCost(
       oauthValueStorageKey("oauth:state", generation),
     );
   } catch {
-    // The refusal must remain opaque even when storage is unavailable.
+    // Deliberately ignored — see above.
   }
 }
 
@@ -228,6 +254,11 @@ export async function routeOAuthCallback(
   if (!code) return html("Missing authorization code.", 400, opts.branding);
   const id = path.slice("/oauth/callback/".length);
   const connector = opts.registry.getConnector(id);
+  // Safe to build before we know the id names anything: `contextFor` is a pure
+  // constructor — a namespaced storage view over `conn:<id>:` and, only for a
+  // connector that declares one, a lazy credential accessor. It neither throws
+  // nor touches storage for an unknown id, which is what lets the refusals
+  // below borrow it to equalize their cost.
   const connectorContext = opts.registry.contextFor(id, baseUrl);
   const refused = () =>
     html(
@@ -240,6 +271,8 @@ export async function routeOAuthCallback(
     await equalizeRefusalCost(connectorContext);
     return refused();
   }
+  // CSRF / login-fixation guard: this route is intentionally public, so verify
+  // the `state` matches the flow connecta started BEFORE exchanging the code.
   if (!connector.verifyState) {
     await equalizeRefusalCost(connectorContext);
     opts.logger.warn(
@@ -280,6 +313,9 @@ export async function routeOAuthCallback(
   try {
     await connector.finishAuth(code, connectorContext);
     await opts.registry.invalidateStored(id);
+    // Recovery, without a restart: the grant this connector was reported dead
+    // for has just been replaced, so drop the verdict rather than let a stale
+    // `auth_required` survive until the next scheduled check.
     await opts.registry.clearCredentialHealth(id);
     return html(
       `Connected "${id}". You can close this window.`,

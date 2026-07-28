@@ -39,7 +39,7 @@ deployment is a small config-as-code file, not a platform.
   `?toolkit=` except `/mcp` — but "ignores the parameter" is not the same as
   "open to everyone": `/ui/data`, `/ui/activity`, and the credential API refuse
   a toolkit-restricted identity outright with 403 (`isToolkitRestricted`,
-  `src/server.ts`), because their payloads describe every connector in the org
+  `src/routes/shared.ts`), because their payloads describe every connector in the org
   and a credential write reaches every view. `/health` (a count) and the OAuth
   callback are unchanged. That is a per-identity refusal, not a per-tenant
   partition; there is still exactly one of everything underneath.
@@ -559,7 +559,7 @@ Toolkit enforcement is split, and the split is the invariant — **neither half 
 do the other's job** (`src/toolkits.ts` header comment states the same rule):
 
 - **WHICH toolkit an identity may open** — the connect-time binding check in
-  `resolveToolkitScope` (`src/server.ts`), run after the auth gate and *before
+  `resolveToolkitScope` (`src/routes/mcp.ts`), run after the auth gate and *before
   any `ScopedRegistry` exists*. Membership decisions belong here and only here.
 - **WHAT a selected toolkit may see** — `ScopedRegistry` (`src/registry.ts`), a
   filtered view of the one registry, which every meta-tool inherits through

@@ -43,7 +43,19 @@ export function createFetchHandler(
       ? runtimeContext.waitUntil.bind(runtimeContext)
       : undefined;
 
+    /**
+     * Piggyback a DUE credential liveness sweep on traffic that has already been
+     * authenticated (issue #24). Started beside the request and never awaited by
+     * it: it must not add latency or change a result, so it is handed to
+     * `ctx.waitUntil` where the runtime has one (Workers, and the Node adapter's
+     * shim) to settle after the response. The registry answers `undefined`
+     * unless a sweep is actually due, so the ordinary request pays nothing.
+     */
     const sweepCredentials = (): void => {
+      // Belt and braces: a rejected sweep is already absorbed below, and this
+      // catches the synchronous half — arming the gate, or a connector list that
+      // throws while deciding whether anything is due. Nothing about a
+      // background health check may turn a served request into a 500.
       try {
         const sweep = registry.sweepCredentialHealthIfDue(baseUrl, defer);
         if (!sweep) return;
@@ -60,14 +72,25 @@ export function createFetchHandler(
       }
     };
 
-    // Internal probes may reach /health over loopback HTTP; all other routes
-    // upgrade to the configured public HTTPS origin before dispatch.
+    // Container and orchestrator probes reach /health over plain HTTP on
+    // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to
+    // the public origin would make an internal liveness check depend on
+    // external DNS, TLS, and the tunnel in front of connecta — so /health is
+    // exempt. It is unauthenticated, returns no user data, and sets no
+    // cookies, so forcing HTTPS on it protects nothing.
     if (
       publicUrl &&
       path !== "/health" &&
       new URL(publicUrl).protocol === "https:" &&
       url.protocol === "http:"
     ) {
+      // Assign the path and query onto the configured URL instead of resolving
+      // attacker-controlled text against it. A pathname beginning with `//`
+      // (including a backslash form normalized by URL parsing) is an authority
+      // when passed to `new URL(value, base)` and would otherwise replace the
+      // deployment host. `/ui` is canonicalized while upgrading it so an old
+      // bookmark reaches the new Connections entry point in one permanent
+      // redirect.
       const target = new URL(publicUrl);
       target.pathname = path === "/ui" ? "/" : url.pathname;
       target.search = url.search;
@@ -168,8 +191,10 @@ export function createFetchHandler(
       const mcp = await routeMcp(context);
       if (mcp) return mcp;
 
-      // Connector-owned public routes are deliberately last and can never
-      // shadow a built-in surface.
+      // Connector-owned public routes, dispatched last: a connector can add a
+      // route but never shadow one of connecta's own. A throw here is the
+      // connector's bug, not a missing route, so it surfaces as 500 rather
+      // than falling through to 404.
       for (const connector of registry.listConnectors()) {
         if (!connector.handleRequest) continue;
         try {

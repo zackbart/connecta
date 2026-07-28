@@ -47,6 +47,11 @@ async function boundedActivityActorLabel(
   }
 }
 
+/**
+ * Add display-only actor labels to one authorized activity page. Resolution is
+ * best-effort, bounded, and read-time only: stored events retain stable ids and
+ * a profile-provider outage falls back to those ids without failing the page.
+ */
 async function enrichActivityActorLabels(
   page: ActivityPage,
   auth: readonly InboundAuth[],
@@ -104,6 +109,10 @@ async function enrichActivityActorLabels(
                   ? `provider:${index}`
                   : `namespace:${namespace}`;
               };
+              // Every same-kind provider participates in the ambiguity check,
+              // even if it cannot resolve labels. Otherwise a legacy ID owned
+              // by a provider without a resolver could be disclosed to a
+              // different provider that happens to have one.
               const directories = new Set(
                 sameKindProviders.map(directoryKey),
               );
@@ -113,6 +122,9 @@ async function enrichActivityActorLabels(
                 (candidate) => directoryKey(candidate) === directory,
               );
             })();
+        // One namespace is one directory. Use its first configured resolver so
+        // duplicate gate adapters over the same Clerk instance do not multiply
+        // the provider-level concurrency cap.
         const provider = eligible[0]?.provider;
         if (!provider) continue;
         const remaining = deadline - Date.now();
@@ -139,6 +151,8 @@ async function enrichActivityActorLabels(
             ]),
           )
         : undefined;
+      // Never trust or echo a `label` supplied by storage. The persisted event
+      // schema has no label; only this authenticated read path may add one.
       const actor: ActivityActor = {
         kind: event.actor.kind,
         ...(event.actor.id ? { id: event.actor.id } : {}),

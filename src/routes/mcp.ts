@@ -27,6 +27,9 @@ export const MCP_CORS_HEADERS = {
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id",
 };
 
+// Browser-based MCP clients call /mcp cross-origin. Without CORS on every
+// response — errors included — the browser hides the 401, the client cannot
+// read WWW-Authenticate, and OAuth discovery silently never starts.
 function withMcpCors(response: Response): Response {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(MCP_CORS_HEADERS)) {
@@ -78,6 +81,11 @@ function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
   );
 }
 
+/**
+ * A request owns its permit through the response body, not merely until the
+ * handler returns. This is what makes slow clients and response-stream failure
+ * part of the same bounded lifecycle as success, error, and cancellation.
+ */
 function releaseAdmissionWithResponse(
   response: Response,
   lease: AdmissionLease,
@@ -97,6 +105,9 @@ function releaseAdmissionWithResponse(
   }
   const reader = response.body.getReader();
   onAbort = () => {
+    // `cancel()` belongs to an operator/auth/SDK-provided stream and may
+    // reject. Consume both outcomes: `.finally(release)` would release the
+    // permit but preserve the rejection as an unhandled promise.
     void reader.cancel(signal.reason).then(release, release);
   };
   signal.addEventListener("abort", onAbort, { once: true });
@@ -131,11 +142,14 @@ function releaseAdmissionWithResponse(
   });
 }
 
+/** What one MCP connection may see: the full registry, or one toolkit's view. */
 interface McpScope {
   registry: RegistryView;
+  /** Set only under `?toolkit=`; recorded on activity events. */
   toolkitId?: string;
 }
 
+/** The one refusal a bound identity ever sees. Constant on purpose — see below. */
 const TOOLKIT_FORBIDDEN_BODY = JSON.stringify({
   jsonrpc: "2.0",
   id: null,
@@ -148,6 +162,15 @@ const TOOLKIT_FORBIDDEN_BODY = JSON.stringify({
   },
 });
 
+/**
+ * 403 for every binding refusal, with a body that does not depend on WHY.
+ *
+ * A bound identity asking for a toolkit it may not open, for a toolkit that does
+ * not exist, or for no toolkit at all gets byte-identical responses, so a team
+ * credential cannot be used to enumerate the org's other teams — the boundary
+ * would leak the very structure it exists to hide. The operator log below is
+ * where the three cases are told apart.
+ */
 function toolkitForbidden(): Response {
   return new Response(TOOLKIT_FORBIDDEN_BODY, {
     status: 403,
@@ -158,10 +181,36 @@ function toolkitForbidden(): Response {
   });
 }
 
+/** How a rejected connection is named in the operator log. */
 function identityLabel(actor: ActivityActor): string {
   return actor.id ? `${actor.kind} ${loggableValue(actor.id)}` : actor.kind;
 }
 
+/**
+ * Resolve `?toolkit=<name>` into the registry view this connection may see,
+ * enforcing the caller's toolkit binding (docs/toolkits.md) on the way.
+ *
+ * For an UNBOUND identity (no binding configured — the pre-#37 shape):
+ *
+ * - absent → the full registry, byte-identical to a deployment with no toolkits
+ * - known → a `ScopedRegistry` over that toolkit (the one visibility boundary)
+ * - anything else, including `?toolkit=` with an empty value → an explicit
+ *   404. Never a silent fallback to the full registry.
+ *
+ * For a BOUND identity, membership is checked FIRST and refusal is a flat 403:
+ * a toolkit outside the binding, an unknown name, and (without `unscoped`) an
+ * omitted `?toolkit=` are all refused before any `ScopedRegistry` is built, and
+ * all three produce the same response.
+ *
+ * Neither error enumerates the configured toolkits: the name selects a scope, so
+ * a wrong guess gets a flat refusal, not a directory.
+ *
+ * Because of that — and because SDK clients treat a 404/403 on the transport
+ * endpoint as a transport failure and discard the body — every rejection is also
+ * logged operator-side (issue #47), which is the channel that actually reaches a
+ * human. The log line may name the configured or bound toolkits; the response
+ * still may not.
+ */
 function resolveToolkitScope(
   url: URL,
   registry: Registry,
@@ -264,6 +313,7 @@ async function serveMcp(
   scope: McpScope,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
+  // Fresh McpServer + transport per request (SDK ≥1.26 requirement), stateless.
   const server = new McpServer(opts.serverInfo, {
     instructions: CONNECTA_INSTRUCTIONS,
   });
@@ -283,6 +333,8 @@ async function serveMcp(
         logger: opts.logger,
       }
     : undefined;
+  // `scope.registry` is the connection's VIEW — the full registry, or one
+  // toolkit's ScopedRegistry. Nothing below may reach for `opts.registry`.
   const registry = scope.registry;
   registerMetaTools(server, registry, {
     baseUrl,
@@ -381,6 +433,8 @@ export function createMcpRoute(
       throw error;
     }
     try {
+      // Authenticate BEFORE resolving ?toolkit=: an unauthenticated caller
+      // must not be able to probe which toolkit names exist.
       const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
       if (!authz.ok) {
         return releaseAdmissionWithResponse(

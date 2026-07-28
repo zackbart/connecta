@@ -151,6 +151,9 @@ async function handleCredentialRequest(
     if (request.method !== "POST") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
+    // The declared credential shape picks the hook — the same single rule the
+    // Credentials page asks for its Test affordance, so a shown button reaches
+    // that reads the shape the credential was stored in.
     const rule = credentialTestRule(connector);
     if (!rule.mode) {
       return privateJson(
@@ -190,6 +193,8 @@ async function handleCredentialRequest(
               storedValues.value!,
               ctx,
             );
+      // The operator just ran the very check the liveness sweep runs; record it
+      // so cached status surfaces agree with what the operator page showed.
       await opts.registry.recordCredentialHealth(connectorId, {
         state: result.ok ? "ok" : "auth_required",
         checkedAt: new Date().toISOString(),
@@ -221,6 +226,8 @@ async function handleCredentialRequest(
               admin.userId,
             );
       await opts.registry.invalidateStored(connectorId);
+      // The credential the last verdict judged is gone; judging its replacement
+      // is the next check's job, not this one's.
       await opts.registry.clearCredentialHealth(connectorId);
       return privateJson({ credential: metadata });
     } catch (err) {
@@ -250,6 +257,8 @@ export async function routeCredentials(
   if (!match) return null;
   const connectorId = match[1];
   if (!connectorId) return null;
+  // Never opt these mutation routes into the server's wildcard CORS
+  // preflight behavior.
   if (context.request.method === "OPTIONS") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }

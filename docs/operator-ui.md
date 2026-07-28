@@ -21,7 +21,7 @@ and each page has a path-specific title such as
 in the masthead rather than pages.
 
 All three canonical routes serve the **same open, data-free HTML shell**
-(`src/ui.ts`, routed by `src/server.ts`). The checked browser sources live at
+(`src/ui.ts`, routed by `src/routes/ui.ts`). The checked browser sources live at
 `src/operator-ui/browser.ts` and `src/operator-ui/browser.css`;
 `scripts/build-operator-ui.mjs` bundles them into the committed
 `src/operator-ui/generated.ts` constants. This is build-time tooling only: the

@@ -14,12 +14,36 @@ import {
   type RouteContext,
 } from "./shared.js";
 
+/**
+ * Headers that make an operator-supplied favicon body inert on this origin.
+ * The SVG route is the sharp one: `image/svg+xml` is an *active* content type,
+ * so a `<script>` inside a branding SVG would run on the deployment origin the
+ * moment anyone navigated straight to `/favicon.svg` — strictly more powerful
+ * than the `favicon.href` vector the branding gates close, because the payload
+ * is same-origin. Neutralizing the response rather than inspecting the body
+ * keeps every valid static SVG (the built-in mark included) byte-identical:
+ *
+ * - `sandbox` (no tokens ⇒ every restriction) drops the document into an opaque
+ *   origin with scripting off, so even a script that ran would have nothing to
+ *   reach.
+ * - `default-src 'none'` denies script, network, and framing outright.
+ * - `style-src 'unsafe-inline'` is the single allowance: the default mark styles
+ *   itself inline to follow the OS colour scheme, and CSS cannot script.
+ * - `nosniff` keeps the declared type authoritative in both directions — an SVG
+ *   can never be re-read as HTML, and `.ico` bytes can never be re-read as SVG.
+ *
+ * `.ico` bodies are deliberately in scope: they are inert bytes rather than
+ * active content, so they are still served verbatim, but they carry the same
+ * headers so the invariant is "every favicon route is neutralized" rather than
+ * "whichever route got attention".
+ */
 const INERT_ICON_HEADERS = {
   "Content-Security-Policy":
     "default-src 'none'; style-src 'unsafe-inline'; sandbox",
   "X-Content-Type-Options": "nosniff",
 };
 
+/** Per-request base64 nonce for an operator shell's scripts (Node 20+ and Workers). */
 function uiScriptNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let binary = "";
@@ -66,8 +90,16 @@ export async function routeUi(
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
+    // Open shell — carries no operator data; everything comes from the
+    // authenticated /ui/* APIs after the browser establishes a session.
     const uiAuth = opts.auth.find((provider) => provider.uiAuth)?.uiAuth;
     const mcpUrl = new URL("/mcp", baseUrl).toString();
+    // Nonce the page's inline script (and the Clerk loader). 'strict-dynamic'
+    // lets scripts the nonced Clerk loader injects at runtime execute; the
+    // https:/'unsafe-inline' fallbacks are ignored by CSP3 browsers that
+    // honour the nonce and only cover legacy ones. No default-src, so Clerk's
+    // style/font/network needs and the page's inline <style> stay unrestricted
+    // — only script execution, the XSS sink, is gated.
     const nonce = uiScriptNonce();
     return new Response(
       request.method === "HEAD"
@@ -92,6 +124,8 @@ export async function routeUi(
   if (isToolkitRestricted(authz.toolkitBinding)) {
     return restrictedOperatorSurface();
   }
+  // After the restriction check, not before: an identity that may not
+  // read this surface should not get to trigger background work from it.
   sweepCredentials();
   const eligibleClerkOperator = authz.uiAdminEligible === true;
   const credentialManagement = credentialManagementCapability({
@@ -105,6 +139,8 @@ export async function routeUi(
     opts.registry,
     baseUrl,
     opts.serverInfo,
+    // The static headless bearer may read connector health, but only a
+    // Clerk-authenticated operator receives credential metadata.
     eligibleClerkOperator ? opts.credentialVault : undefined,
     Boolean(opts.activity?.list),
     credentialManagement,
