@@ -755,6 +755,47 @@ describe("server /mcp end-to-end", () => {
     expect(payload.connectors[0]).toMatchObject({ status: "error" });
     expect(payload.connectors[0].message).toContain("timed out after 10ms");
   });
+
+  it("forwards discovery.concurrency to catalog fan-out", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const connectors = Array.from(
+      { length: 6 },
+      (_, index): Connector => ({
+        id: `bounded_${index}`,
+        kind: "mcp",
+        description: `Bounded ${index}`,
+        async listTools() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return [{ name: `read_${index}`, description: "Read bounded data" }];
+        },
+        async callTool() {
+          return null;
+        },
+      }),
+    );
+    const c = createConnecta({
+      connectors,
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+      discovery: { concurrency: 2 },
+    });
+
+    await rpc(
+      c,
+      "tools/call",
+      {
+        name: "search_tools",
+        arguments: { query: "bounded" },
+      },
+      { token: TOKEN },
+    );
+
+    expect(maxActive).toBe(2);
+  });
 });
 
 describe("server open routes", () => {

@@ -540,6 +540,41 @@ describe("buildSandboxProviders", () => {
     ]);
   });
 
+  it("bounds in-sandbox discovery fan-out", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const connectors = Array.from(
+      { length: 7 },
+      (_, index): Connector => ({
+        id: `sandbox_${index}`,
+        kind: "mcp",
+        async listTools() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return [{ name: `read_${index}`, description: "Read sandbox data" }];
+        },
+        async callTool() {
+          return null;
+        },
+      }),
+    );
+    const providers = await buildSandboxProviders(
+      makeRegistry(connectors),
+      BASE,
+      silentLogger,
+      undefined,
+      { discoveryConcurrency: 2 },
+    );
+    const result = (await connectaProvider(providers).fns.search({
+      query: "sandbox",
+      limit: 20,
+    })) as { total: number };
+    expect(result.total).toBe(7);
+    expect(maxActive).toBe(2);
+  });
+
   it("applies the ordinary discovery count limits inside code mode", async () => {
     const verbose: Connector = {
       id: "verbose",

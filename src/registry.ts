@@ -23,6 +23,10 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
+import {
+  snapshotCatalog,
+  type CatalogSnapshot,
+} from "./catalog-fingerprint.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { splitAddress, type Toolkit } from "./toolkits.js";
 
@@ -76,12 +80,15 @@ export function resolveMaxResultBytes(
 
 interface CacheEntry {
   tools: ToolDef[];
+  fingerprint: string;
   exp: number; // epoch ms
   staleUntil: number;
 }
 
 interface PersistedCatalog {
   tools: ToolDef[];
+  /** Optional only for catalogs written before fingerprints were introduced. */
+  fingerprint?: string;
   fetchedAt: number;
   expiresAt: number;
   staleUntil: number;
@@ -265,6 +272,11 @@ export class Registry implements RegistryView {
   private readonly catalogGenerations = new Map<string, number>();
   /** Serialize persisted catalog set/delete operations within this isolate. */
   private readonly catalogMutations = new Map<string, Promise<void>>();
+  /** Same-request cold loads share one promise without retaining the request. */
+  private readonly requestCatalogLoads = new WeakMap<
+    object,
+    Map<string, Promise<ToolDef[]>>
+  >();
   /** Deployment-wide observations — every call, whatever view made it. */
   private readonly health = new HealthLog();
   private readonly ttlMs: number;
@@ -509,6 +521,8 @@ export class Registry implements RegistryView {
         typeof value.fetchedAt !== "number" ||
         typeof value.expiresAt !== "number" ||
         typeof value.staleUntil !== "number" ||
+        (value.fingerprint !== undefined &&
+          typeof value.fingerprint !== "string") ||
         !value.tools.every(
           (tool) =>
             tool !== null &&
@@ -524,16 +538,22 @@ export class Registry implements RegistryView {
     }
   }
 
-  private async storeCatalog(id: string, tools: ToolDef[]): Promise<void> {
+  private async storeCatalog(
+    id: string,
+    snapshot: CatalogSnapshot,
+  ): Promise<void> {
     if (!this.persistToolCatalog) return;
     const fetchedAt = Date.now();
-    const catalog: PersistedCatalog = {
-      tools,
-      fetchedAt,
-      expiresAt: fetchedAt + this.ttlMs,
-      staleUntil: fetchedAt + this.ttlMs + this.staleMs,
-    };
-    await this.opts.storage.set(this.catalogKey(id), JSON.stringify(catalog), {
+    const expiresAt = fetchedAt + this.ttlMs;
+    const staleUntil = expiresAt + this.staleMs;
+    // Reuse the tool-array serialization that produced the fingerprint. This
+    // avoids another full catalog walk merely to wrap it in persistence fields.
+    const serialized =
+      `{"tools":${snapshot.serializedTools},` +
+      `"fingerprint":${JSON.stringify(snapshot.fingerprint)},` +
+      `"fetchedAt":${fetchedAt},"expiresAt":${expiresAt},` +
+      `"staleUntil":${staleUntil}}`;
+    await this.opts.storage.set(this.catalogKey(id), serialized, {
       ttlSeconds: Math.max(
         60,
         Math.ceil((this.ttlMs + this.staleMs) / 1000),
@@ -580,25 +600,28 @@ export class Registry implements RegistryView {
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
+    if (connector.staticTools) return connector.staticTools;
     const generation = this.catalogGeneration(id);
-    const tools = connector.staticTools
-      ? connector.staticTools
-      : await connector.listTools(
-          this.contextFor(id, baseUrl, requestScope, callOptions),
-        );
+    const tools = await connector.listTools(
+      this.contextFor(id, baseUrl, requestScope, callOptions),
+    );
     // The caller that began this refresh may still use its result, but a
     // credential/OAuth change that landed while listTools was in flight means
     // the listing must not enter either shared cache layer.
     if (generation !== this.catalogGeneration(id)) return tools;
-    const now = Date.now();
     const previous = this.cache.get(id);
+    const snapshot = await snapshotCatalog(tools);
+    if (generation !== this.catalogGeneration(id)) return tools;
+    const now = Date.now();
     const catalogChanged =
-      !previous || JSON.stringify(previous.tools) !== JSON.stringify(tools);
+      !previous || previous.fingerprint !== snapshot.fingerprint;
     const shouldPersist =
-      !connector.staticTools &&
-      (catalogChanged || previous.exp <= now || this.invalidated.has(id));
+      catalogChanged ||
+      (previous !== undefined && previous.exp <= now) ||
+      this.invalidated.has(id);
     this.cache.set(id, {
       tools,
+      fingerprint: snapshot.fingerprint,
       exp: now + this.ttlMs,
       staleUntil: now + this.ttlMs + this.staleMs,
     });
@@ -607,7 +630,7 @@ export class Registry implements RegistryView {
       await this.enqueueCatalogMutation(id, async () => {
         if (generation !== this.catalogGeneration(id)) return;
         try {
-          await this.storeCatalog(id, tools);
+          await this.storeCatalog(id, snapshot);
         } catch (err) {
           this.opts.logger.warn(
             `[connecta] connector "${id}" catalog persistence failed: ${msg(err)}`,
@@ -619,7 +642,7 @@ export class Registry implements RegistryView {
   }
 
   /** Cached listTools with in-memory + persisted serializable catalog layers. */
-  async getTools(
+  private async loadTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
@@ -652,8 +675,12 @@ export class Registry implements RegistryView {
         stale = undefined;
       }
       if (persisted && persisted.staleUntil > now) {
+        const fingerprint =
+          persisted.fingerprint ??
+          (await snapshotCatalog(persisted.tools)).fingerprint;
         this.cache.set(id, {
           tools: persisted.tools,
+          fingerprint,
           exp: persisted.expiresAt,
           staleUntil: persisted.staleUntil,
         });
@@ -676,6 +703,41 @@ export class Registry implements RegistryView {
         return stale;
       }
       throw err;
+    }
+  }
+
+  /**
+   * Coalesce one connector's cold load inside one inbound request. The WeakMap
+   * neither roots the request scope nor lets its connector context escape into
+   * another request; settled entries are also removed eagerly.
+   */
+  async getTools(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+  ): Promise<ToolDef[]> {
+    const connector = this.connectors.get(id);
+    if (!connector) throw new Error(`Unknown connector "${id}"`);
+    if (connector.staticTools) return connector.staticTools;
+    if (!requestScope) {
+      return this.loadTools(id, baseUrl, requestScope, callOptions);
+    }
+
+    let loads = this.requestCatalogLoads.get(requestScope);
+    if (!loads) {
+      loads = new Map();
+      this.requestCatalogLoads.set(requestScope, loads);
+    }
+    const existing = loads.get(id);
+    if (existing) return existing;
+    const loading = this.loadTools(id, baseUrl, requestScope, callOptions);
+    loads.set(id, loading);
+    try {
+      return await loading;
+    } finally {
+      if (loads.get(id) === loading) loads.delete(id);
+      if (loads.size === 0) this.requestCatalogLoads.delete(requestScope);
     }
   }
 

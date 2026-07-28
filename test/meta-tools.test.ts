@@ -285,6 +285,39 @@ Prefer \`notion.search\` over listing databases.
 });
 
 describe("list_connectors", () => {
+  it("bounds live connector probes by discovery concurrency", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const connectors = Array.from(
+      { length: 8 },
+      (_, index): Connector => ({
+        id: `probe_${index}`,
+        kind: "mcp",
+        description: `Probe ${index}`,
+        async status() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return { state: "ok" };
+        },
+        async listTools() {
+          return [{ name: "read" }];
+        },
+        async callTool() {
+          return null;
+        },
+      }),
+    );
+    const result = await createMetaTools(
+      makeRegistry(connectors),
+      BASE,
+      { discoveryConcurrency: 2 },
+    ).listConnectors({ probe: true });
+    expect(result.isError).toBeFalsy();
+    expect(maxActive).toBe(2);
+  });
+
   it("reports tool counts and per-connector status", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(await mt.listConnectors()) as {
@@ -822,6 +855,42 @@ interface SearchResult {
 }
 
 describe("search_tools", () => {
+  it("uses the default bound for catalog fan-out and preserves all results", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const connectors = Array.from(
+      { length: 9 },
+      (_, index): Connector => ({
+        id: `search_${index}`,
+        kind: "mcp",
+        description: `Search ${index}`,
+        async listTools() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return [
+            {
+              name: `read_${index}`,
+              description: "Read matching data",
+            },
+          ];
+        },
+        async callTool() {
+          return null;
+        },
+      }),
+    );
+    const result = textOf(
+      await createMetaTools(makeRegistry(connectors), BASE).searchTools({
+        query: "matching",
+        limit: 20,
+      }),
+    ) as { total: number };
+    expect(result.total).toBe(9);
+    expect(maxActive).toBe(4);
+  });
+
   it("substring-matches over name + description, grouped by connector", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(

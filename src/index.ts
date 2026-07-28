@@ -72,6 +72,11 @@ export interface ConnectaCredentialsConfig {
 
 /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
 export interface ConnectaDiscoveryConfig {
+  /**
+   * Maximum connector catalogs/status probes fetched at once by discovery
+   * operations. Default 4.
+   */
+  concurrency?: number;
   /** Tool-list cache TTL (seconds). Default 300. */
   catalogTtlSeconds?: number;
   /**
@@ -602,6 +607,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     requestAdmission,
     defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
     probeTimeoutMs: config.discovery?.probeTimeoutMs,
+    discoveryConcurrency: config.discovery?.concurrency,
     credentialVault,
     deploymentInfo: config.deploymentInfo,
     branding: config.branding,

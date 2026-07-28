@@ -2035,6 +2035,45 @@ describe("status UI", () => {
     await expect(deferred[0]).resolves.toBeUndefined();
   });
 
+  it("/ui/data honors the discovery concurrency bound", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const connectors = Array.from(
+      { length: 6 },
+      (_, index): Connector => ({
+        id: `ui_bounded_${index}`,
+        kind: "mcp",
+        description: `UI bounded ${index}`,
+        async status() {
+          active++;
+          maxActive = Math.max(maxActive, active);
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          active--;
+          return { state: "ok" };
+        },
+        async listTools() {
+          return [{ name: "read" }];
+        },
+        async callTool() {
+          return null;
+        },
+      }),
+    );
+    const c = createConnecta({
+      connectors,
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+      discovery: { concurrency: 2 },
+    });
+    const response = await c.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    expect(response.status).toBe(200);
+    expect(maxActive).toBe(2);
+  });
+
   it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
     let slowStarted!: () => void;
     const started = new Promise<void>((resolve) => {
