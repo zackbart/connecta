@@ -16,6 +16,7 @@ import {
   truncateExecuteText,
 } from "./executor-result.js";
 import { classifyCallError, ConnectorCallError } from "./errors.js";
+import { isCallAdmissionError } from "./call-admission.js";
 import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
@@ -205,14 +206,20 @@ export async function buildSandboxProviders(
       );
     };
     controller.signal.addEventListener("abort", onAbort, { once: true });
-    const ctx = registry.contextFor(
-      resolved.connector.id,
-      baseUrl,
-      requestScope,
-      { signal: controller.signal, timeoutMs: hostCallTimeoutMs },
-    );
     const started = Date.now();
+    let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
     try {
+      permit = await registry.admitCall(resolved.connector.id, {
+        toolName: resolved.toolName,
+        args: args ?? {},
+        signal: controller.signal,
+      });
+      const ctx = registry.contextFor(
+        resolved.connector.id,
+        baseUrl,
+        requestScope,
+        { signal: controller.signal, timeoutMs: hostCallTimeoutMs },
+      );
       timer = setTimeout(() => {
         controller.abort(
           new ConnectorCallError(
@@ -242,7 +249,13 @@ export async function buildSandboxProviders(
       });
       return value;
     } catch (err) {
-      registry.recordFailure(resolved.connector.id, Date.now() - started, err);
+      if (!isCallAdmissionError(err)) {
+        registry.recordFailure(
+          resolved.connector.id,
+          Date.now() - started,
+          err,
+        );
+      }
       const details = classifyCallError(err);
       recordToolActivity(activity, {
         connectorId: resolved.connector.id,
@@ -259,6 +272,7 @@ export async function buildSandboxProviders(
       if (timer) clearTimeout(timer);
       controller.signal.removeEventListener("abort", onAbort);
       limits.signal?.removeEventListener("abort", cancel);
+      permit?.release();
     }
   };
   for (let i = 0; i < connectors.length; i++) {

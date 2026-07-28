@@ -155,8 +155,8 @@ including for direct internal callers. Count-limit failures are non-retryable
   `readOnlyHint: true` and `destructiveHint` is not true. Missing, false, or
   contradictory safety annotations fail closed and require
   `call_destructive_tool`.
-- **Diagnostics.** `diagnostics: true` adds `{ catalogMs, connectorMs,
-  backoffMs, resultProcessingMs, totalMs }` without changing the default compact
+- **Diagnostics.** `diagnostics: true` adds `{ catalogMs, admissionMs,
+  connectorMs, backoffMs, resultProcessingMs, totalMs }` without changing the default compact
   response.
 - **`fields` (dot-path selection).** When present, it is applied to a
   JSON-parseable result **before** the size guard. Grammar: `a.b.c` descends

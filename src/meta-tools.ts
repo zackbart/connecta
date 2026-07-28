@@ -17,6 +17,7 @@ import {
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
+import { isCallAdmissionError } from "./call-admission.js";
 import {
   isValidMaxResultBytes,
   MIN_MAX_RESULT_BYTES,
@@ -589,6 +590,8 @@ export function createMetaTools(
     /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
+    /** Inbound request cancellation shared by direct and batch child calls. */
+    requestSignal?: AbortSignal;
     /** Runtime continuation for the bounded tail of probe-owned teardown. */
     defer?: DeferredWork;
   } = {},
@@ -621,6 +624,7 @@ export function createMetaTools(
     attempts: number;
     timing: {
       catalogMs: number;
+      admissionMs: number;
       connectorMs: number;
       backoffMs: number;
       resultProcessingMs: number;
@@ -638,12 +642,14 @@ export function createMetaTools(
   ): Promise<RunCallOutcome> {
     const started = Date.now();
     let catalogMs = 0;
+    let admissionMs = 0;
     let connectorMs = 0;
     let backoffMs = 0;
     let resultProcessingMs = 0;
     let attempts = 0;
     const timing = () => ({
       catalogMs,
+      admissionMs,
       connectorMs,
       backoffMs,
       resultProcessingMs,
@@ -764,38 +770,75 @@ export function createMetaTools(
     let result: unknown;
     while (true) {
       attempts++;
-      const controller = timeoutMs ? new AbortController() : undefined;
+      let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
+      const controller =
+        timeoutMs || opts.requestSignal ? new AbortController() : undefined;
+      const forwardAbort = () =>
+        controller?.abort(opts.requestSignal?.reason);
+      if (opts.requestSignal?.aborted) forwardAbort();
+      else {
+        opts.requestSignal?.addEventListener("abort", forwardAbort, {
+          once: true,
+        });
+      }
       let timer: ReturnType<typeof setTimeout> | undefined;
-      const ctx = registry.contextFor(
-        resolved.connector.id,
-        baseUrl,
-        requestScope,
-        { signal: controller?.signal, timeoutMs },
-      );
-      const connectorStarted = Date.now();
+      let onAbort: (() => void) | undefined;
+      let attemptFailed = false;
+      let attemptError: unknown;
       try {
-        const pending = resolved.connector.callTool(
-          resolved.toolName,
-          call.args ?? {},
-          ctx,
+        const admissionStarted = Date.now();
+        try {
+          permit = await registry.admitCall(resolved.connector.id, {
+            toolName: resolved.toolName,
+            args: call.args ?? {},
+            signal: opts.requestSignal,
+          });
+        } finally {
+          admissionMs += Date.now() - admissionStarted;
+        }
+        const ctx = registry.contextFor(
+          resolved.connector.id,
+          baseUrl,
+          requestScope,
+          { signal: controller?.signal, timeoutMs },
         );
-        result = timeoutMs
-          ? await Promise.race([
-              pending,
-              new Promise<never>((_, reject) => {
-                timer = setTimeout(() => {
-                  reject(
-                    new ConnectorCallError(
-                      "timeout",
-                      `Tool call timed out after ${timeoutMs}ms`,
-                    ),
-                  );
-                  controller?.abort();
-                }, timeoutMs);
-              }),
-            ])
-          : await pending;
-        connectorMs += Date.now() - connectorStarted;
+        let rejectCancelled!: (reason: unknown) => void;
+        const cancelled = controller
+          ? new Promise<never>((_, reject) => {
+              rejectCancelled = reject;
+            })
+          : undefined;
+        onAbort = () => {
+          rejectCancelled(
+            controller?.signal.reason ??
+              new ConnectorCallError("timeout", "Tool call was cancelled"),
+          );
+        };
+        controller?.signal.addEventListener("abort", onAbort, { once: true });
+        if (controller?.signal.aborted) onAbort();
+        if (timeoutMs) {
+          timer = setTimeout(() => {
+            controller?.abort(
+              new ConnectorCallError(
+                "timeout",
+                `Tool call timed out after ${timeoutMs}ms`,
+              ),
+            );
+          }, timeoutMs);
+        }
+        const connectorStarted = Date.now();
+        try {
+          const pending = resolved.connector.callTool(
+            resolved.toolName,
+            call.args ?? {},
+            ctx,
+          );
+          result = cancelled
+            ? await Promise.race([pending, cancelled])
+            : await pending;
+        } finally {
+          connectorMs += Date.now() - connectorStarted;
+        }
         const mcpResult = result as {
           content?: TextContent[];
           isError?: boolean;
@@ -806,11 +849,19 @@ export function createMetaTools(
               "Downstream tool call failed",
           );
         }
-        break;
       } catch (err) {
-        // Includes connector setup, downstream execution, and timeout wait.
-        connectorMs += Date.now() - connectorStarted;
-        const details = classifyCallError(err);
+        attemptFailed = true;
+        attemptError = err;
+      } finally {
+        if (timer) clearTimeout(timer);
+        if (onAbort) {
+          controller?.signal.removeEventListener("abort", onAbort);
+        }
+        opts.requestSignal?.removeEventListener("abort", forwardAbort);
+        permit?.release();
+      }
+      if (attemptFailed) {
+        const details = classifyCallError(attemptError);
         if (attempts <= maxRetries && retrySafe && details.retryable) {
           const wait = retryBackoffMs(attempts, details.retryAfterMs);
           if (wait !== undefined) {
@@ -825,15 +876,16 @@ export function createMetaTools(
           // synchronous request for. Fall through to failure with
           // retryAfterMs reported verbatim so the agent can re-issue.
         }
-        registry.recordFailure(
-          resolved.connector.id,
-          Date.now() - started,
-          err,
-        );
+        if (!isCallAdmissionError(attemptError)) {
+          registry.recordFailure(
+            resolved.connector.id,
+            Date.now() - started,
+            attemptError,
+          );
+        }
         return failed(details);
-      } finally {
-        if (timer) clearTimeout(timer);
       }
+      break;
     }
 
     registry.recordSuccess(resolved.connector.id, Date.now() - started);
@@ -1593,6 +1645,7 @@ export function registerMetaTools(
     defaultToolTimeoutMs?: number;
     probeTimeoutMs?: number;
     activity?: ActivityRequestContext;
+    requestSignal?: AbortSignal;
     defer?: DeferredWork;
   },
 ): void {
@@ -1600,6 +1653,7 @@ export function registerMetaTools(
     defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
     probeTimeoutMs: ctx.probeTimeoutMs,
     activity: ctx.activity,
+    requestSignal: ctx.requestSignal,
     defer: ctx.defer,
   });
 

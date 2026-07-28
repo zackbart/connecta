@@ -113,6 +113,7 @@ interface Connector {
   kind?: "mcp" | "api";          // result wrapping (see below)
   description?: string;
   maxResultBytes?: number;       // per-connector inline result cap (see below)
+  callAdmission?: ConnectorCallAdmissionPolicy; // see call-admission.md
   usageGuide?: string;           // agent-facing markdown served by `skills`
   credential?: {
     label: string;
@@ -254,7 +255,6 @@ deployment-wide value in every scope too. What a toolkit changes is only
 JSON-wraps the return value into a single text content block.
 
 Two factories cover the common cases.
-
 ### `remoteMcp(id, opts)`
 
 Proxies a downstream remote MCP server via the SDK `Client`. One client per

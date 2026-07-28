@@ -44,6 +44,61 @@ export interface ToolAnnotations extends Record<string, unknown> {
   openWorldHint?: boolean;
 }
 
+/** Inputs a connector may reduce to a non-secret admission partition key. */
+export interface ConnectorCallAdmissionInput {
+  toolName: string;
+  args: unknown;
+}
+
+/** Exact sliding-window budget for one connector-call partition. */
+export interface ConnectorRollingWindowBudget {
+  kind: "rolling-window";
+  /** Calls admitted during `windowMs` before another is proactively refused. */
+  maxCalls: number;
+  /** Width of the rolling window in milliseconds. */
+  windowMs: number;
+}
+
+/**
+ * One connector-level downstream call-admission rule.
+ *
+ * This release accepts the plural `rules` container below but enforces exactly
+ * one rule. That keeps the public shape ready for providers whose concurrency
+ * and budget limits eventually need different partition dimensions without
+ * pretending multi-rule admission is already atomic.
+ */
+export interface ConnectorCallAdmissionRule {
+  /** Maximum simultaneous Connector.callTool attempts in one partition. */
+  maxConcurrency?: number;
+  /** Callers allowed to wait behind the concurrency bound. Default 32. */
+  maxQueueSize?: number;
+  /** Maximum concurrency-queue wait in milliseconds. Default 5,000. */
+  queueTimeoutMs?: number;
+  /** Retry hint for concurrency overloads. Default 1,000. */
+  retryAfterMs?: number;
+  /** Optional exact rolling-window call-start budget. */
+  budget?: ConnectorRollingWindowBudget;
+  /**
+   * Derive a bounded, non-secret partition key from the tool call. Omit for
+   * one connector-wide partition. Connecta retains the returned key only; it
+   * never copies arguments into limiter state.
+   */
+  partitionKey?(
+    input: Readonly<ConnectorCallAdmissionInput>,
+  ): string;
+}
+
+/** Optional downstream call-admission policy declared by one connector. */
+export interface ConnectorCallAdmissionPolicy {
+  /**
+   * Plural-ready policy container. Exactly one rule is supported in this
+   * release; empty or multi-rule policies fail construction.
+   */
+  rules: readonly ConnectorCallAdmissionRule[];
+  /** Maximum simultaneously retained partition states. Default 1,024. */
+  maxPartitions?: number;
+}
+
 export type ConnectorCredentialValues = Record<string, string>;
 
 /** Read-only access to the credentials assigned to one connector. */
@@ -145,6 +200,12 @@ export interface Connector {
    * the connector inherits the deployment-wide cap.
    */
   maxResultBytes?: number;
+  /**
+   * Optional per-runtime admission policy for downstream tool calls. It covers
+   * call_tool, every batch_call child, and execute_code host calls, but not
+   * catalog/status/auth operations.
+   */
+  callAdmission?: ConnectorCallAdmissionPolicy;
   /**
    * Optional agent-facing usage guide (markdown) for this connector — preferred
    * tools, address quirks, pagination conventions, rate-limit etiquette, good

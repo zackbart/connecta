@@ -640,6 +640,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       closePromise ??= Promise.resolve().then(async () => {
         requestAdmission.close();
         codeAdmission?.close();
+        registry.closeCallAdmission();
         await config.executor?.close?.();
       });
       await closePromise;
@@ -690,6 +691,10 @@ export type {
 export type { ApiOptions, ApiTool } from "./connectors/api.js";
 export type {
   Connector,
+  ConnectorCallAdmissionInput,
+  ConnectorCallAdmissionPolicy,
+  ConnectorCallAdmissionRule,
+  ConnectorRollingWindowBudget,
   ConnectaBranding,
   ConnectorCredentialAccess,
   ConnectorCredentialConfig,

@@ -236,6 +236,16 @@ describe("remoteMcp() connector", () => {
     expect(capped.maxResultBytes).toBe(5_000);
   });
 
+  it("passes callAdmission through, and leaves it unset by default", async () => {
+    expect((await makeConnector()).callAdmission).toBeUndefined();
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] } as const;
+    const limited = remoteMcp("limited", {
+      url: "https://downstream.test/mcp",
+      callAdmission,
+    });
+    expect(limited.callAdmission).toBe(callAdmission);
+  });
+
   it("callTool proxies args and returns the content array as-is", async () => {
     const c = await makeConnector();
     const result = (await c.callTool("echo", { text: "hi" }, ctx())) as {

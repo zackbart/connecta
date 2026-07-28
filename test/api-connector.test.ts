@@ -65,6 +65,17 @@ describe("api() connector", () => {
     expect(capped.maxResultBytes).toBe(200_000);
   });
 
+  it("passes callAdmission through, and leaves it unset by default", () => {
+    expect(makeApi().callAdmission).toBeUndefined();
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] } as const;
+    const limited = api("docs", {
+      description: "Docs",
+      callAdmission,
+      tools: [{ name: "fetch", handler: () => null }],
+    });
+    expect(limited.callAdmission).toBe(callAdmission);
+  });
+
   it("passes usageGuide through, and leaves it unset by default", () => {
     expect(makeApi().usageGuide).toBeUndefined();
     const guide = "# Resend usage\n\nAlways set a verified `from`.\n";
