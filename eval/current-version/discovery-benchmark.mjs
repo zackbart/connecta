@@ -1,0 +1,171 @@
+import { readFile } from "node:fs/promises";
+
+import { round, structured } from "./audit-lib.mjs";
+
+function addressesFrom(value) {
+  return Array.isArray(value?.connectors)
+    ? value.connectors.flatMap((group) =>
+        Array.isArray(group.tools)
+          ? group.tools.map((tool) => tool.address)
+          : [],
+      )
+    : [];
+}
+
+function mean(items, select) {
+  return items.length === 0
+    ? 0
+    : items.reduce((sum, item) => sum + select(item), 0) / items.length;
+}
+
+export async function runDiscoveryBenchmark(context, corpusPath) {
+  const corpus = JSON.parse(await readFile(corpusPath, "utf8"));
+  const cases = [];
+
+  for (const fixture of corpus.queries) {
+    const args = {
+      query: fixture.query,
+      ...(fixture.connector ? { connector: fixture.connector } : {}),
+      ...(fixture.limit !== undefined ? { limit: fixture.limit } : {}),
+      ...(fixture.offset !== undefined ? { offset: fixture.offset } : {}),
+    };
+    const { result, observation } = await context.call(
+      `holdout:${fixture.id}`,
+      "search_tools",
+      args,
+    );
+    const value = structured(result);
+    const pageAddresses = addressesFrom(value);
+    const relevant = fixture.expectedPage ?? fixture.relevant;
+    const relevantSet = new Set(relevant);
+    const returnedRelevant = pageAddresses.filter((address) =>
+      relevantSet.has(address),
+    );
+    const positive = relevant.length > 0;
+    const defaultPage = fixture.limit === undefined;
+    const recall =
+      positive ? returnedRelevant.length / relevant.length : pageAddresses.length === 0 ? 1 : 0;
+    const precision =
+      pageAddresses.length > 0
+        ? returnedRelevant.length / pageAddresses.length
+        : positive
+          ? 0
+          : 1;
+    const top1 =
+      positive && relevantSet.has(pageAddresses[0] ?? "") ? 1 : 0;
+    const falsePositive = !positive && pageAddresses.length > 0;
+    cases.push({
+      id: fixture.id,
+      category: fixture.category,
+      query: fixture.query,
+      ...(fixture.connector ? { connector: fixture.connector } : {}),
+      relevant,
+      pageAddresses,
+      total: typeof value?.total === "number" ? value.total : pageAddresses.length,
+      returned: pageAddresses.length,
+      top1,
+      recall: round(recall, 3),
+      recallAtDefaultPage: defaultPage ? round(recall, 3) : null,
+      precision: round(precision, 3),
+      falsePositive,
+      matchMode: value?.matchMode ?? "all",
+      hasMore: value?.hasMore === true,
+      nextOffset: value?.nextOffset ?? null,
+      responseTokens: observation.responseTokens,
+      latencyMs: observation.latencyMs,
+      passed:
+        positive
+          ? returnedRelevant.length === relevant.length
+          : pageAddresses.length === 0,
+    });
+  }
+
+  const categories = Object.fromEntries(
+    [...new Set(cases.map((entry) => entry.category))].map((category) => {
+      const selected = cases.filter((entry) => entry.category === category);
+      const positives = selected.filter((entry) => entry.relevant.length > 0);
+      const negatives = selected.filter((entry) => entry.relevant.length === 0);
+      return [
+        category,
+        {
+          queries: selected.length,
+          top1Accuracy:
+            positives.length === 0
+              ? null
+              : round(mean(positives, (entry) => entry.top1), 3),
+          positiveRecall:
+            positives.length === 0
+              ? null
+              : round(mean(positives, (entry) => entry.recall), 3),
+          meanPrecision: round(mean(selected, (entry) => entry.precision), 3),
+          falsePositiveRate:
+            negatives.length === 0
+              ? null
+              : round(
+                  negatives.filter((entry) => entry.falsePositive).length /
+                    negatives.length,
+                  3,
+                ),
+          meanResultCount: round(mean(selected, (entry) => entry.returned), 3),
+          meanResponseTokens: round(
+            mean(selected, (entry) => entry.responseTokens),
+            1,
+          ),
+          meanLatencyMs: round(mean(selected, (entry) => entry.latencyMs), 1),
+        },
+      ];
+    }),
+  );
+  const positives = cases.filter((entry) => entry.relevant.length > 0);
+  const negatives = cases.filter((entry) => entry.relevant.length === 0);
+  const defaultPageCases = positives.filter(
+    (entry) => entry.recallAtDefaultPage !== null,
+  );
+
+  return {
+    corpus: {
+      schemaVersion: corpus.schemaVersion,
+      name: corpus.name,
+      authorship: corpus.authorship,
+      connectorCount: corpus.connectors.length,
+      toolCount: corpus.connectors.reduce(
+        (sum, connector) => sum + connector.tools.length,
+        0,
+      ),
+      queryCount: corpus.queries.length,
+    },
+    metrics: {
+      top1Accuracy: round(mean(positives, (entry) => entry.top1), 3),
+      positiveRecall: round(mean(positives, (entry) => entry.recall), 3),
+      recallAtDefaultPage: round(
+        mean(defaultPageCases, (entry) => entry.recallAtDefaultPage),
+        3,
+      ),
+      meanPrecision: round(mean(cases, (entry) => entry.precision), 3),
+      falsePositiveRate:
+        negatives.length === 0
+          ? 0
+          : round(
+              negatives.filter((entry) => entry.falsePositive).length /
+                negatives.length,
+              3,
+            ),
+      meanResultCount: round(mean(cases, (entry) => entry.returned), 3),
+      meanResponseTokens: round(
+        mean(cases, (entry) => entry.responseTokens),
+        1,
+      ),
+      totalResponseTokens: cases.reduce(
+        (sum, entry) => sum + entry.responseTokens,
+        0,
+      ),
+      roundTrips: cases.length,
+      summedLatencyMs: round(
+        cases.reduce((sum, entry) => sum + entry.latencyMs, 0),
+        1,
+      ),
+    },
+    categories,
+    cases,
+  };
+}
