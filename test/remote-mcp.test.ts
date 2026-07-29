@@ -1,11 +1,13 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  InMemoryTransport,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type {
   FetchLike,
   Transport,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
+} from "@modelcontextprotocol/client";
+import { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
@@ -37,8 +39,8 @@ async function connectServer() {
     "echo",
     {
       description: "Echo text back",
-      inputSchema: { text: z.string() },
-      outputSchema: { echoed: z.string() },
+      inputSchema: z.object({ text: z.string() }),
+      outputSchema: z.object({ echoed: z.string() }),
       annotations: { readOnlyHint: true, idempotentHint: true },
     },
     async ({ text }) => ({
@@ -48,7 +50,7 @@ async function connectServer() {
   );
   server.registerTool(
     "fail",
-    { description: "Always fails", inputSchema: {} },
+    { description: "Always fails", inputSchema: z.object({}) },
     async () => ({
       content: [{ type: "text", text: "downstream boom" }],
       isError: true,
@@ -84,7 +86,13 @@ async function makeTrackedConnector(opts: { oauth?: boolean } = {}) {
       counts.connect++;
       await clientTransport.start();
     },
-    send: (message, sendOpts) => clientTransport.send(message, sendOpts),
+    send: (message, sendOpts) =>
+      clientTransport.send(
+        message,
+        sendOpts?.relatedRequestId !== undefined
+          ? { relatedRequestId: sendOpts.relatedRequestId }
+          : undefined,
+      ),
     async close() {
       counts.close++;
       await clientTransport.close();

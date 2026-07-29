@@ -1,4 +1,8 @@
 import { required } from "./helpers.js";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 import { createConnecta } from "../src/index.js";
 import {
@@ -301,6 +305,57 @@ describe("server /mcp end-to-end", () => {
     expect(byName.batch_call.description).toContain(
       "use execute_code when available instead for dependencies",
     );
+  });
+
+  it("serves a modern-era (2026-07-28) client the same nine-tool surface", async () => {
+    // Every other test in this suite sends bare JSON-RPC, which the entry
+    // classifies as legacy traffic — so this is the one automated proof that
+    // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
+    // full revision-adoption matrix; this pins the fork itself.
+    const c = makeConnecta();
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${BASE}/mcp`),
+      {
+        fetch: (async (url: string | URL, init?: RequestInit) =>
+          c.fetch(new Request(url, init))) as typeof fetch,
+        requestInit: { headers: { Authorization: `Bearer ${TOKEN}` } },
+      },
+    );
+    const client = new Client(
+      { name: "modern-probe", version: "0.0.0" },
+      // Pinning is the strict spelling: auto would silently fall back to the
+      // legacy leg and this test would stop proving anything. The literal is
+      // deliberate — the pinned SDK's *typed* surface exports no modern
+      // version constant (its LATEST_PROTOCOL_VERSION is still 2025-11-25),
+      // and a pin of a non-modern revision throws at connect, so a stale
+      // literal here fails loudly rather than drifting.
+      { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    );
+    await client.connect(transport);
+    try {
+      const listed = await client.listTools();
+      expect(client.getProtocolEra()).toBe("modern");
+      expect(listed.tools.map((t) => t.name).sort()).toEqual([
+        "authorize_connector",
+        "batch_call",
+        "call_destructive_tool",
+        "call_tool",
+        "describe_tools",
+        "get_result",
+        "list_connectors",
+        "search_tools",
+        "skills",
+      ]);
+      // One tools/call round trip so the modern leg proves results, not just
+      // catalog serving.
+      const skills = (await client.callTool({
+        name: "skills",
+        arguments: {},
+      })) as { content: { type: string; text?: string }[] };
+      expect(skills.content[0]?.type).toBe("text");
+    } finally {
+      await client.close();
+    }
   });
 
   it("lists and fetches the usage skill", async () => {

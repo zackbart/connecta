@@ -1,9 +1,9 @@
-import type { OAuthClientProvider } from "@modelcontextprotocol/sdk/client/auth.js";
 import type {
   OAuthClientInformationMixed,
   OAuthClientMetadata,
+  OAuthClientProvider,
   OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
+} from "@modelcontextprotocol/client";
 import type { KVStorage } from "../types.js";
 
 /** A 256-bit random opaque value, hex-encoded — used for the OAuth `state`. */

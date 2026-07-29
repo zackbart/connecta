@@ -1,11 +1,14 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   OAuthClientInformationFull,
   OAuthTokens,
-} from "@modelcontextprotocol/sdk/shared/auth.js";
+  Transport,
+} from "@modelcontextprotocol/client";
+import {
+  InMemoryTransport,
+  McpServer,
+} from "@modelcontextprotocol/server";
+import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   KvOAuthProvider,
@@ -699,7 +702,7 @@ async function connectServer() {
   const server = new McpServer({ name: "downstream", version: "1.0.0" });
   server.registerTool(
     "ping",
-    { description: "Ping", inputSchema: {} },
+    { description: "Ping", inputSchema: z.object({}) },
     async () => ({ content: [{ type: "text", text: "pong" }] }),
   );
   await server.connect(serverTransport);

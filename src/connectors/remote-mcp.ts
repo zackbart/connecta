@@ -1,13 +1,16 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client,
+  specTypeSchemas,
+  StreamableHTTPClientTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type {
   FetchLike,
+  ListToolsResult,
+  StandardSchemaV1,
+  Tool,
   Transport,
-} from "@modelcontextprotocol/sdk/shared/transport.js";
-import { ListToolsResultSchema } from "@modelcontextprotocol/sdk/types.js";
-import { CfWorkerJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/cfworker";
-import { z } from "zod";
+} from "@modelcontextprotocol/client";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { ConnectorCallError } from "../errors.js";
@@ -131,36 +134,29 @@ type ListedTool = Awaited<ReturnType<Client["listTools"]>>["tools"][number];
  * end-of-pagination as `null`. Only the cursor is widened; every tool and every
  * other result field still passes through the SDK's pinned schema.
  */
-const CompatibleListToolsResultSchema = ListToolsResultSchema.extend({
-  nextCursor: z.string().nullable().optional(),
-});
-
-/**
- * Re-prime an SDK client's tool-metadata cache from the *full* walked catalog.
- *
- * The SDK's `Client.listTools()` caches one page at a time and **clears** the
- * output-schema validators and task-support sets before each replacement.
- * This walk uses `Client.request()` so it can make the narrow null-cursor
- * compatibility concession above, then primes the metadata exactly once from
- * the complete chain. Otherwise `callTool` would find no validator or task
- * requirement for earlier-page tools and enforcement would depend on where a
- * tool happened to land, which is not enforcement.
- *
- * So hand the whole aggregated list back deliberately, once, at the end. The
- * SDK types the method `private`, hence the cast; the SDK version is pinned
- * exactly and `test/remote-mcp-pagination.test.ts` asserts the method still
- * exists, so a bump that renames it fails CI rather than quietly restoring the
- * bug.
- */
-function primeToolMetadata(client: Client, tools: ListedTool[]): void {
-  const prime = (
-    client as unknown as {
-      cacheToolMetadata?: (tools: ListedTool[]) => void;
-    }
-  ).cacheToolMetadata;
-  if (typeof prime !== "function") return;
-  prime.call(client, tools);
-}
+const CompatibleListToolsResultSchema: StandardSchemaV1<
+  unknown,
+  ListToolsResult
+> = {
+  "~standard": {
+    version: 1,
+    vendor: "connecta",
+    validate(value) {
+      const normalized =
+        typeof value === "object" &&
+        value !== null &&
+        "nextCursor" in value &&
+        value.nextCursor === null
+          ? (() => {
+              const copy = { ...value };
+              delete copy.nextCursor;
+              return copy;
+            })()
+          : value;
+      return specTypeSchemas.ListToolsResult["~standard"].validate(normalized);
+    },
+  },
+};
 
 /**
  * True for a result-parse failure caused by the page's `nextCursor` itself.
@@ -171,13 +167,18 @@ function primeToolMetadata(client: Client, tools: ListedTool[]): void {
  */
 function isCursorShapeError(err: unknown): boolean {
   const issues = (err as { issues?: unknown } | null)?.issues;
-  return (
+  if (
     Array.isArray(issues) &&
     issues.some((issue) => {
       const path = (issue as { path?: unknown }).path;
       return Array.isArray(path) && path[0] === "nextCursor";
     })
-  );
+  ) {
+    return true;
+  }
+  // SDK v2 wraps Standard Schema failures in a ProtocolError and preserves the
+  // failing path in the message rather than exposing the validator's issues.
+  return msg(err).startsWith("Invalid result for tools/list: nextCursor:");
 }
 
 function msg(err: unknown): string {
@@ -393,6 +394,14 @@ export function redirectSafeFetch(
 interface ConnectionState {
   client: Client | null;
   transport: Transport | null;
+  /**
+   * The last complete raw catalog, retained only for this request scope.
+   *
+   * SDK v2 exposes `toolDefinition` as the public call-time seam for output
+   * validation and header mirroring, replacing the v1 private
+   * `cacheToolMetadata` reach-through.
+   */
+  toolDefinitions: Map<string, Tool>;
   connecting: Promise<void> | null;
   authRequired: boolean;
   provider: KvOAuthProvider | null;
@@ -511,6 +520,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state = {
         client: null,
         transport: null,
+        toolDefinitions: new Map(),
         connecting: null,
         authRequired: false,
         provider: null,
@@ -549,29 +559,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
-      // The SDK class declares `sessionId` as an own `string | undefined`
-      // property while its Transport interface declares it optional. They are
-      // runtime-compatible; exact optional types only exposes that declaration
-      // mismatch at this boundary.
       return new StreamableHTTPClientTransport(url, {
         authProvider: provider ?? newProvider(ctx),
         fetch: guardedFetch,
-      }) as unknown as Transport;
+      });
     }
     const headers =
       opts.auth?.type === "headers" ? opts.auth.headers : undefined;
-    return new StreamableHTTPClientTransport(
-      url,
-      {
-        ...(headers ? { requestInit: { headers } } : {}),
-        fetch: guardedFetch,
-      },
-    ) as unknown as Transport;
+    return new StreamableHTTPClientTransport(url, {
+      ...(headers ? { requestInit: { headers } } : {}),
+      fetch: guardedFetch,
+    });
   };
 
   const reset = (state: ConnectionState) => {
     state.client = null;
     state.transport = null;
+    state.toolDefinitions.clear();
     state.connecting = null;
     state.authRequired = false;
     state.provider = null;
@@ -652,13 +656,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           throw operatorDisconnectedError();
         }
         provider?.captureGeneration(genAtStart);
-        // The SDK defaults to AJV, which compiles every advertised outputSchema
-        // with `new Function`. Cloudflare Workers prohibit dynamic code
-        // generation, so a remote such as Stripe fails during tools/list unless
-        // the SDK's edge-safe validator is selected explicitly.
+        // SDK v2 selects its validator by runtime export condition: AJV on
+        // Node and @cfworker/json-schema under workerd. The Workers-safe path
+        // no longer needs Connecta-specific wiring.
         const c = new Client(
           { name: "connecta", version: CONNECTA_VERSION },
-          { jsonSchemaValidator: new CfWorkerJsonSchemaValidator() },
+          // Keep the legacy default for this mechanical port. PR B opts into
+          // 2026-07-28 negotiation after both sides are covered explicitly.
+          { versionNegotiation: { mode: "legacy" } },
         );
         const t = buildTransport(ctx, provider);
         if (!ownsAttempt()) await abandon(t);
@@ -871,9 +876,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           `Connector "${id}" kept advertising more tools/list pages after ${MAX_TOOL_PAGES} — refusing to page further.`,
         );
       }
-      // Repair what the per-page listTools calls left behind before any of
-      // these tools can be called. See primeToolMetadata.
-      primeToolMetadata(client, listed);
+      // Publish definitions only after the full walk succeeds. A later-page
+      // failure must not leave a partial validation/header view behind.
+      state.toolDefinitions = new Map(listed.map((tool) => [tool.name, tool]));
       return listed.map((t) => ({
         name: t.name,
         ...(t.description !== undefined ? { description: t.description } : {}),
@@ -906,13 +911,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       await ensureConnected(ctx, state);
       const client = state.client!;
       try {
+        const toolDefinition = state.toolDefinitions.get(name);
+        if (toolDefinition?.execution?.taskSupport === "required") {
+          throw new Error(
+            `Tool "${name}" requires task-based execution, which Connecta does not support.`,
+          );
+        }
         return await client.callTool(
           {
             name,
             arguments: (args ?? {}) as Record<string, unknown>,
           },
-          undefined,
-          requestOptions(ctx),
+          {
+            ...requestOptions(ctx),
+            ...(toolDefinition ? { toolDefinition } : {}),
+          },
         );
       } catch (err) {
         // A grant revoked after connect surfaces here, not in ensureConnected.
@@ -939,6 +952,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const transport = state.transport;
       state.client = null;
       state.transport = null;
+      state.toolDefinitions.clear();
       state.connecting = null;
       state.authRequired = false;
       state.connectedGeneration = null;

@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import {
@@ -448,11 +448,11 @@ export function registerExecuteTool(
     "execute_code",
     {
       description: EXECUTE_DESC,
-      inputSchema: {
+      inputSchema: z.object({
         code: z
           .string()
           .describe("A JavaScript async arrow function to execute."),
-      },
+      }),
       // The sandbox exposes only tools that are explicitly read-only, and the
       // executor grants no network, filesystem, env, or timer capabilities.
       annotations: {
@@ -463,7 +463,7 @@ export function registerExecuteTool(
     },
     async (args, extra) => {
       const controller = new AbortController();
-      const signals = [extra.signal, ctx.requestSignal].filter(
+      const signals = [extra.mcpReq.signal, ctx.requestSignal].filter(
         (signal): signal is AbortSignal => signal !== undefined,
       );
       const forwarders = signals.map((signal) => {

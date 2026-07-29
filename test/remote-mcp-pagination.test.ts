@@ -1,17 +1,15 @@
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { UnauthorizedError } from "@modelcontextprotocol/sdk/client/auth.js";
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+  Client,
+  InMemoryTransport,
+  UnauthorizedError,
+} from "@modelcontextprotocol/client";
 import type {
   CallToolResult,
-  Tool,
   JSONRPCMessage,
-} from "@modelcontextprotocol/sdk/types.js";
-import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+  Tool,
+  Transport,
+} from "@modelcontextprotocol/client";
+import { Server } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
@@ -140,12 +138,12 @@ function fixture(
           { name: "paged-downstream", version: "1.0.0" },
           { capabilities: { tools: {} } },
         );
-        server.setRequestHandler(ListToolsRequestSchema, async (request) => {
+        server.setRequestHandler("tools/list", async (request) => {
           const cursor = request.params?.cursor;
           cursors.push(cursor);
           return listTools(cursor, cursors.length);
         });
-        server.setRequestHandler(CallToolRequestSchema, async (request) =>
+        server.setRequestHandler("tools/call", async (request) =>
           opts.callTool
             ? opts.callTool(request.params.name)
             : {
@@ -173,7 +171,12 @@ function fixture(
           async send(message, sendOpts) {
             const fault = opts.sendFault?.(message);
             if (fault) throw fault;
-            return clientTransport.send(message, sendOpts);
+            return clientTransport.send(
+              message,
+              sendOpts?.relatedRequestId !== undefined
+                ? { relatedRequestId: sendOpts.relatedRequestId }
+                : undefined,
+            );
           },
           close: () => clientTransport.close(),
         };
@@ -678,14 +681,16 @@ describe("remoteMcp() tools/list pagination", () => {
 
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).not.toMatch(/nextCursor/);
-    // The raw validation failure reaches the operator unedited, still pointing
-    // at the tool entry that broke.
-    const issues = (err as { issues?: Array<{ path?: unknown[] }> }).issues;
-    expect(issues?.some((issue) => issue.path?.[0] === "tools")).toBe(true);
+    // The v2 protocol error still points at the tool entry that broke:
+    // "Invalid result for tools/list: tools.0.inputSchema: …" — path-first,
+    // so a widened cursor predicate can never absorb it.
+    expect((err as Error).message).toMatch(
+      /Invalid result for tools\/list: tools\.0\./,
+    );
   });
 });
 
-describe("tool metadata re-primed across a paginated catalog", () => {
+describe("tool metadata across a paginated catalog", () => {
   const NUMERIC = {
     type: "object",
     properties: { n: { type: "number" } },
@@ -703,15 +708,15 @@ describe("tool metadata re-primed across a paginated catalog", () => {
         : { tools: [tool("late", { outputSchema: NUMERIC })] };
   }
 
-  it("re-primes through a Client method the pinned SDK still provides", () => {
-    // The re-prime reaches past the SDK's `private` marker deliberately. If a
-    // bump renames or drops either half of this pair, the compensation stops
-    // compensating and every earlier-page tool silently loses validation
-    // again — so fail here, on the dependency bump, not in production.
-    const proto = Client.prototype as unknown as Record<string, unknown>;
-    expect(typeof proto.cacheToolMetadata).toBe("function");
-    expect((proto.cacheToolMetadata as (t: unknown[]) => void).length).toBe(1);
-    expect(typeof proto.getToolOutputValidator).toBe("function");
+  it("uses SDK v2's public call-time tool-definition seam", async () => {
+    const { connector } = fixture(twoSchemaPages());
+    const context = { ...ctx(), requestScope: {} };
+    await connector.listTools(context);
+
+    // The behavioral tests below prove that definitions from every page are
+    // passed through the public `toolDefinition` option. This guard keeps the
+    // pinned SDK surface named explicitly without reaching into private state.
+    expect(Client.prototype.callTool).toHaveLength(2);
   });
 
   it("rejects structured content that violates an EARLIER page's output schema", async () => {
@@ -767,7 +772,7 @@ describe("tool metadata re-primed across a paginated catalog", () => {
     }
   });
 
-  it("re-primes from RAW SDK tools, so an earlier page's required-task declaration still binds", async () => {
+  it("retains RAW SDK tools, so an earlier page's required-task declaration still binds", async () => {
     const { connector } = fixture((cursor) =>
       cursor === undefined
         ? {
@@ -784,12 +789,8 @@ describe("tool metadata re-primed across a paginated catalog", () => {
     await connector.listTools(context);
 
     // `execution.taskSupport` lives only on the SDK's own tool shape — a
-    // ToolDef does not carry it. So the re-prime is handed the raw listing,
-    // not the mapped one, and "tidying up the cast" by mapping first would
-    // drop this silently: `gated` would be dispatched as an ordinary
-    // `tools/call` the downstream never agreed to serve that way. Unlike the
-    // output-schema case that is a regression even for a single-page catalog,
-    // because the re-prime is unconditional.
+    // ToolDef does not carry it. The request-scoped definition map therefore
+    // retains the raw listing rather than the mapped public catalog.
     await expect(connector.callTool("gated", {}, context)).rejects.toThrow(
       /task-based execution/i,
     );
