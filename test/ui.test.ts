@@ -3246,13 +3246,35 @@ describe("status UI credential management", () => {
     expect(preflight.headers.get("Access-Control-Allow-Origin")).toBeNull();
   });
 
-  it("fails fast when a connector declares a credential without an encryption key", () => {
-    expect(() =>
-      createConnecta({
-        connectors: [credentialConnector()],
-        storage: memoryStorage(),
+  it("boots without a vault and reports credential management unavailable", async () => {
+    const warn = vi.fn();
+    const connecta = createConnecta({
+      connectors: [credentialConnector()],
+      auth: fakeClerk(),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      logger: {
+        debug() {},
+        info() {},
+        warn,
+        error() {},
+      },
+    });
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining("credentials.encryptionKey is not configured"),
+    );
+    expect(
+      connecta.registry.contextFor("vaulted", BASE).credential,
+    ).toBeUndefined();
+
+    const response = await connecta.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: "Bearer clerk-token" },
       }),
-    ).toThrow("credentials.encryptionKey is required");
+    );
+    const payload = (await response.json()) as any;
+    expect(payload.credentialManagement).toBe("vault_not_configured");
+    expect(payload.connectors[0].credential).toBeUndefined();
   });
 });
 
