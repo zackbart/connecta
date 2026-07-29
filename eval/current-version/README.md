@@ -66,6 +66,45 @@ and published-package graphs. Validate its TypeScript separately:
 npm --prefix eval/current-version run check
 ```
 
+## Full performance analysis
+
+The performance lane adds two measurements that the release audit deliberately
+does not:
+
+- `perf:logic` measures startup, catalog scaling, discovery, direct calls,
+  batching, concurrent throughput, memory after GC, and cold/warm QuickJS
+  overhead against synthetic 100-, 1,000-, and 10,000-tool deployments.
+- `perf:agent` starts a fresh isolated server and a fresh Codex session for
+  each task. The task prompts do not explain Connecta's routing workflow. The
+  runner scores answer correctness, tool choice, redundant routing calls,
+  Connecta result tokens, whole-agent tokens, and wall time.
+
+Run the complete environment:
+
+```sh
+npm --prefix eval/current-version run perf
+```
+
+Results are written to `results/current-performance-*.json` and
+`results/current-performance-report.md`. Logic-only runs need no model:
+
+```sh
+npm --prefix eval/current-version run perf:logic -- --samples 40 --load-calls 400
+```
+
+The agent lane requires an authenticated `codex` CLI. It ignores the user's
+Codex configuration, attaches only the isolated Connecta endpoint, uses a
+read-only filesystem sandbox, and does not persist sessions. Select one case
+while developing:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- --case single-read
+```
+
+Set `CONNECTA_EVAL_AGENT_MODEL` to pin a model. If omitted, the current Codex
+default is used and recorded as `codex-default`; for comparable trend data,
+pin the same model and machine across runs.
+
 For exploratory calls, start `sandbox-server.ts` with `tsx`, set
 `CONNECTA_EVAL_URL` to its reported MCP URL, and pipe JSON commands into
 `mcp-session.mjs`. The release gate is the complete `audit` command above, not
