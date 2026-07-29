@@ -6,6 +6,16 @@ schemas, the call tools enforce safety annotations, and `get_result` pages
 bounded results. `execute_code` is registered only when the deployment
 configures an executor.
 
+## Discovery context
+
+Start an unknown-address lookup with two to four distinctive action/object
+terms, not the full request, and omit `limit` so the default eight-result page
+stays small. `includeSchemas: "compact"` adds each match's input and any
+declared output shape; matches also carry declared behavior annotations. When
+that shape is sufficient, call the returned address directly. Reserve
+`describe_tools` for a search without schemas, an ambiguous compact shape, or
+exact constraints that require `format: "json"`.
+
 ## Result representation
 
 For object results, `structuredContent` is the canonical full-fidelity value.
@@ -19,6 +29,18 @@ content blocks also pass through unchanged when `call_tool` uses MCP result
 mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
+
+## Lexical discovery
+
+`search_tools` tokenizes tool names and descriptions at punctuation and
+camel-case boundaries. Exact whole-token matches carry the most weight; a small
+set of inflectional variants preserves singular/plural and verb-form recall
+without allowing arbitrary mid-word substring matches. Ranking weights each
+query term by its document frequency across the available catalogs in that
+search, so a rare domain term outranks a ubiquitous action while action terms
+still distinguish `get`, `list`, `search`, and write operations. If no tool
+covers every non-conversational term, the same scorer falls back to any-term
+matching and marks the result `matchMode: "partial"`.
 
 ## Authorization recovery
 

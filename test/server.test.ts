@@ -215,9 +215,13 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain(
       "Use call_tool for one explicitly read-only call",
     );
+    expect(body.result.instructions).toContain(
+      "2–4 distinctive action/object terms",
+    );
+    expect(body.result.instructions).toContain("no initial limit");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
-      "when this routing workflow is unfamiliar",
+      "If this routing is unfamiliar",
     );
     expect(body.result.instructions).not.toContain("once per task");
   });
@@ -326,6 +330,24 @@ describe("server /mcp end-to-end", () => {
     expect(
       byName.search_tools.inputSchema.properties.includeSchemas.enum,
     ).toEqual(["compact", "json"]);
+    expect(byName.search_tools.description).toContain(
+      "2–4 distinctive action/object terms",
+    );
+    expect(byName.search_tools.description).toContain(
+      "omit limit initially (default 8)",
+    );
+    expect(byName.search_tools.description).toContain(
+      "the input and any declared output shape",
+    );
+    expect(byName.search_tools.description).toContain(
+      "matches also carry declared annotations",
+    );
+    expect(byName.describe_tools.description).toContain(
+      "Only when search_tools omitted schemas",
+    );
+    expect(byName.describe_tools.description).toContain(
+      '"json" preserves exact constraints',
+    );
     expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
       MAX_SEARCH_LIMIT,
     );
@@ -440,6 +462,14 @@ describe("server /mcp end-to-end", () => {
     );
     expect(skill).toContain(
       "Connector namespace calls and `connecta.call` use the same read-only gate",
+    );
+    expect(skill).toContain("2–4 distinctive action/object terms");
+    expect(skill).toContain("omit `limit` initially");
+    expect(skill).toContain(
+      "every match then includes its input shape plus any declared output shape and annotations",
+    );
+    expect(skill).toContain(
+      'use `format: "json"` only for exact constraints',
     );
     expect(skill).not.toContain("## Examples");
 

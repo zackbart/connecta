@@ -24,14 +24,15 @@ Claude / Cursor ── MCP ──▶  connecta ───┼── remoteMcp("lin
                                         └── api("internal")       → fetch(...)
 ```
 
-The agent discovers instead of preloading: `search_tools` ranks matches,
-`describe_tools` returns schemas for only the addresses about to be called,
-`call_tool` / `batch_call` / `call_destructive_tool` invoke them, and
-`list_connectors`, `authorize_connector`, `get_result`, and `skills` round out
-the nine. An optional tenth, `execute_code`, runs model-written JavaScript in
-a sandbox with no network, filesystem, or environment access — only the
-read-only tools in scope. Context holds nine definitions whether ten tools sit
-behind them or a thousand.
+The agent discovers instead of preloading: `search_tools` ranks matches and can
+return their compact schemas in the same response, while `describe_tools`
+expands only schemas that remain unclear. `call_tool` / `batch_call` /
+`call_destructive_tool` invoke them, and `list_connectors`,
+`authorize_connector`, `get_result`, and `skills` round out the nine. An
+optional tenth, `execute_code`, runs model-written JavaScript in a sandbox with
+no network, filesystem, or environment access — only the read-only tools in
+scope. Context holds nine definitions whether ten tools sit behind them or a
+thousand.
 
 Three properties are load-bearing enough to name here; the rest live in the
 [ethos](./ethos.md). **Read-only is fail-closed**: anything not explicitly
