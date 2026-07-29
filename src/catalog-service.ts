@@ -20,6 +20,7 @@ import {
 } from "./timeout.js";
 import type {
   Connector,
+  JsonSchema,
   ToolDef,
 } from "./types.js";
 
@@ -88,14 +89,6 @@ export function boundedDiscoveryText(value: unknown, hint: string): string {
     );
   }
   return text;
-}
-
-/** Apply the same final UTF-8 boundary where only the check is needed. */
-export function assertDiscoveryResultSize(
-  value: unknown,
-  hint: string,
-): void {
-  boundedDiscoveryText(value, hint);
 }
 
 export interface CatalogSearchArgs {
@@ -170,6 +163,10 @@ export type CatalogResolution =
 
 function framingError(code: string, message: string): CallErrorDetails {
   return { code, message, retryable: messageLooksRetryable(message) };
+}
+
+function renderSchema(schema: JsonSchema, format: "compact" | "json"): unknown {
+  return format === "json" ? schema : compactSchema(schema);
 }
 
 /**
@@ -434,17 +431,13 @@ export class CatalogService {
           ...(args.includeSchemas
             ? {
                 inputSchema:
-                  args.includeSchemas === "json"
-                    ? input
-                    : compactSchema(input),
+                  renderSchema(input, args.includeSchemas),
               }
             : {}),
           ...(args.includeSchemas && match.tool.outputSchema
             ? {
                 outputSchema:
-                  args.includeSchemas === "json"
-                    ? match.tool.outputSchema
-                    : compactSchema(match.tool.outputSchema),
+                  renderSchema(match.tool.outputSchema, args.includeSchemas),
               }
             : {}),
           ...(match.tool.annotations
@@ -534,13 +527,10 @@ export class CatalogService {
         ...(connectorGuide(addressResolution.connector)
           ? { guide: connectorSkillName(addressResolution.connector.id) }
           : {}),
-        inputSchema: format === "json" ? input : compactSchema(input),
+        inputSchema: renderSchema(input, format),
         ...(tool.outputSchema
           ? {
-              outputSchema:
-                format === "json"
-                  ? tool.outputSchema
-                  : compactSchema(tool.outputSchema),
+              outputSchema: renderSchema(tool.outputSchema, format),
             }
           : {}),
         ...(tool.annotations ? { annotations: tool.annotations } : {}),

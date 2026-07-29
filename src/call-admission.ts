@@ -459,7 +459,6 @@ export class ConnectorCallAdmissionController {
 
   private evictIdlePartitions(now: number): void {
     for (const [key, state] of this.partitions) {
-      this.pruneBudget(state, now);
       this.maybeDeletePartition(key, state, now);
     }
   }

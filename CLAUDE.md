@@ -7,13 +7,12 @@ Cloudflare Workers.
 
 - **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
   and isn't, and its decisions table carries a verdict for every shape already
-  considered — refused, retired, provisional, or gated. Check the table before
+  considered — refused, removed, provisional, or gated. Check the table before
   designing or building anything: a `refused` row is a "no" with the reason
-  attached, and a `retired` row (toolkits
+  attached, and a `removed` row (toolkits
   [#178](https://github.com/zackbart/connecta/issues/178), proactive credential
-  liveness [#179](https://github.com/zackbart/connecta/issues/179)) means the
-  code still in the tree is condemned — never extend it or make new code depend
-  on it while its removal is pending.
+  liveness [#179](https://github.com/zackbart/connecta/issues/179)) records a
+  surface that no longer exists — do not reintroduce it without a new decision.
 - There is no TODO.md — the roadmap lives in
   [GitHub issues](https://github.com/zackbart/connecta/issues). When you find
   TODO items (in code comments, docs, or conversation), don't accumulate them
@@ -35,7 +34,7 @@ exports.
 - [`ethos.md`](./ethos.md) — what connecta is, what it refuses to be, the
   decisions table, and the invariants every change must preserve. Check it
   before building something new; "we already decided not to" is a real answer
-  there, and its retired/provisional verdicts override anything staler.
+  there, and its removed/provisional verdicts override anything staler.
 - [`documentation/`](./documentation/) — per-subsystem guides for agents
   working on the repo. **Currently stubs**: the old manual (`docs/`) was
   retired in the phase-1 docs restructure and each guide is being rewritten as

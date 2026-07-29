@@ -174,7 +174,7 @@ export async function routeActivity(
   if (request.method !== "GET") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }
-  const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
+  const authz = await authorize(request, baseUrl, opts.auth);
   if (!authz.ok) return authz.response;
   if (
     opts.activityReadGate &&

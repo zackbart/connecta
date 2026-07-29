@@ -33,6 +33,7 @@ const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
 const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
 const DEFAULT_MAX_RESULT_BYTES = 50_000;
+const encoder = new TextEncoder();
 /** Independent final-envelope boundary for `batch_call`. */
 const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
 
@@ -202,34 +203,6 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
 
 function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
-}
-
-/** WHATWG TextEncoder byte length without allocating another full buffer. */
-function utf8ByteLength(value: string): number {
-  let bytes = 0;
-  for (let index = 0; index < value.length; index++) {
-    const code = value.charCodeAt(index);
-    if (code <= 0x7f) {
-      bytes++;
-    } else if (code <= 0x7ff) {
-      bytes += 2;
-    } else if (
-      code >= 0xd800 &&
-      code <= 0xdbff &&
-      index + 1 < value.length
-    ) {
-      const next = value.charCodeAt(index + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        bytes += 4;
-        index++;
-      } else {
-        bytes += 3;
-      }
-    } else {
-      bytes += 3;
-    }
-  }
-  return bytes;
 }
 
 export type ConnectorOperationOptions = Pick<
@@ -708,7 +681,7 @@ export class Registry implements RegistryView {
         );
         return null;
       }
-      const byteLength = utf8ByteLength(chunk);
+      const byteLength = encoder.encode(chunk).byteLength;
       chunkBytes += byteLength;
       if (
         byteLength > MAX_CATALOG_CHUNK_BYTES ||
@@ -1108,39 +1081,33 @@ export class Registry implements RegistryView {
     }
   }
 
-  /** Drop a connector's cached tool list (e.g. after auth completes). */
-  invalidate(id: string): void {
+  private markCatalogInvalid(id: string): void {
     this.advanceCatalogGeneration(id);
     this.cache.delete(id);
     this.invalidated.add(id);
-    if (this.persistToolCatalog) {
-      void this.enqueueCatalogMutation(id, async () => {
-        try {
-          await this.deleteCatalog(id);
-        } catch (err) {
-          this.opts.logger.warn(
-            `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
-          );
-        }
-      });
-    }
+  }
+
+  private deleteStoredCatalog(id: string): Promise<void> {
+    return this.enqueueCatalogMutation(id, async () => {
+      try {
+        await this.deleteCatalog(id);
+      } catch (err) {
+        this.opts.logger.warn(
+          `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
+        );
+      }
+    });
+  }
+
+  /** Drop a connector's cached tool list (e.g. after auth completes). */
+  invalidate(id: string): void {
+    this.markCatalogInvalid(id);
+    if (this.persistToolCatalog) void this.deleteStoredCatalog(id);
   }
 
   /** Drop both in-memory and persisted tool catalogs. */
   async invalidateStored(id: string): Promise<void> {
-    this.advanceCatalogGeneration(id);
-    this.cache.delete(id);
-    this.invalidated.add(id);
-    if (this.persistToolCatalog) {
-      await this.enqueueCatalogMutation(id, async () => {
-        try {
-          await this.deleteCatalog(id);
-        } catch (err) {
-          this.opts.logger.warn(
-            `[connecta] connector "${id}" catalog invalidation failed: ${msg(err)}`,
-          );
-        }
-      });
-    }
+    this.markCatalogInvalid(id);
+    if (this.persistToolCatalog) await this.deleteStoredCatalog(id);
   }
 }

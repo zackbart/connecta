@@ -4,7 +4,6 @@ import {
   createExecuteTool,
   EXECUTE_MAX_BATCH_CALLS,
   sanitizeIdentifier,
-  unwrapForSandbox,
 } from "../src/execute.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { AdmissionController } from "../src/executor-admission.js";
@@ -15,6 +14,7 @@ import {
   createMetaTools,
 } from "../src/meta-tools.js";
 import { InvocationFailure } from "../src/invocation.js";
+import { unwrapMcpResult } from "../src/mcp-result.js";
 import type {
   ActivityRequestContext,
   ToolCallActivityEvent,
@@ -101,17 +101,17 @@ describe("sanitizeIdentifier", () => {
   });
 });
 
-describe("unwrapForSandbox", () => {
+describe("unwrapMcpResult", () => {
   it("passes non-mcp results through untouched", () => {
-    expect(unwrapForSandbox("api", { sum: 3 })).toEqual({ sum: 3 });
+    expect(unwrapMcpResult("api", { sum: 3 })).toEqual({ sum: 3 });
   });
 
   it("JSON-parses all-text MCP content when possible", () => {
-    const r = unwrapForSandbox("mcp", {
+    const r = unwrapMcpResult("mcp", {
       content: [{ type: "text", text: '{"a":1}' }],
     });
     expect(r).toEqual({ a: 1 });
-    const s = unwrapForSandbox("mcp", {
+    const s = unwrapMcpResult("mcp", {
       content: [{ type: "text", text: "not json" }],
     });
     expect(s).toBe("not json");
@@ -119,24 +119,24 @@ describe("unwrapForSandbox", () => {
 
   it("unwraps a toolResult-carrying MCP result to that value", () => {
     expect(
-      unwrapForSandbox("mcp", {
+      unwrapMcpResult("mcp", {
         toolResult: { rows: [1, 2, 3] },
         content: [{ type: "text", text: "ignored" }],
       }),
     ).toEqual({ rows: [1, 2, 3] });
     // toolResult wins even when it is a falsy-but-present value.
-    expect(unwrapForSandbox("mcp", { toolResult: null })).toBeNull();
+    expect(unwrapMcpResult("mcp", { toolResult: null })).toBeNull();
   });
 
   it("prefers structuredContent and throws on isError", () => {
     expect(
-      unwrapForSandbox("mcp", {
+      unwrapMcpResult("mcp", {
         content: [{ type: "text", text: "x" }],
         structuredContent: { b: 2 },
       }),
     ).toEqual({ b: 2 });
     expect(() =>
-      unwrapForSandbox("mcp", {
+      unwrapMcpResult("mcp", {
         isError: true,
         content: [{ type: "text", text: "downstream sad" }],
       }),

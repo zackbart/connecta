@@ -567,19 +567,24 @@ function renderConnections(): void {
   }
 }
 
-async function oauthRequest(
-  connector: string,
-  method: "DELETE" | "POST",
+async function operatorRequest(
+  path: string,
+  method: "DELETE" | "POST" | "PUT",
   generation: number,
+  body?: object,
 ): Promise<UiActionResponse | null> {
   const token = await sessionToken();
   if (generation !== SESSION_GENERATION) {
     throw new Error("The operator session changed.");
   }
   if (!token) throw new Error("Your Clerk session has expired.");
-  const res = await fetch("/ui/oauth/" + encodeURIComponent(connector), {
+  const res = await fetch(path, {
     method,
-    headers: { Authorization: "Bearer " + token },
+    headers: {
+      Authorization: "Bearer " + token,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (res.status === 204) return null;
   let payload: UiActionResponse = {};
@@ -615,8 +620,8 @@ $("list").onclick = async (event) => {
   )];
   buttons.forEach((item) => { item.disabled = true; });
   try {
-    const result = await oauthRequest(
-      connector,
+    const result = await operatorRequest(
+      "/ui/oauth/" + encodeURIComponent(connector),
       action === "disconnect" ? "DELETE" : "POST",
       generation,
     );
@@ -751,32 +756,13 @@ async function credentialRequest(
   body: { value: string } | { values: Record<string, string> } | null,
   generation: number,
 ): Promise<UiActionResponse | null> {
-  const token = await sessionToken();
-  if (generation !== SESSION_GENERATION) {
-    throw new Error("The operator session changed.");
-  }
-  if (!token) throw new Error("Your Clerk session has expired.");
   const suffix = action ? "/" + action : "";
-  const res = await fetch(
+  return operatorRequest(
     "/ui/credentials/" + encodeURIComponent(connector) + suffix,
-    {
-      method,
-      headers: {
-        Authorization: "Bearer " + token,
-        ...(body ? { "Content-Type": "application/json" } : {}),
-      },
-      ...(body ? { body: JSON.stringify(body) } : {}),
-    },
+    method,
+    generation,
+    body ?? undefined,
   );
-  if (res.status === 204) return null;
-  let payload: UiActionResponse = {};
-  try {
-    payload = await res.json() as UiActionResponse;
-  } catch {
-    // The status code below still owns the operator-facing error.
-  }
-  if (!res.ok) throw new Error(payload.error || "Request failed (" + res.status + ").");
-  return payload;
 }
 
 function credentialForm(connector: string): HTMLElement {
