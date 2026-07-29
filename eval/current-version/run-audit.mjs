@@ -231,7 +231,7 @@ try {
       ),
     },
     compatibility: {
-      client: "@modelcontextprotocol/sdk StreamableHTTPClientTransport",
+      client: "@modelcontextprotocol/client StreamableHTTPClientTransport",
       protocolMode: "stateless streamable HTTP",
       resultCount: observations.length,
       contentResults: observations.filter((entry) => entry.hasContent).length,

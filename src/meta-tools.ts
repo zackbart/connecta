@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type {
   ActivityCallSource,
@@ -1222,7 +1222,7 @@ export function registerMetaTools(
     "skills",
     {
       description: describedFor(registry, SKILLS_DESC, "skills"),
-      inputSchema: { name: z.string().optional() },
+      inputSchema: z.object({ name: z.string().optional() }),
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.skills(args as SkillArgs),
@@ -1232,7 +1232,7 @@ export function registerMetaTools(
     "list_connectors",
     {
       description: LIST_DESC,
-      inputSchema: { probe: z.boolean().optional() },
+      inputSchema: z.object({ probe: z.boolean().optional() }),
       annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.listConnectors(args as ListArgs),
@@ -1242,14 +1242,14 @@ export function registerMetaTools(
     "search_tools",
     {
       description: describedFor(registry, SEARCH_DESC, "search"),
-      inputSchema: {
+      inputSchema: z.object({
         query: z.string().optional(),
         connector: z.string().optional(),
         limit: z.number().int().positive().max(MAX_SEARCH_LIMIT).optional(),
         offset: z.number().int().nonnegative().optional(),
         fullDescriptions: z.boolean().optional(),
         includeSchemas: z.enum(["compact", "json"]).optional(),
-      },
+      }),
       annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.searchTools(args as SearchArgs),
@@ -1259,11 +1259,11 @@ export function registerMetaTools(
     "describe_tools",
     {
       description: describedFor(registry, DESCRIBE_DESC, "describe"),
-      inputSchema: {
+      inputSchema: z.object({
         addresses: z.array(z.string()).max(MAX_DESCRIBE_ADDRESSES),
         format: z.enum(["compact", "json"]).optional(),
         fullDescriptions: z.boolean().optional(),
-      },
+      }),
       annotations: READ_ONLY_REMOTE,
     },
     async (args) => mt.describeTools(args as DescribeArgs),
@@ -1273,7 +1273,7 @@ export function registerMetaTools(
     "call_tool",
     {
       description: CALL_DESC,
-      inputSchema: CALL_INPUT_SCHEMA,
+      inputSchema: z.object(CALL_INPUT_SCHEMA),
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
@@ -1285,7 +1285,7 @@ export function registerMetaTools(
     "call_destructive_tool",
     {
       description: CALL_DESTRUCTIVE_DESC,
-      inputSchema: CALL_INPUT_SCHEMA,
+      inputSchema: z.object(CALL_INPUT_SCHEMA),
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
@@ -1299,10 +1299,10 @@ export function registerMetaTools(
     "authorize_connector",
     {
       description: AUTHORIZE_DESC,
-      inputSchema: {
+      inputSchema: z.object({
         connector: z.string(),
         force: z.boolean().optional(),
-      },
+      }),
       // Starts (or with force, resets) a downstream OAuth flow — it changes
       // stored connector auth state, so it is deliberately not read-only.
       annotations: {
@@ -1318,7 +1318,7 @@ export function registerMetaTools(
     "get_result",
     {
       description: GET_RESULT_DESC,
-      inputSchema: {
+      inputSchema: z.object({
         id: z.string(),
         // Both bounds are the shared rules (isValidResultOffset,
         // isValidMaxResultBytes) expressed for the wire: spelling them against
@@ -1326,7 +1326,7 @@ export function registerMetaTools(
         // in-handler checks if either floor ever moves.
         offset: z.number().int().min(MIN_RESULT_OFFSET).optional(),
         maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
-      },
+      }),
       annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.getResult(args as GetResultArgs),
@@ -1336,7 +1336,7 @@ export function registerMetaTools(
     "batch_call",
     {
       description: BATCH_DESC,
-      inputSchema: {
+      inputSchema: z.object({
         calls: z
           .array(z.object(CALL_INPUT_SCHEMA))
           .min(1)
@@ -1345,7 +1345,7 @@ export function registerMetaTools(
         timeoutMs: z.number().int().positive().optional(),
         maxRetries: z.number().int().min(0).max(2).optional(),
         diagnostics: z.boolean().optional(),
-      },
+      }),
       // Same gate as call_tool: every call in the batch must be explicitly
       // read-only or the batch is refused.
       annotations: READ_ONLY_REMOTE,

@@ -1,5 +1,9 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import {
+  createMcpHandler,
+  isLegacyRequest,
+  McpServer,
+  WebStandardStreamableHTTPServerTransport,
+} from "@modelcontextprotocol/server";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
 import { registerExecuteTool } from "../execute.js";
 import {
@@ -188,54 +192,70 @@ async function serveMcp(
   registry: RegistryView,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
-  // Fresh McpServer + transport per request (SDK ≥1.26 requirement), stateless.
-  const server = new McpServer(opts.serverInfo, {
-    instructions: CONNECTA_INSTRUCTIONS,
-  });
-  const activity: ActivityRequestContext | undefined = opts.activity
-    ? {
-        sink: opts.activity,
-        actor,
-        requestId: crypto.randomUUID(),
-        serverInfo: opts.serverInfo,
-        ...(opts.activityDeploymentId
-          ? { deploymentId: opts.activityDeploymentId }
-          : {}),
-        ...(runtimeContext?.waitUntil
-          ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
-          : {}),
-        logger: opts.logger,
-      }
-    : undefined;
-  registerMetaTools(server, registry, {
-    baseUrl,
-    ...(activity ? { activity } : {}),
-    ...(opts.defaultToolTimeoutMs !== undefined
-      ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
-      : {}),
-    ...(opts.probeTimeoutMs !== undefined
-      ? { probeTimeoutMs: opts.probeTimeoutMs }
-      : {}),
-    ...(opts.discoveryConcurrency !== undefined
-      ? { discoveryConcurrency: opts.discoveryConcurrency }
-      : {}),
-    requestSignal: request.signal,
-    ...(runtimeContext
-      ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
-      : {}),
-  });
-  if (opts.executor) {
-    registerExecuteTool(server, registry, {
+  const createServer = (): McpServer => {
+    const server = new McpServer(opts.serverInfo, {
+      instructions: CONNECTA_INSTRUCTIONS,
+    });
+    const activity: ActivityRequestContext | undefined = opts.activity
+      ? {
+          sink: opts.activity,
+          actor,
+          requestId: crypto.randomUUID(),
+          serverInfo: opts.serverInfo,
+          ...(opts.activityDeploymentId
+            ? { deploymentId: opts.activityDeploymentId }
+            : {}),
+          ...(runtimeContext?.waitUntil
+            ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
+            : {}),
+          logger: opts.logger,
+        }
+      : undefined;
+    registerMetaTools(server, registry, {
       baseUrl,
-      executor: opts.executor,
-      logger: opts.logger,
       ...(activity ? { activity } : {}),
-      requestSignal: request.signal,
+      ...(opts.defaultToolTimeoutMs !== undefined
+        ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
+        : {}),
+      ...(opts.probeTimeoutMs !== undefined
+        ? { probeTimeoutMs: opts.probeTimeoutMs }
+        : {}),
       ...(opts.discoveryConcurrency !== undefined
         ? { discoveryConcurrency: opts.discoveryConcurrency }
         : {}),
+      requestSignal: request.signal,
+      ...(runtimeContext
+        ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
+        : {}),
     });
+    if (opts.executor) {
+      registerExecuteTool(server, registry, {
+        baseUrl,
+        executor: opts.executor,
+        logger: opts.logger,
+        ...(activity ? { activity } : {}),
+        requestSignal: request.signal,
+        ...(opts.discoveryConcurrency !== undefined
+          ? { discoveryConcurrency: opts.discoveryConcurrency }
+          : {}),
+      });
+    }
+    return server;
+  };
+
+  // The v2 entry's built-in legacy fallback streams 2025 results as SSE.
+  // Connecta's established wire contract is JSON, so retain the documented
+  // user-land legacy branch with the same transport setting while the modern
+  // branch uses the fetch-native handler.
+  if (!(await isLegacyRequest(request))) {
+    return createMcpHandler(createServer, {
+      legacy: "reject",
+      onerror: (error) => opts.logger.error("[connecta] MCP handler error", error),
+    }).fetch(request);
   }
+
+  // Fresh server + transport per legacy request, stateless and JSON-shaped.
+  const server = createServer();
   const transport = new WebStandardStreamableHTTPServerTransport({
     enableJsonResponse: true,
   });

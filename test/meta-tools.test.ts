@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
 import {
   CredentialVault,
@@ -3091,8 +3091,9 @@ function overTheWire(result: unknown): {
   content: { type: string; text?: string }[];
 } {
   const serialized = JSON.parse(JSON.stringify(result));
-  const parsed = CallToolResultSchema.safeParse(serialized);
-  expect(parsed.success, JSON.stringify(serialized)).toBe(true);
+  const parsed =
+    specTypeSchemas.CallToolResult["~standard"].validate(serialized);
+  expect(parsed.issues, JSON.stringify(serialized)).toBeUndefined();
   return serialized;
 }
 

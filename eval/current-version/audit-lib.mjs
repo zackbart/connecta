@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
-
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
+import {
+  Client,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
 import { getEncoding } from "js-tiktoken";
 
 export function serialized(value) {

@@ -1,4 +1,4 @@
-import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Implementation } from "@modelcontextprotocol/server";
 import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity.js";
 import type { CredentialVault } from "../credentials.js";
 import type { DeferredWork } from "../connector-scope.js";
@@ -18,7 +18,7 @@ export interface ServerOptions {
   publicUrl?: string;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.
-  serverInfo: ConstructorParameters<typeof McpServer>[0];
+  serverInfo: Implementation;
   logger: Logger;
   activity?: ActivityStore;
   activityReadGate?: ActivityReadGate;
