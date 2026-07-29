@@ -90,6 +90,12 @@ interface SearchDocument {
   descriptionTokens: string[];
 }
 
+interface SearchIndex {
+  documents: SearchDocument[];
+  nameTokenDocuments: ReadonlyMap<string, readonly ToolDef[]>;
+  descriptionTokenDocuments: ReadonlyMap<string, readonly ToolDef[]>;
+}
+
 export type LexicalMatchMode = "all" | "partial";
 
 export interface RankedTool {
@@ -98,14 +104,29 @@ export interface RankedTool {
   order: number;
 }
 
-const searchDocuments = new WeakMap<ToolDef[], SearchDocument[]>();
+const searchIndexes = new WeakMap<ToolDef[], SearchIndex>();
 
-function documentsFor(tools: ToolDef[]): SearchDocument[] {
-  let docs = searchDocuments.get(tools);
-  if (!docs) {
-    docs = tools.map((tool) => {
+function indexFor(tools: ToolDef[]): SearchIndex {
+  let index = searchIndexes.get(tools);
+  if (!index) {
+    const nameTokenDocuments = new Map<string, ToolDef[]>();
+    const descriptionTokenDocuments = new Map<string, ToolDef[]>();
+    const addTokens = (
+      target: Map<string, ToolDef[]>,
+      tokens: string[],
+      tool: ToolDef,
+    ) => {
+      for (const token of new Set(tokens)) {
+        const documents = target.get(token) ?? [];
+        documents.push(tool);
+        target.set(token, documents);
+      }
+    };
+    const documents = tools.map((tool) => {
       const nameTokens = lexicalTokens(tool.name);
       const descriptionTokens = lexicalTokens(tool.description ?? "");
+      addTokens(nameTokenDocuments, nameTokens, tool);
+      addTokens(descriptionTokenDocuments, descriptionTokens, tool);
       return {
         tool,
         name: nameTokens.join(" "),
@@ -113,9 +134,18 @@ function documentsFor(tools: ToolDef[]): SearchDocument[] {
         descriptionTokens,
       };
     });
-    searchDocuments.set(tools, docs);
+    index = {
+      documents,
+      nameTokenDocuments,
+      descriptionTokenDocuments,
+    };
+    searchIndexes.set(tools, index);
   }
-  return docs;
+  return index;
+}
+
+function documentsFor(tools: ToolDef[]): SearchDocument[] {
+  return indexFor(tools).documents;
 }
 
 /**
@@ -124,30 +154,48 @@ function documentsFor(tools: ToolDef[]): SearchDocument[] {
  * without bringing back arbitrary substring matches (`list` must not match
  * `enlist`, and `record` must not match the noun `recording`).
  */
-function tokenMatches(token: string, term: string): boolean {
-  if (token === term) return true;
-  const variants = (base: string, candidate: string) =>
-    candidate === `${base}s` ||
-    candidate === `${base}es` ||
-    candidate === `${base}ed` ||
-    (base.endsWith("e") &&
-      candidate === `${base}d`) ||
-    (base.endsWith("y") &&
-      (candidate === `${base.slice(0, -1)}ies` ||
-        candidate === `${base.slice(0, -1)}ied`));
-  return variants(term, token) || variants(token, term);
+function inflectionVariants(base: string): string[] {
+  return [
+    `${base}s`,
+    `${base}es`,
+    `${base}ed`,
+    ...(base.endsWith("e") ? [`${base}d`] : []),
+    ...(base.endsWith("y")
+      ? [
+          `${base.slice(0, -1)}ies`,
+          `${base.slice(0, -1)}ied`,
+        ]
+      : []),
+  ];
 }
 
-function documentMatchesTerm(doc: SearchDocument, term: string): boolean {
-  return (
-    doc.nameTokens.some((token) => tokenMatches(token, term)) ||
-    doc.descriptionTokens.some((token) => tokenMatches(token, term))
-  );
+function matchingTokenCandidates(term: string): Set<string> {
+  const candidates = new Set([term, ...inflectionVariants(term)]);
+  const possibleBases = [
+    ...(term.endsWith("s") ? [term.slice(0, -1)] : []),
+    ...(term.endsWith("es") ? [term.slice(0, -2)] : []),
+    ...(term.endsWith("ed") ? [term.slice(0, -2)] : []),
+    ...(term.endsWith("d") ? [term.slice(0, -1)] : []),
+    ...(term.endsWith("ies")
+      ? [`${term.slice(0, -3)}y`]
+      : []),
+    ...(term.endsWith("ied")
+      ? [`${term.slice(0, -3)}y`]
+      : []),
+  ];
+  for (const base of possibleBases) {
+    if (base && inflectionVariants(base).includes(term)) {
+      candidates.add(base);
+    }
+  }
+  return candidates;
 }
 
 export interface LexicalCorpusStatistics {
   documentCount: number;
   documentFrequency: ReadonlyMap<string, number>;
+  nameMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
+  descriptionMatches: ReadonlyMap<string, ReadonlySet<ToolDef>>;
 }
 
 /**
@@ -168,25 +216,50 @@ export function lexicalCorpusStatistics(
         0,
       ),
       documentFrequency: new Map(),
+      nameMatches: new Map(),
+      descriptionMatches: new Map(),
     };
   }
-  const documentFrequency = new Map(terms.map((term) => [term, 0]));
-  let documentCount = 0;
-
-  for (const tools of toolSets) {
-    for (const doc of documentsFor(tools)) {
-      documentCount += 1;
-      for (const term of terms) {
-        if (documentMatchesTerm(doc, term)) {
-          documentFrequency.set(
-            term,
-            (documentFrequency.get(term) ?? 0) + 1,
-          );
+  const nameMatches = new Map<string, Set<ToolDef>>();
+  const descriptionMatches = new Map<string, Set<ToolDef>>();
+  for (const term of terms) {
+    const termNameMatches = new Set<ToolDef>();
+    const termDescriptionMatches = new Set<ToolDef>();
+    for (const tools of toolSets) {
+      const index = indexFor(tools);
+      for (const candidate of matchingTokenCandidates(term)) {
+        for (const tool of index.nameTokenDocuments.get(candidate) ?? []) {
+          termNameMatches.add(tool);
+        }
+        for (
+          const tool of
+          index.descriptionTokenDocuments.get(candidate) ?? []
+        ) {
+          termDescriptionMatches.add(tool);
         }
       }
     }
+    nameMatches.set(term, termNameMatches);
+    descriptionMatches.set(term, termDescriptionMatches);
   }
-  return { documentCount, documentFrequency };
+  const documentFrequency = new Map(
+    terms.map((term) => [
+      term,
+      new Set([
+        ...(nameMatches.get(term) ?? []),
+        ...(descriptionMatches.get(term) ?? []),
+      ]).size,
+    ]),
+  );
+  return {
+    documentCount: toolSets.reduce(
+      (total, tools) => total + tools.length,
+      0,
+    ),
+    documentFrequency,
+    nameMatches,
+    descriptionMatches,
+  };
 }
 
 function inverseDocumentFrequency(
@@ -210,7 +283,8 @@ function scoreDocument(
 ): number | null {
   if (!phrase) return 0;
   const matchedTerms = terms.filter((term) =>
-    documentMatchesTerm(doc, term),
+    statistics.nameMatches.get(term)?.has(doc.tool) ||
+    statistics.descriptionMatches.get(term)?.has(doc.tool),
   );
   if (mode === "all" && matchedTerms.length !== terms.length) return null;
   if (matchedTerms.length === 0) return null;
@@ -237,13 +311,11 @@ function scoreDocument(
   for (const term of matchedTerms) {
     const weight = inverseDocumentFrequency(term, statistics);
     if (doc.nameTokens.includes(term)) score += 12 * weight;
-    else if (doc.nameTokens.some((token) => tokenMatches(token, term))) {
+    else if (statistics.nameMatches.get(term)?.has(doc.tool)) {
       score += 8 * weight;
     }
     if (doc.descriptionTokens.includes(term)) score += 3 * weight;
-    else if (
-      doc.descriptionTokens.some((token) => tokenMatches(token, term))
-    ) {
+    else if (statistics.descriptionMatches.get(term)?.has(doc.tool)) {
       score += 1.5 * weight;
     }
   }
