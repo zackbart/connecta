@@ -1,16 +1,16 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes many integrations behind meta-tools. When an address is unknown, start with search_tools and includeSchemas="compact"; use describe_tools only when that schema is insufficient. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent explicitly read-only calls, and execute_code (when available) only for dependent read-only steps, loops, joins, or reducing large results. Unannotated, write-capable, and destructive tools must use call_destructive_tool individually. Use authorize_connector only after auth_required and get_result only for truncated results. Fetch skills({ name: "usage" }) when this routing workflow is unfamiliar.';
+  'Connecta exposes integrations behind meta-tools. Unknown address: use search_tools with 2–4 distinctive action/object terms, no initial limit, and includeSchemas="compact"; describe_tools only if that shape is ambiguous or exact JSON constraints are needed. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent read-only calls, and execute_code (when available) only for dependencies, loops, joins, or substantial reduction. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools. authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
 
 export const USAGE_SKILL = `# Connecta usage
 
 ## Choose the smallest execution tool
 
-Use exact addresses returned by discovery; never invent one.
+Use exact addresses returned by discovery; never invent one. Search with 2–4 distinctive action/object terms rather than the full request, and omit \`limit\` initially so the default page stays small.
 
-- Unknown address: \`search_tools({ query, includeSchemas: "compact" })\`.
-- Schema still unclear: \`describe_tools({ addresses: [...] })\`.
+- Unknown address: \`search_tools({ query, includeSchemas: "compact" })\`; every match then includes its input shape plus any declared output shape and annotations.
+- Compact shape still ambiguous: \`describe_tools({ addresses: [...] })\`; use \`format: "json"\` only for exact constraints.
 - One explicitly read-only call: \`call_tool\`.
 - Two to ten independent explicitly read-only calls: \`batch_call\`.
 - Dependent read-only calls, loops, joins, branching, or large-result reduction: \`execute_code\` when available.
@@ -18,15 +18,15 @@ Use exact addresses returned by discovery; never invent one.
 - Truncated result: retry with \`fields\` when possible; otherwise page it with \`get_result\`.
 - \`auth_required\`: use \`authorize_connector\`, give its recovery handoff to the operator, then retry the original call.
 
-Use \`list_connectors({ probe: false })\` for a fast inventory based on recent call observations and local credential-shape drift. Use \`probe: true\` only when diagnosing live health or authorization.
+Use \`list_connectors({ probe: false })\` for a fast observed-health inventory; use \`probe: true\` only to diagnose live health or authorization.
 
 ## Code mode
 
-Use code mode when calls depend on earlier results, when joining connectors, or when sandbox filtering or aggregation will substantially shrink the response. Use \`Promise.all\` or \`connecta.batch\` for independent calls inside one execution.
+Use code mode for dependent calls, connector joins, or substantial sandbox reduction. Parallelize independent calls with \`Promise.all\` or \`connecta.batch\`.
 
 Connector namespace calls and \`connecta.call\` use the same read-only gate and throw on downstream errors. Catch only failures the workflow can handle; let authorization failures return to the agent for recovery.
 
-Do not use code mode for one call, independent calls already handled by \`batch_call\`, or any tool lacking \`readOnlyHint: true\`. Host calls and time are bounded. Return only the reduced value the agent needs.
+Skip code mode for one call, calls suited to \`batch_call\`, or tools lacking \`readOnlyHint: true\`. Return only the needed reduction.
 `;
 
 /**

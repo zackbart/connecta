@@ -6,6 +6,16 @@ schemas, the call tools enforce safety annotations, and `get_result` pages
 bounded results. `execute_code` is registered only when the deployment
 configures an executor.
 
+## Discovery context
+
+Start an unknown-address lookup with two to four distinctive action/object
+terms, not the full request, and omit `limit` so the default eight-result page
+stays small. `includeSchemas: "compact"` adds each match's input and any
+declared output shape; matches also carry declared behavior annotations. When
+that shape is sufficient, call the returned address directly. Reserve
+`describe_tools` for a search without schemas, an ambiguous compact shape, or
+exact constraints that require `format: "json"`.
+
 ## Result representation
 
 For object results, `structuredContent` is the canonical full-fidelity value.
