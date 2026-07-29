@@ -2,19 +2,46 @@
 
 All notable changes to this package are documented here.
 
-## 0.9.0 — Unreleased
+## 0.8.1 — 2026-07-29
 
-0.9.0 makes deployment boundaries the audience-scoping model. Toolkits are
-removed: one deployment now exposes one deliberate connector surface to every
-identity it admits, and serving another audience means deploying another
-instance. It also removes proactive credential liveness probing: credentials
-now fail at use, while cheap local shape-drift checks and the operator's
-explicit Test action remain. Deployments that configured neither retired
-feature need no change. A deployment still passing either retired config
-refuses to start and points to the relevant issue and `ethos.md`.
+0.8.1 hardens agent routing, response efficiency, and credential recovery while
+making deployment boundaries the audience-scoping model. It removes toolkits
+and proactive credential liveness probing: deployments still using either
+retired configuration must migrate, and stale configuration fails at startup
+instead of silently widening access. Deployments that use neither retired
+feature need no configuration or storage migration; orphaned credential-health
+records and old toolkit columns can remain unused.
+
+Against the pre-0.8.1 release-audit baseline, all 21 task scenarios still pass,
+discovery remains at 89.7% top-1 accuracy and 100% positive/default-page recall,
+and discovery mean precision improves from 46.4% to 73.5%. The same 55 round
+trips take 225.6 ms versus 228.4 ms of summed local-call latency (effectively
+flat). Definition tokens move from 2,164 to 2,174 and request tokens from 1,144
+to 1,145, while response tokens fall from 68,765 to 16,343 (-76.2%) and the
+complete measured surface falls from 72,073 to 19,662 tokens (-72.7%).
+
+### Added
+
+- **A current-version release audit and independently authored discovery
+  holdout** (#189). It exercises every meta-tool, destructive routing, OAuth
+  and static-credential recovery, result paging, client compatibility, and the
+  payload-free activity invariant on Node 20 and 22. Its evidence stays under
+  `eval/` and is excluded from the published package.
 
 ### Changed
 
+- **Lexical discovery ignores conservative conversational framing and defaults
+  to eight results instead of 25** (#190). Action terms such as `get`, `list`,
+  `search`, `find`, and `create` remain significant; cleanup that removes every
+  term falls back to the original query. Explicit `limit` still supports up to
+  100 results, and `total`, `hasMore`, and `nextOffset` preserve complete
+  pagination. On the holdout, mean results fall from 14.0 to 2.853 and negative
+  false positives from 80% to 20%, without losing positive or default-page
+  recall.
+- **`execute_code` is advertised only with a configured live executor** (#193).
+  The existing capability boundary is now explicit in instructions,
+  documentation, and regression coverage: deployments without code mode expose
+  the nine base meta-tools; deployments with it expose ten.
 - **The `usage` guide is slimmer and fetched on demand** (#194). The
   `skills` meta-tool and per-connector guide delivery remain unchanged, while
   the generic guide drops redundant examples and keeps only routing, probe,
@@ -55,6 +82,12 @@ refuses to start and points to the relevant issue and `ethos.md`.
   live-probe a connector whose stored credential cannot be consumed anyway.
   Existing `credhealth:*` KV records are harmless orphaned data: they are
   never read or rewritten, and no cleanup migration runs.
+
+### Fixed
+
+- **Missing credential-vault configuration now fails at use with a typed,
+  actionable recovery envelope** (#192) instead of preventing the deployment
+  from starting before an agent or operator can diagnose it.
 
 ## 0.8.0 — 2026-07-28
 
