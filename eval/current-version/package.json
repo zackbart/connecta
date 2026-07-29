@@ -4,6 +4,10 @@
   "type": "module",
   "scripts": {
     "audit": "node run-audit.mjs",
+    "perf:logic": "node logic-benchmark.mjs",
+    "perf:agent": "node agent-benchmark.mjs",
+    "perf:report": "node performance-report.mjs",
+    "perf": "npm run audit -- --output results/current-performance-audit.json --report results/current-performance-audit.md && npm run perf:logic && npm run perf:agent && npm run perf:report",
     "check": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {

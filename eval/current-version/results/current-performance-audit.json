@@ -1,0 +1,1520 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-29T15:31:17.828Z",
+  "source": {
+    "commit": "e50a165acc8caa9ef08be3b9ccdfa8af235c68fe",
+    "nodeVersion": "26.5.0",
+    "platform": "darwin-arm64",
+    "tokenizer": "o200k_base",
+    "executorMode": "enabled",
+    "corpusSha256": "25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a"
+  },
+  "connection": {
+    "latencyMs": 34.8,
+    "toolsListBytes": 9482,
+    "toolsListTokens": 2174,
+    "toolCount": 10,
+    "tools": [
+      {
+        "name": "skills",
+        "definitionBytes": 487,
+        "definitionTokens": 114
+      },
+      {
+        "name": "list_connectors",
+        "definitionBytes": 476,
+        "definitionTokens": 106
+      },
+      {
+        "name": "search_tools",
+        "definitionBytes": 807,
+        "definitionTokens": 186
+      },
+      {
+        "name": "describe_tools",
+        "definitionBytes": 646,
+        "definitionTokens": 141
+      },
+      {
+        "name": "call_tool",
+        "definitionBytes": 1149,
+        "definitionTokens": 263
+      },
+      {
+        "name": "call_destructive_tool",
+        "definitionBytes": 974,
+        "definitionTokens": 221
+      },
+      {
+        "name": "authorize_connector",
+        "definitionBytes": 538,
+        "definitionTokens": 113
+      },
+      {
+        "name": "get_result",
+        "definitionBytes": 884,
+        "definitionTokens": 219
+      },
+      {
+        "name": "batch_call",
+        "definitionBytes": 1466,
+        "definitionTokens": 341
+      },
+      {
+        "name": "execute_code",
+        "definitionBytes": 2034,
+        "definitionTokens": 466
+      }
+    ]
+  },
+  "totals": {
+    "definitionTokens": 2174,
+    "requestTokens": 1145,
+    "responseTokens": 16420,
+    "measuredSurfaceTokens": 19739,
+    "requestBytes": 4944,
+    "responseBytes": 71043,
+    "roundTrips": 55,
+    "summedLatencyMs": 217.7
+  },
+  "compatibility": {
+    "client": "@modelcontextprotocol/sdk StreamableHTTPClientTransport",
+    "protocolMode": "stateless streamable HTTP",
+    "resultCount": 55,
+    "contentResults": 55,
+    "structuredContentResults": 52,
+    "executeCodeAdvertised": true
+  },
+  "invariants": {
+    "activityPayloadFree": true,
+    "activityKeys": [
+      "actor",
+      "address",
+      "attempts",
+      "connectorId",
+      "deploymentId",
+      "durationMs",
+      "errorCode",
+      "id",
+      "occurredAt",
+      "outcome",
+      "requestId",
+      "schemaVersion",
+      "serverName",
+      "serverVersion",
+      "source",
+      "toolName"
+    ]
+  },
+  "qualification": {
+    "passed": true,
+    "checks": [
+      {
+        "name": "all behavioral scenarios pass",
+        "actual": 1,
+        "minimum": 1,
+        "passed": true
+      },
+      {
+        "name": "holdout top-1 accuracy does not regress",
+        "actual": 0.897,
+        "minimum": 0.897,
+        "passed": true
+      },
+      {
+        "name": "holdout positive recall stays complete",
+        "actual": 1,
+        "minimum": 1,
+        "passed": true
+      },
+      {
+        "name": "default-page recall stays complete",
+        "actual": 1,
+        "minimum": 1,
+        "passed": true
+      },
+      {
+        "name": "activity storage stays payload-free",
+        "actual": true,
+        "expected": true,
+        "passed": true
+      }
+    ]
+  },
+  "tasks": {
+    "summary": {
+      "caseCount": 21,
+      "passed": 21,
+      "failed": 0,
+      "taskSuccessRate": 1,
+      "roundTrips": 21,
+      "summedLatencyMs": 132.29999999999998
+    },
+    "cases": [
+      {
+        "name": "list guidance",
+        "tool": "skills",
+        "latencyMs": 5.3,
+        "requestBytes": 32,
+        "requestTokens": 9,
+        "responseBytes": 207,
+        "responseTokens": 55,
+        "contentTokens": 52,
+        "structuredContentTokens": 1,
+        "hasContent": true,
+        "hasStructuredContent": false,
+        "isError": false,
+        "passed": true,
+        "outcome": "guidance-listed"
+      },
+      {
+        "name": "fetch routing guidance",
+        "tool": "skills",
+        "latencyMs": 3.3,
+        "requestBytes": 46,
+        "requestTokens": 11,
+        "responseBytes": 1780,
+        "responseTokens": 392,
+        "contentTokens": 390,
+        "structuredContentTokens": 1,
+        "hasContent": true,
+        "hasStructuredContent": false,
+        "isError": false,
+        "passed": true,
+        "outcome": "guidance-fetched"
+      },
+      {
+        "name": "inventory configured connectors",
+        "tool": "list_connectors",
+        "latencyMs": 3.5,
+        "requestBytes": 54,
+        "requestTokens": 13,
+        "responseBytes": 5008,
+        "responseTokens": 1415,
+        "contentTokens": 717,
+        "structuredContentTokens": 694,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "inventory-returned"
+      },
+      {
+        "name": "focused discovery",
+        "tool": "search_tools",
+        "latencyMs": 3.6,
+        "requestBytes": 121,
+        "requestTokens": 24,
+        "responseBytes": 1124,
+        "responseTokens": 243,
+        "contentTokens": 127,
+        "structuredContentTokens": 112,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "tool-discovered",
+        "returned": 1
+      },
+      {
+        "name": "inspect complete schema",
+        "tool": "describe_tools",
+        "latencyMs": 3.1,
+        "requestBytes": 90,
+        "requestTokens": 18,
+        "responseBytes": 920,
+        "responseTokens": 193,
+        "contentTokens": 101,
+        "structuredContentTokens": 87,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "schema-described"
+      },
+      {
+        "name": "single read-only call",
+        "tool": "call_tool",
+        "latencyMs": 4.2,
+        "requestBytes": 125,
+        "requestTokens": 30,
+        "responseBytes": 464,
+        "responseTokens": 146,
+        "contentTokens": 76,
+        "structuredContentTokens": 65,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "read-succeeded"
+      },
+      {
+        "name": "read-only route refuses destructive tool",
+        "tool": "call_tool",
+        "latencyMs": 3.2,
+        "requestBytes": 116,
+        "requestTokens": 25,
+        "responseBytes": 638,
+        "responseTokens": 141,
+        "contentTokens": 76,
+        "structuredContentTokens": 61,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "destructive-refused",
+        "errorCode": "destructive_tool_requires_approval"
+      },
+      {
+        "name": "approved destructive call",
+        "tool": "call_destructive_tool",
+        "latencyMs": 2.7,
+        "requestBytes": 147,
+        "requestTokens": 32,
+        "responseBytes": 416,
+        "responseTokens": 130,
+        "contentTokens": 68,
+        "structuredContentTokens": 57,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "destructive-approved"
+      },
+      {
+        "name": "create truncated result",
+        "tool": "call_tool",
+        "latencyMs": 2.6,
+        "requestBytes": 137,
+        "requestTokens": 31,
+        "responseBytes": 740,
+        "responseTokens": 246,
+        "contentTokens": 126,
+        "structuredContentTokens": 115,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "result-truncated",
+        "resultId": "02fae77b-6860-40f3-8936-3ceb0c0fcbdb",
+        "totalBytes": 2026
+      },
+      {
+        "name": "page truncated result",
+        "tool": "get_result",
+        "latencyMs": 2.6,
+        "requestBytes": 105,
+        "requestTokens": 44,
+        "responseBytes": 834,
+        "responseTokens": 258,
+        "contentTokens": 140,
+        "structuredContentTokens": 113,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "result-paged",
+        "offset": 0,
+        "nextOffset": 299,
+        "totalBytes": 2026
+      },
+      {
+        "name": "batch independent reads",
+        "tool": "batch_call",
+        "latencyMs": 2.9,
+        "requestBytes": 241,
+        "requestTokens": 60,
+        "responseBytes": 1028,
+        "responseTokens": 307,
+        "contentTokens": 159,
+        "structuredContentTokens": 144,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "batch-succeeded",
+        "resultCount": 2
+      },
+      {
+        "name": "reduce records in code mode",
+        "tool": "execute_code",
+        "latencyMs": 69.3,
+        "requestBytes": 266,
+        "requestTokens": 73,
+        "responseBytes": 294,
+        "responseTokens": 90,
+        "contentTokens": 49,
+        "structuredContentTokens": 37,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "code-reduction-succeeded"
+      },
+      {
+        "name": "OAuth call requires recovery",
+        "tool": "call_tool",
+        "latencyMs": 3.3,
+        "requestBytes": 102,
+        "requestTokens": 27,
+        "responseBytes": 1061,
+        "responseTokens": 238,
+        "contentTokens": 122,
+        "structuredContentTokens": 107,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": true,
+        "passed": true,
+        "outcome": "oauth-auth-required",
+        "errorCode": "auth_required"
+      },
+      {
+        "name": "OAuth recovery starts",
+        "tool": "authorize_connector",
+        "latencyMs": 2.8,
+        "requestBytes": 76,
+        "requestTokens": 15,
+        "responseBytes": 1048,
+        "responseTokens": 226,
+        "contentTokens": 117,
+        "structuredContentTokens": 105,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "oauth-operator-handoff",
+        "hasAuthorizationUrl": true
+      },
+      {
+        "name": "OAuth retry succeeds",
+        "tool": "call_tool",
+        "latencyMs": 2.7,
+        "requestBytes": 102,
+        "requestTokens": 27,
+        "responseBytes": 250,
+        "responseTokens": 71,
+        "contentTokens": 39,
+        "structuredContentTokens": 28,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "oauth-recovered",
+        "recovery": "success"
+      },
+      {
+        "name": "OAuth unavailable recovery is explicit",
+        "tool": "authorize_connector",
+        "latencyMs": 1.3,
+        "requestBytes": 76,
+        "requestTokens": 14,
+        "responseBytes": 164,
+        "responseTokens": 35,
+        "contentTokens": 27,
+        "structuredContentTokens": 1,
+        "hasContent": true,
+        "hasStructuredContent": false,
+        "isError": true,
+        "passed": true,
+        "outcome": "oauth-recovery-unavailable",
+        "recovery": "unavailable",
+        "messagePreview": "Connector \"oauth-unavailable\": authorization required but no URL is available — retry authorize_connector."
+      },
+      {
+        "name": "static credential call requires recovery",
+        "tool": "call_tool",
+        "latencyMs": 5.8,
+        "requestBytes": 103,
+        "requestTokens": 27,
+        "responseBytes": 1127,
+        "responseTokens": 248,
+        "contentTokens": 127,
+        "structuredContentTokens": 112,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": true,
+        "passed": true,
+        "outcome": "static-auth-required",
+        "errorCode": "auth_required"
+      },
+      {
+        "name": "static recovery returns an operator handoff",
+        "tool": "authorize_connector",
+        "latencyMs": 2.5,
+        "requestBytes": 77,
+        "requestTokens": 15,
+        "responseBytes": 980,
+        "responseTokens": 211,
+        "contentTokens": 109,
+        "structuredContentTokens": 98,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "static-operator-handoff",
+        "recovery": "operator_config",
+        "hasOperatorUrl": true
+      },
+      {
+        "name": "static credential retry succeeds after operator update",
+        "tool": "call_tool",
+        "latencyMs": 2.5,
+        "requestBytes": 103,
+        "requestTokens": 27,
+        "responseBytes": 252,
+        "responseTokens": 71,
+        "contentTokens": 39,
+        "structuredContentTokens": 28,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "static-recovered",
+        "recovery": "success"
+      },
+      {
+        "name": "static unavailable recovery is explicit",
+        "tool": "authorize_connector",
+        "latencyMs": 2.5,
+        "requestBytes": 77,
+        "requestTokens": 14,
+        "responseBytes": 566,
+        "responseTokens": 102,
+        "contentTokens": 55,
+        "structuredContentTokens": 43,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "static-recovery-unavailable",
+        "recovery": "unavailable",
+        "messagePreview": "{\"connector\":\"static-unavailable\",\"recovery\":\"unavailable\",\"message\":\"Connector \\\"static-unavailable\\\" declares neither downstream OAuth nor an operator-managed"
+      },
+      {
+        "name": "activity remains payload-free",
+        "tool": "call_tool",
+        "latencyMs": 2.6,
+        "requestBytes": 106,
+        "requestTokens": 23,
+        "responseBytes": 672,
+        "responseTokens": 170,
+        "contentTokens": 90,
+        "structuredContentTokens": 76,
+        "hasContent": true,
+        "hasStructuredContent": true,
+        "isError": false,
+        "passed": true,
+        "outcome": "activity-payload-free",
+        "eventCount": 11,
+        "activityKeys": [
+          "actor",
+          "address",
+          "attempts",
+          "connectorId",
+          "deploymentId",
+          "durationMs",
+          "errorCode",
+          "id",
+          "occurredAt",
+          "outcome",
+          "requestId",
+          "schemaVersion",
+          "serverName",
+          "serverVersion",
+          "source",
+          "toolName"
+        ],
+        "forbiddenPresent": []
+      }
+    ]
+  },
+  "discovery": {
+    "corpus": {
+      "schemaVersion": 1,
+      "name": "Connecta lexical discovery holdout",
+      "authorship": {
+        "createdFor": "https://github.com/zackbart/connecta/issues/189",
+        "independence": "Authored from Connecta's public discovery contract before inspecting the closed #188 research corpus.",
+        "policy": "This corpus is release qualification evidence. Do not tune ranking rules, stopwords, aliases, or thresholds against its cases."
+      },
+      "connectorCount": 8,
+      "toolCount": 48,
+      "queryCount": 34
+    },
+    "metrics": {
+      "top1Accuracy": 0.897,
+      "positiveRecall": 1,
+      "recallAtDefaultPage": 1,
+      "meanPrecision": 0.735,
+      "falsePositiveRate": 0.2,
+      "meanResultCount": 2.853,
+      "meanResponseTokens": 336.2,
+      "totalResponseTokens": 11432,
+      "roundTrips": 34,
+      "summedLatencyMs": 85.4
+    },
+    "categories": {
+      "direct": {
+        "queries": 8,
+        "top1Accuracy": 1,
+        "positiveRecall": 1,
+        "meanPrecision": 1,
+        "falsePositiveRate": null,
+        "meanResultCount": 1,
+        "meanResponseTokens": 168,
+        "meanLatencyMs": 2.5
+      },
+      "conversational": {
+        "queries": 8,
+        "top1Accuracy": 0.75,
+        "positiveRecall": 1,
+        "meanPrecision": 0.588,
+        "falsePositiveRate": null,
+        "meanResultCount": 2.625,
+        "meanResponseTokens": 303,
+        "meanLatencyMs": 2.5
+      },
+      "multi-intent": {
+        "queries": 4,
+        "top1Accuracy": 0.75,
+        "positiveRecall": 1,
+        "meanPrecision": 0.259,
+        "falsePositiveRate": null,
+        "meanResultCount": 7.75,
+        "meanResponseTokens": 783.5,
+        "meanLatencyMs": 2.6
+      },
+      "short-function-word": {
+        "queries": 4,
+        "top1Accuracy": 1,
+        "positiveRecall": 1,
+        "meanPrecision": 0.567,
+        "falsePositiveRate": null,
+        "meanResultCount": 4.25,
+        "meanResponseTokens": 466,
+        "meanLatencyMs": 2.6
+      },
+      "empty-after-cleanup": {
+        "queries": 1,
+        "top1Accuracy": null,
+        "positiveRecall": null,
+        "meanPrecision": 0,
+        "falsePositiveRate": 1,
+        "meanResultCount": 8,
+        "meanResponseTokens": 967,
+        "meanLatencyMs": 2.6
+      },
+      "negative": {
+        "queries": 4,
+        "top1Accuracy": null,
+        "positiveRecall": null,
+        "meanPrecision": 1,
+        "falsePositiveRate": 0,
+        "meanResultCount": 0,
+        "meanResponseTokens": 59,
+        "meanLatencyMs": 2.5
+      },
+      "connector-filtered": {
+        "queries": 3,
+        "top1Accuracy": 1,
+        "positiveRecall": 1,
+        "meanPrecision": 1,
+        "falsePositiveRate": null,
+        "meanResultCount": 1.333,
+        "meanResponseTokens": 184.7,
+        "meanLatencyMs": 2.1
+      },
+      "paginated": {
+        "queries": 2,
+        "top1Accuracy": 1,
+        "positiveRecall": 1,
+        "meanPrecision": 1,
+        "falsePositiveRate": null,
+        "meanResultCount": 4,
+        "meanResponseTokens": 454.5,
+        "meanLatencyMs": 2.6
+      }
+    },
+    "cases": [
+      {
+        "id": "direct-list-issues",
+        "category": "direct",
+        "query": "list issues",
+        "relevant": [
+          "projects.list_issues"
+        ],
+        "pageAddresses": [
+          "projects.list_issues"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 175,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "direct-search-messages",
+        "category": "direct",
+        "query": "search messages",
+        "relevant": [
+          "messages.search_messages"
+        ],
+        "pageAddresses": [
+          "messages.search_messages"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 165,
+        "latencyMs": 2.4,
+        "passed": true
+      },
+      {
+        "id": "direct-download-file",
+        "category": "direct",
+        "query": "download file",
+        "relevant": [
+          "files.download_file"
+        ],
+        "pageAddresses": [
+          "files.download_file"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 163,
+        "latencyMs": 2.4,
+        "passed": true
+      },
+      {
+        "id": "direct-available-times",
+        "category": "direct",
+        "query": "available times",
+        "relevant": [
+          "calendar.find_available_times"
+        ],
+        "pageAddresses": [
+          "calendar.find_available_times"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 173,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "direct-contact-search",
+        "category": "direct",
+        "query": "search contacts",
+        "relevant": [
+          "customers.search_contacts"
+        ],
+        "pageAddresses": [
+          "customers.search_contacts"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 159,
+        "latencyMs": 2.7,
+        "passed": true
+      },
+      {
+        "id": "direct-query-database",
+        "category": "direct",
+        "query": "query database",
+        "relevant": [
+          "documents.query_database"
+        ],
+        "pageAddresses": [
+          "documents.query_database"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 163,
+        "latencyMs": 2.4,
+        "passed": true
+      },
+      {
+        "id": "direct-failed-jobs",
+        "category": "direct",
+        "query": "rerun failed jobs",
+        "relevant": [
+          "builds.rerun_failed_jobs"
+        ],
+        "pageAddresses": [
+          "builds.rerun_failed_jobs"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 185,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "direct-account-balance",
+        "category": "direct",
+        "query": "account balance",
+        "relevant": [
+          "finance.get_balance"
+        ],
+        "pageAddresses": [
+          "finance.get_balance"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 161,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-open-issues",
+        "category": "conversational",
+        "query": "Can you show me the open issues in this project?",
+        "relevant": [
+          "projects.list_issues"
+        ],
+        "pageAddresses": [
+          "projects.list_issues",
+          "projects.create_issue"
+        ],
+        "total": 2,
+        "returned": 2,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.5,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 257,
+        "latencyMs": 2.1,
+        "passed": true
+      },
+      {
+        "id": "conversation-message-channel",
+        "category": "conversational",
+        "query": "I need to send a message to a channel",
+        "relevant": [
+          "messages.send_message"
+        ],
+        "pageAddresses": [
+          "messages.send_message",
+          "messages.search_messages",
+          "messages.list_channels",
+          "messages.get_thread",
+          "messages.add_reaction",
+          "messages.list_members"
+        ],
+        "total": 6,
+        "returned": 6,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.167,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 551,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-file-folder",
+        "category": "conversational",
+        "query": "Please upload a file into this folder",
+        "relevant": [
+          "files.upload_file"
+        ],
+        "pageAddresses": [
+          "files.upload_file"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 163,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-meeting",
+        "category": "conversational",
+        "query": "Find a free time for everyone to meet",
+        "relevant": [
+          "calendar.find_available_times"
+        ],
+        "pageAddresses": [
+          "calendar.find_available_times",
+          "calendar.create_event"
+        ],
+        "total": 2,
+        "returned": 2,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.5,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 257,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-sales-pipeline",
+        "category": "conversational",
+        "query": "What deals are currently in the sales pipeline?",
+        "relevant": [
+          "customers.list_deals"
+        ],
+        "pageAddresses": [
+          "customers.list_deals"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 176,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-ci-status",
+        "category": "conversational",
+        "query": "Show me whether the latest workflow run passed",
+        "relevant": [
+          "builds.get_workflow_run"
+        ],
+        "pageAddresses": [
+          "builds.list_workflow_runs",
+          "builds.get_workflow_run",
+          "builds.rerun_failed_jobs"
+        ],
+        "total": 3,
+        "returned": 3,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.333,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 366,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "conversation-customer-invoice",
+        "category": "conversational",
+        "query": "I want to create an invoice for a customer",
+        "relevant": [
+          "finance.create_invoice"
+        ],
+        "pageAddresses": [
+          "finance.create_invoice"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 159,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "conversation-page-content",
+        "category": "conversational",
+        "query": "Find the page that mentions our launch plan",
+        "relevant": [
+          "documents.search_content"
+        ],
+        "pageAddresses": [
+          "calendar.find_available_times",
+          "documents.get_page",
+          "documents.create_page",
+          "documents.update_page",
+          "documents.search_content"
+        ],
+        "total": 5,
+        "returned": 5,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.2,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 495,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "multi-find-download",
+        "category": "multi-intent",
+        "query": "find and download a file",
+        "relevant": [
+          "files.search_files",
+          "files.download_file"
+        ],
+        "pageAddresses": [
+          "files.download_file",
+          "files.search_files",
+          "files.upload_file",
+          "files.share_file",
+          "files.move_file",
+          "calendar.find_available_times",
+          "builds.compare_commits"
+        ],
+        "total": 7,
+        "returned": 7,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.286,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 704,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "multi-issue-comment",
+        "category": "multi-intent",
+        "query": "get an issue and add a comment",
+        "relevant": [
+          "projects.get_issue",
+          "projects.add_issue_comment"
+        ],
+        "pageAddresses": [
+          "projects.add_issue_comment",
+          "projects.get_issue",
+          "projects.list_issues",
+          "projects.create_issue",
+          "projects.get_pull_request",
+          "messages.get_thread",
+          "messages.add_reaction",
+          "calendar.get_event"
+        ],
+        "total": 14,
+        "returned": 8,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.25,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 789,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "multi-calendar-update",
+        "category": "multi-intent",
+        "query": "list calendar events and update one",
+        "relevant": [
+          "calendar.list_events",
+          "calendar.update_event"
+        ],
+        "pageAddresses": [
+          "calendar.list_events",
+          "calendar.list_calendars",
+          "calendar.update_event",
+          "calendar.get_event",
+          "projects.list_issues",
+          "projects.list_pull_requests",
+          "messages.list_channels",
+          "messages.list_members"
+        ],
+        "total": 23,
+        "returned": 8,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.25,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 787,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "multi-build-diagnosis",
+        "category": "multi-intent",
+        "query": "get the failed workflow run and its job logs",
+        "relevant": [
+          "builds.get_workflow_run",
+          "builds.get_job_logs"
+        ],
+        "pageAddresses": [
+          "builds.rerun_failed_jobs",
+          "builds.get_workflow_run",
+          "builds.get_job_logs",
+          "builds.list_workflow_runs",
+          "projects.get_issue",
+          "projects.get_pull_request",
+          "messages.get_thread",
+          "calendar.get_event"
+        ],
+        "total": 14,
+        "returned": 8,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.25,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 854,
+        "latencyMs": 2.7,
+        "passed": true
+      },
+      {
+        "id": "short-find-file",
+        "category": "short-function-word",
+        "query": "find a file in storage",
+        "relevant": [
+          "files.search_files"
+        ],
+        "pageAddresses": [
+          "files.search_files",
+          "files.upload_file",
+          "files.download_file",
+          "files.share_file",
+          "files.move_file",
+          "calendar.find_available_times",
+          "builds.compare_commits"
+        ],
+        "total": 7,
+        "returned": 7,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.143,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 704,
+        "latencyMs": 2.8,
+        "passed": true
+      },
+      {
+        "id": "short-send-channel",
+        "category": "short-function-word",
+        "query": "send a message to a channel",
+        "relevant": [
+          "messages.send_message"
+        ],
+        "pageAddresses": [
+          "messages.send_message"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 165,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "short-list-prs",
+        "category": "short-function-word",
+        "query": "list the pull requests in a project",
+        "relevant": [
+          "projects.list_pull_requests"
+        ],
+        "pageAddresses": [
+          "projects.list_pull_requests",
+          "projects.list_issues",
+          "projects.get_pull_request",
+          "messages.list_channels",
+          "messages.list_members",
+          "files.list_folder",
+          "calendar.list_events",
+          "calendar.list_calendars"
+        ],
+        "total": 16,
+        "returned": 8,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.125,
+        "falsePositive": false,
+        "matchMode": "partial",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 830,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "short-get-event",
+        "category": "short-function-word",
+        "query": "get an event from the calendar",
+        "relevant": [
+          "calendar.get_event"
+        ],
+        "pageAddresses": [
+          "calendar.get_event"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 165,
+        "latencyMs": 2.4,
+        "passed": true
+      },
+      {
+        "id": "cleanup-only",
+        "category": "empty-after-cleanup",
+        "query": "a an and are as at be by for from in into is it of on or that the this to was with",
+        "relevant": [],
+        "pageAddresses": [
+          "documents.list_databases",
+          "documents.query_database",
+          "controlled.records",
+          "controlled.activity_snapshot",
+          "controlled.read_record",
+          "builds.list_workflow_runs",
+          "projects.list_issues",
+          "oauth-unavailable.whoami"
+        ],
+        "total": 45,
+        "returned": 8,
+        "top1": 0,
+        "recall": 0,
+        "recallAtDefaultPage": 0,
+        "precision": 0,
+        "falsePositive": true,
+        "matchMode": "partial",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 967,
+        "latencyMs": 2.6,
+        "passed": false
+      },
+      {
+        "id": "negative-flight",
+        "category": "negative",
+        "query": "book an airline flight",
+        "relevant": [],
+        "pageAddresses": [],
+        "total": 0,
+        "returned": 0,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 59,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "negative-food",
+        "category": "negative",
+        "query": "order a pepperoni pizza",
+        "relevant": [],
+        "pageAddresses": [],
+        "total": 0,
+        "returned": 0,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 59,
+        "latencyMs": 2.6,
+        "passed": true
+      },
+      {
+        "id": "negative-weather",
+        "category": "negative",
+        "query": "will it rain tomorrow",
+        "relevant": [],
+        "pageAddresses": [],
+        "total": 0,
+        "returned": 0,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 59,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "negative-audio",
+        "category": "negative",
+        "query": "transcribe this audio recording",
+        "relevant": [],
+        "pageAddresses": [],
+        "total": 0,
+        "returned": 0,
+        "top1": 0,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 59,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "filtered-list-finance",
+        "category": "connector-filtered",
+        "query": "list",
+        "connector": "finance",
+        "relevant": [
+          "finance.list_transactions",
+          "finance.list_accounts"
+        ],
+        "pageAddresses": [
+          "finance.list_transactions",
+          "finance.list_accounts"
+        ],
+        "total": 2,
+        "returned": 2,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 228,
+        "latencyMs": 2.4,
+        "passed": true
+      },
+      {
+        "id": "filtered-search-documents",
+        "category": "connector-filtered",
+        "query": "search",
+        "connector": "documents",
+        "relevant": [
+          "documents.search_content"
+        ],
+        "pageAddresses": [
+          "documents.search_content"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 161,
+        "latencyMs": 1.5,
+        "passed": true
+      },
+      {
+        "id": "filtered-get-calendar",
+        "category": "connector-filtered",
+        "query": "get",
+        "connector": "calendar",
+        "relevant": [
+          "calendar.get_event"
+        ],
+        "pageAddresses": [
+          "calendar.get_event"
+        ],
+        "total": 1,
+        "returned": 1,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": false,
+        "nextOffset": null,
+        "responseTokens": 165,
+        "latencyMs": 2.5,
+        "passed": true
+      },
+      {
+        "id": "page-list-first",
+        "category": "paginated",
+        "query": "list",
+        "relevant": [
+          "projects.list_issues",
+          "projects.list_pull_requests",
+          "messages.list_channels",
+          "messages.list_members"
+        ],
+        "pageAddresses": [
+          "projects.list_issues",
+          "projects.list_pull_requests",
+          "messages.list_channels",
+          "messages.list_members"
+        ],
+        "total": 14,
+        "returned": 4,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": null,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": true,
+        "nextOffset": 4,
+        "responseTokens": 441,
+        "latencyMs": 2.7,
+        "passed": true
+      },
+      {
+        "id": "page-list-second",
+        "category": "paginated",
+        "query": "list",
+        "relevant": [
+          "files.list_folder",
+          "calendar.list_events",
+          "calendar.list_calendars",
+          "customers.list_companies"
+        ],
+        "pageAddresses": [
+          "files.list_folder",
+          "calendar.list_events",
+          "calendar.list_calendars",
+          "customers.list_companies"
+        ],
+        "total": 14,
+        "returned": 4,
+        "top1": 1,
+        "recall": 1,
+        "recallAtDefaultPage": null,
+        "precision": 1,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 468,
+        "latencyMs": 2.5,
+        "passed": true
+      }
+    ]
+  }
+}

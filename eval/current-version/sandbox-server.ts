@@ -101,7 +101,8 @@ const controlled = api("controlled", {
   tools: [
     {
       name: "read_record",
-      description: "Return one deterministic record.",
+      description:
+        "Return one deterministic record by id. Use this point lookup when specific ids are requested.",
       inputSchema: {
         type: "object",
         properties: {
@@ -146,7 +147,7 @@ const controlled = api("controlled", {
     {
       name: "records",
       description:
-        "Return deterministic records for execute_code filtering and reduction.",
+        "Generate a deterministic record collection for filtering and aggregation. Do not use this collection tool for point lookups by id.",
       inputSchema: {
         type: "object",
         properties: {
