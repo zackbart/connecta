@@ -120,8 +120,9 @@ function documentsFor(tools: ToolDef[]): SearchDocument[] {
 
 /**
  * Whole-token equality is the ordinary lexical match. A deliberately narrow
- * inflection check retains useful singular/plural and verb-form recall without
- * bringing back arbitrary substring matches (`list` must not match `enlist`).
+ * inflection check retains useful singular/plural and past-tense recall
+ * without bringing back arbitrary substring matches (`list` must not match
+ * `enlist`, and `record` must not match the noun `recording`).
  */
 function tokenMatches(token: string, term: string): boolean {
   if (token === term) return true;
@@ -129,10 +130,8 @@ function tokenMatches(token: string, term: string): boolean {
     candidate === `${base}s` ||
     candidate === `${base}es` ||
     candidate === `${base}ed` ||
-    candidate === `${base}ing` ||
     (base.endsWith("e") &&
-      (candidate === `${base}d` ||
-        candidate === `${base.slice(0, -1)}ing`)) ||
+      candidate === `${base}d`) ||
     (base.endsWith("y") &&
       (candidate === `${base.slice(0, -1)}ies` ||
         candidate === `${base.slice(0, -1)}ied`));

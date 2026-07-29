@@ -17,9 +17,14 @@ describe("lexical tool ranking", () => {
         name: "blacklist_entry",
         description: "Block an entry",
       },
+      {
+        name: "read_record",
+        description: "Read one stored record",
+      },
     ];
 
     expect(rankTools(tools, "list", "partial")).toEqual([]);
+    expect(rankTools(tools, "audio recording", "partial")).toEqual([]);
   });
 
   it("finds camel-case names and narrow inflectional variants", () => {
