@@ -104,7 +104,6 @@ export async function authorize(
   request: Request,
   baseUrl: string,
   auth: InboundAuth[],
-  _logger: Logger,
 ): Promise<
   | {
       ok: true;
@@ -157,7 +156,6 @@ export async function authorizeUiAdmin(
   request: Request,
   baseUrl: string,
   auth: InboundAuth[],
-  _logger: Logger,
   purpose = "credential management",
 ): Promise<{ ok: true; userId: string } | { ok: false; response: Response }> {
   // Operator mutation is intentionally narrower than /mcp and /ui/data: only

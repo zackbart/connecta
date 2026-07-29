@@ -467,6 +467,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const scopeEndedError = () =>
     new Error(`Connector "${id}" scope ended during connection.`);
 
+  const requestOptions = (ctx: ConnectorContext) =>
+    ctx.timeoutMs || ctx.signal
+      ? {
+          ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
+          ...(ctx.signal ? { signal: ctx.signal } : {}),
+        }
+      : undefined;
+
   /**
    * One `tools/list` request. The SDK schema is retained wholesale except for
    * accepting `null` as the common, unambiguous end-of-chain spelling. Other
@@ -484,12 +492,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           ...(cursor === undefined ? {} : { params: { cursor } }),
         },
         CompatibleListToolsResultSchema,
-        ctx.timeoutMs || ctx.signal
-          ? {
-              ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
-              ...(ctx.signal ? { signal: ctx.signal } : {}),
-            }
-          : undefined,
+        requestOptions(ctx),
       );
     } catch (err) {
       if (!isCursorShapeError(err)) throw err;
@@ -909,12 +912,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             arguments: (args ?? {}) as Record<string, unknown>,
           },
           undefined,
-          ctx.timeoutMs || ctx.signal
-            ? {
-                ...(ctx.timeoutMs ? { timeout: ctx.timeoutMs } : {}),
-                ...(ctx.signal ? { signal: ctx.signal } : {}),
-              }
-            : undefined,
+          requestOptions(ctx),
         );
       } catch (err) {
         // A grant revoked after connect surfaces here, not in ensureConnected.

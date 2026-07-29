@@ -55,7 +55,6 @@ export {
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_RETRY_BACKOFF_MS,
   MAX_SEARCH_LIMIT,
-  DiscoveryPolicyError,
   retryBackoffMs,
 };
 
@@ -107,8 +106,12 @@ function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   return result;
 }
 
-function discoveryResult(value: unknown, hint: string): ToolResult {
+async function discoveryResult(
+  operation: () => unknown | Promise<unknown>,
+  hint: string,
+): Promise<ToolResult> {
   try {
+    const value = await operation();
     const text = boundedDiscoveryText(value, hint);
     return {
       content: [{ type: "text", text }],
@@ -452,15 +455,7 @@ export interface GetResultArgs {
   /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
 }
-export interface BatchCall {
-  address: string;
-  args?: Record<string, unknown>;
-  fields?: string[];
-  resultMode?: ResultMode;
-  timeoutMs?: number;
-  maxRetries?: number;
-  diagnostics?: boolean;
-}
+export type BatchCall = CallArgs;
 export interface BatchArgs {
   calls: BatchCall[];
   resultMode?: ResultMode;
@@ -799,31 +794,18 @@ export function createMetaTools(
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
-      try {
-        return discoveryResult(
+      return discoveryResult(
+        async () =>
           groupedSearchResult(await catalog.search(args)),
-          "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-        );
-      } catch (err) {
-        if (err instanceof DiscoveryPolicyError) {
-          return discoveryErrorResult(err);
-        }
-        throw err;
-      }
+        "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+      );
     },
 
     async describeTools(args: DescribeArgs): Promise<ToolResult> {
-      try {
-        return discoveryResult(
-          { tools: await catalog.describe(args) },
-          'Split the address list or use format: "compact".',
-        );
-      } catch (err) {
-        if (err instanceof DiscoveryPolicyError) {
-          return discoveryErrorResult(err);
-        }
-        throw err;
-      }
+      return discoveryResult(
+        async () => ({ tools: await catalog.describe(args) }),
+        'Split the address list or use format: "compact".',
+      );
     },
 
     async callTool(args: CallArgs): Promise<ToolResult> {
@@ -1127,6 +1109,16 @@ const READ_ONLY_LOCAL = {
   openWorldHint: false,
 } as const;
 
+const CALL_INPUT_SCHEMA = {
+  address: z.string(),
+  args: z.record(z.string(), z.unknown()).optional(),
+  fields: z.array(z.string()).optional(),
+  resultMode: z.enum(["mcp", "value"]).optional(),
+  timeoutMs: z.number().int().positive().optional(),
+  maxRetries: z.number().int().min(0).max(2).optional(),
+  diagnostics: z.boolean().optional(),
+};
+
 /** Register the nine meta-tools onto an McpServer instance. */
 export function registerMetaTools(
   server: McpServer,
@@ -1163,12 +1155,7 @@ export function registerMetaTools(
     {
       description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: { name: z.string().optional() },
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: true,
-        openWorldHint: false,
-      },
+      annotations: READ_ONLY_LOCAL,
     },
     async (args) => mt.skills(args as SkillArgs),
   );
@@ -1218,15 +1205,7 @@ export function registerMetaTools(
     "call_tool",
     {
       description: CALL_DESC,
-      inputSchema: {
-        address: z.string(),
-        args: z.record(z.string(), z.unknown()).optional(),
-        fields: z.array(z.string()).optional(),
-        resultMode: z.enum(["mcp", "value"]).optional(),
-        timeoutMs: z.number().int().positive().optional(),
-        maxRetries: z.number().int().min(0).max(2).optional(),
-        diagnostics: z.boolean().optional(),
-      },
+      inputSchema: CALL_INPUT_SCHEMA,
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
@@ -1238,15 +1217,7 @@ export function registerMetaTools(
     "call_destructive_tool",
     {
       description: CALL_DESTRUCTIVE_DESC,
-      inputSchema: {
-        address: z.string(),
-        args: z.record(z.string(), z.unknown()).optional(),
-        fields: z.array(z.string()).optional(),
-        resultMode: z.enum(["mcp", "value"]).optional(),
-        timeoutMs: z.number().int().positive().optional(),
-        maxRetries: z.number().int().min(0).max(2).optional(),
-        diagnostics: z.boolean().optional(),
-      },
+      inputSchema: CALL_INPUT_SCHEMA,
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
@@ -1299,17 +1270,7 @@ export function registerMetaTools(
       description: BATCH_DESC,
       inputSchema: {
         calls: z
-          .array(
-            z.object({
-              address: z.string(),
-              args: z.record(z.string(), z.unknown()).optional(),
-              fields: z.array(z.string()).optional(),
-              resultMode: z.enum(["mcp", "value"]).optional(),
-              timeoutMs: z.number().int().positive().optional(),
-              maxRetries: z.number().int().min(0).max(2).optional(),
-              diagnostics: z.boolean().optional(),
-            }),
-          )
+          .array(z.object(CALL_INPUT_SCHEMA))
           .min(1)
           .max(10),
         resultMode: z.enum(["mcp", "value"]).optional(),

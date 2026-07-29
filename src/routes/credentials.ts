@@ -138,7 +138,6 @@ async function handleCredentialRequest(
     request,
     baseUrl,
     opts.auth,
-    opts.logger,
   );
   if (!admin.ok) return admin.response;
 

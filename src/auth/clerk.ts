@@ -73,6 +73,30 @@ const ACTIVITY_LABEL_MAX_IN_FLIGHT = 8;
 const GATE_CACHE_MAX_IDENTITIES = 1_024;
 const ACTIVITY_LABEL_MAX_LENGTH = 160;
 
+function readIdentityCache<K, V extends { exp: number }>(
+  cache: Map<K, V>,
+  key: K,
+): V | undefined {
+  const hit = cache.get(key);
+  if (!hit) return undefined;
+  cache.delete(key);
+  if (Date.now() >= hit.exp) return undefined;
+  cache.set(key, hit);
+  return hit;
+}
+
+function writeIdentityCache<K, V>(
+  cache: Map<K, V>,
+  key: K,
+  value: V,
+): void {
+  cache.delete(key);
+  cache.set(key, value);
+  if (cache.size <= GATE_CACHE_MAX_IDENTITIES) return;
+  const oldest = cache.keys().next();
+  if (!oldest.done) cache.delete(oldest.value);
+}
+
 function cleanActivityLabel(
   value: string | null | undefined,
 ): string | undefined {
@@ -239,31 +263,19 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     userId: string,
     label: string | undefined,
   ): void => {
-    activityLabelCache.delete(userId);
-    activityLabelCache.set(userId, {
+    writeIdentityCache(activityLabelCache, userId, {
       ...(label ? { label } : {}),
       exp:
         Date.now() +
         (label ? ACTIVITY_LABEL_TTL_MS : ACTIVITY_LABEL_MISS_TTL_MS),
     });
-    if (activityLabelCache.size > GATE_CACHE_MAX_IDENTITIES) {
-      const oldest = activityLabelCache.keys().next();
-      if (!oldest.done) activityLabelCache.delete(oldest.value);
-    }
   };
 
   const resolveActivityLabel = async (
     userId: string,
   ): Promise<string | undefined> => {
-    const cached = activityLabelCache.get(userId);
-    if (cached) {
-      if (Date.now() < cached.exp) {
-        activityLabelCache.delete(userId);
-        activityLabelCache.set(userId, cached);
-        return cached.label;
-      }
-      activityLabelCache.delete(userId);
-    }
+    const cached = readIdentityCache(activityLabelCache, userId);
+    if (cached) return cached.label;
     const existing = pendingActivityLabels.get(userId);
     if (existing) return existing;
     // The Clerk SDK's getUser call has no AbortSignal. Keep the real upstream
@@ -393,17 +405,8 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
    */
   const checkGate = async (userId: string): Promise<boolean> => {
     if (!opts.gate && !allowedDomains) return true;
-    const hit = gateCache.get(userId);
-    if (hit) {
-      if (Date.now() < hit.exp) {
-        // Map iteration order is the LRU order. Refreshing a valid hit keeps a
-        // small active identity set resident when one-off identities churn.
-        gateCache.delete(userId);
-        gateCache.set(userId, hit);
-        return hit.allowed;
-      }
-      gateCache.delete(userId);
-    }
+    const hit = readIdentityCache(gateCache, userId);
+    if (hit) return hit.allowed;
     let allowed = false;
     try {
       allowed =
@@ -412,16 +415,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     } catch {
       allowed = false;
     }
-    gateCache.set(userId, {
+    writeIdentityCache(gateCache, userId, {
       allowed,
       exp:
         Date.now() +
         (allowed ? GATE_ALLOWED_TTL_MS : GATE_FORBIDDEN_TTL_MS),
     });
-    if (gateCache.size > GATE_CACHE_MAX_IDENTITIES) {
-      const oldest = gateCache.keys().next();
-      if (!oldest.done) gateCache.delete(oldest.value);
-    }
     return allowed;
   };
 

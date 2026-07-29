@@ -302,7 +302,7 @@ export function createMcpRoute(
       throw error;
     }
     try {
-      const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
+      const authz = await authorize(request, baseUrl, opts.auth);
       if (!authz.ok) {
         return releaseAdmissionWithResponse(
           withMcpCors(authz.response),

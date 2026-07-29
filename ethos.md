@@ -62,8 +62,8 @@ proposing one without a new argument is not.
 | Resources & prompts aggregation | refused | tools only |
 | Elicitation passthrough | refused | no route through a stateless aggregator |
 | Repository formatter | refused | style is authored, not enforced |
-| Toolkits (scoped views) | retired | never earned its keep; deploy per audience ([#178](https://github.com/zackbart/connecta/issues/178)) |
-| Proactive credential liveness | retired | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
+| Toolkits (scoped views) | removed | never earned its keep; deploy per audience ([#178](https://github.com/zackbart/connecta/issues/178)) |
+| Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Code mode (`execute_code`) | provisional | merit real but unproven; measurement decides ([#177](https://github.com/zackbart/connecta/issues/177)) |
 | Semantic tool search | gated | earns its way in through the same measurement ([#27](https://github.com/zackbart/connecta/issues/27)) |
 

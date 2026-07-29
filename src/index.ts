@@ -145,7 +145,7 @@ export interface ConnectaConfig {
   publicUrl?: string;
   /** Payload-free tool activity storage and operator-read policy. */
   activity?: ConnectaActivityConfig;
-  /** Operator credential vault and proactive liveness-check settings. */
+  /** Operator credential vault settings. */
   credentials?: ConnectaCredentialsConfig;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;

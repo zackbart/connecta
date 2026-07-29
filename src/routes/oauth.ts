@@ -30,7 +30,6 @@ async function handleOAuthManagementRequest(
     request,
     baseUrl,
     opts.auth,
-    opts.logger,
     "OAuth management",
   );
   if (!admin.ok) return admin.response;

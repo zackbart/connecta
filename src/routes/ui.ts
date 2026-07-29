@@ -116,7 +116,7 @@ export async function routeUi(
   }
   if (path !== "/ui/data") return null;
 
-  const authz = await authorize(request, baseUrl, opts.auth, opts.logger);
+  const authz = await authorize(request, baseUrl, opts.auth);
   if (!authz.ok) return authz.response;
   const eligibleClerkOperator = authz.uiAdminEligible === true;
   const credentialManagement = credentialManagementCapability({

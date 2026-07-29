@@ -2,7 +2,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import {
-  assertDiscoveryResultSize,
+  boundedDiscoveryText,
   CatalogService,
   flatSearchResult,
 } from "./catalog-service.js";
@@ -16,14 +16,12 @@ import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { unwrapMcpResult } from "./mcp-result.js";
 import {
   InvocationFailure,
   InvocationService,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import type {
-  Connector,
   Executor,
   ExecutorProvider,
   Logger,
@@ -135,19 +133,6 @@ function lazyNamespacePrelude(
   }));
 ${declarations}
 })();`;
-}
-
-/**
- * Unwrap an MCP CallToolResult so sandbox code sees plain values:
- * isError throws (a real exception the code can catch), structuredContent
- * wins when present, all-text content is JSON.parsed when possible.
- * Non-MCP connectors already return plain values.
- */
-export function unwrapForSandbox(
-  kind: Connector["kind"],
-  result: unknown,
-): unknown {
-  return unwrapMcpResult(kind, result);
 }
 
 /**
@@ -287,7 +272,7 @@ export async function buildSandboxProviders(
             includeSchemas?: "compact" | "json";
           };
           const result = flatSearchResult(await catalog.search(args));
-          assertDiscoveryResultSize(
+          boundedDiscoveryText(
             result,
             "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
           );
@@ -300,7 +285,7 @@ export async function buildSandboxProviders(
             fullDescriptions?: boolean;
           };
           const result = { tools: await catalog.describe(args) };
-          assertDiscoveryResultSize(
+          boundedDiscoveryText(
             result,
             'Split the address list or use format: "compact".',
           );
