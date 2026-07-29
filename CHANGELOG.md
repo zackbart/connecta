@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased — MCP 2026-07-28 adoption
+## 0.9.0 — 2026-07-29
 
 Connecta now speaks the 2026-07-28 MCP revision on both sides while retaining
 its legacy compatibility floor (#176). Nothing breaks for deployments:
