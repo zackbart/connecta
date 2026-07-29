@@ -279,13 +279,20 @@ export async function buildSandboxProviders(
             offset?: number;
             fullDescriptions?: boolean;
             includeSchemas?: "compact" | "json";
+            includeSchemaKeys?: boolean;
           };
           const result = flatSearchResult(
-            await catalog.search({ ...args, includeSchemaKeys: true }),
+            await catalog.search({
+              ...args,
+              // Key metadata rides along with schemas by default, since that is
+              // the whole point of it in code mode. It stays opt-out because it
+              // counts against the same hard discovery-byte ceiling.
+              includeSchemaKeys: args.includeSchemaKeys !== false,
+            }),
           );
           boundedDiscoveryText(
             result,
-            "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
+            "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
           );
           return result;
         },
@@ -449,13 +456,13 @@ const EXECUTE_DESC = `Use for dependent multi-step calls, loops, joins, branchin
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from describe_tools. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
-- connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Search matches with schemas also include inputKeys, requiredInputKeys, and outputKeys for programmatic field selection.
+- connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
 - console.log(...) — captured and returned alongside the result.
 
 Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
 
-Plain JavaScript only — no TypeScript syntax. For unknown-address dependent work, use one execute_code call: search inside it, read the compact schemas, and continue to the dependent calls; do not return search results for a second execute_code call. Compact schemas are TypeScript-like strings, not JSON Schema objects: use exactly the displayed property names and never send guessed aliases together.
-Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", includeSchemas: "compact" }); const runTool = tools.find((t) => t.address.endsWith(".get_run")); const run = await connecta.call(runTool.address, { [runTool.requiredInputKeys[0]]: 42 }); const jobKey = runTool.outputKeys.find((key) => /failed.*job.*id/i.test(key)); const logsTool = tools.find((t) => t.address.endsWith(".get_job_logs")); const logs = await connecta.call(logsTool.address, { [logsTool.requiredInputKeys[0]]: run[jobKey] }); return [run, logs]; }`;
+Plain JavaScript only — no TypeScript syntax. For unknown-address dependent work, use one execute_code call: search inside it, read the compact schemas, and continue to the dependent calls; do not return search results for a second execute_code call. Compact schemas are TypeScript-like strings, not JSON Schema objects: write the property names they display, never a positional guess or an invented alias.
+Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", includeSchemas: "compact" }); const pick = (suffix) => { const match = tools.find((tool) => tool.address.endsWith(suffix)); if (!match) throw new Error("no tool matching " + suffix); return match.address; }; const run = await connecta.call(pick(".get_run"), { runId: 42 }); const logs = await connecta.call(pick(".get_job_logs"), { jobId: run.failedJobId }); return [run, logs]; }`;
 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(

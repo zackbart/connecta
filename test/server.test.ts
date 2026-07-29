@@ -569,6 +569,33 @@ describe("server /mcp end-to-end", () => {
     expect(payload.total).toBe(1);
   });
 
+  it("search_tools drops a client-requested includeSchemaKeys", async () => {
+    // The code-mode-only claim rests on this boundary, not on the default
+    // response shape: the declared input schema is what refuses the flag, so a
+    // client that asks for the metadata by name still must not receive it.
+    const c = makeConnecta();
+    const res = await rpc(
+      c,
+      "tools/call",
+      {
+        name: "search_tools",
+        arguments: {
+          query: "add",
+          includeSchemas: "compact",
+          includeSchemaKeys: true,
+        },
+      },
+      { token: TOKEN },
+    );
+    const body = await readBody(res);
+    expect(body.result.isError).toBeFalsy();
+    const tool = body.result.structuredContent.connectors[0].tools[0];
+    expect(tool.inputSchema).toBe("{ a: number, b: number }");
+    expect(tool).not.toHaveProperty("inputKeys");
+    expect(tool).not.toHaveProperty("requiredInputKeys");
+    expect(tool).not.toHaveProperty("outputKeys");
+  });
+
   it("tools/call call_tool invokes a downstream api tool", async () => {
     const c = makeConnecta();
     const res = await rpc(
@@ -1477,14 +1504,16 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain('includeSchemas: "compact"');
     expect(executeTool.description).toContain("requiredInputKeys");
     expect(executeTool.description).toContain(
-      "use exactly the displayed property names",
+      "write the property names they display",
     );
     expect(executeTool.description).toContain(
       "the second call requires a value returned by the first",
     );
-    expect(executeTool.description).toContain(
-      "[logsTool.requiredInputKeys[0]]: run[jobKey]",
-    );
+    // The dependent example names its fields. Positional indexing into the key
+    // lists is the pattern this description must never teach: the first
+    // required key of a multi-argument tool is not the one the value belongs to.
+    expect(executeTool.description).toContain("{ jobId: run.failedJobId }");
+    expect(executeTool.description).not.toContain("requiredInputKeys[0]");
     expect(executeTool.description).not.toContain(
       "search_tools → describe_tools (schemas) → execute_code",
     );

@@ -492,3 +492,105 @@ export function compactSchema(schema: JsonSchema): string {
   compactSchemas.set(schema, rendered);
   return rendered;
 }
+
+/** The property and required names a schema resolves to, or undefined. */
+export interface SchemaObjectKeys {
+  properties: string[];
+  required: string[];
+}
+
+/**
+ * Walk a schema the way renderSchema does — composing `allOf` and resolving
+ * `$ref` against the root's `$defs`/`definitions` — and collect the top-level
+ * property names it would render. A shallow `Object.keys(schema.properties)`
+ * disagrees with the rendered compact schema for exactly the shapes real
+ * connectors emit (a top-level `$ref` to a `$defs` entry, or the OpenAPI
+ * "extend this base" `allOf`), which is worse than no metadata at all: it
+ * reports an empty field list for a tool that plainly has fields.
+ *
+ * Returns undefined when the schema is not an object shape at all — a union,
+ * array, enum, or unresolvable `$ref`. Absent metadata tells a caller to read
+ * the rendered schema instead; an empty array would claim the tool takes no
+ * fields.
+ */
+export function schemaObjectKeys(
+  schema: JsonSchema | undefined,
+): SchemaObjectKeys | undefined {
+  if (!schema) return undefined;
+  const defs = {
+    ...(schema.$defs as Record<string, unknown>),
+    ...(schema.definitions as Record<string, unknown>),
+  };
+  try {
+    return objectKeys(schema, defs, new Set(), 0);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Merge in declaration order, first occurrence winning, as renderSchema renders. */
+function mergedKeys(
+  parts: readonly SchemaObjectKeys[],
+): SchemaObjectKeys | undefined {
+  if (parts.length === 0) return undefined;
+  return {
+    properties: [...new Set(parts.flatMap((part) => part.properties))],
+    required: [...new Set(parts.flatMap((part) => part.required))],
+  };
+}
+
+/** The key-collecting twin of renderSchema; the branch order must match it. */
+function objectKeys(
+  schema: unknown,
+  defs: Record<string, unknown>,
+  seen: Set<string>,
+  depth: number,
+): SchemaObjectKeys | undefined {
+  if (depth > 4) return undefined;
+  if (schema === null || typeof schema !== "object") return undefined;
+  const s = schema as Record<string, unknown>;
+
+  if (Array.isArray(s.allOf)) {
+    const { allOf: _members, ...own } = s;
+    const parts = declaresShape(own)
+      ? [objectKeys(own, defs, seen, depth)]
+      : [];
+    for (const member of s.allOf) {
+      parts.push(objectKeys(member, defs, seen, depth + 1));
+    }
+    // An allOf whose members are not all object shapes renders as an
+    // intersection with a non-object half; no single key list describes it.
+    return parts.every((part) => part !== undefined)
+      ? mergedKeys(parts as SchemaObjectKeys[])
+      : undefined;
+  }
+
+  if (typeof s.$ref === "string") {
+    const name = refName(s.$ref);
+    if (seen.has(name)) return undefined;
+    const target = defs[name];
+    if (target === undefined) return undefined;
+    seen.add(name);
+    const resolved = objectKeys(target, defs, seen, depth);
+    seen.delete(name);
+    return resolved;
+  }
+
+  if (Array.isArray(s.oneOf ?? s.anyOf)) return undefined;
+  if (Array.isArray(s.enum)) return undefined;
+  if (s.const !== undefined) return undefined;
+  if (s.type === "array" || s.items) return undefined;
+  if (s.type === "object" || s.properties) {
+    const props = s.properties;
+    if (props === null || Array.isArray(props) || typeof props !== "object") {
+      return { properties: [], required: [] };
+    }
+    return {
+      properties: Object.keys(props as Record<string, unknown>),
+      required: Array.isArray(s.required)
+        ? s.required.filter((key): key is string => typeof key === "string")
+        : [],
+    };
+  }
+  return undefined;
+}

@@ -3,6 +3,7 @@ import {
   lexicalCorpusStatistics,
   lexicalSearchQuery,
   rankTools,
+  schemaObjectKeys,
   summarizeDescription,
 } from "./catalog.js";
 import {
@@ -130,22 +131,30 @@ interface CatalogSearchEntry {
   };
 }
 
-function schemaPropertyKeys(schema: JsonSchema | undefined): string[] {
-  if (
-    !schema ||
-    schema.properties === null ||
-    Array.isArray(schema.properties) ||
-    typeof schema.properties !== "object"
-  ) {
-    return [];
-  }
-  return Object.keys(schema.properties as Record<string, unknown>);
-}
-
-function schemaRequiredKeys(schema: JsonSchema | undefined): string[] {
-  return Array.isArray(schema?.required)
-    ? schema.required.filter((key): key is string => typeof key === "string")
-    : [];
+/**
+ * Code-mode key metadata for one match. Each half is omitted when its schema
+ * does not resolve to an object shape, so a program reads "no metadata, use the
+ * rendered schema" rather than "this tool has no fields".
+ */
+function schemaKeyMetadata(
+  input: JsonSchema,
+  output: JsonSchema | undefined,
+): {
+  inputKeys?: string[];
+  requiredInputKeys?: string[];
+  outputKeys?: string[];
+} {
+  const inputKeys = schemaObjectKeys(input);
+  const outputKeys = schemaObjectKeys(output);
+  return {
+    ...(inputKeys
+      ? {
+          inputKeys: inputKeys.properties,
+          requiredInputKeys: inputKeys.required,
+        }
+      : {}),
+    ...(outputKeys ? { outputKeys: outputKeys.properties } : {}),
+  };
 }
 
 export interface CatalogSearchPage {
@@ -482,13 +491,7 @@ export class CatalogService {
               }
             : {}),
           ...(args.includeSchemas && args.includeSchemaKeys
-            ? {
-                inputKeys: schemaPropertyKeys(input),
-                requiredInputKeys: schemaRequiredKeys(input),
-                ...(match.tool.outputSchema
-                  ? { outputKeys: schemaPropertyKeys(match.tool.outputSchema) }
-                  : {}),
-              }
+            ? schemaKeyMetadata(input, match.tool.outputSchema)
             : {}),
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }

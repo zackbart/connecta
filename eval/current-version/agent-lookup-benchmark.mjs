@@ -229,8 +229,14 @@ const lookupCases = [
     id: "workflow-by-id-clean",
     family: "workflow-by-id",
     context: "clean",
+    // The prompt asks for two named fields, so the expectation is those two
+    // fields. It previously asked for "the integration's JSON result" while
+    // naming a projection of it — an agent could not satisfy both readings, and
+    // scoring the whole payload made a prompt-wording defect look like a
+    // routing failure. Discriminating facts, not payload fidelity, is what the
+    // rest of this suite checks (see page-search).
     prompt:
-      "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "Use the available integrations once to get the status and conclusion of workflow run 42. Return only JSON with that status and conclusion.",
     expectedAddresses: ["builds.get_workflow_run"],
     expectedCalls: [
       { address: "builds.get_workflow_run", args: { runId: 42 } },
