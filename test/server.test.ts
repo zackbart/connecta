@@ -212,6 +212,10 @@ describe("server /mcp end-to-end", () => {
       "Use call_tool for one explicitly read-only call",
     );
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
+    expect(body.result.instructions).toContain(
+      "when this routing workflow is unfamiliar",
+    );
+    expect(body.result.instructions).not.toContain("once per task");
   });
 
   it("initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
@@ -329,6 +333,10 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain(
       "Any unannotated, write-capable, or destructive call: `call_destructive_tool`",
     );
+    expect(skill).toContain(
+      "Connector namespace calls and `connecta.call` use the same read-only gate",
+    );
+    expect(skill).not.toContain("## Examples");
 
     const missing = await rpc(
       c,

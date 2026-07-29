@@ -15,6 +15,11 @@ refuses to start and points to the relevant issue and `ethos.md`.
 
 ### Changed
 
+- **The `usage` guide is slimmer and fetched on demand** (#194). The
+  `skills` meta-tool and per-connector guide delivery remain unchanged, while
+  the generic guide drops redundant examples and keeps only routing, probe,
+  recovery, and code-mode rules. Server instructions now recommend fetching it
+  when the routing workflow is unfamiliar instead of once per task.
 - **Structured results now serialize compactly in text compatibility content**
   (#191). `structuredContent` remains the canonical full-fidelity object and
   `content` remains complete JSON for text-only clients, but indentation no

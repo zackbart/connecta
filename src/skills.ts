@@ -1,11 +1,13 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes many integrations behind meta-tools. When an address is unknown, start with search_tools and includeSchemas="compact"; use describe_tools only when that schema is insufficient. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent explicitly read-only calls, and execute_code (when available) only for dependent read-only steps, loops, joins, or reducing large results. Unannotated, write-capable, and destructive tools must use call_destructive_tool individually. Use authorize_connector only after auth_required and get_result only for truncated results. For the detailed workflow, call skills({ name: "usage" }) once per task.';
+  'Connecta exposes many integrations behind meta-tools. When an address is unknown, start with search_tools and includeSchemas="compact"; use describe_tools only when that schema is insufficient. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent explicitly read-only calls, and execute_code (when available) only for dependent read-only steps, loops, joins, or reducing large results. Unannotated, write-capable, and destructive tools must use call_destructive_tool individually. Use authorize_connector only after auth_required and get_result only for truncated results. Fetch skills({ name: "usage" }) when this routing workflow is unfamiliar.';
 
 export const USAGE_SKILL = `# Connecta usage
 
 ## Choose the smallest execution tool
+
+Use exact addresses returned by discovery; never invent one.
 
 - Unknown address: \`search_tools({ query, includeSchemas: "compact" })\`.
 - Schema still unclear: \`describe_tools({ addresses: [...] })\`.
@@ -20,39 +22,11 @@ Use \`list_connectors({ probe: false })\` for a fast inventory based on recent c
 
 ## Code mode
 
-Use code mode when a later call depends on an earlier result, when joining across connectors, or when filtering or aggregating data in the sandbox will substantially shrink the response. Use \`Promise.all\` or \`connecta.batch\` for independent calls inside one execution.
+Use code mode when calls depend on earlier results, when joining connectors, or when sandbox filtering or aggregation will substantially shrink the response. Use \`Promise.all\` or \`connecta.batch\` for independent calls inside one execution.
 
-Do not use code mode for one straightforward call, for independent calls already handled by \`batch_call\`, or for any tool not explicitly annotated \`readOnlyHint: true\`. Code mode has a bounded host-call budget and per-call deadline. Return only the reduced value the agent needs; do not return a large upstream payload unchanged.
+Connector namespace calls and \`connecta.call\` use the same read-only gate and throw on downstream errors. Catch only failures the workflow can handle; let authorization failures return to the agent for recovery.
 
-## Examples
-
-These addresses are illustrative; always use the exact address returned by \`search_tools\`.
-
-Single call:
-\`\`\`json
-{ "address": "crm.get_account", "args": { "id": "acct_123" }, "resultMode": "value" }
-\`\`\`
-
-Independent calls:
-\`\`\`json
-{ "calls": [
-  { "address": "crm.get_account", "args": { "id": "acct_123" } },
-  { "address": "billing.list_invoices", "args": { "status": "open" } }
-] }
-\`\`\`
-
-Dependent code with reduction:
-\`\`\`js
-async () => {
-  const accounts = await crm.search_accounts({ query: "renewal" });
-  const details = await Promise.all(
-    accounts.results.slice(0, 5).map((account) =>
-      crm.get_account({ id: account.id })
-    )
-  );
-  return details.map(({ id, name, status }) => ({ id, name, status }));
-}
-\`\`\`
+Do not use code mode for one call, independent calls already handled by \`batch_call\`, or any tool lacking \`readOnlyHint: true\`. Host calls and time are bounded. Return only the reduced value the agent needs.
 `;
 
 /**

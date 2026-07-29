@@ -206,6 +206,8 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toContain(
       'skills({ name: "connector:<connectorId>" })',
     );
+    expect(textFrom(fetched)).not.toContain("## Examples");
+    expect(textFrom(fetched)).not.toContain("crm.get_account");
   });
 
   it("serves the base usage guide byte-identically when no connector has one", async () => {
@@ -220,6 +222,7 @@ Prefer \`notion.search\` over listing databases.
     const listed = textFrom(await mt.skills({}));
     expect(listed).toContain("`usage` — How to choose among Connecta");
     expect(listed).not.toContain("connector:");
+    expect(new TextEncoder().encode(USAGE_SKILL).length).toBeLessThan(1_800);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
