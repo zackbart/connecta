@@ -76,7 +76,7 @@ const dec = new TextDecoder();
 
 export function jsonResult(obj: unknown): ToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(obj, null, 2) }],
+    content: [{ type: "text", text: JSON.stringify(obj) }],
     ...(obj !== null && typeof obj === "object" && !Array.isArray(obj)
       ? { structuredContent: obj as Record<string, unknown> }
       : {}),
@@ -258,7 +258,7 @@ function applyFieldsToContent(
     } catch {
       return b;
     }
-    return { ...b, text: JSON.stringify(applyFields(parsed, fields), null, 2) };
+    return { ...b, text: JSON.stringify(applyFields(parsed, fields)) };
   });
 }
 
@@ -280,7 +280,7 @@ function applyFieldsToContent(
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
 function serializeResultText(value: unknown): string {
-  const serialized = JSON.stringify(value, null, 2);
+  const serialized = JSON.stringify(value);
   return serialized === undefined ? String(value) : serialized;
 }
 
@@ -394,7 +394,7 @@ async function guardContent(
 ): Promise<ToolResult> {
   let text: string;
   try {
-    text = JSON.stringify(content, null, 2);
+    text = JSON.stringify(content);
   } catch {
     // A block carrying a BigInt or a cycle cannot be serialized, so it cannot
     // be measured, stashed, or paged either — there is nothing this guard could

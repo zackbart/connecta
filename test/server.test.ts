@@ -416,6 +416,9 @@ describe("server /mcp end-to-end", () => {
     };
     expect(payload.connectors).toHaveLength(1);
     expect(body.result.structuredContent).toEqual(payload);
+    expect(body.result.content[0].text).toBe(
+      JSON.stringify(body.result.structuredContent),
+    );
     expect(required(payload.connectors[0]).id).toBe("calc");
     expect(required(payload.connectors[0]).tools.map((t) => t.address)).toEqual([
       "calc.add",

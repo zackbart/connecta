@@ -10,6 +10,7 @@ import {
   alignEndToCharBoundary,
   alignStartToCharBoundary,
   createMetaTools,
+  jsonResult,
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_RETRY_BACKOFF_MS,
@@ -45,6 +46,38 @@ function registry() {
     authConnector,
   ]);
 }
+
+describe("structured result compatibility", () => {
+  it("keeps structuredContent canonical and content complete but compact", () => {
+    const value = {
+      connectors: [
+        { id: "calc", tools: [{ address: "calc.add", score: 1 }] },
+      ],
+      total: 1,
+    };
+    const result = jsonResult(value);
+
+    // A content-only client keeps the complete result.
+    const contentOnly = JSON.parse(required(result.content[0]).text);
+    expect(contentOnly).toEqual(value);
+    // A structured-aware client receives the original full-fidelity object.
+    expect(result.structuredContent).toBe(value);
+    // A mixed consumer sees equivalent representations without indentation.
+    expect(contentOnly).toEqual(result.structuredContent);
+    expect(required(result.content[0]).text).toBe(JSON.stringify(value));
+    expect(required(result.content[0]).text).not.toContain("\n");
+  });
+
+  it("uses the same compact policy for discovery results", async () => {
+    const result = await createMetaTools(
+      makeRegistry([calcConnector]),
+      BASE,
+    ).searchTools({ query: "add", includeSchemas: "compact" });
+    expect(required(result.content[0]).text).toBe(
+      JSON.stringify(result.structuredContent),
+    );
+  });
+});
 
 describe("skills", () => {
   const NOTION_GUIDE = `# Notion usage
@@ -2581,7 +2614,7 @@ describe("call_tool size guard + get_result", () => {
       if (page.nextOffset === undefined) break;
       offset = page.nextOffset;
     }
-    expect(assembled).toBe(JSON.stringify({ blob: "x".repeat(500) }, null, 2));
+    expect(assembled).toBe(JSON.stringify({ blob: "x".repeat(500) }));
   });
 
   it("returns an error for an unknown/expired result id", async () => {
@@ -2645,7 +2678,7 @@ describe("call_tool size guard + get_result", () => {
     const lines = required(call.content[0]).text.split("\n");
     const notice = JSON.parse(required(lines[lines.length - 1])) as { resultId: string };
 
-    const expected = JSON.stringify(JSON.parse(original), null, 2);
+    const expected = JSON.stringify(JSON.parse(original));
     let offset = 0;
     let assembled = "";
     for (;;) {
@@ -2687,7 +2720,7 @@ describe("call_tool size guard + get_result", () => {
     const head = required(call.content[0]).text.split("\n")[0];
     expect(head).not.toContain("�");
     // Head is a byte-exact prefix of the original (JSON-encoded) string.
-    const full = JSON.stringify("abc😀defghijklmnop", null, 2);
+    const full = JSON.stringify("abc😀defghijklmnop");
     expect(full.startsWith(required(head))).toBe(true);
   });
 });
@@ -2696,7 +2729,7 @@ describe("per-connector maxResultBytes override", () => {
   // ASCII, so byte length == char length, and it JSON-encodes to one line —
   // the truncation notice is therefore always exactly the second line.
   const PAYLOAD = "x".repeat(500);
-  const FULL = JSON.stringify(PAYLOAD, null, 2); // 502 bytes
+  const FULL = JSON.stringify(PAYLOAD); // 502 bytes
 
   /** An api connector returning PAYLOAD, optionally under its own byte cap. */
   function capped(id: string, maxResultBytes?: number): Connector {
@@ -2882,7 +2915,7 @@ describe("maxResultBytes validation", () => {
   // Same 502-byte fixture as the override suite above, so the measured heads
   // line up with the numbers in issue #32.
   const PAYLOAD = "x".repeat(500);
-  const FULL = JSON.stringify(PAYLOAD, null, 2); // 502 bytes
+  const FULL = JSON.stringify(PAYLOAD); // 502 bytes
 
   /** Caps that are accepted today but silently do something wrong (issue #32). */
   const BAD_CAPS = [0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
@@ -3134,7 +3167,7 @@ describe("handler returns JSON cannot represent", () => {
   it("leaves a serializable return byte-identical", async () => {
     const value = { user: { name: "Ada" }, ids: [1, 2, 3] };
     const result = await callFor(value);
-    expect(required(result.content[0]).text).toBe(JSON.stringify(value, null, 2));
+    expect(required(result.content[0]).text).toBe(JSON.stringify(value));
   });
 
   it("stashes an oversized undefined-adjacent return under the same text", async () => {
@@ -3150,7 +3183,7 @@ describe("handler returns JSON cannot represent", () => {
       resultId: string;
       totalBytes: number;
     };
-    const full = JSON.stringify(long, null, 2);
+    const full = JSON.stringify(long);
     expect(notice.totalBytes).toBe(byteLength(full));
     const page = textOf(
       await mt.getResult({ id: notice.resultId, maxBytes: 10_000 }),
@@ -3193,7 +3226,7 @@ describe("mcp-mode content size guard", () => {
 
   /** What `call_tool` stashes and pages for an oversized mcp result. */
   function envelope(content: unknown[]): string {
-    return JSON.stringify(content, null, 2);
+    return JSON.stringify(content);
   }
 
   interface Notice {
@@ -3326,7 +3359,7 @@ describe("get_result offset validation and alignment", () => {
   // Stored as `"aa😀bb"` — byte 3 starts the 4-byte emoji, so bytes 4, 5 and 6
   // are inside a character and byte 3 is the boundary they belong to.
   const PAYLOAD = "aa😀bb";
-  const FULL = JSON.stringify(PAYLOAD, null, 2);
+  const FULL = JSON.stringify(PAYLOAD);
   const EMOJI_START = 3;
 
   async function stash(): Promise<{
