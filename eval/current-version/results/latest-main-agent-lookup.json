@@ -1,0 +1,3736 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-29T17:37:10.414Z",
+  "source": {
+    "commit": "cd20638bf36fc6808fddebe792cfe5e7e03ae49a",
+    "productDirty": false,
+    "nodeVersion": "26.5.0",
+    "platform": "darwin-arm64",
+    "codexVersion": "codex-cli 0.145.0",
+    "model": "gpt-5.6-sol",
+    "tokenizer": "o200k_base"
+  },
+  "configuration": {
+    "repetitions": 5,
+    "concurrency": 3,
+    "selectedCase": "all",
+    "jobOrder": "repetition-major with clean/pressure pairs adjacent",
+    "harnessSha256": "efa5d0af9a6d12282d93746f8972ec23c18a3807ba61d7df2c3a2e4fb8cf3898",
+    "corpusSha256": "25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a",
+    "sandboxSha256": "5b053aa59d4b4c8d333fc87b94be8319a5fd58f193c14b8ee0e0199a602614b1",
+    "disabledHostFeatures": [
+      "apps",
+      "plugins",
+      "browser_use",
+      "computer_use",
+      "in_app_browser",
+      "image_generation",
+      "multi_agent",
+      "goals",
+      "tool_suggest",
+      "skill_search"
+    ],
+    "isolation": "Fresh Connecta server and ephemeral Codex session for every run; user config ignored; host apps/plugins/browser/computer/agent features disabled; read-only filesystem sandbox.",
+    "noiseEstimate": "Search-result tokens minus a reconstructed result retaining only expected candidates and the same MCP content/structured-content shape."
+  },
+  "summary": {
+    "runs": 30,
+    "lookupAccurate": 27,
+    "routingResultCorrect": 27,
+    "addressAccurate": 27,
+    "connectaRouteCorrect": 12,
+    "routeClean": 12,
+    "directRetrievalTop1Accuracy": 0.44,
+    "meanDirectRetrievalRecall": 1,
+    "meanDirectRetrievalMrr": 0.608,
+    "directNegativeCleanRate": 0,
+    "totalSearchResultTokens": 27794,
+    "totalEstimatedLookupNoiseTokens": 22080,
+    "totalConnectaMcpResultTokens": 32169,
+    "totalForeignMcpResultTokens": 0,
+    "totalMcpResultTokens": 32169,
+    "totalInputTokens": 2365456,
+    "totalNonCachedInputTokens": 471568,
+    "totalOutputTokens": 8506,
+    "totalLatencyMs": 492508
+  },
+  "byCase": {
+    "open-issues-clean": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "routeAccuracy": 0.8,
+      "connectaRouteAccuracy": 0.8,
+      "meanSearchPrecision": 0.087,
+      "directRetrievalTop1Accuracy": 1,
+      "meanDirectRetrievalRecall": 1,
+      "meanDirectRetrievalMrr": 1,
+      "directNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 11,
+      "meanLookupAttempts": 1,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 1319.2,
+      "meanEstimatedLookupNoiseTokens": 1123.2,
+      "meanMcpResultTokens": 1424,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 64623,
+      "meanNonCachedInputTokens": 13320.6,
+      "meanLatencyMs": 15884.3,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    },
+    "page-search-clean": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "routeAccuracy": 0.6,
+      "connectaRouteAccuracy": 0.6,
+      "meanSearchPrecision": 0.148,
+      "directRetrievalTop1Accuracy": 0,
+      "meanDirectRetrievalRecall": 1,
+      "meanDirectRetrievalMrr": 0.24,
+      "directNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 6.4,
+      "meanLookupAttempts": 1,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 872.4,
+      "meanEstimatedLookupNoiseTokens": 690.4,
+      "meanMcpResultTokens": 998.2,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 68668.6,
+      "meanNonCachedInputTokens": 19158.2,
+      "meanLatencyMs": 15308.1,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    },
+    "page-search-pressure": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "routeAccuracy": 0,
+      "connectaRouteAccuracy": 0,
+      "meanSearchPrecision": 0.17,
+      "directRetrievalTop1Accuracy": 0.2,
+      "meanDirectRetrievalRecall": 1,
+      "meanDirectRetrievalMrr": 0.467,
+      "directNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 5.2,
+      "meanLookupAttempts": 1,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 750.6,
+      "meanEstimatedLookupNoiseTokens": 568.6,
+      "meanMcpResultTokens": 938.8,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 101788.4,
+      "meanNonCachedInputTokens": 13673.2,
+      "meanLatencyMs": 17757.4,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    },
+    "workflow-by-id-clean": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "routeAccuracy": 0,
+      "connectaRouteAccuracy": 0,
+      "meanSearchPrecision": 0.091,
+      "directRetrievalTop1Accuracy": 1,
+      "meanDirectRetrievalRecall": 1,
+      "meanDirectRetrievalMrr": 1,
+      "directNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 10.6,
+      "meanLookupAttempts": 1,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 1389.2,
+      "meanEstimatedLookupNoiseTokens": 1183.2,
+      "meanMcpResultTokens": 1558.2,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 75402.8,
+      "meanNonCachedInputTokens": 11812.4,
+      "meanLatencyMs": 17301.7,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    },
+    "build-diagnosis-clean": {
+      "runs": 5,
+      "lookupAccuracy": 0.4,
+      "routingResultAccuracy": 0.4,
+      "addressAccuracy": 0.4,
+      "routeAccuracy": 0.2,
+      "connectaRouteAccuracy": 0.2,
+      "meanSearchPrecision": 0.329,
+      "directRetrievalTop1Accuracy": 0,
+      "meanDirectRetrievalRecall": 1,
+      "meanDirectRetrievalMrr": 0.334,
+      "directNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 7.4,
+      "meanLookupAttempts": 1,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 1029.6,
+      "meanEstimatedLookupNoiseTokens": 734.6,
+      "meanMcpResultTokens": 1316.8,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 75071.8,
+      "meanNonCachedInputTokens": 17318.2,
+      "meanLatencyMs": 19009.1,
+      "guidanceFetchRate": 0.2,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    },
+    "unsupported-audio-pressure": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "routeAccuracy": 0.8,
+      "connectaRouteAccuracy": 0.8,
+      "meanSearchPrecision": 0,
+      "directRetrievalTop1Accuracy": null,
+      "meanDirectRetrievalRecall": null,
+      "meanDirectRetrievalMrr": null,
+      "directNegativeCleanRate": 0,
+      "meanIrrelevantCandidates": 1,
+      "meanLookupAttempts": 1.2,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 197.8,
+      "meanEstimatedLookupNoiseTokens": 116,
+      "meanMcpResultTokens": 197.8,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 87536.6,
+      "meanNonCachedInputTokens": 19031,
+      "meanLatencyMs": 13241.1,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "open-issues-clean",
+      "family": "open-issues",
+      "context": "clean",
+      "repetition": 1,
+      "promptSha256": "d4c93b7b5ade0fad021208e3b787b0b2b5eaeb47dbe65c466194b26068e46304",
+      "promptTokens": 20,
+      "promptPreview": "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "projects.list_issues"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 17673.1,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "projects.list_issues"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 15,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 14,
+      "searchPrecision": 0.067,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list open project issues",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 18.6,
+          "resultBytes": 7541,
+          "resultTokens": 1603,
+          "search": {
+            "query": "list open project issues",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 15,
+            "total": 15,
+            "addresses": [
+              "projects.list_issues",
+              "projects.list_pull_requests",
+              "projects.create_issue",
+              "messages.list_channels",
+              "messages.list_members",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.list_calendars",
+              "customers.list_companies",
+              "customers.list_deals",
+              "documents.list_databases",
+              "builds.list_workflow_runs",
+              "builds.list_commits",
+              "finance.list_transactions",
+              "finance.list_accounts"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.067,
+            "irrelevantCandidates": 14,
+            "minimalRelevantResultTokens": 196,
+            "estimatedNoiseTokens": 1407
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "projects.list_issues",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.4,
+          "resultBytes": 293,
+          "resultTokens": 77
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"projects\",\"tool\":\"list_issues\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61690,
+        "cached_input_tokens": 56320,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 235,
+        "reasoning_output_tokens": 80
+      },
+      "nonCachedInputTokens": 5370,
+      "connectaMcpResultTokens": 1680,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1680,
+      "searchResultTokens": 1603,
+      "estimatedLookupNoiseTokens": 1407
+    },
+    {
+      "id": "page-search-clean",
+      "family": "page-search",
+      "context": "clean",
+      "repetition": 1,
+      "promptSha256": "1f5b088d0c11b52be41a99fcf4a89c983b489c1a4c075876d65c5b46b2a8af8f",
+      "promptTokens": 23,
+      "promptPreview": "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 16338.3,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 11,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 10,
+      "searchPrecision": 0.091,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.2,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages documents by text query launch plan",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 28.7,
+          "resultBytes": 6397,
+          "resultTokens": 1316,
+          "search": {
+            "query": "search pages documents by text query launch plan",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 11,
+            "total": 11,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "files.download_file",
+              "customers.search_contacts",
+              "documents.search_content",
+              "documents.query_database",
+              "finance.search_customers",
+              "projects.get_issue",
+              "controlled.read_record",
+              "controlled.records",
+              "controlled.activity_snapshot"
+            ],
+            "relevantRanks": [
+              5
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.091,
+            "irrelevantCandidates": 10,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 1134
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "json"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.9,
+          "resultBytes": 609,
+          "resultTokens": 127
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.6,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 79172,
+        "cached_input_tokens": 60416,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 323,
+        "reasoning_output_tokens": 147
+      },
+      "nonCachedInputTokens": 18756,
+      "connectaMcpResultTokens": 1518,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1518,
+      "searchResultTokens": 1316,
+      "estimatedLookupNoiseTokens": 1134
+    },
+    {
+      "id": "page-search-pressure",
+      "family": "page-search",
+      "context": "pressure",
+      "repetition": 1,
+      "promptSha256": "8a818ad7b2a9589fe34c4082f88f77dfd10e3213631013c557859bc2e327b3ab",
+      "promptTokens": 4738,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\noutcome is complete and irrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nUse the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 16005.2,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.5,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "find page mentions launch plan search pages full text",
+            "includeSchemas": "compact",
+            "limit": 8
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16.1,
+          "resultBytes": 4253,
+          "resultTokens": 899,
+          "search": {
+            "query": "find page mentions launch plan search pages full text",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 8,
+            "total": 9,
+            "addresses": [
+              "messages.search_messages",
+              "documents.search_content",
+              "documents.get_page",
+              "documents.create_page",
+              "documents.update_page",
+              "files.search_files",
+              "calendar.find_available_times",
+              "customers.search_contacts"
+            ],
+            "relevantRanks": [
+              2
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 717
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.9,
+          "resultBytes": 487,
+          "resultTokens": 104
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.3,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 101941,
+        "cached_input_tokens": 96000,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 285,
+        "reasoning_output_tokens": 103
+      },
+      "nonCachedInputTokens": 5941,
+      "connectaMcpResultTokens": 1078,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1078,
+      "searchResultTokens": 899,
+      "estimatedLookupNoiseTokens": 717
+    },
+    {
+      "id": "workflow-by-id-clean",
+      "family": "workflow-by-id",
+      "context": "clean",
+      "repetition": 1,
+      "promptSha256": "b0aa90cc9904be36ce7c3ab710027d61f239481c4c2e925ae29451e9dd6f4876",
+      "promptTokens": 25,
+      "promptPreview": "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 19740.2,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 18,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 17,
+      "searchPrecision": 0.056,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get workflow run status conclusion run id",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 21.6,
+          "resultBytes": 10075,
+          "resultTokens": 2174,
+          "search": {
+            "query": "get workflow run status conclusion run id",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 18,
+            "total": 18,
+            "addresses": [
+              "builds.get_workflow_run",
+              "builds.list_workflow_runs",
+              "builds.rerun_failed_jobs",
+              "builds.get_job_logs",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "messages.get_thread",
+              "calendar.get_event",
+              "customers.get_contact",
+              "documents.get_page",
+              "finance.get_invoice",
+              "finance.get_balance",
+              "files.list_folder",
+              "controlled.read_record",
+              "controlled.records",
+              "oauth-recoverable.whoami",
+              "static-recoverable.whoami",
+              "static-unavailable.whoami"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.056,
+            "irrelevantCandidates": 17,
+            "minimalRelevantResultTokens": 206,
+            "estimatedNoiseTokens": 1968
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "builds.get_workflow_run"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.2,
+          "resultBytes": 639,
+          "resultTokens": 145
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => await connecta.call(\"builds.get_workflow_run\", { run_id: 42 })"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 78.2,
+          "resultBytes": 221,
+          "resultTokens": 53
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"result\":{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true}}",
+      "usage": {
+        "input_tokens": 79756,
+        "cached_input_tokens": 73472,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 252,
+        "reasoning_output_tokens": 73
+      },
+      "nonCachedInputTokens": 6284,
+      "connectaMcpResultTokens": 2372,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 2372,
+      "searchResultTokens": 2174,
+      "estimatedLookupNoiseTokens": 1968
+    },
+    {
+      "id": "build-diagnosis-clean",
+      "family": "build-diagnosis",
+      "context": "clean",
+      "repetition": 1,
+      "promptSha256": "a21bdf3f5f5cb0523952a695ff7030eeeb7077dd6e1838894b736d1ce1bfcfb8",
+      "promptTokens": 27,
+      "promptPreview": "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "expectedAddresses": [
+        "builds.get_workflow_run",
+        "builds.get_job_logs"
+      ],
+      "expectedRoute": "execute_code",
+      "latencyMs": 16294.8,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "builds.get_job_logs",
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 4,
+      "searchRelevantReturned": 2,
+      "searchIrrelevantCandidates": 2,
+      "searchPrecision": 0.5,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.292,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "failed workflow run job logs",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 17.3,
+          "resultBytes": 2057,
+          "resultTokens": 485,
+          "search": {
+            "query": "failed workflow run job logs",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 4,
+            "total": 4,
+            "addresses": [
+              "builds.rerun_failed_jobs",
+              "builds.list_workflow_runs",
+              "builds.get_workflow_run",
+              "builds.get_job_logs"
+            ],
+            "relevantRanks": [
+              3,
+              4
+            ],
+            "relevantReturned": 2,
+            "top1Relevant": false,
+            "precision": 0.5,
+            "irrelevantCandidates": 2,
+            "minimalRelevantResultTokens": 295,
+            "estimatedNoiseTokens": 190
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const run = await builds.get_workflow_run({});\n  const logs = await builds.get_job_logs({});\n  return [run, logs];\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 106,
+          "resultBytes": 355,
+          "resultTokens": 88
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "[{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true},{\"connector\":\"builds\",\"tool\":\"get_job_logs\",\"fixture\":true}]",
+      "usage": {
+        "input_tokens": 61335,
+        "cached_input_tokens": 56320,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 301,
+        "reasoning_output_tokens": 102
+      },
+      "nonCachedInputTokens": 5015,
+      "connectaMcpResultTokens": 573,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 573,
+      "searchResultTokens": 485,
+      "estimatedLookupNoiseTokens": 190
+    },
+    {
+      "id": "unsupported-audio-pressure",
+      "family": "unsupported-audio",
+      "context": "pressure",
+      "repetition": 1,
+      "promptSha256": "21f1bd2bae6f4687cf2dd3fbe6292014fbb1330e6646348dcdc4e1259a825b2e",
+      "promptTokens": 4744,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\nrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nDetermine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {\"available\":false} when none does.",
+      "expectedAddresses": [],
+      "expectedRoute": "search_only",
+      "latencyMs": 12697.2,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 1,
+      "searchRelevantReturned": 0,
+      "searchIrrelevantCandidates": 1,
+      "searchPrecision": 0,
+      "directRetrievalTop1": null,
+      "directRetrievalRecall": null,
+      "directRetrievalMrr": null,
+      "directNegativeClean": false,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "transcribe audio recording speech to text",
+            "includeSchemas": "compact",
+            "limit": 100
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 13.9,
+          "resultBytes": 845,
+          "resultTokens": 186,
+          "search": {
+            "query": "transcribe audio recording speech to text",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 1,
+            "total": 1,
+            "addresses": [
+              "messages.search_messages"
+            ],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 0,
+            "irrelevantCandidates": 1,
+            "minimalRelevantResultTokens": 70,
+            "estimatedNoiseTokens": 116
+          }
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"available\":false}",
+      "usage": {
+        "input_tokens": 82219,
+        "cached_input_tokens": 76800,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 177,
+        "reasoning_output_tokens": 59
+      },
+      "nonCachedInputTokens": 5419,
+      "connectaMcpResultTokens": 186,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 186,
+      "searchResultTokens": 186,
+      "estimatedLookupNoiseTokens": 116
+    },
+    {
+      "id": "open-issues-clean",
+      "family": "open-issues",
+      "context": "clean",
+      "repetition": 2,
+      "promptSha256": "d4c93b7b5ade0fad021208e3b787b0b2b5eaeb47dbe65c466194b26068e46304",
+      "promptTokens": 20,
+      "promptPreview": "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "projects.list_issues"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 15178.6,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "projects.list_issues"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list open project issues",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 17.8,
+          "resultBytes": 5259,
+          "resultTokens": 1130,
+          "search": {
+            "query": "list open project issues",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 15,
+            "addresses": [
+              "projects.list_issues",
+              "projects.list_pull_requests",
+              "messages.list_channels",
+              "messages.list_members",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.list_calendars",
+              "customers.list_companies",
+              "customers.list_deals",
+              "documents.list_databases"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 196,
+            "estimatedNoiseTokens": 934
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "projects.list_issues",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.4,
+          "resultBytes": 293,
+          "resultTokens": 77
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"projects\",\"tool\":\"list_issues\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61210,
+        "cached_input_tokens": 30208,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 264,
+        "reasoning_output_tokens": 103
+      },
+      "nonCachedInputTokens": 31002,
+      "connectaMcpResultTokens": 1207,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1207,
+      "searchResultTokens": 1130,
+      "estimatedLookupNoiseTokens": 934
+    },
+    {
+      "id": "page-search-clean",
+      "family": "page-search",
+      "context": "clean",
+      "repetition": 2,
+      "promptSha256": "1f5b088d0c11b52be41a99fcf4a89c983b489c1a4c075876d65c5b46b2a8af8f",
+      "promptTokens": 23,
+      "promptPreview": "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 16271.6,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages documents workspace full text launch plan",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 17.6,
+          "resultBytes": 4231,
+          "resultTokens": 883,
+          "search": {
+            "query": "search pages documents workspace full text launch plan",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 8,
+            "total": 8,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "documents.get_page",
+              "documents.list_databases",
+              "documents.query_database",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 701
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.4,
+          "resultBytes": 609,
+          "resultTokens": 127
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 78403,
+        "cached_input_tokens": 59392,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 293,
+        "reasoning_output_tokens": 102
+      },
+      "nonCachedInputTokens": 19011,
+      "connectaMcpResultTokens": 1085,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1085,
+      "searchResultTokens": 883,
+      "estimatedLookupNoiseTokens": 701
+    },
+    {
+      "id": "page-search-pressure",
+      "family": "page-search",
+      "context": "pressure",
+      "repetition": 2,
+      "promptSha256": "8a818ad7b2a9589fe34c4082f88f77dfd10e3213631013c557859bc2e327b3ab",
+      "promptTokens": 4738,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\noutcome is complete and irrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nUse the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 18155.7,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 4,
+      "searchPrecision": 0.2,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages full text mentions phrase",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16.8,
+          "resultBytes": 3087,
+          "resultTokens": 640,
+          "search": {
+            "query": "search pages full text mentions phrase",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.2,
+            "irrelevantCandidates": 4,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 458
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 3.2,
+          "resultBytes": 487,
+          "resultTokens": 104
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.6,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 101712,
+        "cached_input_tokens": 78848,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 324,
+        "reasoning_output_tokens": 149
+      },
+      "nonCachedInputTokens": 22864,
+      "connectaMcpResultTokens": 819,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 819,
+      "searchResultTokens": 640,
+      "estimatedLookupNoiseTokens": 458
+    },
+    {
+      "id": "workflow-by-id-clean",
+      "family": "workflow-by-id",
+      "context": "clean",
+      "repetition": 2,
+      "promptSha256": "b0aa90cc9904be36ce7c3ab710027d61f239481c4c2e925ae29451e9dd6f4876",
+      "promptTokens": 25,
+      "promptPreview": "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 17244.2,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get workflow run status conclusion run id",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 6.4,
+          "resultBytes": 5207,
+          "resultTokens": 1154,
+          "search": {
+            "query": "get workflow run status conclusion run id",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 18,
+            "addresses": [
+              "builds.get_workflow_run",
+              "builds.list_workflow_runs",
+              "builds.rerun_failed_jobs",
+              "builds.get_job_logs",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "messages.get_thread",
+              "calendar.get_event",
+              "customers.get_contact",
+              "documents.get_page"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 206,
+            "estimatedNoiseTokens": 948
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "builds.get_workflow_run"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.8,
+          "resultBytes": 639,
+          "resultTokens": 145
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => await builds.get_workflow_run({})"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 96.7,
+          "resultBytes": 221,
+          "resultTokens": 53
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true}",
+      "usage": {
+        "input_tokens": 78368,
+        "cached_input_tokens": 69376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 317,
+        "reasoning_output_tokens": 151
+      },
+      "nonCachedInputTokens": 8992,
+      "connectaMcpResultTokens": 1352,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1352,
+      "searchResultTokens": 1154,
+      "estimatedLookupNoiseTokens": 948
+    },
+    {
+      "id": "build-diagnosis-clean",
+      "family": "build-diagnosis",
+      "context": "clean",
+      "repetition": 2,
+      "promptSha256": "a21bdf3f5f5cb0523952a695ff7030eeeb7077dd6e1838894b736d1ce1bfcfb8",
+      "promptTokens": 27,
+      "promptPreview": "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "expectedAddresses": [
+        "builds.get_workflow_run",
+        "builds.get_job_logs"
+      ],
+      "expectedRoute": "execute_code",
+      "latencyMs": 16447.5,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_job_logs",
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": true,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 14,
+      "searchRelevantReturned": 2,
+      "searchIrrelevantCandidates": 12,
+      "searchPrecision": 0.143,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.417,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "usage"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 12.8,
+          "resultBytes": 1806,
+          "resultTokens": 397
+        },
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get failed workflow run and its job logs",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16.7,
+          "resultBytes": 6885,
+          "resultTokens": 1511,
+          "search": {
+            "query": "get failed workflow run and its job logs",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 14,
+            "total": 14,
+            "addresses": [
+              "builds.rerun_failed_jobs",
+              "builds.get_workflow_run",
+              "builds.get_job_logs",
+              "builds.list_workflow_runs",
+              "builds.list_commits",
+              "builds.compare_commits",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "messages.get_thread",
+              "calendar.get_event",
+              "customers.get_contact",
+              "documents.get_page",
+              "finance.get_invoice",
+              "finance.get_balance"
+            ],
+            "relevantRanks": [
+              2,
+              3
+            ],
+            "relevantReturned": 2,
+            "top1Relevant": false,
+            "precision": 0.143,
+            "irrelevantCandidates": 12,
+            "minimalRelevantResultTokens": 295,
+            "estimatedNoiseTokens": 1216
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "batch_call",
+          "arguments": {
+            "calls": [
+              {
+                "address": "builds.get_workflow_run",
+                "args": {},
+                "resultMode": "value"
+              },
+              {
+                "address": "builds.get_job_logs",
+                "args": {},
+                "resultMode": "value"
+              }
+            ],
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.7,
+          "resultBytes": 737,
+          "resultTokens": 198
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "[{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true},{\"connector\":\"builds\",\"tool\":\"get_job_logs\",\"fixture\":true}]",
+      "usage": {
+        "input_tokens": 79220,
+        "cached_input_tokens": 31232,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 322,
+        "reasoning_output_tokens": 96
+      },
+      "nonCachedInputTokens": 47988,
+      "connectaMcpResultTokens": 2106,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 2106,
+      "searchResultTokens": 1511,
+      "estimatedLookupNoiseTokens": 1216
+    },
+    {
+      "id": "unsupported-audio-pressure",
+      "family": "unsupported-audio",
+      "context": "pressure",
+      "repetition": 2,
+      "promptSha256": "21f1bd2bae6f4687cf2dd3fbe6292014fbb1330e6646348dcdc4e1259a825b2e",
+      "promptTokens": 4744,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\nrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nDetermine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {\"available\":false} when none does.",
+      "expectedAddresses": [],
+      "expectedRoute": "search_only",
+      "latencyMs": 12983.6,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 1,
+      "searchRelevantReturned": 0,
+      "searchIrrelevantCandidates": 1,
+      "searchPrecision": 0,
+      "directRetrievalTop1": null,
+      "directRetrievalRecall": null,
+      "directRetrievalMrr": null,
+      "directNegativeClean": false,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "transcribe audio recording speech to text",
+            "includeSchemas": "compact",
+            "limit": 100
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.2,
+          "resultBytes": 845,
+          "resultTokens": 186,
+          "search": {
+            "query": "transcribe audio recording speech to text",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 1,
+            "total": 1,
+            "addresses": [
+              "messages.search_messages"
+            ],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 0,
+            "irrelevantCandidates": 1,
+            "minimalRelevantResultTokens": 70,
+            "estimatedNoiseTokens": 116
+          }
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"available\":false}",
+      "usage": {
+        "input_tokens": 82475,
+        "cached_input_tokens": 58624,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 171,
+        "reasoning_output_tokens": 59
+      },
+      "nonCachedInputTokens": 23851,
+      "connectaMcpResultTokens": 186,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 186,
+      "searchResultTokens": 186,
+      "estimatedLookupNoiseTokens": 116
+    },
+    {
+      "id": "open-issues-clean",
+      "family": "open-issues",
+      "context": "clean",
+      "repetition": 3,
+      "promptSha256": "d4c93b7b5ade0fad021208e3b787b0b2b5eaeb47dbe65c466194b26068e46304",
+      "promptTokens": 20,
+      "promptPreview": "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "projects.list_issues"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 19123.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "projects.list_issues"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 15,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 14,
+      "searchPrecision": 0.067,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list open project issues",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16.9,
+          "resultBytes": 7541,
+          "resultTokens": 1603,
+          "search": {
+            "query": "list open project issues",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 15,
+            "total": 15,
+            "addresses": [
+              "projects.list_issues",
+              "projects.list_pull_requests",
+              "projects.create_issue",
+              "messages.list_channels",
+              "messages.list_members",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.list_calendars",
+              "customers.list_companies",
+              "customers.list_deals",
+              "documents.list_databases",
+              "builds.list_workflow_runs",
+              "builds.list_commits",
+              "finance.list_transactions",
+              "finance.list_accounts"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.067,
+            "irrelevantCandidates": 14,
+            "minimalRelevantResultTokens": 196,
+            "estimatedNoiseTokens": 1407
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "projects.list_issues"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.6,
+          "resultBytes": 643,
+          "resultTokens": 139
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "projects.list_issues",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.4,
+          "resultBytes": 293,
+          "resultTokens": 77
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"projects\",\"tool\":\"list_issues\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 78011,
+        "cached_input_tokens": 58368,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 295,
+        "reasoning_output_tokens": 127
+      },
+      "nonCachedInputTokens": 19643,
+      "connectaMcpResultTokens": 1819,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1819,
+      "searchResultTokens": 1603,
+      "estimatedLookupNoiseTokens": 1407
+    },
+    {
+      "id": "page-search-clean",
+      "family": "page-search",
+      "context": "clean",
+      "repetition": 3,
+      "promptSha256": "1f5b088d0c11b52be41a99fcf4a89c983b489c1a4c075876d65c5b46b2a8af8f",
+      "promptTokens": 23,
+      "promptPreview": "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 13886.9,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 4,
+      "searchPrecision": 0.2,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages containing phrase launch plan",
+            "includeSchemas": "compact",
+            "limit": 8
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16.2,
+          "resultBytes": 3085,
+          "resultTokens": 640,
+          "search": {
+            "query": "search pages containing phrase launch plan",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.2,
+            "irrelevantCandidates": 4,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 458
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.9,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61935,
+        "cached_input_tokens": 43264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 293,
+        "reasoning_output_tokens": 112
+      },
+      "nonCachedInputTokens": 18671,
+      "connectaMcpResultTokens": 715,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 715,
+      "searchResultTokens": 640,
+      "estimatedLookupNoiseTokens": 458
+    },
+    {
+      "id": "page-search-pressure",
+      "family": "page-search",
+      "context": "pressure",
+      "repetition": 3,
+      "promptSha256": "8a818ad7b2a9589fe34c4082f88f77dfd10e3213631013c557859bc2e327b3ab",
+      "promptTokens": 4738,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\noutcome is complete and irrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nUse the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 15837.9,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 4,
+      "searchPrecision": 0.2,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "Notion search pages text content launch plan",
+            "includeSchemas": "compact",
+            "limit": 8
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16,
+          "resultBytes": 3085,
+          "resultTokens": 640,
+          "search": {
+            "query": "Notion search pages text content launch plan",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "documents.search_content",
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.2,
+            "irrelevantCandidates": 4,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 458
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "json"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.6,
+          "resultBytes": 609,
+          "resultTokens": 127
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.7,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 101738,
+        "cached_input_tokens": 91904,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 336,
+        "reasoning_output_tokens": 135
+      },
+      "nonCachedInputTokens": 9834,
+      "connectaMcpResultTokens": 842,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 842,
+      "searchResultTokens": 640,
+      "estimatedLookupNoiseTokens": 458
+    },
+    {
+      "id": "workflow-by-id-clean",
+      "family": "workflow-by-id",
+      "context": "clean",
+      "repetition": 3,
+      "promptSha256": "b0aa90cc9904be36ce7c3ab710027d61f239481c4c2e925ae29451e9dd6f4876",
+      "promptTokens": 25,
+      "promptPreview": "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 16823.3,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "workflow run status conclusion run id",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 19.1,
+          "resultBytes": 6011,
+          "resultTokens": 1310,
+          "search": {
+            "query": "workflow run status conclusion run id",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 11,
+            "addresses": [
+              "builds.get_workflow_run",
+              "builds.list_workflow_runs",
+              "builds.rerun_failed_jobs",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "files.list_folder",
+              "controlled.read_record",
+              "controlled.records",
+              "oauth-recoverable.whoami",
+              "static-recoverable.whoami"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 206,
+            "estimatedNoiseTokens": 1104
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => await connecta.call(\"builds.get_workflow_run\", { run_id: 42 })"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 108.1,
+          "resultBytes": 221,
+          "resultTokens": 53
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true}",
+      "usage": {
+        "input_tokens": 62064,
+        "cached_input_tokens": 43264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 341,
+        "reasoning_output_tokens": 205
+      },
+      "nonCachedInputTokens": 18800,
+      "connectaMcpResultTokens": 1363,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1363,
+      "searchResultTokens": 1310,
+      "estimatedLookupNoiseTokens": 1104
+    },
+    {
+      "id": "build-diagnosis-clean",
+      "family": "build-diagnosis",
+      "context": "clean",
+      "repetition": 3,
+      "promptSha256": "a21bdf3f5f5cb0523952a695ff7030eeeb7077dd6e1838894b736d1ce1bfcfb8",
+      "promptTokens": 27,
+      "promptPreview": "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "expectedAddresses": [
+        "builds.get_workflow_run",
+        "builds.get_job_logs"
+      ],
+      "expectedRoute": "execute_code",
+      "latencyMs": 24490.1,
+      "lookupAccurate": false,
+      "addressAccurate": false,
+      "finalCorrect": true,
+      "routingResultCorrect": false,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_job_logs",
+        "builds.get_workflow_run",
+        "builds.list_workflow_runs"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 4,
+      "searchRelevantReturned": 2,
+      "searchIrrelevantCandidates": 2,
+      "searchPrecision": 0.5,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.292,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "failed workflow run job logs",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.3,
+          "resultBytes": 2057,
+          "resultTokens": 485,
+          "search": {
+            "query": "failed workflow run job logs",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 4,
+            "total": 4,
+            "addresses": [
+              "builds.rerun_failed_jobs",
+              "builds.list_workflow_runs",
+              "builds.get_workflow_run",
+              "builds.get_job_logs"
+            ],
+            "relevantRanks": [
+              3,
+              4
+            ],
+            "relevantReturned": 2,
+            "top1Relevant": false,
+            "precision": 0.5,
+            "irrelevantCandidates": 2,
+            "minimalRelevantResultTokens": 295,
+            "estimatedNoiseTokens": 190
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const runs = await builds.list_workflow_runs({});\n  return runs;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 106,
+          "resultBytes": 225,
+          "resultTokens": 53
+        },
+        {
+          "server": "connecta",
+          "tool": "batch_call",
+          "arguments": {
+            "calls": [
+              {
+                "address": "builds.get_workflow_run",
+                "args": {},
+                "resultMode": "value"
+              },
+              {
+                "address": "builds.get_job_logs",
+                "args": {},
+                "resultMode": "value"
+              }
+            ],
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 0.9,
+          "resultBytes": 737,
+          "resultTokens": 198
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "[{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true},{\"connector\":\"builds\",\"tool\":\"get_job_logs\",\"fixture\":true}]",
+      "usage": {
+        "input_tokens": 77412,
+        "cached_input_tokens": 71424,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 367,
+        "reasoning_output_tokens": 126
+      },
+      "nonCachedInputTokens": 5988,
+      "connectaMcpResultTokens": 736,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 736,
+      "searchResultTokens": 485,
+      "estimatedLookupNoiseTokens": 190
+    },
+    {
+      "id": "unsupported-audio-pressure",
+      "family": "unsupported-audio",
+      "context": "pressure",
+      "repetition": 3,
+      "promptSha256": "21f1bd2bae6f4687cf2dd3fbe6292014fbb1330e6646348dcdc4e1259a825b2e",
+      "promptTokens": 4744,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\nrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nDetermine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {\"available\":false} when none does.",
+      "expectedAddresses": [],
+      "expectedRoute": "search_only",
+      "latencyMs": 13311.8,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 2,
+      "emptySearches": 1,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 1,
+      "searchRelevantReturned": 0,
+      "searchIrrelevantCandidates": 1,
+      "searchPrecision": 0,
+      "directRetrievalTop1": null,
+      "directRetrievalRecall": null,
+      "directRetrievalMrr": null,
+      "directNegativeClean": false,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "transcribe audio recording speech to text",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 14.8,
+          "resultBytes": 843,
+          "resultTokens": 186,
+          "search": {
+            "query": "transcribe audio recording speech to text",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 1,
+            "total": 1,
+            "addresses": [
+              "messages.search_messages"
+            ],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 0,
+            "irrelevantCandidates": 1,
+            "minimalRelevantResultTokens": 70,
+            "estimatedNoiseTokens": 116
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "audio",
+            "includeSchemas": "compact",
+            "limit": 100
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.5,
+          "resultBytes": 203,
+          "resultTokens": 59,
+          "search": {
+            "query": "audio",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "all",
+            "returned": 0,
+            "total": 0,
+            "addresses": [],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 1,
+            "irrelevantCandidates": 0,
+            "minimalRelevantResultTokens": 59,
+            "estimatedNoiseTokens": 0
+          }
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"available\":false}",
+      "usage": {
+        "input_tokens": 104266,
+        "cached_input_tokens": 79872,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 231,
+        "reasoning_output_tokens": 80
+      },
+      "nonCachedInputTokens": 24394,
+      "connectaMcpResultTokens": 245,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 245,
+      "searchResultTokens": 245,
+      "estimatedLookupNoiseTokens": 116
+    },
+    {
+      "id": "open-issues-clean",
+      "family": "open-issues",
+      "context": "clean",
+      "repetition": 4,
+      "promptSha256": "d4c93b7b5ade0fad021208e3b787b0b2b5eaeb47dbe65c466194b26068e46304",
+      "promptTokens": 20,
+      "promptPreview": "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "projects.list_issues"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 15858.9,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "projects.list_issues"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list open project issues",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 18.9,
+          "resultBytes": 5259,
+          "resultTokens": 1130,
+          "search": {
+            "query": "list open project issues",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 15,
+            "addresses": [
+              "projects.list_issues",
+              "projects.list_pull_requests",
+              "messages.list_channels",
+              "messages.list_members",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.list_calendars",
+              "customers.list_companies",
+              "customers.list_deals",
+              "documents.list_databases"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 196,
+            "estimatedNoiseTokens": 934
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "projects.list_issues",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.1,
+          "resultBytes": 293,
+          "resultTokens": 77
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"projects\",\"tool\":\"list_issues\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61152,
+        "cached_input_tokens": 56320,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 212,
+        "reasoning_output_tokens": 54
+      },
+      "nonCachedInputTokens": 4832,
+      "connectaMcpResultTokens": 1207,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1207,
+      "searchResultTokens": 1130,
+      "estimatedLookupNoiseTokens": 934
+    },
+    {
+      "id": "page-search-clean",
+      "family": "page-search",
+      "context": "clean",
+      "repetition": 4,
+      "promptSha256": "1f5b088d0c11b52be41a99fcf4a89c983b489c1a4c075876d65c5b46b2a8af8f",
+      "promptTokens": 23,
+      "promptPreview": "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 15646.2,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search workspace pages for launch plan notion confluence docs",
+            "includeSchemas": "compact",
+            "limit": 8
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 17.3,
+          "resultBytes": 4229,
+          "resultTokens": 883,
+          "search": {
+            "query": "search workspace pages for launch plan notion confluence docs",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 8,
+            "total": 8,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "documents.get_page",
+              "documents.list_databases",
+              "documents.query_database",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 701
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.2,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 62045,
+        "cached_input_tokens": 43264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 233,
+        "reasoning_output_tokens": 85
+      },
+      "nonCachedInputTokens": 18781,
+      "connectaMcpResultTokens": 958,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 958,
+      "searchResultTokens": 883,
+      "estimatedLookupNoiseTokens": 701
+    },
+    {
+      "id": "page-search-pressure",
+      "family": "page-search",
+      "context": "pressure",
+      "repetition": 4,
+      "promptSha256": "8a818ad7b2a9589fe34c4082f88f77dfd10e3213631013c557859bc2e327b3ab",
+      "promptTokens": 4738,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\noutcome is complete and irrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nUse the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 19474.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.333,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "Notion search pages by content query",
+            "includeSchemas": "compact",
+            "limit": 8
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15,
+          "resultBytes": 4467,
+          "resultTokens": 934,
+          "search": {
+            "query": "Notion search pages by content query",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 8,
+            "total": 11,
+            "addresses": [
+              "files.search_files",
+              "files.download_file",
+              "documents.search_content",
+              "documents.query_database",
+              "messages.search_messages",
+              "customers.search_contacts",
+              "finance.search_customers",
+              "projects.get_issue"
+            ],
+            "relevantRanks": [
+              3
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 752
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.5,
+          "resultBytes": 487,
+          "resultTokens": 104
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.8,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 102040,
+        "cached_input_tokens": 96000,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 336,
+        "reasoning_output_tokens": 160
+      },
+      "nonCachedInputTokens": 6040,
+      "connectaMcpResultTokens": 1113,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1113,
+      "searchResultTokens": 934,
+      "estimatedLookupNoiseTokens": 752
+    },
+    {
+      "id": "workflow-by-id-clean",
+      "family": "workflow-by-id",
+      "context": "clean",
+      "repetition": 4,
+      "promptSha256": "b0aa90cc9904be36ce7c3ab710027d61f239481c4c2e925ae29451e9dd6f4876",
+      "promptTokens": 25,
+      "promptPreview": "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 14396.9,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get workflow run status conclusion run id",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 17.4,
+          "resultBytes": 5207,
+          "resultTokens": 1154,
+          "search": {
+            "query": "get workflow run status conclusion run id",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 18,
+            "addresses": [
+              "builds.get_workflow_run",
+              "builds.list_workflow_runs",
+              "builds.rerun_failed_jobs",
+              "builds.get_job_logs",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "messages.get_thread",
+              "calendar.get_event",
+              "customers.get_contact",
+              "documents.get_page"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 206,
+            "estimatedNoiseTokens": 948
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "builds.get_workflow_run"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.2,
+          "resultBytes": 639,
+          "resultTokens": 145
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => await connecta.call(\"builds.get_workflow_run\", {})"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 103.3,
+          "resultBytes": 221,
+          "resultTokens": 53
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true}",
+      "usage": {
+        "input_tokens": 78416,
+        "cached_input_tokens": 59392,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 365,
+        "reasoning_output_tokens": 173
+      },
+      "nonCachedInputTokens": 19024,
+      "connectaMcpResultTokens": 1352,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1352,
+      "searchResultTokens": 1154,
+      "estimatedLookupNoiseTokens": 948
+    },
+    {
+      "id": "build-diagnosis-clean",
+      "family": "build-diagnosis",
+      "context": "clean",
+      "repetition": 4,
+      "promptSha256": "a21bdf3f5f5cb0523952a695ff7030eeeb7077dd6e1838894b736d1ce1bfcfb8",
+      "promptTokens": 27,
+      "promptPreview": "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "expectedAddresses": [
+        "builds.get_workflow_run",
+        "builds.get_job_logs"
+      ],
+      "expectedRoute": "execute_code",
+      "latencyMs": 21157.6,
+      "lookupAccurate": false,
+      "addressAccurate": false,
+      "finalCorrect": true,
+      "routingResultCorrect": false,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_job_logs",
+        "builds.get_workflow_run",
+        "builds.list_workflow_runs"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 20,
+      "searchRelevantReturned": 2,
+      "searchIrrelevantCandidates": 18,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.375,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "GitHub Actions list failed workflow runs and download or get job logs",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 19.9,
+          "resultBytes": 9557,
+          "resultTokens": 2070,
+          "search": {
+            "query": "GitHub Actions list failed workflow runs and download or get job logs",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 20,
+            "total": 37,
+            "addresses": [
+              "builds.list_workflow_runs",
+              "builds.get_job_logs",
+              "builds.rerun_failed_jobs",
+              "builds.get_workflow_run",
+              "finance.list_transactions",
+              "customers.get_contact",
+              "documents.get_page",
+              "documents.list_databases",
+              "projects.list_issues",
+              "projects.get_issue",
+              "projects.list_pull_requests",
+              "projects.get_pull_request",
+              "messages.list_channels",
+              "messages.get_thread",
+              "messages.list_members",
+              "files.download_file",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.get_event",
+              "calendar.list_calendars"
+            ],
+            "relevantRanks": [
+              4,
+              2
+            ],
+            "relevantReturned": 2,
+            "top1Relevant": false,
+            "precision": 0.1,
+            "irrelevantCandidates": 18,
+            "minimalRelevantResultTokens": 295,
+            "estimatedNoiseTokens": 1775
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const runs = await builds.list_workflow_runs({});\n  return runs;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 76.5,
+          "resultBytes": 225,
+          "resultTokens": 53
+        },
+        {
+          "server": "connecta",
+          "tool": "batch_call",
+          "arguments": {
+            "calls": [
+              {
+                "address": "builds.get_workflow_run",
+                "args": {},
+                "resultMode": "value"
+              },
+              {
+                "address": "builds.get_job_logs",
+                "args": {},
+                "resultMode": "value"
+              }
+            ],
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.7,
+          "resultBytes": 737,
+          "resultTokens": 198
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "[{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true},{\"connector\":\"builds\",\"tool\":\"get_job_logs\",\"fixture\":true}]",
+      "usage": {
+        "input_tokens": 79838,
+        "cached_input_tokens": 73472,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 418,
+        "reasoning_output_tokens": 169
+      },
+      "nonCachedInputTokens": 6366,
+      "connectaMcpResultTokens": 2321,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 2321,
+      "searchResultTokens": 2070,
+      "estimatedLookupNoiseTokens": 1775
+    },
+    {
+      "id": "unsupported-audio-pressure",
+      "family": "unsupported-audio",
+      "context": "pressure",
+      "repetition": 4,
+      "promptSha256": "21f1bd2bae6f4687cf2dd3fbe6292014fbb1330e6646348dcdc4e1259a825b2e",
+      "promptTokens": 4744,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\nrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nDetermine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {\"available\":false} when none does.",
+      "expectedAddresses": [],
+      "expectedRoute": "search_only",
+      "latencyMs": 16157.3,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 1,
+      "searchRelevantReturned": 0,
+      "searchIrrelevantCandidates": 1,
+      "searchPrecision": 0,
+      "directRetrievalTop1": null,
+      "directRetrievalRecall": null,
+      "directRetrievalMrr": null,
+      "directNegativeClean": false,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "transcribe audio recording speech to text",
+            "includeSchemas": "compact",
+            "limit": 100
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 13.5,
+          "resultBytes": 845,
+          "resultTokens": 186,
+          "search": {
+            "query": "transcribe audio recording speech to text",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 1,
+            "total": 1,
+            "addresses": [
+              "messages.search_messages"
+            ],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 0,
+            "irrelevantCandidates": 1,
+            "minimalRelevantResultTokens": 70,
+            "estimatedNoiseTokens": 116
+          }
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"available\":false}",
+      "usage": {
+        "input_tokens": 86387,
+        "cached_input_tokens": 60672,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 246,
+        "reasoning_output_tokens": 80
+      },
+      "nonCachedInputTokens": 25715,
+      "connectaMcpResultTokens": 186,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 186,
+      "searchResultTokens": 186,
+      "estimatedLookupNoiseTokens": 116
+    },
+    {
+      "id": "open-issues-clean",
+      "family": "open-issues",
+      "context": "clean",
+      "repetition": 5,
+      "promptSha256": "d4c93b7b5ade0fad021208e3b787b0b2b5eaeb47dbe65c466194b26068e46304",
+      "promptTokens": 20,
+      "promptPreview": "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "projects.list_issues"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 11587.7,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "projects.list_issues"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list open project issues",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.1,
+          "resultBytes": 5259,
+          "resultTokens": 1130,
+          "search": {
+            "query": "list open project issues",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 15,
+            "addresses": [
+              "projects.list_issues",
+              "projects.list_pull_requests",
+              "messages.list_channels",
+              "messages.list_members",
+              "files.list_folder",
+              "calendar.list_events",
+              "calendar.list_calendars",
+              "customers.list_companies",
+              "customers.list_deals",
+              "documents.list_databases"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 196,
+            "estimatedNoiseTokens": 934
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "projects.list_issues",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 12.1,
+          "resultBytes": 293,
+          "resultTokens": 77
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"projects\",\"tool\":\"list_issues\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61052,
+        "cached_input_tokens": 55296,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 173,
+        "reasoning_output_tokens": 41
+      },
+      "nonCachedInputTokens": 5756,
+      "connectaMcpResultTokens": 1207,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1207,
+      "searchResultTokens": 1130,
+      "estimatedLookupNoiseTokens": 934
+    },
+    {
+      "id": "page-search-clean",
+      "family": "page-search",
+      "context": "clean",
+      "repetition": 5,
+      "promptSha256": "1f5b088d0c11b52be41a99fcf4a89c983b489c1a4c075876d65c5b46b2a8af8f",
+      "promptTokens": 23,
+      "promptPreview": "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 14397.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 4,
+      "searchPrecision": 0.2,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages full text launch plan notion confluence google drive",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5.3,
+          "resultBytes": 3087,
+          "resultTokens": 640,
+          "search": {
+            "query": "search pages full text launch plan notion confluence google drive",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.2,
+            "irrelevantCandidates": 4,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 458
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {
+              "query": "launch plan"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.7,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61788,
+        "cached_input_tokens": 41216,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 237,
+        "reasoning_output_tokens": 60
+      },
+      "nonCachedInputTokens": 20572,
+      "connectaMcpResultTokens": 715,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 715,
+      "searchResultTokens": 640,
+      "estimatedLookupNoiseTokens": 458
+    },
+    {
+      "id": "page-search-pressure",
+      "family": "page-search",
+      "context": "pressure",
+      "repetition": 5,
+      "promptSha256": "8a818ad7b2a9589fe34c4082f88f77dfd10e3213631013c557859bc2e327b3ab",
+      "promptTokens": 4738,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\noutcome is complete and irrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nUse the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "documents.search_content"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 19313.6,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "documents.search_content"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 4,
+      "searchPrecision": 0.2,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.25,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "search pages text launch plan",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 14.9,
+          "resultBytes": 3087,
+          "resultTokens": 640,
+          "search": {
+            "query": "search pages text launch plan",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "messages.search_messages",
+              "files.search_files",
+              "customers.search_contacts",
+              "documents.search_content",
+              "finance.search_customers"
+            ],
+            "relevantRanks": [
+              4
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": false,
+            "precision": 0.2,
+            "irrelevantCandidates": 4,
+            "minimalRelevantResultTokens": 182,
+            "estimatedNoiseTokens": 458
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "documents.search_content"
+            ],
+            "format": "json"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.2,
+          "resultBytes": 609,
+          "resultTokens": 127
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "documents.search_content",
+            "args": {},
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.4,
+          "resultBytes": 301,
+          "resultTokens": 75
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"connector\":\"documents\",\"tool\":\"search_content\",\"fixture\":true},\"durationMs\":1,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 101511,
+        "cached_input_tokens": 77824,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 255,
+        "reasoning_output_tokens": 86
+      },
+      "nonCachedInputTokens": 23687,
+      "connectaMcpResultTokens": 842,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 842,
+      "searchResultTokens": 640,
+      "estimatedLookupNoiseTokens": 458
+    },
+    {
+      "id": "workflow-by-id-clean",
+      "family": "workflow-by-id",
+      "context": "clean",
+      "repetition": 5,
+      "promptSha256": "b0aa90cc9904be36ce7c3ab710027d61f239481c4c2e925ae29451e9dd6f4876",
+      "promptTokens": 25,
+      "promptPreview": "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
+      "expectedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "expectedRoute": "call_tool",
+      "latencyMs": 18303.7,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_workflow_run"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 10,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 9,
+      "searchPrecision": 0.1,
+      "directRetrievalTop1": true,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 1,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get workflow run status conclusion run id",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 16,
+          "resultBytes": 5207,
+          "resultTokens": 1154,
+          "search": {
+            "query": "get workflow run status conclusion run id",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 10,
+            "total": 18,
+            "addresses": [
+              "builds.get_workflow_run",
+              "builds.list_workflow_runs",
+              "builds.rerun_failed_jobs",
+              "builds.get_job_logs",
+              "projects.get_issue",
+              "projects.get_pull_request",
+              "messages.get_thread",
+              "calendar.get_event",
+              "customers.get_contact",
+              "documents.get_page"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.1,
+            "irrelevantCandidates": 9,
+            "minimalRelevantResultTokens": 206,
+            "estimatedNoiseTokens": 948
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "builds.get_workflow_run"
+            ],
+            "format": "json",
+            "fullDescriptions": true
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.1,
+          "resultBytes": 639,
+          "resultTokens": 145
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => await connecta.call(\"builds.get_workflow_run\", {})"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 105.8,
+          "resultBytes": 221,
+          "resultTokens": 53
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"result\":{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true}}",
+      "usage": {
+        "input_tokens": 78410,
+        "cached_input_tokens": 72448,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 372,
+        "reasoning_output_tokens": 199
+      },
+      "nonCachedInputTokens": 5962,
+      "connectaMcpResultTokens": 1352,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1352,
+      "searchResultTokens": 1154,
+      "estimatedLookupNoiseTokens": 948
+    },
+    {
+      "id": "build-diagnosis-clean",
+      "family": "build-diagnosis",
+      "context": "clean",
+      "repetition": 5,
+      "promptSha256": "a21bdf3f5f5cb0523952a695ff7030eeeb7077dd6e1838894b736d1ce1bfcfb8",
+      "promptTokens": 27,
+      "promptPreview": "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "expectedAddresses": [
+        "builds.get_workflow_run",
+        "builds.get_job_logs"
+      ],
+      "expectedRoute": "execute_code",
+      "latencyMs": 16655.5,
+      "lookupAccurate": false,
+      "addressAccurate": false,
+      "finalCorrect": true,
+      "routingResultCorrect": false,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "builds.get_job_logs",
+        "builds.get_workflow_run",
+        "builds.list_workflow_runs"
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 5,
+      "searchRelevantReturned": 2,
+      "searchIrrelevantCandidates": 3,
+      "searchPrecision": 0.4,
+      "directRetrievalTop1": false,
+      "directRetrievalRecall": 1,
+      "directRetrievalMrr": 0.292,
+      "directNegativeClean": null,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "failed workflow run job logs github actions",
+            "includeSchemas": "compact",
+            "limit": 20
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.9,
+          "resultBytes": 2639,
+          "resultTokens": 597,
+          "search": {
+            "query": "failed workflow run job logs github actions",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 5,
+            "total": 5,
+            "addresses": [
+              "builds.rerun_failed_jobs",
+              "builds.list_workflow_runs",
+              "builds.get_workflow_run",
+              "builds.get_job_logs",
+              "finance.list_transactions"
+            ],
+            "relevantRanks": [
+              3,
+              4
+            ],
+            "relevantReturned": 2,
+            "top1Relevant": false,
+            "precision": 0.4,
+            "irrelevantCandidates": 3,
+            "minimalRelevantResultTokens": 295,
+            "estimatedNoiseTokens": 302
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const runs = await builds.list_workflow_runs({});\n  return runs;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 107.3,
+          "resultBytes": 225,
+          "resultTokens": 53
+        },
+        {
+          "server": "connecta",
+          "tool": "batch_call",
+          "arguments": {
+            "calls": [
+              {
+                "address": "builds.get_workflow_run",
+                "args": {}
+              },
+              {
+                "address": "builds.get_job_logs",
+                "args": {}
+              }
+            ],
+            "resultMode": "value",
+            "diagnostics": false
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.9,
+          "resultBytes": 737,
+          "resultTokens": 198
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "[{\"connector\":\"builds\",\"tool\":\"get_workflow_run\",\"fixture\":true},{\"connector\":\"builds\",\"tool\":\"get_job_logs\",\"fixture\":true}]",
+      "usage": {
+        "input_tokens": 77554,
+        "cached_input_tokens": 56320,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 341,
+        "reasoning_output_tokens": 103
+      },
+      "nonCachedInputTokens": 21234,
+      "connectaMcpResultTokens": 848,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 848,
+      "searchResultTokens": 597,
+      "estimatedLookupNoiseTokens": 302
+    },
+    {
+      "id": "unsupported-audio-pressure",
+      "family": "unsupported-audio",
+      "context": "pressure",
+      "repetition": 5,
+      "promptSha256": "21f1bd2bae6f4687cf2dd3fbe6292014fbb1330e6646348dcdc4e1259a825b2e",
+      "promptTokens": 4744,
+      "promptPreview": "You are continuing after a long integration-triage transcript.\n\nEverything in RESOLVED BACKGROUND is historical context.…\nrelevant to the current task.\nEND RESOLVED BACKGROUND\n\nCURRENT TASK\nDetermine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {\"available\":false} when none does.",
+      "expectedAddresses": [],
+      "expectedRoute": "search_only",
+      "latencyMs": 11055.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 1,
+      "searchRelevantReturned": 0,
+      "searchIrrelevantCandidates": 1,
+      "searchPrecision": 0,
+      "directRetrievalTop1": null,
+      "directRetrievalRecall": null,
+      "directRetrievalMrr": null,
+      "directNegativeClean": false,
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "transcribe audio recording speech to text transcription",
+            "includeSchemas": "compact",
+            "limit": 100
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 14.6,
+          "resultBytes": 845,
+          "resultTokens": 186,
+          "search": {
+            "query": "transcribe audio recording speech to text transcription",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "partial",
+            "returned": 1,
+            "total": 1,
+            "addresses": [
+              "messages.search_messages"
+            ],
+            "relevantRanks": [],
+            "relevantReturned": 0,
+            "top1Relevant": false,
+            "precision": 0,
+            "irrelevantCandidates": 1,
+            "minimalRelevantResultTokens": 70,
+            "estimatedNoiseTokens": 116
+          }
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"available\":false}",
+      "usage": {
+        "input_tokens": 82336,
+        "cached_input_tokens": 66560,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 191,
+        "reasoning_output_tokens": 79
+      },
+      "nonCachedInputTokens": 15776,
+      "connectaMcpResultTokens": 186,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 186,
+      "searchResultTokens": 186,
+      "estimatedLookupNoiseTokens": 116
+    }
+  ]
+}
