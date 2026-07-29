@@ -20,6 +20,18 @@ mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
+## Lexical discovery
+
+`search_tools` tokenizes tool names and descriptions at punctuation and
+camel-case boundaries. Exact whole-token matches carry the most weight; a small
+set of inflectional variants preserves singular/plural and verb-form recall
+without allowing arbitrary mid-word substring matches. Ranking weights each
+query term by its document frequency across the available catalogs in that
+search, so a rare domain term outranks a ubiquitous action while action terms
+still distinguish `get`, `list`, `search`, and write operations. If no tool
+covers every non-conversational term, the same scorer falls back to any-term
+matching and marks the result `matchMode: "partial"`.
+
 ## Authorization recovery
 
 Every typed `auth_required` call failure uses the same envelope:

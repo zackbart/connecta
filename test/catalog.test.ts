@@ -1,6 +1,98 @@
 import { describe, expect, it } from "vitest";
-import { compactSchema } from "../src/catalog.js";
-import type { JsonSchema } from "../src/types.js";
+import {
+  compactSchema,
+  lexicalCorpusStatistics,
+  rankTools,
+} from "../src/catalog.js";
+import type { JsonSchema, ToolDef } from "../src/types.js";
+
+describe("lexical tool ranking", () => {
+  it("matches whole tokens rather than arbitrary substrings", () => {
+    const tools: ToolDef[] = [
+      {
+        name: "enlist_members",
+        description: "Enroll members in a cohort",
+      },
+      {
+        name: "blacklist_entry",
+        description: "Block an entry",
+      },
+    ];
+
+    expect(rankTools(tools, "list", "partial")).toEqual([]);
+  });
+
+  it("finds camel-case names and narrow inflectional variants", () => {
+    const tools: ToolDef[] = [
+      {
+        name: "searchDriveFiles",
+        description: "Locate documents",
+      },
+      {
+        name: "searchMessages",
+        description: "Locate conversations",
+      },
+      {
+        name: "getURLMetadata",
+        description: "Inspect a link",
+      },
+      {
+        name: "createDriveFiles",
+        description: "Add documents",
+      },
+    ];
+
+    expect(
+      rankTools(tools, "search drive file").map(({ tool }) => tool.name),
+    ).toEqual(["searchDriveFiles"]);
+    expect(
+      rankTools(tools, "url metadata").map(({ tool }) => tool.name),
+    ).toEqual(["getURLMetadata"]);
+    expect(
+      rankTools(tools, "created drive file").map(({ tool }) => tool.name),
+    ).toEqual(["createDriveFiles"]);
+  });
+
+  it("weights a rare domain term above a ubiquitous action term", () => {
+    const generic: ToolDef[] = Array.from({ length: 12 }, (_, index) => ({
+      name: `get_record_${index}`,
+      description: "Get a record by identifier",
+    }));
+    const domain: ToolDef[] = [
+      {
+        name: "invoice_summary",
+        description: "Summarize an invoice",
+      },
+    ];
+    const query = "get invoice";
+    const statistics = lexicalCorpusStatistics([generic, domain], query);
+    const ranked = [
+      ...rankTools(generic, query, "partial", statistics),
+      ...rankTools(domain, query, "partial", statistics),
+    ].sort((a, b) => b.score - a.score);
+
+    expect(ranked[0]?.tool.name).toBe("invoice_summary");
+  });
+
+  it("keeps action terms as ranking evidence", () => {
+    const tools: ToolDef[] = [
+      {
+        name: "list_invoices",
+        description: "List invoices",
+      },
+      {
+        name: "get_invoice",
+        description: "Get one invoice",
+      },
+    ];
+
+    expect(
+      rankTools(tools, "get invoice", "partial")
+        .sort((a, b) => b.score - a.score)
+        .map(({ tool }) => tool.name),
+    ).toEqual(["get_invoice", "list_invoices"]);
+  });
+});
 
 describe("compactSchema const", () => {
   it("renders a discriminated union with its discriminator values", () => {

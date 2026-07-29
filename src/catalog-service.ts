@@ -1,5 +1,6 @@
 import {
   compactSchema,
+  lexicalCorpusStatistics,
   lexicalSearchQuery,
   rankTools,
   summarizeDescription,
@@ -391,6 +392,12 @@ export class CatalogService {
       order: number;
     }> = [];
     let matchMode: "all" | "partial" = "all";
+    const statistics = lexicalCorpusStatistics(
+      catalogs.flatMap((catalog) =>
+        catalog.status === "fulfilled" ? [catalog.value] : [],
+      ),
+      retrievalQuery,
+    );
     const collectMatches = (mode: "all" | "partial") => {
       matches.length = 0;
       let orderBase = 0;
@@ -404,6 +411,7 @@ export class CatalogService {
             catalog.value,
             retrievalQuery,
             mode,
+            statistics,
           )) {
             matches.push({
               connector,

@@ -13,8 +13,19 @@ export function summarizeDescription(
   return `${compact.slice(0, DEFAULT_DESCRIPTION_LENGTH - 1).trimEnd()}…`;
 }
 
+function lexicalTokens(text: string): string[] {
+  return text
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
 function normalized(text: string): string {
-  return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return lexicalTokens(text).join(" ");
 }
 
 /**
@@ -75,7 +86,8 @@ export function lexicalSearchQuery(query: string): string {
 interface SearchDocument {
   tool: ToolDef;
   name: string;
-  description: string;
+  nameTokens: string[];
+  descriptionTokens: string[];
 }
 
 export type LexicalMatchMode = "all" | "partial";
@@ -91,14 +103,103 @@ const searchDocuments = new WeakMap<ToolDef[], SearchDocument[]>();
 function documentsFor(tools: ToolDef[]): SearchDocument[] {
   let docs = searchDocuments.get(tools);
   if (!docs) {
-    docs = tools.map((tool) => ({
-      tool,
-      name: normalized(tool.name),
-      description: normalized(tool.description ?? ""),
-    }));
+    docs = tools.map((tool) => {
+      const nameTokens = lexicalTokens(tool.name);
+      const descriptionTokens = lexicalTokens(tool.description ?? "");
+      return {
+        tool,
+        name: nameTokens.join(" "),
+        nameTokens,
+        descriptionTokens,
+      };
+    });
     searchDocuments.set(tools, docs);
   }
   return docs;
+}
+
+/**
+ * Whole-token equality is the ordinary lexical match. A deliberately narrow
+ * inflection check retains useful singular/plural and verb-form recall without
+ * bringing back arbitrary substring matches (`list` must not match `enlist`).
+ */
+function tokenMatches(token: string, term: string): boolean {
+  if (token === term) return true;
+  const variants = (base: string, candidate: string) =>
+    candidate === `${base}s` ||
+    candidate === `${base}es` ||
+    candidate === `${base}ed` ||
+    candidate === `${base}ing` ||
+    (base.endsWith("e") &&
+      (candidate === `${base}d` ||
+        candidate === `${base.slice(0, -1)}ing`)) ||
+    (base.endsWith("y") &&
+      (candidate === `${base.slice(0, -1)}ies` ||
+        candidate === `${base.slice(0, -1)}ied`));
+  return variants(term, token) || variants(token, term);
+}
+
+function documentMatchesTerm(doc: SearchDocument, term: string): boolean {
+  return (
+    doc.nameTokens.some((token) => tokenMatches(token, term)) ||
+    doc.descriptionTokens.some((token) => tokenMatches(token, term))
+  );
+}
+
+export interface LexicalCorpusStatistics {
+  documentCount: number;
+  documentFrequency: ReadonlyMap<string, number>;
+}
+
+/**
+ * Compute query-specific document frequencies across every available catalog.
+ * The caller does this once per search and shares the result with each
+ * connector rank, so ubiquitous words contribute less than discriminative
+ * ones without making any action word a stopword.
+ */
+export function lexicalCorpusStatistics(
+  toolSets: ToolDef[][],
+  query: string,
+): LexicalCorpusStatistics {
+  const terms = [...new Set(lexicalTokens(query))];
+  if (terms.length === 0) {
+    return {
+      documentCount: toolSets.reduce(
+        (total, tools) => total + tools.length,
+        0,
+      ),
+      documentFrequency: new Map(),
+    };
+  }
+  const documentFrequency = new Map(terms.map((term) => [term, 0]));
+  let documentCount = 0;
+
+  for (const tools of toolSets) {
+    for (const doc of documentsFor(tools)) {
+      documentCount += 1;
+      for (const term of terms) {
+        if (documentMatchesTerm(doc, term)) {
+          documentFrequency.set(
+            term,
+            (documentFrequency.get(term) ?? 0) + 1,
+          );
+        }
+      }
+    }
+  }
+  return { documentCount, documentFrequency };
+}
+
+function inverseDocumentFrequency(
+  term: string,
+  statistics: LexicalCorpusStatistics,
+): number {
+  const frequency = statistics.documentFrequency.get(term) ?? 0;
+  return Math.log(
+    1 +
+      (statistics.documentCount - frequency + 0.5) /
+        (frequency + 0.5),
+  );
 }
 
 function scoreDocument(
@@ -106,30 +207,46 @@ function scoreDocument(
   phrase: string,
   terms: string[],
   mode: LexicalMatchMode,
+  statistics: LexicalCorpusStatistics,
 ): number | null {
   if (!phrase) return 0;
-  const haystack = `${doc.name} ${doc.description}`;
-  const matchedTerms = terms.filter((term) => haystack.includes(term));
+  const matchedTerms = terms.filter((term) =>
+    documentMatchesTerm(doc, term),
+  );
   if (mode === "all" && matchedTerms.length !== terms.length) return null;
-  if (mode === "partial") {
-    if (matchedTerms.length === 0) return null;
-    const nameMatches = matchedTerms.filter((term) =>
-      doc.name.includes(term),
-    ).length;
-    // Coverage wins first, then the number of those terms found in the tool
-    // name. Catalog order breaks the remaining ties at the caller.
-    return matchedTerms.length * 1_000 + nameMatches;
+  if (matchedTerms.length === 0) return null;
+
+  // Coverage remains meaningful in partial mode, but is IDF-weighted rather
+  // than a raw term count: one rare domain term can beat several ubiquitous
+  // catalog verbs.
+  let score = matchedTerms.reduce(
+    (total, term) =>
+      total + 4 * inverseDocumentFrequency(term, statistics),
+    0,
+  );
+  const phraseWeight = terms.reduce(
+    (total, term) =>
+      total + inverseDocumentFrequency(term, statistics),
+    0,
+  );
+  if (doc.name === phrase) score += 40 * phraseWeight;
+  else if (doc.name.startsWith(`${phrase} `)) score += 24 * phraseWeight;
+  else if (` ${doc.name} `.includes(` ${phrase} `)) {
+    score += 16 * phraseWeight;
   }
 
-  let score = 0;
-  if (doc.name === phrase) score += 1_000;
-  else if (doc.name.startsWith(phrase)) score += 800;
-  else if (doc.name.includes(phrase)) score += 600;
-  for (const term of terms) {
-    if (doc.name === term) score += 200;
-    else if (doc.name.startsWith(term)) score += 120;
-    else if (doc.name.includes(term)) score += 80;
-    if (doc.description.includes(term)) score += 10;
+  for (const term of matchedTerms) {
+    const weight = inverseDocumentFrequency(term, statistics);
+    if (doc.nameTokens.includes(term)) score += 12 * weight;
+    else if (doc.nameTokens.some((token) => tokenMatches(token, term))) {
+      score += 8 * weight;
+    }
+    if (doc.descriptionTokens.includes(term)) score += 3 * weight;
+    else if (
+      doc.descriptionTokens.some((token) => tokenMatches(token, term))
+    ) {
+      score += 1.5 * weight;
+    }
   }
   return score;
 }
@@ -139,12 +256,16 @@ export function rankTools(
   tools: ToolDef[],
   query: string,
   mode: LexicalMatchMode = "all",
+  statistics: LexicalCorpusStatistics = lexicalCorpusStatistics(
+    [tools],
+    query,
+  ),
 ): RankedTool[] {
   const phrase = normalized(query);
-  const terms = phrase.split(/\s+/).filter(Boolean);
+  const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
   const ranked: RankedTool[] = [];
   documentsFor(tools).forEach((doc, order) => {
-    const score = scoreDocument(doc, phrase, terms, mode);
+    const score = scoreDocument(doc, phrase, terms, mode, statistics);
     if (score !== null) ranked.push({ tool: doc.tool, score, order });
   });
   return ranked;
