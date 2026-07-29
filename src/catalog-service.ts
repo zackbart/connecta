@@ -1,4 +1,9 @@
-import { compactSchema, rankTools, summarizeDescription } from "./catalog.js";
+import {
+  compactSchema,
+  lexicalSearchQuery,
+  rankTools,
+  summarizeDescription,
+} from "./catalog.js";
 import {
   mapSettledWithConcurrency,
   resolveDiscoveryConcurrency,
@@ -24,7 +29,7 @@ import type {
   ToolDef,
 } from "./types.js";
 
-const DEFAULT_SEARCH_LIMIT = 25;
+export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
@@ -362,6 +367,7 @@ export class CatalogService {
 
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
     const query = args.query ?? "";
+    const retrievalQuery = lexicalSearchQuery(query);
     const limit = discoverySearchLimit(args.limit);
     const offset = Math.max(0, Math.trunc(args.offset ?? 0));
     const connectors = args.connector
@@ -394,7 +400,11 @@ export class CatalogService {
           throw new Error("Catalog result has no corresponding connector");
         }
         if (catalog.status === "fulfilled") {
-          for (const ranked of rankTools(catalog.value, query, mode)) {
+          for (const ranked of rankTools(
+            catalog.value,
+            retrievalQuery,
+            mode,
+          )) {
             matches.push({
               connector,
               tool: ranked.tool,

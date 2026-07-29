@@ -949,6 +949,36 @@ describe("search_tools", () => {
     expect(next.connectors.flatMap((c) => c.tools)).toHaveLength(1);
   });
 
+  it("defaults to eight results and preserves the remaining page", async () => {
+    const connector: Connector = {
+      id: "default_page",
+      staticTools: Array.from({ length: 12 }, (_, index) => ({
+        name: `read_${String(index).padStart(2, "0")}`,
+        description: "Read a deterministic item",
+      })),
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const first = textOf(await mt.searchTools({})) as SearchResult;
+
+    expect(first.limit).toBe(8);
+    expect(first.total).toBe(12);
+    expect(first.connectors.flatMap((group) => group.tools)).toHaveLength(8);
+    expect(first.nextOffset).toBe(8);
+
+    const second = textOf(
+      await mt.searchTools({ offset: required(first.nextOffset) }),
+    ) as SearchResult;
+    expect(second.limit).toBe(8);
+    expect(second.connectors.flatMap((group) => group.tools)).toHaveLength(4);
+    expect(second.hasMore).toBe(false);
+  });
+
   it("bounds page size before loading or ranking a catalog", async () => {
     let loads = 0;
     const tools = Array.from({ length: MAX_SEARCH_LIMIT }, (_, i) => ({
@@ -1082,6 +1112,191 @@ describe("search_tools", () => {
       "article-fetch",
       "article-search",
     ]);
+    expect(parsed.matchMode).toBeUndefined();
+  });
+
+  it("removes conversational framing before the all-term decision", async () => {
+    const connector: Connector = {
+      id: "conversation",
+      staticTools: [
+        {
+          name: "list_issues",
+          description: "List open issues for a project",
+        },
+        {
+          name: "expand_archive",
+          description: "Expand a compressed archive",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({
+        query:
+          "can you show me all of the current open issues in our project please",
+      }),
+    ) as SearchResult;
+
+    expect(
+      parsed.connectors.flatMap((group) =>
+        group.tools.map((tool) => tool.name),
+      ),
+    ).toEqual(["list_issues"]);
+    expect(parsed.matchMode).toBeUndefined();
+  });
+
+  it("keeps action terms and returns every relevant multi-intent match", async () => {
+    const connector: Connector = {
+      id: "files",
+      staticTools: [
+        {
+          name: "search_files",
+          description: "Find a drive file",
+        },
+        {
+          name: "share_file",
+          description: "Share a drive file",
+        },
+        {
+          name: "list_folder",
+          description: "List child folders",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({
+        query: "find a drive file and share it",
+      }),
+    ) as SearchResult;
+
+    expect(
+      new Set(
+        parsed.connectors.flatMap((group) =>
+          group.tools.map((tool) => tool.address),
+        ),
+      ),
+    ).toEqual(new Set(["files.search_files", "files.share_file"]));
+    expect(parsed.matchMode).toBe("partial");
+  });
+
+  it("does not let short function words force incidental partial matches", async () => {
+    const connector: Connector = {
+      id: "messages",
+      staticTools: [
+        {
+          name: "send_message",
+          description: "Send a message to a channel",
+        },
+        {
+          name: "list_members",
+          description: "List the people in a channel",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({
+        query: "send a message to a channel",
+      }),
+    ) as SearchResult;
+
+    expect(
+      parsed.connectors.flatMap((group) =>
+        group.tools.map((tool) => tool.name),
+      ),
+    ).toEqual(["send_message"]);
+    expect(parsed.matchMode).toBeUndefined();
+  });
+
+  it("falls back to the original query when cleanup removes every term", async () => {
+    const connector: Connector = {
+      id: "framing",
+      staticTools: [
+        {
+          name: "phrase",
+          description: "A and the",
+        },
+        {
+          name: "decoy",
+          description: "Unrelated record",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({
+        query: "a and the",
+      }),
+    ) as SearchResult;
+
+    expect(
+      parsed.connectors.flatMap((group) =>
+        group.tools.map((tool) => tool.name),
+      ),
+    ).toEqual(["phrase"]);
+    expect(parsed.matchMode).toBeUndefined();
+  });
+
+  it("returns no false positive when only a framing word overlaps", async () => {
+    const connector: Connector = {
+      id: "archives",
+      staticTools: [
+        {
+          name: "expand_archive",
+          description: "Expand a compressed archive",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([connector]),
+        BASE,
+      ).searchTools({
+        query: "weather radar and rain forecast",
+      }),
+    ) as SearchResult;
+
+    expect(parsed.connectors).toEqual([]);
+    expect(parsed.total).toBe(0);
     expect(parsed.matchMode).toBeUndefined();
   });
 

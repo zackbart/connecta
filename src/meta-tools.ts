@@ -7,6 +7,7 @@ import type {
 import {
   boundedDiscoveryText,
   CatalogService,
+  DEFAULT_SEARCH_LIMIT,
   DiscoveryPolicyError,
   groupedSearchResult,
   MAX_DESCRIBE_ADDRESSES,
@@ -1046,7 +1047,7 @@ export function createMetaTools(
 
 const LIST_DESC =
   "List connectors with status, cached tool count, and recent real-call health. Use probe=false for a fast inventory; use probe=true (default) only to diagnose live health or authorization.";
-const SEARCH_DESC = `Start here when a tool address is unknown. Exact/name matches rank above description matches; an empty query browses all. Pages contain at most ${MAX_SEARCH_LIMIT} tools. includeSchemas="compact" usually removes the describe_tools round trip.`;
+const SEARCH_DESC = `Start here when a tool address is unknown. Exact/name matches rank above description matches; an empty query browses all. The default page has ${DEFAULT_SEARCH_LIMIT} tools; explicit limit can request up to ${MAX_SEARCH_LIMIT}. includeSchemas="compact" usually removes the describe_tools round trip.`;
 const DESCRIBE_DESC = `Inspect up to ${MAX_DESCRIBE_ADDRESSES} known tool addresses when search_tools did not include a sufficient schema. Returns descriptions, input/output schemas, and behavior annotations; format "compact" is the default.`;
 const CALL_DESC =
   'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';

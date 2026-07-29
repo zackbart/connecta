@@ -17,6 +17,61 @@ function normalized(text: string): string {
   return text.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
 
+/**
+ * Conversational framing selected by the #188 research run before the #189
+ * holdout existed. Action-bearing terms such as get/list/search/find/create
+ * deliberately remain: arbitrary connector catalogs need those distinctions.
+ */
+const CONVERSATIONAL_QUERY_WORDS = new Set([
+  "a",
+  "all",
+  "an",
+  "and",
+  "are",
+  "can",
+  "could",
+  "current",
+  "for",
+  "from",
+  "i",
+  "in",
+  "into",
+  "it",
+  "latest",
+  "let",
+  "me",
+  "most",
+  "of",
+  "on",
+  "our",
+  "please",
+  "right",
+  "show",
+  "that",
+  "the",
+  "this",
+  "to",
+  "up",
+  "want",
+  "when",
+  "which",
+  "with",
+  "you",
+]);
+
+/**
+ * Remove conversational framing before the all-term/partial decision. If
+ * every term is framing, retain the original query rather than turning a
+ * search into an unfiltered catalog browse.
+ */
+export function lexicalSearchQuery(query: string): string {
+  const terms = normalized(query).split(/\s+/).filter(Boolean);
+  const contentTerms = terms.filter(
+    (term) => !CONVERSATIONAL_QUERY_WORDS.has(term),
+  );
+  return contentTerms.length > 0 ? contentTerms.join(" ") : query;
+}
+
 interface SearchDocument {
   tool: ToolDef;
   name: string;
