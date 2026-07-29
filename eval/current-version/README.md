@@ -41,6 +41,16 @@ and exact JSON-serialized definition, request, and response token surfaces.
 The default tokenizer is `o200k_base`; override it with
 `CONNECTA_EVAL_TOKENIZER`.
 
+The default run enables the isolated QuickJS executor. Measure a deployment
+that omits its executor—and therefore must advertise only the nine base
+meta-tools—with:
+
+```sh
+npm --prefix eval/current-version run audit -- \
+  --executor disabled \
+  --output results/no-executor.json
+```
+
 Choose stable output names for release evidence:
 
 ```sh

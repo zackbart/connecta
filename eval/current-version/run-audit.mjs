@@ -45,6 +45,11 @@ const reportPath = resolve(
 );
 const tokenizerName =
   process.env.CONNECTA_EVAL_TOKENIZER ?? "o200k_base";
+const executorMode = option("--executor", "enabled");
+if (executorMode !== "enabled" && executorMode !== "disabled") {
+  throw new Error('--executor must be "enabled" or "disabled".');
+}
+const executorEnabled = executorMode === "enabled";
 const bearer = process.env.CONNECTA_EVAL_TOKEN ?? "connecta-eval-token";
 const operatorToken =
   process.env.CONNECTA_EVAL_OPERATOR_TOKEN ?? "connecta-eval-operator";
@@ -63,6 +68,7 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_OPERATOR_TOKEN: operatorToken,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
+        CONNECTA_EVAL_EXECUTOR: executorMode,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -139,6 +145,7 @@ try {
   const tasks = await runTaskAudit(context, {
     baseUrl: ready.baseUrl,
     operatorToken,
+    executorEnabled,
   });
   const discovery = await runDiscoveryBenchmark(context, corpusPath);
   const observations = context.observations;
@@ -200,6 +207,7 @@ try {
       nodeVersion: process.versions.node,
       platform: `${process.platform}-${process.arch}`,
       tokenizer: tokenizerName,
+      executorMode,
       corpusSha256: createHash("sha256").update(corpusBytes).digest("hex"),
     },
     connection: context.connection,
@@ -230,6 +238,9 @@ try {
       structuredContentResults: observations.filter(
         (entry) => entry.hasStructuredContent,
       ).length,
+      executeCodeAdvertised: context.listed.tools.some(
+        (tool) => tool.name === "execute_code",
+      ),
     },
     invariants: {
       activityPayloadFree:
@@ -261,6 +272,7 @@ try {
       taskSuccessRate: audit.tasks.summary.taskSuccessRate,
       discovery: audit.discovery.metrics,
       totals: audit.totals,
+      executorMode,
     })}\n`,
   );
   if (!audit.qualification.passed) {

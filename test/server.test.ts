@@ -1069,29 +1069,59 @@ describe("clerk metadata routes (no network)", () => {
 });
 
 describe("execute_code registration (code mode)", () => {
-  it("is absent without an executor and present with one", async () => {
+  it("advertises exactly nine tools without an executor and ten with a live one", async () => {
+    const baseTools = [
+      "authorize_connector",
+      "batch_call",
+      "call_destructive_tool",
+      "call_tool",
+      "describe_tools",
+      "get_result",
+      "list_connectors",
+      "search_tools",
+      "skills",
+    ];
     const plain = makeConnecta();
     const res1 = await rpc(plain, "tools/list", {}, { token: TOKEN });
     const names1 = (await readBody(res1)).result.tools.map(
       (t: { name: string }) => t.name,
     );
-    expect(names1).not.toContain("execute_code");
+    expect(names1.sort()).toEqual(baseTools);
 
+    let executions = 0;
     const withExec = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
       executor: {
-        execute: async () => ({ result: null }),
+        execute: async () => {
+          executions++;
+          return { result: { executor: "live" } };
+        },
       },
     });
     const res2 = await rpc(withExec, "tools/list", {}, { token: TOKEN });
     const names2 = (await readBody(res2)).result.tools.map(
       (t: { name: string }) => t.name,
     );
-    expect(names2).toContain("execute_code");
-    expect(names2).toHaveLength(10);
+    expect(names2.sort()).toEqual([...baseTools, "execute_code"].sort());
+
+    const executed = await rpc(
+      withExec,
+      "tools/call",
+      {
+        name: "execute_code",
+        arguments: { code: "async () => null" },
+      },
+      { token: TOKEN },
+    );
+    const executedBody = await readBody(executed);
+    expect(executedBody.result.isError).toBeFalsy();
+    expect(executedBody.result.structuredContent).toMatchObject({
+      result: { executor: "live" },
+    });
+    expect(executions).toBe(1);
   });
 
   it.skipIf(WORKERD)("runs code against connectors end to end", async () => {

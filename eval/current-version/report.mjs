@@ -27,7 +27,7 @@ export function renderReport(audit, jsonName) {
 
 Source commit: \`${audit.source.commit}\`
 
-Runtime: Node ${audit.source.nodeVersion}; tokenizer \`${audit.source.tokenizer}\`
+Runtime: Node ${audit.source.nodeVersion}; tokenizer \`${audit.source.tokenizer}\`; executor \`${audit.source.executorMode}\`
 
 Machine-readable results: [\`${jsonName}\`](./${jsonName})
 
@@ -42,6 +42,7 @@ Machine-readable results: [\`${jsonName}\`](./${jsonName})
 - Round trips: ${audit.totals.roundTrips}; summed call latency: ${audit.totals.summedLatencyMs.toFixed(1)} ms
 - Connecta surface: ${integer(audit.totals.definitionTokens)} definition + ${integer(audit.totals.requestTokens)} request + ${integer(audit.totals.responseTokens)} response = **${integer(audit.totals.measuredSurfaceTokens)} tokens**
 - Result compatibility observed: \`content\` ${audit.compatibility.contentResults}/${audit.compatibility.resultCount}, \`structuredContent\` ${audit.compatibility.structuredContentResults}/${audit.compatibility.resultCount}
+- \`execute_code\` advertised: ${audit.compatibility.executeCodeAdvertised ? "yes" : "no"}
 - Payload-free activity invariant: ${audit.invariants.activityPayloadFree ? "pass" : "FAIL"}
 
 ${failed.length === 0 ? "" : `Failed task scenarios: ${failed.map((entry) => `\`${entry.name}\``).join(", ")}\n`}

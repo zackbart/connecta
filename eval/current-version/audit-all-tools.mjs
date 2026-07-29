@@ -11,7 +11,10 @@ function pass(condition, details = {}) {
   return { passed: Boolean(condition), ...details };
 }
 
-export async function runTaskAudit(context, { baseUrl, operatorToken }) {
+export async function runTaskAudit(
+  context,
+  { baseUrl, operatorToken, executorEnabled },
+) {
   const cases = [];
 
   async function task(name, tool, args, classify) {
@@ -201,21 +204,23 @@ export async function runTaskAudit(context, { baseUrl, operatorToken }) {
       );
     },
   );
-  await task(
-    "reduce records in code mode",
-    "execute_code",
-    {
-      code:
-        "async () => { const rows = await controlled.records({ count: 120 }); " +
-        "return rows.reduce((out, row) => { const group = out[row.group] ??= " +
-        "{ count: 0, sum: 0 }; group.count++; group.sum += row.score; " +
-        "return out; }, {}); }",
-    },
-    (result) =>
-      pass(result.isError !== true && "result" in objectValue(result), {
-        outcome: "code-reduction-succeeded",
-      }),
-  );
+  if (executorEnabled) {
+    await task(
+      "reduce records in code mode",
+      "execute_code",
+      {
+        code:
+          "async () => { const rows = await controlled.records({ count: 120 }); " +
+          "return rows.reduce((out, row) => { const group = out[row.group] ??= " +
+          "{ count: 0, sum: 0 }; group.count++; group.sum += row.score; " +
+          "return out; }, {}); }",
+      },
+      (result) =>
+        pass(result.isError !== true && "result" in objectValue(result), {
+          outcome: "code-reduction-succeeded",
+        }),
+    );
+  }
 
   await task(
     "OAuth call requires recovery",
