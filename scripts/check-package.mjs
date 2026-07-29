@@ -49,6 +49,9 @@ try {
     }
   }
   for (const path of paths) {
+    if (path.startsWith("eval/")) {
+      throw new Error(`Eval-only file leaked into the package: ${path}`);
+    }
     if (
       path.includes("connectors/cloudflare") ||
       path.includes("storage/cloudflare")

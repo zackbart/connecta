@@ -1,0 +1,12 @@
+{
+  "name": "connecta-current-version-eval",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "audit": "node run-audit.mjs",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "js-tiktoken": "1.0.21"
+  }
+}

@@ -1,0 +1,529 @@
+{
+  "schemaVersion": 1,
+  "name": "Connecta lexical discovery holdout",
+  "authorship": {
+    "createdFor": "https://github.com/zackbart/connecta/issues/189",
+    "independence": "Authored from Connecta's public discovery contract before inspecting the closed #188 research corpus.",
+    "policy": "This corpus is release qualification evidence. Do not tune ranking rules, stopwords, aliases, or thresholds against its cases."
+  },
+  "connectors": [
+    {
+      "id": "projects",
+      "description": "Project planning and issue tracking",
+      "tools": [
+        {
+          "name": "list_issues",
+          "description": "List project issues with optional state and label filters"
+        },
+        {
+          "name": "get_issue",
+          "description": "Get one issue by its numeric identifier"
+        },
+        {
+          "name": "create_issue",
+          "description": "Create a new project issue"
+        },
+        {
+          "name": "list_pull_requests",
+          "description": "List pull requests and their review state"
+        },
+        {
+          "name": "get_pull_request",
+          "description": "Get pull request details and merge status"
+        },
+        {
+          "name": "add_issue_comment",
+          "description": "Add a comment to an issue"
+        }
+      ]
+    },
+    {
+      "id": "messages",
+      "description": "Team messages and channels",
+      "tools": [
+        {
+          "name": "search_messages",
+          "description": "Search message text across conversations and channels"
+        },
+        {
+          "name": "send_message",
+          "description": "Send a new message to a channel"
+        },
+        {
+          "name": "list_channels",
+          "description": "List channels visible to the current account"
+        },
+        {
+          "name": "get_thread",
+          "description": "Get all replies in a message thread"
+        },
+        {
+          "name": "add_reaction",
+          "description": "Add an emoji reaction to a message"
+        },
+        {
+          "name": "list_members",
+          "description": "List members of a channel"
+        }
+      ]
+    },
+    {
+      "id": "files",
+      "description": "Cloud files and folders",
+      "tools": [
+        {
+          "name": "search_files",
+          "description": "Search files and folders by name or contents"
+        },
+        {
+          "name": "upload_file",
+          "description": "Upload a file into a folder"
+        },
+        {
+          "name": "download_file",
+          "description": "Download the bytes of a file"
+        },
+        {
+          "name": "list_folder",
+          "description": "List the items inside a folder"
+        },
+        {
+          "name": "share_file",
+          "description": "Share a file with another person"
+        },
+        {
+          "name": "move_file",
+          "description": "Move a file to a different folder"
+        }
+      ]
+    },
+    {
+      "id": "calendar",
+      "description": "Calendars, meetings, and availability",
+      "tools": [
+        {
+          "name": "list_events",
+          "description": "List calendar events within a date range"
+        },
+        {
+          "name": "get_event",
+          "description": "Get one calendar event"
+        },
+        {
+          "name": "create_event",
+          "description": "Create a calendar event or meeting"
+        },
+        {
+          "name": "update_event",
+          "description": "Update an existing calendar event"
+        },
+        {
+          "name": "find_available_times",
+          "description": "Find free meeting times for attendees"
+        },
+        {
+          "name": "list_calendars",
+          "description": "List calendars visible to the current account"
+        }
+      ]
+    },
+    {
+      "id": "customers",
+      "description": "Customer relationship records",
+      "tools": [
+        {
+          "name": "search_contacts",
+          "description": "Search customer and contact records"
+        },
+        {
+          "name": "get_contact",
+          "description": "Get one customer contact record"
+        },
+        {
+          "name": "create_contact",
+          "description": "Create a customer contact"
+        },
+        {
+          "name": "list_companies",
+          "description": "List customer companies"
+        },
+        {
+          "name": "update_company",
+          "description": "Update a customer company record"
+        },
+        {
+          "name": "list_deals",
+          "description": "List sales deals and pipeline stages"
+        }
+      ]
+    },
+    {
+      "id": "documents",
+      "description": "Workspace documents and pages",
+      "tools": [
+        {
+          "name": "search_content",
+          "description": "Search document and page contents"
+        },
+        {
+          "name": "get_page",
+          "description": "Get a workspace page"
+        },
+        {
+          "name": "create_page",
+          "description": "Create a new document page"
+        },
+        {
+          "name": "update_page",
+          "description": "Update a document page"
+        },
+        {
+          "name": "list_databases",
+          "description": "List workspace databases"
+        },
+        {
+          "name": "query_database",
+          "description": "Query rows from a workspace database"
+        }
+      ]
+    },
+    {
+      "id": "builds",
+      "description": "Source control automation and build runs",
+      "tools": [
+        {
+          "name": "list_workflow_runs",
+          "description": "List continuous integration workflow runs"
+        },
+        {
+          "name": "get_workflow_run",
+          "description": "Get the status and conclusion of a workflow run"
+        },
+        {
+          "name": "rerun_failed_jobs",
+          "description": "Rerun failed jobs in a workflow"
+        },
+        {
+          "name": "list_commits",
+          "description": "List source control commits"
+        },
+        {
+          "name": "compare_commits",
+          "description": "Compare two commits and return changed files"
+        },
+        {
+          "name": "get_job_logs",
+          "description": "Get logs for a build job"
+        }
+      ]
+    },
+    {
+      "id": "finance",
+      "description": "Business payments and accounting",
+      "tools": [
+        {
+          "name": "list_transactions",
+          "description": "List account transactions and payments"
+        },
+        {
+          "name": "get_invoice",
+          "description": "Get one customer invoice"
+        },
+        {
+          "name": "create_invoice",
+          "description": "Create a customer invoice"
+        },
+        {
+          "name": "list_accounts",
+          "description": "List financial accounts"
+        },
+        {
+          "name": "get_balance",
+          "description": "Get the current account balance"
+        },
+        {
+          "name": "search_customers",
+          "description": "Search billing customer records"
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "direct-list-issues",
+      "category": "direct",
+      "query": "list issues",
+      "relevant": ["projects.list_issues"],
+      "expectedTop": "projects.list_issues"
+    },
+    {
+      "id": "direct-search-messages",
+      "category": "direct",
+      "query": "search messages",
+      "relevant": ["messages.search_messages"],
+      "expectedTop": "messages.search_messages"
+    },
+    {
+      "id": "direct-download-file",
+      "category": "direct",
+      "query": "download file",
+      "relevant": ["files.download_file"],
+      "expectedTop": "files.download_file"
+    },
+    {
+      "id": "direct-available-times",
+      "category": "direct",
+      "query": "available times",
+      "relevant": ["calendar.find_available_times"],
+      "expectedTop": "calendar.find_available_times"
+    },
+    {
+      "id": "direct-contact-search",
+      "category": "direct",
+      "query": "search contacts",
+      "relevant": ["customers.search_contacts"],
+      "expectedTop": "customers.search_contacts"
+    },
+    {
+      "id": "direct-query-database",
+      "category": "direct",
+      "query": "query database",
+      "relevant": ["documents.query_database"],
+      "expectedTop": "documents.query_database"
+    },
+    {
+      "id": "direct-failed-jobs",
+      "category": "direct",
+      "query": "rerun failed jobs",
+      "relevant": ["builds.rerun_failed_jobs"],
+      "expectedTop": "builds.rerun_failed_jobs"
+    },
+    {
+      "id": "direct-account-balance",
+      "category": "direct",
+      "query": "account balance",
+      "relevant": ["finance.get_balance"],
+      "expectedTop": "finance.get_balance"
+    },
+    {
+      "id": "conversation-open-issues",
+      "category": "conversational",
+      "query": "Can you show me the open issues in this project?",
+      "relevant": ["projects.list_issues"],
+      "expectedTop": "projects.list_issues"
+    },
+    {
+      "id": "conversation-message-channel",
+      "category": "conversational",
+      "query": "I need to send a message to a channel",
+      "relevant": ["messages.send_message"],
+      "expectedTop": "messages.send_message"
+    },
+    {
+      "id": "conversation-file-folder",
+      "category": "conversational",
+      "query": "Please upload a file into this folder",
+      "relevant": ["files.upload_file"],
+      "expectedTop": "files.upload_file"
+    },
+    {
+      "id": "conversation-meeting",
+      "category": "conversational",
+      "query": "Find a free time for everyone to meet",
+      "relevant": ["calendar.find_available_times"],
+      "expectedTop": "calendar.find_available_times"
+    },
+    {
+      "id": "conversation-sales-pipeline",
+      "category": "conversational",
+      "query": "What deals are currently in the sales pipeline?",
+      "relevant": ["customers.list_deals"],
+      "expectedTop": "customers.list_deals"
+    },
+    {
+      "id": "conversation-ci-status",
+      "category": "conversational",
+      "query": "Show me whether the latest workflow run passed",
+      "relevant": ["builds.get_workflow_run"],
+      "expectedTop": "builds.get_workflow_run"
+    },
+    {
+      "id": "conversation-customer-invoice",
+      "category": "conversational",
+      "query": "I want to create an invoice for a customer",
+      "relevant": ["finance.create_invoice"],
+      "expectedTop": "finance.create_invoice"
+    },
+    {
+      "id": "conversation-page-content",
+      "category": "conversational",
+      "query": "Find the page that mentions our launch plan",
+      "relevant": ["documents.search_content"],
+      "expectedTop": "documents.search_content"
+    },
+    {
+      "id": "multi-find-download",
+      "category": "multi-intent",
+      "query": "find and download a file",
+      "relevant": ["files.search_files", "files.download_file"],
+      "expectedTop": "files.download_file"
+    },
+    {
+      "id": "multi-issue-comment",
+      "category": "multi-intent",
+      "query": "get an issue and add a comment",
+      "relevant": ["projects.get_issue", "projects.add_issue_comment"]
+    },
+    {
+      "id": "multi-calendar-update",
+      "category": "multi-intent",
+      "query": "list calendar events and update one",
+      "relevant": ["calendar.list_events", "calendar.update_event"]
+    },
+    {
+      "id": "multi-build-diagnosis",
+      "category": "multi-intent",
+      "query": "get the failed workflow run and its job logs",
+      "relevant": ["builds.get_workflow_run", "builds.get_job_logs"]
+    },
+    {
+      "id": "short-find-file",
+      "category": "short-function-word",
+      "query": "find a file in storage",
+      "relevant": ["files.search_files"],
+      "expectedTop": "files.search_files"
+    },
+    {
+      "id": "short-send-channel",
+      "category": "short-function-word",
+      "query": "send a message to a channel",
+      "relevant": ["messages.send_message"],
+      "expectedTop": "messages.send_message"
+    },
+    {
+      "id": "short-list-prs",
+      "category": "short-function-word",
+      "query": "list the pull requests in a project",
+      "relevant": ["projects.list_pull_requests"],
+      "expectedTop": "projects.list_pull_requests"
+    },
+    {
+      "id": "short-get-event",
+      "category": "short-function-word",
+      "query": "get an event from the calendar",
+      "relevant": ["calendar.get_event"],
+      "expectedTop": "calendar.get_event"
+    },
+    {
+      "id": "cleanup-only",
+      "category": "empty-after-cleanup",
+      "query": "a an and are as at be by for from in into is it of on or that the this to was with",
+      "relevant": []
+    },
+    {
+      "id": "negative-flight",
+      "category": "negative",
+      "query": "book an airline flight",
+      "relevant": []
+    },
+    {
+      "id": "negative-food",
+      "category": "negative",
+      "query": "order a pepperoni pizza",
+      "relevant": []
+    },
+    {
+      "id": "negative-weather",
+      "category": "negative",
+      "query": "will it rain tomorrow",
+      "relevant": []
+    },
+    {
+      "id": "negative-audio",
+      "category": "negative",
+      "query": "transcribe this audio recording",
+      "relevant": []
+    },
+    {
+      "id": "filtered-list-finance",
+      "category": "connector-filtered",
+      "query": "list",
+      "connector": "finance",
+      "relevant": ["finance.list_transactions", "finance.list_accounts"]
+    },
+    {
+      "id": "filtered-search-documents",
+      "category": "connector-filtered",
+      "query": "search",
+      "connector": "documents",
+      "relevant": ["documents.search_content"],
+      "expectedTop": "documents.search_content"
+    },
+    {
+      "id": "filtered-get-calendar",
+      "category": "connector-filtered",
+      "query": "get",
+      "connector": "calendar",
+      "relevant": ["calendar.get_event"],
+      "expectedTop": "calendar.get_event"
+    },
+    {
+      "id": "page-list-first",
+      "category": "paginated",
+      "query": "list",
+      "limit": 4,
+      "offset": 0,
+      "expectedPage": [
+        "projects.list_issues",
+        "projects.list_pull_requests",
+        "messages.list_channels",
+        "messages.list_members"
+      ],
+      "relevant": [
+        "projects.list_issues",
+        "projects.list_pull_requests",
+        "messages.list_channels",
+        "messages.list_members",
+        "files.list_folder",
+        "calendar.list_events",
+        "calendar.list_calendars",
+        "customers.list_companies",
+        "customers.list_deals",
+        "documents.list_databases",
+        "builds.list_workflow_runs",
+        "builds.list_commits",
+        "finance.list_transactions",
+        "finance.list_accounts"
+      ]
+    },
+    {
+      "id": "page-list-second",
+      "category": "paginated",
+      "query": "list",
+      "limit": 4,
+      "offset": 4,
+      "expectedPage": [
+        "files.list_folder",
+        "calendar.list_events",
+        "calendar.list_calendars",
+        "customers.list_companies"
+      ],
+      "relevant": [
+        "projects.list_issues",
+        "projects.list_pull_requests",
+        "messages.list_channels",
+        "messages.list_members",
+        "files.list_folder",
+        "calendar.list_events",
+        "calendar.list_calendars",
+        "customers.list_companies",
+        "customers.list_deals",
+        "documents.list_databases",
+        "builds.list_workflow_runs",
+        "builds.list_commits",
+        "finance.list_transactions",
+        "finance.list_accounts"
+      ]
+    }
+  ]
+}
