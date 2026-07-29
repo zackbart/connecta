@@ -99,6 +99,43 @@ describe("validateToolInput", () => {
     expect(validateToolInput(schema, { n: 2 }, OPTS)).toBeNull();
   });
 
+  it("evaluates dependentSchemas and unevaluatedProperties from 2020-12 schemas", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["basic", "token"] },
+        apiKey: { type: "string" },
+      },
+      required: ["mode"],
+      dependentSchemas: {
+        apiKey: {
+          properties: { mode: { const: "token" } },
+        },
+      },
+      unevaluatedProperties: false,
+    };
+
+    expect(validateToolInput(schema, { mode: "basic" }, OPTS)).toBeNull();
+    expect(
+      validateToolInput(
+        schema,
+        { mode: "token", apiKey: "secret" },
+        OPTS,
+      ),
+    ).toBeNull();
+    expect(
+      validateToolInput(
+        schema,
+        { mode: "basic", apiKey: "wrong-mode" },
+        OPTS,
+      )?.code,
+    ).toBe("invalid_args");
+    expect(
+      validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)
+        ?.code,
+    ).toBe("invalid_args");
+  });
+
   it("fail-closed: a schema that cannot compile yields invalid_args", () => {
     const { logger } = loggerSpy();
     const schema: JsonSchema = {

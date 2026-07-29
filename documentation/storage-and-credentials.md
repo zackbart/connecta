@@ -27,3 +27,22 @@ Credential mutation is intentionally narrower than MCP access:
 
 The vault is read for each call. Once an operator saves a replacement,
 the agent can retry immediately without restarting or redeploying Connecta.
+
+## Downstream OAuth
+
+`remoteMcp()` stores dynamic client registration, tokens, PKCE material, state,
+and the pending authorization URL in the connector's storage namespace.
+Registration and token envelopes are bound to the validated authorization
+server `issuer`. An unbound pre-0.9 envelope is upgraded in place on its first
+issuer-aware read, preserving the existing grant.
+
+If later discovery resolves a different issuer, Connecta does not send the old
+client identifier or tokens to it. The provider publishes a new generation
+epoch, makes every older credential namespace unreadable, cleans up the retired
+values, and lets the SDK begin registration and authorization again. The same
+epoch fence prevents an older isolate or late token exchange from resurrecting
+the retired grant.
+
+The OAuth callback verifies the one-shot `state` first, then hands the complete
+query string—including RFC 9207 `iss`—to the SDK transport. One-shot state,
+verifier, and pending URL are cleared only after a successful exchange.

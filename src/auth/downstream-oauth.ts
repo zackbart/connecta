@@ -1,4 +1,5 @@
 import type {
+  OAuthClientInformationContext,
   OAuthClientInformationMixed,
   OAuthClientMetadata,
   OAuthClientProvider,
@@ -25,7 +26,7 @@ const LEGACY_GENERATION = "legacy";
 const ACTIVE_GENERATION_PREFIX = "v2:";
 const RESETTING_GENERATION_PREFIX = "reset:";
 const DISCONNECTED_GENERATION_PREFIX = "disconnected:";
-const STORED_VALUE_VERSION = 1;
+const STORED_VALUE_VERSION = 2;
 const OAUTH_VALUE_KEYS = [
   "oauth:client",
   "oauth:tokens",
@@ -38,6 +39,13 @@ const MAX_CLEANUP_BACKLOG = 1_000;
 interface StoredOAuthValue<T> {
   connectaOAuthVersion: typeof STORED_VALUE_VERSION;
   generation: string;
+  issuer?: string;
+  value: T;
+}
+
+interface LegacyStoredOAuthValue<T> {
+  connectaOAuthVersion: 1;
+  generation: string;
   value: T;
 }
 
@@ -48,6 +56,19 @@ function storedOAuthValue<T>(
   const candidate = value as Partial<StoredOAuthValue<T>>;
   return (
     candidate.connectaOAuthVersion === STORED_VALUE_VERSION &&
+    typeof candidate.generation === "string" &&
+    (candidate.issuer === undefined || typeof candidate.issuer === "string") &&
+    "value" in candidate
+  );
+}
+
+function legacyStoredOAuthValue<T>(
+  value: unknown,
+): value is LegacyStoredOAuthValue<T> {
+  if (!value || typeof value !== "object") return false;
+  const candidate = value as Partial<LegacyStoredOAuthValue<T>>;
+  return (
+    candidate.connectaOAuthVersion === 1 &&
     typeof candidate.generation === "string" &&
     "value" in candidate
   );
@@ -132,6 +153,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     key: string,
     value: T,
     serializeLegacy: (value: T) => string,
+    issuer?: string,
   ): Promise<void> {
     const generation = await this.writeGeneration();
     if (
@@ -144,12 +166,13 @@ export class KvOAuthProvider implements OAuthClientProvider {
     const stored: StoredOAuthValue<T> = {
       connectaOAuthVersion: STORED_VALUE_VERSION,
       generation,
+      ...(issuer !== undefined ? { issuer } : {}),
       value,
     };
     const physicalKey = oauthValueStorageKey(key, generation);
     await this.storage.set(
       physicalKey,
-      isModernGeneration(generation)
+      isModernGeneration(generation) || issuer !== undefined
         ? JSON.stringify(stored)
         : serializeLegacy(value),
     );
@@ -182,7 +205,9 @@ export class KvOAuthProvider implements OAuthClientProvider {
   private async readValue<T>(
     key: string,
     parseLegacy: (raw: string) => T,
-  ): Promise<{ value: T; generation: string } | undefined> {
+  ): Promise<
+    { value: T; generation: string; issuer?: string } | undefined
+  > {
     const generation = await this.generation();
     const raw = await this.storage.get(
       oauthValueStorageKey(key, generation),
@@ -203,11 +228,54 @@ export class KvOAuthProvider implements OAuthClientProvider {
     }
     if (storedOAuthValue<T>(parsed)) {
       return parsed.generation === generation
+        ? {
+            value: parsed.value,
+            generation,
+            ...(parsed.issuer !== undefined ? { issuer: parsed.issuer } : {}),
+          }
+        : undefined;
+    }
+    if (legacyStoredOAuthValue<T>(parsed)) {
+      return parsed.generation === generation
         ? { value: parsed.value, generation }
         : undefined;
     }
     if (isModernGeneration(generation)) return undefined;
     return { value: parseLegacy(raw), generation };
+  }
+
+  /**
+   * Read credentials only for the authorization server that issued them.
+   *
+   * Values written before issuer binding are bound on their first read with a
+   * validated SDK issuer, preserving an existing grant across this upgrade.
+   * A later issuer change is different: publish a new generation before
+   * returning no credentials, so every isolate drops the old registration and
+   * token set and the SDK starts authorization from scratch.
+   */
+  private async readIssuerBoundValue<T>(
+    key: "oauth:client" | "oauth:tokens",
+    parseLegacy: (raw: string) => T,
+    serializeLegacy: (value: T) => string,
+    ctx?: OAuthClientInformationContext,
+  ): Promise<T | undefined> {
+    const stored = await this.readValue(key, parseLegacy);
+    if (!stored || !ctx) return stored?.value;
+    if (stored.issuer === undefined) {
+      await this.writeValue(key, stored.value, serializeLegacy, ctx.issuer);
+      return stored.value;
+    }
+    if (stored.issuer === ctx.issuer) return stored.value;
+
+    try {
+      await this.resetAuthorization();
+    } finally {
+      // The issuer-aware flow may continue after the reset. Stamp any later
+      // writes into the replacement epoch; the connector's generation check
+      // still discards this connection attempt before caching it.
+      this.captureGeneration(await this.generation());
+    }
+    return undefined;
   }
 
   /** Attempt every key deletion, then report the first backend failure. */
@@ -276,35 +344,49 @@ export class KvOAuthProvider implements OAuthClientProvider {
     };
   }
 
-  async clientInformation(): Promise<OAuthClientInformationMixed | undefined> {
-    return (
-      await this.readValue(
-        "oauth:client",
-        (raw) => JSON.parse(raw) as OAuthClientInformationMixed,
-      )
-    )?.value;
+  async clientInformation(
+    ctx?: OAuthClientInformationContext,
+  ): Promise<OAuthClientInformationMixed | undefined> {
+    return this.readIssuerBoundValue(
+      "oauth:client",
+      (raw) => JSON.parse(raw) as OAuthClientInformationMixed,
+      (value) => JSON.stringify(value),
+      ctx,
+    );
   }
 
   async saveClientInformation(
     info: OAuthClientInformationMixed,
+    ctx?: OAuthClientInformationContext,
   ): Promise<void> {
-    await this.writeValue("oauth:client", info, (value) =>
-      JSON.stringify(value),
+    await this.writeValue(
+      "oauth:client",
+      info,
+      (value) => JSON.stringify(value),
+      ctx?.issuer,
     );
   }
 
-  async tokens(): Promise<OAuthTokens | undefined> {
-    return (
-      await this.readValue(
-        "oauth:tokens",
-        (raw) => JSON.parse(raw) as OAuthTokens,
-      )
-    )?.value;
+  async tokens(
+    ctx?: OAuthClientInformationContext,
+  ): Promise<OAuthTokens | undefined> {
+    return this.readIssuerBoundValue(
+      "oauth:tokens",
+      (raw) => JSON.parse(raw) as OAuthTokens,
+      (value) => JSON.stringify(value),
+      ctx,
+    );
   }
 
-  async saveTokens(tokens: OAuthTokens): Promise<void> {
-    await this.writeValue("oauth:tokens", tokens, (value) =>
-      JSON.stringify(value),
+  async saveTokens(
+    tokens: OAuthTokens,
+    ctx?: OAuthClientInformationContext,
+  ): Promise<void> {
+    await this.writeValue(
+      "oauth:tokens",
+      tokens,
+      (value) => JSON.stringify(value),
+      ctx?.issuer,
     );
   }
 

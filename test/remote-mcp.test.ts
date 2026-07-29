@@ -7,10 +7,19 @@ import type {
   FetchLike,
   Transport,
 } from "@modelcontextprotocol/client";
-import { McpServer } from "@modelcontextprotocol/server";
+import {
+  createMcpHandler,
+  inputRequired,
+  McpServer,
+} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
+import {
+  buildSandboxProviders,
+  createExecuteTool,
+} from "../src/execute.js";
+import { InvocationFailure } from "../src/invocation.js";
 import {
   MAX_REMOTE_REDIRECT_HOPS,
   redirectSafeFetch,
@@ -21,7 +30,12 @@ import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { withTimeout } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
-import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
+import type {
+  ConnectorContext,
+  Executor,
+  KVStorage,
+  Logger,
+} from "../src/types.js";
 import { required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -74,6 +88,35 @@ async function makeConnector() {
     url: "https://unused.example/mcp",
     description: "Downstream",
     _transportFactory: () => clientTransport,
+  });
+}
+
+async function makeInputRequiredConnector() {
+  const url = "https://mrtr-downstream.test/mcp";
+  const handler = createMcpHandler(() => {
+    const server = new McpServer({
+      name: "mrtr-downstream",
+      version: "1.0.0",
+    });
+    server.registerTool(
+      "needs_input",
+      {
+        description: "Requires a second protocol round trip",
+        inputSchema: z.object({}),
+        annotations: { readOnlyHint: true },
+      },
+      async () => inputRequired({ requestState: "opaque-resume-state" }),
+    );
+    return server;
+  });
+  return remoteMcp("mrtr", {
+    url,
+    description: "MRTR downstream",
+    _transportFactory: () =>
+      new StreamableHTTPClientTransport(new URL(url), {
+        fetch: async (input, init) =>
+          handler.fetch(new Request(input, init)),
+      }) as unknown as Transport,
   });
 }
 
@@ -157,6 +200,11 @@ function makeHttpDownstream(
     // 405 is the spec's "no stream here", which it accepts silently.
     if (init.method !== "POST") return new Response(null, { status: 405 });
     const message = JSON.parse(String(init.body));
+    // Auto negotiation treats any non-auth, non-5xx HTTP rejection without a
+    // modern discovery result as legacy evidence, then performs initialize.
+    if (message.method === "server/discover") {
+      return new Response("not found", { status: 404 });
+    }
     if (message.method !== "initialize") {
       return new Response(null, { status: 202 });
     }
@@ -277,6 +325,100 @@ describe("remoteMcp() connector", () => {
     };
     expect(result.isError).toBe(true);
     expect(required(result.content[0]).text).toContain("downstream boom");
+  });
+
+  it("fails loudly and structurally when a downstream returns input_required", async () => {
+    const connector = await makeInputRequiredConnector();
+    const direct = await connector
+      .callTool("needs_input", {}, ctx())
+      .then(() => undefined, (error: unknown) => error);
+    expect(direct).toMatchObject({
+      name: "ConnectorCallError",
+      code: "input_required_unsupported",
+      retryable: false,
+    });
+    expect((direct as Error).message).toContain("input_required");
+    expect((direct as Error).message).toContain("gated");
+
+    const meta = createMetaTools(makeRegistry([connector]), BASE);
+    const single = await meta.callTool({
+      address: "mrtr.needs_input",
+      args: {},
+    });
+    expect(single.isError).toBe(true);
+    expect(single.structuredContent).toMatchObject({
+      error: {
+        code: "input_required_unsupported",
+        retryable: false,
+        message: expect.stringContaining("input_required"),
+      },
+    });
+
+    const batch = await meta.batchCall({
+      calls: [{ address: "mrtr.needs_input", args: {} }],
+    });
+    expect(batch.structuredContent).toMatchObject({
+      results: [
+        {
+          address: "mrtr.needs_input",
+          ok: false,
+          errorDetails: {
+            code: "input_required_unsupported",
+            retryable: false,
+          },
+        },
+      ],
+    });
+
+    const providers = await buildSandboxProviders(
+      makeRegistry([connector]),
+      BASE,
+      silentLogger,
+    );
+    const host = required(
+      providers.find((provider) => provider.name === "connecta"),
+    );
+    const executeError = await required(host.fns.call)(
+      "mrtr.needs_input",
+      {},
+    ).then(() => undefined, (error: unknown) => error);
+    expect(executeError).toBeInstanceOf(InvocationFailure);
+    expect(executeError).toMatchObject({
+      code: "input_required_unsupported",
+      retryable: false,
+      message: expect.stringContaining("input_required"),
+    });
+
+    const executor: Executor = {
+      async execute(_code, sandboxProviders) {
+        const connecta = required(
+          sandboxProviders.find((provider) => provider.name === "connecta"),
+        );
+        try {
+          await required(connecta.fns.call)("mrtr.needs_input", {});
+          return { result: "unexpected success" };
+        } catch (error) {
+          return {
+            result: undefined,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    };
+    const executeResult = await createExecuteTool(
+      makeRegistry([connector]),
+      BASE,
+      executor,
+      silentLogger,
+    )({ code: "async () => mrtr.needs_input({})" });
+    expect(executeResult.isError).toBe(true);
+    expect(executeResult.structuredContent).toMatchObject({
+      error: {
+        code: "input_required_unsupported",
+        retryable: false,
+        message: expect.stringContaining("input_required"),
+      },
+    });
   });
 
   it("reports ok status once connected", async () => {

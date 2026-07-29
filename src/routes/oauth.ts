@@ -309,7 +309,7 @@ export async function routeOAuthCallback(
     return refused();
   }
   try {
-    await connector.finishAuth(code, connectorContext);
+    await connector.finishAuth(code, connectorContext, url.searchParams);
     await opts.registry.invalidateStored(id);
     return html(
       `Connected "${id}". You can close this window.`,

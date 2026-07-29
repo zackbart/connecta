@@ -276,8 +276,16 @@ export interface Connector {
    * pending URL could complete consent with their own account.
    */
   verifyState?(state: string | null, ctx: ConnectorContext): Promise<boolean>;
-  /** Optional: complete a downstream OAuth flow (called by /oauth/callback/<id>). */
-  finishAuth?(code: string, ctx: ConnectorContext): Promise<void>;
+  /**
+   * Optional: complete a downstream OAuth flow (called by
+   * /oauth/callback/<id>). `callbackParams` preserves the authorization
+   * server's RFC 9207 `iss` response parameter for SDK validation.
+   */
+  finishAuth?(
+    code: string,
+    ctx: ConnectorContext,
+    callbackParams?: URLSearchParams,
+  ): Promise<void>;
   /**
    * Optional: serve a connector-owned HTTP route — for example a signed
    * download link minted by one of the connector's tools. Called only after

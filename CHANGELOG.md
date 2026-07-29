@@ -2,6 +2,47 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased — MCP 2026-07-28 adoption
+
+Connecta now speaks the 2026-07-28 MCP revision on both sides while retaining
+its legacy compatibility floor (#176). Nothing breaks for deployments:
+Connecta's exports, configuration, connector definitions, meta-tool surface,
+and its own stateless `/mcp` behavior are unchanged. Deployments can ignore the
+wire revision entirely unless they imported or pinned transitive MCP SDK
+internals; those internals moved from the v1 monolith to the exact-pinned v2
+client and server packages.
+
+This is alignment and compatibility work, not a state-management rewrite. The
+new spec arrived at Connecta's existing stateless server design. Modern clients
+now negotiate without `initialize`, while legacy clients remain served.
+Stateful legacy *downstreams* still require Connecta's explicit session DELETE:
+tests confirm SDK v2 client close does not make it redundant.
+
+### Added
+
+- **Modern/legacy version negotiation and cache metadata.** Modern
+  `tools/list` results declare a one-hour private cache lifetime; the legacy
+  initialize path and session headers remain supported.
+- **Issuer-bound downstream OAuth storage.** Registrations and tokens are
+  stored with the validated authorization-server issuer. A changed issuer
+  advances the existing generation fence before the SDK starts a fresh grant;
+  pre-upgrade credentials bind in place on their first validated read.
+- **A complete in-repo disposition of the revision** in
+  [`documentation/mcp-2026-07-28.md`](./documentation/mcp-2026-07-28.md),
+  including the declined and gated surfaces.
+
+### Changed
+
+- **Downstream multi-round-trip results fail loudly instead of being
+  misread as complete.** `call_tool`, `batch_call`, and the `execute_code` host
+  boundary preserve the non-retryable `input_required_unsupported` code.
+  Passthrough remains gated until a real host and downstream establish the
+  resumed-call contract.
+- **Browser CORS allows the modern `Mcp-Method` and `Mcp-Name` request
+  headers.**
+- **JSON Schema 2020-12 compatibility is pinned by exotic-keyword discovery
+  and validation coverage.**
+
 ## 0.8.1 — 2026-07-29
 
 0.8.1 hardens agent routing, response efficiency, and credential recovery while

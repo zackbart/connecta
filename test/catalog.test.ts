@@ -294,3 +294,26 @@ describe("compactSchema caching", () => {
     expect(first).toBe("{ name: string }");
   });
 });
+
+describe("compactSchema 2020-12 keyword compatibility", () => {
+  it("keeps the callable shape compact when schemas use exotic validation keywords", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        mode: { type: "string", enum: ["basic", "token"] },
+        apiKey: { type: "string" },
+      },
+      required: ["mode"],
+      dependentSchemas: {
+        apiKey: {
+          properties: { mode: { const: "token" } },
+        },
+      },
+      unevaluatedProperties: false,
+    };
+
+    expect(compactSchema(schema)).toBe(
+      '{ mode: "basic" | "token", apiKey?: string }',
+    );
+  });
+});
