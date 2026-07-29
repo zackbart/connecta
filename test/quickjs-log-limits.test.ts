@@ -52,22 +52,29 @@ describe("quickJsExecutor log limits", () => {
     expect(required(entry).length).toBeLessThan(MAX_LOG_ENTRY_CHARS + 64);
   });
 
-  it("does not accumulate log characters beyond the cumulative budget", async () => {
-    const ex = quickJsExecutor();
-    const out = await ex.execute(
-      `async () => {
-        const big = "x".repeat(25_000_000);
-        for (let i = 0; i < 200; i++) console.log(big);
-        return null;
-      }`,
-      [],
-    );
-    expect(out.error).toBeUndefined();
-    const total = out.logs!.reduce((n, l) => n + l.length, 0);
-    // Cumulative budget plus one over-budget entry and the final marker.
-    expect(total).toBeLessThan(MAX_LOG_TOTAL_CHARS + MAX_LOG_ENTRY_CHARS + 128);
-    expect(out.logs).toContain("[log truncated: size budget exceeded]");
-  });
+  // Allow a 10s cold-child startup plus 25 MB transport; 30s still matches the executor wall ceiling for hangs.
+  it(
+    "does not accumulate log characters beyond the cumulative budget",
+    async () => {
+      const ex = quickJsExecutor();
+      const out = await ex.execute(
+        `async () => {
+          const big = "x".repeat(25_000_000);
+          for (let i = 0; i < 200; i++) console.log(big);
+          return null;
+        }`,
+        [],
+      );
+      expect(out.error).toBeUndefined();
+      const total = out.logs!.reduce((n, l) => n + l.length, 0);
+      // Cumulative budget plus one over-budget entry and the final marker.
+      expect(total).toBeLessThan(
+        MAX_LOG_TOTAL_CHARS + MAX_LOG_ENTRY_CHARS + 128,
+      );
+      expect(out.logs).toContain("[log truncated: size budget exceeded]");
+    },
+    30_000,
+  );
 
   it("leaves small logs byte-for-byte unaffected", async () => {
     const ex = quickJsExecutor();
