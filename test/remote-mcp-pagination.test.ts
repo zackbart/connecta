@@ -681,11 +681,11 @@ describe("remoteMcp() tools/list pagination", () => {
 
     expect(err).toBeInstanceOf(Error);
     expect((err as Error).message).not.toMatch(/nextCursor/);
-    // The v2 protocol error still points at the tool entry that broke.
-    expect(err).toBeInstanceOf(Error);
-    expect((err as Error).message).toMatch(/tools/i);
-    expect((err as Error).message).not.toMatch(
-      /nextCursor is neither a string, null, nor absent/,
+    // The v2 protocol error still points at the tool entry that broke:
+    // "Invalid result for tools/list: tools.0.inputSchema: …" — path-first,
+    // so a widened cursor predicate can never absorb it.
+    expect((err as Error).message).toMatch(
+      /Invalid result for tools\/list: tools\.0\./,
     );
   });
 });
