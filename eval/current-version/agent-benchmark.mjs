@@ -31,6 +31,18 @@ const tokenizerName =
 const tokenizer = getEncoding(tokenizerName);
 const agentModel = process.env.CONNECTA_EVAL_AGENT_MODEL;
 const bearer = "connecta-agent-eval-token";
+const disabledHostFeatures = [
+  "apps",
+  "plugins",
+  "browser_use",
+  "computer_use",
+  "in_app_browser",
+  "image_generation",
+  "multi_agent",
+  "goals",
+  "tool_suggest",
+  "skill_search",
+];
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
   encoding: "utf8",
@@ -234,6 +246,10 @@ async function runAgent(fixture, url) {
     'mcp_servers.connecta.bearer_token_env_var="CONNECTA_EVAL_TOKEN"',
     "--config",
     'approval_policy="never"',
+    ...disabledHostFeatures.flatMap((feature) => [
+      "--disable",
+      feature,
+    ]),
     ...(agentModel ? ["--model", agentModel] : []),
     fixture.prompt,
   ];
@@ -275,6 +291,7 @@ async function runAgent(fixture, url) {
         const itemStarted = startedItems.get(item.id);
         if (item.type === "mcp_tool_call") {
           toolCalls.push({
+            server: item.server ?? null,
             tool: item.tool,
             arguments: item.arguments,
             status: item.status,
@@ -325,7 +342,13 @@ async function runAgent(fixture, url) {
       `Codex exited with ${exitCode} for "${fixture.id}".\n${stderr}`,
     );
   }
-  const called = toolCalls.map((call) => call.tool);
+  const connectaToolCalls = toolCalls.filter(
+    (call) => call.server === "connecta",
+  );
+  const foreignToolCalls = toolCalls.filter(
+    (call) => call.server !== "connecta",
+  );
+  const called = connectaToolCalls.map((call) => call.tool);
   const missingTools = fixture.expectedTools.filter(
     (tool) => !called.includes(tool),
   );
@@ -334,8 +357,14 @@ async function runAgent(fixture, url) {
   );
   const correct = fixture.correct(finalText);
   const routeEfficient =
-    missingTools.length === 0 && forbiddenTools.length === 0;
-  const mcpResultTokens = toolCalls.reduce(
+    missingTools.length === 0 &&
+    forbiddenTools.length === 0 &&
+    foreignToolCalls.length === 0;
+  const mcpResultTokens = connectaToolCalls.reduce(
+    (sum, call) => sum + call.resultTokens,
+    0,
+  );
+  const foreignMcpResultTokens = foreignToolCalls.reduce(
     (sum, call) => sum + call.resultTokens,
     0,
   );
@@ -354,11 +383,15 @@ async function runAgent(fixture, url) {
     missingTools,
     forbiddenTools,
     guidanceFetched: called.includes("skills"),
+    foreignToolCalls: foreignToolCalls.map(
+      (call) => `${call.server ?? "unknown"}.${call.tool}`,
+    ),
     toolCalls,
     nonMcpActions,
     finalText,
     usage,
     mcpResultTokens,
+    foreignMcpResultTokens,
   };
 }
 
@@ -422,6 +455,10 @@ const result = {
     ),
     totalMcpResultTokens: caseResults.reduce(
       (sum, fixture) => sum + fixture.mcpResultTokens,
+      0,
+    ),
+    totalForeignMcpResultTokens: caseResults.reduce(
+      (sum, fixture) => sum + fixture.foreignMcpResultTokens,
       0,
     ),
   },

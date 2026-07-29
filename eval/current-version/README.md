@@ -93,9 +93,10 @@ npm --prefix eval/current-version run perf:logic -- --samples 40 --load-calls 40
 ```
 
 The agent lane requires an authenticated `codex` CLI. It ignores the user's
-Codex configuration, attaches only the isolated Connecta endpoint, uses a
-read-only filesystem sandbox, and does not persist sessions. Select one case
-while developing:
+Codex configuration, explicitly disables host apps, plugins, browser,
+computer-use, and related discovery features, attaches the isolated Connecta
+endpoint, uses a read-only filesystem sandbox, and does not persist sessions.
+Select one case while developing:
 
 ```sh
 npm --prefix eval/current-version run perf:agent -- --case single-read
@@ -104,6 +105,32 @@ npm --prefix eval/current-version run perf:agent -- --case single-read
 Set `CONNECTA_EVAL_AGENT_MODEL` to pin a model. If omitted, the current Codex
 default is used and recorded as `codex-default`; for comparable trend data,
 pin the same model and machine across runs.
+
+### Tool-lookup and context-noise canary
+
+The focused lookup lane repeats natural-language discovery tasks, records the
+exact candidates returned to the agent, estimates the token cost of irrelevant
+candidates, and compares clean prompts with long resolved-task context. Every
+run gets a fresh server and ephemeral Codex session:
+
+```sh
+npm --prefix eval/current-version run perf:lookup
+```
+
+Use `--repetitions` to expose routing variance and `--concurrency` to bound how
+many isolated agents run at once. A single case is useful while changing the
+harness:
+
+```sh
+npm --prefix eval/current-version run perf:lookup -- \
+  --case page-search-pressure \
+  --repetitions 1 \
+  --concurrency 1
+```
+
+This is an agent-behavior canary, not part of the release gate. Its pressure
+prompt tests selection amid competing integration vocabulary; it is not a
+context-window limit test.
 
 For exploratory calls, start `sandbox-server.ts` with `tsx`, set
 `CONNECTA_EVAL_URL` to its reported MCP URL, and pipe JSON commands into
