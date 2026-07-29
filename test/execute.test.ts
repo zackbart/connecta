@@ -511,6 +511,8 @@ describe("buildSandboxProviders", () => {
     expect(search.tools[0]).toMatchObject({
       address: "calc.add",
       inputSchema: "{ a: number, b: number }",
+      inputKeys: ["a", "b"],
+      requiredInputKeys: ["a", "b"],
     });
 
     const partial = (await required(connecta.fns.search)({
@@ -521,6 +523,9 @@ describe("buildSandboxProviders", () => {
     };
     expect(partial.matchMode).toBe("partial");
     expect(required(partial.tools[0]).address).toBe("calc.add");
+    // Key metadata accompanies schemas; a search that asked for neither pays
+    // for neither.
+    expect(required(partial.tools[0])).not.toHaveProperty("inputKeys");
 
     const described = (await required(connecta.fns.describe)({
       addresses: ["calc.add", "remote.echo"],
@@ -538,6 +543,112 @@ describe("buildSandboxProviders", () => {
       { address: "calc.add", ok: true, data: { sum: 3 } },
       { address: "remote.echo", ok: true, data: "echo:hello" },
     ]);
+  });
+
+  it("resolves schema key metadata the way the compact schema renders", async () => {
+    // A top-level $ref and an "extend this base" allOf are what OpenAPI- and
+    // pydantic-derived connectors actually emit. Reading `properties` off the
+    // schema root sees nothing there, which would advertise a field-less tool
+    // beside a compact schema that plainly lists fields.
+    const shapes: Connector = {
+      id: "shapes",
+      kind: "api",
+      description: "Schema shapes",
+      async listTools() {
+        return [
+          {
+            name: "referenced",
+            description: "Input behind a $ref",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              $defs: {
+                GetRun: {
+                  type: "object",
+                  properties: { runId: { type: "integer" } },
+                  required: ["runId"],
+                },
+              },
+              $ref: "#/$defs/GetRun",
+            },
+            outputSchema: {
+              allOf: [
+                {
+                  type: "object",
+                  properties: { runId: { type: "integer" } },
+                  required: ["runId"],
+                },
+                {
+                  type: "object",
+                  properties: { failedJobId: { type: "integer" } },
+                },
+              ],
+            },
+          },
+          {
+            name: "union",
+            description: "Input that is a union, not an object",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              oneOf: [
+                { type: "object", properties: { a: { type: "string" } } },
+                { type: "object", properties: { b: { type: "string" } } },
+              ],
+            },
+          },
+          {
+            name: "argless",
+            description: "A tool that genuinely takes no fields",
+            annotations: { readOnlyHint: true },
+            inputSchema: { type: "object" },
+          },
+        ];
+      },
+      async callTool() {
+        return {};
+      },
+    };
+    const providers = await buildSandboxProviders(
+      makeRegistry([shapes]),
+      BASE,
+      silentLogger,
+    );
+    const connecta = connectaProvider(providers);
+    const byName = async (query: string, args: Record<string, unknown> = {}) => {
+      const page = (await required(connecta.fns.search)({
+        query,
+        includeSchemas: "compact",
+        ...args,
+      })) as { tools: Array<Record<string, unknown>> };
+      return Object.fromEntries(
+        page.tools.map((tool) => [tool.name as string, tool]),
+      );
+    };
+
+    const tools = await byName("referenced union argless");
+    const referenced = required(tools.referenced);
+    expect(referenced.inputSchema).toBe("{ runId: integer }");
+    expect(referenced.inputKeys).toEqual(["runId"]);
+    expect(referenced.requiredInputKeys).toEqual(["runId"]);
+    expect(referenced.outputSchema).toBe(
+      "{ runId: integer } & { failedJobId?: integer }",
+    );
+    expect(referenced.outputKeys).toEqual(["runId", "failedJobId"]);
+
+    // A union has no single key list. Absent says "read the schema"; [] would
+    // say "this tool takes nothing".
+    const union = required(tools.union);
+    expect(union).not.toHaveProperty("inputKeys");
+    expect(union).not.toHaveProperty("requiredInputKeys");
+
+    // An object with no properties is the one case where empty is the truth.
+    const argless = required(tools.argless);
+    expect(argless.inputKeys).toEqual([]);
+    expect(argless.requiredInputKeys).toEqual([]);
+    expect(argless).not.toHaveProperty("outputKeys");
+
+    const optedOut = await byName("referenced", { includeSchemaKeys: false });
+    expect(required(optedOut.referenced).inputSchema).toBe("{ runId: integer }");
+    expect(required(optedOut.referenced)).not.toHaveProperty("inputKeys");
   });
 
   it("bounds in-sandbox discovery fan-out", async () => {

@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes integrations behind meta-tools. Unknown address: use search_tools with 2–4 distinctive action/object terms, no initial limit, and includeSchemas="compact"; describe_tools only if that shape is ambiguous or exact JSON constraints are needed. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent read-only calls, and execute_code (when available) only for dependencies, loops, joins, or substantial reduction. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools. authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
+  'Connecta exposes integrations behind meta-tools. Unknown address: use search_tools with 2–4 distinctive action/object terms, no initial limit, and includeSchemas="compact"; describe_tools only if that shape is ambiguous or exact JSON constraints are needed. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent read-only calls, and execute_code (when available) only for dependencies, loops, joins, or substantial reduction — searching inside that one run rather than searching first. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools. authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
 
 export const USAGE_SKILL = `# Connecta usage
 
@@ -22,7 +22,7 @@ Use \`list_connectors({ probe: false })\` for a fast observed-health inventory; 
 
 ## Code mode
 
-Use code mode for dependent calls, connector joins, or substantial sandbox reduction. Parallelize independent calls with \`Promise.all\` or \`connecta.batch\`.
+Unknown addresses plus dependent calls: search inside the run, not in an outer \`search_tools\`. Parallelize independent calls with \`Promise.all\` or \`connecta.batch\`.
 
 Connector namespace calls and \`connecta.call\` use the same read-only gate and throw on downstream errors. Catch only failures the workflow can handle; let authorization failures return to the agent for recovery.
 

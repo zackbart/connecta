@@ -69,7 +69,18 @@ imports. Its only capabilities are:
 - lazy connector globals for explicitly read-only tools;
 - `connecta.call()` and `connecta.batch()` for exact-address read-only calls;
 - `connecta.search()` and `connecta.describe()` for request-local discovery;
+  schema-bearing search matches also expose `inputKeys`,
+  `requiredInputKeys`, and `outputKeys` so one program can check exact field
+  names before continuing to a dependent call;
 - captured `console.*` output.
+
+The key lists are derived by the same walk that renders the compact schema, so
+they resolve a top-level `$ref` and compose `allOf` instead of disagreeing with
+the shape printed beside them. A schema that is not an object at all — a union,
+an array, an unresolvable `$ref` — gets no lists rather than empty ones: absent
+means "read the schema", where `[]` would claim the tool takes no fields. The
+metadata is code-mode-only; `search_tools` never carries it, and a program that
+wants the bytes back can pass `includeSchemaKeys: false`.
 
 All calls use the same catalog, fail-closed read-only predicate, admission,
 cancellation, timeout classification, health, credential containment, and

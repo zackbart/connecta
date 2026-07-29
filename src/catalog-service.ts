@@ -3,6 +3,7 @@ import {
   lexicalCorpusStatistics,
   lexicalSearchQuery,
   rankTools,
+  schemaObjectKeys,
   summarizeDescription,
 } from "./catalog.js";
 import {
@@ -104,6 +105,8 @@ export interface CatalogSearchArgs {
   offset?: number;
   fullDescriptions?: boolean;
   includeSchemas?: "compact" | "json";
+  /** Code-mode helper metadata; never exposed by the public search_tools schema. */
+  includeSchemaKeys?: boolean;
 }
 
 export interface CatalogDescribeArgs {
@@ -121,7 +124,36 @@ interface CatalogSearchEntry {
     description?: string;
     inputSchema?: unknown;
     outputSchema?: unknown;
+    inputKeys?: string[];
+    requiredInputKeys?: string[];
+    outputKeys?: string[];
     annotations?: ToolDef["annotations"];
+  };
+}
+
+/**
+ * Code-mode key metadata for one match. Each half is omitted when its schema
+ * does not resolve to an object shape, so a program reads "no metadata, use the
+ * rendered schema" rather than "this tool has no fields".
+ */
+function schemaKeyMetadata(
+  input: JsonSchema,
+  output: JsonSchema | undefined,
+): {
+  inputKeys?: string[];
+  requiredInputKeys?: string[];
+  outputKeys?: string[];
+} {
+  const inputKeys = schemaObjectKeys(input);
+  const outputKeys = schemaObjectKeys(output);
+  return {
+    ...(inputKeys
+      ? {
+          inputKeys: inputKeys.properties,
+          requiredInputKeys: inputKeys.required,
+        }
+      : {}),
+    ...(outputKeys ? { outputKeys: outputKeys.properties } : {}),
   };
 }
 
@@ -457,6 +489,9 @@ export class CatalogService {
                 outputSchema:
                   renderSchema(match.tool.outputSchema, args.includeSchemas),
               }
+            : {}),
+          ...(args.includeSchemas && args.includeSchemaKeys
+            ? schemaKeyMetadata(input, match.tool.outputSchema)
             : {}),
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
