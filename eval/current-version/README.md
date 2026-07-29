@@ -108,10 +108,14 @@ pin the same model and machine across runs.
 
 ### Tool-lookup and context-noise canary
 
-The focused lookup lane repeats natural-language discovery tasks, records the
-exact candidates returned to the agent, estimates the token cost of irrelevant
-candidates, and compares clean prompts with long resolved-task context. Every
-run gets a fresh server and ephemeral Codex session:
+The focused lookup lane repeats natural-language discovery tasks against
+validated, realistic fixture schemas and deterministic domain results. Its
+per-run eval-server trace records outer meta-tool operations, discovery and
+calls nested inside `execute_code`, exact downstream execution addresses,
+arguments, results, and timing. The report scores retrieval, arguments,
+addresses, route shape, final results, round trips, Connecta tokens, and host
+input tokens separately, and compares clean prompts with long resolved-task
+context. Every run gets a fresh server and ephemeral Codex session:
 
 ```sh
 npm --prefix eval/current-version run perf:lookup
