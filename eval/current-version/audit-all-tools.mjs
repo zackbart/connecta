@@ -244,6 +244,7 @@ export async function runTaskAudit(
       const value = objectValue(result);
       return pass(
         result.isError !== true &&
+          value.recovery === "oauth" &&
           typeof value.authorizationUrl === "string",
         {
           outcome: "oauth-operator-handoff",
@@ -301,21 +302,33 @@ export async function runTaskAudit(
       }),
   );
   await task(
-    "current static agent recovery reaches its boundary",
+    "static recovery returns an operator handoff",
     "authorize_connector",
     { connector: "static-recoverable" },
-    (result) =>
-      pass(result.isError === true, {
-        outcome: "static-agent-handoff-missing",
-        recovery: "operator-required",
-        messagePreview: textContent(result)?.slice(0, 160) ?? null,
-      }),
+    (result) => {
+      const value = objectValue(result);
+      return pass(
+        result.isError !== true &&
+          value.recovery === "operator_config" &&
+          typeof value.operatorUrl === "string",
+        {
+          outcome: "static-operator-handoff",
+          recovery: value.recovery ?? null,
+          hasOperatorUrl: typeof value.operatorUrl === "string",
+        },
+      );
+    },
   );
   const configured = await fetch(
-    `${baseUrl}/fixture/static-recoverable/configure`,
+    `${baseUrl}/ui/credentials/static-recoverable`,
     {
-      method: "POST",
-      headers: { "x-connecta-eval-operator": operatorToken },
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${operatorToken}`,
+        origin: baseUrl,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ value: "sandbox-ok" }),
     },
   );
   if (!configured.ok) {
@@ -341,12 +354,17 @@ export async function runTaskAudit(
     "static unavailable recovery is explicit",
     "authorize_connector",
     { connector: "static-unavailable" },
-    (result) =>
-      pass(result.isError === true, {
+    (result) => {
+      const value = objectValue(result);
+      return pass(
+        result.isError !== true && value.recovery === "unavailable",
+        {
         outcome: "static-recovery-unavailable",
-        recovery: "unavailable",
+        recovery: value.recovery ?? null,
         messagePreview: textContent(result)?.slice(0, 160) ?? null,
-      }),
+        },
+      );
+    },
   );
   await task(
     "activity remains payload-free",

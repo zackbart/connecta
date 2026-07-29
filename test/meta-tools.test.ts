@@ -2386,13 +2386,59 @@ describe("call_tool", () => {
     ) as {
       ok: boolean;
       attempts: number;
-      error: { code: string; message: string; retryable: boolean };
+      error: {
+        code: string;
+        message: string;
+        retryable: boolean;
+        retry: string;
+      };
     };
     expect(parsed.ok).toBe(false);
     expect(parsed.attempts).toBe(1);
     expect(parsed.error.code).toBe("auth_required");
     expect(parsed.error.retryable).toBe(false);
     expect(parsed.error.message).toContain("authorize_connector");
+    expect(parsed.error).toMatchObject({
+      connector: "expired",
+      operation: "expired.read",
+      recovery: "unavailable",
+      nextAction: {
+        tool: "authorize_connector",
+        arguments: { connector: "expired" },
+      },
+    });
+    expect(parsed.error.retry).toContain("expired.read");
+  });
+
+  it("returns the same structured auth_required envelope in MCP result mode", async () => {
+    const connector = api("expired", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new ConnectorCallError(
+              "auth_required",
+              "Authorization is required.",
+            );
+          },
+        },
+      ],
+    });
+    const result = await createMetaTools(
+      makeRegistry([connector]),
+      BASE,
+    ).callTool({ address: "expired.read" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        connector: "expired",
+        operation: "expired.read",
+        recovery: "unavailable",
+      },
+    });
   });
 
   it("schema-invalid args fail closed as invalid_args without reaching the handler", async () => {
@@ -3599,11 +3645,13 @@ describe("authorize_connector", () => {
       await mt.authorizeConnector({ connector: "needsauth" }),
     ) as {
       connector: string;
+      recovery: string;
       status: string;
       authorizationUrl?: string;
       instructions?: string;
     };
     expect(parsed.connector).toBe("needsauth");
+    expect(parsed.recovery).toBe("oauth");
     expect(parsed.status).toBe("auth_required");
     expect(parsed.authorizationUrl).toContain("auth.example");
     expect(parsed.instructions).toContain("/oauth/callback/");
@@ -3617,11 +3665,116 @@ describe("authorize_connector", () => {
     expect(authConnector.startAuthCalls).toEqual([{ force: true }]);
   });
 
-  it("errors for a connector without downstream OAuth", async () => {
+  it("reports unavailable when a connector declares no recovery path", async () => {
     const mt = createMetaTools(registry(), BASE);
     const result = await mt.authorizeConnector({ connector: "calc" });
-    expect(result.isError).toBe(true);
-    expect(required(result.content[0]).text).toContain("does not use downstream OAuth");
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatchObject({
+      connector: "calc",
+      recovery: "unavailable",
+    });
+    expect(required(result.content[0]).text).toContain(
+      "neither downstream OAuth nor an operator-managed credential slot",
+    );
+  });
+
+  it("returns a secret-free operator handoff for a configured credential vault", async () => {
+    const connector = api("static", {
+      credential: {
+        label: "Service credentials",
+        description: "Credentials provisioned by the service operator.",
+        fields: [
+          {
+            name: "email",
+            label: "Account email",
+            description: "The service account email.",
+          },
+          {
+            name: "apiKey",
+            label: "API key",
+          },
+        ],
+      },
+      tools: [],
+    });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.setAll(
+      "static",
+      {
+        email: "operator@example.com",
+        apiKey: "do-not-return-this-secret",
+      },
+      "user_1",
+    );
+    const result = await createMetaTools(
+      makeRegistry([connector], { storage, credentialVault: vault }),
+      BASE,
+    ).authorizeConnector({ connector: "static", force: true });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toEqual({
+      connector: "static",
+      recovery: "operator_config",
+      credential: {
+        label: "Service credentials",
+        fields: [
+          { name: "email", guidance: "The service account email." },
+          { name: "apiKey", guidance: "API key" },
+        ],
+      },
+      operatorUrl: `${BASE}/credentials`,
+      instructions:
+        "Have the operator open operatorUrl, set and test the credential, " +
+        "then retry the original call. No redeploy is needed. Credential " +
+        "mutation requires a Clerk-authenticated operator.",
+    });
+    expect(required(result.content[0]).text).not.toContain(
+      "do-not-return-this-secret",
+    );
+    expect(required(result.content[0]).text).not.toContain(
+      "operator@example.com",
+    );
+  });
+
+  it("reports unavailable when a declared credential has no vault", async () => {
+    const connector = api("static", {
+      credential: { label: "API key" },
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => {
+            throw new Error("the connector must not run without its vault");
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const result = await mt.authorizeConnector({ connector: "static" });
+    expect(result.isError).toBeFalsy();
+    expect(textOf(result)).toMatchObject({
+      connector: "static",
+      recovery: "unavailable",
+    });
+    expect(required(result.content[0]).text).toContain(
+      "credentials.encryptionKey",
+    );
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "static.read",
+          resultMode: "value",
+        }),
+      ),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        connector: "static",
+        operation: "static.read",
+        recovery: "unavailable",
+      },
+    });
   });
 
   it("errors for an unknown connector", async () => {

@@ -64,6 +64,7 @@ proposing one without a new argument is not.
 | Repository formatter | refused | style is authored, not enforced |
 | Toolkits (scoped views) | removed | never earned its keep; deploy per audience ([#178](https://github.com/zackbart/connecta/issues/178)) |
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
+| Agent credential recovery | accepted | one `auth_required` route through `authorize_connector`; only an operator handles secrets ([#192](https://github.com/zackbart/connecta/issues/192)) |
 | Code mode (`execute_code`) | provisional | merit real but unproven; measurement decides ([#177](https://github.com/zackbart/connecta/issues/177)) |
 | Semantic tool search | gated | earns its way in through the same measurement ([#27](https://github.com/zackbart/connecta/issues/27)) |
 

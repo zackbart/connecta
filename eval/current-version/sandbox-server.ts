@@ -9,11 +9,10 @@ import {
   createConnecta,
   memoryStorage,
   type Connector,
-  type ConnectorContext,
+  type InboundAuth,
   type ToolCallActivityEvent,
   type ToolDef,
 } from "../../src/index.js";
-import { CredentialVault } from "../../src/credentials.js";
 import { quickJsExecutor } from "../../src/executors/quickjs.js";
 import { listen } from "../../src/node.js";
 
@@ -41,8 +40,27 @@ const port = Number(process.env.CONNECTA_EVAL_PORT ?? "0");
 const host = "127.0.0.1";
 const credentialEncryptionKey = Buffer.alloc(32, 7).toString("base64");
 const storage = memoryStorage();
-const vault = new CredentialVault(storage, credentialEncryptionKey);
 const activityEvents: ToolCallActivityEvent[] = [];
+
+const operatorAuth: InboundAuth = {
+  kind: "clerk",
+  uiAuth: {
+    kind: "clerk",
+    publishableKey: "pk_test_eval",
+    frontendApiUrl: "https://clerk.eval.invalid",
+  },
+  authorize(request) {
+    if (
+      request.headers.get("authorization") === `Bearer ${operatorToken}`
+    ) {
+      return { ok: true, userId: "isolated-eval-operator" };
+    }
+    return {
+      ok: false,
+      response: Response.json({ error: "unauthorized" }, { status: 401 }),
+    };
+  },
+};
 
 function fixtureTools(
   definitions: { name: string; description: string }[],
@@ -310,10 +328,14 @@ function staticCredentialConnector(
     description: allowOperatorUpdate
       ? "Static credential fixture with an isolated operator handoff"
       : "Static credential fixture with no available operator handoff",
-    credential: {
-      label: "Eval access token",
-      description: "Configured only by the isolated operator fixture.",
-    },
+    ...(allowOperatorUpdate
+      ? {
+          credential: {
+            label: "Eval access token",
+            description: "Configured only by the isolated operator fixture.",
+          },
+        }
+      : {}),
     staticTools: tools,
     async listTools() {
       return tools;
@@ -326,20 +348,6 @@ function staticCredentialConnector(
         );
       }
       return { id: "static-evaluator", recovered: true };
-    },
-    async handleRequest(request: Request, _ctx: ConnectorContext) {
-      const url = new URL(request.url);
-      if (
-        !allowOperatorUpdate ||
-        url.pathname !== `/fixture/${id}/configure`
-      ) {
-        return null;
-      }
-      if (request.headers.get("x-connecta-eval-operator") !== operatorToken) {
-        return new Response("Forbidden", { status: 403 });
-      }
-      await vault.set(id, "sandbox-ok", "isolated-eval-operator");
-      return Response.json({ configured: true });
     },
   };
 }
@@ -361,7 +369,10 @@ const executor = executorEnabled
   : undefined;
 
 const connecta = createConnecta({
-  auth: bearerToken(token, { subjectId: "current-version-evaluator" }),
+  auth: [
+    bearerToken(token, { subjectId: "current-version-evaluator" }),
+    operatorAuth,
+  ],
   connectors: [
     ...discoveryConnectors,
     controlled,

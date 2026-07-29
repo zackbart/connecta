@@ -609,17 +609,22 @@ export function createMetaTools(
       },
     );
     if (!outcome.ok) {
+      const failedResult =
+        outcome.error.code === "auth_required" ||
+        call.resultMode === "value"
+          ? jsonResult({
+              ok: false,
+              error: outcome.error,
+              durationMs: outcome.durationMs,
+              attempts: outcome.attempts,
+              ...(call.diagnostics ? { timing: outcome.timing } : {}),
+            })
+          : errorResult(outcome.error.message);
+      if (outcome.error.code === "auth_required") {
+        failedResult.isError = true;
+      }
       return {
-        toolResult:
-          call.resultMode === "value"
-            ? jsonResult({
-                ok: false,
-                error: outcome.error,
-                durationMs: outcome.durationMs,
-                attempts: outcome.attempts,
-                ...(call.diagnostics ? { timing: outcome.timing } : {}),
-              })
-            : errorResult(outcome.error.message),
+        toolResult: failedResult,
         durationMs: outcome.durationMs,
         attempts: outcome.attempts,
         timing: outcome.timing,
@@ -992,6 +997,21 @@ export function createMetaTools(
               ...(details.retryAfterMs !== undefined
                 ? { retryAfterMs: details.retryAfterMs }
                 : {}),
+              ...(details.connector !== undefined
+                ? { connector: batchSummaryString(details.connector) }
+                : {}),
+              ...(details.operation !== undefined
+                ? { operation: batchSummaryString(details.operation) }
+                : {}),
+              ...(details.recovery !== undefined
+                ? { recovery: details.recovery }
+                : {}),
+              ...(details.nextAction !== undefined
+                ? { nextAction: details.nextAction }
+                : {}),
+              ...(details.retry !== undefined
+                ? { retry: batchSummaryString(details.retry) }
+                : {}),
             },
           };
         }),
@@ -1006,9 +1026,55 @@ export function createMetaTools(
         return errorResult(`Unknown connector "${args.connector}"`);
       }
       if (!connector.startAuth) {
-        return errorResult(
-          `Connector "${args.connector}" does not use downstream OAuth — its auth is static (headers/none), so there is nothing to authorize.`,
+        if (!connector.credential) {
+          return jsonResult({
+            connector: connector.id,
+            recovery: "unavailable",
+            message:
+              `Connector "${connector.id}" declares neither downstream OAuth ` +
+              "nor an operator-managed credential slot. Update the connector " +
+              "or deployment configuration before retrying.",
+          });
+        }
+        const ctx = registry.contextFor(
+          connector.id,
+          baseUrl,
+          requestScope,
         );
+        if (!ctx.credential) {
+          return jsonResult({
+            connector: connector.id,
+            recovery: "unavailable",
+            message:
+              "Credential storage is not configured. Configure " +
+              "credentials.encryptionKey, redeploy, then call " +
+              "authorize_connector again.",
+          });
+        }
+        const fields = connector.credential.fields?.map((field) => ({
+          name: field.name,
+          guidance: field.description ?? field.label,
+        })) ?? [
+          {
+            name: "value",
+            guidance:
+              connector.credential.description ??
+              connector.credential.label,
+          },
+        ];
+        return jsonResult({
+          connector: connector.id,
+          recovery: "operator_config",
+          credential: {
+            label: connector.credential.label,
+            fields,
+          },
+          operatorUrl: new URL("/credentials", baseUrl).toString(),
+          instructions:
+            "Have the operator open operatorUrl, set and test the credential, " +
+            "then retry the original call. No redeploy is needed. Credential " +
+            "mutation requires a Clerk-authenticated operator.",
+        });
       }
       const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
       try {
@@ -1024,6 +1090,7 @@ export function createMetaTools(
         }
         return jsonResult({
           connector: connector.id,
+          recovery: "oauth",
           status: status.state,
           ...(status.authorizationUrl
             ? {
@@ -1058,7 +1125,7 @@ const GET_RESULT_DESC =
 const BATCH_DESC =
   "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call. An oversized final envelope returns ordered outcome summaries plus a get_result page handle.";
 const AUTHORIZE_DESC =
-  "Use after a connector reports auth_required. Starts downstream OAuth and returns an authorizationUrl for the operator to open. force=true wipes stored credentials first and restarts consent.";
+  "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 

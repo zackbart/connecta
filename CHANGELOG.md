@@ -15,6 +15,15 @@ refuses to start and points to the relevant issue and `ethos.md`.
 
 ### Changed
 
+- **Credential recovery has one agent-facing route** (#192).
+  `auth_required` errors now name the connector, failed operation, recovery
+  class, `authorize_connector` call, operator handoff, and retry. Calling
+  `authorize_connector` returns `recovery: "oauth"`, `"operator_config"`, or
+  `"unavailable"`; static handoffs expose only declared field names and
+  guidance plus the Clerk-protected `/credentials` URL, never credential
+  values. A missing `credentials.encryptionKey` now boots with an explicit
+  unavailable recovery state instead of preventing the deployment from
+  explaining the problem.
 - **Toolkits are removed** (#178). `ConnectaConfig.toolkits`, toolkit bindings
   on `bearerToken` and `clerkAuth`, `?toolkit=` routing, scoped registries, and
   the operator UI's toolkit projection no longer exist. Passing `toolkits` or

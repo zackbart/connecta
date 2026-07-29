@@ -10,6 +10,12 @@ export type ConnectorCallErrorCode =
   | "invalid_args"
   | "connector_call_failed";
 
+/** Agent-visible recovery class attached only to `auth_required` failures. */
+export type AuthRecoveryMode =
+  | "oauth"
+  | "operator_config"
+  | "unavailable";
+
 const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   timeout: true,
   rate_limited: true,
@@ -78,6 +84,20 @@ export interface CallErrorDetails {
    * window so it can schedule a re-issue.
    */
   retryAfterMs?: number;
+  /** Connector whose failed operation needs recovery. */
+  connector?: string;
+  /** Canonical downstream address the agent may retry after recovery. */
+  operation?: string;
+  /** Which safe recovery path `authorize_connector` will return. */
+  recovery?: AuthRecoveryMode;
+  /** The single model-facing entry point for every credential class. */
+  nextAction?: {
+    tool: "authorize_connector";
+    arguments: { connector: string };
+    operatorHandoff: string;
+  };
+  /** Explicit retry guidance; recovery never retries or mutates by itself. */
+  retry?: string;
 }
 
 const RETRYABLE_MESSAGE_RE =

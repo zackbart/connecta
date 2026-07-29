@@ -14,7 +14,7 @@ export const USAGE_SKILL = `# Connecta usage
 - Dependent read-only calls, loops, joins, branching, or large-result reduction: \`execute_code\` when available.
 - Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, individually and only after reviewing its schema and consequences.
 - Truncated result: retry with \`fields\` when possible; otherwise page it with \`get_result\`.
-- \`auth_required\`: use \`authorize_connector\`, have the operator complete consent, then confirm with \`list_connectors\`.
+- \`auth_required\`: use \`authorize_connector\`, give its recovery handoff to the operator, then retry the original call.
 
 Use \`list_connectors({ probe: false })\` for a fast inventory based on recent call observations and local credential-shape drift. Use \`probe: true\` only when diagnosing live health or authorization.
 

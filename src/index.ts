@@ -413,8 +413,10 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const credentialConnectors = config.connectors.filter((c) => c.credential);
   const encryptionKey = config.credentials?.encryptionKey;
   if (credentialConnectors.length > 0 && !encryptionKey) {
-    throw new Error(
-      `credentials.encryptionKey is required by connector credentials: ${credentialConnectors.map((c) => c.id).join(", ")}`,
+    logger.warn(
+      "Operator-managed credentials are unavailable because " +
+        "credentials.encryptionKey is not configured for connectors: " +
+        credentialConnectors.map((c) => c.id).join(", "),
     );
   }
   const credentialVault = encryptionKey

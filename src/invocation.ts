@@ -13,6 +13,7 @@ import {
   classifyCallError,
   ConnectorCallError,
   messageLooksRetryable,
+  type AuthRecoveryMode,
   type CallErrorDetails,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
@@ -79,6 +80,21 @@ function callerCancelledDetails(): CallErrorDetails {
     message: "Tool call was cancelled by the caller.",
     retryable: false,
   };
+}
+
+function recoveryMode(
+  registry: RegistryView,
+  connector: ResolvedCatalogTool["connector"],
+  baseUrl: string,
+): AuthRecoveryMode {
+  if (connector.startAuth) return "oauth";
+  if (
+    connector.credential &&
+    registry.contextFor(connector.id, baseUrl).credential
+  ) {
+    return "operator_config";
+  }
+  return "unavailable";
 }
 
 function isCallerCancellation(
@@ -155,6 +171,11 @@ export class InvocationFailure extends Error {
   readonly code: string;
   readonly retryable: boolean;
   readonly retryAfterMs: number | undefined;
+  readonly connector: string | undefined;
+  readonly operation: string | undefined;
+  readonly recovery: CallErrorDetails["recovery"];
+  readonly nextAction: CallErrorDetails["nextAction"];
+  readonly retry: string | undefined;
 
   constructor(readonly details: CallErrorDetails) {
     super(details.message);
@@ -162,6 +183,11 @@ export class InvocationFailure extends Error {
     this.code = details.code;
     this.retryable = details.retryable;
     this.retryAfterMs = details.retryAfterMs;
+    this.connector = details.connector;
+    this.operation = details.operation;
+    this.recovery = details.recovery;
+    this.nextAction = details.nextAction;
+    this.retry = details.retry;
   }
 }
 
@@ -262,13 +288,36 @@ export class InvocationService {
     };
     const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
       const diagnostics = timing();
+      const target = resolved ?? activityTarget;
+      const details =
+        error.code === "auth_required" && target
+          ? {
+              ...error,
+              connector: target.connector.id,
+              operation: `${target.connector.id}.${target.toolName}`,
+              recovery: recoveryMode(
+                this.registry,
+                target.connector,
+                this.catalog.baseUrl,
+              ),
+              nextAction: {
+                tool: "authorize_connector" as const,
+                arguments: { connector: target.connector.id },
+                operatorHandoff:
+                  "Give the URL and instructions it returns to the operator.",
+              },
+              retry:
+                `Retry ${target.connector.id}.${target.toolName} after ` +
+                "the operator completes recovery.",
+            }
+          : error;
       record(
-        error.code === "timeout"
+        details.code === "timeout"
           ? "timeout"
-          : error.code === "cancelled"
+          : details.code === "cancelled"
             ? "cancelled"
             : "error",
-        error.code,
+        details.code,
       );
       return {
         ok: false,
@@ -276,7 +325,7 @@ export class InvocationService {
         attempts,
         timing: diagnostics,
         ...(resolved ? { resolved } : {}),
-        error,
+        error: details,
       };
     };
 
@@ -380,6 +429,13 @@ export class InvocationService {
               : {}),
           },
         );
+        if (resolved.connector.credential && !connectorContext.credential) {
+          throw new ConnectorCallError(
+            "auth_required",
+            "Operator-managed credential storage is not configured. Call " +
+              `authorize_connector({ connector: "${resolved.connector.id}" }).`,
+          );
+        }
         let rejectCancelled!: (reason: unknown) => void;
         const cancelled = controller
           ? new Promise<never>((_, reject) => {

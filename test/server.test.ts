@@ -24,12 +24,14 @@ async function loadQuickJsExecutor() {
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
+import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
 import type { Connector, InboundAuth } from "../src/types.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
+const CREDENTIAL_KEY = Buffer.alloc(32, 13).toString("base64");
 
 function calc() {
   return api("calc", {
@@ -56,6 +58,65 @@ function makeConnecta() {
     auth: bearerToken(TOKEN),
     storage: memoryStorage(),
     publicUrl: BASE,
+  });
+}
+
+function fakeClerkOperator(): InboundAuth {
+  return {
+    kind: "clerk",
+    uiAuth: {
+      kind: "clerk",
+      publishableKey: "pk_test_fake",
+      frontendApiUrl: "https://clerk.example.com",
+    },
+    authorize(request) {
+      if (request.headers.get("authorization") === "Bearer operator-token") {
+        return { ok: true, userId: "operator_1" };
+      }
+      return {
+        ok: false,
+        response: Response.json({ error: "unauthorized" }, { status: 401 }),
+      };
+    },
+  };
+}
+
+function recoverableStaticConnector(): Connector {
+  return api("static", {
+    description: "Static credential recovery fixture",
+    credential: {
+      label: "Service credentials",
+      fields: [
+        {
+          name: "account",
+          label: "Account",
+          description: "The service account identifier.",
+        },
+        {
+          name: "apiKey",
+          label: "API key",
+          description: "The API key issued for that account.",
+        },
+      ],
+    },
+    tools: [
+      {
+        name: "whoami",
+        description: "Return the configured service account.",
+        inputSchema: { type: "object", additionalProperties: false },
+        annotations: { readOnlyHint: true },
+        handler: async (_args, ctx) => {
+          const values = await ctx.credential?.getAll();
+          if (!values) {
+            throw new ConnectorCallError(
+              "auth_required",
+              "Operator-managed credentials are required.",
+            );
+          }
+          return { account: values.account };
+        },
+      },
+    ],
   });
 }
 
@@ -568,8 +629,158 @@ describe("server /mcp end-to-end", () => {
       authorizationUrl?: string;
     };
     expect(payload.connector).toBe("needsauth");
+    expect((payload as any).recovery).toBe("oauth");
     expect(payload.status).toBe("auth_required");
     expect(payload.authorizationUrl).toContain("auth.example");
+  });
+
+  it("gives a bearer-only deployment a safe handoff but keeps mutation Clerk-only", async () => {
+    const c = createConnecta({
+      connectors: [recoverableStaticConnector()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
+    });
+    const response = await rpc(
+      c,
+      "tools/call",
+      { name: "authorize_connector", arguments: { connector: "static" } },
+      { token: TOKEN },
+    );
+    const body = await readBody(response);
+    const recovery = JSON.parse(body.result.content[0].text);
+    expect(recovery).toMatchObject({
+      connector: "static",
+      recovery: "operator_config",
+      operatorUrl: `${BASE}/credentials`,
+    });
+    expect(recovery.instructions).toContain("Clerk-authenticated operator");
+
+    const mutation = await c.fetch(
+      new Request(`${BASE}/ui/credentials/static`, {
+        method: "PUT",
+        headers: {
+          Authorization: `Bearer ${TOKEN}`,
+          Origin: BASE,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          values: { account: "operator@example.com", apiKey: "secret" },
+        }),
+      }),
+    );
+    expect(mutation.status).toBe(403);
+    expect(await mutation.json()).toEqual({
+      error: "credential management requires Clerk authentication",
+    });
+  });
+
+  it("recovers a bearer agent after a Clerk operator update without redeploy", async () => {
+    const c = createConnecta({
+      connectors: [recoverableStaticConnector()],
+      auth: [bearerToken(TOKEN), fakeClerkOperator()],
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      credentials: { encryptionKey: CREDENTIAL_KEY },
+    });
+
+    const failed = await readBody(
+      await rpc(
+        c,
+        "tools/call",
+        {
+          name: "call_tool",
+          arguments: {
+            address: "static.whoami",
+            resultMode: "value",
+          },
+        },
+        { token: TOKEN },
+      ),
+    );
+    expect(failed.result.isError).toBe(true);
+    const failure = JSON.parse(failed.result.content[0].text);
+    expect(failure).toMatchObject({
+      ok: false,
+      error: {
+        code: "auth_required",
+        connector: "static",
+        operation: "static.whoami",
+        recovery: "operator_config",
+        nextAction: {
+          tool: "authorize_connector",
+          arguments: { connector: "static" },
+        },
+      },
+    });
+
+    const handoff = await readBody(
+      await rpc(
+        c,
+        "tools/call",
+        {
+          name: "authorize_connector",
+          arguments: { connector: "static" },
+        },
+        { token: TOKEN },
+      ),
+    );
+    const handoffPayload = JSON.parse(handoff.result.content[0].text);
+    expect(handoffPayload).toMatchObject({
+      recovery: "operator_config",
+      operatorUrl: `${BASE}/credentials`,
+      credential: {
+        label: "Service credentials",
+        fields: [
+          {
+            name: "account",
+            guidance: "The service account identifier.",
+          },
+          {
+            name: "apiKey",
+            guidance: "The API key issued for that account.",
+          },
+        ],
+      },
+    });
+
+    const secret = "operator-secret-never-returned";
+    const saved = await c.fetch(
+      new Request(`${BASE}/ui/credentials/static`, {
+        method: "PUT",
+        headers: {
+          Authorization: "Bearer operator-token",
+          Origin: BASE,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          values: { account: "service-account", apiKey: secret },
+        }),
+      }),
+    );
+    expect(saved.status).toBe(200);
+    expect(await saved.text()).not.toContain(secret);
+
+    const retried = await readBody(
+      await rpc(
+        c,
+        "tools/call",
+        {
+          name: "call_tool",
+          arguments: {
+            address: "static.whoami",
+            resultMode: "value",
+          },
+        },
+        { token: TOKEN },
+      ),
+    );
+    expect(retried.result.isError).toBeFalsy();
+    expect(JSON.parse(retried.result.content[0].text)).toMatchObject({
+      ok: true,
+      data: { account: "service-account" },
+    });
   });
 
   it("tools/call get_result rejects a page size that could not advance", async () => {
