@@ -1,5 +1,6 @@
 import {
   Client,
+  isInputRequiredResult,
   specTypeSchemas,
   StreamableHTTPClientTransport,
   UnauthorizedError,
@@ -661,9 +662,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         // no longer needs Connecta-specific wiring.
         const c = new Client(
           { name: "connecta", version: CONNECTA_VERSION },
-          // Keep the legacy default for this mechanical port. PR B opts into
-          // 2026-07-28 negotiation after both sides are covered explicitly.
-          { versionNegotiation: { mode: "legacy" } },
+          {
+            versionNegotiation: { mode: "auto" },
+            // Connecta has no interactive relay. Surface the result manually
+            // below as one structured, non-retryable connector failure.
+            inputRequired: { autoFulfill: false },
+          },
         );
         const t = buildTransport(ctx, provider);
         if (!ownsAttempt()) await abandon(t);
@@ -917,16 +921,26 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             `Tool "${name}" requires task-based execution, which Connecta does not support.`,
           );
         }
-        return await client.callTool(
+        const result = await client.callTool(
           {
             name,
             arguments: (args ?? {}) as Record<string, unknown>,
           },
           {
             ...requestOptions(ctx),
+            allowInputRequired: true,
             ...(toolDefinition ? { toolDefinition } : {}),
           },
         );
+        if (isInputRequiredResult(result)) {
+          throw new ConnectorCallError(
+            "input_required_unsupported",
+            `Connector "${id}" returned input_required for "${name}". ` +
+              "Connecta cannot relay multi-round-trip input yet; this " +
+              "capability is gated pending real host and downstream adoption.",
+          );
+        }
+        return result;
       } catch (err) {
         // A grant revoked after connect surfaces here, not in ensureConnected.
         if (err instanceof UnauthorizedError) {
@@ -993,7 +1007,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
     },
 
-    async finishAuth(code, ctx) {
+    async finishAuth(code, ctx, callbackParams) {
       const state = stateFor(ctx);
       const provider = getProvider(ctx, state);
       // verifyState ran on this request-scoped provider first and captured the
@@ -1001,7 +1015,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // token write remains tagged with that older generation and is unreadable.
       const t = (state.transport ??
         buildTransport(ctx, provider)) as StreamableHTTPClientTransport;
-      await t.finishAuth(code);
+      if (callbackParams !== undefined) {
+        await t.finishAuth(callbackParams);
+      } else {
+        await t.finishAuth(code);
+      }
       await provider.clearPending();
       // Reset so the next use reconnects with the freshly stored tokens.
       reset(state);

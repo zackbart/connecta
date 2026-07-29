@@ -68,6 +68,9 @@ proposing one without a new argument is not.
 | Structured result surface | accepted | canonical `structuredContent` plus complete compact `content`; summary-only text is gated on host-forwarding evidence ([#191](https://github.com/zackbart/connecta/issues/191)) |
 | Code mode (`execute_code`) | provisional | merit real but unproven; measurement decides ([#177](https://github.com/zackbart/connecta/issues/177)) |
 | Semantic tool search | gated | earns its way in through the same measurement ([#27](https://github.com/zackbart/connecta/issues/27)) |
+| MRTR / `input_required` passthrough | gated | statelessly relayable via `requestState`, but no host or downstream emits it yet; fails loudly until adoption evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
+| Native Tasks for oversized results | refused | tasks solve duration, `get_result` solves size; paging on a polling extension adds round trips for nothing ([#176](https://github.com/zackbart/connecta/issues/176)) |
+| Downstream `ttlMs` cache hints | gated | fixed TTL + fingerprint is battle-tested and catalog reads are ~3 ms; earns its way in with refresh-churn evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
 
 ## Invariants
 

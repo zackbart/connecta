@@ -1,5 +1,6 @@
 import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
+  OAuthClientInformationContext,
   OAuthClientInformationFull,
   OAuthTokens,
   Transport,
@@ -43,7 +44,7 @@ async function storeCurrentOAuthValue(
   await storage.set(
     oauthValueStorageKey(key, generation),
     JSON.stringify({
-      connectaOAuthVersion: 1,
+      connectaOAuthVersion: 2,
       generation,
       value,
     }),
@@ -91,6 +92,98 @@ describe("KvOAuthProvider over memoryStorage", () => {
     };
     await p.saveTokens(tokens);
     expect(await p.tokens()).toEqual(tokens);
+  });
+
+  it("binds client registration and tokens to the validated authorization issuer", async () => {
+    const storage = memoryStorage();
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const issuer: OAuthClientInformationContext = {
+      issuer: "https://auth.example",
+    };
+    const info: OAuthClientInformationFull = {
+      client_id: "issuer-client",
+      redirect_uris: [REDIRECT],
+    };
+    const tokens: OAuthTokens = {
+      access_token: "issuer-token",
+      token_type: "Bearer",
+    };
+
+    await p.saveClientInformation(info, issuer);
+    await p.saveTokens(tokens, issuer);
+
+    expect(await p.clientInformation(issuer)).toEqual(info);
+    expect(await p.tokens(issuer)).toEqual(tokens);
+    // Token attachment has no issuer context, so it reads the already-bound
+    // credential selected during validated discovery.
+    expect(await p.tokens()).toEqual(tokens);
+    expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
+      connectaOAuthVersion: 2,
+      generation: "legacy",
+      issuer: issuer.issuer,
+      value: { client_id: "issuer-client" },
+    });
+    expect(JSON.parse((await storage.get("oauth:tokens"))!)).toMatchObject({
+      connectaOAuthVersion: 2,
+      generation: "legacy",
+      issuer: issuer.issuer,
+      value: { access_token: "issuer-token" },
+    });
+  });
+
+  it("invalidates the credential generation when validated discovery changes issuer", async () => {
+    const storage = memoryStorage();
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+    const original = { issuer: "https://auth-a.example" };
+    const replacement = { issuer: "https://auth-b.example" };
+    await p.saveClientInformation(
+      { client_id: "client-a", redirect_uris: [REDIRECT] },
+      original,
+    );
+    await p.saveTokens(
+      { access_token: "token-a", token_type: "Bearer" },
+      original,
+    );
+
+    expect(await p.clientInformation(replacement)).toBeUndefined();
+    expect(await p.generation()).toMatch(/^v2:/);
+    expect(await p.tokens()).toBeUndefined();
+    expect(await storage.get("oauth:client")).toBeNull();
+    expect(await storage.get("oauth:tokens")).toBeNull();
+
+    await p.saveTokens(
+      { access_token: "token-b", token_type: "Bearer" },
+      replacement,
+    );
+    expect(await p.tokens(replacement)).toMatchObject({
+      access_token: "token-b",
+    });
+  });
+
+  it("upgrades a v1 credential envelope by binding it on first issuer-aware read", async () => {
+    const storage = memoryStorage();
+    await storage.set(
+      "oauth:client",
+      JSON.stringify({
+        connectaOAuthVersion: 1,
+        generation: "legacy",
+        value: {
+          client_id: "upgrade-client",
+          redirect_uris: [REDIRECT],
+        },
+      }),
+    );
+    const p = new KvOAuthProvider("svc", storage, REDIRECT);
+
+    await expect(
+      p.clientInformation({ issuer: "https://auth.example" }),
+    ).resolves.toMatchObject({ client_id: "upgrade-client" });
+    expect(JSON.parse((await storage.get("oauth:client"))!)).toMatchObject({
+      connectaOAuthVersion: 2,
+      generation: "legacy",
+      issuer: "https://auth.example",
+      value: { client_id: "upgrade-client" },
+    });
   });
 
   it("round-trips the PKCE code verifier and throws when missing", async () => {
@@ -1097,7 +1190,7 @@ describe("remoteMcp() finishAuth", () => {
     await storage.set("oauth:pending", "https://auth.example/authorize");
     await storage.set("oauth:verifier", "v-123");
 
-    const finishAuth = vi.fn(async (_code: string) => {});
+    const finishAuth = vi.fn(async (_params: URLSearchParams) => {});
     const { server, clientTransport } = await connectServer();
     closer = () => server.close();
 
@@ -1116,9 +1209,13 @@ describe("remoteMcp() finishAuth", () => {
       },
     });
 
-    await connector.finishAuth!("code123", c);
+    const callbackParams = new URLSearchParams({
+      code: "code123",
+      iss: "https://auth.example",
+    });
+    await connector.finishAuth!("code123", c, callbackParams);
 
-    expect(finishAuth).toHaveBeenCalledWith("code123");
+    expect(finishAuth).toHaveBeenCalledWith(callbackParams);
     expect(await storage.get("oauth:pending")).toBeNull();
     expect(await storage.get("oauth:verifier")).toBeNull();
 
@@ -1280,7 +1377,9 @@ describe("/oauth/callback/<id> route", () => {
     expect(res.status).toBe(200);
     const body = await res.text();
     expect(body).toContain("Connected");
-    expect(spy).toHaveBeenCalledWith("abc");
+    const callbackParams = spy.mock.calls[0]?.[0];
+    expect(callbackParams).toBeInstanceOf(URLSearchParams);
+    expect(callbackParams.get("code")).toBe("abc");
   });
 
   it("every unverifiable callback failure is indistinguishable", async () => {

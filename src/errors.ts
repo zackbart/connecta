@@ -8,6 +8,7 @@ export type ConnectorCallErrorCode =
   | "rate_limited"
   | "unavailable"
   | "invalid_args"
+  | "input_required_unsupported"
   | "connector_call_failed";
 
 /** Agent-visible recovery class attached only to `auth_required` failures. */
@@ -22,6 +23,7 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   unavailable: true,
   auth_required: false,
   invalid_args: false,
+  input_required_unsupported: false,
   connector_call_failed: false,
 };
 

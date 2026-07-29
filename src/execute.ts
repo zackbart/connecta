@@ -150,6 +150,7 @@ export async function buildSandboxProviders(
     maxHostCalls?: number;
     hostCallTimeoutMs?: number;
     discoveryConcurrency?: number;
+    onInvocationFailure?: (failure: InvocationFailure) => void;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
@@ -210,7 +211,11 @@ export async function buildSandboxProviders(
       args ?? {},
       invocationContext(),
     );
-    if (!outcome.ok) throw new InvocationFailure(outcome.error);
+    if (!outcome.ok) {
+      const failure = new InvocationFailure(outcome.error);
+      limits.onInvocationFailure?.(failure);
+      throw failure;
+    }
     return outcome.value;
   };
   const callNamespace = async (
@@ -225,7 +230,11 @@ export async function buildSandboxProviders(
       args ?? {},
       invocationContext(),
     );
-    if (!outcome.ok) throw new InvocationFailure(outcome.error);
+    if (!outcome.ok) {
+      const failure = new InvocationFailure(outcome.error);
+      limits.onInvocationFailure?.(failure);
+      throw failure;
+    }
     return outcome.value;
   };
 
@@ -317,6 +326,7 @@ export function createExecuteTool(
     }
     let lease;
     let outcome;
+    const invocationFailures: InvocationFailure[] = [];
     try {
       // Admission comes before provider construction: queued calls retain no
       // catalogs, request scopes, or one-closure-per-tool provider arrays.
@@ -335,6 +345,9 @@ export function createExecuteTool(
         activity,
         {
           signal: controller.signal,
+          onInvocationFailure: (failure) => {
+            invocationFailures.push(failure);
+          },
           ...(config.discoveryConcurrency !== undefined
             ? { discoveryConcurrency: config.discoveryConcurrency }
             : {}),
@@ -386,6 +399,27 @@ export function createExecuteTool(
           )
         : undefined;
     if (outcome.error) {
+      // Executor bridges necessarily reduce thrown host errors to strings.
+      // Match that terminal string back to the request-local typed failure so
+      // an unhandled tool failure keeps the same structured contract as
+      // call_tool and batch_call. Failures caught by model code never reach
+      // outcome.error and therefore remain under that code's control.
+      let invocationFailure: InvocationFailure | undefined;
+      for (let i = invocationFailures.length - 1; i >= 0; i--) {
+        const candidate = invocationFailures[i];
+        if (candidate && outcome.error.includes(candidate.message)) {
+          invocationFailure = candidate;
+          break;
+        }
+      }
+      if (invocationFailure) {
+        const result = jsonResult({
+          error: invocationFailure.details,
+          ...(logs ? { logs } : {}),
+        });
+        result.isError = true;
+        return result;
+      }
       return errorResult(
         `Error: ${outcome.error}${logs ? `\n\nLogs:\n${logs}` : ""}`,
       );

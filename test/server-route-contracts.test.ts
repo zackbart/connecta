@@ -67,6 +67,9 @@ function expectMcpCors(response: Response): void {
   expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
     "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version",
   );
+  expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
+    "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
+  );
 }
 
 let requestId = 0;
@@ -388,8 +391,9 @@ describe("server route contracts", () => {
             acceptedOrder.push(`verify:${state}`);
             return state === "valid-state";
           },
-          async finishAuth(code) {
+          async finishAuth(code, _ctx, callbackParams) {
             acceptedOrder.push(`finish:${code}`);
+            acceptedOrder.push(`iss:${callbackParams?.get("iss")}`);
           },
         },
         {
@@ -422,7 +426,7 @@ describe("server route contracts", () => {
 
     const accepted = await connecta.fetch(
       new Request(
-        `${BASE}/oauth/callback/accepted?code=auth-code&state=valid-state`,
+        `${BASE}/oauth/callback/accepted?code=auth-code&state=valid-state&iss=https%3A%2F%2Fauth.example`,
       ),
     );
     expect(accepted.status).toBe(200);
@@ -430,6 +434,7 @@ describe("server route contracts", () => {
     expect(acceptedOrder).toEqual([
       "verify:valid-state",
       "finish:auth-code",
+      "iss:https://auth.example",
     ]);
 
     const opaquePaths = [

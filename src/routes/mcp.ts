@@ -25,7 +25,7 @@ export const MCP_CORS_HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers":
-    "Content-Type, Authorization, mcp-protocol-version, mcp-session-id",
+    "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
 };
 
 // Browser-based MCP clients call /mcp cross-origin. Without CORS on every
@@ -195,6 +195,12 @@ async function serveMcp(
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
       instructions: CONNECTA_INSTRUCTIONS,
+      cacheHints: {
+        "tools/list": {
+          ttlMs: 3_600_000,
+          cacheScope: "private",
+        },
+      },
     });
     const activity: ActivityRequestContext | undefined = opts.activity
       ? {

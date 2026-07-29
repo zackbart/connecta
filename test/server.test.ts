@@ -178,7 +178,7 @@ describe("server /mcp end-to-end", () => {
     );
   });
 
-  it("serves CORS on successful /mcp responses too", async () => {
+  it("serves CORS on successful legacy /mcp responses too", async () => {
     const c = makeConnecta();
     const res = await rpc(
       c,
@@ -197,7 +197,7 @@ describe("server /mcp end-to-end", () => {
     );
   });
 
-  it("initialize succeeds with a valid token", async () => {
+  it("legacy initialize succeeds with a valid token", async () => {
     const c = makeConnecta();
     const res = await rpc(
       c,
@@ -222,7 +222,7 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).not.toContain("once per task");
   });
 
-  it("initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
+  it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
     const c = createConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
@@ -252,6 +252,56 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.serverInfo.icons).toEqual([
       { src: `${BASE}/favicon.svg`, mimeType: "image/svg+xml" },
     ]);
+  });
+
+  it("serves a modern client without initialize and emits private tools/list cache hints", async () => {
+    const c = makeConnecta();
+    const methods: string[] = [];
+    let toolsListResult: Record<string, unknown> | undefined;
+    const client = new Client(
+      { name: "modern-e2e", version: "1.0.0" },
+      { versionNegotiation: { mode: "auto" } },
+    );
+    const transport = new StreamableHTTPClientTransport(
+      new URL(`${BASE}/mcp`),
+      {
+        requestInit: {
+          headers: { Authorization: `Bearer ${TOKEN}` },
+        },
+        fetch: async (input, init) => {
+          const request = new Request(input, init);
+          const payload = (await request.clone().json()) as {
+            method?: string;
+          };
+          if (payload.method) methods.push(payload.method);
+          const response = await c.fetch(request);
+          if (payload.method === "tools/list") {
+            const body = (await response.clone().json()) as {
+              result?: Record<string, unknown>;
+            };
+            toolsListResult = body.result;
+          }
+          return response;
+        },
+      },
+    );
+
+    try {
+      await client.connect(transport);
+      const result = await client.listTools();
+
+      expect(result.tools).toHaveLength(9);
+      expect(client.getProtocolEra()).toBe("modern");
+      expect(methods).toContain("server/discover");
+      expect(methods).not.toContain("initialize");
+      expect(toolsListResult).toMatchObject({
+        resultType: "complete",
+        ttlMs: 3_600_000,
+        cacheScope: "private",
+      });
+    } finally {
+      await client.close();
+    }
   });
 
   it("tools/list shows exactly the 9 base meta-tools", async () => {
