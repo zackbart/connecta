@@ -1,7 +1,94 @@
 # Code mode
 
-> **Stub.** The old manual was retired in the phase-1 docs restructure. This
-> document will be rewritten as an agent-facing guide — what the subsystem is
-> for, how to work on it, and what it must never do — once the ideas in
-> [ethos.md](../ethos.md) settle. The prior text lives in git history as
-> `docs/code-mode.md`.
+Code mode adds one optional meta-tool, `execute_code`, for dependent read-only
+workflows, loops, joins, and reducing large connector results before they enter
+the model context. It is a deploy-time capability, not a runtime preference.
+
+## Capability contract
+
+The `executor` passed to `createConnecta()` is the complete switch:
+
+- omit `executor` and `tools/list` contains exactly the nine base meta-tools;
+- provide a live `Executor` and `tools/list` also contains `execute_code`.
+
+There is no separate feature flag. Connecta never advertises a code tool that
+it plans to discover or initialize later. Changing whether a deployment offers
+code mode means changing its executor configuration and redeploying.
+
+The always-loaded instructions and tool descriptions say “when available”
+because clients connected to an executor-free deployment retain the normal
+`call_tool` and `batch_call` paths. One straightforward call belongs in
+`call_tool`; two to ten independent calls belong in `batch_call`. Code mode
+earns its larger definition only when the workflow has dependencies, loops,
+joins, branching, or meaningful result reduction.
+
+## Configure an executor
+
+On Node, install the optional `quickjs-emscripten` peer and use the package's
+QuickJS subpath:
+
+```ts
+import { createConnecta } from "@zackbart/connecta";
+import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+
+const connecta = createConnecta({
+  executor: quickJsExecutor(),
+  // connectors, auth, storage…
+});
+```
+
+`quickJsExecutor()` runs each program in a disposable child-process sandbox.
+Its CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are
+configured on the executor. Server bundlers must keep the
+`@zackbart/connecta/quickjs` package files external so the child entry remains
+on disk. The [Node example](../examples/node/README.md) is enabled; remove its
+`executor` field to see the nine-tool deployment.
+
+On Cloudflare Workers, the Worker Loader binding is both the paid capability
+and the configuration switch:
+
+```ts
+createConnecta({
+  ...(env.LOADER
+    ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
+    : {}),
+  // connectors, auth, storage…
+});
+```
+
+Leave the binding absent on the Workers Free plan. Its absence must also be
+represented as optional in the deployment's `Env` type. The
+[Worker example](../examples/worker/README.md#code-mode) carries the complete
+binding and package setup.
+
+## Sandbox boundary
+
+Model-written code has no ambient network, filesystem, environment, timers, or
+imports. Its only capabilities are:
+
+- lazy connector globals for explicitly read-only tools;
+- `connecta.call()` and `connecta.batch()` for exact-address read-only calls;
+- `connecta.search()` and `connecta.describe()` for request-local discovery;
+- captured `console.*` output.
+
+All calls use the same catalog, fail-closed read-only predicate, admission,
+cancellation, timeout classification, health, credential containment, and
+payload-free activity events as the ordinary meta-tools. Unannotated,
+write-capable, or destructive work must leave the sandbox and cross
+`call_destructive_tool`, where the MCP host can ask a human.
+
+Never implement this seam with unsandboxed `eval` or `node:vm`.
+
+## Verify the surface
+
+`test/server.test.ts` calls `tools/list` with and without a live executor and
+asserts the exact nine- and ten-tool surfaces. The current-version release audit
+supports the same comparison:
+
+```sh
+npm --prefix eval/current-version run audit
+npm --prefix eval/current-version run audit -- --executor disabled
+```
+
+The results record whether `execute_code` was advertised plus the complete
+definition, request, response, latency, and task-success surfaces.
