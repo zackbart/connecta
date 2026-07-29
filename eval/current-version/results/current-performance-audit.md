@@ -1,6 +1,6 @@
 # Current-version Connecta audit
 
-Source commit: `769bf18d933c516edef822ada7ecedf4f36dd112`
+Source commit: `e50a165acc8caa9ef08be3b9ccdfa8af235c68fe`
 
 Runtime: Node 26.5.0; tokenizer `o200k_base`; executor `enabled`
 
