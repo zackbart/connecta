@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isDeepStrictEqual } from "node:util";
 
 import { getEncoding } from "js-tiktoken";
 
@@ -99,9 +100,6 @@ const knownConnectorIds = new Set([
   "static-recoverable",
   "static-unavailable",
 ]);
-const knownAddresses = discoveryCorpus.connectors.flatMap((connector) =>
-  connector.tools.map((tool) => `${connector.id}.${tool.name}`),
-);
 
 function parseJson(text) {
   try {
@@ -113,6 +111,23 @@ function parseJson(text) {
 
 function sha256(text) {
   return createHash("sha256").update(text).digest("hex");
+}
+
+function containsMatchingObject(value, expected) {
+  if (Array.isArray(value)) {
+    return value.some((entry) => containsMatchingObject(entry, expected));
+  }
+  if (!value || typeof value !== "object") return false;
+  const matches = Object.entries(expected).every(
+    ([key, expectedValue]) =>
+      key in value && isDeepStrictEqual(value[key], expectedValue),
+  );
+  return (
+    matches ||
+    Object.values(value).some((entry) =>
+      containsMatchingObject(entry, expected),
+    )
+  );
 }
 
 function pressurePrompt(currentTask) {
@@ -151,7 +166,19 @@ const lookupCases = [
     prompt:
       "Use the available integrations once to list the open project issues. Return only the integration's JSON result.",
     expectedAddresses: ["projects.list_issues"],
+    expectedCalls: [
+      { address: "projects.list_issues", args: { state: "open" } },
+    ],
+    expectedFinalFacts: [
+      { state: "open" },
+      {
+        number: 213,
+        title: "Measure agent routing overhead",
+        state: "open",
+      },
+    ],
     expectedRoute: "call_tool",
+    expectedOuterRoute: ["search_tools", "call_tool"],
   },
   {
     id: "page-search-clean",
@@ -160,7 +187,20 @@ const lookupCases = [
     prompt:
       "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
     expectedAddresses: ["documents.search_content"],
+    expectedCalls: [
+      {
+        address: "documents.search_content",
+        args: { query: "launch plan" },
+      },
+    ],
+    expectedFinalFacts: [
+      {
+        id: "page-launch-plan",
+        title: "Launch plan",
+      },
+    ],
     expectedRoute: "call_tool",
+    expectedOuterRoute: ["search_tools", "call_tool"],
   },
   {
     id: "page-search-pressure",
@@ -170,7 +210,20 @@ const lookupCases = [
       "Use the available integrations once to find the page that mentions our launch plan. Return only the integration's JSON result.",
     ),
     expectedAddresses: ["documents.search_content"],
+    expectedCalls: [
+      {
+        address: "documents.search_content",
+        args: { query: "launch plan" },
+      },
+    ],
+    expectedFinalFacts: [
+      {
+        id: "page-launch-plan",
+        title: "Launch plan",
+      },
+    ],
     expectedRoute: "call_tool",
+    expectedOuterRoute: ["search_tools", "call_tool"],
   },
   {
     id: "workflow-by-id-clean",
@@ -179,19 +232,48 @@ const lookupCases = [
     prompt:
       "Use the available integrations once to get the status and conclusion of workflow run 42. Return only the integration's JSON result.",
     expectedAddresses: ["builds.get_workflow_run"],
+    expectedCalls: [
+      { address: "builds.get_workflow_run", args: { runId: 42 } },
+    ],
+    expectedFinalFacts: [
+      {
+        runId: 42,
+        status: "completed",
+        conclusion: "failure",
+        failedJobId: 4207,
+      },
+    ],
     expectedRoute: "call_tool",
+    expectedOuterRoute: ["search_tools", "call_tool"],
   },
   {
     id: "build-diagnosis-clean",
     family: "build-diagnosis",
     context: "clean",
     prompt:
-      "Use the available integrations to get both the failed workflow run and its job logs. Return only a JSON array containing the two integration results.",
+      "Use the available integrations to get workflow run 42, then get the logs for the failed job id returned by that run. Return only a JSON array containing the two integration results.",
     expectedAddresses: [
       "builds.get_workflow_run",
       "builds.get_job_logs",
     ],
+    expectedCalls: [
+      { address: "builds.get_workflow_run", args: { runId: 42 } },
+      { address: "builds.get_job_logs", args: { jobId: 4207 } },
+    ],
+    expectedFinalFacts: [
+      {
+        runId: 42,
+        status: "completed",
+        conclusion: "failure",
+        failedJobId: 4207,
+      },
+      {
+        jobId: 4207,
+        runId: 42,
+      },
+    ],
     expectedRoute: "execute_code",
+    expectedOuterRoute: ["execute_code"],
   },
   {
     id: "unsupported-audio-pressure",
@@ -201,7 +283,9 @@ const lookupCases = [
       'Determine whether an available integration can transcribe an audio recording. Do not pretend one exists. Return only {"available":false} when none does.',
     ),
     expectedAddresses: [],
+    expectedCalls: [],
     expectedRoute: "search_only",
+    expectedOuterRoute: ["search_tools"],
     finalCorrect(_fixture, finalText) {
       return parseJson(finalText)?.available === false;
     },
@@ -220,6 +304,7 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
         CONNECTA_EVAL_EXECUTOR: "enabled",
+        CONNECTA_EVAL_TRACE: "enabled",
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -255,9 +340,11 @@ function startServer() {
         const line = buffered.slice(0, newline);
         buffered = buffered.slice(newline + 1);
         const message = parseJson(line);
-        if (message?.event !== "ready") continue;
-        clearTimeout(timeout);
-        resolveReady(message);
+        if (message?.event === "eval_trace") continue;
+        if (message?.event === "ready") {
+          clearTimeout(timeout);
+          resolveReady(message);
+        }
       }
     });
   });
@@ -279,6 +366,25 @@ async function stopServer(child) {
   });
 }
 
+async function readServerTraces(mcpUrl) {
+  const traceUrl = new URL(mcpUrl);
+  traceUrl.pathname = "/__eval/trace";
+  traceUrl.search = "";
+  const response = await fetch(traceUrl, {
+    headers: { Authorization: `Bearer ${bearer}` },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Eval trace read failed with HTTP ${response.status}.`,
+    );
+  }
+  const body = await response.json();
+  if (!Array.isArray(body?.traces)) {
+    throw new Error("Eval trace response did not contain a traces array.");
+  }
+  return body.traces;
+}
+
 function structuredAgentResult(result) {
   if (!result || typeof result !== "object") return undefined;
   if (result.structured_content !== undefined) {
@@ -290,19 +396,39 @@ function structuredAgentResult(result) {
 }
 
 function addressesFromSearch(value) {
-  if (!Array.isArray(value?.connectors)) return [];
-  return value.connectors.flatMap((connector) =>
-    Array.isArray(connector.tools)
-      ? connector.tools
-          .map((tool) => tool.address)
-          .filter((address) => typeof address === "string")
-      : [],
-  );
+  if (Array.isArray(value?.tools)) {
+    return value.tools
+      .map((tool) => tool.address)
+      .filter((address) => typeof address === "string");
+  }
+  if (Array.isArray(value?.connectors)) {
+    return value.connectors.flatMap((connector) =>
+      Array.isArray(connector.tools)
+        ? connector.tools
+            .map((tool) => tool.address)
+            .filter((address) => typeof address === "string")
+        : [],
+    );
+  }
+  return [];
 }
 
 function filteredSearchValue(value, relevantSet) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return value;
+  }
+  if (Array.isArray(value.tools)) {
+    const tools = value.tools.filter((tool) =>
+      relevantSet.has(tool.address),
+    );
+    return {
+      ...value,
+      tools,
+      total: tools.length,
+      offset: 0,
+      hasMore: false,
+      ...("nextOffset" in value ? { nextOffset: undefined } : {}),
+    };
   }
   const connectors = Array.isArray(value.connectors)
     ? value.connectors.flatMap((connector) => {
@@ -326,6 +452,61 @@ function filteredSearchValue(value, relevantSet) {
   };
 }
 
+function traceResultValue(trace) {
+  return trace.source === "outer"
+    ? structuredAgentResult(trace.result)
+    : trace.result;
+}
+
+function searchTrace(trace, fixture) {
+  const resultTokens = tokens(trace.result ?? null);
+  const value = traceResultValue(trace);
+  const addresses = addressesFromSearch(value);
+  const relevantSet = new Set(fixture.expectedAddresses);
+  const relevantRanks = fixture.expectedAddresses.map((address) => {
+    const index = addresses.indexOf(address);
+    return index < 0 ? null : index + 1;
+  });
+  const relevantReturned = addresses.filter((address) =>
+    relevantSet.has(address),
+  ).length;
+  const filtered = filteredSearchValue(value, relevantSet);
+  const minimalRelevantResultTokens =
+    trace.source === "outer"
+      ? tokens(filteredAgentResult(trace.result, filtered))
+      : tokens(filtered);
+  return {
+    source: trace.source,
+    query: trace.arguments?.query ?? "",
+    connector: trace.arguments?.connector ?? null,
+    includeSchemas: trace.arguments?.includeSchemas ?? null,
+    matchMode: value?.matchMode ?? "all",
+    returned: addresses.length,
+    total:
+      typeof value?.total === "number"
+        ? value.total
+        : addresses.length,
+    addresses,
+    relevantRanks,
+    relevantReturned,
+    top1Relevant:
+      addresses.length > 0 && relevantSet.has(addresses[0]),
+    precision:
+      addresses.length === 0
+        ? fixture.expectedAddresses.length === 0
+          ? 1
+          : 0
+        : round(relevantReturned / addresses.length, 3),
+    irrelevantCandidates: addresses.length - relevantReturned,
+    resultTokens,
+    minimalRelevantResultTokens,
+    estimatedNoiseTokens: Math.max(
+      0,
+      resultTokens - minimalRelevantResultTokens,
+    ),
+  };
+}
+
 function filteredAgentResult(result, filtered) {
   if (!result || typeof result !== "object") return result;
   const copy = { ...result };
@@ -341,91 +522,73 @@ function filteredAgentResult(result, filtered) {
   return copy;
 }
 
-function sanitizedIdentifier(value) {
-  let name = value.replace(/[^A-Za-z0-9_$]/g, "_");
-  if (/^[0-9]/.test(name)) name = `_${name}`;
-  return name;
-}
-
-function codeCallsAddress(code, address) {
-  const separator = address.indexOf(".");
-  const connector = address.slice(0, separator);
-  const tool = address.slice(separator + 1);
-  const namespaceCall = `${sanitizedIdentifier(connector)}.${sanitizedIdentifier(tool)}(`;
-  return (
-    code.includes(namespaceCall) ||
-    code.includes(`connecta.call("${address}"`) ||
-    code.includes(`connecta.call('${address}'`)
+function defaultFinalCorrect(fixture, finalText) {
+  const parsed = parseJson(finalText);
+  return fixture.expectedFinalFacts.every((expected) =>
+    containsMatchingObject(parsed, expected),
   );
 }
 
-function executionAddresses(toolCalls, expectedAddresses) {
-  return toolCalls.flatMap((call) => {
-    if (
-      call.tool === "call_tool" ||
-      call.tool === "call_destructive_tool"
-    ) {
-      return typeof call.arguments?.address === "string"
-        ? [call.arguments.address]
+function tracedExecutions(metaToolTraces) {
+  return metaToolTraces.flatMap((trace) => {
+    if (trace.operation === "call_tool") {
+      return typeof trace.arguments?.address === "string"
+        ? [
+            {
+              address: trace.arguments.address,
+              args: trace.arguments.args ?? {},
+              source: trace.source,
+            },
+          ]
         : [];
     }
-    if (call.tool === "batch_call" && Array.isArray(call.arguments?.calls)) {
-      return call.arguments.calls
-        .map((entry) => entry?.address)
-        .filter((address) => typeof address === "string");
-    }
     if (
-      call.tool === "execute_code" &&
-      typeof call.arguments?.code === "string"
+      trace.operation === "batch_call" &&
+      Array.isArray(trace.arguments?.calls)
     ) {
-      const candidates = [...new Set([...knownAddresses, ...expectedAddresses])];
-      return candidates.filter((address) =>
-        codeCallsAddress(call.arguments.code, address),
+      return trace.arguments.calls.flatMap((call) =>
+        typeof call?.address === "string"
+          ? [
+              {
+                address: call.address,
+                args: call.args ?? {},
+                source: trace.source,
+              },
+            ]
+          : [],
       );
     }
     return [];
   });
 }
 
-function defaultFinalCorrect(fixture, finalText) {
-  const parsed = parseJson(finalText);
-  function containsResult(value, connector, tool) {
-    if (Array.isArray(value)) {
-      return value.some((entry) => containsResult(entry, connector, tool));
-    }
-    if (!value || typeof value !== "object") return false;
-    if (value.connector === connector && value.tool === tool) return true;
-    return Object.values(value).some((entry) =>
-      containsResult(entry, connector, tool),
+function argumentsAccurate(fixture, executions) {
+  if (fixture.expectedCalls.length !== executions.length) return false;
+  const remaining = [...executions];
+  for (const expected of fixture.expectedCalls) {
+    const match = remaining.findIndex(
+      (execution) =>
+        execution.address === expected.address &&
+        isDeepStrictEqual(execution.args, expected.args),
     );
+    if (match < 0) return false;
+    remaining.splice(match, 1);
   }
-  return fixture.expectedAddresses.every((address) => {
-    const [connector, tool] = address.split(".");
-    return containsResult(parsed, connector, tool);
-  });
+  return remaining.length === 0;
 }
 
-function connectaRouteCorrect(fixture, toolCalls) {
-  const called = toolCalls.map((call) => call.tool);
+function connectaRouteCorrect(fixture, metaToolTraces) {
+  const outer = metaToolTraces
+    .filter((trace) => trace.source === "outer")
+    .map((trace) => trace.operation);
+  const called = metaToolTraces.map((trace) => trace.operation);
   const discoveryCorrect =
     called.filter((tool) => tool === "search_tools").length === 1 &&
     !called.includes("describe_tools") &&
     !called.includes("list_connectors");
-  const execution = called.filter((tool) =>
-    [
-      "call_tool",
-      "batch_call",
-      "execute_code",
-      "call_destructive_tool",
-    ].includes(tool),
-  );
-  if (fixture.expectedRoute === "search_only") {
-    return discoveryCorrect && execution.length === 0;
-  }
   return (
     discoveryCorrect &&
-    execution.length === 1 &&
-    execution[0] === fixture.expectedRoute
+    isDeepStrictEqual(outer, fixture.expectedOuterRoute)
   );
 }
 
@@ -590,6 +753,7 @@ async function runAgent(fixture, url, repetition) {
       `Codex exited with ${exitCode} for "${fixture.id}" repetition ${repetition}.\n${stderr}`,
     );
   }
+  const serverTraces = await readServerTraces(url);
 
   const connectaToolCalls = toolCalls.filter(
     (call) => call.server === "connecta",
@@ -597,29 +761,53 @@ async function runAgent(fixture, url, repetition) {
   const foreignToolCalls = toolCalls.filter(
     (call) => call.server !== "connecta",
   );
+  const orderedServerTraces = [...serverTraces]
+    .sort((a, b) => a.sequence - b.sequence)
+    .map((trace) =>
+      trace.kind === "meta_tool"
+        ? {
+            ...trace,
+            resultTokens: tokens(trace.result ?? null),
+          }
+        : trace,
+    );
+  const metaToolTraces = orderedServerTraces.filter(
+    (trace) => trace.kind === "meta_tool",
+  );
+  const executionTraces = orderedServerTraces.filter(
+    (trace) => trace.kind === "execution",
+  );
   const expected = [...fixture.expectedAddresses].sort();
-  const executed = executionAddresses(
-    connectaToolCalls.filter((call) => call.status === "completed"),
-    fixture.expectedAddresses,
-  ).sort();
+  const executed = executionTraces
+    .map((trace) => trace.address)
+    .sort();
   const addressAccurate =
     expected.length === executed.length &&
     expected.every((address, index) => address === executed[index]);
+  const executionCalls = tracedExecutions(metaToolTraces);
+  const argumentCorrect = argumentsAccurate(fixture, executionCalls);
   const finalCorrect = (fixture.finalCorrect ?? defaultFinalCorrect)(
     fixture,
     finalText,
   );
-  const routingResultCorrect = addressAccurate && finalCorrect;
-  const searchCalls = connectaToolCalls.filter(
-    (call) => call.tool === "search_tools",
+  const routingResultCorrect =
+    addressAccurate && argumentCorrect && finalCorrect;
+  const searchCalls = metaToolTraces
+    .filter((trace) => trace.operation === "search_tools")
+    .map((trace) => searchTrace(trace, fixture));
+  const directSearchCalls = searchCalls.filter(
+    (search) => search.source === "outer",
   );
-  const firstDirectSearch = searchCalls[0]?.search;
-  const firstRelevantRanks = firstDirectSearch?.relevantRanks ?? [];
-  const directRetrievalTop1 =
+  const nestedSearchCalls = searchCalls.filter(
+    (search) => search.source === "execute_code",
+  );
+  const firstSearch = searchCalls[0];
+  const firstRelevantRanks = firstSearch?.relevantRanks ?? [];
+  const retrievalTop1 =
     fixture.expectedAddresses.length === 0
       ? null
-      : firstDirectSearch?.top1Relevant === true;
-  const directRetrievalRecall =
+      : firstSearch?.top1Relevant === true;
+  const retrievalRecall =
     fixture.expectedAddresses.length === 0
       ? null
       : round(
@@ -627,7 +815,7 @@ async function runAgent(fixture, url, repetition) {
             fixture.expectedAddresses.length,
           3,
         );
-  const directRetrievalMrr =
+  const retrievalMrr =
     fixture.expectedAddresses.length === 0
       ? null
       : round(
@@ -637,21 +825,25 @@ async function runAgent(fixture, url, repetition) {
           ) / fixture.expectedAddresses.length,
           3,
         );
-  const directNegativeClean =
+  const retrievalNegativeClean =
     fixture.expectedAddresses.length > 0
       ? null
-      : firstDirectSearch !== undefined &&
-        firstDirectSearch.returned === 0;
+      : firstSearch !== undefined &&
+        firstSearch.returned === 0;
   const searchResultTokens = searchCalls.reduce(
-    (sum, call) => sum + call.resultTokens,
+    (sum, search) => sum + search.resultTokens,
+    0,
+  );
+  const nestedSearchResultTokens = nestedSearchCalls.reduce(
+    (sum, search) => sum + search.resultTokens,
     0,
   );
   const searchReturned = searchCalls.reduce(
-    (sum, call) => sum + (call.search?.returned ?? 0),
+    (sum, search) => sum + search.returned,
     0,
   );
   const searchRelevantReturned = searchCalls.reduce(
-    (sum, call) => sum + (call.search?.relevantReturned ?? 0),
+    (sum, search) => sum + search.relevantReturned,
     0,
   );
   const searchIrrelevantCandidates =
@@ -665,7 +857,7 @@ async function runAgent(fixture, url, repetition) {
         : 0
       : round(searchRelevantReturned / searchReturned, 3);
   const estimatedLookupNoiseTokens = searchCalls.reduce(
-    (sum, call) => sum + (call.search?.estimatedNoiseTokens ?? 0),
+    (sum, search) => sum + search.estimatedNoiseTokens,
     0,
   );
   const connectaMcpResultTokens = connectaToolCalls.reduce(
@@ -682,7 +874,7 @@ async function runAgent(fixture, url, repetition) {
   const cachedInputTokens = usage.cached_input_tokens ?? 0;
   const intendedConnectaRoute = connectaRouteCorrect(
     fixture,
-    connectaToolCalls,
+    metaToolTraces,
   );
   const routeClean =
     intendedConnectaRoute &&
@@ -701,39 +893,47 @@ async function runAgent(fixture, url, repetition) {
         ? `${fixture.prompt.slice(0, 120)}…\n${fixture.prompt.slice(-220)}`
         : fixture.prompt,
     expectedAddresses: fixture.expectedAddresses,
+    expectedCalls: fixture.expectedCalls,
     expectedRoute: fixture.expectedRoute,
+    expectedOuterRoute: fixture.expectedOuterRoute,
     latencyMs: round(performance.now() - started, 1),
     lookupAccurate: addressAccurate,
     addressAccurate,
+    argumentCorrect,
     finalCorrect,
     routingResultCorrect,
     connectaRouteCorrect: intendedConnectaRoute,
     routeClean,
     executedAddresses: executed,
-    guidanceFetched: connectaToolCalls.some(
-      (call) => call.tool === "skills",
+    executionCalls,
+    guidanceFetched: metaToolTraces.some(
+      (trace) => trace.operation === "skills",
     ),
     foreignToolCalls: foreignToolCalls.length,
     foreignTools: foreignToolCalls.map(
       (call) => `${call.server ?? "unknown"}.${call.tool}`,
     ),
     searchCalls: searchCalls.length,
+    directSearchCalls: directSearchCalls.length,
+    nestedSearchCalls: nestedSearchCalls.length,
     emptySearches: searchCalls.filter(
-      (call) => (call.search?.returned ?? 0) === 0,
+      (search) => search.returned === 0,
     ).length,
     unknownConnectorFilters: searchCalls.filter(
-      (call) =>
-        typeof call.search?.connector === "string" &&
-        !knownConnectorIds.has(call.search.connector),
+      (search) =>
+        typeof search.connector === "string" &&
+        !knownConnectorIds.has(search.connector),
     ).length,
     searchReturned,
     searchRelevantReturned,
     searchIrrelevantCandidates,
     searchPrecision,
-    directRetrievalTop1,
-    directRetrievalRecall,
-    directRetrievalMrr,
-    directNegativeClean,
+    retrievalTop1,
+    retrievalRecall,
+    retrievalMrr,
+    retrievalNegativeClean,
+    searchTraces: searchCalls,
+    serverTraces: orderedServerTraces,
     toolCalls,
     nonMcpActions,
     hostActionCount: nonMcpActions.length,
@@ -744,7 +944,11 @@ async function runAgent(fixture, url, repetition) {
     foreignMcpResultTokens,
     allMcpResultTokens,
     searchResultTokens,
+    nestedSearchResultTokens,
     estimatedLookupNoiseTokens,
+    connectaRoundTrips: metaToolTraces.filter(
+      (trace) => trace.source === "outer",
+    ).length,
   };
 }
 
@@ -807,10 +1011,10 @@ const byCase = Object.fromEntries(
       (entry) => entry.searchPrecision !== null,
     );
     const retrievalRuns = runs.filter(
-      (entry) => entry.directRetrievalRecall !== null,
+      (entry) => entry.retrievalRecall !== null,
     );
     const negativeRuns = runs.filter(
-      (entry) => entry.directNegativeClean !== null,
+      (entry) => entry.retrievalNegativeClean !== null,
     );
     return [
       fixture.id,
@@ -829,6 +1033,14 @@ const byCase = Object.fromEntries(
           runs.filter((entry) => entry.addressAccurate).length / runs.length,
           3,
         ),
+        argumentAccuracy: round(
+          runs.filter((entry) => entry.argumentCorrect).length / runs.length,
+          3,
+        ),
+        finalAccuracy: round(
+          runs.filter((entry) => entry.finalCorrect).length / runs.length,
+          3,
+        ),
         routeAccuracy: round(
           runs.filter((entry) => entry.routeClean).length / runs.length,
           3,
@@ -845,41 +1057,41 @@ const byCase = Object.fromEntries(
                 mean(precisionRuns, (entry) => entry.searchPrecision),
                 3,
               ),
-        directRetrievalTop1Accuracy:
+        retrievalTop1Accuracy:
           retrievalRuns.length === 0
             ? null
             : round(
                 retrievalRuns.filter(
-                  (entry) => entry.directRetrievalTop1,
+                  (entry) => entry.retrievalTop1,
                 ).length / retrievalRuns.length,
                 3,
               ),
-        meanDirectRetrievalRecall:
+        meanRetrievalRecall:
           retrievalRuns.length === 0
             ? null
             : round(
                 mean(
                   retrievalRuns,
-                  (entry) => entry.directRetrievalRecall,
+                  (entry) => entry.retrievalRecall,
                 ),
                 3,
               ),
-        meanDirectRetrievalMrr:
+        meanRetrievalMrr:
           retrievalRuns.length === 0
             ? null
             : round(
                 mean(
                   retrievalRuns,
-                  (entry) => entry.directRetrievalMrr,
+                  (entry) => entry.retrievalMrr,
                 ),
                 3,
               ),
-        directNegativeCleanRate:
+        retrievalNegativeCleanRate:
           negativeRuns.length === 0
             ? null
             : round(
                 negativeRuns.filter(
-                  (entry) => entry.directNegativeClean,
+                  (entry) => entry.retrievalNegativeClean,
                 ).length / negativeRuns.length,
                 3,
               ),
@@ -891,6 +1103,14 @@ const byCase = Object.fromEntries(
           mean(runs, (entry) => entry.searchCalls),
           1,
         ),
+        meanNestedLookupAttempts: round(
+          mean(runs, (entry) => entry.nestedSearchCalls),
+          1,
+        ),
+        meanConnectaRoundTrips: round(
+          mean(runs, (entry) => entry.connectaRoundTrips),
+          1,
+        ),
         unknownConnectorFilterRate: round(
           runs.filter((entry) => entry.unknownConnectorFilters > 0).length /
             runs.length,
@@ -898,6 +1118,10 @@ const byCase = Object.fromEntries(
         ),
         meanSearchResultTokens: round(
           mean(runs, (entry) => entry.searchResultTokens),
+          1,
+        ),
+        meanNestedSearchResultTokens: round(
+          mean(runs, (entry) => entry.nestedSearchResultTokens),
           1,
         ),
         meanEstimatedLookupNoiseTokens: round(
@@ -939,15 +1163,15 @@ const byCase = Object.fromEntries(
     ];
   }),
 );
-const positiveDirectRetrievalRuns = caseResults.filter(
-  (entry) => entry.directRetrievalRecall !== null,
+const positiveRetrievalRuns = caseResults.filter(
+  (entry) => entry.retrievalRecall !== null,
 );
-const negativeDirectRetrievalRuns = caseResults.filter(
-  (entry) => entry.directNegativeClean !== null,
+const negativeRetrievalRuns = caseResults.filter(
+  (entry) => entry.retrievalNegativeClean !== null,
 );
 
 const result = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   source: {
     commit: sourceCommit,
@@ -973,6 +1197,8 @@ const result = {
       "Fresh Connecta server and ephemeral Codex session for every run; user config ignored; host apps/plugins/browser/computer/agent features disabled; read-only filesystem sandbox.",
     noiseEstimate:
       "Search-result tokens minus a reconstructed result retaining only expected candidates and the same MCP content/structured-content shape.",
+    trace:
+      "Per-run eval-server trace captures outer MCP meta-tool calls, nested execute_code provider operations, and payload-free downstream activity. Search metrics include outer and nested discovery.",
   },
   summary: {
     runs: caseResults.length,
@@ -983,50 +1209,62 @@ const result = {
     ).length,
     addressAccurate: caseResults.filter((entry) => entry.addressAccurate)
       .length,
+    argumentCorrect: caseResults.filter((entry) => entry.argumentCorrect)
+      .length,
+    finalCorrect: caseResults.filter((entry) => entry.finalCorrect)
+      .length,
     connectaRouteCorrect: caseResults.filter(
       (entry) => entry.connectaRouteCorrect,
     ).length,
     routeClean: caseResults.filter((entry) => entry.routeClean).length,
-    directRetrievalTop1Accuracy:
-      positiveDirectRetrievalRuns.length === 0
+    retrievalTop1Accuracy:
+      positiveRetrievalRuns.length === 0
         ? null
         : round(
-            positiveDirectRetrievalRuns.filter(
-              (entry) => entry.directRetrievalTop1,
-            ).length / positiveDirectRetrievalRuns.length,
+            positiveRetrievalRuns.filter(
+              (entry) => entry.retrievalTop1,
+            ).length / positiveRetrievalRuns.length,
             3,
           ),
-    meanDirectRetrievalRecall:
-      positiveDirectRetrievalRuns.length === 0
+    meanRetrievalRecall:
+      positiveRetrievalRuns.length === 0
         ? null
         : round(
             mean(
-              positiveDirectRetrievalRuns,
-              (entry) => entry.directRetrievalRecall,
+              positiveRetrievalRuns,
+              (entry) => entry.retrievalRecall,
             ),
             3,
           ),
-    meanDirectRetrievalMrr:
-      positiveDirectRetrievalRuns.length === 0
+    meanRetrievalMrr:
+      positiveRetrievalRuns.length === 0
         ? null
         : round(
             mean(
-              positiveDirectRetrievalRuns,
-              (entry) => entry.directRetrievalMrr,
+              positiveRetrievalRuns,
+              (entry) => entry.retrievalMrr,
             ),
             3,
           ),
-    directNegativeCleanRate:
-      negativeDirectRetrievalRuns.length === 0
+    retrievalNegativeCleanRate:
+      negativeRetrievalRuns.length === 0
         ? null
         : round(
-            negativeDirectRetrievalRuns.filter(
-              (entry) => entry.directNegativeClean,
-            ).length / negativeDirectRetrievalRuns.length,
+            negativeRetrievalRuns.filter(
+              (entry) => entry.retrievalNegativeClean,
+            ).length / negativeRetrievalRuns.length,
             3,
           ),
     totalSearchResultTokens: caseResults.reduce(
       (sum, entry) => sum + entry.searchResultTokens,
+      0,
+    ),
+    totalNestedSearchCalls: caseResults.reduce(
+      (sum, entry) => sum + entry.nestedSearchCalls,
+      0,
+    ),
+    totalNestedSearchResultTokens: caseResults.reduce(
+      (sum, entry) => sum + entry.nestedSearchResultTokens,
       0,
     ),
     totalEstimatedLookupNoiseTokens: caseResults.reduce(
@@ -1061,6 +1299,10 @@ const result = {
       caseResults.reduce((sum, entry) => sum + entry.latencyMs, 0),
       1,
     ),
+    totalConnectaRoundTrips: caseResults.reduce(
+      (sum, entry) => sum + entry.connectaRoundTrips,
+      0,
+    ),
   },
   byCase,
   cases: caseResults,
@@ -1079,13 +1321,13 @@ const rows = caseResults
     const route = entry.toolCalls
       .map((call) => `${call.server ?? "unknown"}.${call.tool}`)
       .join(" → ");
-    return `| ${entry.id} #${entry.repetition} | ${yesNo(entry.lookupAccurate)} | ${yesNo(entry.routingResultCorrect)} | ${yesNo(entry.connectaRouteCorrect)} | ${yesNo(entry.routeClean)} | ${metric(entry.directRetrievalTop1)} | ${metric(entry.directRetrievalRecall)} | ${metric(entry.directRetrievalMrr)} | ${metric(entry.searchPrecision)} | ${entry.searchIrrelevantCandidates} | ${entry.searchCalls} | ${entry.unknownConnectorFilters} | ${entry.estimatedLookupNoiseTokens} | ${entry.connectaMcpResultTokens} | ${entry.foreignMcpResultTokens} | ${entry.usage.input_tokens ?? 0} | ${entry.promptTokens} | \`${route}\` |`;
+    return `| ${entry.id} #${entry.repetition} | ${yesNo(entry.addressAccurate)} | ${yesNo(entry.argumentCorrect)} | ${yesNo(entry.finalCorrect)} | ${yesNo(entry.connectaRouteCorrect)} | ${yesNo(entry.routeClean)} | ${metric(entry.retrievalTop1)} | ${metric(entry.retrievalRecall)} | ${metric(entry.searchPrecision)} | ${entry.searchIrrelevantCandidates} | ${entry.searchCalls} | ${entry.nestedSearchCalls} | ${entry.connectaRoundTrips} | ${entry.estimatedLookupNoiseTokens} | ${entry.connectaMcpResultTokens} | ${entry.usage.input_tokens ?? 0} | \`${route}\` |`;
   })
   .join("\n");
 const groupedRows = Object.entries(byCase)
   .map(
     ([id, metrics]) =>
-      `| ${id} | ${(metrics.lookupAccuracy * 100).toFixed(0)}% | ${(metrics.routingResultAccuracy * 100).toFixed(0)}% | ${(metrics.connectaRouteAccuracy * 100).toFixed(0)}% | ${(metrics.routeAccuracy * 100).toFixed(0)}% | ${metric(metrics.directRetrievalTop1Accuracy)} | ${metric(metrics.meanDirectRetrievalRecall)} | ${metric(metrics.meanDirectRetrievalMrr)} | ${metric(metrics.meanSearchPrecision)} | ${metrics.meanIrrelevantCandidates} | ${metrics.meanLookupAttempts} | ${(metrics.unknownConnectorFilterRate * 100).toFixed(0)}% | ${metrics.meanEstimatedLookupNoiseTokens} | ${metrics.meanMcpResultTokens} | ${metrics.meanForeignMcpResultTokens} | ${metrics.meanInputTokens} |`,
+      `| ${id} | ${(metrics.addressAccuracy * 100).toFixed(0)}% | ${(metrics.argumentAccuracy * 100).toFixed(0)}% | ${(metrics.finalAccuracy * 100).toFixed(0)}% | ${(metrics.connectaRouteAccuracy * 100).toFixed(0)}% | ${(metrics.routeAccuracy * 100).toFixed(0)}% | ${metric(metrics.retrievalTop1Accuracy)} | ${metric(metrics.meanRetrievalRecall)} | ${metric(metrics.meanSearchPrecision)} | ${metrics.meanIrrelevantCandidates} | ${metrics.meanLookupAttempts} | ${metrics.meanNestedLookupAttempts} | ${metrics.meanConnectaRoundTrips} | ${metrics.meanEstimatedLookupNoiseTokens} | ${metrics.meanMcpResultTokens} | ${metrics.meanInputTokens} |`,
   )
   .join("\n");
 const report = `# Latest-main agent lookup benchmark
@@ -1097,23 +1339,28 @@ Source: \`${sourceCommit}\`; ${result.source.codexVersion}; model ${result.sourc
 Each run used a fresh isolated server and ephemeral agent. Host apps, plugins,
 browser, computer-use, multi-agent, and related discovery features were
 explicitly disabled in addition to ignoring user config. Accuracy requires the
-agent to execute exactly the expected downstream address set and return the
-matching synthetic routing result. This is a routing canary, not validation of
-real connector arguments or task semantics. The noise-token figure is the actual
-serialized search result minus the same MCP envelope reconstructed with only
-the expected candidate rows.
+agent to execute exactly the expected downstream address set with the expected
+arguments and return the deterministic domain result. A server-side trace
+attributes both outer MCP operations and discovery/calls nested inside
+execute_code. The noise-token figure is the traced serialized search result
+minus the same result reconstructed with only the expected candidate rows.
 
 ## Summary
 
 - Exact tool-address accuracy: ${result.summary.lookupAccurate}/${result.summary.runs}
+- Argument accuracy: ${result.summary.argumentCorrect}/${result.summary.runs}
+- Final-result accuracy: ${result.summary.finalCorrect}/${result.summary.runs}
 - Routing-result agreement: ${result.summary.routingResultCorrect}/${result.summary.runs}
 - Intended Connecta route: ${result.summary.connectaRouteCorrect}/${result.summary.runs}
 - Clean route (no foreign tool or host actions): ${result.summary.routeClean}/${result.summary.runs}
-- Direct retrieval top-1 accuracy: ${metric(result.summary.directRetrievalTop1Accuracy)}
-- Mean direct retrieval recall: ${metric(result.summary.meanDirectRetrievalRecall)}
-- Mean direct retrieval MRR: ${metric(result.summary.meanDirectRetrievalMrr)}
-- Direct negative clean rate: ${metric(result.summary.directNegativeCleanRate)}
+- Attributed retrieval top-1 accuracy: ${metric(result.summary.retrievalTop1Accuracy)}
+- Mean attributed retrieval recall: ${metric(result.summary.meanRetrievalRecall)}
+- Mean attributed retrieval MRR: ${metric(result.summary.meanRetrievalMrr)}
+- Attributed negative clean rate: ${metric(result.summary.retrievalNegativeCleanRate)}
+- Nested search calls: ${result.summary.totalNestedSearchCalls}
+- Outer Connecta round trips: ${result.summary.totalConnectaRoundTrips}
 - Search-result tokens: ${result.summary.totalSearchResultTokens.toLocaleString()}
+- Nested search-result tokens: ${result.summary.totalNestedSearchResultTokens.toLocaleString()}
 - Estimated irrelevant lookup tokens: ${result.summary.totalEstimatedLookupNoiseTokens.toLocaleString()}
 - Connecta MCP result tokens: ${result.summary.totalConnectaMcpResultTokens.toLocaleString()}
 - Foreign MCP result tokens: ${result.summary.totalForeignMcpResultTokens.toLocaleString()}
@@ -1122,23 +1369,23 @@ the expected candidate rows.
 
 ## By case
 
-| Case | Address accuracy | Routing result | Connecta route | Clean route | Direct top-1 | Direct recall | Direct MRR | Search precision | Irrelevant candidates | Lookup attempts | Unknown connector filter | Est. noise tokens | Connecta MCP tokens | Foreign MCP tokens | Whole-agent input tokens |
+| Case | Address | Arguments | Final result | Connecta route | Clean route | Retrieval top-1 | Retrieval recall | Search precision | Irrelevant candidates | Searches | Nested searches | Round trips | Est. noise tokens | Connecta MCP tokens | Whole-agent input tokens |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${groupedRows}
 
 ## Runs
 
-| Run | Address | Routing result | Connecta route | Clean route | Direct top-1 | Direct recall | Direct MRR | Search precision | Irrelevant candidates | Lookup attempts | Unknown connector filters | Est. noise tokens | Connecta MCP tokens | Foreign MCP tokens | Agent input tokens | Prompt tokens | Tool route |
-| --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Run | Address | Arguments | Final result | Connecta route | Clean route | Retrieval top-1 | Retrieval recall | Search precision | Irrelevant candidates | Searches | Nested searches | Round trips | Est. noise tokens | Connecta MCP tokens | Agent input tokens | Tool route |
+| --- | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 ${rows}
 
 ## Interpretation
 
-- Direct retrieval metrics measure only outer search_tools calls; searches
-  nested inside execute_code are intentionally not attributed without a server
-  trace. Search precision measures only the returned page. An accurate answer with low
-  precision means the agent reasoned through retrieval noise; it does not make
-  the lookup payload cheap.
+- Retrieval metrics use the first server-traced search, whether it happened at
+  the outer MCP boundary or inside execute_code. Search precision measures only
+  returned pages. Nested search tokens describe sandbox work and are kept
+  separate from outer MCP tokens so host-context accounting is not double
+  counted.
 - Whole-agent input tokens are Codex CLI accounting for the complete host
   context, including built-in definitions and cache reads. MCP result tokens
   isolate the observed Connecta payloads.

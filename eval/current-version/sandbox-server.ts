@@ -8,7 +8,11 @@ import {
   bearerToken,
   createConnecta,
   memoryStorage,
+  type AdmittingExecutor,
+  type ApiTool,
+  type Connecta,
   type Connector,
+  type ExecutorProvider,
   type InboundAuth,
   type ToolCallActivityEvent,
   type ToolDef,
@@ -24,6 +28,36 @@ interface HoldoutCorpus {
   }[];
 }
 
+type EvalTraceSource = "outer" | "execute_code";
+
+interface EvalMetaToolTrace {
+  schemaVersion: 1;
+  sequence: number;
+  kind: "meta_tool";
+  source: EvalTraceSource;
+  operation: string;
+  arguments: unknown;
+  result?: unknown;
+  error?: string;
+  durationMs: number;
+}
+
+interface EvalExecutionTrace {
+  schemaVersion: 1;
+  sequence: number;
+  kind: "execution";
+  address: string;
+  source: ToolCallActivityEvent["source"];
+  outcome: ToolCallActivityEvent["outcome"];
+  durationMs: number;
+  attempts: number;
+  errorCode?: string;
+}
+
+type EvalTraceInput =
+  | Omit<EvalMetaToolTrace, "schemaVersion" | "sequence">
+  | Omit<EvalExecutionTrace, "schemaVersion" | "sequence">;
+
 const holdout = JSON.parse(
   await readFile(
     fileURLToPath(new URL("./discovery-holdout.json", import.meta.url)),
@@ -36,11 +70,203 @@ const operatorToken =
   process.env.CONNECTA_EVAL_OPERATOR_TOKEN ?? "connecta-eval-operator";
 const sourceCommit = process.env.CONNECTA_EVAL_SOURCE_COMMIT ?? "working-tree";
 const executorEnabled = process.env.CONNECTA_EVAL_EXECUTOR !== "disabled";
+const traceEnabled = process.env.CONNECTA_EVAL_TRACE === "enabled";
 const port = Number(process.env.CONNECTA_EVAL_PORT ?? "0");
 const host = "127.0.0.1";
 const credentialEncryptionKey = Buffer.alloc(32, 7).toString("base64");
 const storage = memoryStorage();
 const activityEvents: ToolCallActivityEvent[] = [];
+const evalTraces: Array<EvalMetaToolTrace | EvalExecutionTrace> = [];
+let traceSequence = 0;
+
+function emitTrace(trace: EvalTraceInput): void {
+  if (!traceEnabled) return;
+  const event = {
+    schemaVersion: 1,
+    sequence: ++traceSequence,
+    ...trace,
+  } as EvalMetaToolTrace | EvalExecutionTrace;
+  evalTraces.push(event);
+  console.log(JSON.stringify({ event: "eval_trace", trace: event }));
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function providerOperation(
+  name: string,
+  args: unknown[],
+): { operation: string; arguments: unknown } {
+  if (name === "search") {
+    return { operation: "search_tools", arguments: args[0] ?? {} };
+  }
+  if (name === "describe") {
+    return { operation: "describe_tools", arguments: args[0] ?? {} };
+  }
+  if (name === "call") {
+    return {
+      operation: "call_tool",
+      arguments: { address: String(args[0]), args: args[1] ?? {} },
+    };
+  }
+  if (name === "batch") {
+    return { operation: "batch_call", arguments: { calls: args[0] ?? [] } };
+  }
+  if (name === "__callNamespace") {
+    return {
+      operation: "call_tool",
+      arguments: {
+        address: `${String(args[0])}.${String(args[1])}`,
+        args: args[2] ?? {},
+        via: "namespace",
+      },
+    };
+  }
+  return { operation: name, arguments: args };
+}
+
+function tracedProviders(
+  providers: ExecutorProvider[],
+): ExecutorProvider[] {
+  return providers.map((provider) => ({
+    ...provider,
+    fns: Object.fromEntries(
+      Object.entries(provider.fns).map(([name, fn]) => [
+        name,
+        async (...args: unknown[]) => {
+          const operation = providerOperation(name, args);
+          const started = performance.now();
+          try {
+            const result = await fn(...args);
+            emitTrace({
+              kind: "meta_tool",
+              source: "execute_code",
+              ...operation,
+              result,
+              durationMs: performance.now() - started,
+            });
+            return result;
+          } catch (error) {
+            emitTrace({
+              kind: "meta_tool",
+              source: "execute_code",
+              ...operation,
+              error: errorMessage(error),
+              durationMs: performance.now() - started,
+            });
+            throw error;
+          }
+        },
+      ]),
+    ),
+  }));
+}
+
+function tracedExecutor(base: AdmittingExecutor): AdmittingExecutor {
+  return {
+    async acquire(options = {}) {
+      const lease = await base.acquire(options);
+      return {
+        ...(lease.waitMs !== undefined ? { waitMs: lease.waitMs } : {}),
+        execute: (code, providers) =>
+          lease.execute(code, tracedProviders(providers)),
+        release: () => lease.release(),
+      };
+    },
+    execute: (code, providers) =>
+      base.execute(code, tracedProviders(providers)),
+    ...(base.admissionSnapshot
+      ? { admissionSnapshot: () => base.admissionSnapshot!() }
+      : {}),
+    close: () => base.close?.(),
+  };
+}
+
+async function outerMetaToolCall(
+  request: Request,
+): Promise<{ operation: string; arguments: unknown } | undefined> {
+  if (request.method !== "POST") return undefined;
+  try {
+    const body = (await request.clone().json()) as {
+      method?: unknown;
+      params?: { name?: unknown; arguments?: unknown };
+    };
+    if (
+      body.method !== "tools/call" ||
+      typeof body.params?.name !== "string"
+    ) {
+      return undefined;
+    }
+    return {
+      operation: body.params.name,
+      arguments: body.params.arguments ?? {},
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function withOuterTracing(connecta: Connecta): Connecta {
+  return {
+    ...connecta,
+    async fetch(request, env, ctx) {
+      const url = new URL(request.url);
+      if (
+        request.method === "GET" &&
+        url.pathname === "/__eval/trace"
+      ) {
+        if (
+          request.headers.get("authorization") !== `Bearer ${token}`
+        ) {
+          return Response.json({ error: "unauthorized" }, { status: 401 });
+        }
+        return Response.json({ traces: evalTraces });
+      }
+      const operation = await outerMetaToolCall(request);
+      const started = performance.now();
+      try {
+        const response = await connecta.fetch(request, env, ctx);
+        if (!operation) return response;
+        let payload: {
+          result?: unknown;
+          error?: { message?: unknown };
+        } = {};
+        try {
+          payload = await response.clone().json() as typeof payload;
+        } catch {
+          // A malformed transport result is still traced below as an error.
+        }
+        emitTrace({
+          kind: "meta_tool",
+          source: "outer",
+          ...operation,
+          ...(payload.result !== undefined
+            ? { result: payload.result }
+            : {
+                error:
+                  typeof payload.error?.message === "string"
+                    ? payload.error.message
+                    : `HTTP ${response.status}`,
+              }),
+          durationMs: performance.now() - started,
+        });
+        return response;
+      } catch (error) {
+        if (operation) {
+          emitTrace({
+            kind: "meta_tool",
+            source: "outer",
+            ...operation,
+            error: errorMessage(error),
+            durationMs: performance.now() - started,
+          });
+        }
+        throw error;
+      }
+    },
+  };
+}
 
 const operatorAuth: InboundAuth = {
   kind: "clerk",
@@ -62,35 +288,326 @@ const operatorAuth: InboundAuth = {
   },
 };
 
-function fixtureTools(
-  definitions: { name: string; description: string }[],
-): ToolDef[] {
-  return definitions.map((definition) => ({
-    ...definition,
+const objectOutput = {
+  type: "object",
+  additionalProperties: true,
+} as const;
+
+function genericFixtureContract(
+  connectorId: string,
+  name: string,
+): Pick<ApiTool, "inputSchema" | "outputSchema" | "handler"> {
+  if (name.startsWith("list_")) {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            default: 25,
+          },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          items: { type: "array", items: objectOutput },
+          nextCursor: { type: "string" },
+        },
+        required: ["items"],
+        additionalProperties: false,
+      },
+      handler: (args: { limit?: number }) => ({
+        items: [
+          {
+            id: `${connectorId}-${name}-1`,
+            label: `Deterministic ${name.replaceAll("_", " ")} fixture`,
+          },
+        ].slice(0, args.limit ?? 25),
+      }),
+    };
+  }
+  if (name.startsWith("search_")) {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 1 },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            default: 25,
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          results: { type: "array", items: objectOutput },
+        },
+        required: ["query", "results"],
+        additionalProperties: false,
+      },
+      handler: (args: { query: string }) => ({
+        query: args.query,
+        results: [
+          {
+            id: `${connectorId}-${name}-1`,
+            label: `Result for ${args.query}`,
+          },
+        ],
+      }),
+    };
+  }
+  if (name.startsWith("create_")) {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          title: { type: "string", minLength: 1 },
+        },
+        required: ["title"],
+        additionalProperties: false,
+      },
+      outputSchema: objectOutput,
+      handler: (args: { title: string }) => ({
+        id: `${connectorId}-${name}-created`,
+        title: args.title,
+        created: true,
+      }),
+    };
+  }
+  if (name.startsWith("update_")) {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string", minLength: 1 },
+          fields: { type: "object", additionalProperties: true },
+        },
+        required: ["id", "fields"],
+        additionalProperties: false,
+      },
+      outputSchema: objectOutput,
+      handler: (args: { id: string; fields: Record<string, unknown> }) => ({
+        id: args.id,
+        fields: args.fields,
+        updated: true,
+      }),
+    };
+  }
+  return {
     inputSchema: {
       type: "object",
-      properties: {},
+      properties: {
+        id: { type: "string", minLength: 1 },
+      },
+      required: ["id"],
       additionalProperties: false,
     },
+    outputSchema: objectOutput,
+    handler: (args: { id: string }) => ({
+      id: args.id,
+      connector: connectorId,
+      operation: name,
+    }),
+  };
+}
+
+function agentFixtureContract(
+  connectorId: string,
+  name: string,
+): Pick<ApiTool, "inputSchema" | "outputSchema" | "handler"> | undefined {
+  const address = `${connectorId}.${name}`;
+  if (address === "projects.list_issues") {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          state: { type: "string", enum: ["open", "closed"] },
+          label: { type: "string", minLength: 1 },
+        },
+        required: ["state"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          state: { type: "string", enum: ["open", "closed"] },
+          issues: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                number: { type: "integer" },
+                title: { type: "string" },
+                state: { type: "string", enum: ["open", "closed"] },
+              },
+              required: ["number", "title", "state"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["state", "issues"],
+        additionalProperties: false,
+      },
+      handler: (args: { state: "open" | "closed"; label?: string }) => ({
+        state: args.state,
+        issues:
+          args.state === "open"
+            ? [
+                {
+                  number: 213,
+                  title: "Measure agent routing overhead",
+                  state: "open",
+                },
+                {
+                  number: 214,
+                  title: "Document benchmark protocol",
+                  state: "open",
+                },
+              ]
+            : [
+                {
+                  number: 212,
+                  title: "Improve tool lookup ranking",
+                  state: "closed",
+                },
+              ],
+      }),
+    };
+  }
+  if (address === "documents.search_content") {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 1 },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string" },
+          results: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                snippet: { type: "string" },
+              },
+              required: ["id", "title", "snippet"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["query", "results"],
+        additionalProperties: false,
+      },
+      handler: (args: { query: string }) => ({
+        query: args.query,
+        results: [
+          {
+            id: "page-launch-plan",
+            title: "Launch plan",
+            snippet: "The launch plan begins with a staged customer rollout.",
+          },
+        ],
+      }),
+    };
+  }
+  if (address === "builds.get_workflow_run") {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "integer", minimum: 1 },
+        },
+        required: ["runId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          runId: { type: "integer" },
+          status: { type: "string" },
+          conclusion: { type: "string" },
+          failedJobId: { type: "integer" },
+        },
+        required: ["runId", "status", "conclusion", "failedJobId"],
+        additionalProperties: false,
+      },
+      handler: (args: { runId: number }) => ({
+        runId: args.runId,
+        status: "completed",
+        conclusion: "failure",
+        failedJobId: args.runId * 100 + 7,
+      }),
+    };
+  }
+  if (address === "builds.get_job_logs") {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          jobId: { type: "integer", minimum: 1 },
+        },
+        required: ["jobId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          jobId: { type: "integer" },
+          runId: { type: "integer" },
+          lines: { type: "array", items: { type: "string" } },
+        },
+        required: ["jobId", "runId", "lines"],
+        additionalProperties: false,
+      },
+      handler: (args: { jobId: number }) => ({
+        jobId: args.jobId,
+        runId: Math.trunc(args.jobId / 100),
+        lines: [
+          "test: expected 2 received 3",
+          "process exited with status 1",
+        ],
+      }),
+    };
+  }
+  return undefined;
+}
+
+function fixtureTools(
+  connectorId: string,
+  definitions: { name: string; description: string }[],
+): ApiTool[] {
+  return definitions.map((definition) => ({
+    ...definition,
+    ...(agentFixtureContract(connectorId, definition.name) ??
+      genericFixtureContract(connectorId, definition.name)),
     annotations: { readOnlyHint: true, idempotentHint: true },
   }));
 }
 
-const discoveryConnectors: Connector[] = holdout.connectors.map((fixture) => {
-  const tools = fixtureTools(fixture.tools);
-  return {
-    id: fixture.id,
-    kind: "api",
+const discoveryConnectors: Connector[] = holdout.connectors.map((fixture) =>
+  api(fixture.id, {
     description: fixture.description,
-    staticTools: tools,
-    async listTools() {
-      return tools;
-    },
-    async callTool(name) {
-      return { connector: fixture.id, tool: name, fixture: true };
-    },
-  };
-});
+    strictValidation: true,
+    tools: fixtureTools(fixture.id, fixture.tools),
+  }),
+);
 
 let mutationCount = 0;
 const controlled = api("controlled", {
@@ -363,10 +880,13 @@ const staticUnavailable = staticCredentialConnector(
 );
 
 const executor = executorEnabled
-  ? quickJsExecutor({
-      timeoutMs: 10_000,
-      cpuTimeMs: 2_000,
-    })
+  ? (() => {
+      const base = quickJsExecutor({
+        timeoutMs: 10_000,
+        cpuTimeMs: 2_000,
+      });
+      return traceEnabled ? tracedExecutor(base) : base;
+    })()
   : undefined;
 
 const connecta = createConnecta({
@@ -397,6 +917,15 @@ const connecta = createConnecta({
     store: {
       record(event) {
         activityEvents.push(event);
+        emitTrace({
+          kind: "execution",
+          address: event.address,
+          source: event.source,
+          outcome: event.outcome,
+          durationMs: event.durationMs,
+          attempts: event.attempts,
+          ...(event.errorCode ? { errorCode: event.errorCode } : {}),
+        });
       },
       async list({ limit }) {
         return { events: activityEvents.slice(-limit).reverse() };
@@ -414,7 +943,7 @@ const connecta = createConnecta({
   },
 });
 
-const server = listen(connecta, {
+const server = listen(traceEnabled ? withOuterTracing(connecta) : connecta, {
   port,
   host,
   gracefulShutdown: false,
@@ -433,6 +962,7 @@ console.log(
     sourceCommit,
     connectorCount: discoveryConnectors.length + 5,
     executorEnabled,
+    traceEnabled,
   }),
 );
 
