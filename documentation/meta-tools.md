@@ -6,6 +6,20 @@ schemas, the call tools enforce safety annotations, and `get_result` pages
 bounded results. `execute_code` is registered only when the deployment
 configures an executor.
 
+## Result representation
+
+For object results, `structuredContent` is the canonical full-fidelity value.
+`content` carries the same complete value as compact JSON for clients that only
+consume text. Keeping both follows MCP's backwards-compatibility guidance;
+removing or summarizing the text copy is deferred until host-forwarding
+measurements demonstrate that supported clients do not need it.
+
+Plain-text guidance and errors remain text-only. A downstream MCP tool's native
+content blocks also pass through unchanged when `call_tool` uses MCP result
+mode; they are not a duplicated Connecta object result. Newly stashed JSON and
+downstream content envelopes use compact serialization, so `get_result` byte
+offsets and totals refer to that exact compact text.
+
 ## Authorization recovery
 
 Every typed `auth_required` call failure uses the same envelope:

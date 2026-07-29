@@ -15,6 +15,13 @@ refuses to start and points to the relevant issue and `ethos.md`.
 
 ### Changed
 
+- **Structured results now serialize compactly in text compatibility content**
+  (#191). `structuredContent` remains the canonical full-fidelity object and
+  `content` remains complete JSON for text-only clients, but indentation no
+  longer inflates discovery, call, paging, batch, authorization, or code-mode
+  responses. Replacing the compatibility copy with a summary remains deferred
+  until host-forwarding measurements justify departing from MCP's compatibility
+  guidance.
 - **Credential recovery has one agent-facing route** (#192).
   `auth_required` errors now name the connector, failed operation, recovery
   class, `authorize_connector` call, operator handoff, and retry. Calling

@@ -82,7 +82,7 @@ function discoveryAddresses(value: unknown): unknown[] {
 
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
 export function boundedDiscoveryText(value: unknown, hint: string): string {
-  const text = JSON.stringify(value, null, 2);
+  const text = JSON.stringify(value);
   if (text === undefined) {
     throw new TypeError("Discovery result is not JSON-serializable.");
   }

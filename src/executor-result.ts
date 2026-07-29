@@ -9,7 +9,7 @@ function msg(err: unknown): string {
 }
 
 function serializeExecuteValue(value: unknown): string {
-  const serialized = JSON.stringify(value, null, 2);
+  const serialized = JSON.stringify(value);
   return serialized === undefined ? String(value) : serialized;
 }
 

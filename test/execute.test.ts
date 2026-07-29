@@ -1050,6 +1050,9 @@ describe("execute_code handler", () => {
     };
     expect(parsed.result).toEqual({ picked: [1, 2] });
     expect(out.structuredContent).toEqual(parsed);
+    expect(required(out.content[0]).text).toBe(
+      JSON.stringify(out.structuredContent),
+    );
     expect(parsed.logs).toBe("hi");
     expect(required(executor.seen[0]).code).toBe("async () => 1");
     expect(required(executor.seen[0]).providers.map((p) => p.name)).toEqual([
