@@ -2,6 +2,55 @@
 
 All notable changes to this package are documented here.
 
+## 0.9.1 — 2026-07-29
+
+A code-mode routing release. Agents that needed an unknown address *and* a
+dependent call used to spend two outer executions on it — one to search, one to
+act. They now spend one: schema-bearing `connecta.search()` matches carry the
+exact field names a dependent program needs, and `execute_code` says to search
+inside the run rather than ahead of it. A deployment can ignore all of this
+unless it runs code mode; nothing in the published surface, the nine base
+meta-tools, or `search_tools` responses changed.
+
+Measured against the previous release across 60 matched runs per arm with a
+pinned model: the dependent one-pass route went 0/10 to 10/10, the intended
+route 41/60 to 52/60, exact addresses and arguments 58/60 to 60/60, and outer
+round trips fell 10.8%. Final-answer correctness stayed at 60/60 in both arms.
+The trade is real and recorded rather than buried: agent *output* tokens rose
+38.3% and non-cached host input 107.1%, both reproducing across replications,
+while total agent input still fell 1.7%. Search performance is untouched —
+10,000-tool warm-search p50 stays near 3 ms.
+
+### Added
+
+- **Schema key metadata in code mode.** `connecta.search()` matches that carry
+  schemas also carry `inputKeys`, `requiredInputKeys`, and `outputKeys`. The
+  names come from the same walk that renders the compact schema, so a top-level
+  `$ref` resolves and an `allOf` composes instead of reporting an empty field
+  list beside a schema that plainly lists fields. A schema that is not an object
+  shape — a union, an array, an unresolvable `$ref` — gets no lists rather than
+  empty ones: absent means "read the schema", where `[]` would claim the tool
+  takes no fields. A program that wants the bytes back passes
+  `includeSchemaKeys: false`.
+
+### Changed
+
+- **`execute_code` routes dependent unknown-address work in one execution.**
+  Its description, the server instructions, and the usage guide agreed on the
+  two-round-trip pattern; they now agree on the one-pass one, and still send
+  search-only and single-call work to `search_tools` and `call_tool`.
+- **The dependent example names its fields.** It previously indexed
+  `requiredInputKeys[0]`, which is a positional guess in a description that
+  forbids guessing, and worked only because the benchmark's tool has exactly
+  one required key.
+
+### Fixed
+
+- **The workflow-by-id benchmark fixture no longer contradicts its own
+  prompt.** It asked for "the integration's JSON result" while naming a
+  projection of it, so no answer satisfied both readings and a wording defect
+  scored as a routing failure.
+
 ## 0.9.0 — 2026-07-29
 
 Connecta now speaks the 2026-07-28 MCP revision on both sides while retaining
