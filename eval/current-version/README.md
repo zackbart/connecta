@@ -50,6 +50,17 @@ Results and interpretation:
 - [`audit-results-2026-07-29.json`](./audit-results-2026-07-29.json)
 - [`tool-audit-2026-07-29.md`](./tool-audit-2026-07-29.md)
 
+Run the reproducible discovery A/B benchmark:
+
+```sh
+CONNECTA_COMMIT=$(git rev-parse HEAD) \
+  npx tsx eval/current-version/discovery-benchmark.ts
+```
+
+Discovery findings:
+
+- [`discovery-findings-2026-07-29.md`](./discovery-findings-2026-07-29.md)
+
 The disposable credential value for the `protected` connector is
 `sandbox-ok`. The current operator credential route requires Clerk
 authentication, so the bearer-only sandbox intentionally cannot mutate it.

@@ -3,5 +3,5 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["sandbox-server.ts"]
+  "include": ["discovery-benchmark.ts", "sandbox-server.ts"]
 }
