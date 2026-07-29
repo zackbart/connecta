@@ -4,7 +4,9 @@ import {
   bearerToken,
   createConnecta,
   memoryStorage,
+  type Connector,
   type ConnectorContext,
+  type ToolDef,
   type ToolCallActivityEvent,
 } from "../../src/index.js";
 import { CredentialVault } from "../../src/credentials.js";
@@ -267,6 +269,8 @@ const github = api("github", {
   ],
 });
 
+let mutationCount = 0;
+
 const controlled = api("controlled", {
   title: "Controlled Eval Fixtures",
   description:
@@ -326,8 +330,89 @@ const controlled = api("controlled", {
           score: (index * 17) % 101,
         })),
     },
+    {
+      name: "increment_counter",
+      description:
+        "Increment an isolated in-memory counter to exercise approved write routing.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          amount: {
+            type: "integer",
+            minimum: 1,
+            maximum: 10,
+            default: 1,
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+      handler: (args: { amount?: number }) => {
+        mutationCount += args.amount ?? 1;
+        return { counter: mutationCount };
+      },
+    },
   ],
 });
+
+const oauthTools: ToolDef[] = [
+  {
+    name: "whoami",
+    description:
+      "Return the OAuth fixture identity after the simulated flow completes.",
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: true, idempotentHint: true },
+  },
+];
+let oauthStarts = 0;
+const oauthFixture: Connector = {
+  id: "oauth-fixture",
+  title: "OAuth Recovery Fixture",
+  kind: "api",
+  description:
+    "Isolated OAuth-shaped connector for authorize_connector auditing",
+  usageGuide:
+    "# OAuth fixture\n\nUse `authorize_connector` when this connector reports `auth_required`.",
+  staticTools: oauthTools,
+  async listTools() {
+    return oauthTools;
+  },
+  async callTool() {
+    throw new ConnectorCallError(
+      "auth_required",
+      "OAuth fixture authorization is required.",
+    );
+  },
+  async status() {
+    return {
+      state: "auth_required",
+      authorizationUrl: `http://${host}:${port}/fixture/oauth-consent`,
+      message:
+        oauthStarts > 0
+          ? "Simulated authorization started."
+          : "Simulated authorization required.",
+    };
+  },
+  async startAuth(_ctx, options) {
+    oauthStarts++;
+    const force = options?.force ? "&force=true" : "";
+    return {
+      state: "auth_required",
+      authorizationUrl:
+        `http://${host}:${port}/fixture/oauth-consent` +
+        `?attempt=${oauthStarts}${force}`,
+      message: "Open the simulated consent URL.",
+    };
+  },
+};
 
 const protectedConnector = api("protected", {
   title: "Credential-gated Sandbox Service",
@@ -373,7 +458,7 @@ const activityEvents: ToolCallActivityEvent[] = [];
 
 const connecta = createConnecta({
   auth: bearerToken(token, { subjectId: "current-version-evaluator" }),
-  connectors: [npm, github, controlled, protectedConnector],
+  connectors: [npm, github, controlled, protectedConnector, oauthFixture],
   storage,
   executor: quickJsExecutor({
     timeoutMs: 10_000,
@@ -400,11 +485,11 @@ const connecta = createConnecta({
   },
   serverInfo: {
     name: "connecta-current-version-eval",
-    version: "b43dd2d",
+    version: "e3c3ac6",
     title: "Connecta current-version eval sandbox",
   },
   deploymentInfo: {
-    sourceCommit: "b43dd2d85a32953b81af3d827a722d13ee60e5b5",
+    sourceCommit: "e3c3ac6a0843ca1668cd28ea75a6726710f4f91d",
     isolated: true,
   },
 });
@@ -419,8 +504,14 @@ console.log(
   JSON.stringify({
     event: "ready",
     url: `http://${host}:${port}/mcp`,
-    commit: "b43dd2d85a32953b81af3d827a722d13ee60e5b5",
-    connectors: ["npm", "github", "controlled", "protected"],
+    commit: "e3c3ac6a0843ca1668cd28ea75a6726710f4f91d",
+    connectors: [
+      "npm",
+      "github",
+      "controlled",
+      "protected",
+      "oauth-fixture",
+    ],
     protectedCredentialSeeded:
       process.env.CONNECTA_EVAL_SEED_PROTECTED === "1",
   }),

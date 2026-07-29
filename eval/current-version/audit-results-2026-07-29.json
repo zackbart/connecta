@@ -1,0 +1,520 @@
+{
+  "capturedAt": "2026-07-29T10:46:22.359Z",
+  "sourceCommit": "e3c3ac6a0843ca1668cd28ea75a6726710f4f91d",
+  "tokenizer": "o200k_base",
+  "tokenScope": "JSON-serialized MCP tools/list definitions, tool-call parameters, and tool results; excludes model deliberation and host envelope tokens.",
+  "connection": {
+    "latencyMs": 35.8,
+    "toolsListBytes": 9828,
+    "toolsListTokens": 2252,
+    "toolCount": 10
+  },
+  "totals": {
+    "caseCount": 14,
+    "schemaTokens": 2252,
+    "requestTokens": 493,
+    "responseTokens": 8562,
+    "measuredSurfaceTokens": 11307,
+    "summedCallLatencyMs": 566.1
+  },
+  "toolSchemas": [
+    {
+      "name": "skills",
+      "schemaBytes": 661,
+      "schemaTokens": 151
+    },
+    {
+      "name": "list_connectors",
+      "schemaBytes": 476,
+      "schemaTokens": 106
+    },
+    {
+      "name": "search_tools",
+      "schemaBytes": 867,
+      "schemaTokens": 201
+    },
+    {
+      "name": "describe_tools",
+      "schemaBytes": 756,
+      "schemaTokens": 168
+    },
+    {
+      "name": "call_tool",
+      "schemaBytes": 1149,
+      "schemaTokens": 263
+    },
+    {
+      "name": "call_destructive_tool",
+      "schemaBytes": 974,
+      "schemaTokens": 221
+    },
+    {
+      "name": "authorize_connector",
+      "schemaBytes": 540,
+      "schemaTokens": 112
+    },
+    {
+      "name": "get_result",
+      "schemaBytes": 884,
+      "schemaTokens": 219
+    },
+    {
+      "name": "batch_call",
+      "schemaBytes": 1466,
+      "schemaTokens": 341
+    },
+    {
+      "name": "execute_code",
+      "schemaBytes": 2034,
+      "schemaTokens": 466
+    }
+  ],
+  "toolTotals": [
+    {
+      "tool": "skills",
+      "schemaTokens": 151,
+      "calls": 2,
+      "requestTokens": 20,
+      "responseTokens": 802,
+      "totalMeasuredTokens": 973,
+      "averageLatencyMs": 3.7,
+      "maxLatencyMs": 3.8,
+      "errorCases": 0
+    },
+    {
+      "tool": "list_connectors",
+      "schemaTokens": 106,
+      "calls": 2,
+      "requestTokens": 26,
+      "responseTokens": 2051,
+      "totalMeasuredTokens": 2183,
+      "averageLatencyMs": 4.2,
+      "maxLatencyMs": 4.7,
+      "errorCases": 0
+    },
+    {
+      "tool": "search_tools",
+      "schemaTokens": 201,
+      "calls": 1,
+      "requestTokens": 28,
+      "responseTokens": 1794,
+      "totalMeasuredTokens": 2023,
+      "averageLatencyMs": 3.9,
+      "maxLatencyMs": 3.9,
+      "errorCases": 0
+    },
+    {
+      "tool": "describe_tools",
+      "schemaTokens": 168,
+      "calls": 1,
+      "requestTokens": 47,
+      "responseTokens": 1638,
+      "totalMeasuredTokens": 1853,
+      "averageLatencyMs": 3.6,
+      "maxLatencyMs": 3.6,
+      "errorCases": 0
+    },
+    {
+      "tool": "call_tool",
+      "schemaTokens": 263,
+      "calls": 3,
+      "requestTokens": 108,
+      "responseTokens": 727,
+      "totalMeasuredTokens": 1098,
+      "averageLatencyMs": 75.6,
+      "maxLatencyMs": 217,
+      "errorCases": 1
+    },
+    {
+      "tool": "call_destructive_tool",
+      "schemaTokens": 221,
+      "calls": 1,
+      "requestTokens": 32,
+      "responseTokens": 183,
+      "totalMeasuredTokens": 436,
+      "averageLatencyMs": 9.8,
+      "maxLatencyMs": 9.8,
+      "errorCases": 0
+    },
+    {
+      "tool": "authorize_connector",
+      "schemaTokens": 112,
+      "calls": 1,
+      "requestTokens": 14,
+      "responseTokens": 236,
+      "totalMeasuredTokens": 362,
+      "averageLatencyMs": 4.9,
+      "maxLatencyMs": 4.9,
+      "errorCases": 0
+    },
+    {
+      "tool": "get_result",
+      "schemaTokens": 219,
+      "calls": 1,
+      "requestTokens": 41,
+      "responseTokens": 459,
+      "totalMeasuredTokens": 719,
+      "averageLatencyMs": 5.1,
+      "maxLatencyMs": 5.1,
+      "errorCases": 0
+    },
+    {
+      "tool": "batch_call",
+      "schemaTokens": 341,
+      "calls": 1,
+      "requestTokens": 88,
+      "responseTokens": 496,
+      "totalMeasuredTokens": 925,
+      "averageLatencyMs": 205.3,
+      "maxLatencyMs": 205.3,
+      "errorCases": 0
+    },
+    {
+      "tool": "execute_code",
+      "schemaTokens": 466,
+      "calls": 1,
+      "requestTokens": 89,
+      "responseTokens": 176,
+      "totalMeasuredTokens": 731,
+      "averageLatencyMs": 91,
+      "maxLatencyMs": 91,
+      "errorCases": 0
+    }
+  ],
+  "cases": [
+    {
+      "name": "list available skills",
+      "tool": "skills",
+      "latencyMs": 3.5,
+      "requestBytes": 32,
+      "requestTokens": 9,
+      "responseBytes": 334,
+      "responseTokens": 89,
+      "contentTokens": 87,
+      "structuredContentTokens": 1,
+      "structuredKeys": [],
+      "structuredSummary": null,
+      "textPreview": "Available skills. Fetch one with skills({ name: \"<name>\" }). - `usage` — How to choose among Connecta discovery, direct, batch, destructive, and code-mode tools. - `connector:npm` "
+    },
+    {
+      "name": "read routing guide",
+      "tool": "skills",
+      "latencyMs": 3.8,
+      "requestBytes": 46,
+      "requestTokens": 11,
+      "responseBytes": 2921,
+      "responseTokens": 713,
+      "contentTokens": 711,
+      "structuredContentTokens": 1,
+      "structuredKeys": [],
+      "structuredSummary": null,
+      "textPreview": "# Connecta usage ## Choose the smallest execution tool - Unknown address: `search_tools({ query, includeSchemas: \"compact\" })`. - Schema still unclear: `describe_tools({ addresses:"
+    },
+    {
+      "name": "fast connector inventory",
+      "tool": "list_connectors",
+      "latencyMs": 3.7,
+      "requestBytes": 54,
+      "requestTokens": 13,
+      "responseBytes": 2897,
+      "responseTokens": 839,
+      "contentTokens": 519,
+      "structuredContentTokens": 316,
+      "isError": false,
+      "structuredKeys": [
+        "connectors"
+      ],
+      "structuredSummary": {
+        "connectorCount": 5,
+        "toolCount": 12,
+        "statusCounts": {
+          "ok": 5
+        }
+      },
+      "textPreview": "{ \"connectors\": [ { \"id\": \"npm\", \"title\": \"npm Registry\", \"description\": \"Live public npm package metadata and download counts\", \"toolCount\": 3, \"status\": \"ok\", \"checkedAt\": \"2026-"
+    },
+    {
+      "name": "live connector health",
+      "tool": "list_connectors",
+      "latencyMs": 4.7,
+      "requestBytes": 53,
+      "requestTokens": 13,
+      "responseBytes": 3977,
+      "responseTokens": 1212,
+      "contentTokens": 734,
+      "structuredContentTokens": 474,
+      "isError": false,
+      "structuredKeys": [
+        "connectors"
+      ],
+      "structuredSummary": {
+        "connectorCount": 5,
+        "toolCount": 12,
+        "statusCounts": {
+          "ok": 4,
+          "auth_required": 1
+        }
+      },
+      "textPreview": "{ \"connectors\": [ { \"id\": \"npm\", \"title\": \"npm Registry\", \"description\": \"Live public npm package metadata and download counts\", \"toolCount\": 3, \"status\": \"ok\", \"checkedAt\": \"2026-"
+    },
+    {
+      "name": "focused discovery",
+      "tool": "search_tools",
+      "latencyMs": 3.9,
+      "requestBytes": 140,
+      "requestTokens": 28,
+      "responseBytes": 7687,
+      "responseTokens": 1794,
+      "contentTokens": 1133,
+      "structuredContentTokens": 657,
+      "isError": false,
+      "structuredKeys": [
+        "connectors",
+        "total",
+        "offset",
+        "limit",
+        "hasMore",
+        "matchMode"
+      ],
+      "structuredSummary": {
+        "connectorCount": 4,
+        "toolCount": 9,
+        "statusCounts": {},
+        "total": 9,
+        "matchMode": "partial"
+      },
+      "textPreview": "{ \"connectors\": [ { \"id\": \"github\", \"title\": \"GitHub Public API\", \"description\": \"Live unauthenticated read-only GitHub repository data\", \"guide\": \"connector:github\", \"tools\": [ { "
+    },
+    {
+      "name": "inspect complete input schemas",
+      "tool": "describe_tools",
+      "latencyMs": 3.6,
+      "requestBytes": 241,
+      "requestTokens": 47,
+      "responseBytes": 6950,
+      "responseTokens": 1638,
+      "contentTokens": 1090,
+      "structuredContentTokens": 543,
+      "isError": false,
+      "structuredKeys": [
+        "tools"
+      ],
+      "structuredSummary": {
+        "toolCount": 7
+      },
+      "textPreview": "{ \"tools\": [ { \"address\": \"npm.get_download_counts\", \"name\": \"get_download_counts\", \"description\": \"Fetch npm download counts for an exact package and period such as last-week or l"
+    },
+    {
+      "name": "single live read-only call",
+      "tool": "call_tool",
+      "latencyMs": 217,
+      "requestBytes": 222,
+      "requestTokens": 52,
+      "responseBytes": 719,
+      "responseTokens": 253,
+      "contentTokens": 162,
+      "structuredContentTokens": 86,
+      "isError": false,
+      "structuredKeys": [
+        "ok",
+        "data",
+        "durationMs",
+        "attempts",
+        "timing"
+      ],
+      "structuredSummary": {
+        "ok": true,
+        "dataKeys": [
+          "package",
+          "downloads",
+          "start",
+          "end"
+        ],
+        "durationMs": 210
+      },
+      "textPreview": "{ \"ok\": true, \"data\": { \"package\": \"@modelcontextprotocol/sdk\", \"downloads\": 45520029, \"start\": \"2026-07-18\", \"end\": \"2026-07-24\" }, \"durationMs\": 210, \"attempts\": 1, \"timing\": { \""
+    },
+    {
+      "name": "read-only gate refuses a write",
+      "tool": "call_tool",
+      "latencyMs": 5,
+      "requestBytes": 116,
+      "requestTokens": 25,
+      "responseBytes": 685,
+      "responseTokens": 170,
+      "contentTokens": 105,
+      "structuredContentTokens": 61,
+      "isError": true,
+      "structuredKeys": [
+        "ok",
+        "error",
+        "durationMs",
+        "attempts"
+      ],
+      "structuredSummary": {
+        "ok": false,
+        "errorCode": "destructive_tool_requires_approval",
+        "durationMs": 1
+      },
+      "textPreview": "{ \"ok\": false, \"error\": { \"code\": \"destructive_tool_requires_approval\", \"message\": \"Tool \\\"controlled.increment_counter\\\" is not explicitly read-only. Invoke it through call_destru"
+    },
+    {
+      "name": "prepare a truncated result",
+      "tool": "call_tool",
+      "latencyMs": 4.8,
+      "requestBytes": 137,
+      "requestTokens": 31,
+      "responseBytes": 845,
+      "responseTokens": 304,
+      "contentTokens": 187,
+      "structuredContentTokens": 112,
+      "isError": false,
+      "structuredKeys": [
+        "ok",
+        "data",
+        "durationMs",
+        "attempts",
+        "timing"
+      ],
+      "structuredSummary": {
+        "ok": true,
+        "truncated": true,
+        "totalBytes": 2338,
+        "dataKeys": [
+          "truncated",
+          "resultId",
+          "totalBytes",
+          "hint"
+        ],
+        "durationMs": 0
+      },
+      "textPreview": "{ \"ok\": true, \"data\": { \"truncated\": true, \"resultId\": \"8a5204df-3852-4ef6-be51-77aae349a8ef\", \"totalBytes\": 2338, \"hint\": \"use get_result {id, offset} to page, or re-call with fie"
+    },
+    {
+      "name": "page a stashed result",
+      "tool": "get_result",
+      "latencyMs": 5.1,
+      "requestBytes": 105,
+      "requestTokens": 41,
+      "responseBytes": 1698,
+      "responseTokens": 459,
+      "contentTokens": 251,
+      "structuredContentTokens": 204,
+      "isError": false,
+      "structuredKeys": [
+        "offset",
+        "nextOffset",
+        "totalBytes",
+        "text"
+      ],
+      "structuredSummary": {
+        "offset": 0,
+        "nextOffset": 700,
+        "totalBytes": 2338,
+        "textBytes": 700
+      },
+      "textPreview": "{ \"offset\": 0, \"nextOffset\": 700, \"totalBytes\": 2338, \"text\": \"{\\n \\\"title\\\": \\\"Deterministic paging fixture\\\",\\n \\\"paragraphs\\\": [\\n \\\"1. Connecta keeps discovery bounded while pr"
+    },
+    {
+      "name": "parallel live read-only calls",
+      "tool": "batch_call",
+      "latencyMs": 205.3,
+      "requestBytes": 383,
+      "requestTokens": 88,
+      "responseBytes": 1651,
+      "responseTokens": 496,
+      "contentTokens": 325,
+      "structuredContentTokens": 167,
+      "isError": false,
+      "structuredKeys": [
+        "results",
+        "durationMs"
+      ],
+      "structuredSummary": {
+        "resultCount": 2,
+        "successCount": 2,
+        "failureCount": 0,
+        "batchDurationMs": 199,
+        "maxChildDurationMs": 199,
+        "summedChildDurationMs": 248
+      },
+      "textPreview": "{ \"results\": [ { \"address\": \"npm.get_download_counts\", \"ok\": true, \"data\": { \"package\": \"@modelcontextprotocol/sdk\", \"downloads\": 45520029 }, \"durationMs\": 49, \"attempts\": 1, \"timi"
+    },
+    {
+      "name": "approved isolated write",
+      "tool": "call_destructive_tool",
+      "latencyMs": 9.8,
+      "requestBytes": 147,
+      "requestTokens": 32,
+      "responseBytes": 500,
+      "responseTokens": 183,
+      "contentTokens": 121,
+      "structuredContentTokens": 57,
+      "isError": false,
+      "structuredKeys": [
+        "ok",
+        "data",
+        "durationMs",
+        "attempts",
+        "timing"
+      ],
+      "structuredSummary": {
+        "ok": true,
+        "dataKeys": [
+          "counter"
+        ],
+        "durationMs": 0
+      },
+      "textPreview": "{ \"ok\": true, \"data\": { \"counter\": 2 }, \"durationMs\": 0, \"attempts\": 1, \"timing\": { \"catalogMs\": 0, \"admissionMs\": 0, \"connectorMs\": 0, \"backoffMs\": 0, \"resultProcessingMs\": 0, \"to"
+    },
+    {
+      "name": "start simulated OAuth",
+      "tool": "authorize_connector",
+      "latencyMs": 4.9,
+      "requestBytes": 72,
+      "requestTokens": 14,
+      "responseBytes": 1021,
+      "responseTokens": 236,
+      "contentTokens": 133,
+      "structuredContentTokens": 99,
+      "isError": false,
+      "structuredKeys": [
+        "connector",
+        "status",
+        "authorizationUrl",
+        "instructions",
+        "message"
+      ],
+      "structuredSummary": {
+        "connector": "oauth-fixture",
+        "status": "auth_required",
+        "hasAuthorizationUrl": true
+      },
+      "textPreview": "{ \"connector\": \"oauth-fixture\", \"status\": \"auth_required\", \"authorizationUrl\": \"http://127.0.0.1:8797/fixture/oauth-consent?attempt=1\", \"instructions\": \"Have the operator open auth"
+    },
+    {
+      "name": "sandboxed reduction",
+      "tool": "execute_code",
+      "latencyMs": 91,
+      "requestBytes": 318,
+      "requestTokens": 89,
+      "responseBytes": 487,
+      "responseTokens": 176,
+      "contentTokens": 123,
+      "structuredContentTokens": 49,
+      "isError": false,
+      "structuredKeys": [
+        "result"
+      ],
+      "structuredSummary": {
+        "resultType": "object",
+        "resultKeys": [
+          "alpha",
+          "beta",
+          "gamma"
+        ]
+      },
+      "textPreview": "{ \"result\": { \"alpha\": { \"count\": 40, \"sum\": 1400, \"max\": 70 }, \"beta\": { \"count\": 40, \"sum\": 2080, \"max\": 87 }, \"gamma\": { \"count\": 40, \"sum\": 2356, \"max\": 100 } } }"
+    }
+  ]
+}

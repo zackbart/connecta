@@ -5,13 +5,16 @@ loopback. It has:
 
 - live read-only npm and public GitHub API connectors;
 - deterministic fixtures for truncation and code-mode reduction;
+- an isolated in-memory write for the destructive approval path;
+- an OAuth-shaped fixture for authorization recovery;
 - a disposable credential-gated connector for fail-at-use recovery;
 - QuickJS-backed `execute_code`;
 - in-memory credentials, catalogs, paging results, and payload-free activity.
 
-Start it:
+Install the audit-only tokenizer and start the server:
 
 ```sh
+npm install --prefix eval/current-version
 npx tsc -p eval/current-version/tsconfig.json
 npx tsx eval/current-version/sandbox-server.ts
 ```
@@ -30,6 +33,22 @@ latency plus serialized request/response byte counts:
 {"action":"call","tool":"call_tool","args":{"address":"npm.search_packages","args":{"query":"model context protocol","size":3},"resultMode":"value","diagnostics":true}}
 {"action":"close"}
 ```
+
+Run the complete ten-tool token and behavior audit against a fresh server:
+
+```sh
+node eval/current-version/audit-all-tools.mjs \
+  eval/current-version/audit-results-2026-07-29.json
+```
+
+The audit uses `o200k_base` by default and records definition, request, and
+response tokens separately. Set `CONNECTA_EVAL_TOKENIZER` to select another
+encoding supported by `js-tiktoken`.
+
+Results and interpretation:
+
+- [`audit-results-2026-07-29.json`](./audit-results-2026-07-29.json)
+- [`tool-audit-2026-07-29.md`](./tool-audit-2026-07-29.md)
 
 The disposable credential value for the `protected` connector is
 `sandbox-ok`. The current operator credential route requires Clerk
