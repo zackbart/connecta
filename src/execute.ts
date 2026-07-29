@@ -280,7 +280,9 @@ export async function buildSandboxProviders(
             fullDescriptions?: boolean;
             includeSchemas?: "compact" | "json";
           };
-          const result = flatSearchResult(await catalog.search(args));
+          const result = flatSearchResult(
+            await catalog.search({ ...args, includeSchemaKeys: true }),
+          );
           boundedDiscoveryText(
             result,
             "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
@@ -442,18 +444,18 @@ export function createExecuteTool(
   };
 }
 
-const EXECUTE_DESC = `Use for dependent multi-step calls, loops, joins, branching, or reducing large results in a sandbox. Only tools explicitly annotated readOnlyHint: true are available. For one straightforward call use call_tool; for 2–10 independent calls use batch_call. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
+const EXECUTE_DESC = `Use for dependent multi-step calls, loops, joins, branching, or reducing large results in a sandbox. Never use execute_code for search-only discovery or one downstream call: use search_tools, then call_tool when needed. For 2–10 independent calls use batch_call. Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from describe_tools. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
-- connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand.
+- connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Search matches with schemas also include inputKeys, requiredInputKeys, and outputKeys for programmatic field selection.
 - console.log(...) — captured and returned alongside the result.
 
 Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
 
-Workflow: search_tools → describe_tools (schemas) → execute_code. Plain JavaScript only — no TypeScript syntax.
-Example: async () => { const r = await crm.search({ query: "roadmap" }); return r.results.map((item) => item.title); }`;
+Plain JavaScript only — no TypeScript syntax. For unknown-address dependent work, use one execute_code call: search inside it, read the compact schemas, and continue to the dependent calls; do not return search results for a second execute_code call. Compact schemas are TypeScript-like strings, not JSON Schema objects: use exactly the displayed property names and never send guessed aliases together.
+Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", includeSchemas: "compact" }); const runTool = tools.find((t) => t.address.endsWith(".get_run")); const run = await connecta.call(runTool.address, { [runTool.requiredInputKeys[0]]: 42 }); const jobKey = runTool.outputKeys.find((key) => /failed.*job.*id/i.test(key)); const logsTool = tools.find((t) => t.address.endsWith(".get_job_logs")); const logs = await connecta.call(logsTool.address, { [logsTool.requiredInputKeys[0]]: run[jobKey] }); return [run, logs]; }`;
 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(

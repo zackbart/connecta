@@ -511,6 +511,8 @@ describe("buildSandboxProviders", () => {
     expect(search.tools[0]).toMatchObject({
       address: "calc.add",
       inputSchema: "{ a: number, b: number }",
+      inputKeys: ["a", "b"],
+      requiredInputKeys: ["a", "b"],
     });
 
     const partial = (await required(connecta.fns.search)({

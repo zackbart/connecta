@@ -1459,10 +1459,35 @@ describe("execute_code registration (code mode)", () => {
       },
     });
     const res2 = await rpc(withExec, "tools/list", {}, { token: TOKEN });
-    const names2 = (await readBody(res2)).result.tools.map(
+    const listed2 = (await readBody(res2)).result.tools;
+    const names2 = listed2.map(
       (t: { name: string }) => t.name,
     );
     expect(names2.sort()).toEqual([...baseTools, "execute_code"].sort());
+    const executeTool = listed2.find(
+      (tool: { name: string }) => tool.name === "execute_code",
+    );
+    expect(executeTool.description).toContain(
+      "Never use execute_code for search-only discovery or one downstream call",
+    );
+    expect(executeTool.description).toContain("use one execute_code call");
+    expect(executeTool.description).toContain(
+      "do not return search results for a second execute_code call",
+    );
+    expect(executeTool.description).toContain('includeSchemas: "compact"');
+    expect(executeTool.description).toContain("requiredInputKeys");
+    expect(executeTool.description).toContain(
+      "use exactly the displayed property names",
+    );
+    expect(executeTool.description).toContain(
+      "the second call requires a value returned by the first",
+    );
+    expect(executeTool.description).toContain(
+      "[logsTool.requiredInputKeys[0]]: run[jobKey]",
+    );
+    expect(executeTool.description).not.toContain(
+      "search_tools → describe_tools (schemas) → execute_code",
+    );
 
     const executed = await rpc(
       withExec,

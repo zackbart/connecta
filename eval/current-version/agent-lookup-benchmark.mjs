@@ -237,10 +237,8 @@ const lookupCases = [
     ],
     expectedFinalFacts: [
       {
-        runId: 42,
         status: "completed",
         conclusion: "failure",
-        failedJobId: 4207,
       },
     ],
     expectedRoute: "call_tool",

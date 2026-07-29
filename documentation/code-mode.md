@@ -69,6 +69,9 @@ imports. Its only capabilities are:
 - lazy connector globals for explicitly read-only tools;
 - `connecta.call()` and `connecta.batch()` for exact-address read-only calls;
 - `connecta.search()` and `connecta.describe()` for request-local discovery;
+  schema-bearing search matches also expose `inputKeys`,
+  `requiredInputKeys`, and `outputKeys` so one program can select exact fields
+  before continuing to a dependent call;
 - captured `console.*` output.
 
 All calls use the same catalog, fail-closed read-only predicate, admission,

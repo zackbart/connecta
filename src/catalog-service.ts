@@ -104,6 +104,8 @@ export interface CatalogSearchArgs {
   offset?: number;
   fullDescriptions?: boolean;
   includeSchemas?: "compact" | "json";
+  /** Code-mode helper metadata; never exposed by the public search_tools schema. */
+  includeSchemaKeys?: boolean;
 }
 
 export interface CatalogDescribeArgs {
@@ -121,8 +123,29 @@ interface CatalogSearchEntry {
     description?: string;
     inputSchema?: unknown;
     outputSchema?: unknown;
+    inputKeys?: string[];
+    requiredInputKeys?: string[];
+    outputKeys?: string[];
     annotations?: ToolDef["annotations"];
   };
+}
+
+function schemaPropertyKeys(schema: JsonSchema | undefined): string[] {
+  if (
+    !schema ||
+    schema.properties === null ||
+    Array.isArray(schema.properties) ||
+    typeof schema.properties !== "object"
+  ) {
+    return [];
+  }
+  return Object.keys(schema.properties as Record<string, unknown>);
+}
+
+function schemaRequiredKeys(schema: JsonSchema | undefined): string[] {
+  return Array.isArray(schema?.required)
+    ? schema.required.filter((key): key is string => typeof key === "string")
+    : [];
 }
 
 export interface CatalogSearchPage {
@@ -456,6 +479,15 @@ export class CatalogService {
             ? {
                 outputSchema:
                   renderSchema(match.tool.outputSchema, args.includeSchemas),
+              }
+            : {}),
+          ...(args.includeSchemas && args.includeSchemaKeys
+            ? {
+                inputKeys: schemaPropertyKeys(input),
+                requiredInputKeys: schemaRequiredKeys(input),
+                ...(match.tool.outputSchema
+                  ? { outputKeys: schemaPropertyKeys(match.tool.outputSchema) }
+                  : {}),
               }
             : {}),
           ...(match.tool.annotations

@@ -1506,6 +1506,9 @@ describe("search_tools", () => {
     };
     const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
     expect(required(required(byId.weather).tools[0]).inputSchema).toBe("{ city: string }");
+    expect(required(required(byId.weather).tools[0])).not.toHaveProperty(
+      "inputKeys",
+    );
     expect(required(required(byId.weather).tools[0]).outputSchema).toContain("temperature");
     expect(required(required(byId.weather).tools[0]).annotations).toEqual({
       readOnlyHint: true,
