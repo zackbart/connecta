@@ -524,7 +524,7 @@ const EXECUTE_SCHEMA_SOURCE = {
 
 const executeDescription = (
   surface: ConnectaSurface,
-) => `execute_code runs one Connecta JavaScript program for integration discovery, batching, dependent joins, and data reduction. ${EXECUTE_ROUTING[surface]} Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
+) => `${EXECUTE_ROUTING[surface]} Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from ${EXECUTE_SCHEMA_SOURCE[surface]}. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
@@ -565,7 +565,6 @@ export function registerExecuteTool(
   server.registerTool(
     "execute_code",
     {
-      title: "Execute Code with Connecta",
       description: executeDescription(ctx.surface ?? "classic"),
       inputSchema: z.object({
         code: z
