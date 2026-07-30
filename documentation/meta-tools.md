@@ -86,8 +86,11 @@ distinct intents. A true negative says that no matching capability is
 configured and recommends refining, connector-scoping, or browsing; when a
 connector catalog was unavailable, the response includes
 `unavailableConnectorCount` instead of making that stronger claim. Analysis
-covers at most eight distinct terms of at most 64 displayed characters each,
-marks longer input `truncated`, and never changes lexical ranking.
+from a connector-filtered search includes `connectorScope` and speaks only
+about that connector; `unknownConnector` distinguishes an unconfigured ID from
+a known connector with no match. Analysis covers at most eight distinct terms
+of at most 64 displayed characters each, marks longer input `truncated`, and
+never changes lexical ranking.
 
 ## Authorization recovery
 

@@ -173,6 +173,8 @@ export interface CatalogSearchPage {
     otherResultTerms: string[];
     unmatchedTerms: string[];
     truncated?: true;
+    connectorScope?: string;
+    unknownConnector?: true;
     unavailableConnectorCount?: number;
     guidance?: string;
   };
@@ -410,10 +412,13 @@ export class CatalogService {
     const retrievalQuery = lexicalSearchQuery(query);
     const limit = discoverySearchLimit(args.limit);
     const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+    const scopedConnector = args.connector
+      ? this.registry.getConnector(args.connector)
+      : undefined;
     const connectors = args.connector
-      ? [this.registry.getConnector(args.connector)].filter(
-          (connector): connector is Connector => Boolean(connector),
-        )
+      ? scopedConnector
+        ? [scopedConnector]
+        : []
       : this.registry.listConnectors();
     const catalogs = await mapSettledWithConcurrency(
       connectors,
@@ -543,11 +548,19 @@ export class CatalogService {
       queryTerms.length === 0
         ? undefined
         : matches.length === 0
-          ? unavailableCatalogs === 0
-            ? "No matching capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query."
-            : `No matching capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.`
+          ? args.connector && !scopedConnector
+            ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
+            : scopedConnector
+              ? unavailableCatalogs > 0
+                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Retry later.`
+                : `No matching capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.`
+              : unavailableCatalogs === 0
+                ? "No matching capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query."
+                : `No matching capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.`
           : matchMode === "partial"
-            ? unavailableCatalogs === 0
+            ? scopedConnector
+              ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`
+              : unavailableCatalogs === 0
               ? "No single tool matched every term. Split distinct intents into separate searches."
               : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
             : undefined;
@@ -572,6 +585,10 @@ export class CatalogService {
                 (term) => term.length > MAX_QUERY_ANALYSIS_TERM_LENGTH,
               )
                 ? { truncated: true as const }
+                : {}),
+              ...(args.connector ? { connectorScope: args.connector } : {}),
+              ...(args.connector && !scopedConnector
+                ? { unknownConnector: true as const }
                 : {}),
               ...(unavailableCatalogs > 0
                 ? { unavailableConnectorCount: unavailableCatalogs }

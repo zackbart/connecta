@@ -889,6 +889,8 @@ interface SearchResult {
     otherResultTerms: string[];
     unmatchedTerms: string[];
     truncated?: true;
+    connectorScope?: string;
+    unknownConnector?: true;
     unavailableConnectorCount?: number;
     guidance?: string;
   };
@@ -1329,6 +1331,40 @@ describe("search_tools", () => {
           "No matching capability is configured in this deployment",
         ),
       },
+    });
+
+    const scopedAbsent = textOf(
+      await mt.searchTools({
+        connector: "projects",
+        query: "calendar availability",
+      }),
+    ) as SearchResult;
+    expect(scopedAbsent.queryAnalysis).toMatchObject({
+      connectorScope: "projects",
+      unmatchedTerms: ["calendar", "availability"],
+      guidance: expect.stringContaining(
+        'No matching capability was found on connector "projects"',
+      ),
+    });
+    expect(required(scopedAbsent.queryAnalysis).guidance).not.toContain(
+      "configured in this deployment",
+    );
+
+    const unknownConnector = textOf(
+      await mt.searchTools({
+        connector: "ghost",
+        query: "calendar availability",
+      }),
+    ) as SearchResult;
+    expect(unknownConnector.queryAnalysis).toMatchObject({
+      connectorScope: "ghost",
+      unknownConnector: true,
+      representedTerms: [],
+      otherResultTerms: [],
+      unmatchedTerms: ["calendar", "availability"],
+      guidance: expect.stringContaining(
+        'Connector "ghost" is not configured in this deployment',
+      ),
     });
   });
 
@@ -4050,6 +4086,23 @@ describe("probe timeout", () => {
       unmatchedTerms: ["impossible"],
       guidance: expect.stringContaining("catalogs that answered"),
     });
+
+    const scoped = textOf(
+      await mt.searchTools({
+        connector: "hang",
+        query: "impossible",
+      }),
+    ) as SearchResult;
+    expect(scoped.queryAnalysis).toMatchObject({
+      connectorScope: "hang",
+      unavailableConnectorCount: 1,
+      guidance: expect.stringContaining(
+        'Connector "hang" could not be searched',
+      ),
+    });
+    expect(required(scoped.queryAnalysis).guidance).not.toContain(
+      "No matching capability",
+    );
   });
 
   it("list_connectors reports a hung connector as errored within the timeout", async () => {
