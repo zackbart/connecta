@@ -10,7 +10,7 @@ import {
   mapSettledWithConcurrency,
   resolveDiscoveryConcurrency,
 } from "./concurrency.js";
-import { classifyCallError, messageLooksRetryable } from "./errors.js";
+import { classifyCallError, framingError } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
   ConnectorOperationOptions,
@@ -198,10 +198,6 @@ export type CatalogResolution =
       toolName?: string;
       cause?: unknown;
     };
-
-function framingError(code: string, message: string): CallErrorDetails {
-  return { code, message, retryable: messageLooksRetryable(message) };
-}
 
 function renderSchema(schema: JsonSchema, format: "compact" | "json"): unknown {
   return format === "json" ? schema : compactSchema(schema);

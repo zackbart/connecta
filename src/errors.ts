@@ -102,6 +102,34 @@ export interface CallErrorDetails {
   retry?: string;
 }
 
+/**
+ * Codes whose retryability is a fact about connecta's own framing, never a
+ * guess from text. The message embeds the address the caller asked for, so a
+ * connector named `svc-503` or `temporary-export` would otherwise flip a policy
+ * refusal into `retryable: true` through the heuristic below — and a caller that
+ * trusts the flag would cheerfully retry a refusal forever.
+ */
+const NEVER_RETRYABLE_FRAMING = new Set([
+  "unknown_address",
+  "unknown_tool",
+  "ambiguous_tool_alias",
+  "destructive_tool_requires_approval",
+]);
+
+/**
+ * Details for a failure connecta itself framed — an address it could not
+ * resolve, a tool it refuses to run — rather than one a connector threw.
+ */
+export function framingError(code: string, message: string): CallErrorDetails {
+  return {
+    code,
+    message,
+    retryable: NEVER_RETRYABLE_FRAMING.has(code)
+      ? false
+      : messageLooksRetryable(message),
+  };
+}
+
 const RETRYABLE_MESSAGE_RE =
   /timeout|timed out|econnreset|econnrefused|temporar|rate.?limit|429|502|503|504|refcountedcanceler|different request/i;
 const TIMEOUT_MESSAGE_RE = /timed out|timeout/i;

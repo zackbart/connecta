@@ -12,7 +12,7 @@ import {
 import {
   classifyCallError,
   ConnectorCallError,
-  messageLooksRetryable,
+  framingError,
   type AuthRecoveryMode,
   type CallErrorDetails,
 } from "./errors.js";
@@ -68,10 +68,6 @@ function retrySafe(definition: ToolDef): boolean {
     definition.annotations?.readOnlyHint === true ||
     definition.annotations?.idempotentHint === true
   );
-}
-
-function framingError(code: string, message: string): CallErrorDetails {
-  return { code, message, retryable: messageLooksRetryable(message) };
 }
 
 function callerCancelledDetails(): CallErrorDetails {

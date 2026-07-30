@@ -18,6 +18,7 @@ import type {
   ExecutorProvider,
 } from "../types.js";
 import {
+  hostCallLabel,
   MAX_QUICKJS_IPC_BYTES,
   MAX_QUICKJS_HOST_RPC_BYTES,
   type ChildToParentMessage,
@@ -593,6 +594,9 @@ class QuickJsChildPool implements AdmittingExecutor {
         serializedBytes(message.payloadJson) >
         MAX_QUICKJS_HOST_RPC_BYTES
       ) {
+        // Refused before parsing, so there is no address to name here: parsing
+        // an over-limit payload to improve its error message would spend the
+        // work the limit exists to refuse.
         throw new RangeError("Host call arguments exceeded the IPC limit.");
       }
       const payload = JSON.parse(message.payloadJson) as HostCallPayload;
@@ -610,14 +614,17 @@ class QuickJsChildPool implements AdmittingExecutor {
       try {
         payloadJson = stringifyBounded(
           { ok: true, value } satisfies HostResultPayload,
-          `Host result from ${payload.namespace}.${payload.functionName}`,
+          `Host result from ${hostCallLabel(payload)}`,
           MAX_QUICKJS_HOST_RPC_BYTES,
         );
       } catch (err) {
+        // The guest reads this text, so it names the address the program called
+        // rather than the internal dispatcher every shortcut namespace shares.
+        const label = hostCallLabel(payload);
         const detail =
           err instanceof RangeError
-            ? `Host result from ${payload.namespace}.${payload.functionName} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
-            : `Host result from ${payload.namespace}.${payload.functionName} could not be serialized: ${msg(err)}`;
+            ? `Host result from ${label} exceeds the ${MAX_QUICKJS_HOST_RPC_BYTES}-byte serialized bridge limit.`
+            : `Host result from ${label} could not be serialized: ${msg(err)}`;
         payloadJson = errorPayload(detail);
       }
     } catch (err) {
