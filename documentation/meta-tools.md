@@ -44,7 +44,12 @@ of it, and that is an operator concern: the operator pages and `/health` own it.
 
 Start an unknown-address lookup with two to four distinctive action/object
 terms, not the full request, and omit `limit` so the default eight-result page
-stays small. `includeSchemas: "compact"` adds each match's input and any
+stays small. Set `safety: "readOnly"` when the result is headed to `call_tool`
+or generated code; `safety: "approvalRequired"` finds the complementary set
+that must cross `call_destructive_tool`. Omitting `safety`, or setting it to
+`"all"`, preserves the complete configured catalog. This is only a discovery
+filter: it neither grants authority nor changes invocation admission.
+`includeSchemas: "compact"` adds each match's input and any
 declared output shape; matches also carry declared behavior annotations. When
 that shape is sufficient, call the returned address directly. Reserve schema
 expansion — `connecta.describe` in a program, `describe_tools` on the classic

@@ -553,6 +553,43 @@ describe("buildSandboxProviders", () => {
     ]);
   });
 
+  it("lets programs discover only calls the sandbox can execute", async () => {
+    const mixed: Connector = {
+      id: "mixed",
+      kind: "api",
+      staticTools: [
+        { name: "read", annotations: { readOnlyHint: true } },
+        { name: "write", annotations: { readOnlyHint: false } },
+        { name: "missing" },
+        {
+          name: "contradictory",
+          annotations: { readOnlyHint: true, destructiveHint: true },
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool(name) {
+        return name;
+      },
+    };
+    const providers = await buildSandboxProviders(
+      makeRegistry([mixed]),
+      BASE,
+      silentLogger,
+    );
+    const connecta = connectaProvider(providers);
+    const page = (await required(connecta.fns.search)({
+      safety: "readOnly",
+      limit: 10,
+    })) as { tools: Array<{ address: string }> };
+
+    expect(page.tools.map((tool) => tool.address)).toEqual(["mixed.read"]);
+    expect(
+      await required(connecta.fns.call)(required(page.tools[0]).address, {}),
+    ).toBe("read");
+  });
+
   it("resolves schema key metadata the way the compact schema renders", async () => {
     // A top-level $ref and an "extend this base" allOf are what OpenAPI- and
     // pydantic-derived connectors actually emit. Reading `properties` off the

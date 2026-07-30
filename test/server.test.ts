@@ -330,6 +330,11 @@ describe("server /mcp end-to-end", () => {
     expect(
       byName.search_tools.inputSchema.properties.includeSchemas.enum,
     ).toEqual(["compact", "json"]);
+    expect(byName.search_tools.inputSchema.properties.safety.enum).toEqual([
+      "readOnly",
+      "approvalRequired",
+      "all",
+    ]);
     expect(byName.search_tools.description).toContain(
       "2–4 distinctive action/object terms",
     );
@@ -341,6 +346,12 @@ describe("server /mcp end-to-end", () => {
     );
     expect(byName.search_tools.description).toContain(
       "matches also carry declared annotations",
+    );
+    expect(byName.search_tools.description).toContain(
+      'safety="readOnly" returns only calls available',
+    );
+    expect(byName.search_tools.description).toContain(
+      "filters results, not authority",
     );
     expect(byName.describe_tools.description).toContain(
       "Only when search_tools omitted schemas",
@@ -1538,6 +1549,10 @@ describe("execute_code registration (code mode)", () => {
       "do not return search results for a second execute_code call",
     );
     expect(executeTool.description).toContain('includeSchemas: "compact"');
+    expect(executeTool.description).toContain('safety: "readOnly"');
+    expect(executeTool.description).toContain(
+      "avoid advertising calls this sandbox cannot execute",
+    );
     expect(executeTool.description).toContain("requiredInputKeys");
     expect(executeTool.description).toContain(
       "write the property names they display",

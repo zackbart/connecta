@@ -218,6 +218,7 @@ documented functions as the whole surface.
 const page = await connecta.search({
   query: "pipeline run job logs",   // 2–4 distinctive action/object terms
   connector: "ci",                  // optional single-connector filter
+  safety: "readOnly",               // or "approvalRequired" / "all"
   limit: 8,                         // 1–100, default 8
   offset: 0,
   fullDescriptions: false,
@@ -226,11 +227,9 @@ const page = await connecta.search({
 });
 ```
 
-**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus
-`nextOffset` when more remains and `matchMode: "partial"` when no tool matched
-every term. Each entry in `tools` carries `address`, `name`, and — when
-requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the
-connector's `guide`. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes; capped shapes remain structurally valid with `unknown` types plus `/* truncated */`, and carry `inputSchemaTruncated` or `outputSchemaTruncated`. Use `connecta.describe` (or JSON search) for omitted exact constraints.
+**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes; capped shapes remain structurally valid with `unknown` types plus `/* truncated */`, and carry `inputSchemaTruncated` or `outputSchemaTruncated`. Use `connecta.describe` (or JSON search) for omitted exact constraints.
+
+**S1a.** `safety: "readOnly"` returns exactly the tools available through `connecta.call`, connector shortcuts, and `connecta.batch`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. This filters rows only: it grants no authority and changes no admission decision.
 
 **S2.** With schemas requested, a match whose input (or output) schema resolves
 to an object shape also carries `inputKeys`, `requiredInputKeys`, and

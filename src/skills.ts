@@ -60,7 +60,7 @@ Use exact addresses returned by discovery; never invent one. Search with 2–4 d
 
 One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the four \`connecta\` functions, and \`console.log\`.
 
-- What exists: \`connecta.search({})\` browses every catalog and \`connecta.search({ connector: "<id>" })\` browses one — that inventory is what a program discovers with, and each match carries its \`address\` and annotations.
+- What exists: \`connecta.search({})\` browses every catalog; add \`safety: "readOnly"\` for only calls the program can execute, and \`connector: "<id>"\` to browse one. This filters discovery results, not authority, and each match carries its \`address\` and annotations.
 - Exact schemas for known addresses: \`connecta.describe({ addresses: [...] })\`; \`format: "json"\` only for exact constraints.
 - Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\`, which is also how a program tells a policy refusal from a transient failure.
 - Search inside the run rather than searching first, and return only the reduction the answer needs — never raw payloads.
