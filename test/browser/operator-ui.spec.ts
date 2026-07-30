@@ -20,6 +20,13 @@ let server: Server;
 let origin: string;
 let credentialValue: string | undefined;
 let oauthConnected = true;
+let accessTokens: Array<{
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  createdAt: string;
+  revokedAt?: string;
+}> = [];
 let requests: RecordedRequest[] = [];
 
 function data(): UiData {
@@ -27,6 +34,7 @@ function data(): UiData {
     serverInfo: { name: "browser-test", version: "host" },
     connectaVersion: "package",
     credentialManagement: "available",
+    accessTokenManagement: "available",
     oauthManagement: true,
     activityEnabled: true,
     connectors: [
@@ -152,6 +160,48 @@ test.beforeAll(async () => {
       });
       return;
     }
+    if (url.pathname === "/ui/access-tokens") {
+      if (method === "GET") {
+        sendJson(response, 200, { accessTokens });
+        return;
+      }
+      if (method === "POST") {
+        const name = (body as { name?: string } | undefined)?.name ?? "";
+        const accessToken = {
+          id: "00000000-0000-4000-8000-000000000001",
+          name,
+          tokenPrefix: "cta_browser1",
+          createdAt: "2026-07-30T12:00:00.000Z",
+        };
+        accessTokens = [accessToken, ...accessTokens];
+        sendJson(response, 201, {
+          token: "cta_browser_test_secret_value",
+          accessToken,
+        });
+        return;
+      }
+    }
+    const tokenMatch =
+      /^\/ui\/access-tokens\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (tokenMatch) {
+      const id = tokenMatch[1]!;
+      const current = accessTokens.find((token) => token.id === id);
+      if (!current) {
+        sendJson(response, 404, { error: "unknown access token" });
+        return;
+      }
+      if (method === "PUT") {
+        current.name =
+          (body as { name?: string } | undefined)?.name ?? current.name;
+        sendJson(response, 200, { accessToken: current });
+        return;
+      }
+      if (method === "DELETE") {
+        current.revokedAt = "2026-07-30T12:05:00.000Z";
+        sendJson(response, 200, { accessToken: current });
+        return;
+      }
+    }
     if (url.pathname === "/ui/credentials/vaulted") {
       if (method === "PUT") {
         const value = (body as { value?: string } | undefined)?.value;
@@ -209,6 +259,7 @@ test.afterAll(async () => {
 test.beforeEach(() => {
   credentialValue = undefined;
   oauthConnected = true;
+  accessTokens = [];
   requests = [];
 });
 
@@ -310,6 +361,65 @@ test("disconnects and restarts downstream OAuth", async ({ page }) => {
     { method: "DELETE", authorization: `Bearer ${TOKEN}` },
     { method: "POST", authorization: `Bearer ${TOKEN}` },
   ]);
+});
+
+test("creates, reveals once, renames, and revokes an access token", async ({
+  page,
+}) => {
+  await openAuthenticated(page, "/tokens");
+
+  await expect(page.getByText("No access tokens yet")).toBeVisible();
+  await page.getByLabel("Client name").fill("Claude desktop");
+  await page.getByRole("button", { name: "Create token" }).click();
+
+  await expect(page.locator("#tokenReveal")).toBeVisible();
+  await expect(page.locator("#createdToken")).toHaveText(
+    "cta_browser_test_secret_value",
+  );
+  await expect(page.locator("#tokenCreateForm")).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Claude desktop" }))
+    .toBeVisible();
+
+  await page.getByRole("link", { name: "Connections" }).click();
+  await expect(page.locator("#tokenReveal")).toBeHidden();
+  await expect(page.locator("#createdToken")).toHaveText("");
+
+  await page.getByRole("link", { name: "Access tokens" }).click();
+  await expect(page.locator("#tokenCreateForm")).toBeVisible();
+
+  await page.getByRole("button", { name: "Rename" }).click();
+  await page.getByLabel("Token name").fill("ChatGPT production");
+  await page.getByRole("button", { name: "Save name" }).click();
+  await expect(page.getByRole("heading", { name: "ChatGPT production" }))
+    .toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Revoke" }).click();
+  await expect(page.getByText(/Revoked/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Revoke" })).toHaveCount(0);
+
+  expect(
+    requests
+      .filter((request) => request.path.startsWith("/ui/access-tokens"))
+      .map(({ method }) => method),
+  ).toEqual(["GET", "POST", "PUT", "DELETE"]);
+});
+
+test("clears a one-time access token before the document is cached", async ({
+  page,
+}) => {
+  await openAuthenticated(page, "/tokens");
+  await page.getByLabel("Client name").fill("Claude desktop");
+  await page.getByRole("button", { name: "Create token" }).click();
+  await expect(page.locator("#createdToken")).not.toHaveText("");
+
+  await page.evaluate(
+    "window.dispatchEvent(new PageTransitionEvent('pagehide'))",
+  );
+
+  await expect(page.locator("#tokenReveal")).toBeHidden();
+  await expect(page.locator("#createdToken")).toHaveText("");
+  await expect(page.locator("#tokenCreateForm")).toBeVisible();
 });
 
 test("navigates to the activity list and back without a shell reload", async ({

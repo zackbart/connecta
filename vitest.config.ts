@@ -5,6 +5,7 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 // project runs both; the Workers project runs only the portable list.
 // test/suite-partition.test.ts guards the partition, including itself.
 export const WORKERS_SUITES = [
+  "test/access-tokens.test.ts",
   "test/activity.test.ts",
   "test/api-connector.test.ts",
   "test/bearer.test.ts",

@@ -1,5 +1,11 @@
 # Storage and credentials
 
+The core `KVStorage` seam supports `get`, `set`, and `delete`; adapters may also
+implement `list(prefix)`. Named access tokens require listing because every
+token is an independent record rather than one shared, race-prone manifest.
+The built-in memory and file adapters implement it, as does the Cloudflare KV
+example.
+
 Connectors may declare an operator-managed `credential` slot. When
 `credentials.encryptionKey` is configured, Connecta encrypts values in the
 deployment storage and exposes read-only access only through that connector's

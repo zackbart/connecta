@@ -114,5 +114,10 @@ export function fileStorage(
       delete data[key];
       persist();
     },
+    async list(prefix) {
+      return Object.keys(data)
+        .filter((key) => Boolean(fresh(key)) && key.startsWith(prefix))
+        .sort();
+    },
   };
 }

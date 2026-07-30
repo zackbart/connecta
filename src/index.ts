@@ -3,6 +3,7 @@ import {
   credentialTestRule,
   describeCredentialTestMismatch,
 } from "./credentials.js";
+import { AccessTokenManager } from "./access-tokens.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedUiAuthUrls } from "./ui.js";
@@ -47,6 +48,12 @@ export interface ConnectaCredentialsConfig {
    * Keep this in the runtime's secret store, never in KV or source control.
    */
   encryptionKey?: string;
+}
+
+/** Operator-issued credentials for clients connecting to this deployment. */
+export interface ConnectaAccessTokensConfig {
+  /** Maximum simultaneously active access tokens. Defaults to 100. */
+  maxActive?: number;
 }
 
 /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
@@ -148,6 +155,11 @@ export interface ConnectaConfig {
   activity?: ConnectaActivityConfig;
   /** Operator credential vault settings. */
   credentials?: ConnectaCredentialsConfig;
+  /**
+   * Named, revocable Bearer tokens for MCP clients. Creation and mutation
+   * require an eligible Clerk operator; token secrets are returned once.
+   */
+  accessTokens?: ConnectaAccessTokensConfig;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
@@ -468,6 +480,19 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const credentialVault = encryptionKey
     ? new CredentialVault(storage, encryptionKey)
     : undefined;
+  const configuredAuth = normalizeAuth(config.auth);
+  const accessTokens = config.accessTokens
+    ? new AccessTokenManager(storage, config.accessTokens)
+    : undefined;
+  if (
+    accessTokens &&
+    !configuredAuth.some((provider) => provider.uiAuth?.kind === "clerk")
+  ) {
+    throw new Error(
+      "accessTokens requires a Clerk auth provider: only an eligible Clerk " +
+        "operator may create, rename, or revoke deployment access tokens",
+    );
+  }
   const registry = new Registry(config.connectors, {
     storage,
     logger,
@@ -488,7 +513,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? { maxBatchResultBytes: config.calls.maxBatchResultBytes }
       : {}),
   });
-  const inboundAuth = normalizeAuth(config.auth);
+  const inboundAuth = normalizeAuth(
+    accessTokens ? [accessTokens.auth, ...configuredAuth] : configuredAuth,
+  );
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
@@ -542,6 +569,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? { discoveryConcurrency: config.discovery.concurrency }
       : {}),
     ...(credentialVault !== undefined ? { credentialVault } : {}),
+    ...(accessTokens !== undefined ? { accessTokens } : {}),
     ...(config.deploymentInfo !== undefined
       ? { deploymentInfo: config.deploymentInfo }
       : {}),
@@ -580,6 +608,10 @@ export { validateToolInput } from "./validate.js";
 export type { ValidateToolInputOptions } from "./validate.js";
 export { bearerToken } from "./auth/bearer.js";
 export type { BearerTokenOptions } from "./auth/bearer.js";
+export type {
+  AccessTokenMetadata,
+  CreatedAccessToken,
+} from "./access-tokens.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";
 // Registry is reachable through `Connecta.registry`, so its type is public;

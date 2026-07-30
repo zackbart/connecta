@@ -12,6 +12,11 @@ export interface KVStorage {
     opts?: { ttlSeconds?: number },
   ): Promise<void>;
   delete(key: string): Promise<void>;
+  /**
+   * Sorted keys beginning with `prefix`. Optional for existing adapters;
+   * subsystems that need independent, enumerable records require it explicitly.
+   */
+  list?(prefix: string): Promise<string[]>;
 }
 
 export interface Logger {

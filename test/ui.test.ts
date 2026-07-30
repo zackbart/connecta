@@ -451,6 +451,7 @@ describe("operator page routing and capabilities", () => {
   it("maps only canonical shell paths and builds page-specific titles", () => {
     expect(operatorPageForPath("/")).toBe("connections");
     expect(operatorPageForPath("/credentials")).toBe("credentials");
+    expect(operatorPageForPath("/tokens")).toBe("tokens");
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();
@@ -497,6 +498,7 @@ describe("status UI", () => {
     for (const [path, page, label] of [
       ["/", "connections", "Connections"],
       ["/credentials", "credentials", "Credentials"],
+      ["/tokens", "tokens", "Access tokens"],
       ["/activity", "activity", "Activity"],
     ] as const) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
@@ -533,7 +535,7 @@ describe("status UI", () => {
 
   it("serves bodyless HEAD responses for every operator page", async () => {
     const c = makeConnecta();
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const get = await c.fetch(new Request(`${BASE}${path}`));
       const head = await c.fetch(
         new Request(`${BASE}${path}`, { method: "HEAD" }),
@@ -578,7 +580,7 @@ describe("status UI", () => {
       publicUrl: BASE,
       deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
     });
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const body = await (
         await c.fetch(new Request(`${BASE}${path}`))
       ).text();
@@ -706,7 +708,7 @@ describe("status UI", () => {
   it("operator shells set nonce-based CSP and nonce every script tag", async () => {
     const c = makeConnecta();
     const nonces = new Set<string>();
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       const csp = res.headers.get("content-security-policy") ?? "";
       expect(csp).toContain("'strict-dynamic'");
@@ -726,7 +728,7 @@ describe("status UI", () => {
         expect(tag).toContain(`nonce="${nonce}"`);
       }
     }
-    expect(nonces.size).toBe(3);
+    expect(nonces.size).toBe(4);
   });
 
   it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {

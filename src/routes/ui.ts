@@ -126,6 +126,14 @@ export async function routeUi(
       .some((connector) => Boolean(connector.credential)),
     hasCredentialVault: Boolean(opts.credentialVault),
   });
+  // As with connector credentials, a Bearer-authenticated observer learns
+  // only that Clerk is required—not whether this deployment has opted into
+  // token issuance. Configuration topology is operator data.
+  const accessTokenManagement = !eligibleClerkOperator
+    ? "requires_clerk" as const
+    : opts.accessTokens
+      ? "available" as const
+      : "not_configured" as const;
   const data = await buildUiData(
     opts.registry,
     baseUrl,
@@ -138,6 +146,7 @@ export async function routeUi(
     defer,
     eligibleClerkOperator,
     opts.discoveryConcurrency,
+    accessTokenManagement,
   );
   return privateJson(data);
 }

@@ -35,6 +35,8 @@ flowchart LR
   to be loaded up front.
 - **Safer access.** Credentials stay server-side — the program never sees them
   — and consequential actions remain explicit and individual.
+- **Named client access.** A Clerk operator can issue and revoke one-time,
+  hashed Bearer tokens for MCP clients that support header authentication.
 - **Your deployment.** Connecta runs on Node, Docker, or Cloudflare Workers,
   with configuration you can review and version.
 

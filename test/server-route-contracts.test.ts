@@ -136,6 +136,7 @@ describe("server route contracts", () => {
       { path: "/", status: 200 },
       { path: "/credentials", status: 200 },
       { path: "/activity", status: 200 },
+      { path: "/tokens", status: 200 },
       { path: "/ui", status: 308 },
       { path: "/ui/data", status: 401 },
       { path: "/ui/activity", status: 401 },
@@ -191,7 +192,7 @@ describe("server route contracts", () => {
       credentials: { encryptionKey: CREDENTIAL_KEY },
     });
 
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const response = await connecta.fetch(new Request(`${BASE}${path}`));
       const body = await response.text();
       expect(response.status).toBe(200);

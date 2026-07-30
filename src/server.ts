@@ -1,4 +1,5 @@
 import { isAdmittingExecutor } from "./executor-admission.js";
+import { routeAccessTokens } from "./routes/access-tokens.js";
 import { routeActivity } from "./routes/activity.js";
 import { routeCredentials } from "./routes/credentials.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
@@ -88,6 +89,9 @@ export function createFetchHandler(
 
     const route = async (): Promise<Response> => {
       // Private mutations own OPTIONS so they never inherit wildcard CORS.
+      const accessTokens = await routeAccessTokens(context);
+      if (accessTokens) return accessTokens;
+
       const credentials = await routeCredentials(context);
       if (credentials) return credentials;
 
@@ -140,6 +144,7 @@ export function createFetchHandler(
               "/health",
               "/",
               "/credentials",
+              "/tokens",
               "/activity",
               "/ui",
               "/ui/*",

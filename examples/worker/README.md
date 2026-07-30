@@ -24,7 +24,8 @@ migrations, and secrets. See [deployment architecture](../../documentation/opera
 the package: storage backends are deployment-owned, so the package ships only
 the generic `KVStorage` and `ActivityStore` contracts. Workers KV is eventually
 consistent across locations; use a strongly consistent `KVStorage` adapter when
-OAuth disconnect or rotation must become globally visible immediately.
+OAuth disconnect, credential rotation, or access-token issuance/revocation must
+become globally visible immediately.
 
 ## Deploy
 
@@ -50,8 +51,8 @@ DCR) so Claude/Cursor can self-register — full walkthrough in
 [setting up Clerk](../../documentation/auth.md).
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
-Connections. Credentials is at `/credentials`, Activity is at `/activity`, and
-legacy `/ui` redirects to `/`.
+Connections. Credentials is at `/credentials`, named MCP access tokens are at
+`/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`.
 
 ## Code mode
 
