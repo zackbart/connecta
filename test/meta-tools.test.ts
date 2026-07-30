@@ -884,6 +884,14 @@ interface SearchResult {
   hasMore: boolean;
   nextOffset?: number;
   matchMode?: "partial";
+  queryAnalysis?: {
+    representedTerms: string[];
+    otherResultTerms: string[];
+    unmatchedTerms: string[];
+    truncated?: true;
+    unavailableConnectorCount?: number;
+    guidance?: string;
+  };
 }
 
 describe("search_tools", () => {
@@ -1230,6 +1238,118 @@ describe("search_tools", () => {
       ),
     ).toEqual(new Set(["files.search_files", "files.share_file"]));
     expect(parsed.matchMode).toBe("partial");
+  });
+
+  it("explains supported, mixed, partial, and absent lexical intents", async () => {
+    const connector: Connector = {
+      id: "projects",
+      staticTools: [
+        {
+          name: "list_projects",
+          description: "List software projects",
+        },
+        {
+          name: "list_deployments",
+          description: "List software deployments",
+        },
+        {
+          name: "get_project",
+          description: "Get one software project by ID",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+
+    const supported = textOf(
+      await mt.searchTools({ query: "list projects deployments" }),
+    ) as SearchResult;
+    expect(supported.matchMode).toBe("partial");
+    expect(supported.queryAnalysis).toMatchObject({
+      representedTerms: ["list", "projects", "deployments"],
+      otherResultTerms: [],
+      unmatchedTerms: [],
+      guidance: expect.stringContaining("Split distinct intents"),
+    });
+
+    const supportedFirstPage = textOf(
+      await mt.searchTools({
+        query: "list projects deployments",
+        limit: 1,
+      }),
+    ) as SearchResult;
+    expect(
+      new Set([
+        ...required(supportedFirstPage.queryAnalysis).representedTerms,
+        ...required(supportedFirstPage.queryAnalysis).otherResultTerms,
+      ]),
+    ).toEqual(new Set(["list", "projects", "deployments"]));
+    expect(
+      required(supportedFirstPage.queryAnalysis).otherResultTerms,
+    ).toHaveLength(1);
+
+    const mixed = textOf(
+      await mt.searchTools({ query: "list projects invoices" }),
+    ) as SearchResult;
+    expect(mixed.matchMode).toBe("partial");
+    expect(mixed.queryAnalysis).toMatchObject({
+      representedTerms: ["list", "projects"],
+      otherResultTerms: [],
+      unmatchedTerms: ["invoices"],
+      guidance: expect.stringContaining("Split distinct intents"),
+    });
+
+    const weakPartial = textOf(
+      await mt.searchTools({
+        query: "get project owner billing metadata",
+      }),
+    ) as SearchResult;
+    expect(weakPartial.matchMode).toBe("partial");
+    expect(weakPartial.queryAnalysis).toMatchObject({
+      representedTerms: ["get", "project"],
+      unmatchedTerms: ["owner", "billing", "metadata"],
+    });
+
+    const absent = textOf(
+      await mt.searchTools({ query: "calendar availability" }),
+    ) as SearchResult;
+    expect(absent).toMatchObject({
+      connectors: [],
+      total: 0,
+      queryAnalysis: {
+        representedTerms: [],
+        otherResultTerms: [],
+        unmatchedTerms: ["calendar", "availability"],
+        guidance: expect.stringContaining(
+          "No matching capability is configured in this deployment",
+        ),
+      },
+    });
+  });
+
+  it("bounds query analysis independently of long search input", async () => {
+    const query = Array.from(
+      { length: 20 },
+      (_, index) => `${index}${"x".repeat(100)}`,
+    ).join(" ");
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([]), BASE).searchTools({ query }),
+    ) as SearchResult;
+    const analysis = required(parsed.queryAnalysis);
+
+    expect(analysis.unmatchedTerms).toHaveLength(8);
+    expect(
+      analysis.unmatchedTerms.every((term) => term.length <= 64),
+    ).toBe(true);
+    expect(analysis.truncated).toBe(true);
+    expect(new TextEncoder().encode(JSON.stringify(analysis)).length).toBeLessThan(
+      1_600,
+    );
   });
 
   it("does not let short function words force incidental partial matches", async () => {
@@ -3916,15 +4036,20 @@ describe("probe timeout", () => {
       probeTimeoutMs: 50,
     });
     const started = Date.now();
-    const parsed = textOf(await mt.searchTools({ query: "" })) as {
-      connectors: Array<{ id: string }>;
-    };
+    const parsed = textOf(
+      await mt.searchTools({ query: "add impossible" }),
+    ) as SearchResult;
     // Returns rather than hanging: the healthy connector still resolves, the
     // hung one is simply absent (its rejected catalog is dropped).
     expect(Date.now() - started).toBeLessThan(2_000);
     const ids = parsed.connectors.map((c) => c.id);
     expect(ids).toContain("calc");
     expect(ids).not.toContain("hang");
+    expect(parsed.queryAnalysis).toMatchObject({
+      unavailableConnectorCount: 1,
+      unmatchedTerms: ["impossible"],
+      guidance: expect.stringContaining("catalogs that answered"),
+    });
   });
 
   it("list_connectors reports a hung connector as errored within the timeout", async () => {

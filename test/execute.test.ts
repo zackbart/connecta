@@ -519,10 +519,18 @@ describe("buildSandboxProviders", () => {
       query: "add numbers operands result metadata",
     })) as {
       matchMode?: string;
+      queryAnalysis?: {
+        representedTerms: string[];
+        unmatchedTerms: string[];
+      };
       tools: Array<{ address: string }>;
     };
     expect(partial.matchMode).toBe("partial");
     expect(required(partial.tools[0]).address).toBe("calc.add");
+    expect(partial.queryAnalysis).toMatchObject({
+      representedTerms: ["add", "numbers"],
+      unmatchedTerms: ["operands", "result", "metadata"],
+    });
     // Key metadata accompanies schemas; a search that asked for neither pays
     // for neither.
     expect(required(partial.tools[0])).not.toHaveProperty("inputKeys");

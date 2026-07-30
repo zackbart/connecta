@@ -77,6 +77,18 @@ still distinguish `get`, `list`, `search`, and write operations. If no tool
 covers every non-conversational term, the same scorer falls back to any-term
 matching and marks the result `matchMode: "partial"`.
 
+Every partial or no-match lexical search also returns bounded `queryAnalysis`;
+an all-term result needs no recovery advice. `representedTerms` occur in the
+current page, `otherResultTerms` occur only in another result, and
+`unmatchedTerms` have no lexical match in the catalogs that answered. Partial
+results explain that no single tool covered every term and recommend splitting
+distinct intents. A true negative says that no matching capability is
+configured and recommends refining, connector-scoping, or browsing; when a
+connector catalog was unavailable, the response includes
+`unavailableConnectorCount` instead of making that stronger claim. Analysis
+covers at most eight distinct terms of at most 64 displayed characters each,
+marks longer input `truncated`, and never changes lexical ranking.
+
 ## Authorization recovery
 
 Every typed `auth_required` call failure uses the same envelope:
