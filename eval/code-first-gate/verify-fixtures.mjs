@@ -151,7 +151,29 @@ const EXPECTED_SURFACES = {
 
 for (const arm of ARM_NAMES) {
   await withArm(arm, async ({ client, call }) => {
-    const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    const listed = await client.listTools();
+    const names = listed.tools.map((tool) => tool.name).sort();
+    // A surface that hides a tool while still recommending it measures the
+    // harness's contradiction, not the surface. Every advertised description and
+    // the server instructions must be silent about anything suppressed.
+    const advertisedProse = [
+      ...listed.tools.map((tool) => String(tool.description ?? "")),
+      String(client.getInstructions?.() ?? ""),
+    ].join("\n");
+    for (const hidden of ARMS[arm].suppress) {
+      check(
+        !advertisedProse.includes(hidden),
+        `Arm "${arm}" suppresses "${hidden}" but still names it in an advertised description or in the server instructions.`,
+      );
+    }
+    if (ARMS[arm].suppress.length === 0) {
+      // The control arms must still carry the original prose, or the rewrite is
+      // leaking across arms and the comparison is not like-for-like.
+      check(
+        advertisedProse.includes("batch_call"),
+        `Arm "${arm}" suppresses nothing but its prose no longer mentions batch_call — the rewrite is leaking into a control arm.`,
+      );
+    }
     const expected = [...EXPECTED_SURFACES[arm]].sort();
     check(
       names.join(",") === expected.join(","),
@@ -576,7 +598,10 @@ await withArm("code-first", async ({ call, ready }) => {
         const failed = outcomes.find((outcome) => !outcome.ok);
         return {
           failedAddress: failed?.address,
-          errorCode: failed?.error?.includes("credential") ? "auth_required" : failed?.error,
+          // The typed route, not a substring of the message. This is the path
+          // mixed-read-outcomes depends on, so an errorDetails regression must
+          // fail this check rather than fall back to sniffing prose.
+          errorCode: failed?.errorDetails?.code,
           succeededAddresses: outcomes.filter((outcome) => outcome.ok).map((outcome) => outcome.address),
         };
       }`,
@@ -587,6 +612,10 @@ await withArm("code-first", async ({ call, ready }) => {
       mixed.result.succeededAddresses.length === 2 &&
       mixed.result.failedAddress === "billing.get_invoice",
     `connecta.batch inside a program did not reproduce the mixed outcome: ${JSON.stringify(mixed).slice(0, 400)}`,
+  );
+  check(
+    mixed?.result?.errorCode === "auth_required",
+    `connecta.batch did not expose a typed errorDetails.code for the failed call (got ${JSON.stringify(mixed?.result?.errorCode)}) — mixed-read-outcomes depends on that route.`,
   );
 
   // The projection the control arm has to page for.

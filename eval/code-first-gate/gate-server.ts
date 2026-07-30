@@ -648,8 +648,97 @@ const connecta = createConnecta({
 interface JsonRpcEnvelope {
   method?: unknown;
   params?: { name?: unknown };
-  result?: { tools?: Array<{ name?: unknown }> };
+  result?: {
+    tools?: Array<{ name?: unknown; description?: unknown }>;
+    instructions?: unknown;
+  };
   error?: { message?: unknown; data?: unknown };
+}
+
+/**
+ * Hiding a tool while still recommending it is not a smaller surface, it is a
+ * trap. connecta's own prose tells a model to reach for `batch_call` for
+ * independent calls and to read schemas from `describe_tools`, and the server
+ * instructions repeat it — so an arm that suppresses those tools without editing
+ * the prose measures the harness's contradiction rather than the surface. The
+ * post-consolidation surface would ship rewritten copy; this is that copy,
+ * applied deterministically.
+ *
+ * Each edit names the tool it exists for and must match at least once, and after
+ * every edit no advertised text may still mention a suppressed tool. A wording
+ * change upstream therefore fails the server loudly instead of quietly
+ * reintroducing the confound.
+ */
+const PROSE_EDITS: Array<{ tool: string; find: RegExp; replace: string }> = [
+  {
+    tool: "batch_call",
+    find: /For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available\./,
+    replace:
+      "For multi-step work, independent or dependent, or for data reduction use execute_code.",
+  },
+  {
+    tool: "batch_call",
+    find: /For 2–10 independent calls use batch_call\. /,
+    replace: "",
+  },
+  {
+    tool: "batch_call",
+    find: /stashed by call_tool\/batch_call\./,
+    replace: "stashed by call_tool.",
+  },
+  {
+    tool: "batch_call",
+    find: /, batch_call for 2–10 independent read-only calls,/,
+    replace: ",",
+  },
+  {
+    tool: "describe_tools",
+    find: /matching the schema from describe_tools\./,
+    replace: "matching the schema search_tools returned.",
+  },
+  {
+    tool: "describe_tools",
+    find: /; describe_tools only if that shape is ambiguous or exact JSON constraints are needed/,
+    replace: "",
+  },
+];
+
+const appliedEdits = new Set<number>();
+
+/** Apply every edit whose suppressed tool this arm hides, then assert silence. */
+function rewriteProse(text: string, where: string): string {
+  let rewritten = text;
+  for (const [index, edit] of PROSE_EDITS.entries()) {
+    if (!suppressed.has(edit.tool)) continue;
+    if (edit.find.test(rewritten)) {
+      appliedEdits.add(index);
+      rewritten = rewritten.replace(edit.find, edit.replace);
+    }
+  }
+  for (const name of suppressed) {
+    if (rewritten.includes(name)) {
+      throw new Error(
+        `${where} still recommends suppressed tool "${name}" after prose rewriting. Its wording changed in src/ — update PROSE_EDITS in gate-server.ts rather than measuring a surface that hides a tool while advising it.\n\n${rewritten}`,
+      );
+    }
+  }
+  return rewritten;
+}
+
+/**
+ * Every edit for a suppressed tool must have fired at least once by the time the
+ * catalog has been served, or an upstream rewording silently removed the clause
+ * this depends on and the next one may not be caught.
+ */
+function assertEditsFired(): void {
+  const stale = PROSE_EDITS.map((edit, index) => ({ edit, index }))
+    .filter(({ edit, index }) => suppressed.has(edit.tool) && !appliedEdits.has(index))
+    .map(({ edit }) => String(edit.find));
+  if (stale.length > 0) {
+    throw new Error(
+      `Prose edits never matched: ${stale.join("; ")}. The wording they target changed in src/; update PROSE_EDITS in gate-server.ts.`,
+    );
+  }
 }
 
 /**
@@ -769,17 +858,33 @@ const gate = {
 
     const response = await connecta.fetch(request, env, ctx);
     return await rewriteBody(response, (message) => {
+      const instructions = message.result?.instructions;
+      if (typeof instructions === "string") {
+        return {
+          ...message,
+          result: {
+            ...message.result,
+            instructions: rewriteProse(instructions, "Server instructions"),
+          },
+        };
+      }
       const tools = message.result?.tools;
       if (!Array.isArray(tools)) return message;
-      return {
-        ...message,
-        result: {
-          ...message.result,
-          tools: tools.filter(
-            (tool) => typeof tool.name !== "string" || !suppressed.has(tool.name),
-          ),
-        },
-      };
+      const kept = tools
+        .filter((tool) => typeof tool.name !== "string" || !suppressed.has(tool.name))
+        .map((tool) =>
+          typeof tool.description === "string"
+            ? {
+                ...tool,
+                description: rewriteProse(
+                  tool.description,
+                  `Description of "${String(tool.name)}"`,
+                ),
+              }
+            : tool,
+        );
+      assertEditsFired();
+      return { ...message, result: { ...message.result, tools: kept } };
     });
   },
 };

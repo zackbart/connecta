@@ -335,6 +335,18 @@ const CODEX_DISABLED_FEATURES = [
 ];
 
 /**
+ * Codex item types that mean the model used a capability that is not connecta.
+ * Reasoning, plan updates, and message items are not capabilities and stay out.
+ */
+const HOST_TOOL_ITEM_TYPES = new Set([
+  "command_execution",
+  "local_shell_call",
+  "web_search",
+  "file_change",
+  "patch_apply",
+]);
+
+/**
  * `prepend` is the known-working mechanism and `base_instructions` is the one
  * that actually replaces Codex's own instructions. Default to replacement, with
  * an escape hatch, and record which one a sample used — a `prepend` sample is
@@ -441,10 +453,17 @@ const codexDriver = {
             events.push({ kind: "assistant_text", atMs: at(), text: finalText });
             return;
           }
+          // Codex is the driver that actually has a shell, so its host-tool
+          // escapes must bind the same check the Claude driver's do. A read-only
+          // sandbox still executes commands, and a command is a route to the MCP
+          // endpoint and to the harness's own files.
+          const type = item.type ?? "unknown";
           events.push({
             kind: "other_action",
             atMs: at(),
-            type: item.type ?? "unknown",
+            type: HOST_TOOL_ITEM_TYPES.has(type)
+              ? `non_mcp_tool:${type}`
+              : type,
           });
           return;
         }
