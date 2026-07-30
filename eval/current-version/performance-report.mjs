@@ -1,6 +1,8 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
+import { normalizeAgentBenchmark } from "./performance-report-agent.mjs";
+
 const here = new URL(".", import.meta.url);
 const args = process.argv.slice(2);
 
@@ -31,6 +33,7 @@ function mb(value) {
 }
 
 function pct(value) {
+  if (value === null || value === undefined) return "n/a";
   return `${(value * 100).toFixed(1)}%`;
 }
 
@@ -50,11 +53,12 @@ const outputPath = resolve(
   new URL(".", here).pathname,
   option("--output", "results/current-performance-report.md"),
 );
-const [audit, logic, agent] = await Promise.all([
+const [audit, logic, rawAgent] = await Promise.all([
   json(auditPath),
   json(logicPath),
   json(agentPath),
 ]);
+const agent = normalizeAgentBenchmark(rawAgent);
 
 const logicRows = logic.profiles
   .map(
@@ -70,20 +74,21 @@ const loadRows = logic.profiles
     ),
   )
   .join("\n");
+const agentRuns = agent.runs ?? agent.cases;
 const agentRows = agent.cases
   .map(
     (fixture) =>
-      `| ${fixture.id} | ${fixture.correct ? "yes" : "NO"} | ${fixture.routeEfficient ? "yes" : "NO"} | ${fixture.contextEfficient ? "yes" : "NO"} | ${fixture.calledTools.map((tool) => `\`${tool}\``).join(" → ")} | ${integer(fixture.mcpResultTokens)} / ${integer(fixture.mcpResultTokenBudget)} | ${(fixture.latencyMs / 1_000).toFixed(1)} s |`,
+      `| ${fixture.id} | ${integer(fixture.repetitions)} | ${pct(fixture.rates.taskCorrect)} | ${pct(fixture.rates.safetyPassed)} | ${pct(fixture.rates.surfaceValid)} | ${pct(fixture.rates.costEfficient)} | ${fixture.observedRoutes.map(({ route, count }) => `\`${route}\` ×${count}`).join("; ")} | ${integer(fixture.connectaRoundTrips.p50)} (${integer(fixture.connectaRoundTrips.min)}–${integer(fixture.connectaRoundTrips.max)}) | ${integer(fixture.mcpResultTokens.p50)} / ${integer(fixture.costEnvelope.maxMcpResultTokens)} | ${(fixture.latencyMs.p50 / 1_000).toFixed(1)} s (${(fixture.latencyMs.min / 1_000).toFixed(1)}–${(fixture.latencyMs.max / 1_000).toFixed(1)}) |`,
   )
   .join("\n");
-const inefficient = agent.cases.filter((fixture) => !fixture.routeEfficient);
-const incorrect = agent.cases.filter((fixture) => !fixture.correct);
-const contextHeavy = agent.cases.filter(
+const inefficient = agentRuns.filter((fixture) => !fixture.costEfficient);
+const incorrect = agentRuns.filter((fixture) => !fixture.taskCorrect);
+const contextHeavy = agentRuns.filter(
   (fixture) => !fixture.contextEfficient,
 );
-const guided = agent.cases.filter((fixture) => fixture.guidanceFetched);
-const locallyExploratory = agent.cases.filter((fixture) =>
-  fixture.nonMcpActions.some(
+const guided = agentRuns.filter((fixture) => fixture.guidanceFetched);
+const locallyExploratory = agentRuns.filter((fixture) =>
+  (fixture.nonMcpActions ?? []).some(
     (action) =>
       (typeof action === "string" ? action : action.type) ===
       "command_execution",
@@ -102,32 +107,38 @@ const soakHeap =
 const findings = [
   `The fixed agent-visible surface is ${integer(audit.totals.definitionTokens)} tokens for ${audit.connection.toolCount} meta-tools.`,
   `The held-out discovery suite achieves ${pct(audit.discovery.metrics.top1Accuracy)} top-1 accuracy and ${pct(audit.discovery.metrics.positiveRecall)} recall, with a ${pct(audit.discovery.metrics.falsePositiveRate)} false-positive rate on negative queries.`,
-  `Fresh-agent task correctness is ${agent.summary.correct}/${agent.summary.cases}; efficient routing is ${agent.summary.routeEfficient}/${agent.summary.cases}.`,
-  `Fresh-agent context efficiency is ${agent.summary.contextEfficient}/${agent.summary.cases} against task-specific budgets derived from the scripted minimal routes.`,
+  `Fresh-agent task correctness is ${agent.summary.correct}/${agent.summary.runs} runs; cost efficiency is ${agent.summary.costEfficient}/${agent.summary.runs}.`,
+  agent.summary.safetyPassed === null
+    ? `This legacy schema-v1 artifact did not record execution safety or advertised-surface validity; context efficiency is ${agent.summary.contextEfficient}/${agent.summary.runs}.`
+    : `Fresh-agent safety is ${agent.summary.safetyPassed}/${agent.summary.runs}, advertised-surface validity is ${agent.summary.surfaceValid}/${agent.summary.runs}, and context efficiency is ${agent.summary.contextEfficient}/${agent.summary.runs}.`,
   guided.length > 0
-    ? `Connecta's on-demand usage guide was self-fetched in ${guided.length}/${agent.summary.cases} cases (${guided.map((fixture) => `\`${fixture.id}\``).join(", ")}); no user prompt explained the routing workflow.`
+    ? `Connecta's on-demand usage guide was self-fetched in ${guided.length}/${agent.summary.runs} runs (${guided.map((fixture) => `\`${fixture.id}\` #${fixture.repetition}`).join(", ")}); no user prompt explained the routing workflow.`
     : "No case needed the on-demand usage guide; the always-loaded instructions were sufficient.",
   locallyExploratory.length > 0
-    ? `The coding-agent host explored the local filesystem before or alongside Connecta in ${locallyExploratory.length}/${agent.summary.cases} cases (${locallyExploratory.map((fixture) => `\`${fixture.id}\``).join(", ")}). This is host routing overhead, not Connecta call latency.`
+    ? `The coding-agent host explored the local filesystem before or alongside Connecta in ${locallyExploratory.length}/${agent.summary.runs} runs (${locallyExploratory.map((fixture) => `\`${fixture.id}\` #${fixture.repetition}`).join(", ")}). This is host routing overhead, not Connecta call latency.`
     : "The agent went directly to Connecta in every case without unrelated local-tool exploration.",
   `QuickJS costs ${ms(logic.executor.coldNoopMs)} ms cold and ${ms(logic.executor.warmHostCall.p50Ms)} ms p50 for warm executions that make a host call.`,
   widestSearch
     ? `The largest held-out discovery response is \`${widestSearch.id}\` at ${integer(widestSearch.responseTokens)} tokens.`
     : null,
   inefficient.length > 0
-    ? `Routing misses occurred in: ${inefficient
+    ? `Cost envelopes were exceeded in: ${inefficient
         .map(
           (fixture) =>
-            `\`${fixture.id}\` (${fixture.forbiddenTools.join(", ") || `missing ${fixture.missingTools.join(", ")}`})`,
+            fixture.costEnvelope.maxRoundTrips === null
+              ? `\`${fixture.id}\` (legacy route/context score)`
+              : `\`${fixture.id}\` #${fixture.repetition} (${fixture.connectaRoundTrips}/${fixture.costEnvelope.maxRoundTrips} round trips, ${integer(fixture.mcpResultTokens)}/${integer(fixture.costEnvelope.maxMcpResultTokens)} result tokens)`,
         )
         .join("; ")}.`
-    : "Every fresh-agent case chose the intended minimal route.",
+    : "Every fresh-agent run stayed inside its round-trip and result-token envelope.",
   incorrect.length > 0
-    ? `Incorrect final answers occurred in: ${incorrect.map((fixture) => `\`${fixture.id}\``).join(", ")}.`
-    : "Every fresh-agent case produced the correct task result.",
+    ? `${agent.reportSchema === "v1-legacy" ? "Incorrect final answers" : "Incorrect task outcomes"} occurred in: ${incorrect.map((fixture) => `\`${fixture.id}\` #${fixture.repetition}`).join(", ")}.`
+    : agent.reportSchema === "v1-legacy"
+      ? "Every legacy fresh-agent run produced the expected final answer; execution correctness was not recorded."
+      : "Every fresh-agent run produced the correct task result and execution.",
   contextHeavy.length > 0
-    ? `Context budgets were exceeded in: ${contextHeavy.map((fixture) => `\`${fixture.id}\` (${integer(fixture.mcpResultTokens)} / ${integer(fixture.mcpResultTokenBudget)} tokens)`).join(", ")}.`
-    : "Every fresh-agent case stayed within its Connecta result-token budget.",
+    ? `Context budgets were exceeded in: ${contextHeavy.map((fixture) => `\`${fixture.id}\` #${fixture.repetition} (${integer(fixture.mcpResultTokens)} / ${integer(fixture.costEnvelope.maxMcpResultTokens)} tokens)`).join(", ")}.`
+    : "Every fresh-agent run stayed within its Connecta result-token budget.",
   soakRss.length > 0
     ? `After the initial load allocation, the 10,000-tool soak held at ${soakRss.join(" / ")} MB RSS and ${soakHeap.join(" / ")} MB live heap across three rounds; this run shows a plateau, not continuing live-heap growth.`
     : null,
@@ -171,10 +182,10 @@ ${loadRows}
 
 ## Agent experience
 
-Each case starts a fresh Connecta server and a fresh non-interactive Codex session. The user prompt states the task, not the Connecta routing procedure. “Route” means the agent chose the intended smallest execution path without making redundant schema calls or substituting another execution tool. Fetching Connecta's usage guide once is counted separately as successful self-guidance. “Context” compares serialized MCP results with a task budget derived from the scripted minimal path.
+Each run starts a fresh Connecta server and a fresh non-interactive Codex session. The user prompt states the task, not the Connecta routing procedure. The current schema-v2 scorer accepts any route on the advertised seven-tool surface that produces the expected execution and answer safely, without foreign tools, inside task-specific round-trip and result-token envelopes. Exact routes and duplicate, failed, foreign, unavailable-surface, and unexpected calls remain visible as diagnostics. Classic-only top-level tools are a separate comparison surface, never an expected route here. Legacy schema-v1 artifacts are labeled as such because they did not record execution safety or advertised-surface validity.
 
-| Task | Correct | Route | Context | Tool route | MCP result tokens / budget | Wall time |
-| --- | --- | --- | --- | --- | ---: | ---: |
+| Task | Runs | Correct | Safe | Surface | Cost | Observed outer routes | RT p50 (range) | MCP tokens p50 / budget | Wall p50 (range) |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
 ${agentRows}
 
 Codex reported ${integer(agent.summary.totalInputTokens)} total input tokens and ${integer(agent.summary.totalOutputTokens)} output tokens across the fresh sessions. Those are whole-agent figures—including the host system prompt, built-in tool definitions, reasoning context, and Connecta—not Connecta-only costs. The measured Connecta MCP results contributed ${integer(agent.summary.totalMcpResultTokens)} serialized tokens.
@@ -182,9 +193,9 @@ Codex reported ${integer(agent.summary.totalInputTokens)} total input tokens and
 ## Priorities
 
 1. **Use the harness to evaluate discovery changes without trading away recall.** The unchanged baseline has a ${pct(audit.discovery.metrics.falsePositiveRate)} held-out false-positive rate, and the natural reduction query exceeded its MCP-result budget. Select candidates on independently authored corpora and reserve the release holdout for final regression checks.
-2. **Keep the routing contract in server instructions and measure it across repeated fresh sessions.** This sample chose the intended execution path in ${agent.summary.routeEfficient}/${agent.summary.cases} tasks without user coaching. The on-demand skill should remain a fallback, not required ceremony.
+2. **Keep the routing contract in server instructions and measure it across repeated fresh sessions.** This sample stayed within its cost envelopes in ${agent.summary.costEfficient}/${agent.summary.runs} runs without prescribing one exact tool sequence. The on-demand skill should remain a fallback, not required ceremony.
 3. **Treat code mode as a latency/context trade.** The scripted audit reduced 120 records to a tiny answer in one MCP execution, but code mode pays a roughly ${ms(logic.executor.coldNoopMs)} ms cold start and had ${ms(logic.executor.warmHostCall.p95Ms)} ms p95 in this small sample. Keep it optional and compare it against equivalent direct-call response tokens on real workloads.
-4. **Benchmark more hosts before changing the public tool surface.** The Codex lane showed unrelated filesystem exploration in ${locallyExploratory.length}/${agent.summary.cases} cases and an approval stop at \`authorize_connector\`. Add an interactive host and at least one non-coding agent to distinguish Connecta affordances from host policy and coding-agent bias.
+4. **Benchmark more hosts before changing the public tool surface.** The Codex lane showed unrelated filesystem exploration in ${locallyExploratory.length}/${agent.summary.runs} runs and an approval stop at \`authorize_connector\`. Add an interactive host and at least one non-coding agent to distinguish Connecta affordances from host policy and coding-agent bias.
 5. **Set performance budgets in CI, not machine-specific absolute gates.** Track percentage regression from a pinned runner for 10,000-tool cold/warm search, 16-in-flight p95, definition tokens, discovery quality, and fresh-agent route success.
 
 ## Release audit
@@ -200,7 +211,7 @@ Codex reported ${integer(agent.summary.totalInputTokens)} total input tokens and
 
 - Logic latency is the Connecta/framework floor on one local machine. Real connector and network latency will dominate most production calls.
 - Synthetic catalogs isolate Connecta scaling but do not reproduce every downstream MCP schema, pagination behavior, or provider rate limit.
-- The agent lane measures one run per task on one Codex CLI/model configuration. Repeated runs showed meaningful routing variance, so it is a behavioral canary, not a stable pass/fail gate or a claim that every host and model will route identically.
+- The agent lane measured ${agent.summary.runs} run${agent.summary.runs === 1 ? "" : "s"} across ${agent.summary.cases} task${agent.summary.cases === 1 ? "" : "s"} on one Codex CLI/model configuration. Routing varies across repetitions, so this is a behavioral canary, not a stable pass/fail gate or a claim that every host and model will route identically.
 - Whole-agent token counts are useful for comparing repeated runs of the same harness; only the MCP definitions, requests, and results are attributable to Connecta.
 `;
 

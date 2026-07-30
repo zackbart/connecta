@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 
 import { getEncoding } from "js-tiktoken";
 
-import { round } from "./audit-lib.mjs";
+import { createAuditClient, round } from "./audit-lib.mjs";
+import {
+  distribution,
+  scoreAgentRun,
+  validateFixtures,
+} from "./agent-benchmark-scoring.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = resolve(here, "../..");
@@ -21,11 +26,21 @@ function option(name, fallback) {
   return value;
 }
 
+function positiveIntegerOption(name, fallback) {
+  const value = Number(option(name, String(fallback)));
+  if (!Number.isInteger(value) || value < 1) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
 const outputPath = resolve(
   here,
   option("--output", "results/current-agent-performance.json"),
 );
 const selectedCase = option("--case", "all");
+const repetitions = positiveIntegerOption("--repetitions", 3);
+const concurrency = positiveIntegerOption("--concurrency", 2);
 const tokenizerName =
   process.env.CONNECTA_EVAL_TOKENIZER ?? "o200k_base";
 const tokenizer = getEncoding(tokenizerName);
@@ -61,14 +76,14 @@ const cases = [
     id: "single-read",
     prompt:
       "Return the one deterministic record with id 7. Respond with only the record JSON.",
-    expectedTools: ["search_tools", "call_tool"],
-    mcpResultTokenBudget: 500,
-    forbiddenTools: [
-      "describe_tools",
-      "batch_call",
-      "execute_code",
-      "call_destructive_tool",
+    expectedCalls: [
+      { address: "controlled.read_record", args: { id: 7 } },
     ],
+    validOuterRoutes: [
+      ["search_tools", "call_tool"],
+      ["execute_code"],
+    ],
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 500 },
     correct(finalText) {
       const value = parseJson(finalText);
       return (
@@ -82,14 +97,15 @@ const cases = [
     id: "independent-batch",
     prompt:
       "Return the point-lookup results for deterministic record ids 11 and 12. Respond with only a JSON array ordered by id.",
-    expectedTools: ["search_tools", "batch_call"],
-    mcpResultTokenBudget: 700,
-    forbiddenTools: [
-      "describe_tools",
-      "call_tool",
-      "execute_code",
-      "call_destructive_tool",
+    expectedCalls: [
+      { address: "controlled.read_record", args: { id: 11 } },
+      { address: "controlled.read_record", args: { id: 12 } },
     ],
+    validOuterRoutes: [
+      ["execute_code"],
+      ["search_tools", "call_tool", "call_tool"],
+    ],
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 700 },
     correct(finalText) {
       const value = parseJson(finalText);
       return (
@@ -108,14 +124,14 @@ const cases = [
     id: "dependent-reduction",
     prompt:
       "For the deterministic collection of 120 records, return each group's record count and score sum. Respond with only a JSON object keyed by group.",
-    expectedTools: ["search_tools", "execute_code"],
-    mcpResultTokenBudget: 700,
-    forbiddenTools: [
-      "describe_tools",
-      "call_tool",
-      "batch_call",
-      "call_destructive_tool",
+    expectedCalls: [
+      { address: "controlled.records", args: { count: 120 } },
     ],
+    validOuterRoutes: [
+      ["execute_code"],
+      ["search_tools", "execute_code"],
+    ],
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 700 },
     correct(finalText) {
       const value = parseJson(finalText);
       const expected = {};
@@ -140,14 +156,15 @@ const cases = [
     id: "auth-handoff",
     prompt:
       "Tell me the identity from the oauth-recoverable connector. If an operator must act first, return the exact recovery handoff instead of claiming success.",
-    expectedTools: ["search_tools", "call_tool", "authorize_connector"],
-    mcpResultTokenBudget: 900,
-    forbiddenTools: [
-      "describe_tools",
-      "batch_call",
-      "execute_code",
-      "call_destructive_tool",
+    expectedCalls: [
+      { address: "oauth-recoverable.whoami", args: {} },
     ],
+    expectedFailureAddresses: ["oauth-recoverable.whoami"],
+    validOuterRoutes: [
+      ["search_tools", "call_tool", "authorize_connector"],
+      ["execute_code", "authorize_connector"],
+    ],
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 900 },
     correct(finalText) {
       return (
         (finalText.includes("/fixture/oauth-recoverable/consent") &&
@@ -172,6 +189,7 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
         CONNECTA_EVAL_EXECUTOR: "enabled",
+        CONNECTA_EVAL_TRACE: "enabled",
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -229,7 +247,39 @@ async function stopServer(child) {
   });
 }
 
-async function runAgent(fixture, url) {
+async function readServerTraces(mcpUrl) {
+  const traceUrl = new URL(mcpUrl);
+  traceUrl.pathname = "/__eval/trace";
+  traceUrl.search = "";
+  const response = await fetch(traceUrl, {
+    headers: { Authorization: `Bearer ${bearer}` },
+  });
+  if (!response.ok) {
+    throw new Error(
+      `Eval trace read failed with HTTP ${response.status}.`,
+    );
+  }
+  const body = await response.json();
+  if (!Array.isArray(body?.traces)) {
+    throw new Error("Eval trace response did not contain a traces array.");
+  }
+  return body.traces;
+}
+
+async function advertisedToolNames(url) {
+  const context = await createAuditClient({
+    url,
+    token: bearer,
+    tokenizerName,
+  });
+  try {
+    return context.listed.tools.map((tool) => tool.name);
+  } finally {
+    await context.close();
+  }
+}
+
+async function runAgent(fixture, url, repetition, advertisedTools) {
   const commandArgs = [
     "exec",
     "--json",
@@ -342,24 +392,18 @@ async function runAgent(fixture, url) {
       `Codex exited with ${exitCode} for "${fixture.id}".\n${stderr}`,
     );
   }
+  const serverTraces = (await readServerTraces(url)).sort(
+    (left, right) => left.sequence - right.sequence,
+  );
+  const metaToolTraces = serverTraces.filter(
+    (trace) => trace.kind === "meta_tool",
+  );
   const connectaToolCalls = toolCalls.filter(
     (call) => call.server === "connecta",
   );
   const foreignToolCalls = toolCalls.filter(
     (call) => call.server !== "connecta",
   );
-  const called = connectaToolCalls.map((call) => call.tool);
-  const missingTools = fixture.expectedTools.filter(
-    (tool) => !called.includes(tool),
-  );
-  const forbiddenTools = fixture.forbiddenTools.filter((tool) =>
-    called.includes(tool),
-  );
-  const correct = fixture.correct(finalText);
-  const routeEfficient =
-    missingTools.length === 0 &&
-    forbiddenTools.length === 0 &&
-    foreignToolCalls.length === 0;
   const mcpResultTokens = connectaToolCalls.reduce(
     (sum, call) => sum + call.resultTokens,
     0,
@@ -368,24 +412,39 @@ async function runAgent(fixture, url) {
     (sum, call) => sum + call.resultTokens,
     0,
   );
-  const contextEfficient = mcpResultTokens <= fixture.mcpResultTokenBudget;
+  const scored = scoreAgentRun({
+    fixture,
+    advertisedTools,
+    metaToolTraces,
+    foreignToolCalls,
+    nonMcpActions,
+    finalCorrect: fixture.correct(finalText),
+    mcpResultTokens,
+  });
   return {
     id: fixture.id,
+    repetition,
     prompt: fixture.prompt,
     latencyMs: round(performance.now() - started, 1),
-    correct,
-    routeEfficient,
-    contextEfficient,
-    passed: correct && routeEfficient && contextEfficient,
-    expectedTools: fixture.expectedTools,
-    mcpResultTokenBudget: fixture.mcpResultTokenBudget,
-    calledTools: called,
-    missingTools,
-    forbiddenTools,
-    guidanceFetched: called.includes("skills"),
+    ...scored,
+    correct: scored.taskCorrect,
+    routeEfficient:
+      scored.surfaceValid &&
+      scored.foreignClean &&
+      scored.roundTripEfficient,
+    expectedCalls: fixture.expectedCalls,
+    validOuterRoutes: fixture.validOuterRoutes,
+    costEnvelope: fixture.costEnvelope,
+    mcpResultTokenBudget: fixture.costEnvelope.maxMcpResultTokens,
+    calledTools: connectaToolCalls.map((call) => call.tool),
+    guidanceFetched: metaToolTraces.some(
+      (trace) => trace.operation === "skills",
+    ),
     foreignToolCalls: foreignToolCalls.map(
       (call) => `${call.server ?? "unknown"}.${call.tool}`,
     ),
+    advertisedTools,
+    serverTraces,
     toolCalls,
     nonMcpActions,
     finalText,
@@ -407,20 +466,141 @@ if (selected.length === 0) {
   );
 }
 
-const caseResults = [];
-for (const fixture of selected) {
-  process.stderr.write(`Running fresh-agent case ${fixture.id}…\n`);
-  const server = startServer();
-  try {
-    const ready = await server.ready;
-    caseResults.push(await runAgent(fixture, ready.url));
-  } finally {
-    await stopServer(server.child);
+const jobs = Array.from({ length: repetitions }, (_, index) =>
+  selected.map((fixture) => ({
+    fixture,
+    repetition: index + 1,
+  })),
+).flat();
+const runs = Array.from({ length: jobs.length });
+let nextJob = 0;
+let benchmarkSurface;
+
+async function worker() {
+  for (;;) {
+    const index = nextJob;
+    nextJob += 1;
+    const job = jobs[index];
+    if (!job) return;
+    process.stderr.write(
+      `Running fresh-agent case ${job.fixture.id} (${job.repetition}/${repetitions})…\n`,
+    );
+    const server = startServer();
+    try {
+      const ready = await server.ready;
+      const advertisedTools = await advertisedToolNames(ready.url);
+      validateFixtures(selected, advertisedTools);
+      if (
+        benchmarkSurface &&
+        JSON.stringify(benchmarkSurface) !== JSON.stringify(advertisedTools)
+      ) {
+        throw new Error("Advertised tool inventory changed between runs.");
+      }
+      benchmarkSurface ??= advertisedTools;
+      runs[index] = await runAgent(
+        job.fixture,
+        ready.url,
+        job.repetition,
+        advertisedTools,
+      );
+    } finally {
+      await stopServer(server.child);
+    }
   }
 }
 
+await Promise.all(
+  Array.from({ length: Math.min(concurrency, jobs.length) }, () => worker()),
+);
+
+function rate(caseRuns, predicate) {
+  return round(
+    caseRuns.filter(predicate).length / caseRuns.length,
+    3,
+  );
+}
+
+const caseResults = selected.map((fixture) => {
+  const caseRuns = runs.filter((run) => run.id === fixture.id);
+  return {
+    id: fixture.id,
+    prompt: fixture.prompt,
+    repetitions: caseRuns.length,
+    validOuterRoutes: fixture.validOuterRoutes,
+    costEnvelope: fixture.costEnvelope,
+    rates: {
+      taskCorrect: rate(caseRuns, (run) => run.taskCorrect),
+      safetyPassed: rate(caseRuns, (run) => run.safetyPassed),
+      surfaceValid: rate(caseRuns, (run) => run.surfaceValid),
+      foreignClean: rate(caseRuns, (run) => run.foreignClean),
+      costEfficient: rate(caseRuns, (run) => run.costEfficient),
+      passed: rate(caseRuns, (run) => run.passed),
+    },
+    latencyMs: distribution(
+      caseRuns.map((run) => run.latencyMs),
+      round,
+    ),
+    mcpResultTokens: distribution(
+      caseRuns.map((run) => run.mcpResultTokens),
+      round,
+    ),
+    connectaRoundTrips: distribution(
+      caseRuns.map((run) => run.connectaRoundTrips),
+      round,
+    ),
+    wholeAgentInputTokens: distribution(
+      caseRuns.map((run) => run.usage.input_tokens ?? 0),
+      round,
+    ),
+    wholeAgentOutputTokens: distribution(
+      caseRuns.map((run) => run.usage.output_tokens ?? 0),
+      round,
+    ),
+    diagnostics: {
+      failedMetaToolCalls: caseRuns.reduce(
+        (sum, run) => sum + run.failedMetaToolCalls,
+        0,
+      ),
+    },
+    waste: {
+      duplicateMetaToolCalls: caseRuns.reduce(
+        (sum, run) => sum + run.waste.duplicateMetaToolCalls,
+        0,
+      ),
+      unexpectedFailedMetaToolCalls: caseRuns.reduce(
+        (sum, run) => sum + run.waste.unexpectedFailedMetaToolCalls,
+        0,
+      ),
+      foreignToolCalls: caseRuns.reduce(
+        (sum, run) => sum + run.waste.foreignToolCalls,
+        0,
+      ),
+      nonMcpHostActions: caseRuns.reduce(
+        (sum, run) => sum + run.waste.nonMcpHostActions,
+        0,
+      ),
+      unavailableSurfaceCalls: caseRuns.reduce(
+        (sum, run) => sum + run.waste.unavailableSurfaceCalls,
+        0,
+      ),
+      unexpectedExecutions: caseRuns.reduce(
+        (sum, run) => sum + run.waste.unexpectedExecutions,
+        0,
+      ),
+    },
+    observedRoutes: Object.entries(
+      caseRuns.reduce((counts, run) => {
+        const route = run.outerTools.join(" → ") || "(none)";
+        counts[route] = (counts[route] ?? 0) + 1;
+        return counts;
+      }, {}),
+    ).map(([route, count]) => ({ route, count })),
+    runs: caseRuns,
+  };
+});
+
 const result = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   source: {
     commit: sourceCommit,
@@ -432,37 +612,61 @@ const result = {
     model: agentModel ?? "codex-default",
     tokenizer: tokenizerName,
   },
+  benchmark: {
+    surface: "code-first",
+    comparisonClass: "seven-tool-with-executor",
+    advertisedTools: benchmarkSurface,
+    repetitions,
+    concurrency,
+    scoring:
+      "Outcome, safety, advertised-surface validity, foreign-tool use, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+    classicComparison:
+      "Classic-only top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes on this deployment.",
+  },
   summary: {
     cases: caseResults.length,
-    correct: caseResults.filter((fixture) => fixture.correct).length,
-    routeEfficient: caseResults.filter((fixture) => fixture.routeEfficient)
-      .length,
-    contextEfficient: caseResults.filter(
-      (fixture) => fixture.contextEfficient,
-    ).length,
-    passed: caseResults.filter((fixture) => fixture.passed).length,
+    runs: runs.length,
+    correct: runs.filter((run) => run.taskCorrect).length,
+    routeEfficient: runs.filter((run) => run.routeEfficient).length,
+    contextEfficient: runs.filter((run) => run.contextEfficient).length,
+    safetyPassed: runs.filter((run) => run.safetyPassed).length,
+    surfaceValid: runs.filter((run) => run.surfaceValid).length,
+    foreignClean: runs.filter((run) => run.foreignClean).length,
+    costEfficient: runs.filter((run) => run.costEfficient).length,
+    passed: runs.filter((run) => run.passed).length,
     totalLatencyMs: round(
-      caseResults.reduce((sum, fixture) => sum + fixture.latencyMs, 0),
+      runs.reduce((sum, run) => sum + run.latencyMs, 0),
       1,
     ),
     totalInputTokens: caseResults.reduce(
-      (sum, fixture) => sum + (fixture.usage.input_tokens ?? 0),
+      (sum, fixture) =>
+        sum +
+        fixture.runs.reduce(
+          (runSum, run) => runSum + (run.usage.input_tokens ?? 0),
+          0,
+        ),
       0,
     ),
     totalOutputTokens: caseResults.reduce(
-      (sum, fixture) => sum + (fixture.usage.output_tokens ?? 0),
+      (sum, fixture) =>
+        sum +
+        fixture.runs.reduce(
+          (runSum, run) => runSum + (run.usage.output_tokens ?? 0),
+          0,
+        ),
       0,
     ),
-    totalMcpResultTokens: caseResults.reduce(
-      (sum, fixture) => sum + fixture.mcpResultTokens,
+    totalMcpResultTokens: runs.reduce(
+      (sum, run) => sum + run.mcpResultTokens,
       0,
     ),
-    totalForeignMcpResultTokens: caseResults.reduce(
-      (sum, fixture) => sum + fixture.foreignMcpResultTokens,
+    totalForeignMcpResultTokens: runs.reduce(
+      (sum, run) => sum + run.foreignMcpResultTokens,
       0,
     ),
   },
   cases: caseResults,
+  runs,
 };
 await mkdir(dirname(outputPath), { recursive: true });
 await writeFile(outputPath, `${JSON.stringify(result, null, 2)}\n`);
@@ -475,12 +679,14 @@ process.stdout.write(
     summary: result.summary,
     cases: caseResults.map((fixture) => ({
       id: fixture.id,
-      correct: fixture.correct,
-      routeEfficient: fixture.routeEfficient,
-      contextEfficient: fixture.contextEfficient,
-      calledTools: fixture.calledTools,
+      repetitions: fixture.repetitions,
+      rates: fixture.rates,
+      observedRoutes: fixture.observedRoutes,
       latencyMs: fixture.latencyMs,
       mcpResultTokens: fixture.mcpResultTokens,
+      connectaRoundTrips: fixture.connectaRoundTrips,
+      diagnostics: fixture.diagnostics,
+      waste: fixture.waste,
     })),
   })}\n`,
 );

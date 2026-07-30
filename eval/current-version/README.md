@@ -93,8 +93,10 @@ does not:
   overhead against synthetic 100-, 1,000-, and 10,000-tool deployments.
 - `perf:agent` starts a fresh isolated server and a fresh Codex session for
   each task. The task prompts do not explain Connecta's routing workflow. The
-  runner scores answer correctness, tool choice, redundant routing calls,
-  Connecta result tokens, whole-agent tokens, and wall time.
+  runner scores answer and execution correctness, safety, advertised-surface
+  validity, foreign and redundant calls, Connecta round trips and result
+  tokens, whole-agent tokens, and wall time. It accepts multiple valid routes
+  rather than prescribing an exact tool sequence.
 
 Run the complete environment:
 
@@ -118,6 +120,25 @@ Select one case while developing:
 ```sh
 npm --prefix eval/current-version run perf:agent -- --case single-read
 ```
+
+The agent lane defaults to three repetitions per case and two concurrent
+isolated sessions. Override those independently:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --repetitions 5 \
+  --concurrency 2
+```
+
+Each case documents at least one route achievable on the server's actual
+advertised tool inventory. The harness validates that invariant before an agent
+runs. The JSON retains every trace and reports duplicate calls, expected and
+unexpected failures, foreign tools, non-MCP host actions, unavailable-surface
+calls, unexpected connector executions, correctness, safety, round trips,
+Connecta/whole-agent tokens, and latency.
+Per-case summaries report rates plus min, p50, p95, max, mean, and standard
+deviation. Classic-only top-level tools remain a distinct comparison surface:
+they are never treated as expected code-first routes.
 
 Set `CONNECTA_EVAL_AGENT_MODEL` to pin a model. If omitted, the current Codex
 default is used and recorded as `codex-default`; for comparable trend data,
