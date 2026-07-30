@@ -2,6 +2,20 @@
 
 All notable changes to this package are documented here.
 
+## 0.10.4 — 2026-07-30
+
+A small code-mode recovery release. The `execute_code` contract now shows the
+literal object shape required by `connecta.describe`, and its validation error
+repeats that shape when a program passes a bare address or array. Valid programs
+and deployments without an executor are unchanged.
+
+### Fixed
+
+- **`connecta.describe` states its argument shape at both failure points.** The
+  tool description now spells out `{ addresses: ["<connectorId>.<toolName>",
+  ...] }`, and a malformed call receives the same actionable example instead of
+  only learning that `addresses` must be an array.
+
 ## 0.10.3 — 2026-07-30
 
 Two agent-recovery gaps are closed without changing the seven-tool surface.
