@@ -1280,7 +1280,7 @@ describe("server open routes", () => {
     expect(await health.text()).toContain('"status":"ok"');
     const mcp = await c.fetch(new Request(`${BASE}/mcp`, { method: "POST" }));
     expect(mcp.status).toBe(401);
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const shell = await c.fetch(new Request(`${BASE}${path}`));
       expect(shell.status).toBe(200);
       expect(await shell.text()).not.toBe("hijacked");
@@ -1341,7 +1341,7 @@ describe("server open routes", () => {
 
   it("protects the UI from framing without applying UI CSP to MCP routes", async () => {
     const c = makeConnecta();
-    for (const path of ["/", "/credentials", "/activity"]) {
+    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
       const ui = await c.fetch(new Request(`${BASE}${path}`));
       const csp = ui.headers.get("Content-Security-Policy") ?? "";
       expect(csp).toContain("script-src 'nonce-");

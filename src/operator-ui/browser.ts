@@ -1,10 +1,11 @@
 import {
+  type AccessTokenManagementCapability,
   filterUiConnectors,
   type CredentialManagementCapability,
   type UiData,
 } from "./model.js";
 
-type OperatorPage = "connections" | "credentials" | "activity";
+type OperatorPage = "connections" | "credentials" | "tokens" | "activity";
 
 interface BrowserAuth {
   kind: string;
@@ -69,6 +70,17 @@ interface UiActionResponse {
   ok?: boolean;
   message?: string;
   error?: string;
+  token?: string;
+  accessToken?: UiAccessToken;
+  accessTokens?: UiAccessToken[];
+}
+
+interface UiAccessToken {
+  id: string;
+  name: string;
+  tokenPrefix: string;
+  createdAt: string;
+  revokedAt?: string;
 }
 
 interface OperatorElement extends HTMLElement {
@@ -99,12 +111,15 @@ const $ = (id: string): OperatorElement => {
 const PAGE_META = {
   connections: { path: "/", label: "Connections" },
   credentials: { path: "/credentials", label: "Credentials" },
+  tokens: { path: "/tokens", label: "Access tokens" },
   activity: { path: "/activity", label: "Activity" },
 } satisfies Record<OperatorPage, { path: string; label: string }>;
 let DATA: UiData | null = null;
 let ACTIVITY: UiActivityEvent[] = [];
 let ACTIVITY_CURSOR: string | null = null;
 let ACTIVITY_LOADED = false;
+let ACCESS_TOKENS: UiAccessToken[] = [];
+let ACCESS_TOKENS_LOADED = false;
 let CURRENT_PAGE: OperatorPage = INITIAL_PAGE;
 let SESSION_GENERATION = 0;
 let ACTIVITY_GENERATION = 0;
@@ -194,9 +209,21 @@ function clearIdentityState(): void {
   $("credentialUnavailable").textContent = "";
   $("credentialUnavailable").classList.add("hidden");
   $("credentialList").classList.add("hidden");
+  ACCESS_TOKENS = [];
+  ACCESS_TOKENS_LOADED = false;
+  $("tokenList").innerHTML = "";
+  $("tokenList").setAttribute("aria-busy", "false");
+  $("tokenNotice").textContent = "";
+  $("tokenReveal").classList.add("hidden");
+  $("createdToken").textContent = "";
+  $("tokenName").value = "";
+  $("tokenUnavailable").textContent = "";
+  $("tokenUnavailable").classList.add("hidden");
+  $("tokenAvailable").classList.add("hidden");
   $("activityUnavailable").classList.add("hidden");
   $("activityAvailable").classList.add("hidden");
   $("credentialsNav").classList.add("hidden");
+  $("tokensNav").classList.add("hidden");
   $("activityNav").classList.add("hidden");
   $("serverInfo").textContent = PRODUCT_OPERATOR_LABEL;
 }
@@ -221,6 +248,7 @@ function showGate(msg: string): void {
 
 function pageForPath(path: string): OperatorPage {
   if (path === "/credentials") return "credentials";
+  if (path === "/tokens") return "tokens";
   if (path === "/activity") return "activity";
   return "connections";
 }
@@ -237,16 +265,32 @@ function credentialUnavailableCopy(
   return "Credential management requires an eligible Clerk operator. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
 }
 
+function accessTokenUnavailableCopy(
+  capability?: AccessTokenManagementCapability,
+): string {
+  if (capability === "not_configured") {
+    return "Access tokens are not configured for this deployment. Add accessTokens to the deployment configuration to enable them.";
+  }
+  return "Access token management requires an eligible Clerk operator. A Bearer token can connect to MCP, but it cannot create or revoke other tokens.";
+}
+
 function updateCapabilities(): void {
   const credentialsAvailable =
     DATA?.credentialManagement === "available";
   $("credentialsNav").classList.toggle("hidden", !credentialsAvailable);
+  const tokensAvailable = DATA?.accessTokenManagement === "available";
+  $("tokensNav").classList.toggle("hidden", !tokensAvailable);
   $("activityNav").classList.toggle("hidden", !DATA?.activityEnabled);
   $("credentialUnavailable").classList.toggle("hidden", credentialsAvailable);
   $("credentialList").classList.toggle("hidden", !credentialsAvailable);
   $("credentialUnavailable").textContent = credentialsAvailable
     ? ""
     : credentialUnavailableCopy(DATA?.credentialManagement);
+  $("tokenUnavailable").classList.toggle("hidden", Boolean(tokensAvailable));
+  $("tokenAvailable").classList.toggle("hidden", !tokensAvailable);
+  $("tokenUnavailable").textContent = tokensAvailable
+    ? ""
+    : accessTokenUnavailableCopy(DATA?.accessTokenManagement);
   $("activityUnavailable").classList.toggle("hidden", Boolean(DATA?.activityEnabled));
   $("activityAvailable").classList.toggle("hidden", !DATA?.activityEnabled);
 }
@@ -269,6 +313,13 @@ function activatePage(
     updateCapabilities();
     if (next === "connections") renderConnections();
     if (next === "credentials") renderCredentials();
+    if (
+      next === "tokens" &&
+      DATA.accessTokenManagement === "available" &&
+      !ACCESS_TOKENS_LOADED
+    ) {
+      void loadAccessTokens();
+    }
     if (next === "activity" && DATA.activityEnabled && !ACTIVITY_LOADED) {
       loadActivity(true);
     }
@@ -569,7 +620,7 @@ function renderConnections(): void {
 
 async function operatorRequest(
   path: string,
-  method: "DELETE" | "POST" | "PUT",
+  method: "DELETE" | "GET" | "POST" | "PUT",
   generation: number,
   body?: object,
 ): Promise<UiActionResponse | null> {
@@ -596,6 +647,228 @@ async function operatorRequest(
   if (!res.ok) throw new Error(payload.error || "Request failed (" + res.status + ").");
   return payload;
 }
+
+function renderAccessTokens(): void {
+  const list = $("tokenList");
+  list.innerHTML = "";
+  if (!ACCESS_TOKENS.length) {
+    list.innerHTML =
+      '<p class="empty">No access tokens yet. Name the first MCP client above.</p>';
+    return;
+  }
+  for (const token of ACCESS_TOKENS) {
+    const revoked = Boolean(token.revokedAt);
+    const item = document.createElement("section");
+    item.className = "token-card" + (revoked ? " revoked" : "");
+    item.setAttribute("aria-labelledby", "access-token-" + token.id);
+    item.innerHTML =
+      '<div class="token-card-head"><div><h2 id="access-token-' +
+      esc(token.id) + '">' + esc(token.name) +
+      '</h2><p class="mono">' + esc(token.tokenPrefix) +
+      '…</p></div><div class="cap">' +
+      (revoked
+        ? "Revoked " + esc(formatDate(token.revokedAt!))
+        : "Created " + esc(formatDate(token.createdAt))) +
+      "</div></div>" +
+      '<div class="credential-actions">' +
+      '<button class="linklike" type="button" data-token-action="rename" data-token-id="' +
+      esc(token.id) + '">Rename</button>' +
+      (revoked
+        ? ""
+        : '<button class="linklike danger" type="button" data-token-action="revoke" data-token-id="' +
+          esc(token.id) + '">Revoke</button>') +
+      "</div>" +
+      '<form class="credential-form hidden" data-token-form="' +
+      esc(token.id) + '"><label class="visually-hidden" for="token-name-' +
+      esc(token.id) + '">Token name</label><input id="token-name-' +
+      esc(token.id) + '" type="text" maxlength="80" value="' +
+      esc(token.name) + '" autocomplete="off">' +
+      '<button class="linklike" type="submit" data-token-action="save-name" data-token-id="' +
+      esc(token.id) + '">Save name</button>' +
+      '<button class="linklike" type="button" data-token-action="cancel-name" data-token-id="' +
+      esc(token.id) + '">Cancel</button></form>';
+    list.appendChild(item);
+  }
+}
+
+async function loadAccessTokens(): Promise<void> {
+  const generation = SESSION_GENERATION;
+  $("tokenList").setAttribute("aria-busy", "true");
+  $("tokenNotice").textContent = "Loading access tokens…";
+  try {
+    const payload = await operatorRequest(
+      "/ui/access-tokens",
+      "GET",
+      generation,
+    );
+    if (generation !== SESSION_GENERATION) return;
+    ACCESS_TOKENS = payload?.accessTokens || [];
+    ACCESS_TOKENS_LOADED = true;
+    $("tokenNotice").textContent = "";
+    renderAccessTokens();
+  } catch (error) {
+    if (generation !== SESSION_GENERATION) return;
+    $("tokenNotice").setAttribute("role", "alert");
+    $("tokenNotice").textContent = errorMessage(
+      error,
+      "Access tokens could not be loaded.",
+    );
+  } finally {
+    if (generation === SESSION_GENERATION) {
+      $("tokenList").setAttribute("aria-busy", "false");
+    }
+  }
+}
+
+$("tokenCreateForm").onsubmit = async (event) => {
+  event.preventDefault();
+  const name = $("tokenName").value.trim();
+  if (!name) {
+    $("tokenNotice").textContent = "Name the MCP client before creating a token.";
+    $("tokenNotice").setAttribute("role", "alert");
+    return;
+  }
+  const generation = SESSION_GENERATION;
+  $("createToken").disabled = true;
+  $("tokenNotice").textContent = "";
+  try {
+    const payload = await operatorRequest(
+      "/ui/access-tokens",
+      "POST",
+      generation,
+      { name },
+    );
+    if (generation !== SESSION_GENERATION) return;
+    if (!payload?.token || !payload.accessToken) {
+      throw new Error("The created token was not returned.");
+    }
+    ACCESS_TOKENS = [
+      payload.accessToken,
+      ...ACCESS_TOKENS.filter((token) => token.id !== payload.accessToken!.id),
+    ];
+    ACCESS_TOKENS_LOADED = true;
+    $("tokenName").value = "";
+    $("createdToken").textContent = payload.token;
+    $("tokenReveal").classList.remove("hidden");
+    $("tokenNotice").textContent = "Access token created.";
+    renderAccessTokens();
+    $("tokenRevealHeading").focus();
+  } catch (error) {
+    if (generation !== SESSION_GENERATION) return;
+    $("tokenNotice").setAttribute("role", "alert");
+    $("tokenNotice").textContent = errorMessage(
+      error,
+      "Access token could not be created.",
+    );
+    $("tokenNotice").focus();
+  } finally {
+    if (generation === SESSION_GENERATION) $("createToken").disabled = false;
+  }
+};
+
+$("copyCreatedToken").onclick = async () => {
+  const button = $("copyCreatedToken");
+  const token = $("createdToken").textContent || "";
+  try {
+    await navigator.clipboard.writeText(token);
+    button.textContent = "Copied";
+  } catch {
+    button.textContent = "Copy failed";
+  }
+  window.setTimeout(() => { button.textContent = "Copy token"; }, 1600);
+};
+
+$("dismissCreatedToken").onclick = () => {
+  $("createdToken").textContent = "";
+  $("tokenReveal").classList.add("hidden");
+  $("tokenName").focus();
+};
+
+$("tokenList").onclick = async (event) => {
+  const button = closestElement<HTMLButtonElement>(
+    event.target,
+    "[data-token-action]",
+  );
+  if (!button) return;
+  const id = button.dataset.tokenId;
+  const action = button.dataset.tokenAction;
+  if (!id || !action) return;
+  const form = document.querySelector<HTMLFormElement>(
+    '[data-token-form="' + CSS.escape(id) + '"]',
+  );
+  if (!form) return;
+  if (action === "rename") {
+    form.classList.remove("hidden");
+    form.querySelector("input")?.focus();
+    return;
+  }
+  if (action === "cancel-name") {
+    form.classList.add("hidden");
+    return;
+  }
+  if (action !== "revoke") return;
+  const named = ACCESS_TOKENS.find((token) => token.id === id);
+  if (!window.confirm(
+    "Revoke " + (named?.name || "this access token") +
+      "? Its MCP client will immediately lose access."
+  )) return;
+  const generation = SESSION_GENERATION;
+  try {
+    const payload = await operatorRequest(
+      "/ui/access-tokens/" + encodeURIComponent(id),
+      "DELETE",
+      generation,
+    );
+    if (generation !== SESSION_GENERATION) return;
+    if (payload?.accessToken) {
+      ACCESS_TOKENS = ACCESS_TOKENS.map((token) =>
+        token.id === id ? payload.accessToken! : token);
+    }
+    $("tokenNotice").textContent = "Access token revoked.";
+    renderAccessTokens();
+    $("tokenNotice").focus();
+  } catch (error) {
+    if (generation !== SESSION_GENERATION) return;
+    $("tokenNotice").setAttribute("role", "alert");
+    $("tokenNotice").textContent = errorMessage(
+      error,
+      "Access token could not be revoked.",
+    );
+  }
+};
+
+$("tokenList").onsubmit = async (event) => {
+  event.preventDefault();
+  const form = closestElement<HTMLFormElement>(event.target, "[data-token-form]");
+  if (!form) return;
+  const id = form.dataset.tokenForm;
+  const name = form.querySelector<HTMLInputElement>("input")?.value.trim();
+  if (!id || !name) return;
+  const generation = SESSION_GENERATION;
+  try {
+    const payload = await operatorRequest(
+      "/ui/access-tokens/" + encodeURIComponent(id),
+      "PUT",
+      generation,
+      { name },
+    );
+    if (generation !== SESSION_GENERATION) return;
+    if (payload?.accessToken) {
+      ACCESS_TOKENS = ACCESS_TOKENS.map((token) =>
+        token.id === id ? payload.accessToken! : token);
+    }
+    $("tokenNotice").textContent = "Access token renamed.";
+    renderAccessTokens();
+    $("tokenNotice").focus();
+  } catch (error) {
+    if (generation !== SESSION_GENERATION) return;
+    $("tokenNotice").setAttribute("role", "alert");
+    $("tokenNotice").textContent = errorMessage(
+      error,
+      "Access token could not be renamed.",
+    );
+  }
+};
 
 $("list").onclick = async (event) => {
   const button = closestElement<HTMLButtonElement>(
@@ -931,6 +1204,7 @@ document.addEventListener("click", (event) => {
   if (
     page !== "connections" &&
     page !== "credentials" &&
+    page !== "tokens" &&
     page !== "activity"
   ) return;
   event.preventDefault();

@@ -81,6 +81,9 @@ function build(env: Env) {
         // allowedDomains: ["acme.com"],
       }),
     ],
+    // Eligible Clerk operators can create named, revocable MCP Bearer tokens
+    // at /tokens. Secrets are shown once; only their hashes enter KV.
+    accessTokens: {},
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",

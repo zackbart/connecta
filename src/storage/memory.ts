@@ -32,5 +32,13 @@ export function memoryStorage(): KVStorage {
     async delete(key) {
       map.delete(key);
     },
+    async list(prefix) {
+      return [...map.keys()]
+        .filter((key) => {
+          fresh(key);
+          return key.startsWith(prefix) && map.has(key);
+        })
+        .sort();
+    },
   };
 }

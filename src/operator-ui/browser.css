@@ -285,6 +285,69 @@
   .credential-field input { min-width: 0; width: 100%; }
   .danger { text-decoration-style: double; }
 
+  .token-create {
+    border-bottom: 1px solid var(--rule);
+    border-top: 1px solid var(--rule);
+    padding: .75rem 0;
+  }
+  .token-create > label {
+    display: block;
+    margin-bottom: .5rem;
+  }
+  .token-create input { flex: 1 1 18rem; }
+  .token-create button,
+  .token-card button,
+  .token-reveal button {
+    align-items: center;
+    display: inline-flex;
+    min-height: 2.75rem;
+  }
+  .token-reveal {
+    background: var(--ink);
+    color: var(--paper);
+    margin-top: 1.5rem;
+    padding: 1rem 1.25rem;
+  }
+  .token-reveal .meta,
+  .token-reveal .cap { color: #bbb; }
+  .token-reveal-head,
+  .token-card-head {
+    align-items: baseline;
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem var(--gap);
+    justify-content: space-between;
+  }
+  .token-secret {
+    border-bottom: 1px solid #555;
+    border-top: 1px solid #555;
+    margin-top: .75rem;
+  }
+  .token-secret code {
+    color: var(--paper);
+    user-select: all;
+  }
+  .token-ledger {
+    border-bottom: 1px solid var(--rule);
+    margin-top: 1.5rem;
+  }
+  .token-card {
+    border-top: 1px solid var(--rule);
+    padding: .75rem 0 .75rem 1.25rem;
+    position: relative;
+  }
+  .token-card::before {
+    background: var(--ink);
+    bottom: 0;
+    content: "";
+    left: .25rem;
+    position: absolute;
+    top: 0;
+    width: 1px;
+  }
+  .token-card.revoked { color: var(--muted); }
+  .token-card.revoked::before { background: var(--rule); }
+
   details { margin-top: .75rem; }
   summary { cursor: pointer; list-style: none; width: max-content; }
   summary::-webkit-details-marker { display: none; }

@@ -14,6 +14,7 @@ import {
 } from "./concurrency.js";
 import {
   type CredentialManagementCapability,
+  type AccessTokenManagementCapability,
   type UiConnector,
   type UiData,
   type UiTool,
@@ -32,6 +33,7 @@ import { CONNECTA_VERSION } from "./version.js";
 
 export {
   filterUiConnectors,
+  type AccessTokenManagementCapability,
   type CredentialManagementCapability,
   type UiConnector,
   type UiData,
@@ -265,17 +267,23 @@ export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   ];
 }
 
-export type OperatorPage = "connections" | "credentials" | "activity";
+export type OperatorPage =
+  | "connections"
+  | "credentials"
+  | "tokens"
+  | "activity";
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   connections: "Connections",
   credentials: "Credentials",
+  tokens: "Access tokens",
   activity: "Activity",
 };
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
   if (path === "/") return "connections";
   if (path === "/credentials") return "credentials";
+  if (path === "/tokens") return "tokens";
   if (path === "/activity") return "activity";
   return undefined;
 }
@@ -315,6 +323,7 @@ export async function buildUiData(
   defer?: DeferredWork,
   oauthManagement = false,
   discoveryConcurrency?: number,
+  accessTokenManagement: AccessTokenManagementCapability = "not_configured",
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -474,6 +483,7 @@ export async function buildUiData(
     connectors,
     activityEnabled,
     credentialManagement,
+    accessTokenManagement,
     oauthManagement,
   };
 }
@@ -583,6 +593,8 @@ ${clerkScript}
           data-operator-page="connections"${page === "connections" ? ' aria-current="page"' : ""}>Connections</a>
         <a id="credentialsNav" class="navlink hidden" href="/credentials"
           data-operator-page="credentials"${page === "credentials" ? ' aria-current="page"' : ""}>Credentials</a>
+        <a id="tokensNav" class="navlink hidden" href="/tokens"
+          data-operator-page="tokens"${page === "tokens" ? ' aria-current="page"' : ""}>Access tokens</a>
         <a id="activityNav" class="navlink hidden" href="/activity"
           data-operator-page="activity"${page === "activity" ? ' aria-current="page"' : ""}>Activity</a>
       </nav>
@@ -652,6 +664,43 @@ ${clerkScript}
           tabindex="-1"></p>
         <div id="credentialUnavailable" class="unavailable hidden"></div>
         <div id="credentialList" class="credential-ledger" aria-busy="false"></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="tokensView"${page === "tokens" ? "" : ' class="hidden"'}>
+    <div class="lead pgrid">
+      <h1 id="tokensHeading" class="pcap" tabindex="-1">Access tokens</h1>
+      <div class="pbody">
+        <p class="activity-copy">Create named Bearer tokens for MCP clients. Each secret is shown once; revoke it when that client should lose access.</p>
+        <p id="tokenNotice" class="meta" role="status" aria-live="polite"
+          tabindex="-1"></p>
+        <div id="tokenUnavailable" class="unavailable hidden"></div>
+        <div id="tokenAvailable" class="hidden">
+          <form id="tokenCreateForm" class="token-create">
+            <label for="tokenName">Client name</label>
+            <div class="row">
+              <input id="tokenName" type="text" maxlength="80"
+                placeholder="Claude desktop, ChatGPT production…"
+                autocomplete="off">
+              <button id="createToken" class="linklike" type="submit">Create token</button>
+            </div>
+          </form>
+          <section id="tokenReveal" class="token-reveal hidden"
+            aria-labelledby="tokenRevealHeading">
+            <div class="token-reveal-head">
+              <h2 id="tokenRevealHeading" tabindex="-1">Copy this token now</h2>
+              <span class="cap">Shown once</span>
+            </div>
+            <p class="meta">Store it in the MCP client before leaving this page. It cannot be displayed again.</p>
+            <div class="endpoint-row token-secret">
+              <code id="createdToken" class="mono"></code>
+              <button id="copyCreatedToken" class="linklike" type="button">Copy token</button>
+            </div>
+            <button id="dismissCreatedToken" class="linklike" type="button">I stored it</button>
+          </section>
+          <div id="tokenList" class="token-ledger" aria-busy="false"></div>
+        </div>
       </div>
     </div>
   </section>

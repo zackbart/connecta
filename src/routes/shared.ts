@@ -1,4 +1,5 @@
 import type { Implementation } from "@modelcontextprotocol/server";
+import type { AccessTokenManager } from "../access-tokens.js";
 import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity.js";
 import type { CredentialVault } from "../credentials.js";
 import type { DeferredWork } from "../connector-scope.js";
@@ -43,6 +44,8 @@ export interface ServerOptions {
   requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */
   credentialVault?: CredentialVault;
+  /** Hashed deployment access tokens backing MCP admission and the Tokens page. */
+  accessTokens?: AccessTokenManager;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding;
 }

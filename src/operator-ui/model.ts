@@ -55,6 +55,11 @@ export type CredentialManagementCapability =
   | "vault_not_configured"
   | "no_slots";
 
+export type AccessTokenManagementCapability =
+  | "available"
+  | "requires_clerk"
+  | "not_configured";
+
 export interface UiData {
   serverInfo: { name: string; version: string };
   /** Version of the installed @zackbart/connecta package. */
@@ -62,6 +67,7 @@ export interface UiData {
   connectors: UiConnector[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
+  accessTokenManagement: AccessTokenManagementCapability;
   /** True only for an eligible Clerk operator. */
   oauthManagement: boolean;
 }
