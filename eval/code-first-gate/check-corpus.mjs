@@ -8,12 +8,20 @@
 import { measureSample, payloadFreeViolations } from "./measure.mjs";
 import {
   GATE,
+  catalogFor,
   minPooledRateFor,
   minSuccessesFor,
   renderReport,
   wilson,
 } from "./report.mjs";
-import { ARMS, ARM_NAMES, CANDIDATE_ARM, CONTROL_ARM } from "./server-process.mjs";
+import {
+  ARMS,
+  ARM_NAMES,
+  CANDIDATE_ARM,
+  CATALOGS,
+  CONTROL_ARM,
+  DEFAULT_CATALOG,
+} from "./server-process.mjs";
 import { PROMPT_PREPENDED, PROMPT_REPLACED } from "./agents.mjs";
 import {
   CORPUS_VERSION,
@@ -1020,7 +1028,7 @@ function syntheticRun(options = {}) {
       samplesPerTask: options.samplesPerTask ?? 1,
       concurrency: 1,
       timeoutMs: 1_000,
-      catalog: "core",
+      catalog: options.catalog ?? DEFAULT_CATALOG,
       downstreamDelayMs: 0,
       arms: ARM_NAMES,
       candidateArm: CANDIDATE_ARM,
@@ -1058,6 +1066,7 @@ function syntheticRun(options = {}) {
           driver: model.spec.split(":")[0],
           requestedModel: model.spec.split(":")[1],
           resolvedModel: model.resolved,
+          catalog: options.catalog ?? DEFAULT_CATALOG,
           sample: 1,
           promptSha256: "0".repeat(64),
           ...measureSample({
@@ -1103,6 +1112,38 @@ function syntheticRun(options = {}) {
   };
 }
 
+/**
+ * No rate may sit outside a per-model-version section, whatever the run measured.
+ * Checked per catalog, because the closing paragraph is the one part of the
+ * document that changes with the catalog and it is exactly the part that must not
+ * start quoting numbers.
+ */
+function checkRatesStayInsideSections(text, label) {
+  const firstModel = text.indexOf("\n## claude:");
+  const verdictStart = text.lastIndexOf("\n## Verdict");
+  check(
+    firstModel > 0 && verdictStart > firstModel,
+    `Report sections are out of order (${label}).`,
+  );
+  if (firstModel <= 0 || verdictStart <= firstModel) return;
+  const preamble = text.slice(0, firstModel);
+  const closing = text.slice(verdictStart);
+  for (const [where, section] of [
+    ["preamble", preamble],
+    ["closing verdict", closing],
+  ]) {
+    const rates = [...section.matchAll(/\d+(?:\.\d+)?%/g)].map((match) => match[0]);
+    check(
+      rates.length === 0,
+      `The ${where} of the ${label} report contains rate figures (${rates.join(", ")}); every rate must live inside one model version's section.`,
+    );
+  }
+  check(
+    /aggregate safety stop-work count/i.test(preamble),
+    `The one aggregate figure in the ${label} report is not labelled as an aggregate stop-work count.`,
+  );
+}
+
 let report;
 try {
   report = renderReport(syntheticRun());
@@ -1138,27 +1179,7 @@ if (report) {
   // per-model-version section. The preamble and the closing verdict may carry
   // counts — the aggregate safety stop-work figure is deliberately one — but not
   // rates, because a rate spanning models is the thing this report must not emit.
-  const firstModel = report.indexOf("\n## claude:opus@");
-  const verdictStart = report.lastIndexOf("\n## Verdict");
-  check(firstModel > 0 && verdictStart > firstModel, "Report sections are out of order.");
-  if (firstModel > 0 && verdictStart > firstModel) {
-    const preamble = report.slice(0, firstModel);
-    const closing = report.slice(verdictStart);
-    for (const [where, text] of [
-      ["preamble", preamble],
-      ["closing verdict", closing],
-    ]) {
-      const rates = [...text.matchAll(/\d+(?:\.\d+)?%/g)].map((match) => match[0]);
-      check(
-        rates.length === 0,
-        `The ${where} contains rate figures (${rates.join(", ")}); every rate must live inside one model version's section.`,
-      );
-    }
-    check(
-      /aggregate safety stop-work count/i.test(preamble),
-      "The one aggregate figure in the report is not labelled as an aggregate stop-work count.",
-    );
-  }
+  checkRatesStayInsideSections(report, DEFAULT_CATALOG);
   check(
     /\*\*hold\*\*/i.test(report),
     "A one-sample-per-cell run must not produce a flip verdict.",
@@ -1194,6 +1215,92 @@ const confounded = renderReport(
 check(
   /driver-confounded/i.test(confounded),
   "A sample whose system prompt was only prepended must restrict the verdict to hold, driver-confounded.",
+);
+
+// --- catalogs are named, and never pooled -------------------------------------
+
+// Every catalog the runner accepts must render, say which one it was, and keep
+// its rates inside the model sections.
+for (const catalog of CATALOGS) {
+  let rendered;
+  try {
+    rendered = renderReport(syntheticRun({ catalog }));
+  } catch (error) {
+    failures.push(
+      `renderReport threw for catalog "${catalog}": ${error instanceof Error ? error.message : String(error)}`,
+    );
+    continue;
+  }
+  check(
+    rendered.includes(`catalog \`${catalog}\``),
+    `A report from catalog "${catalog}" does not state the catalog it ran against.`,
+  );
+  checkRatesStayInsideSections(rendered, catalog);
+}
+
+// A verdict from `core` alone has the wide catalog outstanding and must keep
+// saying so, because "we never pressured discovery" is the caveat most likely to
+// be dropped once the numbers look good. Matching is whitespace-insensitive: the
+// report hard-wraps its prose and a line break is not a wording change.
+const flat = (text) => text.replace(/\s+/g, " ");
+if (report) {
+  check(
+    /leaves the wide catalog outstanding/i.test(flat(report)),
+    "A report from the narrow catalog no longer says the wide catalog is outstanding.",
+  );
+}
+const wideReport = renderReport(syntheticRun({ catalog: "wide" }));
+check(
+  /near miss/i.test(flat(wideReport)) && /`wide` catalog/.test(flat(wideReport)),
+  "A report from the wide catalog does not describe what that catalog contains.",
+);
+check(
+  !/leaves the wide catalog outstanding/i.test(flat(wideReport)),
+  "A report from the wide catalog still claims the wide catalog is outstanding.",
+);
+check(
+  /not comparable with a `core` run/i.test(flat(wideReport)),
+  "The wide report does not warn against comparing it with a narrow-catalog run.",
+);
+
+// Pooling across catalogs is refused structurally, not by convention: a file
+// whose samples disagree is a merged file, and averaging it would report a
+// deployment nobody ran.
+const mixedCatalogs = syntheticRun();
+mixedCatalogs.samples[0] = { ...mixedCatalogs.samples[0], catalog: "wide" };
+let pooled;
+try {
+  pooled = renderReport(mixedCatalogs);
+} catch (error) {
+  pooled = error;
+}
+check(
+  pooled instanceof Error && /never pooled/i.test(pooled.message),
+  "A run carrying samples from two catalogs was pooled into one report instead of refused.",
+);
+
+// A run whose declared catalog does not match its samples is provenance that
+// cannot be trusted, so it is refused too.
+const mislabelled = syntheticRun({ catalog: "wide" });
+mislabelled.configuration.catalog = DEFAULT_CATALOG;
+let mismatch;
+try {
+  mismatch = renderReport(mislabelled);
+} catch (error) {
+  mismatch = error;
+}
+check(
+  mismatch instanceof Error && /but its samples were taken against/i.test(mismatch.message),
+  "A run whose declared catalog disagrees with its samples was rendered anyway.",
+);
+
+// Runs recorded before samples carried a catalog fall back to the declared one
+// rather than failing, so an old result file still regenerates its report.
+const legacyRun = syntheticRun();
+legacyRun.samples = legacyRun.samples.map(({ catalog: _dropped, ...rest }) => rest);
+check(
+  catalogFor(legacyRun) === DEFAULT_CATALOG,
+  "A run whose samples predate per-sample catalogs no longer resolves its catalog.",
 );
 
 if (failures.length > 0) {

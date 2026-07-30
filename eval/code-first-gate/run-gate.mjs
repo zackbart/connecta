@@ -27,7 +27,9 @@ import {
   ARMS,
   ARM_NAMES,
   CANDIDATE_ARM,
+  CATALOGS,
   CONTROL_ARM,
+  DEFAULT_CATALOG,
   readActivity,
   startGateServer,
   stopGateServer,
@@ -90,7 +92,7 @@ const samples = nonNegativeInteger("--samples", 20);
 const concurrency = nonNegativeInteger("--concurrency", 2);
 const timeoutMs = nonNegativeInteger("--timeout-ms", 300_000);
 const downstreamDelayMs = nonNegativeInteger("--downstream-delay-ms", 0, 0);
-const catalog = option("--catalog", "core");
+const catalog = option("--catalog", DEFAULT_CATALOG);
 const armNames = list(option("--arms", ARM_NAMES.join(",")));
 const scenarioFilter = option("--scenarios", "all");
 const label = option("--label", "gate");
@@ -104,6 +106,14 @@ const activityToken = `gate-activity-${randomBytes(16).toString("hex")}`;
 const outputPath = resolve(here, option("--output", `results/${label}.json`));
 const reportPath = resolve(here, option("--report", `results/${label}.md`));
 
+// A mistyped catalog would otherwise be caught by the gate server, one spawn
+// later. Catching it here keeps "unknown catalog" a refusal rather than a
+// campaign that dies on its first job.
+if (!CATALOGS.includes(catalog)) {
+  throw new Error(
+    `Unknown catalog "${catalog}". Choose one of ${CATALOGS.join(", ")}.`,
+  );
+}
 for (const arm of armNames) {
   if (!ARMS[arm]) {
     throw new Error(
@@ -285,6 +295,9 @@ function record(job, transcript, measured) {
     requestedModel: job.spec.model,
     resolvedModel: transcript?.resolvedModel ?? `unresolved:${job.spec.model}`,
     usageByModel: transcript?.usageByModel ?? {},
+    // On the sample, not only in `configuration`: the report refuses to blend two
+    // catalogs, and it can only refuse what each sample admits to.
+    catalog,
     sample: job.sample,
     promptSha256: sha256(promptFor(job.scenario, job.variant)),
     ...measured,
