@@ -7,26 +7,40 @@ order, and amending it is a design decision, not a drive-by edit.
 
 ## What this is
 
-- **One MCP endpoint in front of every integration you've deliberately
-  chosen.** Agents see a small, fixed set of meta-tools; any number of
-  connectors sits behind them.
+- **One MCP endpoint, one programmable surface.** Every integration you've
+  deliberately chosen sits behind a capability catalog that agents reach by
+  writing ordinary JavaScript, ringed by a few explicit tools — for the
+  boundaries code must not cross, and for the jobs a program is the wrong
+  shape for.
 - **A deployment is a small config-as-code file.** Changing what agents can
   reach is an edit and a redeploy. One deployment, one tenant, one audience —
   more audiences means more deployments.
 - **Two equal ways in.** `remoteMcp()` proxies a downstream MCP server;
   `api()` hand-writes a deliberate tool surface over a plain HTTP API. Both
   come out identical: same addresses, same catalog, same safety rules.
-- **Every meta-tool earns its keep.** The surface stays small enough for an
-  agent to hold in context — nine today, plus optional `execute_code` — and
-  the count is not sacred in either direction: a tool that isn't worth its
-  context cost goes, and a candidate has to beat that bar to get in.
+- **Every meta-tool earns its keep**, and the bar has gone up. The default
+  answer to "agents need X" is the program surface: a capability has to be
+  shown inexpressible through it before it earns a top-level tool, and one
+  that isn't worth its context cost still goes. Nine today plus optional
+  `execute_code`; the accepted destination is two deploy-time surfaces —
+  seven tools counting `execute_code` where a deployment has an executor,
+  classic where it doesn't
+  ([#224](https://github.com/zackbart/connecta/issues/224)).
 - **Safe by default.** Only tools explicitly annotated read-only are callable
-  through `call_tool`, `batch_call`, and the sandbox; everything else crosses
-  `call_destructive_tool`, where the MCP host can put the question to a human.
-  Approval is the host's job; connecta makes the question visible.
+  without crossing the destructive boundary — directly or from generated code;
+  everything else goes through `call_destructive_tool`, where the MCP host can
+  put the question to a human. Approval is the host's job; connecta makes the
+  question visible.
 - **One fetch-native core, two runtimes.** The same code runs unchanged on
   Cloudflare Workers and in Node — a Worker or a Docker stack, your pick. Web
   APIs only in the core; Node touches live behind explicit subpaths.
+- **An executor is the assumed posture.** The primary surface is a program, so
+  the deployment connecta is written toward has one — a Dynamic Worker on
+  Cloudflare, QuickJS behind its optional-peer subpath on Node. Converging
+  defaults, examples, and docs on that is
+  [#224](https://github.com/zackbart/connecta/issues/224)'s job; executor-free
+  stays supported as compatibility, not as an equal citizen. Packaging is
+  unchanged: assumed is about defaults, never about dependencies.
 - **Observable, never administrable.** Operator pages show connector status,
   masked credentials, and payload-free activity. They can rotate a secret;
   they cannot add a connector, change policy, or alter what an agent can call.
@@ -66,8 +80,13 @@ proposing one without a new argument is not.
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Agent credential recovery | accepted | one `auth_required` route through `authorize_connector`; only an operator handles secrets ([#192](https://github.com/zackbart/connecta/issues/192)) |
 | Structured result surface | accepted | canonical `structuredContent` plus complete compact `content`; summary-only text is gated on host-forwarding evidence ([#191](https://github.com/zackbart/connecta/issues/191)) |
-| Code mode (`execute_code`) | provisional | merit real but unproven; measurement decides ([#177](https://github.com/zackbart/connecta/issues/177)) |
-| Semantic tool search | gated | earns its way in through the same measurement ([#27](https://github.com/zackbart/connecta/issues/27)) |
+| Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: ~32% smaller serialized definitions, far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md)) |
+| Code-first as the user-facing default | gated | one pinned sample is legibility evidence, not a success rate; the repeated per-model eval decides ([#222](https://github.com/zackbart/connecta/issues/222)) |
+| Surface consolidation to seven tools | accepted | folding `list_connectors`, `describe_tools`, and `batch_call` into the program surface deletes the overlapping routing choice between direct calls, batches, discovery, and execution; `call_tool` stays because a simple call is not cheaper through code ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Executor-assumed posture | accepted | the primary surface is a program, so a deployment without an executor can only ever be the compatibility shape; packaging invariants are untouched ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Classic surface retention | accepted | compatibility path, rollback path, and the control arm of the eval; whether it is ever removed is a separate future decision ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Stabilized workflows (programs → versioned scripts/skills) | gated | earns a surface only once real traffic shows programs that actually recur ([#225](https://github.com/zackbart/connecta/issues/225)) |
+| Semantic tool search | gated | keyword search has not been shown to be the thing failing; earns its way in through [#222](https://github.com/zackbart/connecta/issues/222)'s harness ([#27](https://github.com/zackbart/connecta/issues/27)) |
 | MRTR / `input_required` passthrough | gated | statelessly relayable via `requestState`, but no host or downstream emits it yet; fails loudly until adoption evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Native Tasks for oversized results | refused | tasks solve duration, `get_result` solves size; paging on a polling extension adds round trips for nothing ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | fixed TTL + fingerprint is battle-tested and catalog reads are ~3 ms; earns its way in with refresh-churn evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
@@ -79,6 +98,12 @@ Breaking one is not a bug fix — it is a design change wearing a disguise.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation
   never gets the benefit of the doubt.
+- **Generated code cannot mint capabilities.** Admission, credentials, and
+  read-only classification are enforced below the sandbox; nothing a program
+  does widens what it can reach.
+- **Only explicitly read-only work runs inside the sandbox.** Unannotated,
+  write-capable, and destructive tools cross `call_destructive_tool`, where the
+  host can ask a human.
 - **Nothing request-bound survives a request.** No transport, stream, abort
   state, or later-awaited promise outlives the request that made it.
 - **A downstream catalog is complete or it is a failure.** A partial catalog
