@@ -477,10 +477,12 @@ export interface SkillArgs {
 }
 
 /**
- * The nine meta-tool handlers over a registry. Exported for direct testing;
- * registerMetaTools() wires them onto an McpServer. `opts.defaultToolTimeoutMs`
- * supplies a deadline for calls that don't carry one. (execute_code, the
- * optional tenth tool, is registered separately by registerExecuteTool.)
+ * Every base meta-tool handler over a registry — all nine, whichever surface is
+ * advertised, since folding a tool away only skips its registration and never
+ * its handler. Exported for direct testing; registerMetaTools() wires the ones
+ * this surface advertises onto an McpServer. `opts.defaultToolTimeoutMs`
+ * supplies a deadline for calls that don't carry one. (execute_code is
+ * registered separately by registerExecuteTool.)
  *
  * Deployment-wide result-size caps are read off the registry view rather than
  * passed in: `ConnectaConfig.calls.maxResultBytes`, its per-connector override,

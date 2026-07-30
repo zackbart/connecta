@@ -41,9 +41,12 @@ and exact JSON-serialized definition, request, and response token surfaces.
 The default tokenizer is `o200k_base`; override it with
 `CONNECTA_EVAL_TOKENIZER`.
 
-The default run enables the isolated QuickJS executor. Measure a deployment
-that omits its executor—and therefore must advertise only the nine base
-meta-tools—with:
+The default run enables the isolated QuickJS executor and pins
+`surface: "classic"`, so it measures the ten-tool shape: this audit walks every
+top-level meta-tool by name, and three of them exist only on the classic surface
+([#234](https://github.com/zackbart/connecta/issues/234) is extending it to the
+seven-tool code-first surface a deployment now serves by default). Measure a
+deployment that omits its executor—nine tools, no `execute_code`—with:
 
 ```sh
 npm --prefix eval/current-version run audit -- \

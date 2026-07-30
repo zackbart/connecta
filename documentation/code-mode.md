@@ -198,10 +198,10 @@ keep, a working ergonomic surface should not be removed mid-arc, and the
 exploration's cold-start sample used them naturally. Frozen means no typed method
 lists, no per-tool closures, no generated `.d.ts`, no second sanitization rule —
 every expansion invents a collision class the addressing in `A1` already solves.
-Whether they survive the default flip is
-[#222](https://github.com/zackbart/connecta/issues/222)'s evidence to settle: if
-programs reach for `connecta.call` anyway, or shortcut ambiguity shows up in
-failures, they lose.
+The default has since flipped without revisiting them
+([#224](https://github.com/zackbart/connecta/issues/224)), so evidence rather
+than a gate would take them away: if programs reach for `connecta.call` anyway,
+or shortcut ambiguity shows up in failures, they lose.
 
 ## The surface
 

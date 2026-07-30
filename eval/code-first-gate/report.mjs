@@ -747,7 +747,7 @@ Three surfaces, one commit, identical connectors and prompts:
 | --- | --- | --- |
 | \`classic\` | control — nine meta-tools, no executor | the comparison every delta is measured against |
 | \`classic-plus-code\` | incremental — the nine plus \`execute_code\` | nothing; it answers "does adding a code tool help on its own?" |
-| \`code-first\` | candidate — the seven-tool consolidated surface | the default-flip verdict |
+| \`code-first\` | candidate — the seven-tool consolidated surface, and what a deployment with an executor serves by default | the verdict |
 
 \`list_connectors\`, \`describe_tools\`, and \`batch_call\` are not part of the
 candidate arm's surface: connecta folded them into \`connecta.search\`,
@@ -826,13 +826,16 @@ The \`classic-plus-code\` arm gates nothing. Whatever it shows is an argument ab
 whether \`execute_code\` earns its definition on the nine-tool surface, not about
 the default.
 
-This verdict is an input to the default-flip decision, not the decision. **This
-suite flips nothing** — it advertises no surface, changes no default, and edits
-no configuration. Surface problems it surfaced — a shape models systematically
+The default already flipped: #224 shipped code-first as what a deployment with an
+executor serves, and the ethos records the eval-as-gate as \`removed\`. So this
+verdict gates nothing — it reports which surface performs, per model version, and
+is evidence for a regression, a follow-up, or a later decision. **This suite
+flips nothing** — it advertises no surface, changes no default, and edits no
+configuration. Surface problems it surfaced — a shape models systematically
 misuse — belong in the ethos decisions table, not in more prompt text.
 
 The catalog is the narrow one. A wide catalog with near-miss connector names is a
-required follow-up before any flip verdict here is treated as final.
+required follow-up before any verdict here is treated as final.
 `;
 }
 

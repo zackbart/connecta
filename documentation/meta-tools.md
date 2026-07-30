@@ -17,15 +17,21 @@ The `executor` decides it, and there is nothing else to configure
 Code-first is what a model sees. Four overlapping ways to reach one connector
 became two: `search_tools` then `call_tool` for a single cold read — measurably
 cheaper direct than through a program — and `execute_code` for everything wider.
-The fold is worth 19.6% of the serialized tool definitions, and more durably,
-one fewer routing decision a model makes before doing any work. The
-[guest API contract](./code-mode.md) is what a program is promised.
+The fold is worth 19.6% of the serialized tool definitions measured against the
+ten-tool shape an executor-backed deployment used to serve — 10,675B to 8,587B —
+and, more durably, one fewer routing decision a model makes before doing any
+work. Note which baseline that is: the executor-free nine serialize to 7,207B,
+so the seven-tool surface is *larger* than the row below it in that table. It
+buys the program with those bytes. The [guest API contract](./code-mode.md) is
+what a program is promised.
 
 Classic is the compatibility surface: what an executor-free deployment
 necessarily serves, since the program surface the fold depends on is not there.
 It is supported and tested, not an equal citizen in the docs. `surface:
-"classic"` beside an executor is the only override, and exists for the
-[eval gate](../eval/code-first-gate/README.md)'s control arms.
+"classic"` beside an executor is the only override; it produces the ten-tool
+shape the [eval gate](../eval/code-first-gate/README.md)'s *incremental* arm
+measures. That gate's control arm is executor-free classic and needs no
+override.
 
 Nothing became unreachable. `connecta.describe` takes the same addresses and
 formats as `describe_tools`, `connecta.batch` runs the same 1–10 parallel

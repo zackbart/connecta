@@ -313,8 +313,9 @@ export interface Connector {
  *   tools; their behavior lives in `connecta.search`, `connecta.describe`, and
  *   `connecta.batch` inside a program.
  * - `classic`: the nine base meta-tools, plus `execute_code` when an executor
- *   is configured. What an executor-free deployment necessarily serves, and
- *   the eval gate's control arm.
+ *   is configured. Without an executor it is what a deployment necessarily
+ *   serves and the eval gate's control arm; with one it is the ten-tool shape
+ *   the gate's incremental arm measures, and the only thing `surface` is for.
  */
 export type ConnectaSurface = "classic" | "code-first";
 

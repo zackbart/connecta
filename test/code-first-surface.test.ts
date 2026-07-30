@@ -278,7 +278,7 @@ describe("the measured cost of the surface", () => {
   // 2,521B of the ten-tool surface and the code-first routing prose adds 433B
   // back. The floor below is deliberately slack: the number to defend is the
   // direction, not a digit that turns every wording change into a test failure.
-  it("serializes materially smaller tool definitions than classic", async () => {
+  it("serializes materially smaller tool definitions than classic plus execute_code", async () => {
     const bytes = async (options: Parameters<typeof makeConnecta>[0]) =>
       JSON.stringify(await listTools(makeConnecta(options))).length;
     const codeFirst = await bytes({ executor: stubExecutor });

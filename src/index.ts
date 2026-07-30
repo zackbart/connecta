@@ -180,8 +180,10 @@ export interface ConnectaConfig {
   /**
    * Override the surface the `executor` implies. The only reason to set it is
    * `"classic"` alongside an executor — ten tools, the shape the eval gate's
-   * control arm measures against. `"code-first"` is the default wherever an
-   * executor exists and throws without one.
+   * *incremental* arm measures ("does adding `execute_code` to classic help on
+   * its own?"). The gate's control arm is executor-free classic, which needs no
+   * override. `"code-first"` is the default wherever an executor exists and
+   * throws without one.
    */
   surface?: ConnectaSurface;
 }

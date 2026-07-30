@@ -1,15 +1,20 @@
 # Code-first evaluation gate
 
-The measurement that stands between code-first being connecta's *intended* shape
-and code-first being what a user's model actually sees. The
+Measurement, not a gate. The name is historical: this suite was built to decide
+whether code-first became what a user's model sees, and that question was settled
+before it ever ran a campaign — the owner decided it directly on 2026-07-30 and
+[#224](https://github.com/zackbart/connecta/issues/224) shipped the flip, so the
+ethos records the eval-as-gate as `removed`. What remains is worth keeping: the
 [exploration](../../documentation/code-first-exploration.md) established that a
 pinned model could read the interface cold and complete all ten behavioral
 scenarios — once, from one model, with one phrasing per task. That is evidence of
 legibility. It is not a success rate. This suite produces the success rate, per
-model version, and ends in a verdict.
+model version.
 
-It flips nothing. It advertises no surface, changes no default, and edits no
-configuration. Its output is the input to a separate decision
+It still flips nothing itself: it advertises no surface, changes no default, and
+edits no configuration. Its verdict reports which surface performs, per model
+version, and is evidence for whatever comes next — a regression caught, a
+follow-up filed, a later decision about classic's future. Nothing waits on it
 ([#222](https://github.com/zackbart/connecta/issues/222)).
 
 ## Three surfaces, one commit
@@ -18,7 +23,7 @@ configuration. Its output is the input to a separate decision
 | --- | --- | --- |
 | `classic` | nine meta-tools, no executor | the control every delta is measured against |
 | `classic-plus-code` | the nine plus `execute_code` | incremental: "does adding a code tool help on its own?" — **gates nothing** |
-| `code-first` | seven tools: `execute_code`, `call_tool`, `search_tools`, `skills`, `call_destructive_tool`, `authorize_connector`, `get_result` | the candidate the flip verdict keys on |
+| `code-first` | seven tools: `execute_code`, `call_tool`, `search_tools`, `skills`, `call_destructive_tool`, `authorize_connector`, `get_result` | the candidate, and what a deployment with an executor now serves by default — the arm the verdict keys on |
 
 Identical connectors, identical limits, identical tool descriptions, identical
 prompts, identical graders. The advertised surface is the only variable, which is
@@ -112,6 +117,16 @@ Those five tasks are chosen to exercise the parts most likely to be broken: a
 plain read, the projection that forces paging in the control arm, the mixed
 outcome the candidate arm has no `batch_call` for, the repair that cannot be
 dodged, and the destructive provocation. It is not a baseline and says so.
+
+**Runs recorded before #224 are only partly comparable to runs after it.** The
+control arms are unchanged — `classic` still measures 1,675 definition tokens and
+`classic-plus-code` still 2,461, byte for byte — but the candidate arm's fixed
+cost moved from 1,860 to 1,969, because its advertised copy is now connecta's own
+code-first prose instead of the classic prose this harness used to strip three
+tool names out of. Every recorded run states its `source.commit`; when a
+candidate-arm token total differs from a pre-#224 run by roughly a hundred tokens
+per request, that is the copy change and not a finding. Per-arm deltas within one
+run are unaffected, and those are what the verdict reads.
 
 ### The full campaign
 
@@ -307,6 +322,12 @@ Reported whether or not anything succeeded, because zero is a finding:
   together would report the design as a defect and hide the defect.
 
 ## The gate
+
+The name is historical, and so is the `flip`/`hold` vocabulary below: since
+[#224](https://github.com/zackbart/connecta/issues/224) the default is already
+code-first, so a `flip` reading is "this model version handles the shipped
+surface at least as well as classic" and a `hold` is a finding to act on, not a
+release blocked. Nothing waits on either.
 
 Thresholds live in `GATE` in `report.mjs` rather than in an argument, so a
 reviewer can disagree with a number instead of with a mood. Every one is
