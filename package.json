@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.10.1",
+  "version": "0.10.2",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
@@ -10,6 +10,9 @@
   },
   "publishConfig": {
     "access": "public"
+  },
+  "bin": {
+    "connecta": "./bin/connecta.mjs"
   },
   "repository": {
     "type": "git",
@@ -26,9 +29,16 @@
     "connectors"
   ],
   "files": [
+    "bin",
     "dist",
     "src",
     "assets",
+    "documentation",
+    "examples/node",
+    "examples/worker",
+    "templates",
+    "AGENTS.md",
+    "ethos.md",
     "README.md",
     "CHANGELOG.md",
     "SECURITY.md",

@@ -1,6 +1,8 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync } from "node:fs";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,12 +10,104 @@ import { fileURLToPath } from "node:url";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const work = await mkdtemp(join(tmpdir(), "connecta-package-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const rootManifest = JSON.parse(
+  await readFile(join(root, "package.json"), "utf8"),
+);
+const templateManifest = JSON.parse(
+  await readFile(join(root, "templates", "node", "package.json"), "utf8"),
+);
 
-function run(command, args, cwd) {
+if (
+  templateManifest.dependencies?.["@zackbart/connecta"] !==
+  rootManifest.version
+) {
+  throw new Error("Node template must pin the package's current version");
+}
+
+function run(command, args, cwd, env = {}) {
   return execFileSync(command, args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "inherit"],
+    env: { ...process.env, ...env },
+  });
+}
+
+function expectFailure(command, args, cwd, expected, env = {}) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    env: { ...process.env, ...env },
+    timeout: 10_000,
+    killSignal: "SIGKILL",
+  });
+  const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+  if (
+    result.error ||
+    result.signal ||
+    result.status === 0 ||
+    !output.includes(expected)
+  ) {
+    throw new Error(
+      `Expected command failure containing ${JSON.stringify(expected)}; ` +
+        `status=${String(result.status)} signal=${String(result.signal)} ` +
+        `error=${String(result.error)} output=${output.slice(-2_000)}`,
+    );
+  }
+}
+
+async function freePort() {
+  const server = createServer();
+  await new Promise((resolvePromise, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolvePromise);
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Could not allocate a package-smoke port");
+  }
+  await new Promise((resolvePromise, reject) =>
+    server.close((error) => error ? reject(error) : resolvePromise()),
+  );
+  return address.port;
+}
+
+async function waitForHealth(url, child, output) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null) {
+      throw new Error(
+        `Generated deployment exited before health was ready:\n${output()}`,
+      );
+    }
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(500),
+      });
+      if (response.ok) return;
+    } catch {
+      // Startup is still in progress.
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 100));
+  }
+  throw new Error(
+    `Generated deployment did not become healthy within 15s:\n${output()}`,
+  );
+}
+
+async function stopChild(child) {
+  if (child.exitCode !== null) return;
+  child.kill("SIGTERM");
+  await new Promise((resolvePromise) => {
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      resolvePromise();
+    }, 5_000);
+    void once(child, "exit").then(() => {
+      clearTimeout(timer);
+      resolvePromise();
+    });
   });
 }
 
@@ -29,9 +123,17 @@ try {
   const paths = new Set(packed.files.map((file) => file.path));
 
   for (const required of [
+    "AGENTS.md",
     "README.md",
     "LICENSE",
     "assets/connecta-clay-hero.png",
+    "bin/connecta.mjs",
+    "documentation/code-mode.md",
+    "ethos.md",
+    "templates/node/.env.example",
+    "templates/node/AGENTS.md",
+    "templates/node/package.json",
+    "templates/node/src/index.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -51,6 +153,9 @@ try {
   for (const path of paths) {
     if (path.startsWith("eval/")) {
       throw new Error(`Eval-only file leaked into the package: ${path}`);
+    }
+    if (path.startsWith("examples/docker/")) {
+      throw new Error(`Repository-only Docker file leaked into package: ${path}`);
     }
     if (
       path.includes("connectors/cloudflare") ||
@@ -109,6 +214,114 @@ try {
     ["install", "--ignore-scripts", "--omit=optional", archive],
     work,
   );
+  const installedBin = join(
+    work,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "connecta.cmd" : "connecta",
+  );
+  run(installedBin, ["init", "generated-deployment"], work);
+  expectFailure(
+    installedBin,
+    ["init", "generated-deployment"],
+    work,
+    "Refusing to overwrite existing path",
+  );
+  const generatedPackage = JSON.parse(
+    await readFile(join(work, "generated-deployment", "package.json"), "utf8"),
+  );
+  if (
+    generatedPackage.dependencies?.["@zackbart/connecta"] !==
+    packed.version
+  ) {
+    throw new Error("Initializer did not pin the packed Connecta version");
+  }
+  for (const generated of [
+    ".env.example",
+    ".gitignore",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "src/index.ts",
+    "tsconfig.json",
+  ]) {
+    if (!existsSync(join(work, "generated-deployment", generated))) {
+      throw new Error(`Initializer is missing ${generated}`);
+    }
+  }
+  if (
+    process.platform !== "win32" &&
+    !(await lstat(
+      join(work, "generated-deployment", "CLAUDE.md"),
+    )).isSymbolicLink()
+  ) {
+    throw new Error("Initializer did not link CLAUDE.md to AGENTS.md");
+  }
+
+  // Substitute the tarball under test for the registry pin, then exercise the
+  // generated deployment exactly as a consumer would.
+  generatedPackage.dependencies["@zackbart/connecta"] = `file:${archive}`;
+  await writeFile(
+    join(work, "generated-deployment", "package.json"),
+    JSON.stringify(generatedPackage, null, 2) + "\n",
+  );
+  const generatedRoot = join(work, "generated-deployment");
+  run(npm, ["install", "--ignore-scripts"], generatedRoot);
+  run(npm, ["run", "typecheck"], generatedRoot);
+  const generatedTsx = join(
+    generatedRoot,
+    "node_modules",
+    ".bin",
+    process.platform === "win32" ? "tsx.cmd" : "tsx",
+  );
+  expectFailure(
+    generatedTsx,
+    ["src/index.ts"],
+    generatedRoot,
+    "CONNECTA_TOKEN is required",
+  );
+
+  const port = await freePort();
+  const smokeToken = "package-smoke-token";
+  let serverOutput = "";
+  const deployment = spawn(generatedTsx, ["src/index.ts"], {
+    cwd: generatedRoot,
+    env: {
+      ...process.env,
+      CONNECTA_TOKEN: smokeToken,
+      PORT: String(port),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const retainOutput = (chunk) => {
+    serverOutput = (serverOutput + chunk.toString()).slice(-8_000);
+  };
+  deployment.stdout.on("data", retainOutput);
+  deployment.stderr.on("data", retainOutput);
+  try {
+    await waitForHealth(
+      `http://127.0.0.1:${port}/health`,
+      deployment,
+      () => serverOutput,
+    );
+    const generatedConnecta = join(
+      generatedRoot,
+      "node_modules",
+      ".bin",
+      process.platform === "win32" ? "connecta.cmd" : "connecta",
+    );
+    const doctorOutput = run(
+      generatedConnecta,
+      ["doctor", "--url", `http://127.0.0.1:${port}`],
+      generatedRoot,
+      { CONNECTA_TOKEN: smokeToken },
+    );
+    if (!doctorOutput.includes("QuickJS executed")) {
+      throw new Error(`Doctor did not prove execution: ${doctorOutput}`);
+    }
+  } finally {
+    await stopChild(deployment);
+  }
+
   const coreDeclarations = await readFile(
     join(
       work,

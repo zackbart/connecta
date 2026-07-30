@@ -1,8 +1,9 @@
 # connecta — Docker
 
-Run connecta as a single self-contained Docker service. No database: the only
-state (downstream-OAuth tokens, connector caches) is a JSON file persisted to a
-named volume via `fileStorage`.
+Run the prescribed seven-tool code-first Connecta surface as a single
+self-contained Docker service. Generated read-only programs execute in a
+bounded QuickJS child. No database is required: downstream-OAuth tokens and
+connector caches live in a JSON file persisted through `fileStorage`.
 
 Everything here is driven by env vars — see [`.env.example`](./.env.example).
 The entrypoint is [`server.ts`](./server.ts), run with `tsx` inside the image.
@@ -70,10 +71,11 @@ that forwards to port 8787 and sets `X-Forwarded-Proto: https`.
 
 Edit [`server.ts`](./server.ts) and rebuild. It ships one demo `time` connector
 and a commented-out `remoteMcp` block showing both downstream-auth variants
-(static `headers` and full `oauth`). Options this entrypoint does not wire —
-code mode (`executor`), the credential vault (`credentials.encryptionKey`),
-activity history (`activity.store`), and `branding` — are ordinary
-`createConnecta` config; add them there. See the
+(static `headers` and full `oauth`). The entrypoint already wires the prescribed
+QuickJS executor. Options it does not wire — the credential vault
+(`credentials.encryptionKey`), activity history (`activity.store`), and
+`branding` — are ordinary `createConnecta` config; add them only when the
+deployment needs them. See the
 package [README](../../README.md) and
 [documentation](../../documentation/) for the subsystem
 references, or [ethos.md](../../ethos.md) for the rationale.

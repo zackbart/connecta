@@ -2,6 +2,57 @@
 
 All notable changes to this package are documented here.
 
+## 0.10.2 — 2026-07-30
+
+A prescribed deployment path for agents and operators. `connecta init` now
+creates one small, reviewable Node project with exact dependencies and
+auto-discoverable conventions; `connecta doctor` proves the running endpoint is
+healthy, advertises the intended seven tools, and can actually execute a
+harmless QuickJS program. The initializer never merges into an existing path,
+and it stages the complete project before an atomic rename so an interrupted
+setup leaves nothing half-created. **Existing deployments are unchanged.** The
+new template refuses to start without an explicit bearer token, while the
+repository Docker example now selects the same code-first surface by default.
+
+### Added
+
+- **One command to create the prescribed deployment.**
+  `npx @zackbart/connecta init <directory>` writes only the deployment config,
+  exact package manifest, TypeScript config, environment example, ignore rules,
+  README, and canonical `AGENTS.md` with `CLAUDE.md` pointing to it. The command
+  refuses every existing destination and pins the generated project to the
+  initializer's exact Connecta version.
+- **A live deployment doctor.** `CONNECTA_TOKEN=… connecta doctor` checks
+  `/health`, requires the exact seven-tool code-first surface, and runs
+  `async () => 42` through `execute_code`. Requests are bounded to ten seconds,
+  bearer tokens are accepted only from the environment, and remote plaintext
+  HTTP is refused.
+- **Artifact-level setup qualification.** The package smoke now installs the
+  packed tarball, initializes a deployment, checks overwrite refusal, installs
+  and typechecks the generated project, verifies tokenless startup fails,
+  starts it with auth, and runs the live doctor through QuickJS.
+
+### Changed
+
+- **Agent instructions have one source of truth.** `AGENTS.md` is canonical in
+  the package repository and generated deployments; `CLAUDE.md` is a symlink
+  where the filesystem supports it.
+- **The setup material ships with the package.** The standalone template,
+  agent-facing documentation, ethos, and usable Node and Worker examples are
+  available beside the installed package. Docker remains explicitly
+  repository-only because its reproducible build consumes repository inputs.
+- **The Docker example is code-first by default.** Its entrypoint configures the
+  bounded QuickJS executor instead of leaving operators to infer and add it.
+
+### Fixed
+
+- **The prescribed Node deployment no longer has a known fallback secret.**
+  Both the generated template and repository example refuse startup when
+  `CONNECTA_TOKEN` is absent.
+- **Failed initialization no longer strands a partial destination.** Work is
+  assembled in a uniquely named sibling directory, cleaned on failure, and
+  renamed into place only when complete.
+
 ## 0.10.1 — 2026-07-30
 
 An inbound-auth escape hatch for MCP clients whose OAuth implementations do not

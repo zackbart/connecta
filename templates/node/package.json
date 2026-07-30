@@ -1,0 +1,23 @@
+{
+  "name": "connecta-deployment",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "doctor": "connecta doctor",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@zackbart/connecta": "0.10.2",
+    "quickjs-emscripten": "0.32.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.23.1",
+    "typescript": "^5.6.0"
+  }
+}

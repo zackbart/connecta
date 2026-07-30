@@ -15,7 +15,12 @@ import { api, bearerToken, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 
-const token = process.env.CONNECTA_TOKEN ?? "dev-token";
+const token = process.env.CONNECTA_TOKEN;
+if (!token) {
+  throw new Error(
+    "CONNECTA_TOKEN is required. Refusing to start without inbound auth.",
+  );
+}
 const port = Number(process.env.PORT ?? 8787);
 
 const connecta = createConnecta({

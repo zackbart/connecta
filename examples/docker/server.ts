@@ -21,6 +21,7 @@ import { api, bearerToken, createConnecta } from "@zackbart/connecta";
 import type { InboundAuth } from "@zackbart/connecta";
 import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { fileStorage, listen } from "@zackbart/connecta/node";
+import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 
 const port = Number(process.env.PORT ?? 8787);
 const stateFile = process.env.STATE_FILE ?? "/data/connecta-state.json";
@@ -61,6 +62,9 @@ const connecta = createConnecta({
   storage: fileStorage(stateFile),
   auth,
   ...(publicUrl !== undefined ? { publicUrl } : {}),
+  // The prescribed surface: generated read-only programs run in a bounded,
+  // disposable QuickJS child. Removing this opts into classic compatibility.
+  executor: quickJsExecutor(),
   connectors: [
     api("time", {
       description: "Time — current timestamp",
@@ -89,7 +93,7 @@ const connecta = createConnecta({
     //
     // Full downstream OAuth (discovery, DCR, PKCE, refresh — persisted to the
     // state volume). Requires PUBLIC_URL so the /oauth/callback/<id> route is
-    // reachable; list_connectors surfaces the authorization URL to open:
+    // reachable; authorize_connector returns the authorization URL to open:
     //
     // remoteMcp("linear", {
     //   url: "https://mcp.linear.app/mcp",
