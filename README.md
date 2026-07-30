@@ -42,15 +42,59 @@ flowchart LR
 
 ## Start here
 
-- [Node example](./examples/node/)
-- [Docker example](./examples/docker/)
-- [Cloudflare Worker example](./examples/worker/)
-- [Documentation](./documentation/)
+Create the prescribed Node deployment:
 
-Configuring a sandbox — a Dynamic Worker on Cloudflare, QuickJS on Node — is
-what selects the code-first surface, and it is the assumed posture. A
-deployment without one keeps the earlier nine-tool, call-by-call interface,
-which stays supported.
+```sh
+npx @zackbart/connecta init my-connecta
+cd my-connecta
+npm install
+CONNECTA_TOKEN=dev-token npm start
+```
+
+Point an MCP client at `http://localhost:8787/mcp` with
+`Authorization: Bearer dev-token`. The generated project is deliberately small:
+
+```text
+my-connecta/
+├── src/index.ts       # connectors, auth, storage, public URL
+├── package.json       # exact Connecta and QuickJS versions
+├── tsconfig.json
+├── .env.example
+├── .gitignore
+├── AGENTS.md
+├── CLAUDE.md -> AGENTS.md
+└── README.md
+```
+
+For an agent setting this up, the contract is:
+
+1. Edit `src/index.ts`; do not copy Connecta internals into the deployment.
+2. Keep `executor: quickJsExecutor()` for the prescribed seven-tool surface.
+3. Keep secrets in environment variables or a secret store, never source.
+4. Add code only for deliberate `api()` connectors.
+5. Run `npm run typecheck`, start the server, and run
+   `CONNECTA_TOKEN=... npm run doctor`. Doctor checks health, the executor, and
+   the exact seven-tool model-facing surface, then executes a harmless sandbox
+   program. The bearer stays in the environment rather than command history.
+
+The template refuses to merge into an existing directory, so initialization
+cannot overwrite another project. Its generated programs have no filesystem,
+environment, arbitrary network, imports, or timers; only explicitly read-only
+connector tools are reachable. Unannotated or write-capable calls stay
+individual and cross `call_destructive_tool`, where the MCP host can ask the
+operator for approval.
+
+Other supported deployment shapes:
+
+- [Prescribed Node template](./templates/node/)
+- [Node repository example](./examples/node/)
+- [Code-first Docker deployment (repository-only)](https://github.com/zackbart/connecta/tree/main/examples/docker)
+- [Cloudflare Worker deployment](./examples/worker/)
+- [Subsystem documentation](./documentation/)
+
+Configuring a sandbox — QuickJS on Node or a Dynamic Worker on Cloudflare — is
+what selects the code-first surface and is the assumed posture. A deployment
+without one keeps the earlier nine-tool compatibility interface.
 
 ## Project status
 

@@ -1,14 +1,21 @@
-# connecta — Node example
+# connecta — Node repository example
 
-The smallest useful deployment: two in-code `api()` connectors behind the
-seven-tool code-first surface — `execute_code` in a QuickJS/WASM sandbox and the
-six explicit tools around it — with static bearer-token inbound auth and state
-on disk.
+This example runs against the current package source. For an independently
+installable deployment, use the root initializer instead:
 
 ```sh
-npm install                                    # from the package root
+npx @zackbart/connecta init my-connecta
+```
+
+From the package repository, run this example with:
+
+```sh
+npm install
 CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
 ```
+
+It serves the prescribed seven-tool code-first surface: `execute_code` in a
+bounded QuickJS child plus the six explicit boundary tools.
 
 - MCP endpoint: `http://localhost:8787/mcp`, with
   `Authorization: Bearer dev-token`
@@ -17,22 +24,30 @@ CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
   bearer-only example cannot manage credentials)
 - Health: `http://localhost:8787/health`
 
-`PORT` and `CONNECTA_TOKEN` are the only env vars; both have dev defaults.
+`PORT` defaults to `8787`; `CONNECTA_TOKEN` is required. Use a long random
+value outside this local example.
 
-## What to change
+## The deployment contract
 
-- **Storage** — `fileStorage("./.connecta-state.json")` persists downstream
-  OAuth tokens and tool catalogs across restarts. `memoryStorage()` is fine when
-  you use neither.
-- **The surface** — `executor: quickJsExecutor()` is what makes this a
-  code-first deployment. Remove that line and it serves the nine classic
-  meta-tools instead, with discovery and batching back at the top level. It
-  needs the optional `quickjs-emscripten` peer installed.
-- **Connectors** — add `remoteMcp(...)` entries to proxy downstream MCP servers,
-  or more `api(...)` connectors for HTTP APIs you own. Downstream OAuth
-  additionally needs `publicUrl` set to an origin the browser can reach, so the
-  `/oauth/callback/<connectorId>` route resolves.
+Keep this deployment small:
 
-Docker packaging of this same shape (env-driven, refuses to start without
-inbound auth) lives in [`../docker/`](../docker/). Documentation:
-[`documentation/`](../../documentation/).
+- Edit `src/index.ts` to change connectors, auth, storage, and the public URL.
+- Keep `executor: quickJsExecutor()` unless you deliberately want the classic
+  compatibility surface.
+- Keep secrets in environment variables or an external secret store. Never put
+  tokens in `src/index.ts`, connector guides, or committed JSON.
+- Add application code only when implementing a deliberate `api()` connector.
+  Do not copy Connecta internals into the deployment.
+- Run the repository's `npm run check` after a package change.
+
+`fileStorage("./.connecta-state.json")` persists downstream OAuth tokens and
+tool catalogs across restarts. `memoryStorage()` is sufficient only when the
+deployment needs neither. Add `remoteMcp(...)` entries for downstream MCP
+servers or `api(...)` connectors for HTTP APIs you deliberately expose.
+Downstream OAuth also requires `publicUrl` to be an origin the browser can
+reach.
+
+Docker packaging of the same code-first shape is
+[repository-only](https://github.com/zackbart/connecta/tree/main/examples/docker).
+The standalone template used by the initializer is in
+[`../../templates/node/`](../../templates/node/).

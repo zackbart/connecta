@@ -27,7 +27,7 @@ FROM node:22-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 
-# node_modules from the deps stage (includes tsx + runtime deps).
+# node_modules from the deps stage (includes tsx, QuickJS, and runtime deps).
 COPY --from=deps /app/node_modules ./node_modules
 # Built package and TypeScript example entrypoint.
 COPY package.json ./
