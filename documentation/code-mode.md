@@ -108,3 +108,10 @@ npm --prefix eval/current-version run audit -- --executor disabled
 
 The results record whether `execute_code` was advertised plus the complete
 definition, request, response, latency, and task-success surfaces.
+
+Whether code mode should become the *default* surface a user's model sees is a
+separate question with its own measurement:
+[`eval/code-first-gate`](../eval/code-first-gate/README.md) runs the
+exploration's ten behavioral scenarios against both surfaces, at least twenty
+samples per task per model, and reports per model rather than blending. It is
+the gate on that decision and it changes no default itself.

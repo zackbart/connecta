@@ -206,6 +206,12 @@ Turn the exploratory scenarios into a repeatable evaluation suite before
 changing the default surface. Run at least 20 independent samples per task and
 model, with prompt variation.
 
+That suite now exists as
+[`eval/code-first-gate`](../eval/code-first-gate/README.md): these ten scenarios
+as versioned tasks with three phrasings each, the classic nine-tool surface as
+the control arm, and a per-model report that ends in a flip/hold verdict without
+flipping anything.
+
 Capture:
 
 - task success;
