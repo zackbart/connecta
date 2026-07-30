@@ -76,7 +76,7 @@ function discoveryAddresses(value: unknown): unknown[] {
   if (!Array.isArray(value)) {
     throw new DiscoveryPolicyError(
       "invalid_args",
-      "addresses must be an array.",
+      'describe takes { addresses: ["<connectorId>.<toolName>", ...] }; addresses must be an array.',
     );
   }
   if (value.length > MAX_DESCRIBE_ADDRESSES) {
