@@ -32,8 +32,9 @@ Connecta deliberately sits between protocol generations
   five-minute fingerprinted catalog cache; that remains gated in
   [#206](https://github.com/zackbart/connecta/issues/206).
 - **Multi-round-trip results:** a downstream `input_required` result becomes a
-  non-retryable `input_required_unsupported` failure. `call_tool`, `batch_call`,
-  and the `execute_code` host bridge preserve the structured code. Relaying the
+  non-retryable `input_required_unsupported` failure. `call_tool`, the
+  `execute_code` host bridge, and classic's `batch_call` all preserve the
+  structured code. Relaying the
   opaque `requestState` is architecturally possible but gated until real hosts
   and downstreams adopt it.
 

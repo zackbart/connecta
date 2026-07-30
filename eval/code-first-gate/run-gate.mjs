@@ -186,9 +186,11 @@ async function probeArm(arm) {
         `Arm "${arm}" advertised ${names.length} tools, expected ${expected}: ${names.join(", ")}.`,
       );
     }
-    for (const hidden of ARMS[arm].suppress) {
+    for (const hidden of ARMS[arm].folded) {
       if (names.includes(hidden)) {
-        throw new Error(`Arm "${arm}" still advertises suppressed "${hidden}".`);
+        throw new Error(
+          `Arm "${arm}" still advertises folded "${hidden}": its surface configuration did not take effect.`,
+        );
       }
     }
     return {
@@ -196,7 +198,7 @@ async function probeArm(arm) {
       role: ARMS[arm].role,
       toolCount: names.length,
       tools: names,
-      suppressed: [...ARMS[arm].suppress].sort(),
+      folded: [...ARMS[arm].folded].sort(),
       toolDefinitionTokens: tokens(JSON.stringify(listed.tools)),
     };
   } finally {

@@ -9,27 +9,37 @@ import { fileURLToPath } from "node:url";
 const here = dirname(fileURLToPath(import.meta.url));
 
 /**
- * The three surfaces. `classic` is the control. `classic-plus-code` is today's
- * ten-tool deployment and answers only "does adding execute_code help or hurt?"
- * — it is reported and never gates the flip. `code-first` is the seven-tool
- * consolidated surface #224 accepts, and it is the arm the verdict keys on.
+ * The three surfaces, each an ordinary connecta deployment shape since #224.
+ * `classic` is the control. `classic-plus-code` is the ten-tool deployment and
+ * answers only "does adding execute_code help or hurt?" — it is reported and
+ * never gates the verdict. `code-first` is the seven-tool consolidated surface,
+ * which is what a deployment with an executor now serves by default, and it is
+ * the arm the verdict keys on.
+ *
+ * `folded` lists what a given arm's surface does not advertise. It used to be
+ * an instruction to the harness ("hide these"); it is now a declaration about
+ * the deployment, which the fixture verifier and the corpus checks read to know
+ * which routes are impossible on which arm.
  */
 export const ARMS = {
   classic: {
     executor: "disabled",
-    suppress: [],
+    surface: "classic",
+    folded: [],
     role: "control",
     expectedToolCount: 9,
   },
   "classic-plus-code": {
     executor: "enabled",
-    suppress: [],
+    surface: "classic",
+    folded: [],
     role: "incremental",
     expectedToolCount: 10,
   },
   "code-first": {
     executor: "enabled",
-    suppress: ["list_connectors", "describe_tools", "batch_call"],
+    surface: "code-first",
+    folded: ["list_connectors", "describe_tools", "batch_call"],
     role: "candidate",
     expectedToolCount: 7,
   },
@@ -66,7 +76,7 @@ export function startGateServer({
         CONNECTA_GATE_ACTIVITY_TOKEN: activityToken,
         CONNECTA_GATE_SOURCE_COMMIT: sourceCommit,
         CONNECTA_GATE_EXECUTOR: configuration.executor,
-        CONNECTA_GATE_SUPPRESS: configuration.suppress.join(","),
+        CONNECTA_GATE_SURFACE: configuration.surface,
         CONNECTA_GATE_CATALOG: catalog,
         CONNECTA_GATE_DOWNSTREAM_DELAY_MS: String(downstreamDelayMs),
       },

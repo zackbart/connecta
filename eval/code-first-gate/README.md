@@ -1,15 +1,20 @@
 # Code-first evaluation gate
 
-The measurement that stands between code-first being connecta's *intended* shape
-and code-first being what a user's model actually sees. The
+Measurement, not a gate. The name is historical: this suite was built to decide
+whether code-first became what a user's model sees, and that question was settled
+before it ever ran a campaign — the owner decided it directly on 2026-07-30 and
+[#224](https://github.com/zackbart/connecta/issues/224) shipped the flip, so the
+ethos records the eval-as-gate as `removed`. What remains is worth keeping: the
 [exploration](../../documentation/code-first-exploration.md) established that a
 pinned model could read the interface cold and complete all ten behavioral
 scenarios — once, from one model, with one phrasing per task. That is evidence of
 legibility. It is not a success rate. This suite produces the success rate, per
-model version, and ends in a verdict.
+model version.
 
-It flips nothing. It advertises no surface, changes no default, and edits no
-configuration. Its output is the input to a separate decision
+It still flips nothing itself: it advertises no surface, changes no default, and
+edits no configuration. Its verdict reports which surface performs, per model
+version, and is evidence for whatever comes next — a regression caught, a
+follow-up filed, a later decision about classic's future. Nothing waits on it
 ([#222](https://github.com/zackbart/connecta/issues/222)).
 
 ## Three surfaces, one commit
@@ -18,40 +23,36 @@ configuration. Its output is the input to a separate decision
 | --- | --- | --- |
 | `classic` | nine meta-tools, no executor | the control every delta is measured against |
 | `classic-plus-code` | the nine plus `execute_code` | incremental: "does adding a code tool help on its own?" — **gates nothing** |
-| `code-first` | seven tools: `execute_code`, `call_tool`, `search_tools`, `skills`, `call_destructive_tool`, `authorize_connector`, `get_result` | the candidate the flip verdict keys on |
+| `code-first` | seven tools: `execute_code`, `call_tool`, `search_tools`, `skills`, `call_destructive_tool`, `authorize_connector`, `get_result` | the candidate, and what a deployment with an executor now serves by default — the arm the verdict keys on |
 
 Identical connectors, identical limits, identical tool descriptions, identical
 prompts, identical graders. The advertised surface is the only variable, which is
 the only reason a delta between arms means anything.
 
-connecta has no configuration for suppressing a meta-tool — the surface is a
-property of the deployment shape, not a preference — so `code-first` is produced
-harness-side: `gate-server.ts` filters `list_connectors`, `describe_tools`, and
-`batch_call` out of `tools/list` and refuses a `tools/call` on any of them with
-`tool_not_on_surface` and a message saying the capability now lives inside
-`execute_code`. That refusal is deliberately measurable. A model reaching for
-`batch_call` when the surface no longer offers one is exactly the evidence
-[#224](https://github.com/zackbart/connecta/issues/224) needs, and it is counted
-under misrouting.
+All three arms are deployment shapes connecta can actually be, so the harness
+configures them rather than faking them:
+[#224](https://github.com/zackbart/connecta/issues/224) made the consolidated
+surface real, and `code-first` is what a deployment with an executor now serves
+by default. `gate-server.ts` passes `surface` and an executor per arm and wraps
+nothing but its own `/__gate/activity` route. It previously filtered `tools/list`
+itself and rewrote connecta's copy around the tools it hid, because the product
+had no way to express this surface; both workarounds are gone.
 
-**The prose is rewritten with the surface.** Hiding a tool while still
-recommending it is not a smaller surface, it is a trap: connecta's `call_tool`
-description says "For 2–10 independent read-only calls use batch_call",
-`get_result` says results are "stashed by call_tool/batch_call", `execute_code`
-points at `describe_tools` for schemas, and the server `instructions` repeat all
-of it. An arm that suppressed those tools without editing that copy would measure
-the harness's own contradiction — a model told to use a tool it cannot call — and
-the misrouting counts would be an artifact rather than a finding. The
-post-consolidation surface would ship rewritten copy, so `PROSE_EDITS` in
-`gate-server.ts` is that copy, applied deterministically to the tool descriptions
-and the instructions of the suppressed arm only. Two guards keep it honest: every
-edit must match at least once, and after rewriting no advertised text may still
-contain a suppressed tool's name. A wording change in `src/` therefore fails the
-server loudly instead of quietly reintroducing the confound, and
-`verify-fixtures.mjs` additionally asserts the control arms still carry the
-original prose so the rewrite cannot leak across arms.
+A model reaching for `batch_call` on the candidate arm meets the MCP layer's
+unknown-tool error and that reach is counted under misrouting — still the
+evidence the consolidation wanted, now measured against the product rather than
+against a stand-in for it.
 
-Every task is completable in all three arms and no grader depends on a suppressed
+**The prose comes with the surface.** Advertising a tool while recommending
+another one that is not there is a trap, so connecta ships its own code-first
+copy: `call_tool` points wider work at `connecta.batch` instead of `batch_call`,
+`get_result` says a program's return is reduced in code rather than paged, and
+`execute_code` reads schemas through `connecta.describe`. `verify-fixtures.mjs`
+asserts both directions — the candidate arm's advertised text and instructions
+never name a folded tool, and the control arms still carry the original prose, so
+neither surface's copy can leak into the other.
+
+Every task is completable in all three arms and no grader depends on a folded
 tool: the batch semantics `code-first` needs live inside `execute_code` as
 `connecta.batch`. Only each task's *intended route* differs per arm, and intended
 route is reported, never graded.
@@ -88,7 +89,7 @@ That runs three things:
   transcripts, the stated thresholds against their own arithmetic, and the report
   against a synthetic run including its structural anti-blending rule.
 - `verify-fixtures.mjs` — all three arms driven over the real MCP transport:
-  exact advertised tool lists, suppression that refuses as well as hides, each
+  exact advertised tool lists, a folded tool that refuses as well as hides, each
   task's fixtures returning what its grader accepts, truncation and paging, the
   flaky read, both argument-repair targets, the destructive boundary from
   `call_tool` and from the sandbox, and the activity feed refusing the MCP bearer.
@@ -116,6 +117,16 @@ Those five tasks are chosen to exercise the parts most likely to be broken: a
 plain read, the projection that forces paging in the control arm, the mixed
 outcome the candidate arm has no `batch_call` for, the repair that cannot be
 dodged, and the destructive provocation. It is not a baseline and says so.
+
+**Runs recorded before #224 are only partly comparable to runs after it.** The
+control arms are unchanged — `classic` still measures 1,675 definition tokens and
+`classic-plus-code` still 2,461, byte for byte — but the candidate arm's fixed
+cost moved from 1,860 to 1,969, because its advertised copy is now connecta's own
+code-first prose instead of the classic prose this harness used to strip three
+tool names out of. Every recorded run states its `source.commit`; when a
+candidate-arm token total differs from a pre-#224 run by roughly a hundred tokens
+per request, that is the copy change and not a finding. Per-arm deltas within one
+run are unaffected, and those are what the verdict reads.
 
 ### The full campaign
 
@@ -312,6 +323,12 @@ Reported whether or not anything succeeded, because zero is a finding:
 
 ## The gate
 
+The name is historical, and so is the `flip`/`hold` vocabulary below: since
+[#224](https://github.com/zackbart/connecta/issues/224) the default is already
+code-first, so a `flip` reading is "this model version handles the shipped
+surface at least as well as classic" and a `hold` is a finding to act on, not a
+release blocked. Nothing waits on either.
+
 Thresholds live in `GATE` in `report.mjs` rather than in an argument, so a
 reviewer can disagree with a number instead of with a mood. Every one is
 evaluated inside a single model version, on the **`code-first`** arm, against the
@@ -370,12 +387,10 @@ Other honest limits:
   `downstreamSerializedMs` sums the durations and legitimately exceeds the round
   trip whenever calls overlap — three parallel 300 ms reads sum to 900 ms inside a
   395 ms round trip — so it is reported and never subtracted.
-- The candidate arm pays a small latency tax the other two do not: suppression
-  buffers and re-serializes each MCP response to filter `tools/list` and rewrite
-  the prose. It costs a fraction of a millisecond per round trip, is invisible
-  beside model inference, and does not touch token counts — but it is real, and
-  the arms are not byte-for-byte identical in the transport layer. Prefer the
-  token and round-trip deltas over the raw millisecond ones when comparing arms.
+- The arms are now byte-for-byte identical in the transport layer: every one is
+  plain connecta, and the candidate arm no longer pays the fraction of a
+  millisecond the harness's old response rewriting cost it. The remaining
+  difference between arms is the surface itself.
 - Latency figures move with `--concurrency` and with the machine. Compare runs
   that used the same value on the same hardware, or compare only the split.
 - Parallel tool calls arrive as one batch of results. Their elapsed time is
@@ -423,7 +438,7 @@ drawn from:
 | File | Role |
 | --- | --- |
 | `scenarios.mjs` | the versioned corpus: twelve tasks, thirty-six prompts, expectations, graders. Bump `CORPUS_VERSION` on any change; results carrying different versions are not comparable |
-| `gate-server.ts` | the deployment under evaluation. Three arms, one file; surface suppression, the catalog seam, the downstream-delay knob, and the activity route |
+| `gate-server.ts` | the deployment under evaluation. Three arms, one file; the surface and executor per arm, the catalog seam, the downstream-delay knob, and the activity route |
 | `agents.mjs` | driver adapters and the normalized transcript |
 | `measure.mjs` | per-sample metrics, misrouting signals, and the failure taxonomy |
 | `report.mjs` | the report, the `GATE` thresholds, the Wilson interval, and the effective-threshold arithmetic |

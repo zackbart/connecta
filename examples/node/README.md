@@ -1,8 +1,9 @@
 # connecta — Node example
 
-The smallest useful deployment: two in-code `api()` connectors behind the nine
-meta-tools plus `execute_code` (QuickJS/WASM sandbox), static bearer-token
-inbound auth, and state on disk.
+The smallest useful deployment: two in-code `api()` connectors behind the
+seven-tool code-first surface — `execute_code` in a QuickJS/WASM sandbox and the
+six explicit tools around it — with static bearer-token inbound auth and state
+on disk.
 
 ```sh
 npm install                                    # from the package root
@@ -23,9 +24,10 @@ CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
 - **Storage** — `fileStorage("./.connecta-state.json")` persists downstream
   OAuth tokens and tool catalogs across restarts. `memoryStorage()` is fine when
   you use neither.
-- **Code mode** — remove the `executor: quickJsExecutor()` line to serve the
-  nine base meta-tools. It needs the optional `quickjs-emscripten` peer
-  installed.
+- **The surface** — `executor: quickJsExecutor()` is what makes this a
+  code-first deployment. Remove that line and it serves the nine classic
+  meta-tools instead, with discovery and batching back at the top level. It
+  needs the optional `quickjs-emscripten` peer installed.
 - **Connectors** — add `remoteMcp(...)` entries to proxy downstream MCP servers,
   or more `api(...)` connectors for HTTP APIs you own. Downstream OAuth
   additionally needs `publicUrl` set to an origin the browser can reach, so the

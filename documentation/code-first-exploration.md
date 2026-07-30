@@ -1,5 +1,21 @@
 # Code-first Connecta: exploration findings
 
+> **Read as a record, not as current policy.** This is the exploration that
+> started the arc, kept as written. Two of its conclusions have since been
+> overtaken, and [`ethos.md`](../ethos.md)'s decisions table is the authority
+> where they disagree:
+>
+> - **The ~32% definition-size reduction was an estimate.** The shipped fold
+>   measures **19.6%** on the same 10-tools-to-7 comparison (10,675B → 8,587B).
+>   The prototype's seven descriptions were thinner than the ones connecta
+>   actually ships.
+> - **The "require repeated pinned-model evaluation before changing the default"
+>   constraint below was dropped.** The owner decided the default directly on
+>   2026-07-30 and [#224](https://github.com/zackbart/connecta/issues/224)
+>   shipped it; the ethos records the eval-as-gate as `removed` and
+>   [`eval/code-first-gate`](../eval/code-first-gate/README.md) continues as
+>   measurement that nothing waits on.
+
 ## Executive summary
 
 We explored whether Connecta should make code execution the primary interface

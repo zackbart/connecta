@@ -20,16 +20,19 @@ are stable and cited by the tests in [Verification](#verification).
 
 ## Deploy-time capability
 
-The `executor` passed to `createConnecta()` is the complete switch:
+The `executor` passed to `createConnecta()` is the complete switch, and it selects
+the whole surface rather than one tool
+([#224](https://github.com/zackbart/connecta/issues/224)): with a live `Executor`,
+`tools/list` is exactly seven — `execute_code`, `search_tools`, `call_tool`,
+`call_destructive_tool`, `authorize_connector`, `get_result`, `skills`; without one
+it is the nine base meta-tools, whose `list_connectors`, `describe_tools`, and
+`batch_call` are what seven folds into `connecta.search`, `connecta.describe`, and
+`connecta.batch`.
 
-- omit `executor` and `tools/list` contains exactly the nine base meta-tools;
-- provide a live `Executor` and `tools/list` also contains `execute_code`.
-
-There is no separate feature flag, and connecta never advertises a code tool it
-plans to initialize later. Changing whether a deployment offers code mode means
-changing its executor configuration and redeploying. Executor-free deployments
-keep the classic `call_tool`/`batch_call` paths, which is why the always-loaded
-instructions say "when available".
+No feature flag, and no code tool advertised before it can be honored.
+`surface: "classic"` beside an executor is the one override (ten tools, the eval
+gate's incremental arm); `surface: "code-first"` without one throws at
+construction rather than advertise an absent program surface.
 
 On Node, install the optional `quickjs-emscripten` peer and use the package's
 QuickJS subpath:
@@ -49,7 +52,7 @@ CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are configured
 on the executor. Server bundlers must keep the `@zackbart/connecta/quickjs`
 package files external so the child entry stays on disk. The
 [Node example](../examples/node/README.md) is enabled; remove its `executor` field
-to see the nine-tool deployment.
+for the nine-tool compatibility deployment.
 
 On Cloudflare Workers, the Worker Loader binding is both the paid capability and
 the configuration switch:
@@ -195,10 +198,10 @@ keep, a working ergonomic surface should not be removed mid-arc, and the
 exploration's cold-start sample used them naturally. Frozen means no typed method
 lists, no per-tool closures, no generated `.d.ts`, no second sanitization rule —
 every expansion invents a collision class the addressing in `A1` already solves.
-Whether they survive the default flip is
-[#222](https://github.com/zackbart/connecta/issues/222)'s evidence to settle: if
-programs reach for `connecta.call` anyway, or shortcut ambiguity shows up in
-failures, they lose.
+The default has since flipped without revisiting them
+([#224](https://github.com/zackbart/connecta/issues/224)), so evidence rather
+than a gate would take them away: if programs reach for `connecta.call` anyway,
+or shortcut ambiguity shows up in failures, they lose.
 
 ## The surface
 
@@ -592,8 +595,8 @@ error when a program returns something its codec cannot carry. QuickJS converts
 lossily instead — a cyclic object comes back as the string `"[object Object]"`,
 because the guest-to-host dump happens before any serializer can object.
 Normalizing this would mean walking every returned value in the child for
-JSON-representability, which spends real CPU on every program to improve the
-error message of a program that is already wrong. `P3` is the contract: neither
+JSON-representability, spending real CPU on every program to improve the error
+message of a program that is already wrong. `P3` is the contract: neither
 behavior returns the value.
 
 **X10. Per-host-call payload bound.** `L6`'s 256 KiB ceiling on a host call's
@@ -615,11 +618,9 @@ entry. Programs that ran before still run.
   both surfaces.
 - **A policy refusal can no longer look retryable** (`E7`). Pinned in code rather
   than read out of message text, so a connector named `svc-503` stops flipping a
-  permanent refusal to `retryable: true`. This reaches `call_tool` and
-  `batch_call` too.
-- **An uncaught discovery-bound failure is typed** (`S3`). It arrives as
-  `invalid_args`/`result_too_large` rather than prose, the same envelope a failed
-  tool call gets.
+  permanent refusal to `retryable: true`. This reaches the call tools too.
+- **An uncaught discovery-bound failure is typed** (`S3`): `invalid_args` or
+  `result_too_large` rather than prose, the same envelope a failed call gets.
 - **A bridge-bound failure names the address** (`L6`), not the internal
   dispatcher every shortcut namespace shares.
 - **An oversized result is truncated once** (`R2`). The envelope is sized so its
@@ -653,7 +654,7 @@ the upstream `Executor` shape assignable.
 | `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
 | `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
 | `A5` | verdict; `A1`–`A3` are its enforcement |
-| `S1`, `S2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (schema keys, `$ref`/`allOf`) |
+| `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (`$ref`/`allOf`) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
 | `S4` | `test/guest-api-contract.test.ts` (unknown address in `describe`) |
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
@@ -687,9 +688,10 @@ the upstream `Executor` shape assignable.
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface count itself is checked by `test/server.test.ts`, which calls
-`tools/list` with and without a live executor. The release audit supports the
-same comparison:
+The surface itself is checked by `test/server.test.ts` (the exact seven, nine, and
+ten tool lists) and `test/code-first-surface.test.ts` (the fold's construction
+rules, refusals, copy, and measured size). The release audit compares the same
+two shapes:
 
 ```sh
 npm --prefix eval/current-version run audit

@@ -1,10 +1,44 @@
 # Meta-tools
 
 Connecta keeps one small tool surface in model context and resolves downstream
-tools behind it. `search_tools` finds addresses, `describe_tools` expands
-schemas, the call tools enforce safety annotations, and `get_result` pages
-bounded results. `execute_code` is registered only when the deployment
-configures an executor.
+tools behind it. `search_tools` finds addresses, the call tools enforce safety
+annotations, and `get_result` pages bounded results.
+
+## Which surface a deployment serves
+
+The `executor` decides it, and there is nothing else to configure
+([#224](https://github.com/zackbart/connecta/issues/224)):
+
+| | `tools/list` | Discovery breadth and batching |
+| --- | --- | --- |
+| **executor configured** | seven: `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`, `authorize_connector`, `get_result`, `skills` | `connecta.search`, `connecta.describe`, `connecta.batch` inside a program |
+| **no executor** | nine: the above minus `execute_code`, plus `list_connectors`, `describe_tools`, `batch_call` | those three top-level tools |
+
+Code-first is what a model sees. Four overlapping ways to reach one connector
+became two: `search_tools` then `call_tool` for a single cold read — measurably
+cheaper direct than through a program — and `execute_code` for everything wider.
+The fold is worth 19.6% of the serialized tool definitions measured against the
+ten-tool shape an executor-backed deployment used to serve — 10,675B to 8,587B —
+and, more durably, one fewer routing decision a model makes before doing any
+work. Note which baseline that is: the executor-free nine serialize to 7,207B,
+so the seven-tool surface is *larger* than the row below it in that table. It
+buys the program with those bytes. The [guest API contract](./code-mode.md) is
+what a program is promised.
+
+Classic is the compatibility surface: what an executor-free deployment
+necessarily serves, since the program surface the fold depends on is not there.
+It is supported and tested, not an equal citizen in the docs. `surface:
+"classic"` beside an executor is the only override; it produces the ten-tool
+shape the [eval gate](../eval/code-first-gate/README.md)'s *incremental* arm
+measures. That gate's control arm is executor-free classic and needs no
+override.
+
+Nothing became unreachable. `connecta.describe` takes the same addresses and
+formats as `describe_tools`, `connecta.batch` runs the same 1–10 parallel
+read-only calls as `batch_call` and returns the same typed outcomes, and an
+unfiltered `connecta.search({})` browses every catalog a program can reach —
+the part of `list_connectors` a model used. Live connector probing was the rest
+of it, and that is an operator concern: the operator pages and `/health` own it.
 
 ## Discovery context
 
@@ -12,9 +46,10 @@ Start an unknown-address lookup with two to four distinctive action/object
 terms, not the full request, and omit `limit` so the default eight-result page
 stays small. `includeSchemas: "compact"` adds each match's input and any
 declared output shape; matches also carry declared behavior annotations. When
-that shape is sufficient, call the returned address directly. Reserve
-`describe_tools` for a search without schemas, an ambiguous compact shape, or
-exact constraints that require `format: "json"`.
+that shape is sufficient, call the returned address directly. Reserve schema
+expansion — `connecta.describe` in a program, `describe_tools` on the classic
+surface — for a search without schemas, an ambiguous compact shape, or exact
+constraints that require `format: "json"`.
 
 ## Result representation
 

@@ -314,7 +314,15 @@ export function measureSample({
       unknownAddressObserved += 1;
     }
     if (code === BOUNDARY_REFUSAL_CODE) boundaryRefusalsSeen += 1;
-    if (code === "tool_not_on_surface" || /not part of this deployment's surface/.test(text)) {
+    // Since #224 the surface is connecta's own configuration, so a call to a
+    // folded tool meets the MCP layer's unknown-tool error. The harness's older
+    // rewritten refusal is still recognized: fixtures recorded before the fold
+    // became real must keep measuring the same way.
+    if (
+      code === "tool_not_on_surface" ||
+      /not part of this deployment's surface/.test(text) ||
+      (SUPPRESSIBLE_TOOLS.has(event.tool) && /not found/.test(text))
+    ) {
       notOnSurfaceRefusalsSeen += 1;
     }
     if (/"truncated"\s*:\s*true/.test(text)) truncationsObserved += 1;
