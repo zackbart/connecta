@@ -67,13 +67,16 @@ offsets and totals refer to that exact compact text.
 
 `fields` keeps its historical flat `{ "<path>": value }` result when every
 requested dot-path resolves. If any path misses, the result instead carries
-the matches under `data` and names each miss under
-`projection.unmatchedFields`, so a bad projection cannot impersonate empty
-source data. A declared output schema also contributes a bounded
-`availableFields` list and identifies paths outside it as `invalidFields`;
-without one, Connecta reports only the observed misses and does not pretend it
-knows the complete runtime shape. API values and JSON-parseable downstream MCP
-text blocks follow the same rule.
+the matches under `data` and reserves `$connecta` for a
+`type: "field_projection"` recovery record naming each `unmatchedFields`
+entry. The discriminator means downstream fields named `data`, `projection`,
+or `$connecta` remain ordinary values nested under `data`, never apparent
+metadata. A declared output schema contributes a bounded `availableFields`
+list and a `schemaCoverage` verdict. Only a completely analyzed, closed schema
+can label paths `invalidFields`; open, patterned, tuple, unresolvable, cyclic,
+or traversal-limited shapes stay `partial`. Without a schema, Connecta reports
+only observed misses and does not pretend it knows the complete runtime shape.
+API values and JSON-parseable downstream MCP text blocks follow the same rule.
 
 ## Lexical discovery
 

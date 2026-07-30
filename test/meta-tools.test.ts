@@ -2689,13 +2689,16 @@ const dataConnector: Connector = {
         annotations: { readOnlyHint: true },
         outputSchema: {
           type: "object",
+          additionalProperties: false,
           properties: {
             user: {
               type: "object",
+              additionalProperties: false,
               properties: {
                 name: { type: "string" },
                 address: {
                   type: "object",
+                  additionalProperties: false,
                   properties: { city: { type: "string" } },
                 },
               },
@@ -2704,6 +2707,7 @@ const dataConnector: Connector = {
               type: "array",
               items: {
                 type: "object",
+                additionalProperties: false,
                 properties: { id: { type: "number" } },
               },
             },
@@ -2726,6 +2730,7 @@ const dataConnector: Connector = {
         annotations: { readOnlyHint: true },
         outputSchema: {
           type: "object",
+          additionalProperties: false,
           properties: { title: { type: "string" } },
         },
       },
@@ -2758,6 +2763,7 @@ const jsonMcpConnector: Connector = {
         annotations: { readOnlyHint: true },
         outputSchema: {
           type: "object",
+          additionalProperties: false,
           properties: { a: { type: "number" }, b: { type: "number" } },
         },
       },
@@ -2772,6 +2778,123 @@ const jsonMcpConnector: Connector = {
     return {
       content: [{ type: "text", text: JSON.stringify({ a: 1, b: 2 }) }],
     };
+  },
+};
+
+function deepProjectionSchema(): Record<string, unknown> {
+  let nested: Record<string, unknown> = { type: "string" };
+  for (let i = 0; i < 40; i++) {
+    nested = {
+      type: "object",
+      additionalProperties: false,
+      properties: { next: nested },
+    };
+  }
+  return nested;
+}
+
+const projectionSchemaConnector: Connector = {
+  id: "projection-schemas",
+  kind: "api",
+  description: "Projection schema edge cases",
+  async listTools() {
+    return [
+      {
+        name: "ref",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          $ref: "#/$defs/record",
+          $defs: {
+            record: {
+              type: "object",
+              additionalProperties: false,
+              properties: { title: { type: "string" } },
+            },
+          },
+        },
+      },
+      {
+        name: "open",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          properties: { known: { type: "string" } },
+        },
+      },
+      {
+        name: "unresolved",
+        annotations: { readOnlyHint: true },
+        outputSchema: { $ref: "https://schemas.example/record.json" },
+      },
+      {
+        name: "patterned",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          patternProperties: { "^x-": { type: "string" } },
+          properties: { known: { type: "string" } },
+        },
+      },
+      {
+        name: "tuple",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "array",
+          prefixItems: [
+            {
+              type: "object",
+              additionalProperties: false,
+              properties: { id: { type: "number" } },
+            },
+          ],
+          items: false,
+        },
+      },
+      {
+        name: "unselectable",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { "a.b": { type: "string" } },
+        },
+      },
+      {
+        name: "deep",
+        annotations: { readOnlyHint: true },
+        outputSchema: deepProjectionSchema(),
+      },
+      {
+        name: "broad",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: Object.fromEntries(
+            Array.from({ length: 300 }, (_, i) => [
+              `field${String(i).padStart(3, "0")}`,
+              { type: "string" },
+            ]),
+          ),
+        },
+      },
+      {
+        name: "collision",
+        annotations: { readOnlyHint: true },
+      },
+    ];
+  },
+  async callTool(name) {
+    if (name === "tuple") return [];
+    if (name === "collision") {
+      return {
+        data: "downstream data",
+        projection: "downstream projection",
+        $connecta: "downstream namespace",
+      };
+    }
+    return {};
   },
 };
 
@@ -2799,20 +2922,23 @@ describe("call_tool fields selection", () => {
       }),
     ) as {
       data: Record<string, unknown>;
-      projection: {
+      $connecta: {
+        type: string;
         unmatchedFields: string[];
         schemaDeclared: boolean;
         availableFields: string[];
       };
     };
     expect(parsed.data).toEqual({ "user.address.city": "London" });
-    expect(parsed.projection).toMatchObject({
+    expect(parsed.$connecta).toMatchObject({
+      type: "field_projection",
       unmatchedFields: ["user.missing.deep"],
       schemaDeclared: true,
+      schemaCoverage: "complete",
       invalidFields: ["user.missing.deep"],
     });
-    expect(parsed.projection.availableFields).toContain("user.address.city");
-    expect(parsed.projection.availableFields).toContain("results[].id");
+    expect(parsed.$connecta.availableFields).toContain("user.address.city");
+    expect(parsed.$connecta.availableFields).toContain("results[].id");
   });
 
   it("reports all-unmatched API projections in value mode", async () => {
@@ -2827,16 +2953,18 @@ describe("call_tool fields selection", () => {
       ok: boolean;
       data: {
         data: Record<string, unknown>;
-        projection: { unmatchedFields: string[] };
+        $connecta: { unmatchedFields: string[] };
       };
     };
     expect(parsed).toMatchObject({
       ok: true,
       data: {
         data: {},
-        projection: {
+        $connecta: {
+          type: "field_projection",
           unmatchedFields: ["title", "url"],
           schemaDeclared: true,
+          schemaCoverage: "complete",
           invalidFields: ["title", "url"],
         },
       },
@@ -2853,7 +2981,10 @@ describe("call_tool fields selection", () => {
     );
     expect(parsed).toEqual({
       data: { a: 1 },
-      projection: { unmatchedFields: ["missing"] },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: ["missing"],
+      },
     });
   });
 
@@ -2864,9 +2995,11 @@ describe("call_tool fields selection", () => {
     );
     expect(parsed).toEqual({
       data: {},
-      projection: {
+      $connecta: {
+        type: "field_projection",
         unmatchedFields: ["title"],
         schemaDeclared: true,
+        schemaCoverage: "complete",
         availableFields: ["title"],
       },
     });
@@ -2886,9 +3019,11 @@ describe("call_tool fields selection", () => {
     });
     expect(JSON.parse(required(result.content[0]).text)).toEqual({
       data: { a: 1 },
-      projection: {
+      $connecta: {
+        type: "field_projection",
         unmatchedFields: ["missing"],
         schemaDeclared: true,
+        schemaCoverage: "complete",
         invalidFields: ["missing"],
         availableFields: ["a", "b"],
       },
@@ -2903,7 +3038,105 @@ describe("call_tool fields selection", () => {
     });
     expect(JSON.parse(required(result.content[0]).text)).toEqual({
       data: { a: 1 },
-      projection: { unmatchedFields: ["missing"] },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: ["missing"],
+      },
+    });
+  });
+
+  it("resolves a closed local $ref before identifying invalid fields", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.callTool({
+        address: "projection-schemas.ref",
+        fields: ["title", "url"],
+      }),
+    ) as {
+      $connecta: Record<string, unknown>;
+    };
+    expect(parsed.$connecta).toEqual({
+      type: "field_projection",
+      unmatchedFields: ["title", "url"],
+      schemaDeclared: true,
+      schemaCoverage: "complete",
+      invalidFields: ["url"],
+      availableFields: ["title"],
+    });
+  });
+
+  it.each(["open", "unresolved", "patterned", "tuple", "unselectable"])(
+    "does not claim invalid fields for a %s schema",
+    async (name) => {
+      const mt = createMetaTools(
+        makeRegistry([projectionSchemaConnector]),
+        BASE,
+      );
+      const parsed = textOf(
+        await mt.callTool({
+          address: `projection-schemas.${name}`,
+          fields: ["missing"],
+        }),
+      ) as {
+        $connecta: Record<string, unknown>;
+      };
+      expect(parsed.$connecta).toMatchObject({
+        type: "field_projection",
+        unmatchedFields: ["missing"],
+        schemaDeclared: true,
+        schemaCoverage: "partial",
+      });
+      expect(parsed.$connecta).not.toHaveProperty("invalidFields");
+    },
+  );
+
+  it("bounds deep and broad schema analysis before rendering feedback", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    for (const name of ["deep", "broad"]) {
+      const result = await mt.callTool({
+        address: `projection-schemas.${name}`,
+        fields: ["missing"],
+      });
+      const text = required(result.content[0]).text;
+      const parsed = JSON.parse(text) as {
+        $connecta: Record<string, unknown>;
+      };
+      expect(parsed.$connecta).toMatchObject({
+        schemaCoverage: "partial",
+        availableFieldsTruncated: true,
+      });
+      expect(parsed.$connecta).not.toHaveProperty("invalidFields");
+      expect(text.length).toBeLessThan(1_000);
+    }
+  });
+
+  it("keeps colliding downstream field names below reserved metadata", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.callTool({
+        address: "projection-schemas.collision",
+        fields: ["data", "projection", "$connecta", "missing"],
+      }),
+    );
+    expect(parsed).toEqual({
+      data: {
+        data: "downstream data",
+        projection: "downstream projection",
+        $connecta: "downstream namespace",
+      },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: ["missing"],
+      },
     });
   });
 });
