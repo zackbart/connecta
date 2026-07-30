@@ -1,6 +1,7 @@
 import {
   compactSchema,
   lexicalCorpusStatistics,
+  lexicalQueryTerms,
   lexicalSearchQuery,
   rankTools,
   schemaObjectKeys,
@@ -35,6 +36,8 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
+const MAX_QUERY_ANALYSIS_TERMS = 8;
+const MAX_QUERY_ANALYSIS_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
 
@@ -165,6 +168,16 @@ export interface CatalogSearchPage {
   hasMore: boolean;
   nextOffset?: number;
   matchMode?: "partial";
+  queryAnalysis?: {
+    representedTerms: string[];
+    otherResultTerms: string[];
+    unmatchedTerms: string[];
+    truncated?: true;
+    connectorScope?: string;
+    unknownConnector?: true;
+    unavailableConnectorCount?: number;
+    guidance?: string;
+  };
 }
 
 export interface CatalogDescription {
@@ -399,10 +412,13 @@ export class CatalogService {
     const retrievalQuery = lexicalSearchQuery(query);
     const limit = discoverySearchLimit(args.limit);
     const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+    const scopedConnector = args.connector
+      ? this.registry.getConnector(args.connector)
+      : undefined;
     const connectors = args.connector
-      ? [this.registry.getConnector(args.connector)].filter(
-          (connector): connector is Connector => Boolean(connector),
-        )
+      ? scopedConnector
+        ? [scopedConnector]
+        : []
       : this.registry.listConnectors();
     const catalogs = await mapSettledWithConcurrency(
       connectors,
@@ -459,7 +475,8 @@ export class CatalogService {
       collectMatches(matchMode);
     }
     matches.sort((a, b) => b.score - a.score || a.order - b.order);
-    const entries = matches.slice(offset, offset + limit).map((match) => {
+    const pageMatches = matches.slice(offset, offset + limit);
+    const entries = pageMatches.map((match) => {
       const input = match.tool.inputSchema ?? { type: "object" };
       const description = summarizeDescription(
         match.tool.description,
@@ -499,6 +516,54 @@ export class CatalogService {
       offset + entries.length < matches.length
         ? offset + entries.length
         : undefined;
+    const queryTerms = lexicalQueryTerms(retrievalQuery);
+    const analyzedTerms = queryTerms.slice(0, MAX_QUERY_ANALYSIS_TERMS);
+    const displayTerm = (term: string) =>
+      term.length <= MAX_QUERY_ANALYSIS_TERM_LENGTH
+        ? term
+        : `${term.slice(0, MAX_QUERY_ANALYSIS_TERM_LENGTH - 1)}…`;
+    const pageTools = new Set(pageMatches.map((match) => match.tool));
+    const matchingTools = (term: string) =>
+      new Set([
+        ...(statistics.nameMatches.get(term) ?? []),
+        ...(statistics.descriptionMatches.get(term) ?? []),
+      ]);
+    const representedTerms: string[] = [];
+    const otherResultTerms: string[] = [];
+    const unmatchedTerms: string[] = [];
+    for (const term of analyzedTerms) {
+      const termTools = matchingTools(term);
+      if ([...termTools].some((tool) => pageTools.has(tool))) {
+        representedTerms.push(displayTerm(term));
+      } else if (termTools.size > 0) {
+        otherResultTerms.push(displayTerm(term));
+      } else {
+        unmatchedTerms.push(displayTerm(term));
+      }
+    }
+    const unavailableCatalogs = catalogs.filter(
+      (catalog) => catalog.status === "rejected",
+    ).length;
+    const guidance =
+      queryTerms.length === 0
+        ? undefined
+        : matches.length === 0
+          ? args.connector && !scopedConnector
+            ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
+            : scopedConnector
+              ? unavailableCatalogs > 0
+                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Retry later.`
+                : `No matching capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.`
+              : unavailableCatalogs === 0
+                ? "No matching capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query."
+                : `No matching capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.`
+          : matchMode === "partial"
+            ? scopedConnector
+              ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`
+              : unavailableCatalogs === 0
+              ? "No single tool matched every term. Split distinct intents into separate searches."
+              : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+            : undefined;
     return {
       entries,
       total: matches.length,
@@ -508,6 +573,29 @@ export class CatalogService {
       ...(nextOffset !== undefined ? { nextOffset } : {}),
       ...(matchMode === "partial" && matches.length > 0
         ? { matchMode }
+        : {}),
+      ...(queryTerms.length > 0 && matchMode === "partial"
+        ? {
+            queryAnalysis: {
+              representedTerms,
+              otherResultTerms,
+              unmatchedTerms,
+              ...(queryTerms.length > analyzedTerms.length ||
+              analyzedTerms.some(
+                (term) => term.length > MAX_QUERY_ANALYSIS_TERM_LENGTH,
+              )
+                ? { truncated: true as const }
+                : {}),
+              ...(args.connector ? { connectorScope: args.connector } : {}),
+              ...(args.connector && !scopedConnector
+                ? { unknownConnector: true as const }
+                : {}),
+              ...(unavailableCatalogs > 0
+                ? { unavailableConnectorCount: unavailableCatalogs }
+                : {}),
+              ...(guidance ? { guidance } : {}),
+            },
+          }
         : {}),
     };
   }
@@ -624,6 +712,7 @@ export function groupedSearchResult(page: CatalogSearchPage) {
     hasMore: page.hasMore,
     ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
     ...(page.matchMode ? { matchMode: page.matchMode } : {}),
+    ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
   };
 }
 
@@ -636,5 +725,6 @@ export function flatSearchResult(page: CatalogSearchPage) {
     hasMore: page.hasMore,
     ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
     ...(page.matchMode ? { matchMode: page.matchMode } : {}),
+    ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
   };
 }

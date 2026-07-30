@@ -28,6 +28,11 @@ function normalized(text: string): string {
   return lexicalTokens(text).join(" ");
 }
 
+/** Distinct normalized terms in query order, shared by ranking and feedback. */
+export function lexicalQueryTerms(query: string): string[] {
+  return [...new Set(lexicalTokens(query))];
+}
+
 /**
  * Conversational framing selected by the #188 research run before the #189
  * holdout existed. Action-bearing terms such as get/list/search/find/create
@@ -208,7 +213,7 @@ export function lexicalCorpusStatistics(
   toolSets: ToolDef[][],
   query: string,
 ): LexicalCorpusStatistics {
-  const terms = [...new Set(lexicalTokens(query))];
+  const terms = lexicalQueryTerms(query);
   if (terms.length === 0) {
     return {
       documentCount: toolSets.reduce(
