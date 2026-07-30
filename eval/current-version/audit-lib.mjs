@@ -77,8 +77,14 @@ export async function createAuditClient({
     })),
   };
   const observations = [];
+  const advertisedTools = new Set(listed.tools.map((tool) => tool.name));
 
   async function call(name, tool, args, classify = () => ({})) {
+    if (!advertisedTools.has(tool)) {
+      throw new Error(
+        `Audit task "${name}" requires top-level tool "${tool}", but the configured surface advertises: ${[...advertisedTools].sort().join(", ")}.`,
+      );
+    }
     const params = { name: tool, arguments: args };
     const callStarted = performance.now();
     const result = await client.callTool(params);

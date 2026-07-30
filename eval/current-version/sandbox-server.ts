@@ -904,13 +904,6 @@ const connecta = createConnecta({
   ],
   storage,
   ...(executor ? { executor } : {}),
-  // Pinned, because this audit walks every top-level meta-tool by name and three
-  // of them — list_connectors, describe_tools, batch_call — only exist on the
-  // classic surface. Since #224 an executor alone would select code-first and
-  // those three tasks would fail as unknown tools, auditing nothing. The two
-  // shapes this suite compares are therefore ten tools and nine, not seven and
-  // nine; extending it to the code-first surface is its own work (#234).
-  surface: "classic",
   credentials: {
     encryptionKey: credentialEncryptionKey,
   },
