@@ -240,6 +240,10 @@ const MAX_PROJECTION_AVAILABLE_FIELDS = 20;
 const MAX_PROJECTION_SCHEMA_DEPTH = 12;
 const MAX_PROJECTION_SCHEMA_NODES = 200;
 const MAX_PROJECTION_SCHEMA_PATHS = 100;
+const MAX_PROJECTION_PATH_CHARS = 256;
+const MAX_PROJECTION_PATH_BYTES = 512;
+const MAX_PROJECTION_TOTAL_PATH_CHARS = 512;
+const MAX_PROJECTION_TOTAL_PATH_BYTES = 768;
 const JSON_SCHEMA_TYPES = new Set([
   "array",
   "boolean",
@@ -248,6 +252,22 @@ const JSON_SCHEMA_TYPES = new Set([
   "number",
   "object",
   "string",
+]);
+const NON_SEMANTIC_REF_SIBLINGS = new Set([
+  "$anchor",
+  "$comment",
+  "$defs",
+  "$id",
+  "$ref",
+  "$schema",
+  "default",
+  "definitions",
+  "deprecated",
+  "description",
+  "examples",
+  "readOnly",
+  "title",
+  "writeOnly",
 ]);
 
 interface FieldProjection {
@@ -327,17 +347,36 @@ function analyzeSchemaFields(root: unknown): SchemaFieldAnalysis {
   ];
   const paths = new Set<string>();
   let nodes = 0;
+  let totalPathChars = 0;
+  let totalPathBytes = 0;
   let complete = true;
   let truncated = false;
 
   const addPath = (path: string): boolean => {
     if (paths.has(path)) return true;
-    if (paths.size >= MAX_PROJECTION_SCHEMA_PATHS) {
+    // Check UTF-16 length before encoding, so a hostile multi-megabyte key
+    // never causes a same-sized temporary allocation merely to reject it.
+    if (
+      path.length > MAX_PROJECTION_PATH_CHARS ||
+      totalPathChars + path.length > MAX_PROJECTION_TOTAL_PATH_CHARS
+    ) {
+      complete = false;
+      truncated = true;
+      return false;
+    }
+    const pathBytes = enc.encode(path).length;
+    if (
+      pathBytes > MAX_PROJECTION_PATH_BYTES ||
+      totalPathBytes + pathBytes > MAX_PROJECTION_TOTAL_PATH_BYTES ||
+      paths.size >= MAX_PROJECTION_SCHEMA_PATHS
+    ) {
       complete = false;
       truncated = true;
       return false;
     }
     paths.add(path);
+    totalPathChars += path.length;
+    totalPathBytes += pathBytes;
     return true;
   };
   const enqueue = (item: PendingSchema): boolean => {
@@ -394,6 +433,23 @@ function analyzeSchemaFields(root: unknown): SchemaFieldAnalysis {
 
     if (schema.$ref !== undefined) {
       recognized = true;
+      let hasSemanticSiblings = false;
+      for (const key in schema) {
+        if (
+          Object.prototype.hasOwnProperty.call(schema, key) &&
+          !NON_SEMANTIC_REF_SIBLINGS.has(key)
+        ) {
+          hasSemanticSiblings = true;
+          break;
+        }
+      }
+      if (hasSemanticSiblings) {
+        // Modern JSON Schema applies $ref siblings as an intersection. A
+        // compact field walker cannot prove that intersection's selectable
+        // paths, so do not publish paths from either half as available.
+        complete = false;
+        continue;
+      }
       const target =
         typeof schema.$ref === "string"
           ? localSchemaRef(root, schema.$ref)
@@ -475,13 +531,21 @@ function analyzeSchemaFields(root: unknown): SchemaFieldAnalysis {
             truncated = true;
             break;
           }
+          if (key.length > MAX_PROJECTION_PATH_CHARS) {
+            complete = false;
+            truncated = true;
+            break;
+          }
           if (!selectableFieldName(key)) {
             complete = false;
             continue;
           }
+          const child = propertyRecord[key];
+          // A false property schema forbids the property; advertising its name
+          // as selectable would turn an impossible value into a valid hint.
+          if (child === false) continue;
           const path = item.prefix ? `${item.prefix}.${key}` : key;
           if (!addPath(path)) break;
-          const child = propertyRecord[key];
           if (
             !enqueue({
               schema: child,
@@ -595,11 +659,11 @@ function schemaProjectionFeedback(
             0,
             MAX_PROJECTION_AVAILABLE_FIELDS,
           ),
-          ...(analysis.truncated ||
-          analysis.paths.length > MAX_PROJECTION_AVAILABLE_FIELDS
-            ? { availableFieldsTruncated: true as const }
-            : {}),
         }
+      : {}),
+    ...(analysis.truncated ||
+    analysis.paths.length > MAX_PROJECTION_AVAILABLE_FIELDS
+      ? { availableFieldsTruncated: true as const }
       : {}),
   };
 }
@@ -630,7 +694,16 @@ function projectionValue(
   outputSchema?: unknown,
 ): Record<string, unknown> | ProjectionFeedback {
   const projected = applyFields(value, fields);
-  if (projected.unmatchedFields.length === 0) return projected.data;
+  // `$connecta` is reserved at the top level of a projection. Even a fully
+  // matched downstream field with that exact name is escaped below `data`, so
+  // no user-controlled value can impersonate Connecta's discriminator.
+  const reservedCollision = Object.prototype.hasOwnProperty.call(
+    projected.data,
+    "$connecta",
+  );
+  if (projected.unmatchedFields.length === 0 && !reservedCollision) {
+    return projected.data;
+  }
   return {
     data: projected.data,
     $connecta: {

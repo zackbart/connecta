@@ -2822,6 +2822,34 @@ const projectionSchemaConnector: Connector = {
         },
       },
       {
+        name: "ref-sibling",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          $ref: "#/$defs/record",
+          type: "object",
+          properties: { sibling: { type: "string" } },
+          $defs: {
+            record: {
+              type: "object",
+              additionalProperties: false,
+              properties: { title: { type: "string" } },
+            },
+          },
+        },
+      },
+      {
+        name: "false-property",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            forbidden: false,
+            known: { type: "string" },
+          },
+        },
+      },
+      {
         name: "unresolved",
         annotations: { readOnlyHint: true },
         outputSchema: { $ref: "https://schemas.example/record.json" },
@@ -2874,6 +2902,29 @@ const projectionSchemaConnector: Connector = {
           properties: Object.fromEntries(
             Array.from({ length: 300 }, (_, i) => [
               `field${String(i).padStart(3, "0")}`,
+              { type: "string" },
+            ]),
+          ),
+        },
+      },
+      {
+        name: "huge-key",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: { ["x".repeat(100_000)]: { type: "string" } },
+        },
+      },
+      {
+        name: "character-heavy",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: Object.fromEntries(
+            Array.from({ length: 30 }, (_, i) => [
+              `${String(i).padStart(2, "0")}-${"é".repeat(190)}`,
               { type: "string" },
             ]),
           ),
@@ -3068,6 +3119,50 @@ describe("call_tool fields selection", () => {
     });
   });
 
+  it("does not advertise false-schema properties as selectable", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.callTool({
+        address: "projection-schemas.false-property",
+        fields: ["forbidden"],
+      }),
+    ) as {
+      $connecta: Record<string, unknown>;
+    };
+    expect(parsed.$connecta).toEqual({
+      type: "field_projection",
+      unmatchedFields: ["forbidden"],
+      schemaDeclared: true,
+      schemaCoverage: "complete",
+      invalidFields: ["forbidden"],
+      availableFields: ["known"],
+    });
+  });
+
+  it("treats semantic $ref siblings as partial without advertised fields", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.callTool({
+        address: "projection-schemas.ref-sibling",
+        fields: ["title"],
+      }),
+    ) as {
+      $connecta: Record<string, unknown>;
+    };
+    expect(parsed.$connecta).toEqual({
+      type: "field_projection",
+      unmatchedFields: ["title"],
+      schemaDeclared: true,
+      schemaCoverage: "partial",
+    });
+  });
+
   it.each(["open", "unresolved", "patterned", "tuple", "unselectable"])(
     "does not claim invalid fields for a %s schema",
     async (name) => {
@@ -3093,12 +3188,17 @@ describe("call_tool fields selection", () => {
     },
   );
 
-  it("bounds deep and broad schema analysis before rendering feedback", async () => {
+  it("bounds deep, broad, and large-path schemas before rendering feedback", async () => {
     const mt = createMetaTools(
       makeRegistry([projectionSchemaConnector]),
       BASE,
     );
-    for (const name of ["deep", "broad"]) {
+    for (const name of [
+      "deep",
+      "broad",
+      "huge-key",
+      "character-heavy",
+    ]) {
       const result = await mt.callTool({
         address: `projection-schemas.${name}`,
         fields: ["missing"],
@@ -3136,6 +3236,29 @@ describe("call_tool fields selection", () => {
       $connecta: {
         type: "field_projection",
         unmatchedFields: ["missing"],
+      },
+    });
+  });
+
+  it("escapes an all-valid downstream $connecta field", async () => {
+    const mt = createMetaTools(
+      makeRegistry([projectionSchemaConnector]),
+      BASE,
+    );
+    const parsed = textOf(
+      await mt.callTool({
+        address: "projection-schemas.collision",
+        fields: ["data", "$connecta"],
+      }),
+    );
+    expect(parsed).toEqual({
+      data: {
+        data: "downstream data",
+        $connecta: "downstream namespace",
+      },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: [],
       },
     });
   });
