@@ -65,6 +65,16 @@ mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
+`fields` keeps its historical flat `{ "<path>": value }` result when every
+requested dot-path resolves. If any path misses, the result instead carries
+the matches under `data` and names each miss under
+`projection.unmatchedFields`, so a bad projection cannot impersonate empty
+source data. A declared output schema also contributes a bounded
+`availableFields` list and identifies paths outside it as `invalidFields`;
+without one, Connecta reports only the observed misses and does not pretend it
+knows the complete runtime shape. API values and JSON-parseable downstream MCP
+text blocks follow the same rule.
+
 ## Lexical discovery
 
 `search_tools` tokenizes tool names and descriptions at punctuation and

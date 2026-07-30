@@ -236,23 +236,134 @@ function resolvePath(value: unknown, segments: string[]): unknown {
   return resolvePath(next, rest);
 }
 
-/** Select the given dot-paths from a value → `{ "<path>": value }` (omitting misses). */
+const MAX_PROJECTION_AVAILABLE_FIELDS = 20;
+
+interface FieldProjection {
+  data: Record<string, unknown>;
+  unmatchedFields: string[];
+}
+
+interface ProjectionFeedback {
+  data: Record<string, unknown>;
+  projection: {
+    unmatchedFields: string[];
+    schemaDeclared?: true;
+    invalidFields?: string[];
+    availableFields?: string[];
+    availableFieldsTruncated?: true;
+  };
+}
+
+/**
+ * Enumerate the field syntax accepted by `resolvePath` from a declared output
+ * schema. This is recovery guidance, not schema validation: unsupported schema
+ * constructs simply contribute no paths, and the caller still gets the exact
+ * unmatched request without Connecta pretending it knows the runtime shape.
+ */
+function schemaFieldPaths(
+  schema: unknown,
+  prefix = "",
+  seen = new Set<unknown>(),
+): string[] {
+  if (schema === null || typeof schema !== "object" || seen.has(schema)) {
+    return [];
+  }
+  seen.add(schema);
+  const record = schema as Record<string, unknown>;
+  const paths: string[] = [];
+  const properties = record.properties;
+  if (
+    properties !== null &&
+    typeof properties === "object" &&
+    !Array.isArray(properties)
+  ) {
+    for (const [key, child] of Object.entries(
+      properties as Record<string, unknown>,
+    )) {
+      const path = prefix ? `${prefix}.${key}` : key;
+      paths.push(path, ...schemaFieldPaths(child, path, seen));
+    }
+  }
+  if (record.items !== undefined) {
+    const path = `${prefix}[]`;
+    paths.push(path, ...schemaFieldPaths(record.items, path, seen));
+  }
+  for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+    const variants = record[keyword];
+    if (!Array.isArray(variants)) continue;
+    for (const variant of variants) {
+      paths.push(...schemaFieldPaths(variant, prefix, seen));
+    }
+  }
+  seen.delete(schema);
+  return [...new Set(paths)];
+}
+
+/** Select the given dot-paths, retaining both matches and exact misses. */
 function applyFields(
   value: unknown,
   fields: string[],
-): Record<string, unknown> {
+): FieldProjection {
   const out: Record<string, unknown> = {};
+  const unmatchedFields: string[] = [];
   for (const path of fields) {
     const resolved = resolvePath(value, path.split("."));
-    if (resolved !== undefined) out[path] = resolved;
+    if (resolved === undefined) unmatchedFields.push(path);
+    else out[path] = resolved;
   }
-  return out;
+  return { data: out, unmatchedFields };
+}
+
+/**
+ * Keep the historical flat projection when every path resolves. A miss gets a
+ * wrapper so `{ data: {}, projection: ... }` cannot be mistaken for legitimate
+ * empty source data. Declared schemas add a bounded list of selectable paths;
+ * undeclared schemas deliberately do not imply that the runtime list is
+ * complete.
+ */
+function projectionValue(
+  value: unknown,
+  fields: string[],
+  outputSchema?: unknown,
+): Record<string, unknown> | ProjectionFeedback {
+  const projected = applyFields(value, fields);
+  if (projected.unmatchedFields.length === 0) return projected.data;
+  const available = outputSchema
+    ? schemaFieldPaths(outputSchema).sort()
+    : [];
+  const invalidFields = outputSchema
+    ? projected.unmatchedFields.filter((field) => !available.includes(field))
+    : [];
+  return {
+    data: projected.data,
+    projection: {
+      unmatchedFields: projected.unmatchedFields,
+      ...(outputSchema
+        ? {
+            schemaDeclared: true as const,
+            ...(invalidFields.length > 0 ? { invalidFields } : {}),
+            ...(available.length > 0
+              ? {
+                  availableFields: available.slice(
+                    0,
+                    MAX_PROJECTION_AVAILABLE_FIELDS,
+                  ),
+                  ...(available.length > MAX_PROJECTION_AVAILABLE_FIELDS
+                    ? { availableFieldsTruncated: true as const }
+                    : {}),
+                }
+              : {}),
+          }
+        : {}),
+    },
+  };
 }
 
 /** Apply fields to each JSON-parseable text block; non-JSON blocks pass through. */
 function applyFieldsToContent(
   content: TextContent[],
   fields: string[],
+  outputSchema?: unknown,
 ): TextContent[] {
   return content.map((b) => {
     if (b.type !== "text") return b;
@@ -262,7 +373,10 @@ function applyFieldsToContent(
     } catch {
       return b;
     }
-    return { ...b, text: JSON.stringify(applyFields(parsed, fields)) };
+    return {
+      ...b,
+      text: JSON.stringify(projectionValue(parsed, fields, outputSchema)),
+    };
   });
 }
 
@@ -596,7 +710,13 @@ export function createMetaTools(
             globalCap,
           );
           if (call.resultMode === "value") {
-            let value = fields ? applyFields(result, fields) : result;
+            let value = fields
+              ? projectionValue(
+                  result,
+                  fields,
+                  resolved.definition.outputSchema,
+                )
+              : result;
             value = await guardValue(value, results, cap);
             return {
               toolResult: jsonResult({ ok: true, data: value }),
@@ -606,10 +726,22 @@ export function createMetaTools(
           if (resolved.connector.kind === "mcp") {
             const mcpResult = result as { content?: TextContent[] };
             let content = mcpResult?.content ?? [];
-            if (fields) content = applyFieldsToContent(content, fields);
+            if (fields) {
+              content = applyFieldsToContent(
+                content,
+                fields,
+                resolved.definition.outputSchema,
+              );
+            }
             return { toolResult: await guardContent(content, results, cap) };
           }
-          const value = fields ? applyFields(result, fields) : result;
+          const value = fields
+            ? projectionValue(
+                result,
+                fields,
+                resolved.definition.outputSchema,
+              )
+            : result;
           return {
             toolResult: await guardText(
               serializeResultText(value),
@@ -1134,7 +1266,7 @@ const LIST_DESC =
 const SEARCH_DESC = `Unknown address: use 2–4 distinctive action/object terms, not the full request; omit limit initially (default ${DEFAULT_SEARCH_LIMIT}) and page only if needed, up to ${MAX_SEARCH_LIMIT}. Partial and no-match searches report term coverage and next-step guidance. includeSchemas="compact" adds the input and any declared output shape; matches also carry declared annotations. Call directly when sufficient. Empty query browses all.`;
 const DESCRIBE_DESC = `Only when search_tools omitted schemas, a compact shape is ambiguous, or exact JSON constraints are needed. Inspects up to ${MAX_DESCRIBE_ADDRESSES} addresses with schemas and annotations; "compact" is default, while "json" preserves exact constraints.`;
 const CALL_DESC =
-  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; any misses return data plus structured projection feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
@@ -1159,7 +1291,7 @@ const SKILLS_DESC =
  */
 const CODE_FIRST_SEARCH_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
 const CODE_FIRST_CALL_DESC =
-  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; any misses return data plus structured projection feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CODE_FIRST_GET_RESULT_DESC =
   "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 

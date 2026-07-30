@@ -2687,11 +2687,47 @@ const dataConnector: Connector = {
         name: "get",
         description: "Get a nested record",
         annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          properties: {
+            user: {
+              type: "object",
+              properties: {
+                name: { type: "string" },
+                address: {
+                  type: "object",
+                  properties: { city: { type: "string" } },
+                },
+              },
+            },
+            results: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: { id: { type: "number" } },
+              },
+            },
+          },
+        },
       },
       {
         name: "big",
         description: "Return a large blob",
         annotations: { readOnlyHint: true },
+      },
+      {
+        name: "loose",
+        description: "Return a record without an output schema",
+        annotations: { readOnlyHint: true },
+      },
+      {
+        name: "empty",
+        description: "Return an empty record with an optional declared field",
+        annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          properties: { title: { type: "string" } },
+        },
       },
     ];
   },
@@ -2703,6 +2739,8 @@ const dataConnector: Connector = {
       };
     }
     if (name === "big") return { blob: "x".repeat(500) };
+    if (name === "loose") return { a: 1, b: 2 };
+    if (name === "empty") return {};
     throw new Error(`Unknown tool "${name}" on connector "data"`);
   },
 };
@@ -2718,6 +2756,15 @@ const jsonMcpConnector: Connector = {
         name: "rec",
         description: "record",
         annotations: { readOnlyHint: true },
+        outputSchema: {
+          type: "object",
+          properties: { a: { type: "number" }, b: { type: "number" } },
+        },
+      },
+      {
+        name: "loose",
+        description: "record without an output schema",
+        annotations: { readOnlyHint: true },
       },
     ];
   },
@@ -2729,23 +2776,135 @@ const jsonMcpConnector: Connector = {
 };
 
 describe("call_tool fields selection", () => {
-  it("selects nested paths and array maps, omitting misses", async () => {
+  it("keeps all-valid nested and array-map projections flat", async () => {
     const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
     const parsed = textOf(
       await mt.callTool({
         address: "data.get",
-        fields: ["user.address.city", "results[].id", "user.missing.deep"],
+        fields: ["user.address.city", "results[].id"],
       }),
     ) as Record<string, unknown>;
-    expect(parsed["user.address.city"]).toBe("London");
-    expect(parsed["results[].id"]).toEqual([1, 2, 3]);
-    expect("user.missing.deep" in parsed).toBe(false);
+    expect(parsed).toEqual({
+      "user.address.city": "London",
+      "results[].id": [1, 2, 3],
+    });
   });
 
-  it("applies fields to a JSON mcp text block", async () => {
+  it("preserves API matches and reports schema-declared misses", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({
+        address: "data.get",
+        fields: ["user.address.city", "user.missing.deep"],
+      }),
+    ) as {
+      data: Record<string, unknown>;
+      projection: {
+        unmatchedFields: string[];
+        schemaDeclared: boolean;
+        availableFields: string[];
+      };
+    };
+    expect(parsed.data).toEqual({ "user.address.city": "London" });
+    expect(parsed.projection).toMatchObject({
+      unmatchedFields: ["user.missing.deep"],
+      schemaDeclared: true,
+      invalidFields: ["user.missing.deep"],
+    });
+    expect(parsed.projection.availableFields).toContain("user.address.city");
+    expect(parsed.projection.availableFields).toContain("results[].id");
+  });
+
+  it("reports all-unmatched API projections in value mode", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({
+        address: "data.get",
+        fields: ["title", "url"],
+        resultMode: "value",
+      }),
+    ) as {
+      ok: boolean;
+      data: {
+        data: Record<string, unknown>;
+        projection: { unmatchedFields: string[] };
+      };
+    };
+    expect(parsed).toMatchObject({
+      ok: true,
+      data: {
+        data: {},
+        projection: {
+          unmatchedFields: ["title", "url"],
+          schemaDeclared: true,
+          invalidFields: ["title", "url"],
+        },
+      },
+    });
+  });
+
+  it("reports undeclared API misses without claiming a complete field list", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({
+        address: "data.loose",
+        fields: ["a", "missing"],
+      }),
+    );
+    expect(parsed).toEqual({
+      data: { a: 1 },
+      projection: { unmatchedFields: ["missing"] },
+    });
+  });
+
+  it("distinguishes an absent declared value from an invalid path", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({ address: "data.empty", fields: ["title"] }),
+    );
+    expect(parsed).toEqual({
+      data: {},
+      projection: {
+        unmatchedFields: ["title"],
+        schemaDeclared: true,
+        availableFields: ["title"],
+      },
+    });
+  });
+
+  it("keeps all-valid JSON MCP text projections compatible", async () => {
     const mt = createMetaTools(makeRegistry([jsonMcpConnector]), BASE);
     const result = await mt.callTool({ address: "jm.rec", fields: ["a"] });
     expect(JSON.parse(required(result.content[0]).text)).toEqual({ a: 1 });
+  });
+
+  it("adds declared-schema guidance to JSON MCP misses", async () => {
+    const mt = createMetaTools(makeRegistry([jsonMcpConnector]), BASE);
+    const result = await mt.callTool({
+      address: "jm.rec",
+      fields: ["a", "missing"],
+    });
+    expect(JSON.parse(required(result.content[0]).text)).toEqual({
+      data: { a: 1 },
+      projection: {
+        unmatchedFields: ["missing"],
+        schemaDeclared: true,
+        invalidFields: ["missing"],
+        availableFields: ["a", "b"],
+      },
+    });
+  });
+
+  it("reports JSON MCP misses without inventing undeclared schema fields", async () => {
+    const mt = createMetaTools(makeRegistry([jsonMcpConnector]), BASE);
+    const result = await mt.callTool({
+      address: "jm.loose",
+      fields: ["a", "missing"],
+    });
+    expect(JSON.parse(required(result.content[0]).text)).toEqual({
+      data: { a: 1 },
+      projection: { unmatchedFields: ["missing"] },
+    });
   });
 });
 
