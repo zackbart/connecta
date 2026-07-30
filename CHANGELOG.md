@@ -2,6 +2,38 @@
 
 All notable changes to this package are documented here.
 
+## 0.10.1 — 2026-07-30
+
+An inbound-auth escape hatch for MCP clients whose OAuth implementations do not
+interoperate cleanly with a Connecta deployment. Eligible Clerk operators can
+now issue named, revocable Bearer tokens from `/tokens`; each call is attributed
+to the token's immutable identity while activity history resolves the current
+friendly name. The secret is shown once, only a SHA-256 digest is stored, and a
+token can authenticate MCP without gaining operator privileges. **Deployments
+that do not set `accessTokens: {}` are unchanged.** Enabling it requires a
+storage adapter with `list(prefix)` and a Clerk auth provider so token lifecycle
+operations remain behind the human operator boundary.
+
+### Added
+
+- **Managed MCP access tokens.** `accessTokens: {}` adds a Clerk-only operator
+  ledger for creating, naming, renaming, and revoking `cta_…` Bearer tokens.
+  `maxActive` defaults to 100 and can be configured from 1 through 1,000.
+- **Token-attributed activity.** Calls authenticated by a managed token record
+  its immutable token ID and resolve the current friendly name when an eligible
+  operator reads activity. Revoked metadata remains as a tombstone so historical
+  attribution survives rotation.
+- **Enumerable storage.** `KVStorage.list(prefix)` is available for durable
+  metadata ledgers, with implementations in the built-in memory and file
+  adapters and the Cloudflare Workers KV example.
+
+### Fixed
+
+- **One-time secrets leave no reusable operator-UI state.** The plaintext token
+  disappears when it is dismissed, when the operator navigates away or signs
+  out, and before the document enters the browser back-forward cache. The create
+  form stays unavailable while a newly issued secret is waiting to be stored.
+
 ## 0.10.0 — 2026-07-30
 
 **Code-first is what a model sees.** A deployment with an executor now serves
