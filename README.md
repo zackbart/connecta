@@ -5,26 +5,32 @@
 One place for AI agents to connect to the tools you choose.
 
 Connecta gives an agent a single MCP endpoint instead of making it connect to
-every service separately. You decide which integrations are available,
-Connecta keeps their credentials and connections in one place, and the agent
-discovers what it needs as it works.
+every service separately. You decide which integrations are available and
+Connecta holds their credentials, and the agent mostly works by writing
+ordinary JavaScript that Connecta runs in a sandbox next to them — with a few
+explicit tools for the jobs a program is the wrong shape for, destructive calls
+among them.
 
 ```mermaid
 flowchart LR
-    Agent["AI agent"] --> Connecta
-    Connecta --> Work["Work tools"]
-    Connecta --> Data["Data sources"]
-    Connecta --> Services["Internal services"]
-    Operator["You"] --> Connecta
+    Agent["AI agent"] -- "writes a program" --> Sandbox
+    Agent -- "one deliberate call" --> Explicit
+    subgraph Connecta["Connecta — one MCP endpoint. Credentials stay here."]
+        Sandbox["execute_code<br/>server-side sandbox"]
+        Explicit["Explicit tools<br/>destructive calls, search, auth"]
+    end
+    Sandbox --> Integrations["The integrations you chose"]
+    Explicit --> Integrations
 ```
 
 ## Why Connecta
 
 - **One connection.** Configure clients once, even as integrations change.
-- **Less clutter.** Agents discover capabilities when needed instead of
-  loading every tool up front.
-- **Safer access.** Credentials stay server-side and consequential actions
-  remain explicit.
+- **Seven tools, not seven hundred.** A program can search the catalog, chain
+  calls, and trim the results before the agent ever sees them — so nothing has
+  to be loaded up front.
+- **Safer access.** Credentials stay server-side — the program never sees them
+  — and consequential actions remain explicit and individual.
 - **Your deployment.** Connecta runs on Node, Docker, or Cloudflare Workers,
   with configuration you can review and version.
 
@@ -35,10 +41,10 @@ flowchart LR
 - [Cloudflare Worker example](./examples/worker/)
 - [Documentation](./documentation/)
 
-Connecta is code-first: an agent writes ordinary JavaScript against the
-integrations you chose, and a handful of explicit tools cover the jobs a program
-is the wrong shape for. Deployments without a sandbox to run that code keep the
-earlier tool-by-tool interface, which stays supported.
+Configuring a sandbox — a Dynamic Worker on Cloudflare, QuickJS on Node — is
+what selects the code-first surface, and it is the assumed posture. A
+deployment without one keeps the earlier nine-tool, call-by-call interface,
+which stays supported.
 
 ## Project status
 
