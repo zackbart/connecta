@@ -261,10 +261,21 @@ findable. And the graders are untouched — a near miss earns its place by being
 rejected by the grader the campaign already uses, never by a new expectation.
 `verify-fixtures.mjs` drives **both** catalogs through the whole sweep and then
 checks the wide-only properties: that each near miss answers *and* is rejected,
-that every required address is still on the first page of a plausible query with a
-near miss beside it, that the destructive surface is unchanged, and that the alias
-collision is unreachable from any task. An unknown `--catalog` value is still a
-refusal, from the runner before it spends and from the server on its own.
+that every required address is still on the first page of **several** plausible
+queries with a near miss beside at least one of them, that the destructive surface
+is unchanged, and that the alias collision is named by no task and surfaced by none
+of those queries. An unknown `--catalog` value is still a refusal, from the runner
+before it spends and from the server on its own.
+
+Several queries per task rather than one, because discovery falls back to matching
+*any* query term only when nothing matches every term. A near miss whose wording is
+a keyword superset of the query therefore does not merely outrank the required
+address, it removes it from the page — which is why every telemetry connector names
+its region in the tool's own description rather than saying "this region". Under
+`core` that wording was harmless, since no other tool claimed a region either; once
+a legacy EU collector does, "eu latency" would have returned the wrong number as
+the only result. Unfindable is a broken fixture, not a hard task, and one
+hand-picked query per task cannot tell the two apart.
 
 **Results from two catalogs are never pooled.** A catalog is as unpoolable as a
 model version: the same task against `core` and against `wide` asks two different

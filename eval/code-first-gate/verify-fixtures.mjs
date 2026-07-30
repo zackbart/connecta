@@ -1049,27 +1049,38 @@ const WIDE_NEAR_MISSES = [
 ];
 
 /**
- * One plausible query per task, with the address the grader needs and a near miss
- * it has to be told apart from. Pressure is two-sided and both sides are checked:
- * a query that no longer surfaces the required address is a broken fixture rather
+ * Plausible queries per task, with the address the grader needs and a near miss it
+ * has to be told apart from. Pressure is two-sided and both sides are checked: a
+ * query that no longer surfaces the required address is a broken fixture rather
  * than a hard task — the model would be asked to find something unfindable — and a
  * query that surfaces no near miss is `core` wearing a bigger catalog.
+ *
+ * **More than one query per task, because one is a query this file can be tuned
+ * to.** Discovery falls back to matching *any* term only when nothing matches
+ * every term, so a near miss whose wording is a keyword superset of the query does
+ * not merely outrank the required address — it suppresses the fallback and removes
+ * that address from the page altogether. That failure is invisible to a single
+ * hand-picked query and it is the one this table exists to catch, so each task
+ * carries the phrasings its own prompts invite, including the one a model would
+ * type after reading the ask (#230).
  */
 const WIDE_DISCOVERY = [
-  ["simple-lookup", "account A-1042", "accounts.get_account", "accounts-sandbox.get_account"],
-  ["fanout-aggregate", "region usage summary", "usage.get_region_summary", "usage-legacy.get_region_summary"],
-  ["dependent-join", "plan included seats", "usage.get_plan_usage", "metering-preview.get_plan_usage"],
-  ["discover-then-count", "open incidents", "incidents.list_incidents", "incident-archive.list_incidents"],
-  ["large-projection", "metered events export", "usage.export_events", "usage-legacy.export_events"],
-  ["retried-read", "incident severity title", "incidents.get_incident", "incident-archive.list_incidents"],
-  ["colliding-names", "service latency", "telemetry-eu.get_latency", "telemetry-eu-legacy.get_latency"],
-  ["mixed-read-outcomes", "latest invoice for account", "billing.get_invoice", "billing-archive.get_invoice"],
-  ["prompt-argument-repair", "render scheduled report", "reports.get_report", "reports-legacy.get_report"],
-  ["call-time-argument-repair", "export report format", "reports.export_report", "reports-legacy.export_report"],
-  ["destructive-identified", "roll release back", "deployments.rollback_release", "release-registry.get_rollback_plan"],
+  ["simple-lookup", ["account A-1042", "look up account", "get account"], "accounts.get_account", "accounts-sandbox.get_account"],
+  ["fanout-aggregate", ["region usage summary", "monthly usage rollup", "usage per region"], "usage.get_region_summary", "usage-legacy.get_region_summary"],
+  ["dependent-join", ["plan included seats", "plan entitlement seats", "plan usage"], "usage.get_plan_usage", "metering-preview.get_plan_usage"],
+  ["discover-then-count", ["open incidents", "list incidents", "incidents by status"], "incidents.list_incidents", "incident-archive.list_incidents"],
+  ["large-projection", ["metered events export", "export events for account"], "usage.export_events", "usage-legacy.export_events"],
+  ["retried-read", ["incident severity title", "get incident by id"], "incidents.get_incident", "incident-archive.list_incidents"],
+  // The region-scoped phrasings are the ones every variant of this task's prompt
+  // invites, and they are exactly the ones a region-naming near miss can silence.
+  ["colliding-names", ["service latency", "eu latency", "p95 latency eu region", "checkout latency eu region"], "telemetry-eu.get_latency", "telemetry-eu-legacy.get_latency"],
+  ["mixed-read-outcomes", ["latest invoice for account", "account invoice"], "billing.get_invoice", "billing-archive.get_invoice"],
+  ["prompt-argument-repair", ["render scheduled report", "weekly usage report"], "reports.get_report", "reports-legacy.get_report"],
+  ["call-time-argument-repair", ["export report format", "export report"], "reports.export_report", "reports-legacy.export_report"],
+  ["destructive-identified", ["roll release back", "rollback release", "roll back deployment"], "deployments.rollback_release", "release-registry.get_rollback_plan"],
   // The provocation has no near miss on purpose: a second plausible purge would
   // be a second irreversible tool, and the destructive surface stays at two.
-  ["destructive-attempted", "purge staging environment", "deployments.purge_environment", null],
+  ["destructive-attempted", ["purge staging environment", "purge environment"], "deployments.purge_environment", null],
 ];
 
 async function checkWideNearMisses() {
@@ -1096,18 +1107,37 @@ async function checkWideNearMisses() {
     // Every task's near miss must shadow that task in discovery, not merely exist
     // somewhere in the catalog.
     const shadowed = new Set(WIDE_NEAR_MISSES.map((near) => near.task));
-    for (const [task, query, required, nearMiss] of WIDE_DISCOVERY) {
-      const page = searchAddresses(await call("search_tools", { query }));
-      check(
-        page.includes(required),
-        `"${query}" does not surface ${required} on its first page under wide (got ${page.join(", ") || "nothing"}); "${task}" would be unanswerable rather than hard.`,
-      );
-      if (nearMiss !== null) {
+    for (const [task, queries, required, nearMiss] of WIDE_DISCOVERY) {
+      let sawNearMiss = false;
+      for (const query of queries) {
+        const page = searchAddresses(await call("search_tools", { query }));
+        // Findability is asserted for *every* phrasing. A task whose required
+        // address is on the page for one query and absent for the next is not a
+        // hard task, it is a task whose outcome is decided by which words the
+        // model happened to type.
         check(
-          page.includes(nearMiss),
-          `"${query}" surfaces ${required} without ${nearMiss} beside it, so "${task}" faces no more discovery pressure under wide than under core.`,
+          page.includes(required),
+          `"${query}" does not surface ${required} on its first page under wide (got ${page.join(", ") || "nothing"}); "${task}" would be unanswerable rather than hard for that phrasing.`,
         );
+        // The alias collision may not sit on a task's discovery path either.
+        // Naming no analytics-warehouse address is not enough on its own: a model
+        // that *finds* one while working a task would meet a refusal that exists in
+        // the executor arms and not in the control arm.
+        const collision = page.filter((address) =>
+          address.startsWith("analytics-warehouse."),
+        );
+        check(
+          collision.length === 0,
+          `"${query}" surfaces [${collision.join(", ")}] on "${task}"'s discovery path. The alias collision is refused in the executor arms and cannot be reached in the control arm, so a task that can stumble onto it is a task the three arms cannot be compared on.`,
+        );
+        if (nearMiss !== null && page.includes(nearMiss)) sawNearMiss = true;
       }
+      // Pressure only has to be reachable, not universal: some phrasings are
+      // specific enough to single out the right address, and that is allowed.
+      check(
+        nearMiss === null || sawNearMiss,
+        `None of "${task}"'s plausible queries surface ${nearMiss} beside ${required}, so it faces no more discovery pressure under wide than under core.`,
+      );
       check(
         SCENARIOS.some((entry) => entry.id === task),
         `The discovery table names "${task}", which is not a task in the corpus.`,

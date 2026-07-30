@@ -248,5 +248,8 @@ suite flips nothing** — it advertises no surface, changes no default, and edit
 no configuration. Surface problems it surfaced — a shape models systematically
 misuse — belong in the ethos decisions table, not in more prompt text.
 
-The catalog is the narrow one. A wide catalog with near-miss connector names is a
-required follow-up before any flip verdict here is treated as final.
+The catalog is the narrow one: eight connectors, sixteen tools, and discovery
+that succeeds essentially always. **A verdict from this run alone leaves the wide
+catalog outstanding** — the `wide` catalog with near-miss connector names exists
+for exactly that gap, and no flip verdict from `core` should be treated as final
+until a run against `wide` says the same thing.

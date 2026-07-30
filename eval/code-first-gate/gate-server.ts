@@ -328,8 +328,15 @@ function telemetryConnector(
     tools: delayed([
       {
         name: "get_latency",
-        description:
-          "Return the p95 request latency for one service in this region.",
+        // The region is named here and not only in the connector title, because
+        // discovery indexes the tool's own text. A tool that says "this region"
+        // cannot be matched by the region a model is asking about, which was
+        // harmless under `core` — no other tool claimed a region either, so the
+        // whole-catalog fallback surfaced both twins — and is not harmless once a
+        // wide-catalog near miss does name one: the near miss would then be the
+        // only tool matching every term of "eu latency", and the required address
+        // would vanish from the page entirely (#230).
+        description: `Return the p95 request latency for one service in the ${label} region.`,
         inputSchema: objectSchema({ service: { type: "string", minLength: 1 } }, [
           "service",
         ]),
