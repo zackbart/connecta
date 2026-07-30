@@ -54,7 +54,12 @@ function truncationEnvelope(text: string): {
       Math.floor(budget * (MAX_EXECUTE_RESULT_CHARS / size)) - 8,
     );
   }
-  return { ...base, preview: text.slice(0, budget) };
+  // The loop shrinks monotonically, so this is unreachable in practice — but an
+  // unchecked slice is exactly how a "bounded" envelope stops being bounded.
+  const clamped = { ...base, preview: text.slice(0, Math.max(0, budget)) };
+  return JSON.stringify(clamped).length <= MAX_EXECUTE_RESULT_CHARS
+    ? clamped
+    : { ...base, preview: "" };
 }
 
 export function guardExecuteResultValue(value: unknown): unknown {

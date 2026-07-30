@@ -10,8 +10,11 @@ program is promised — surface, addressing, error shapes, projection, retry,
 cancellation, limits, activity — with clause identifiers the tests cite, and
 names the QuickJS/Dynamic Worker divergences as documented exceptions instead of
 leaving them to be discovered. Both executors now run the same contract case
-table, the Workers arm against a real Dynamic Worker in workerd. A deployment
-running programs today sees two behavior changes, both additive or corrective.
+table, the Workers arm against a real Dynamic Worker in workerd. Writing the
+clauses down turned up four places where the code did not quite match the
+behavior worth having; those are the changes below, all additive or corrective,
+and one of them (retryable policy refusals) reaches `call_tool` and `batch_call`
+as well as programs.
 
 ### Added
 
@@ -22,9 +25,30 @@ running programs today sees two behavior changes, both additive or corrective.
   sandbox bridge as a bare message in every executor, so this is the one channel
   through which a program can tell a policy refusal from a transient failure
   instead of cheerfully retrying the refusal. Programs reading `error` are
-  unaffected.
+  unaffected. An entry connecta could not even attempt — a malformed call object
+  — reports `batch_call_failed`, the code `batch_call` already uses for the same
+  situation.
 
 ### Fixed
+
+- **A policy refusal can no longer look retryable.** `unknown_address`,
+  `unknown_tool`, `ambiguous_tool_alias`, and
+  `destructive_tool_requires_approval` now pin `retryable: false` instead of
+  deriving it from their own message text. Those messages embed the address the
+  caller asked for, and the heuristic that classifies connector errors matches
+  `503`, `429`, and `temporar`, so a connector named `svc-503` or
+  `temporary-export` turned a refusal that will never succeed into one an agent
+  was told to retry. This affects `call_tool` and `batch_call` too, not only
+  programs.
+- **An uncaught discovery-bound failure inside a program is typed.** A bad
+  `limit`, an oversized `addresses` list, or a discovery page over the
+  256,000-byte ceiling now reaches the model as `invalid_args` or
+  `result_too_large` with `retryable: false`, the same envelope a failed tool
+  call gets, instead of as untyped error prose.
+- **Bridge-limit errors name the address, not the plumbing.** A host call over
+  the QuickJS 256 KiB bound reported `connecta.__callNamespace` — the internal
+  dispatcher every shortcut namespace shares — where it now reports the
+  `connector.tool` address the program called.
 
 - **An oversized program result is truncated once.** The over-cap notice is now
   sized so its *serialized* form fits the 24,000-character result cap.

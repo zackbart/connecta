@@ -16,7 +16,7 @@ import {
   MAX_EXECUTE_LOG_CHARS,
   prepareExecuteResultForTransport,
 } from "../src/executor-result.js";
-import type { Executor } from "../src/types.js";
+import type { Connector, Executor } from "../src/types.js";
 import {
   CONTRACT_BASE,
   CONTRACT_CASES,
@@ -166,6 +166,48 @@ describe("guest API contract (executor-independent)", () => {
     // and the contract would be verified against one executor while claiming
     // two. Fail instead.
     expect(inWorkerd ? workerExecutor !== undefined : true).toBe(true);
+  });
+
+  it("[E5, L2] fails a host call still in flight when the run ends", async () => {
+    // Cancellation is unobservable inside a program by construction (L1), so
+    // the seam is only visible from the host side: the call the sandbox
+    // abandoned rejects with the typed cancelled failure, not a hang.
+    const hanging: Connector = {
+      id: "hanging",
+      kind: "api",
+      async listTools() {
+        return [{ name: "read", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return new Promise<never>(() => {});
+      },
+    };
+    let pending: Promise<unknown> | undefined;
+    const executor: Executor = {
+      async execute(_code, providers) {
+        const connecta = required(
+          providers.find((provider) => provider.name === "connecta"),
+        );
+        pending = required(connecta.fns.__callNamespace)(
+          "hanging",
+          "read",
+          {},
+        );
+        return { result: "returned without waiting" };
+      },
+    };
+    const out = await createExecuteTool(
+      makeRegistry([hanging]),
+      CONTRACT_BASE,
+      executor,
+      silentLogger,
+    )({ code: "async () => 'returned without waiting'" });
+
+    expect(out.isError).toBeUndefined();
+    await expect(pending).rejects.toMatchObject({
+      code: "cancelled",
+      retryable: false,
+    });
   });
 
   it("[E5] never leaks an execution failure into the result channel", async () => {

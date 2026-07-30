@@ -57,6 +57,25 @@ export interface ExecutionPayload {
   timedOut?: boolean;
 }
 
+/**
+ * How a host call should be named in an error a program will read. The lazy
+ * connector namespaces all dispatch through one internal function, so the raw
+ * provider/function pair would report every shortcut call as
+ * `connecta.__callNamespace` — an internal name that appears nowhere in the
+ * documented surface. Report the address the program actually called.
+ */
+export function hostCallLabel(payload: {
+  namespace: string;
+  functionName: string;
+  args: unknown[];
+}): string {
+  if (payload.functionName === "__callNamespace") {
+    const [connectorId, toolAlias] = payload.args;
+    return `${String(connectorId)}.${String(toolAlias)}`;
+  }
+  return `${payload.namespace}.${payload.functionName}`;
+}
+
 export function serializedBytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }

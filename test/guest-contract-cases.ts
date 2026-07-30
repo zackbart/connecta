@@ -156,6 +156,26 @@ function contractConnectors(state: ContractState): Connector[] {
       };
     },
   };
+  // An id whose text trips the retryable-message heuristic. A policy refusal
+  // about this connector must still report retryable: false.
+  const retryableLooking: Connector = {
+    id: "temporary-503-service",
+    kind: "api",
+    description: "Its name looks like a transient failure",
+    async listTools() {
+      return [
+        readOnly("read"),
+        {
+          name: "wipe",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+        },
+      ];
+    },
+    async callTool(name) {
+      count(`temporary-503-service.${name}`);
+      return { done: true };
+    },
+  };
   const hang: Connector = {
     id: "hang",
     kind: "api",
@@ -168,7 +188,7 @@ function contractConnectors(state: ContractState): Connector[] {
       return new Promise<never>(() => {});
     },
   };
-  return [reader, remote, collide, odd, needsAuth, hang];
+  return [reader, remote, collide, odd, needsAuth, retryableLooking, hang];
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
@@ -494,13 +514,25 @@ export const CONTRACT_CASES: ContractCase[] = [
           break;
         }
       }
-      return { succeeded: succeeded, failure: failure };
+      const [spent] = await connecta.batch([
+        { address: "reader.read", args: { value: "after" } }
+      ]);
+      return {
+        succeeded: succeeded,
+        failure: failure,
+        spentCode: spent.errorDetails.code,
+        spentRetryable: spent.errorDetails.retryable
+      };
     }`,
     check(outcome, state) {
       const result = record(outcome);
       expect(result.succeeded).toBe(20);
       expect(String(result.failure)).toContain("budget");
       expect(state.calls["reader.read"]).toBe(20);
+      // Budget exhaustion is framed as connector_call_failed even though no
+      // connector was reached — L4 says so rather than leaving it to be found.
+      expect(result.spentCode).toBe("connector_call_failed");
+      expect(result.spentRetryable).toBe(false);
     },
   },
   {
@@ -667,15 +699,86 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "E6, X8",
-    name: "an unknown connecta property throws instead of resolving",
+    clauses: "E2, E7",
+    name: "a policy refusal stays non-retryable however the address reads",
     code: `async () => {
-      try { await connecta.nope({}); } catch (err) { return { message: String(err.message) }; }
-      return { message: "" };
+      const outcomes = await connecta.batch([
+        { address: "temporary-503-service.nope", args: {} },
+        { address: "temporary-503-service.wipe", args: {} },
+        { address: "no-such-503-service.read", args: {} }
+      ]);
+      return outcomes.map((outcome) => ({
+        code: outcome.errorDetails.code,
+        retryable: outcome.errorDetails.retryable
+      }));
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual([
+        { code: "unknown_tool", retryable: false },
+        { code: "destructive_tool_requires_approval", retryable: false },
+        { code: "unknown_address", retryable: false },
+      ]);
+    },
+  },
+  {
+    clauses: "S3, E1",
+    name: "an uncaught discovery-bound failure reaches the model typed",
+    code: `async () => await connecta.search({ limit: 500 })`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "invalid_args",
+        retryable: false,
+      });
+      expect(String((outcome.value.error as { message: string }).message)).toContain(
+        "through 100",
+      );
+    },
+  },
+  {
+    clauses: "V1, V2, V3",
+    name: "a refusal that reached a connector is an event; a guessed connector is not",
+    code: `async () => {
+      try { await connecta.call("reader.nope", {}); } catch (err) { void err; }
+      try { await collide.get_thing({}); } catch (err) { void err; }
+      try { await connecta.call("nope.read", {}); } catch (err) { void err; }
+      return "done";
+    }`,
+    check(outcome, state) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      // Two refusals resolved a connector and are recorded; the third never
+      // named a real connector, so there is nothing to attribute it to.
+      expect(
+        state.events.map((event) => [event.address, event.errorCode]),
+      ).toEqual([
+        ["reader.nope", "unknown_tool"],
+        // The sanitized alias, not a canonical address: it is what the program
+        // asked for, and no single tool owns it.
+        ["collide.get_thing", "ambiguous_tool_alias"],
+      ]);
+      for (const event of state.events) {
+        expect(event.outcome).toBe("error");
+        expect(event.source).toBe("execute_code");
+      }
+    },
+  },
+  {
+    clauses: "E6, X8",
+    name: "only provider functions are callable, inherited members included",
+    code: `async () => {
+      const out = { inheritedType: typeof connecta.toString };
+      try { await connecta.nope({}); } catch (err) { out.unknown = String(err.message); }
+      try { await connecta.toString(); } catch (err) { out.inherited = String(err.message); }
+      return out;
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(String(result.message).length).toBeGreaterThan(0);
+      // Reading any property yields a function — the namespace is a Proxy —
+      // which is exactly why the host, not the guest, decides what is callable.
+      expect(result.inheritedType).toBe("function");
+      expect(String(result.unknown).length).toBeGreaterThan(0);
+      expect(String(result.inherited).length).toBeGreaterThan(0);
     },
   },
   {

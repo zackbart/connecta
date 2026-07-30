@@ -4,6 +4,7 @@ import type { ActivityRequestContext } from "./activity.js";
 import {
   boundedDiscoveryText,
   CatalogService,
+  DiscoveryPolicyError,
   flatSearchResult,
 } from "./catalog-service.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
@@ -206,6 +207,29 @@ export async function buildSandboxProviders(
       }
     },
   });
+  /**
+   * A discovery bound is as typed a failure as a tool call is, and a program
+   * that lets one escape deserves the same envelope: register it on the same
+   * request-local channel so an unhandled `invalid_args`/`result_too_large`
+   * reaches the model with its code instead of as prose. The guest still sees
+   * only the message — that is the bridge's limit, not a policy.
+   */
+  const typedDiscovery = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (err) {
+      if (err instanceof DiscoveryPolicyError) {
+        limits.onInvocationFailure?.(
+          new InvocationFailure({
+            code: err.code,
+            message: err.message,
+            retryable: false,
+          }),
+        );
+      }
+      throw err;
+    }
+  };
   const callAddress = async (address: unknown, args: unknown) => {
     const outcome = await invocation.invoke(
       String(address),
@@ -282,44 +306,46 @@ export async function buildSandboxProviders(
             }),
           );
         },
-        search: async (raw: unknown) => {
-          const args = (raw ?? {}) as {
-            query?: string;
-            connector?: string;
-            limit?: number;
-            offset?: number;
-            fullDescriptions?: boolean;
-            includeSchemas?: "compact" | "json";
-            includeSchemaKeys?: boolean;
-          };
-          const result = flatSearchResult(
-            await catalog.search({
-              ...args,
-              // Key metadata rides along with schemas by default, since that is
-              // the whole point of it in code mode. It stays opt-out because it
-              // counts against the same hard discovery-byte ceiling.
-              includeSchemaKeys: args.includeSchemaKeys !== false,
-            }),
-          );
-          boundedDiscoveryText(
-            result,
-            "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-          );
-          return result;
-        },
-        describe: async (raw: unknown) => {
-          const args = (raw ?? {}) as {
-            addresses?: unknown;
-            format?: "compact" | "json";
-            fullDescriptions?: boolean;
-          };
-          const result = { tools: await catalog.describe(args) };
-          boundedDiscoveryText(
-            result,
-            'Split the address list or use format: "compact".',
-          );
-          return result;
-        },
+        search: async (raw: unknown) =>
+          typedDiscovery(async () => {
+            const args = (raw ?? {}) as {
+              query?: string;
+              connector?: string;
+              limit?: number;
+              offset?: number;
+              fullDescriptions?: boolean;
+              includeSchemas?: "compact" | "json";
+              includeSchemaKeys?: boolean;
+            };
+            const result = flatSearchResult(
+              await catalog.search({
+                ...args,
+                // Key metadata rides along with schemas by default, since that
+                // is the whole point of it in code mode. It stays opt-out
+                // because it counts against the same discovery-byte ceiling.
+                includeSchemaKeys: args.includeSchemaKeys !== false,
+              }),
+            );
+            boundedDiscoveryText(
+              result,
+              "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+            );
+            return result;
+          }),
+        describe: async (raw: unknown) =>
+          typedDiscovery(async () => {
+            const args = (raw ?? {}) as {
+              addresses?: unknown;
+              format?: "compact" | "json";
+              fullDescriptions?: boolean;
+            };
+            const result = { tools: await catalog.describe(args) };
+            boundedDiscoveryText(
+              result,
+              'Split the address list or use format: "compact".',
+            );
+            return result;
+          }),
       },
     },
   ];

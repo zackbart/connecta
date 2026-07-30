@@ -18,6 +18,7 @@ import type {
   ExecutorProvider,
 } from "../types.js";
 import {
+  hostCallLabel,
   MAX_QUICKJS_IPC_BYTES,
   MAX_QUICKJS_HOST_RPC_BYTES,
   type ChildToParentMessage,
@@ -610,7 +611,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       try {
         payloadJson = stringifyBounded(
           { ok: true, value } satisfies HostResultPayload,
-          `Host result from ${payload.namespace}.${payload.functionName}`,
+          `Host result from ${hostCallLabel(payload)}`,
           MAX_QUICKJS_HOST_RPC_BYTES,
         );
       } catch (err) {

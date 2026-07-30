@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { classifyCallError, ConnectorCallError } from "../src/errors.js";
+import {
+  classifyCallError,
+  ConnectorCallError,
+  framingError,
+} from "../src/errors.js";
 
 describe("ConnectorCallError", () => {
   it("defaults retryable per code", () => {
@@ -142,5 +146,36 @@ describe("classifyCallError", () => {
       message: "boom",
       retryable: false,
     });
+  });
+});
+
+describe("framingError", () => {
+  it("pins the policy codes non-retryable however the address reads", () => {
+    // The message embeds the address, and the heuristic matches 503/429/
+    // temporar — a connector named for a transient failure must not turn a
+    // refusal that can never succeed into one a caller is told to retry.
+    for (const code of [
+      "unknown_address",
+      "unknown_tool",
+      "ambiguous_tool_alias",
+      "destructive_tool_requires_approval",
+    ]) {
+      expect(
+        framingError(code, `Unknown address "temporary-503-service.read"`),
+      ).toEqual({
+        code,
+        message: 'Unknown address "temporary-503-service.read"',
+        retryable: false,
+      });
+    }
+  });
+
+  it("still reads the message for codes it does not frame itself", () => {
+    expect(
+      framingError("result_processing_failed", "upstream 503 while paging"),
+    ).toMatchObject({ retryable: true });
+    expect(
+      framingError("result_processing_failed", "field shape mismatch"),
+    ).toMatchObject({ retryable: false });
   });
 });
