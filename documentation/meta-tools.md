@@ -25,6 +25,12 @@ so the seven-tool surface is *larger* than the row below it in that table. It
 buys the program with those bytes. The [guest API contract](./code-mode.md) is
 what a program is promised.
 
+`execute_code` accepts optional `diagnostics: true` when a caller is measuring
+a workflow. It adds only compact request-local timing and serialized-size
+aggregates; normal calls carry no diagnostics block or response-context cost.
+The measurements never contain program source, arguments, values, addresses,
+credentials, logs, or raw error text.
+
 Classic is the compatibility surface: what an executor-free deployment
 necessarily serves, since the program surface the fold depends on is not there.
 It is supported and tested, not an equal citizen in the docs. `surface:

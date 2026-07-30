@@ -1219,6 +1219,224 @@ describe("execute_code handler", () => {
     );
   });
 
+  it("reports compact payload-free diagnostics for every guest operation", async () => {
+    const executor: Executor = {
+      async execute(_code, providers) {
+        const connecta = connectaProvider(providers).fns;
+        await required(connecta.search)({
+          query: "add numbers",
+          includeSchemas: "compact",
+        });
+        await required(connecta.describe)({
+          addresses: ["calc.add"],
+          format: "compact",
+        });
+        await required(connecta.call)("calc.add", {
+          a: 7,
+          b: 9,
+          credential: "argument-secret",
+        });
+        try {
+          await required(connecta.call)("calc.missing", {
+            raw: "failure-secret",
+          });
+        } catch {
+          // A caught failure must still be counted.
+        }
+        await required(connecta.batch)([
+          {
+            address: "calc.add",
+            args: { a: 1, b: 2, token: "batch-secret" },
+          },
+          {
+            address: "calc.missing",
+            args: { raw: "batch-failure-secret" },
+          },
+        ]);
+        return { result: { done: true } };
+      },
+    };
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      executor,
+      silentLogger,
+    )({
+      code: 'async () => "source-secret"',
+      diagnostics: true,
+    });
+    const parsed = JSON.parse(required(out.content[0]).text) as {
+      result: { done: boolean };
+      diagnostics: {
+        timing: Record<string, number>;
+        operations: Array<{
+          operation: string;
+          count: number;
+          calls?: number;
+          failures: number;
+          resultBytes: number;
+          catalogMs: number;
+          connectorMs: number;
+        }>;
+      };
+    };
+
+    expect(parsed.result).toEqual({ done: true });
+    expect(parsed.diagnostics.timing).toEqual({
+      totalMs: expect.any(Number),
+      admissionMs: 0,
+      setupMs: expect.any(Number),
+      executorWallMs: expect.any(Number),
+      catalogMs: expect.any(Number),
+      connectorMs: expect.any(Number),
+    });
+    const operation = (name: string) =>
+      required(
+        parsed.diagnostics.operations.find((item) => item.operation === name),
+      );
+    expect(operation("search")).toMatchObject({
+      count: 1,
+      failures: 0,
+      resultBytes: expect.any(Number),
+    });
+    expect(operation("describe")).toMatchObject({
+      count: 1,
+      failures: 0,
+      resultBytes: expect.any(Number),
+    });
+    expect(operation("call")).toMatchObject({
+      count: 2,
+      failures: 1,
+      resultBytes: expect.any(Number),
+    });
+    expect(operation("batch")).toMatchObject({
+      count: 1,
+      calls: 2,
+      failures: 1,
+      resultBytes: expect.any(Number),
+    });
+    expect(operation("call").resultBytes).toBeGreaterThan(0);
+    expect(operation("batch").resultBytes).toBeGreaterThan(0);
+
+    const diagnosticsText = JSON.stringify(parsed.diagnostics);
+    for (const forbidden of [
+      "source-secret",
+      "argument-secret",
+      "failure-secret",
+      "batch-secret",
+      "batch-failure-secret",
+      "calc.add",
+      "calc.missing",
+      "Unknown tool",
+    ]) {
+      expect(diagnosticsText).not.toContain(forbidden);
+    }
+  });
+
+  it("adds no response context when diagnostics are disabled or omitted", async () => {
+    const handler = createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      fakeExecutor({ result: { ok: true } }),
+      silentLogger,
+    );
+    const omitted = await handler({ code: "async () => null" });
+    const disabled = await handler({
+      code: "async () => null",
+      diagnostics: false,
+    });
+    expect(required(omitted.content[0]).text).toBe('{"result":{"ok":true}}');
+    expect(disabled).toEqual(omitted);
+  });
+
+  it("keeps diagnostics on discovery, batch, and executor failures", async () => {
+    const guestFailures: Executor = {
+      async execute(_code, providers) {
+        const connecta = connectaProvider(providers).fns;
+        try {
+          await required(connecta.batch)("private batch payload");
+        } catch {
+          // Exercise a caught batch shape error before an uncaught discovery
+          // policy failure ends the program.
+        }
+        try {
+          await required(connecta.search)({ limit: 101 });
+          return { result: null };
+        } catch (error) {
+          return {
+            result: undefined,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    };
+    const discovery = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      guestFailures,
+      silentLogger,
+    )({
+      code: 'async () => "private source"',
+      diagnostics: true,
+    });
+    const parsedDiscovery = JSON.parse(
+      required(discovery.content[0]).text,
+    ) as {
+      error: { code: string };
+      diagnostics: {
+        operations: Array<{
+          operation: string;
+          count: number;
+          failures: number;
+        }>;
+      };
+    };
+    expect(discovery.isError).toBe(true);
+    expect(parsedDiscovery.error.code).toBe("invalid_args");
+    expect(parsedDiscovery.diagnostics.operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          operation: "batch",
+          count: 1,
+          failures: 1,
+        }),
+        expect.objectContaining({
+          operation: "search",
+          count: 1,
+          failures: 1,
+        }),
+      ]),
+    );
+    expect(JSON.stringify(parsedDiscovery.diagnostics)).not.toContain(
+      "private",
+    );
+
+    const executorFailure = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      {
+        async execute() {
+          throw new Error("raw executor secret");
+        },
+      },
+      silentLogger,
+    )({
+      code: "async () => null",
+      diagnostics: true,
+    });
+    const parsedExecutor = JSON.parse(
+      required(executorFailure.content[0]).text,
+    ) as {
+      error: { code: string; message: string };
+      diagnostics: { timing: Record<string, number>; operations: unknown[] };
+    };
+    expect(executorFailure.isError).toBe(true);
+    expect(parsedExecutor.error.code).toBe("executor_failed");
+    expect(parsedExecutor.error.message).toContain("raw executor secret");
+    expect(JSON.stringify(parsedExecutor.diagnostics)).not.toContain("secret");
+    expect(parsedExecutor.diagnostics.operations).toEqual([]);
+  });
+
   it("reports sandbox errors as isError with logs attached", async () => {
     const registry = makeRegistry([calcConnector]);
     const executor = fakeExecutor({ error: "kaboom", logs: ["step 1"] });
