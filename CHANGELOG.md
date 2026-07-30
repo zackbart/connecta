@@ -2,6 +2,31 @@
 
 All notable changes to this package are documented here.
 
+## 0.10.5 — 2026-07-30
+
+A consumer-audit recovery release. Schema discovery now provides the bounded
+key contracts an agent needs before its first read, a single-address describe
+no longer requires plural ceremony, and field-projection failures teach the
+array syntax when that is the likely mistake. Discovery payload ceilings and
+write admission are unchanged.
+
+### Changed
+
+- **Schema search exposes usable key contracts on both surfaces.**
+  `search_tools` now includes `inputKeys`, `requiredInputKeys`, and `outputKeys`
+  alongside bounded plain-object schemas, matching code-mode discovery.
+  Truncated shapes omit their corresponding key list instead of repeating a
+  large partial inventory.
+- **One address has a singular describe form.**
+  `connecta.describe({ address: "connector.tool" })` complements the bounded
+  plural form. Supplying both forms is rejected with a direct conflict error.
+
+### Fixed
+
+- **Projection misses teach array traversal when applicable.** Tool guidance
+  documents `results[].id`, and a plausible `results.id` miss gains a targeted
+  hint when the declared output schema confirms the array path.
+
 ## 0.10.4 — 2026-07-30
 
 A small code-mode recovery release. The `execute_code` contract now shows the

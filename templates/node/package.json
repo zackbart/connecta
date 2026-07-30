@@ -12,7 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@zackbart/connecta": "0.10.4",
+    "@zackbart/connecta": "0.10.5",
     "quickjs-emscripten": "0.32.0"
   },
   "devDependencies": {
