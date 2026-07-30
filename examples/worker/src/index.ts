@@ -1,10 +1,10 @@
 /**
  * connecta on Cloudflare Workers.
  *
- * One MCP endpoint aggregating a downstream remote MCP and an HTTP API behind
- * the nine base meta-tools, guarded by Clerk OAuth *and* a static bearer token,
- * with OAuth/cache state in a KV namespace. Add the optional Worker Loader
- * binding in wrangler.jsonc to register execute_code.
+ * One MCP endpoint aggregating a downstream remote MCP and an HTTP API, guarded
+ * by Clerk OAuth *and* a static bearer token, with OAuth/cache state in a KV
+ * namespace. Add the optional Worker Loader binding in wrangler.jsonc for the
+ * seven-tool code-first surface; without it this serves the nine classic tools.
  *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
@@ -45,9 +45,10 @@ interface Env {
   DOWNSTREAM_TOKEN: string;
   PUBLIC_URL: string;
   /**
-   * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering the
-   * optional execute_code meta-tool. Dynamic Workers require the Workers Paid
-   * plan; leave the binding absent for the nine base meta-tools on either plan.
+   * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
+   * execute_code and, with it, the code-first surface. Dynamic Workers require
+   * the Workers Paid plan; leave the binding absent for the nine classic
+   * meta-tools on either plan.
    */
   LOADER?: WorkerLoader;
 }
@@ -57,7 +58,8 @@ function build(env: Env) {
     publicUrl: env.PUBLIC_URL,
     storage: cloudflareKvStorage(env.CONNECTA_KV),
     // Binding-as-switch: adding worker_loaders in wrangler.jsonc enables code
-    // mode; leaving it absent keeps this deployment free-tier compatible.
+    // mode and the seven-tool code-first surface with it; leaving it absent
+    // keeps this deployment free-tier compatible on the classic surface.
     ...(env.LOADER
       ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
       : {}),

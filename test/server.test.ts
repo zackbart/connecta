@@ -1453,7 +1453,7 @@ describe("clerk metadata routes (no network)", () => {
 });
 
 describe("execute_code registration (code mode)", () => {
-  it("advertises exactly nine tools without an executor and ten with a live one", async () => {
+  it("advertises seven tools with an executor, nine without, and ten when classic is asked for", async () => {
     const baseTools = [
       "authorize_connector",
       "batch_call",
@@ -1462,6 +1462,18 @@ describe("execute_code registration (code mode)", () => {
       "describe_tools",
       "get_result",
       "list_connectors",
+      "search_tools",
+      "skills",
+    ];
+    // The consolidated surface (#224): the three folded tools are gone and
+    // `call_tool` stays, because one cold call is cheaper direct than through
+    // a program.
+    const codeFirstTools = [
+      "authorize_connector",
+      "call_destructive_tool",
+      "call_tool",
+      "execute_code",
+      "get_result",
       "search_tools",
       "skills",
     ];
@@ -1490,11 +1502,35 @@ describe("execute_code registration (code mode)", () => {
     const names2 = listed2.map(
       (t: { name: string }) => t.name,
     );
-    expect(names2.sort()).toEqual([...baseTools, "execute_code"].sort());
+    expect(names2.sort()).toEqual(codeFirstTools);
+
+    // An executor plus an explicit `surface: "classic"`: the ten-tool shape,
+    // which exists so the eval gate can measure "classic plus execute_code"
+    // against both other arms.
+    const classicWithExec = createConnecta({
+      connectors: [calc()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      surface: "classic",
+      executor: { execute: async () => ({ result: null }) },
+    });
+    const res3 = await rpc(classicWithExec, "tools/list", {}, { token: TOKEN });
+    const listed3 = (await readBody(res3)).result.tools;
+    expect(listed3.map((t: { name: string }) => t.name).sort()).toEqual(
+      [...baseTools, "execute_code"].sort(),
+    );
+
+    // The same tool, two routing stories: on the classic surface it is the tool
+    // of last resort, on the code-first one it is where the work happens.
     const executeTool = listed2.find(
       (tool: { name: string }) => tool.name === "execute_code",
     );
-    expect(executeTool.description).toContain(
+    expect(executeTool.description).toContain("The primary surface.");
+    expect(
+      listed3.find((tool: { name: string }) => tool.name === "execute_code")
+        .description,
+    ).toContain(
       "Never use execute_code for search-only discovery or one downstream call",
     );
     expect(executeTool.description).toContain("use one execute_code call");

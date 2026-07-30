@@ -95,8 +95,8 @@ order of magnitude larger, and its numbers are not comparable with a \`core\` ru
     return `The catalog is the narrow one: eight connectors, sixteen tools, and discovery
 that succeeds essentially always. **A verdict from this run alone leaves the wide
 catalog outstanding** — the \`wide\` catalog with near-miss connector names exists
-for exactly that gap, and no flip verdict from \`core\` should be treated as final
-until a run against \`wide\` says the same thing.`;
+for exactly that gap, and a \`flip\` reading from \`core\` alone is uncorroborated
+measurement until a run against \`wide\` says the same thing.`;
   }
   return `This run used the \`${catalog}\` catalog. Compare it only with runs against the
 same catalog.`;
@@ -811,12 +811,12 @@ Three surfaces, one commit, identical connectors and prompts:
 | --- | --- | --- |
 | \`classic\` | control — nine meta-tools, no executor | the comparison every delta is measured against |
 | \`classic-plus-code\` | incremental — the nine plus \`execute_code\` | nothing; it answers "does adding a code tool help on its own?" |
-| \`code-first\` | candidate — the seven-tool consolidated surface | the default-flip verdict |
+| \`code-first\` | candidate — the seven-tool consolidated surface, and what a deployment with an executor serves by default | the verdict |
 
-\`list_connectors\`, \`describe_tools\`, and \`batch_call\` are suppressed in the
-candidate arm by the harness, since connecta has no configuration for hiding a
-meta-tool. A model reaching for one of them there is refused with a message
-saying the capability now lives inside \`execute_code\`, and that reach is counted
+\`list_connectors\`, \`describe_tools\`, and \`batch_call\` are not part of the
+candidate arm's surface: connecta folded them into \`connecta.search\`,
+\`connecta.describe\`, and \`connecta.batch\` inside \`execute_code\`. A model reaching
+for one of them there is refused as an unknown tool, and that reach is counted
 under misrouting — it is the evidence the consolidation decision needs.
 
 Observation is from the client seat — the agent transcript — plus connecta's
@@ -890,9 +890,12 @@ The \`classic-plus-code\` arm gates nothing. Whatever it shows is an argument ab
 whether \`execute_code\` earns its definition on the nine-tool surface, not about
 the default.
 
-This verdict is an input to the default-flip decision, not the decision. **This
-suite flips nothing** — it advertises no surface, changes no default, and edits
-no configuration. Surface problems it surfaced — a shape models systematically
+The default already flipped: #224 shipped code-first as what a deployment with an
+executor serves, and the ethos records the eval-as-gate as \`removed\`. So this
+verdict gates nothing — it reports which surface performs, per model version, and
+is evidence for a regression, a follow-up, or a later decision. **This suite
+flips nothing** — it advertises no surface, changes no default, and edits no
+configuration. Surface problems it surfaced — a shape models systematically
 misuse — belong in the ethos decisions table, not in more prompt text.
 
 ${catalogCaveat(catalog)}

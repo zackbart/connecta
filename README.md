@@ -35,9 +35,10 @@ flowchart LR
 - [Cloudflare Worker example](./examples/worker/)
 - [Documentation](./documentation/)
 
-Connecta is moving toward a simpler, code-first experience. That direction is
-being measured before it becomes the default; the current interfaces remain
-supported during the transition.
+Connecta is code-first: an agent writes ordinary JavaScript against the
+integrations you chose, and a handful of explicit tools cover the jobs a program
+is the wrong shape for. Deployments without a sandbox to run that code keep the
+earlier tool-by-tool interface, which stays supported.
 
 ## Project status
 

@@ -8,18 +8,19 @@
 //
 //   classic            executor off, nine meta-tools. The control.
 //   classic-plus-code  executor on, ten tools. "Does adding execute_code help?"
-//   code-first         executor on, seven tools: list_connectors,
-//                      describe_tools, and batch_call suppressed, which is the
-//                      consolidated surface #224 accepts.
+//   code-first         executor on, seven tools — the consolidated surface,
+//                      which #224 shipped as connecta's default wherever an
+//                      executor exists.
 //
-// CONNECTA_GATE_EXECUTOR toggles the executor. CONNECTA_GATE_SUPPRESS is the
-// comma-separated list of meta-tools to hide. connecta has no configuration for
-// suppressing a meta-tool — the surface is a property of the deployment shape,
-// not a preference — so suppression happens here, in the harness's own fetch
-// wrapper, by filtering `tools/list` and refusing `tools/call` on a suppressed
-// name with a message that says so. That refusal is deliberately measurable: a
-// model reaching for `batch_call` when the surface no longer offers one is
-// exactly the evidence #224 needs.
+// CONNECTA_GATE_EXECUTOR toggles the executor and CONNECTA_GATE_SURFACE picks
+// the surface. Both are ordinary connecta configuration now: this file once hid
+// three meta-tools in its own fetch wrapper and rewrote connecta's prose around
+// them, because the product had no way to express the consolidated surface.
+// #224 made it a real deployment shape, so all three arms are now shapes a
+// deployment can actually be, and the harness measures the product instead of a
+// stand-in for it. A model reaching for `batch_call` on the candidate arm is
+// still the measurement #224 wanted; the MCP layer's unknown-tool error is now
+// what it meets.
 //
 // The only harness-owned route is GET /__gate/activity, which hands back the
 // connecta activity events this deployment recorded plus the fixtures' own
@@ -51,26 +52,20 @@ const executorEnabled = process.env.CONNECTA_GATE_EXECUTOR === "enabled";
 const port = Number(process.env.CONNECTA_GATE_PORT ?? "0");
 const host = "127.0.0.1";
 
-const SUPPRESSIBLE = new Set([
-  "batch_call",
-  "describe_tools",
-  "list_connectors",
-]);
-const suppressed = new Set(
-  (process.env.CONNECTA_GATE_SUPPRESS ?? "")
-    .split(",")
-    .map((name) => name.trim())
-    .filter((name) => name !== ""),
-);
-for (const name of suppressed) {
-  if (!SUPPRESSIBLE.has(name)) {
-    throw new Error(
-      `Refusing to suppress "${name}". Only ${[...SUPPRESSIBLE].sort().join(", ")} fold into the program surface; suppressing anything else would measure a deployment shape nobody has accepted.`,
-    );
-  }
+const SURFACES = ["classic", "code-first"] as const;
+const requestedSurface = process.env.CONNECTA_GATE_SURFACE ?? "classic";
+if (!(SURFACES as readonly string[]).includes(requestedSurface)) {
+  throw new Error(
+    `Unknown surface "${requestedSurface}". Available: ${SURFACES.join(", ")}.`,
+  );
 }
-/** The sentinel a suppressed call is rewritten to, so the server itself errors. */
-const SUPPRESSED_PREFIX = "__surface_suppressed__";
+const surface = requestedSurface as (typeof SURFACES)[number];
+if (surface === "code-first" && !executorEnabled) {
+  throw new Error(
+    "The code-first surface needs the executor: connecta refuses the " +
+      "combination at construction, and an arm that cannot boot measures nothing.",
+  );
+}
 
 /**
  * Catalogs are a seam, not a setting. `core` is the narrow eight-connector
@@ -1524,6 +1519,10 @@ const connecta = createConnecta({
   ...(executorEnabled
     ? { executor: quickJsExecutor({ timeoutMs: 10_000, cpuTimeMs: 2_000 }) }
     : {}),
+  // Named on every arm, including the ones where it matches what the executor
+  // already implies: the surface is the independent variable, so it is stated
+  // rather than inferred from a default that may move again.
+  surface,
   calls: {
     defaultTimeoutMs: 15_000,
     maxResultBytes: 8_000,
@@ -1548,180 +1547,6 @@ const connecta = createConnecta({
   deploymentInfo: { sourceCommit, isolated: true },
 });
 
-// ---------------------------------------------------------------------------
-// Surface suppression, harness-side
-// ---------------------------------------------------------------------------
-
-interface JsonRpcEnvelope {
-  method?: unknown;
-  params?: { name?: unknown };
-  result?: {
-    tools?: Array<{ name?: unknown; description?: unknown }>;
-    instructions?: unknown;
-  };
-  error?: { message?: unknown; data?: unknown };
-}
-
-/**
- * Hiding a tool while still recommending it is not a smaller surface, it is a
- * trap. connecta's own prose tells a model to reach for `batch_call` for
- * independent calls and to read schemas from `describe_tools`, and the server
- * instructions repeat it — so an arm that suppresses those tools without editing
- * the prose measures the harness's contradiction rather than the surface. The
- * post-consolidation surface would ship rewritten copy; this is that copy,
- * applied deterministically.
- *
- * Each edit names the tool it exists for and must match at least once, and after
- * every edit no advertised text may still mention a suppressed tool. A wording
- * change upstream therefore fails the server loudly instead of quietly
- * reintroducing the confound.
- */
-const PROSE_EDITS: Array<{ tool: string; find: RegExp; replace: string }> = [
-  {
-    tool: "batch_call",
-    find: /For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available\./,
-    replace:
-      "For multi-step work, independent or dependent, or for data reduction use execute_code.",
-  },
-  {
-    tool: "batch_call",
-    find: /For 2–10 independent calls use batch_call\. /,
-    replace: "",
-  },
-  {
-    tool: "batch_call",
-    find: /stashed by call_tool\/batch_call\./,
-    replace: "stashed by call_tool.",
-  },
-  {
-    tool: "batch_call",
-    find: /, batch_call for 2–10 independent read-only calls,/,
-    replace: ",",
-  },
-  {
-    tool: "describe_tools",
-    find: /matching the schema from describe_tools\./,
-    replace: "matching the schema search_tools returned.",
-  },
-  {
-    tool: "describe_tools",
-    find: /; describe_tools only if that shape is ambiguous or exact JSON constraints are needed/,
-    replace: "",
-  },
-];
-
-const appliedEdits = new Set<number>();
-
-/** Apply every edit whose suppressed tool this arm hides, then assert silence. */
-function rewriteProse(text: string, where: string): string {
-  let rewritten = text;
-  for (const [index, edit] of PROSE_EDITS.entries()) {
-    if (!suppressed.has(edit.tool)) continue;
-    if (edit.find.test(rewritten)) {
-      appliedEdits.add(index);
-      rewritten = rewritten.replace(edit.find, edit.replace);
-    }
-  }
-  for (const name of suppressed) {
-    if (rewritten.includes(name)) {
-      throw new Error(
-        `${where} still recommends suppressed tool "${name}" after prose rewriting. Its wording changed in src/ — update PROSE_EDITS in gate-server.ts rather than measuring a surface that hides a tool while advising it.\n\n${rewritten}`,
-      );
-    }
-  }
-  return rewritten;
-}
-
-/**
- * Every edit for a suppressed tool must have fired at least once by the time the
- * catalog has been served, or an upstream rewording silently removed the clause
- * this depends on and the next one may not be caught.
- */
-function assertEditsFired(): void {
-  const stale = PROSE_EDITS.map((edit, index) => ({ edit, index }))
-    .filter(({ edit, index }) => suppressed.has(edit.tool) && !appliedEdits.has(index))
-    .map(({ edit }) => String(edit.find));
-  if (stale.length > 0) {
-    throw new Error(
-      `Prose edits never matched: ${stale.join("; ")}. The wording they target changed in src/; update PROSE_EDITS in gate-server.ts.`,
-    );
-  }
-}
-
-/**
- * Rewrite a JSON-RPC body, whether the transport handed it back as JSON or as a
- * one-shot SSE frame. Buffering is safe here because every response this server
- * produces is a single complete JSON-RPC message.
- */
-async function rewriteBody(
-  response: Response,
-  transform: (message: JsonRpcEnvelope) => JsonRpcEnvelope,
-): Promise<Response> {
-  const contentType = response.headers.get("content-type") ?? "";
-  const raw = await response.text();
-  let body: string;
-  if (contentType.includes("text/event-stream")) {
-    body = raw
-      .split("\n")
-      .map((line) => {
-        if (!line.startsWith("data:")) return line;
-        const payload = line.slice(5).trim();
-        try {
-          return `data: ${JSON.stringify(transform(JSON.parse(payload)))}`;
-        } catch {
-          return line;
-        }
-      })
-      .join("\n");
-  } else {
-    try {
-      body = JSON.stringify(transform(JSON.parse(raw)));
-    } catch {
-      body = raw;
-    }
-  }
-  const headers = new Headers(response.headers);
-  headers.delete("content-length");
-  return new Response(body, {
-    status: response.status,
-    statusText: response.statusText,
-    headers,
-  });
-}
-
-/** The suppressed tool a request was aimed at, if any. */
-async function suppressedTarget(request: Request): Promise<string | undefined> {
-  if (suppressed.size === 0 || request.method !== "POST") return undefined;
-  try {
-    const body = (await request.clone().json()) as JsonRpcEnvelope;
-    if (body.method !== "tools/call") return undefined;
-    const name = body.params?.name;
-    return typeof name === "string" && suppressed.has(name) ? name : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function requestWithSuppressedName(
-  request: Request,
-  name: string,
-): Promise<Request> {
-  const body = (await request.clone().json()) as Record<string, unknown> & {
-    params?: Record<string, unknown>;
-  };
-  const rewritten = {
-    ...body,
-    params: { ...body.params, name: `${SUPPRESSED_PREFIX}${name}` },
-  };
-  const headers = new Headers(request.headers);
-  headers.delete("content-length");
-  return new Request(request.url, {
-    method: request.method,
-    headers,
-    body: JSON.stringify(rewritten),
-  });
-}
-
 const gate = {
   ...connecta,
   async fetch(request: Request, env?: unknown, ctx?: unknown) {
@@ -1737,62 +1562,9 @@ const gate = {
         mutations: { rollbacks, purgeAttempts },
       });
     }
-    if (suppressed.size === 0) return await connecta.fetch(request, env, ctx);
-
-    // A call to a suppressed tool is forwarded under a sentinel name so the MCP
-    // machinery produces a correctly shaped error in whatever format this client
-    // negotiated; only the human-readable part is then replaced. Synthesising the
-    // envelope here instead would risk disagreeing with the transport.
-    const target = await suppressedTarget(request);
-    if (target !== undefined) {
-      const response = await connecta.fetch(
-        await requestWithSuppressedName(request, target),
-        env,
-        ctx,
-      );
-      return await rewriteBody(response, (message) => {
-        if (!message.error) return message;
-        return {
-          ...message,
-          error: {
-            ...message.error,
-            message: `Tool "${target}" is not part of this deployment's surface. Its capability is available inside execute_code.`,
-            data: { code: "tool_not_on_surface", tool: target },
-          },
-        };
-      });
-    }
-
-    const response = await connecta.fetch(request, env, ctx);
-    return await rewriteBody(response, (message) => {
-      const instructions = message.result?.instructions;
-      if (typeof instructions === "string") {
-        return {
-          ...message,
-          result: {
-            ...message.result,
-            instructions: rewriteProse(instructions, "Server instructions"),
-          },
-        };
-      }
-      const tools = message.result?.tools;
-      if (!Array.isArray(tools)) return message;
-      const kept = tools
-        .filter((tool) => typeof tool.name !== "string" || !suppressed.has(tool.name))
-        .map((tool) =>
-          typeof tool.description === "string"
-            ? {
-                ...tool,
-                description: rewriteProse(
-                  tool.description,
-                  `Description of "${String(tool.name)}"`,
-                ),
-              }
-            : tool,
-        );
-      assertEditsFired();
-      return { ...message, result: { ...message.result, tools: kept } };
-    });
+    // Everything else is connecta, unwrapped. The arm's surface is now the
+    // deployment's own configuration, so there is nothing left to intercept.
+    return await connecta.fetch(request, env, ctx);
   },
 };
 
@@ -1811,7 +1583,7 @@ console.log(
     activityUrl: `http://${host}:${address.port}/__gate/activity`,
     sourceCommit,
     executorEnabled,
-    suppressed: [...suppressed].sort(),
+    surface,
     catalog,
     // Provenance, not decoration: a run recorded against "wide" that served eight
     // connectors would otherwise look identical to one that served forty.

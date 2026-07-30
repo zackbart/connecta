@@ -1,9 +1,10 @@
 /**
  * connecta on Node.
  *
- * One MCP endpoint aggregating two in-code HTTP API connectors behind the nine
- * meta-tools plus execute_code (code mode, QuickJS/WASM sandbox), guarded by
- * a static bearer token, with OAuth/cache state on disk.
+ * One MCP endpoint aggregating two in-code HTTP API connectors behind the
+ * seven-tool code-first surface (execute_code in a QuickJS/WASM sandbox plus the
+ * six explicit tools), guarded by a static bearer token, with OAuth/cache state
+ * on disk.
  *
  * Run:
  *   CONNECTA_TOKEN=dev-token npx tsx examples/node/src/index.ts
@@ -25,7 +26,8 @@ const connecta = createConnecta({
   // Downstream OAuth callbacks use this deployment origin.
   publicUrl: `http://localhost:${port}`,
   // Code mode: QuickJS runs model-written JS in a bounded disposable child.
-  // Remove this line to serve the nine base meta-tools only.
+  // This line is also what selects the seven-tool code-first surface; remove it
+  // to serve the nine classic meta-tools instead.
   executor: quickJsExecutor(),
   connectors: [
     api("time", {

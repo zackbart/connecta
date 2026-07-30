@@ -20,7 +20,7 @@
 
   // Optional paid code mode: add a comma above, then uncomment this binding.
   // Its presence is the entire switch — src/index.ts detects env.LOADER and
-  // registers execute_code automatically. Leave it absent for a free-tier
-  // deployment with the nine base meta-tools.
+  // serves the seven-tool code-first surface. Leave it absent for a free-tier
+  // deployment with the nine classic meta-tools.
   // "worker_loaders": [{ "binding": "LOADER" }]
 }

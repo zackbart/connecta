@@ -120,16 +120,16 @@ for (const scenario of SCENARIOS) {
     `${where} does not declare requiredAddresses (an empty array is fine).`,
   );
   // Every task must be completable in every arm, so no grader may depend on a
-  // tool the candidate arm suppresses.
+  // tool the candidate arm folded into the program surface.
   for (const arm of ARM_NAMES) {
     const intended = scenario.intendedRoute?.[arm];
     check(
       intended !== undefined,
       `${where} declares no intended route for arm "${arm}".`,
     );
-    if (intended && ARMS[arm].suppress.includes(intended)) {
+    if (intended && ARMS[arm].folded.includes(intended)) {
       failures.push(
-        `${where} intends route "${intended}" on arm "${arm}", which suppresses it.`,
+        `${where} intends route "${intended}" on arm "${arm}", which does not advertise it.`,
       );
     }
   }
@@ -1052,8 +1052,8 @@ function syntheticRun(options = {}) {
           arm,
           role: ARMS[arm].role,
           toolCount: ARMS[arm].expectedToolCount,
-          tools: ALL_TOOLS.filter((name) => !ARMS[arm].suppress.includes(name)),
-          suppressed: ARMS[arm].suppress,
+          tools: ALL_TOOLS.filter((name) => !ARMS[arm].folded.includes(name)),
+          folded: ARMS[arm].folded,
           toolDefinitionTokens: 1_000 * ARMS[arm].expectedToolCount,
         },
       ]),
@@ -1074,7 +1074,7 @@ function syntheticRun(options = {}) {
             variant: scenario.variants[0],
             arm,
             advertisedTools: ALL_TOOLS.filter(
-              (name) => !ARMS[arm].suppress.includes(name),
+              (name) => !ARMS[arm].folded.includes(name),
             ),
             toolDefinitionTokens: 1_000,
             tokenizer,

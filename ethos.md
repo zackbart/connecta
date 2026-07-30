@@ -21,10 +21,9 @@ order, and amending it is a design decision, not a drive-by edit.
 - **Every meta-tool earns its keep**, and the bar has gone up. The default
   answer to "agents need X" is the program surface: a capability has to be
   shown inexpressible through it before it earns a top-level tool, and one
-  that isn't worth its context cost still goes. Nine today plus optional
-  `execute_code`; the accepted destination is two deploy-time surfaces —
-  seven tools counting `execute_code` where a deployment has an executor,
-  classic where it doesn't
+  that isn't worth its context cost still goes. Seven tools counting
+  `execute_code` where a deployment has an executor, which is what a model
+  sees by default; nine where it doesn't
   ([#224](https://github.com/zackbart/connecta/issues/224)).
 - **Safe by default.** Only tools explicitly annotated read-only are callable
   without crossing the destructive boundary — directly or from generated code;
@@ -36,11 +35,10 @@ order, and amending it is a design decision, not a drive-by edit.
   APIs only in the core; Node touches live behind explicit subpaths.
 - **An executor is the assumed posture.** The primary surface is a program, so
   the deployment connecta is written toward has one — a Dynamic Worker on
-  Cloudflare, QuickJS behind its optional-peer subpath on Node. Converging
-  defaults, examples, and docs on that is
-  [#224](https://github.com/zackbart/connecta/issues/224)'s job; executor-free
-  stays supported as compatibility, not as an equal citizen. Packaging is
-  unchanged: assumed is about defaults, never about dependencies.
+  Cloudflare, QuickJS behind its optional-peer subpath on Node. Configuring one
+  is what selects the code-first surface; executor-free stays supported as
+  compatibility, not as an equal citizen. Packaging is unchanged: assumed is
+  about defaults, never about dependencies.
 - **Observable, never administrable.** Operator pages show connector status,
   masked credentials, and payload-free activity. They can rotate a secret;
   they cannot add a connector, change policy, or alter what an agent can call.
@@ -80,11 +78,12 @@ proposing one without a new argument is not.
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Agent credential recovery | accepted | one `auth_required` route through `authorize_connector`; only an operator handles secrets ([#192](https://github.com/zackbart/connecta/issues/192)) |
 | Structured result surface | accepted | canonical `structuredContent` plus complete compact `content`; summary-only text is gated on host-forwarding evidence ([#191](https://github.com/zackbart/connecta/issues/191)) |
-| Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: ~32% smaller serialized definitions, far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md)) |
-| Code-first as the user-facing default | gated | one pinned sample is legibility evidence, not a success rate; the repeated per-model eval decides ([#222](https://github.com/zackbart/connecta/issues/222)) |
-| Surface consolidation to seven tools | accepted | folding `list_connectors`, `describe_tools`, and `batch_call` into the program surface deletes the overlapping routing choice between direct calls, batches, discovery, and execution; `call_tool` stays because a simple call is not cheaper through code ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: smaller serialized definitions (the exploration estimated ~32%, the shipped fold measures 19.6% — see the consolidation row), far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md)) |
+| Code-first as the user-facing default | accepted | owner decision, 2026-07-30: "we don't need a deploy time flip, I'm the only one who uses it… We already decided it's good let's just do it." One operator, one deployment, and the exploration plus the smoke runs were enough judgment for him; the gate below was written for a user base connecta does not have ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| The repeated per-model eval as the flip's gate | removed | it decided a question the owner has now decided himself; [`eval/code-first-gate`](./eval/code-first-gate/README.md) remains as measurement — the arms are real deployment shapes and it still reports which surface performs — but nothing waits on its verdict ([#222](https://github.com/zackbart/connecta/issues/222)) |
+| Surface consolidation to seven tools | accepted | folding `list_connectors`, `describe_tools`, and `batch_call` into the program surface deletes the overlapping routing choice between direct calls, batches, discovery, and execution; `call_tool` stays because a simple call is not cheaper through code. Measured at 19.6% fewer serialized definition bytes than the ten-tool shape the same deployment used to serve (10,675B → 8,587B), correcting the exploration's ~32% ([#224](https://github.com/zackbart/connecta/issues/224)) |
 | Executor-assumed posture | accepted | the primary surface is a program, so a deployment without an executor can only ever be the compatibility shape; packaging invariants are untouched ([#224](https://github.com/zackbart/connecta/issues/224)) |
-| Classic surface retention | accepted | compatibility path, rollback path, and the control arm of the eval; whether it is ever removed is a separate future decision ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Classic surface retention | accepted | what an executor-free deployment necessarily serves, the rollback path, and the eval's control arm; `surface: "classic"` alongside an executor is the only knob, and whether classic is ever removed is a separate future decision ([#224](https://github.com/zackbart/connecta/issues/224)) |
 | Connector shortcut namespaces in programs | accepted | sugar over canonical addressing, kept but frozen — every expansion invents a collision class `<connectorId>.<toolName>` already solved ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | Automatic host-side projection of program results | refused | the measured win was program-authored projection; a host heuristic drops fields a program chose to return and is invisible in the transcript ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | `get_result` paging for program results | refused | paging rewards the unprojected return code mode exists to remove; a program can shrink anything ([#223](https://github.com/zackbart/connecta/issues/223)) |
