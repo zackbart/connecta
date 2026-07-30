@@ -1,16 +1,35 @@
 import type { JsonSchema, ToolDef } from "./types.js";
 
 const DEFAULT_DESCRIPTION_LENGTH = 240;
+const DISCOVERY_DESCRIPTION_LENGTH = 160;
+export const MAX_COMPACT_DISCOVERY_SCHEMA_BYTES = 1_024;
+const schemaEncoder = new TextEncoder();
+const COMPACT_DISCOVERY_TRUNCATION = " /* truncated */";
 
 export function summarizeDescription(
   text: string | undefined,
   full: boolean,
 ): string | undefined {
+  return summarizeToLength(text, full, DEFAULT_DESCRIPTION_LENGTH);
+}
+
+export function summarizeDiscoveryDescription(
+  text: string | undefined,
+  full: boolean,
+): string | undefined {
+  return summarizeToLength(text, full, DISCOVERY_DESCRIPTION_LENGTH);
+}
+
+function summarizeToLength(
+  text: string | undefined,
+  full: boolean,
+  maxLength: number,
+): string | undefined {
   if (!text) return undefined;
   if (full) return text;
   const compact = text.replace(/\s+/g, " ").trim();
-  if (compact.length <= DEFAULT_DESCRIPTION_LENGTH) return compact;
-  return `${compact.slice(0, DEFAULT_DESCRIPTION_LENGTH - 1).trimEnd()}…`;
+  if (compact.length <= maxLength) return compact;
+  return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
 function lexicalTokens(text: string): string[] {
@@ -391,6 +410,10 @@ function renderSchema(
   defs: Record<string, unknown>,
   seen: Set<string>,
   depth: number,
+  options: {
+    propertyDescriptions: boolean;
+    requiredFirst: boolean;
+  },
 ): string {
   if (depth > 4) return "…";
   if (schema === null || typeof schema !== "object") {
@@ -409,10 +432,10 @@ function renderSchema(
   if (Array.isArray(s.allOf)) {
     const { allOf: _members, ...own } = s;
     const parts = declaresShape(own)
-      ? [renderSchema(own, defs, seen, depth)]
+      ? [renderSchema(own, defs, seen, depth, options)]
       : [];
     for (const member of s.allOf) {
-      parts.push(renderSchema(member, defs, seen, depth + 1));
+      parts.push(renderSchema(member, defs, seen, depth + 1, options));
     }
     if (parts.length === 0) return "unknown";
     if (parts.length === 1) return parts[0] as string;
@@ -425,7 +448,7 @@ function renderSchema(
     const target = defs[name];
     if (target === undefined) return name;
     seen.add(name);
-    const rendered = renderSchema(target, defs, seen, depth);
+    const rendered = renderSchema(target, defs, seen, depth, options);
     seen.delete(name);
     return rendered;
   }
@@ -433,7 +456,9 @@ function renderSchema(
   const union = (s.oneOf ?? s.anyOf) as unknown[] | undefined;
   if (Array.isArray(union)) {
     return (
-      union.map((u) => renderSchema(u, defs, seen, depth + 1)).join(" | ") ||
+      union
+        .map((u) => renderSchema(u, defs, seen, depth + 1, options))
+        .join(" | ") ||
       "unknown"
     );
   }
@@ -449,7 +474,7 @@ function renderSchema(
   const type = s.type;
   if (type === "array" || s.items) {
     const items = s.items
-      ? renderSchema(s.items, defs, seen, depth + 1)
+      ? renderSchema(s.items, defs, seen, depth + 1, options)
       : "unknown";
     return `${items}[]`;
   }
@@ -458,17 +483,31 @@ function renderSchema(
     const required = new Set(
       (Array.isArray(s.required) ? s.required : []) as string[],
     );
-    const keys = Object.keys(props);
+    const declaredKeys = Object.keys(props);
+    const keys = options.requiredFirst
+      ? [
+          ...declaredKeys.filter((key) => required.has(key)),
+          ...declaredKeys.filter((key) => !required.has(key)),
+        ]
+      : declaredKeys;
     if (keys.length === 0) return "{}";
     return `{ ${keys
       .map((key) => {
         const optional = required.has(key) ? "" : "?";
-        const rendered = renderSchema(props[key], defs, seen, depth + 1);
+        const rendered = renderSchema(
+          props[key],
+          defs,
+          seen,
+          depth + 1,
+          options,
+        );
         const description = (
           props[key] as Record<string, unknown> | null
         )?.description;
         const comment =
-          typeof description === "string" ? ` // ${description}` : "";
+          options.propertyDescriptions && typeof description === "string"
+            ? ` // ${description}`
+            : "";
         return `${key}${optional}: ${rendered}${comment}`;
       })
       .join(", ")} }`;
@@ -490,12 +529,99 @@ export function compactSchema(schema: JsonSchema): string {
   };
   let rendered: string;
   try {
-    rendered = renderSchema(schema, defs, new Set(), 0);
+    rendered = renderSchema(schema, defs, new Set(), 0, {
+      propertyDescriptions: true,
+      requiredFirst: false,
+    });
   } catch {
     rendered = JSON.stringify(schema);
   }
   compactSchemas.set(schema, rendered);
   return rendered;
+}
+
+export interface CompactDiscoverySchema {
+  text: string;
+  truncated: boolean;
+}
+
+const compactDiscoverySchemas = new WeakMap<
+  JsonSchema,
+  CompactDiscoverySchema
+>();
+
+/**
+ * A valid, bounded replacement for a discovery shape too large to carry.
+ *
+ * Required object keys come first and every retained key is JSON-quoted, so
+ * arbitrary downstream names remain valid TypeScript property signatures.
+ * Types become `unknown`: pretending a severed nested type is exact would be
+ * worse than making the existing truncation flag's recovery route explicit.
+ */
+function truncatedDiscoverySchema(schema: JsonSchema): string {
+  const keys = schemaObjectKeys(schema);
+  if (!keys) return `unknown${COMPACT_DISCOVERY_TRUNCATION}`;
+  const required = new Set(keys.required);
+  const ordered = [
+    ...keys.properties.filter((key) => required.has(key)),
+    ...keys.properties.filter((key) => !required.has(key)),
+  ];
+  const parts: string[] = [];
+  for (const key of ordered) {
+    const part = `${JSON.stringify(key)}${required.has(key) ? "" : "?"}: unknown`;
+    const candidate = `{ ${[...parts, part].join(", ")} }${COMPACT_DISCOVERY_TRUNCATION}`;
+    if (
+      schemaEncoder.encode(candidate).length >
+      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES
+    ) {
+      break;
+    }
+    parts.push(part);
+  }
+  if (parts.length === 0 && ordered.length > 0) {
+    return `unknown${COMPACT_DISCOVERY_TRUNCATION}`;
+  }
+  return `{ ${parts.join(", ")} }${COMPACT_DISCOVERY_TRUNCATION}`;
+}
+
+/**
+ * Render the schema shape carried by search results.
+ *
+ * Search is a routing step, so repeated property prose does not earn its
+ * context cost there. Required inputs render first, and the result has a hard
+ * UTF-8 budget; exact JSON and the prose-rich compact rendering remain
+ * available through the existing full retrieval paths.
+ */
+export function compactDiscoverySchema(
+  schema: JsonSchema,
+): CompactDiscoverySchema {
+  const cached = compactDiscoverySchemas.get(schema);
+  if (cached) return cached;
+  const defs = {
+    ...(schema.$defs as Record<string, unknown>),
+    ...(schema.definitions as Record<string, unknown>),
+  };
+  let rendered: string;
+  try {
+    rendered = renderSchema(schema, defs, new Set(), 0, {
+      propertyDescriptions: false,
+      requiredFirst: true,
+    });
+  } catch {
+    rendered = JSON.stringify(schema);
+  }
+  const bytes = schemaEncoder.encode(rendered);
+  let result: CompactDiscoverySchema;
+  if (bytes.length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {
+    result = { text: rendered, truncated: false };
+  } else {
+    result = {
+      text: truncatedDiscoverySchema(schema),
+      truncated: true,
+    };
+  }
+  compactDiscoverySchemas.set(schema, result);
+  return result;
 }
 
 /** The property and required names a schema resolves to, or undefined. */

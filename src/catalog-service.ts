@@ -1,10 +1,12 @@
 import {
+  compactDiscoverySchema,
   compactSchema,
   lexicalCorpusStatistics,
   lexicalQueryTerms,
   lexicalSearchQuery,
   rankTools,
   schemaObjectKeys,
+  summarizeDiscoveryDescription,
   summarizeDescription,
 } from "./catalog.js";
 import {
@@ -127,6 +129,8 @@ interface CatalogSearchEntry {
     description?: string;
     inputSchema?: unknown;
     outputSchema?: unknown;
+    inputSchemaTruncated?: true;
+    outputSchemaTruncated?: true;
     inputKeys?: string[];
     requiredInputKeys?: string[];
     outputKeys?: string[];
@@ -214,6 +218,15 @@ export type CatalogResolution =
 
 function renderSchema(schema: JsonSchema, format: "compact" | "json"): unknown {
   return format === "json" ? schema : compactSchema(schema);
+}
+
+function renderSearchSchema(
+  schema: JsonSchema,
+  format: "compact" | "json",
+): { schema: unknown; truncated: boolean } {
+  if (format === "json") return { schema, truncated: false };
+  const compact = compactDiscoverySchema(schema);
+  return { schema: compact.text, truncated: compact.truncated };
 }
 
 /**
@@ -478,7 +491,14 @@ export class CatalogService {
     const pageMatches = matches.slice(offset, offset + limit);
     const entries = pageMatches.map((match) => {
       const input = match.tool.inputSchema ?? { type: "object" };
-      const description = summarizeDescription(
+      const renderedInput = args.includeSchemas
+        ? renderSearchSchema(input, args.includeSchemas)
+        : undefined;
+      const renderedOutput =
+        args.includeSchemas && match.tool.outputSchema
+          ? renderSearchSchema(match.tool.outputSchema, args.includeSchemas)
+          : undefined;
+      const description = summarizeDiscoveryDescription(
         match.tool.description,
         args.fullDescriptions === true,
       );
@@ -493,15 +513,19 @@ export class CatalogService {
           ...(description !== undefined ? { description } : {}),
           ...(args.includeSchemas
             ? {
-                inputSchema:
-                  renderSchema(input, args.includeSchemas),
+                inputSchema: renderedInput?.schema,
               }
+            : {}),
+          ...(renderedInput?.truncated
+            ? { inputSchemaTruncated: true as const }
             : {}),
           ...(args.includeSchemas && match.tool.outputSchema
             ? {
-                outputSchema:
-                  renderSchema(match.tool.outputSchema, args.includeSchemas),
+                outputSchema: renderedOutput?.schema,
               }
+            : {}),
+          ...(renderedOutput?.truncated
+            ? { outputSchemaTruncated: true as const }
             : {}),
           ...(args.includeSchemas && args.includeSchemaKeys
             ? schemaKeyMetadata(input, match.tool.outputSchema)
@@ -680,7 +704,6 @@ export function groupedSearchResult(page: CatalogSearchPage) {
   const groups: Array<{
     id: string;
     title?: string;
-    description?: string;
     guide?: string;
     tools: CatalogSearchEntry["tool"][];
   }> = [];
@@ -693,9 +716,6 @@ export function groupedSearchResult(page: CatalogSearchPage) {
       const group: (typeof groups)[number] = {
         id: entry.connector.id,
         ...(entry.connector.title ? { title: entry.connector.title } : {}),
-        ...(entry.connector.description !== undefined
-          ? { description: entry.connector.description }
-          : {}),
         ...(entry.guide ? { guide: entry.guide } : {}),
         tools: [],
       };

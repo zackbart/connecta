@@ -230,7 +230,7 @@ const page = await connecta.search({
 `nextOffset` when more remains and `matchMode: "partial"` when no tool matched
 every term. Each entry in `tools` carries `address`, `name`, and — when
 requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the
-connector's `guide`.
+connector's `guide`. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes; capped shapes remain structurally valid with `unknown` types plus `/* truncated */`, and carry `inputSchemaTruncated` or `outputSchemaTruncated`. Use `connecta.describe` (or JSON search) for omitted exact constraints.
 
 **S2.** With schemas requested, a match whose input (or output) schema resolves
 to an object shape also carries `inputKeys`, `requiredInputKeys`, and
