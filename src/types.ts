@@ -304,6 +304,20 @@ export interface Connector {
   ): Promise<Response | null>;
 }
 
+/**
+ * Which model-facing surface a deployment advertises. The `executor` decides
+ * it; this type is how a deployment overrides that.
+ *
+ * - `code-first`: seven tools, the default wherever an executor is configured.
+ *   `list_connectors`, `describe_tools`, and `batch_call` are not top-level
+ *   tools; their behavior lives in `connecta.search`, `connecta.describe`, and
+ *   `connecta.batch` inside a program.
+ * - `classic`: the nine base meta-tools, plus `execute_code` when an executor
+ *   is configured. What an executor-free deployment necessarily serves, and
+ *   the eval gate's control arm.
+ */
+export type ConnectaSurface = "classic" | "code-first";
+
 /** Result of one sandboxed code execution. */
 export interface ExecuteResult {
   result: unknown;

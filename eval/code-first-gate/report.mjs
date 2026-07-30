@@ -749,10 +749,10 @@ Three surfaces, one commit, identical connectors and prompts:
 | \`classic-plus-code\` | incremental — the nine plus \`execute_code\` | nothing; it answers "does adding a code tool help on its own?" |
 | \`code-first\` | candidate — the seven-tool consolidated surface | the default-flip verdict |
 
-\`list_connectors\`, \`describe_tools\`, and \`batch_call\` are suppressed in the
-candidate arm by the harness, since connecta has no configuration for hiding a
-meta-tool. A model reaching for one of them there is refused with a message
-saying the capability now lives inside \`execute_code\`, and that reach is counted
+\`list_connectors\`, \`describe_tools\`, and \`batch_call\` are not part of the
+candidate arm's surface: connecta folded them into \`connecta.search\`,
+\`connecta.describe\`, and \`connecta.batch\` inside \`execute_code\`. A model reaching
+for one of them there is refused as an unknown tool, and that reach is counted
 under misrouting — it is the evidence the consolidation decision needs.
 
 Observation is from the client seat — the agent transcript — plus connecta's

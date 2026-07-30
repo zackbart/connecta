@@ -12,7 +12,7 @@ import {
 } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
-import { CONNECTA_INSTRUCTIONS } from "../skills.js";
+import { instructionsFor } from "../skills.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
@@ -192,9 +192,13 @@ async function serveMcp(
   registry: RegistryView,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
+  // One deployment-wide value, read once here so the instructions, the
+  // registered tools, and the guidance the `skills` tool serves cannot
+  // disagree about which surface this deployment advertises.
+  const surface = opts.surface ?? "classic";
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
-      instructions: CONNECTA_INSTRUCTIONS,
+      instructions: instructionsFor(surface),
       cacheHints: {
         "tools/list": {
           ttlMs: 3_600_000,
@@ -219,6 +223,7 @@ async function serveMcp(
       : undefined;
     registerMetaTools(server, registry, {
       baseUrl,
+      surface,
       ...(activity ? { activity } : {}),
       ...(opts.defaultToolTimeoutMs !== undefined
         ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
@@ -237,6 +242,7 @@ async function serveMcp(
     if (opts.executor) {
       registerExecuteTool(server, registry, {
         baseUrl,
+        surface,
         executor: opts.executor,
         logger: opts.logger,
         ...(activity ? { activity } : {}),

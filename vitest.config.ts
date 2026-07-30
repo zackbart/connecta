@@ -12,6 +12,7 @@ export const WORKERS_SUITES = [
   "test/call-admission.test.ts",
   "test/catalog.test.ts",
   "test/clerk.test.ts",
+  "test/code-first-surface.test.ts",
   "test/codemode-compat.test.ts",
   "test/config.test.ts",
   "test/credentials.test.ts",

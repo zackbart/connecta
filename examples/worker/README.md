@@ -1,10 +1,10 @@
 # connecta — Cloudflare Worker example
 
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
-API connector behind the nine base meta-tools, guarded by Clerk OAuth *and* a
-static bearer token, with state in a KV namespace. Optional paid code mode adds
-`execute_code` through one Wrangler binding; the checked-in configuration
-deploys without it and is compatible with the Workers Free plan.
+API connector, guarded by Clerk OAuth *and* a static bearer token, with state in
+a KV namespace. One Wrangler binding turns on paid code mode, which is also what
+selects the seven-tool code-first surface; the checked-in configuration deploys
+without it, serving the nine classic meta-tools on the Workers Free plan.
 
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
@@ -66,10 +66,10 @@ after the preceding property):
 ```
 
 `src/index.ts` detects `env.LOADER`, constructs `DynamicWorkerExecutor`, and
-registers `execute_code` automatically. Leave the binding absent — as it is in
+serves the seven-tool code-first surface. Leave the binding absent — as it is in
 the checked-in config — to deploy the same source on the Workers Free plan with
-the nine base meta-tools. A deployment copied into its own repository must also
-install the executor package before enabling the binding:
+the nine classic meta-tools. A deployment copied into its own repository must
+also install the executor package before enabling the binding:
 
 ```sh
 npm install @cloudflare/codemode

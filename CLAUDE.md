@@ -1,9 +1,10 @@
 # Working on connecta
 
 A single MCP endpoint aggregating downstream connectors (remote MCP servers and
-plain HTTP APIs) behind a small fixed set of meta-tools — nine today, plus an
-optional tenth for code mode. One fetch-native core, running on both Node and
-Cloudflare Workers.
+plain HTTP APIs) behind a small fixed set of meta-tools. A deployment with an
+executor serves seven, `execute_code` among them, and agents reach connectors by
+writing JavaScript against it; one without an executor serves the nine classic
+tools. One fetch-native core, running on both Node and Cloudflare Workers.
 
 - **[`ethos.md`](./ethos.md) is the constitution.** It states what connecta is
   and isn't, and its decisions table carries a verdict for every shape already

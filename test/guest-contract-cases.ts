@@ -511,6 +511,51 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    // The discovery path a model used to reach through `list_connectors`, which
+    // the code-first surface folded away (#224). An unfiltered browse is the
+    // replacement: it names every connector a program can reach and how many
+    // tools each one has, which is the part of that tool a model ever used.
+    clauses: "S1, S2",
+    name: "an unfiltered browse enumerates the deployment's connectors",
+    code: `async () => {
+      const page = await connecta.search({ limit: 100 });
+      const byConnector = {};
+      for (const tool of page.tools) {
+        const connector = tool.address.slice(0, tool.address.indexOf("."));
+        byConnector[connector] = (byConnector[connector] ?? 0) + 1;
+      }
+      const scoped = await connecta.search({ connector: "reader", limit: 100 });
+      return {
+        connectors: Object.keys(byConnector).sort(),
+        readerTools: byConnector.reader,
+        total: page.total,
+        scopedConnectors: scoped.tools
+          .map((tool) => tool.address.slice(0, tool.address.indexOf(".")))
+          .filter((id, index, all) => all.indexOf(id) === index)
+      };
+    }`,
+    check(outcome) {
+      const result = record(outcome);
+      // Every connector whose catalog loads, not merely the ones a query
+      // happened to match. badcatalog throws on listTools and so has no tools
+      // to browse; its absence here is the complete-or-failure rule holding,
+      // not a gap in the browse.
+      expect(result.connectors).toEqual([
+        "collide",
+        "hang",
+        "needsauth",
+        "needsstore",
+        "odd-service",
+        "reader",
+        "remote",
+        "temporary-503-service",
+      ]);
+      expect(result.readerTools).toBe(5);
+      expect(result.total).toBeGreaterThan(5);
+      expect(result.scopedConnectors).toEqual(["reader"]);
+    },
+  },
+  {
     clauses: "S4",
     name: "describe answers per address and reports bad ones inline",
     code: `async () => {

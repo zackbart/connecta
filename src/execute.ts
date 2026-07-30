@@ -24,6 +24,7 @@ import {
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import type {
+  ConnectaSurface,
   Executor,
   ExecutorProvider,
   Logger,
@@ -501,10 +502,32 @@ export function createExecuteTool(
   };
 }
 
-const EXECUTE_DESC = `Use for dependent multi-step calls, loops, joins, branching, or reducing large results in a sandbox. Never use execute_code for search-only discovery or one downstream call: use search_tools, then call_tool when needed. For 2–10 independent calls use batch_call. Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
+/**
+ * How the tool opens, and where a program's argument schemas come from. Both
+ * differ by surface: on the classic surface `execute_code` is the tool of last
+ * resort and its neighbours (`batch_call`, `describe_tools`) own the simpler
+ * jobs, while on the code-first surface those tools are gone and the program is
+ * where all of that work happens. Everything after these two phrases is
+ * identical, so the shared body below has one source of truth.
+ */
+const EXECUTE_ROUTING = {
+  classic:
+    "Use for dependent multi-step calls, loops, joins, branching, or reducing large results in a sandbox. Never use execute_code for search-only discovery or one downstream call: use search_tools, then call_tool when needed. For 2–10 independent calls use batch_call.",
+  "code-first":
+    "The primary surface. Use for discovery beyond one lookup, two or more calls, dependent steps, loops, joins, branching, or reducing large results before they reach the model — connecta.search and connecta.describe browse and expand catalogs in the run, and connecta.batch replaces a separate batch tool. The exception is a single call at an address already in hand: search_tools then one call_tool is cheaper than a program.",
+} as const;
+
+const EXECUTE_SCHEMA_SOURCE = {
+  classic: "describe_tools",
+  "code-first": "connecta.describe",
+} as const;
+
+const executeDescription = (
+  surface: ConnectaSurface,
+) => `${EXECUTE_ROUTING[surface]} Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
-- One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from describe_tools. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
+- One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from ${EXECUTE_SCHEMA_SOURCE[surface]}. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
 - connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
 - console.log(...) — captured and returned alongside the result.
@@ -525,6 +548,8 @@ export function registerExecuteTool(
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
     discoveryConcurrency?: number;
+    /** The advertised surface, which decides this tool's routing copy. */
+    surface?: ConnectaSurface;
   },
 ): void {
   const handler = createExecuteTool(
@@ -540,7 +565,7 @@ export function registerExecuteTool(
   server.registerTool(
     "execute_code",
     {
-      description: EXECUTE_DESC,
+      description: executeDescription(ctx.surface ?? "classic"),
       inputSchema: z.object({
         code: z
           .string()

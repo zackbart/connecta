@@ -4,6 +4,29 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+**Code-first is what a model sees.** A deployment with an executor now serves
+seven meta-tools instead of ten: `list_connectors`, `describe_tools`, and
+`batch_call` are no longer top-level tools, and their behavior lives in
+`connecta.search`, `connecta.describe`, and `connecta.batch` inside a program.
+Nothing became unreachable and no policy machinery changed — writes still cross
+`call_destructive_tool`, and `call_tool` deliberately stays, because a single cold
+call is measurably cheaper direct than through a program. What breaks is a client
+that calls one of the three folded names against an executor-backed deployment:
+it gets an unknown-tool error. The always-loaded instructions, the `skills`
+guidance, and the routing sentences in `call_tool`, `search_tools`, `get_result`,
+and `execute_code` are rewritten for that surface, which measures 19.6% smaller
+serialized tool definitions (10,675B → 8,587B), correcting the exploration's ~32%
+estimate. **An executor-free deployment can ignore all of it**: it serves the same
+nine tools with the same descriptions and the same instructions as before, byte
+for byte. `surface: "classic"` alongside an executor restores the ten-tool shape.
+
+The default was flipped by owner decision for a single-operator deployment rather
+than by the repeated per-model eval that [`ethos.md`](./ethos.md) had gated it on;
+that row now records the decision and its reasoning, and
+[`eval/code-first-gate`](./eval/code-first-gate/README.md) remains as measurement
+with all three of its arms now real deployment shapes rather than harness
+simulations.
+
 The code-mode guest API is now specified rather than merely described:
 [`documentation/code-mode.md`](./documentation/code-mode.md) states what a
 program is promised — surface, addressing, error shapes, projection, retry,
@@ -15,6 +38,24 @@ clauses down turned up four places where the code did not quite match the
 behavior worth having; those are the changes below, all additive or corrective,
 and one of them (retryable policy refusals) reaches `call_tool` and `batch_call`
 as well as programs.
+
+### Changed
+
+- **The code-first surface is the default wherever an executor is configured.**
+  Seven tools: `execute_code`, `search_tools`, `call_tool`,
+  `call_destructive_tool`, `authorize_connector`, `get_result`, `skills`. Four
+  overlapping ways to reach one connector became two — `search_tools` then
+  `call_tool` for a single cold read, one `execute_code` run for everything wider.
+  An executor-free deployment is unchanged.
+- **`ConnectaConfig.surface`** overrides what the executor implies. The reason to
+  set it is `"classic"` beside an executor, which is the ten-tool shape the eval
+  gate's incremental arm measures. `"code-first"` without an executor throws at
+  construction rather than advertise a program surface that does not exist, as
+  does any other value.
+- **The eval gate configures its arms instead of faking one.** `gate-server.ts`
+  no longer filters `tools/list` or rewrites connecta's descriptions: all three
+  arms are ordinary deployments, so the harness measures the product and the arms
+  are byte-for-byte identical in the transport layer.
 
 ### Added
 

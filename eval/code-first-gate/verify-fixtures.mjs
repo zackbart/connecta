@@ -5,7 +5,7 @@
 //
 // It drives the real MCP transport through all three arms and proves the things a
 // campaign silently depends on: that each arm advertises exactly the surface it
-// claims; that suppression actually hides a tool and refuses a call to it; that
+// claims; that a folded tool is both hidden and refused when called; that
 // every task's required addresses exist and return the values its grader accepts;
 // that the oversized export truncates and pages; that the flaky read fails its
 // first attempt; that a mixed read reports one typed failure beside two
@@ -155,23 +155,23 @@ for (const arm of ARM_NAMES) {
     const names = listed.tools.map((tool) => tool.name).sort();
     // A surface that hides a tool while still recommending it measures the
     // harness's contradiction, not the surface. Every advertised description and
-    // the server instructions must be silent about anything suppressed.
+    // the server instructions must be silent about anything folded away.
     const advertisedProse = [
       ...listed.tools.map((tool) => String(tool.description ?? "")),
       String(client.getInstructions?.() ?? ""),
     ].join("\n");
-    for (const hidden of ARMS[arm].suppress) {
+    for (const hidden of ARMS[arm].folded) {
       check(
         !advertisedProse.includes(hidden),
-        `Arm "${arm}" suppresses "${hidden}" but still names it in an advertised description or in the server instructions.`,
+        `Arm "${arm}" folded "${hidden}" away but still names it in an advertised description or in the server instructions.`,
       );
     }
-    if (ARMS[arm].suppress.length === 0) {
+    if (ARMS[arm].folded.length === 0) {
       // The control arms must still carry the original prose, or the rewrite is
       // leaking across arms and the comparison is not like-for-like.
       check(
         advertisedProse.includes("batch_call"),
-        `Arm "${arm}" suppresses nothing but its prose no longer mentions batch_call — the rewrite is leaking into a control arm.`,
+        `Arm "${arm}" folds nothing away but its prose no longer mentions batch_call — the code-first copy is leaking into a control arm.`,
       );
     }
     const expected = [...EXPECTED_SURFACES[arm]].sort();
@@ -183,11 +183,13 @@ for (const arm of ARM_NAMES) {
       names.length === ARMS[arm].expectedToolCount,
       `Arm "${arm}" advertised ${names.length} tools; its declared shape is ${ARMS[arm].expectedToolCount}.`,
     );
-    // Suppression must refuse the call, not merely hide the definition: a client
+    // Folding must refuse the call, not merely hide the definition: a client
     // that remembers a tool from another deployment must not slip through. A
     // strict MCP client raises on a JSON-RPC error rather than returning a tool
-    // result, so both shapes are accepted as long as the reason is legible.
-    for (const hidden of ARMS[arm].suppress) {
+    // result, so both shapes are accepted as long as the reason names the tool.
+    // The refusal is the MCP layer's unknown-tool error now that the surface is
+    // connecta's own configuration rather than something this harness hides.
+    for (const hidden of ARMS[arm].folded) {
       let observed;
       try {
         const refused = await call(hidden, {});
@@ -196,9 +198,8 @@ for (const arm of ARM_NAMES) {
         observed = `${error instanceof Error ? error.message : String(error)} ${JSON.stringify(error?.data ?? {})}`;
       }
       check(
-        /not part of this deployment's surface/.test(observed) &&
-          /tool_not_on_surface/.test(observed),
-        `Arm "${arm}" did not refuse a call to suppressed "${hidden}" legibly: ${observed.slice(0, 200)}`,
+        observed.includes(hidden) && /not found|not part of/.test(observed),
+        `Arm "${arm}" did not refuse a call to folded "${hidden}" legibly: ${observed.slice(0, 200)}`,
       );
     }
   });
