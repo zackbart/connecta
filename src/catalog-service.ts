@@ -28,6 +28,7 @@ import {
   normalizeTimeoutMs,
   withAbortableTimeout,
 } from "./timeout.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Connector,
   JsonSchema,
@@ -106,12 +107,46 @@ export function boundedDiscoveryText(value: unknown, hint: string): string {
 export interface CatalogSearchArgs {
   query?: string;
   connector?: string;
+  /**
+   * Result classification only; never changes which tools exist or what may
+   * execute. Omitted and "all" preserve the complete configured catalog.
+   */
+  safety?: "readOnly" | "approvalRequired" | "all";
   limit?: number;
   offset?: number;
   fullDescriptions?: boolean;
   includeSchemas?: "compact" | "json";
   /** Code-mode helper metadata; never exposed by the public search_tools schema. */
   includeSchemaKeys?: boolean;
+}
+
+function discoverySafety(
+  value: unknown,
+): "readOnly" | "approvalRequired" | "all" {
+  if (value === undefined) return "all";
+  if (
+    value !== "readOnly" &&
+    value !== "approvalRequired" &&
+    value !== "all"
+  ) {
+    throw new DiscoveryPolicyError(
+      "invalid_args",
+      'safety must be "readOnly", "approvalRequired", or "all".',
+    );
+  }
+  return value;
+}
+
+function toolsForSafety(
+  tools: ToolDef[],
+  safety: "readOnly" | "approvalRequired" | "all",
+): ToolDef[] {
+  if (safety === "all") return tools;
+  return tools.filter((tool) =>
+    safety === "readOnly"
+      ? isExplicitlyReadOnly(tool)
+      : !isExplicitlyReadOnly(tool),
+  );
 }
 
 export interface CatalogDescribeArgs {
@@ -423,6 +458,7 @@ export class CatalogService {
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
     const query = args.query ?? "";
     const retrievalQuery = lexicalSearchQuery(query);
+    const safety = discoverySafety(args.safety);
     const limit = discoverySearchLimit(args.limit);
     const offset = Math.max(0, Math.trunc(args.offset ?? 0));
     const scopedConnector = args.connector
@@ -442,6 +478,14 @@ export class CatalogService {
           `search_tools probe of "${connector.id}"`,
         ),
     );
+    const searchableCatalogs = catalogs.map((catalog) =>
+      catalog.status === "fulfilled"
+        ? {
+            status: "fulfilled" as const,
+            value: toolsForSafety(catalog.value, safety),
+          }
+        : catalog,
+    );
     const matches: Array<{
       connector: Connector;
       tool: ToolDef;
@@ -450,7 +494,7 @@ export class CatalogService {
     }> = [];
     let matchMode: "all" | "partial" = "all";
     const statistics = lexicalCorpusStatistics(
-      catalogs.flatMap((catalog) =>
+      searchableCatalogs.flatMap((catalog) =>
         catalog.status === "fulfilled" ? [catalog.value] : [],
       ),
       retrievalQuery,
@@ -458,7 +502,7 @@ export class CatalogService {
     const collectMatches = (mode: "all" | "partial") => {
       matches.length = 0;
       let orderBase = 0;
-      catalogs.forEach((catalog, connectorIndex) => {
+      searchableCatalogs.forEach((catalog, connectorIndex) => {
         const connector = connectors[connectorIndex];
         if (!connector) {
           throw new Error("Catalog result has no corresponding connector");
@@ -568,6 +612,14 @@ export class CatalogService {
     const unavailableCatalogs = catalogs.filter(
       (catalog) => catalog.status === "rejected",
     ).length;
+    const safetyLabel =
+      safety === "readOnly"
+        ? "read-only "
+        : safety === "approvalRequired"
+          ? "approval-required "
+          : "";
+    const filterRecovery =
+      safety === "all" ? "" : " Change safety to inspect the other tools.";
     const guidance =
       queryTerms.length === 0
         ? undefined
@@ -577,10 +629,10 @@ export class CatalogService {
             : scopedConnector
               ? unavailableCatalogs > 0
                 ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Retry later.`
-                : `No matching capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.`
+                : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
               : unavailableCatalogs === 0
-                ? "No matching capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query."
-                : `No matching capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.`
+                ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
+                : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
           : matchMode === "partial"
             ? scopedConnector
               ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`

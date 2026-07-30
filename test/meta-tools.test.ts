@@ -995,6 +995,104 @@ describe("search_tools", () => {
     expect(parsed.total).toBe(2);
   });
 
+  it("filters discovery with the same fail-closed safety classification as invocation", async () => {
+    const classified: Connector = {
+      id: "classified",
+      kind: "api",
+      staticTools: [
+        {
+          name: "explicit_read",
+          annotations: { readOnlyHint: true },
+        },
+        {
+          name: "explicit_read_non_destructive",
+          annotations: { readOnlyHint: true, destructiveHint: false },
+        },
+        {
+          name: "explicit_write",
+          annotations: { readOnlyHint: false, destructiveHint: false },
+        },
+        { name: "missing" },
+        {
+          name: "contradictory",
+          annotations: { readOnlyHint: true, destructiveHint: true },
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool(name) {
+        return name;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([classified]), BASE);
+    const addresses = async (
+      safety?: "readOnly" | "approvalRequired" | "all",
+    ) => {
+      const page = textOf(
+        await mt.searchTools({ ...(safety ? { safety } : {}), limit: 10 }),
+      ) as SearchResult;
+      return page.connectors.flatMap((group) =>
+        group.tools.map((tool) => tool.address),
+      );
+    };
+
+    expect(await addresses("readOnly")).toEqual([
+      "classified.explicit_read",
+      "classified.explicit_read_non_destructive",
+    ]);
+    expect(await addresses("approvalRequired")).toEqual([
+      "classified.explicit_write",
+      "classified.missing",
+      "classified.contradictory",
+    ]);
+    expect(await addresses()).toEqual(await addresses("all"));
+    expect(await addresses()).toHaveLength(5);
+
+    for (const address of await addresses("readOnly")) {
+      expect((await mt.callTool({ address })).isError).toBeFalsy();
+    }
+    for (const address of await addresses("approvalRequired")) {
+      const result = await mt.callTool({ address });
+      expect(result.isError).toBe(true);
+      expect(required(result.content[0]).text).toContain(
+        "not explicitly read-only",
+      );
+    }
+  });
+
+  it("explains an empty safety-filtered result without hiding the complete catalog", async () => {
+    const writeOnly: Connector = {
+      id: "write_only",
+      staticTools: [{ name: "create", annotations: { readOnlyHint: false } }],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return {};
+      },
+    };
+    const mt = createMetaTools(makeRegistry([writeOnly]), BASE);
+    const filtered = textOf(
+      await mt.searchTools({
+        query: "create",
+        safety: "readOnly",
+      }),
+    ) as SearchResult;
+    expect(filtered.total).toBe(0);
+    expect(filtered.queryAnalysis?.guidance).toContain(
+      "No matching read-only capability",
+    );
+    expect(filtered.queryAnalysis?.guidance).toContain(
+      "Change safety to inspect the other tools.",
+    );
+
+    const complete = textOf(
+      await mt.searchTools({ query: "create" }),
+    ) as SearchResult;
+    expect(complete.connectors.flatMap((group) => group.tools)).toHaveLength(1);
+  });
+
   it("respects the connector filter → a single group", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(

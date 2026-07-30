@@ -18,6 +18,7 @@ import {
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
 import type { RegistryView } from "./registry.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type { ToolDef } from "./types.js";
 
 /**
@@ -53,14 +54,6 @@ export function retryBackoffMs(
     return Math.min(250 * 2 ** (attempt - 1), 1_000);
   }
   return retryAfterMs <= MAX_RETRY_BACKOFF_MS ? retryAfterMs : undefined;
-}
-
-/** The one fail-closed admission predicate for every invocation adapter. */
-function isExplicitlyReadOnly(definition: ToolDef): boolean {
-  return (
-    definition.annotations?.readOnlyHint === true &&
-    definition.annotations?.destructiveHint !== true
-  );
 }
 
 function retrySafe(definition: ToolDef): boolean {
