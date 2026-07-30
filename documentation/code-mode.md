@@ -419,14 +419,13 @@ anything, so paging its result would reward the one behavior code mode exists to
 remove — and stashing every unprojected return value would spend the result store
 on data nobody asked for.
 
-**R5.** `console.log`, `console.warn`, and `console.error` are captured in call
-order and returned as a single `logs` string, capped at 4,000 characters with a
-truncation marker. Logs survive failure — they ride along with the error result,
-which is what makes them worth writing. How a non-string argument renders is not
-contract (`X4`).
+**R5.** `console.log`, `console.warn`, and `console.error` are captured in call order and returned as a single `logs` string, capped at 4,000 characters with a truncation marker. Logs survive failure — they ride along with the error result, which is what makes them worth writing. How a non-string argument renders is not contract (`X4`).
 
-**R6.** Nothing else is added to a program's result. There is no timing or
-diagnostics block; per-call durations live in activity (`V2`).
+**R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; omitted and `false` are byte-for-byte the ordinary response path.
+
+**R7.** Timing separates admission, provider setup, total executor wall time, catalog work, and connector work. Catalog and connector values are cumulative, so parallel work can exceed executor wall time. Each used operation kind (`search`, `describe`, `call`, `batch`) gets one aggregate with count, failures, duration, returned serialized bytes, and catalog/connector time; batch adds only its total child count.
+
+**R8.** Diagnostics contain measurements and fixed operation names only: no addresses, arguments, results, code, credentials, logs, or raw errors. Result sizes are numbers, never previews. The collector exists only for the opted-in request; it is not activity, a session, or a stream.
 
 ## Retry semantics
 
@@ -670,7 +669,7 @@ the upstream `Executor` shape assignable.
 | `R2` | `test/guest-api-contract.test.ts` (envelope fits the cap, idempotent) |
 | `R4` | verdict; `R2` is its enforcement |
 | `R5` | `test/guest-api-contract.test.ts`, `test/quickjs-log-limits.test.ts` |
-| `R6` | `test/guest-api-contract.test.ts` (result keys) |
+| `R6`–`R8` | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion) |
 | `Y1` | `test/guest-api-contract.test.ts` (one attempt per call) |
 | `Y2`, `Y3` | `test/guest-api-contract.test.ts` (retryable flags by code) |
 | `Y4` | `test/meta-tools.test.ts` (`retryBackoffMs`, `MAX_RETRY_BACKOFF_MS`) |

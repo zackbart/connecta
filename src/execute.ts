@@ -34,6 +34,145 @@ import type {
 const EXECUTE_MAX_HOST_CALLS = 20;
 export const EXECUTE_MAX_BATCH_CALLS = 10;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+const diagnosticsEncoder = new TextEncoder();
+
+type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "batch";
+
+interface ExecuteOperationDiagnostics {
+  operation: ExecuteDiagnosticOperation;
+  count: number;
+  failures: number;
+  durationMs: number;
+  resultBytes: number;
+  catalogMs: number;
+  connectorMs: number;
+  calls?: number;
+}
+
+type MutableOperationDiagnostics = ExecuteOperationDiagnostics;
+
+class ExecuteDiagnostics {
+  private readonly started = Date.now();
+  private readonly operations = new Map<
+    ExecuteDiagnosticOperation,
+    MutableOperationDiagnostics
+  >();
+  admissionMs = 0;
+  setupMs = 0;
+  executorWallMs = 0;
+
+  private stats(operation: ExecuteDiagnosticOperation) {
+    let stats = this.operations.get(operation);
+    if (!stats) {
+      stats = {
+        operation,
+        count: 0,
+        failures: 0,
+        durationMs: 0,
+        resultBytes: 0,
+        catalogMs: 0,
+        connectorMs: 0,
+      };
+      this.operations.set(operation, stats);
+    }
+    return stats;
+  }
+
+  recordCatalog(
+    operation: "search" | "describe",
+    durationMs: number,
+    ok: boolean,
+    result?: unknown,
+  ): void {
+    const stats = this.stats(operation);
+    stats.count++;
+    stats.failures += ok ? 0 : 1;
+    stats.durationMs += durationMs;
+    stats.catalogMs += durationMs;
+    if (ok) stats.resultBytes += serializedDiagnosticBytes(result);
+  }
+
+  recordCall(
+    operation: "call" | "batch",
+    outcome: {
+      ok: boolean;
+      durationMs: number;
+      timing: { catalogMs: number; connectorMs: number };
+      value?: unknown;
+    },
+  ): void {
+    const stats = this.stats(operation);
+    if (operation === "call") {
+      stats.count++;
+      if (outcome.ok) {
+        stats.resultBytes += serializedDiagnosticBytes(outcome.value);
+      }
+    } else {
+      stats.calls = (stats.calls ?? 0) + 1;
+    }
+    stats.failures += outcome.ok ? 0 : 1;
+    if (operation === "call") stats.durationMs += outcome.durationMs;
+    stats.catalogMs += outcome.timing.catalogMs;
+    stats.connectorMs += outcome.timing.connectorMs;
+  }
+
+  recordBatch(
+    durationMs: number,
+    ok: boolean,
+    calls: number,
+    result?: unknown,
+  ): void {
+    const stats = this.stats("batch");
+    stats.count++;
+    // Calls normally accrue while each child runs. Invalid batch input never
+    // starts children, so retain the attempted cardinality here.
+    if (!ok) stats.calls = Math.max(stats.calls ?? 0, calls);
+    stats.durationMs += durationMs;
+    if (!ok) stats.failures++;
+    else stats.resultBytes += serializedDiagnosticBytes(result);
+  }
+
+  finish(): {
+    timing: {
+      totalMs: number;
+      admissionMs: number;
+      setupMs: number;
+      executorWallMs: number;
+      catalogMs: number;
+      connectorMs: number;
+    };
+    operations: ExecuteOperationDiagnostics[];
+  } {
+    const operations = [...this.operations.values()];
+    return {
+      timing: {
+        totalMs: Date.now() - this.started,
+        admissionMs: this.admissionMs,
+        setupMs: this.setupMs,
+        executorWallMs: this.executorWallMs,
+        catalogMs: operations.reduce((sum, item) => sum + item.catalogMs, 0),
+        connectorMs: operations.reduce(
+          (sum, item) => sum + item.connectorMs,
+          0,
+        ),
+      },
+      operations,
+    };
+  }
+}
+
+function serializedDiagnosticBytes(value: unknown): number {
+  try {
+    const text = JSON.stringify(value);
+    return text === undefined
+      ? 0
+      : diagnosticsEncoder.encode(text).byteLength;
+  } catch {
+    // The executor's normal result guard owns the error. Diagnostics must
+    // never turn measurement into a second failure path.
+    return 0;
+  }
+}
 
 // deno-fmt-ignore
 const RESERVED = new Set([
@@ -154,6 +293,7 @@ export async function buildSandboxProviders(
     hostCallTimeoutMs?: number;
     discoveryConcurrency?: number;
     onInvocationFailure?: (failure: InvocationFailure) => void;
+    diagnostics?: ExecuteDiagnostics;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
@@ -231,12 +371,17 @@ export async function buildSandboxProviders(
       throw err;
     }
   };
-  const callAddress = async (address: unknown, args: unknown) => {
+  const callAddress = async (
+    address: unknown,
+    args: unknown,
+    diagnosticOperation: "call" | "batch" = "call",
+  ) => {
     const outcome = await invocation.invoke(
       String(address),
       args ?? {},
       invocationContext(),
     );
+    limits.diagnostics?.recordCall(diagnosticOperation, outcome);
     if (!outcome.ok) {
       const failure = new InvocationFailure(outcome.error);
       limits.onInvocationFailure?.(failure);
@@ -256,6 +401,7 @@ export async function buildSandboxProviders(
       args ?? {},
       invocationContext(),
     );
+    limits.diagnostics?.recordCall("call", outcome);
     if (!outcome.ok) {
       const failure = new InvocationFailure(outcome.error);
       limits.onInvocationFailure?.(failure);
@@ -270,84 +416,143 @@ export async function buildSandboxProviders(
       prelude: lazyNamespacePrelude(namespaces),
       fns: {
         __callNamespace: callNamespace,
-        call: callAddress,
+        call: (address: unknown, args: unknown) =>
+          callAddress(address, args),
         batch: async (calls: unknown) => {
-          if (!Array.isArray(calls)) throw new Error("calls must be an array");
-          if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
-            throw new Error(
-              `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
-            );
-          }
-          return await Promise.all(
-            calls.map(async (call) => {
-              const item = call as { address?: unknown; args?: unknown };
-              try {
-                return {
-                  address: String(item.address),
-                  ok: true,
-                  data: await callAddress(item.address, item.args),
-                };
-              } catch (err) {
-                // Same failure shape batch_call reports: the message a program
-                // can log, plus the typed details it must classify by. A
-                // thrown host error crosses the sandbox bridge as a bare
-                // message string in every executor, so this is the one place a
-                // program can tell a policy refusal from a transient failure.
-                const details =
-                  err instanceof InvocationFailure
-                    ? err.details
-                    : classifyCallError(err, "batch_call_failed");
-                return {
-                  address: String(item.address),
-                  ok: false,
-                  error: details.message,
-                  errorDetails: details,
-                };
-              }
-            }),
-          );
-        },
-        search: async (raw: unknown) =>
-          typedDiscovery(async () => {
-            const args = (raw ?? {}) as {
-              query?: string;
-              connector?: string;
-              safety?: "readOnly" | "approvalRequired" | "all";
-              limit?: number;
-              offset?: number;
-              fullDescriptions?: boolean;
-              includeSchemas?: "compact" | "json";
-              includeSchemaKeys?: boolean;
-            };
-            const result = flatSearchResult(
-              await catalog.search({
-                ...args,
-                // Key metadata rides along with schemas by default, since that
-                // is the whole point of it in code mode. It stays opt-out
-                // because it counts against the same discovery-byte ceiling.
-                includeSchemaKeys: args.includeSchemaKeys !== false,
+          const started = Date.now();
+          const callCount = Array.isArray(calls) ? calls.length : 0;
+          try {
+            if (!Array.isArray(calls)) throw new Error("calls must be an array");
+            if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
+              throw new Error(
+                `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
+              );
+            }
+            const result = await Promise.all(
+              calls.map(async (call) => {
+                const item = call as { address?: unknown; args?: unknown };
+                try {
+                  return {
+                    address: String(item.address),
+                    ok: true,
+                    data: await callAddress(
+                      item.address,
+                      item.args,
+                      "batch",
+                    ),
+                  };
+                } catch (err) {
+                  // Same failure shape batch_call reports: the message a program
+                  // can log, plus the typed details it must classify by. A
+                  // thrown host error crosses the sandbox bridge as a bare
+                  // message string in every executor, so this is the one place a
+                  // program can tell a policy refusal from a transient failure.
+                  const details =
+                    err instanceof InvocationFailure
+                      ? err.details
+                      : classifyCallError(err, "batch_call_failed");
+                  return {
+                    address: String(item.address),
+                    ok: false,
+                    error: details.message,
+                    errorDetails: details,
+                  };
+                }
               }),
             );
-            boundedDiscoveryText(
+            limits.diagnostics?.recordBatch(
+              Date.now() - started,
+              true,
+              callCount,
               result,
-              "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
             );
             return result;
-          }),
-        describe: async (raw: unknown) =>
-          typedDiscovery(async () => {
-            const args = (raw ?? {}) as {
-              addresses?: unknown;
-              format?: "compact" | "json";
-              fullDescriptions?: boolean;
-            };
-            const result = { tools: await catalog.describe(args) };
-            boundedDiscoveryText(
+          } catch (err) {
+            limits.diagnostics?.recordBatch(
+              Date.now() - started,
+              false,
+              callCount,
+            );
+            throw err;
+          }
+        },
+        search: async (raw: unknown) => {
+          const started = Date.now();
+          try {
+            const result = await typedDiscovery(async () => {
+              const args = (raw ?? {}) as {
+                query?: string;
+                connector?: string;
+                safety?: "readOnly" | "approvalRequired" | "all";
+                limit?: number;
+                offset?: number;
+                fullDescriptions?: boolean;
+                includeSchemas?: "compact" | "json";
+                includeSchemaKeys?: boolean;
+              };
+              const result = flatSearchResult(
+                await catalog.search({
+                  ...args,
+                  // Key metadata rides along with schemas by default, since that
+                  // is the whole point of it in code mode. It stays opt-out
+                  // because it counts against the same discovery-byte ceiling.
+                  includeSchemaKeys: args.includeSchemaKeys !== false,
+                }),
+              );
+              boundedDiscoveryText(
+                result,
+                "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+              );
+              return result;
+            });
+            limits.diagnostics?.recordCatalog(
+              "search",
+              Date.now() - started,
+              true,
               result,
-              'Split the address list or use format: "compact".',
             );
             return result;
-          }),
+          } catch (err) {
+            limits.diagnostics?.recordCatalog(
+              "search",
+              Date.now() - started,
+              false,
+            );
+            throw err;
+          }
+        },
+        describe: async (raw: unknown) => {
+          const started = Date.now();
+          try {
+            const result = await typedDiscovery(async () => {
+              const args = (raw ?? {}) as {
+                addresses?: unknown;
+                format?: "compact" | "json";
+                fullDescriptions?: boolean;
+              };
+              const result = { tools: await catalog.describe(args) };
+              boundedDiscoveryText(
+                result,
+                'Split the address list or use format: "compact".',
+              );
+              return result;
+            });
+            limits.diagnostics?.recordCatalog(
+              "describe",
+              Date.now() - started,
+              true,
+              result,
+            );
+            return result;
+          } catch (err) {
+            limits.diagnostics?.recordCatalog(
+              "describe",
+              Date.now() - started,
+              false,
+            );
+            throw err;
+          }
+        },
       },
     },
   ];
@@ -363,7 +568,10 @@ export function createExecuteTool(
   config: { discoveryConcurrency?: number } = {},
 ) {
   return async (
-    { code }: { code: string },
+    { code, diagnostics: diagnosticsRequested }: {
+      code: string;
+      diagnostics?: boolean;
+    },
     options: { signal?: AbortSignal } = {},
   ): Promise<ToolResult> => {
     const controller = new AbortController();
@@ -374,42 +582,64 @@ export function createExecuteTool(
     }
     let lease;
     let outcome;
+    const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
     const invocationFailures: InvocationFailure[] = [];
     try {
       // Admission comes before provider construction: queued calls retain no
       // catalogs, request scopes, or one-closure-per-tool provider arrays.
       if (isAdmittingExecutor(executor)) {
-        lease = await executor.acquire({ signal: controller.signal });
+        const admissionStarted = Date.now();
+        try {
+          lease = await executor.acquire({ signal: controller.signal });
+        } finally {
+          if (diagnostics) {
+            diagnostics.admissionMs = Date.now() - admissionStarted;
+          }
+        }
         if ((lease.waitMs ?? 0) > 0) {
           logger.debug("[connecta] execute_code admitted after queue wait", {
             waitMs: lease.waitMs,
           });
         }
       }
-      const providers = await buildSandboxProviders(
-        registry,
-        baseUrl,
-        logger,
-        activity,
-        {
-          signal: controller.signal,
-          onInvocationFailure: (failure) => {
-            invocationFailures.push(failure);
+      const setupStarted = Date.now();
+      let providers: ExecutorProvider[];
+      try {
+        providers = await buildSandboxProviders(
+          registry,
+          baseUrl,
+          logger,
+          activity,
+          {
+            signal: controller.signal,
+            onInvocationFailure: (failure) => {
+              invocationFailures.push(failure);
+            },
+            ...(diagnostics ? { diagnostics } : {}),
+            ...(config.discoveryConcurrency !== undefined
+              ? { discoveryConcurrency: config.discoveryConcurrency }
+              : {}),
           },
-          ...(config.discoveryConcurrency !== undefined
-            ? { discoveryConcurrency: config.discoveryConcurrency }
-            : {}),
-        },
-      );
+        );
+      } finally {
+        if (diagnostics) diagnostics.setupMs = Date.now() - setupStarted;
+      }
       if (controller.signal.aborted) {
         throw new ExecutorAdmissionError(
           "executor_cancelled",
           "Execution was cancelled during sandbox setup.",
         );
       }
-      outcome = lease
-        ? await lease.execute(code, providers)
-        : await executor.execute(code, providers);
+      const executorStarted = Date.now();
+      try {
+        outcome = lease
+          ? await lease.execute(code, providers)
+          : await executor.execute(code, providers);
+      } finally {
+        if (diagnostics) {
+          diagnostics.executorWallMs = Date.now() - executorStarted;
+        }
+      }
     } catch (err) {
       if (err instanceof ExecutorAdmissionError) {
         if (err.code === "executor_overloaded") {
@@ -427,6 +657,19 @@ export function createExecuteTool(
               ? { retryAfterMs: err.retryAfterMs }
               : {}),
           },
+          ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+        });
+        result.isError = true;
+        return result;
+      }
+      if (diagnostics) {
+        const result = jsonResult({
+          error: {
+            code: "executor_failed",
+            message: `Executor failed: ${msg(err)}`,
+            retryable: false,
+          },
+          diagnostics: diagnostics.finish(),
         });
         result.isError = true;
         return result;
@@ -477,13 +720,26 @@ export function createExecuteTool(
         const result = jsonResult({
           error: invocationFailure.details,
           ...(logs ? { logs } : {}),
+          ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
         });
         result.isError = true;
         return result;
       }
-      return errorResult(
-        `Error: ${outcome.error}${logs ? `\n\nLogs:\n${logs}` : ""}`,
-      );
+      const message = `Error: ${outcome.error}`;
+      if (diagnostics) {
+        const result = jsonResult({
+          error: {
+            code: "executor_failed",
+            message,
+            retryable: false,
+          },
+          ...(logs ? { logs } : {}),
+          diagnostics: diagnostics.finish(),
+        });
+        result.isError = true;
+        return result;
+      }
+      return errorResult(`${message}${logs ? `\n\nLogs:\n${logs}` : ""}`);
     }
     // A result crossing back as a host BigInt (or otherwise unserializable
     // value) makes JSON.stringify throw — keep that inside the structured
@@ -492,13 +748,26 @@ export function createExecuteTool(
     try {
       result = guardExecuteResultValue(outcome.result);
     } catch (err) {
-      return errorResult(
-        `Error: result is not JSON-serializable: ${msg(err)}${logs ? `\n\nLogs:\n${logs}` : ""}`,
-      );
+      const message = `Error: result is not JSON-serializable: ${msg(err)}`;
+      if (diagnostics) {
+        const response = jsonResult({
+          error: {
+            code: "executor_failed",
+            message,
+            retryable: false,
+          },
+          ...(logs ? { logs } : {}),
+          diagnostics: diagnostics.finish(),
+        });
+        response.isError = true;
+        return response;
+      }
+      return errorResult(`${message}${logs ? `\n\nLogs:\n${logs}` : ""}`);
     }
     return jsonResult({
       result,
       ...(logs ? { logs } : {}),
+      ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
     });
   };
 }
@@ -571,6 +840,12 @@ export function registerExecuteTool(
         code: z
           .string()
           .describe("A JavaScript async arrow function to execute."),
+        diagnostics: z
+          .boolean()
+          .optional()
+          .describe(
+            "Add request-local, payload-free timing and result-size summaries.",
+          ),
       }),
       // The sandbox exposes only tools that are explicitly read-only, and the
       // executor grants no network, filesystem, env, or timer capabilities.
@@ -592,7 +867,7 @@ export function registerExecuteTool(
         return { signal, forward };
       });
       try {
-        return await handler(args as { code: string }, {
+        return await handler(args as { code: string; diagnostics?: boolean }, {
           signal: controller.signal,
         });
       } finally {
