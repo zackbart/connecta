@@ -49,13 +49,23 @@ export const ARM_NAMES = Object.keys(ARMS);
 export const CANDIDATE_ARM = "code-first";
 export const CONTROL_ARM = "classic";
 
+/**
+ * The fixture catalogs, so the runner can reject a typo before spending and the
+ * fixture verifier can walk every one of them. `gate-server.ts` owns the
+ * authoritative list and refuses an unknown value on its own — this is the copy
+ * the `.mjs` side can import, and `verify-fixtures.mjs` boots each name here plus
+ * one that is not, so the two lists cannot drift apart quietly.
+ */
+export const CATALOGS = ["core", "wide"];
+export const DEFAULT_CATALOG = "core";
+
 /** Start one gate server on an ephemeral port; resolve when it reports ready. */
 export function startGateServer({
   arm,
   token,
   activityToken,
   sourceCommit,
-  catalog = "core",
+  catalog = DEFAULT_CATALOG,
   downstreamDelayMs = 0,
 }) {
   const configuration = ARMS[arm];

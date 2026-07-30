@@ -14,7 +14,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 
 import { FAILURE_CLASSES } from "./measure.mjs";
-import { ARMS, CANDIDATE_ARM, CONTROL_ARM } from "./server-process.mjs";
+import {
+  ARMS,
+  CANDIDATE_ARM,
+  CONTROL_ARM,
+  DEFAULT_CATALOG,
+} from "./server-process.mjs";
 import { PROMPT_REPLACED } from "./agents.mjs";
 
 /**
@@ -38,6 +43,64 @@ export const GATE = {
 };
 
 const Z = 1.96;
+
+/**
+ * The one catalog this run measured, and a refusal if it measured two.
+ *
+ * A catalog is as unpoolable as a model version. The same task against `core`
+ * and against `wide` is two different questions — one asks whether the model can
+ * use the surface, the other whether it can find anything on it first — so a
+ * rate averaged over both describes a deployment nobody ran. Sections are keyed
+ * by model, not by catalog, which is exactly why this has to be a hard refusal:
+ * a file with mixed samples would otherwise blend them silently into every rate
+ * in the document. A run stamps each sample with its catalog, so a merged file
+ * fails here instead.
+ */
+export function catalogFor(run) {
+  const declared = run.configuration?.catalog ?? DEFAULT_CATALOG;
+  const observed = [
+    ...new Set((run.samples ?? []).map((sample) => sample.catalog ?? declared)),
+  ].sort();
+  if (observed.length > 1) {
+    throw new Error(
+      `This run carries samples from more than one catalog (${observed.join(", ")}). Results from different catalogs are never pooled — report each catalog's run on its own.`,
+    );
+  }
+  const [only] = observed;
+  if (only !== undefined && only !== declared) {
+    throw new Error(
+      `Run configuration declares catalog "${declared}" but its samples were taken against "${only}".`,
+    );
+  }
+  return declared;
+}
+
+/**
+ * The closing caveat, which depends on what the run actually faced. A verdict
+ * from `core` alone has the wide catalog outstanding and must keep saying so;
+ * a verdict from `wide` has faced discovery pressure and must not claim more
+ * than that either, since forty fixtures are still fixtures.
+ */
+function catalogCaveat(catalog) {
+  if (catalog === "wide") {
+    return `This run used the \`wide\` catalog: forty connectors, sixty-five tools, and
+deliberate near misses — a plausible wrong address beside the right one for most
+tasks, one tool name at four addresses, and a shortcut alias that cannot be
+resolved without an exact address. Discovery can fail here, and a task that fails
+because the model chose a near miss failed for the reason this catalog exists. It
+is still a fixture and not a real deployment: it says nothing about catalogs an
+order of magnitude larger, and its numbers are not comparable with a \`core\` run's.`;
+  }
+  if (catalog === DEFAULT_CATALOG) {
+    return `The catalog is the narrow one: eight connectors, sixteen tools, and discovery
+that succeeds essentially always. **A verdict from this run alone leaves the wide
+catalog outstanding** — the \`wide\` catalog with near-miss connector names exists
+for exactly that gap, and a \`flip\` reading from \`core\` alone is uncorroborated
+measurement until a run against \`wide\` says the same thing.`;
+  }
+  return `This run used the \`${catalog}\` catalog. Compare it only with runs against the
+same catalog.`;
+}
 
 /** Wilson score interval — honest at the small n this suite runs at. */
 export function wilson(successes, total) {
@@ -463,7 +526,7 @@ function taxonomyRows(scenarios, arm) {
   ].join("\n");
 }
 
-function modelSection(model, run) {
+function modelSection(model, run, catalog) {
   const armNames = model.armNames;
   const candidate = model.arms[CANDIDATE_ARM];
   const control = model.arms[CONTROL_ARM];
@@ -550,7 +613,7 @@ function modelSection(model, run) {
 
   return `## ${model.key}
 
-Driver \`${model.driver}\` ${run.source.driverVersions?.[model.driver] ?? "(version unrecorded)"}; requested \`${model.spec}\`, resolved \`${model.resolvedModel}\`; corpus ${run.corpusVersion}; catalog \`${run.configuration.catalog ?? "core"}\`; source \`${run.source.commit.slice(0, 12)}\`${run.source.productDirty ? " (working tree dirty)" : ""}.
+Driver \`${model.driver}\` ${run.source.driverVersions?.[model.driver] ?? "(version unrecorded)"}; requested \`${model.spec}\`, resolved \`${model.resolvedModel}\`; corpus ${run.corpusVersion}; catalog \`${catalog}\`; source \`${run.source.commit.slice(0, 12)}\`${run.source.productDirty ? " (working tree dirty)" : ""}.
 
 The verdict below keys on **${CANDIDATE_ARM}** against **${CONTROL_ARM}**. The
 \`classic-plus-code\` arm is measured for the incremental question — what does
@@ -687,6 +750,7 @@ ${checkRows}
 }
 
 export function renderReport(run) {
+  const catalog = catalogFor(run);
   const models = summarize(run);
   const passing = models.filter((model) => model.verdict === "flip");
   const breaches = models.reduce(
@@ -726,7 +790,7 @@ Source \`${run.source.commit}\`${run.source.productDirty ? " with a dirty workin
     .map(([name, version]) => `${name} ${version}`)
     .join(", ")}.
 
-Configuration: ${run.configuration.samplesPerTask} sample${run.configuration.samplesPerTask === 1 ? "" : "s"} per task per model per arm, ${run.configuration.arms.length} arms, ${run.configuration.scenarios.length} task${run.configuration.scenarios.length === 1 ? "" : "s"}, catalog \`${run.configuration.catalog ?? "core"}\`, concurrency ${run.configuration.concurrency}. ${run.samples.length} samples recorded.${
+Configuration: ${run.configuration.samplesPerTask} sample${run.configuration.samplesPerTask === 1 ? "" : "s"} per task per model per arm, ${run.configuration.arms.length} arms, ${run.configuration.scenarios.length} task${run.configuration.scenarios.length === 1 ? "" : "s"}, catalog \`${catalog}\`, concurrency ${run.configuration.concurrency}. ${run.samples.length} samples recorded.${
     run.configuration.samplesPerTask < GATE.minSamplesPerTask
       ? ` **Below the gate's floor of ${GATE.minSamplesPerTask} samples per task — this is a pipeline check, not a baseline.**`
       : ""
@@ -804,7 +868,7 @@ ${Object.entries(run.configuration.variantsPerScenario)
     })
     .join("\n")}
 
-${models.map((model) => modelSection(model, run)).join("\n")}
+${models.map((model) => modelSection(model, run, catalog)).join("\n")}
 ## Verdict
 
 **${overall}.**
@@ -834,8 +898,7 @@ flips nothing** — it advertises no surface, changes no default, and edits no
 configuration. Surface problems it surfaced — a shape models systematically
 misuse — belong in the ethos decisions table, not in more prompt text.
 
-The catalog is the narrow one. A wide catalog with near-miss connector names is a
-required follow-up before any verdict here is treated as final.
+${catalogCaveat(catalog)}
 `;
 }
 

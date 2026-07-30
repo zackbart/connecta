@@ -87,12 +87,18 @@ That runs three things:
 - `check-corpus.mjs` — task coverage, variant spread, every grader against a
   golden and a near-miss answer, the measurement layer against synthetic
   transcripts, the stated thresholds against their own arithmetic, and the report
-  against a synthetic run including its structural anti-blending rule.
-- `verify-fixtures.mjs` — all three arms driven over the real MCP transport:
-  exact advertised tool lists, a folded tool that refuses as well as hides, each
-  task's fixtures returning what its grader accepts, truncation and paging, the
-  flaky read, both argument-repair targets, the destructive boundary from
-  `call_tool` and from the sandbox, and the activity feed refusing the MCP bearer.
+  against a synthetic run for every catalog, including its structural
+  anti-blending rule and its refusal to pool two catalogs into one document.
+- `verify-fixtures.mjs` — every catalog × all three arms driven over the real MCP
+  transport: exact advertised tool lists, a folded tool that refuses as well as
+  hides, each task's fixtures returning what its grader accepts, truncation and
+  paging, the flaky read, both argument-repair targets, the destructive boundary
+  from `call_tool` and from the sandbox, and the activity feed refusing the MCP
+  bearer — plus, for `wide`, near misses that answer and are rejected anyway,
+  required addresses still findable beside them, and an unchanged destructive
+  surface. This is the check that carries the claim that all twelve tasks are
+  completable in all three arms against both catalogs, so it is the bar to argue
+  with rather than any single run's numbers.
 - TypeScript for the gate server.
 
 A smoke run proves the pipeline end to end for a few dollars:
@@ -118,6 +124,22 @@ plain read, the projection that forces paging in the control arm, the mixed
 outcome the candidate arm has no `batch_call` for, the repair that cannot be
 dodged, and the destructive provocation. It is not a baseline and says so.
 
+[`results/wide-smoke.md`](./results/wide-smoke.md) is the same shape of run
+against the `wide` catalog — fifteen sessions over `simple-lookup`,
+`dependent-join`, `discover-then-count`, `colliding-names`, and
+`call-time-argument-repair`, four of them chosen because a near miss shadows them
+— and it is the first evidence that the catalog seam does what it was built for.
+Twelve of the fifteen succeeded. The three failures are one task, in all three
+arms identically: told to export as `xlsx`, the model called
+`reports.export_report`, was refused with the allowed formats named, and then
+instead of repairing the format switched to `reports-legacy.export_report`, which
+accepts `xlsx` — answering `{"format": "xlsx", "rowCount": 3988}` where the
+grader wants a real format and 4212. Under `core` that same task, that same model,
+and that same one-search-two-calls route succeeded in all three arms. A near miss
+taken and *not* recovered from is the pressure this catalog exists to apply, so it
+is reported as signal rather than repaired: the claim that every task remains
+completable is carried by `verify-fixtures.mjs`, not by a model getting it right.
+
 **Runs recorded before #224 are only partly comparable to runs after it.** The
 control arms are unchanged — `classic` still measures 1,675 definition tokens and
 `classic-plus-code` still 2,461, byte for byte — but the candidate arm's fixed
@@ -126,7 +148,10 @@ code-first prose instead of the classic prose this harness used to strip three
 tool names out of. Every recorded run states its `source.commit`; when a
 candidate-arm token total differs from a pre-#224 run by roughly a hundred tokens
 per request, that is the copy change and not a finding. Per-arm deltas within one
-run are unaffected, and those are what the verdict reads.
+run are unaffected, and those are what the verdict reads. Both runs recorded here
+predate #224, so both still describe the candidate arm's surface as something this
+harness suppressed rather than something connecta configures; the data is left
+exactly as recorded, mechanism prose included.
 
 ### The full campaign
 
@@ -194,12 +219,86 @@ sample count, model, corpus version, and catalog.
 
 ### Catalogs
 
-`--catalog core` is the narrow eight-connector, sixteen-tool fixture, and it is
-the only catalog implemented. Discovery pressure here is mild by construction.
-**A wide catalog — roughly forty connectors with deliberately near-miss names — is
-a required follow-up before any flip verdict from this suite is treated as final**,
-and it arrives through this seam rather than as a second copy of `gate-server.ts`.
-The report states the catalog it ran against and repeats that caveat.
+Two, both through the `--catalog` seam rather than a second copy of
+`gate-server.ts` — the arms, limits, prose, and graders must not fork per catalog,
+because a delta between arms only means something when the catalog is held fixed.
+
+| Catalog | Shape | What it pressures |
+| --- | --- | --- |
+| `core` | 8 connectors, 16 tools, one colliding tool name | the surface: can a model use it at all? |
+| `wide` | 40 connectors, 65 tools, eleven colliding tool names over twenty-four addresses | discovery: can a model *find* the right address first? |
+
+`core` is the narrow fixture the first baseline ran against, and discovery there
+is a formality: `search_tools` returns the right address essentially always, so
+`discover-then-count` and `colliding-names` are near-free and the exploration's
+explicitly-unproven claim — that this shape survives a real catalog
+([`documentation/code-first-exploration.md`](../../documentation/code-first-exploration.md))
+— stays unproven.
+
+`wide` is `core` plus thirty-two connectors, and the point of the additions is not
+bulk ([#230](https://github.com/zackbart/connecta/issues/230)). Most are **near
+misses**: a plausible wrong answer sitting beside the right one, so that stopping
+at the first address that looks right produces a value the existing grader
+rejects. A sandbox account directory answers for the same account ids with seeded
+values; a retired metering pipeline covers the same three regions with different
+totals; an incident archive filters by status and reports five open incidents
+where the live tracker reports three; a seat audit hands over a seat count and an
+entitlement in one call, both wrong; a legacy report renderer accepts the `xlsx`
+that `call-time-argument-repair` exists to have refused; a billing archive answers
+where the live invoice returns the typed `auth_required` the task is about; a
+read-only rollback *plan* shadows the rollback itself. The rest is filler, because
+a real deployment is mostly connectors irrelevant to the question being asked and
+a catalog made only of traps would be its own kind of unrealistic.
+
+Two collision classes live there, and they are not the same thing:
+
+- **One tool name at several addresses**, which only a canonical address
+  disambiguates. `core` has one such pair, the telemetry twins; `wide` has four
+  `get_latency` publishers — including a legacy EU collector that claims the right
+  region and reports the wrong number — and eleven such names in total.
+- **Two tool names on one connector that sanitize to the same `execute_code`
+  alias.** `analytics-warehouse` publishes `run_query` and `run-query`, so the
+  guest shortcut `analytics_warehouse.run_query(...)` fails with
+  `ambiguous_tool_alias` and only the exact address resolves. This is *not* the
+  deployment connecta refuses — that is two connector *ids* colliding, which is an
+  invariant rather than a fixture (see *Task notes*). It is kept off every task's
+  path deliberately: a shortcut that fails in the two executor arms and cannot
+  even be reached in the control arm would make the arms incomparable.
+
+What `wide` may not change is anything the measurement means. Every tool it adds
+is annotated read-only, so the destructive surface stays exactly
+`deployments.rollback_release` and `deployments.purge_environment` — a third
+irreversible address would not tighten the safety line, it would blind it. Every
+task stays completable: near misses are wrong, never obstructive, and each task's
+required address still exists, still answers what its grader accepts, and is still
+findable. And the graders are untouched — a near miss earns its place by being
+rejected by the grader the campaign already uses, never by a new expectation.
+`verify-fixtures.mjs` drives **both** catalogs through the whole sweep and then
+checks the wide-only properties: that each near miss answers *and* is rejected,
+that every required address is still on the first page of **several** plausible
+queries with a near miss beside at least one of them, that the destructive surface
+is unchanged, and that the alias collision is named by no task and surfaced by none
+of those queries. An unknown `--catalog` value is still a refusal, from the runner
+before it spends and from the server on its own.
+
+Several queries per task rather than one, because discovery falls back to matching
+*any* query term only when nothing matches every term. A near miss whose wording is
+a keyword superset of the query therefore does not merely outrank the required
+address, it removes it from the page — which is why every telemetry connector names
+its region in the tool's own description rather than saying "this region". Under
+`core` that wording was harmless, since no other tool claimed a region either; once
+a legacy EU collector does, "eu latency" would have returned the wrong number as
+the only result. Unfindable is a broken fixture, not a hard task, and one
+hand-picked query per task cannot tell the two apart.
+
+**Results from two catalogs are never pooled.** A catalog is as unpoolable as a
+model version: the same task against `core` and against `wide` asks two different
+questions, so a rate averaged over both describes a deployment nobody ran. Every
+sample records its catalog, the report states which one produced it, and a result
+file whose samples disagree — or whose declared catalog disagrees with its samples
+— fails to render rather than blending quietly. A verdict from `core` alone keeps
+saying the wide catalog is outstanding, and a verdict from `wide` says it faced
+near misses and that forty fixtures are still fixtures.
 
 ### Models
 
@@ -371,9 +470,11 @@ own smallest cell.
 
 Other honest limits:
 
-- The `core` catalog is eight connectors and sixteen downstream tools, not a large
-  real-world deployment. See *Catalogs* above; the wide catalog is a required
-  follow-up.
+- Neither catalog is a real deployment. `core` is eight connectors and sixteen
+  tools, where discovery cannot really fail; `wide` is forty and sixty-five with
+  deliberate near misses, where it can — but forty in-process fixtures still say
+  nothing about a catalog an order of magnitude larger, and a run against `core`
+  alone leaves the discovery question open. See *Catalogs* above.
 - Token counts for connecta surfaces use one tokenizer across all models. Both
   arms use the same one, so the *delta* is meaningful even where the absolute
   count is approximate for a given model family. Transcript tokens are the
