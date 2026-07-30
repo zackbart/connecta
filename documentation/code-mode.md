@@ -4,6 +4,11 @@ Code mode adds one optional meta-tool, `execute_code`, for dependent read-only
 workflows, loops, joins, and reducing large connector results before they enter
 the model context. It is a deploy-time capability, not a runtime preference.
 
+The [code-first exploration](./code-first-exploration.md) documents the
+evidence and design direction for potentially making this the primary Connecta
+interface. It is a research recommendation, not the current production
+contract described below.
+
 ## Capability contract
 
 The `executor` passed to `createConnecta()` is the complete switch:
