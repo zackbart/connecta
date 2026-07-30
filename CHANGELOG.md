@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.10.3 — 2026-07-30
 
 Two agent-recovery gaps are closed without changing the seven-tool surface.
 Code-mode search now points directly at connector guides, and predictable
