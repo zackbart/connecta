@@ -345,6 +345,11 @@ Prefer \`notion.search\` over listing databases.
     const byId = Object.fromEntries(searched.connectors.map((c) => [c.id, c]));
     expect(required(byId.notion).guide).toBe("connector:notion");
     expect(byId.plain).not.toHaveProperty("guide");
+    expect(
+      textFrom(
+        await mt.skills({ name: required(required(byId.notion).guide) }),
+      ),
+    ).toBe(NOTION_GUIDE);
 
     const described = textOf(
       await mt.describeTools({ addresses: ["notion.search", "plain.search"] }),
@@ -2941,6 +2946,145 @@ describe("call_tool", () => {
       error: { code: "invalid_args", retryable: false },
     });
     expect(calls).toBe(0);
+  });
+
+  it("classifies remote schema mismatches consistently without provider prose", async () => {
+    let calls = 0;
+    const connector: Connector = {
+      id: "remote_strict",
+      kind: "mcp",
+      async listTools() {
+        const inputSchema = {
+          type: "object" as const,
+          properties: {
+            title: { type: "string" as const },
+            options: {
+              type: "object" as const,
+              properties: { enabled: { type: "boolean" as const } },
+              required: ["enabled"],
+            },
+          },
+          required: ["title", "options"],
+        };
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+            inputSchema,
+          },
+          {
+            name: "write",
+            annotations: { readOnlyHint: false, destructiveHint: true },
+            inputSchema,
+          },
+          {
+            name: "provider_only",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              type: "object",
+              properties: { value: { $ref: "#/definitions/missing" } },
+            },
+          },
+        ];
+      },
+      async callTool(name) {
+        calls++;
+        if (name === "provider_only") {
+          throw new Error(
+            'Malformed validation text: path=/value value="provider-secret"',
+          );
+        }
+        return { content: [{ type: "text", text: "unexpected dispatch" }] };
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const args = {
+      options: { enabled: "submitted-secret" },
+    };
+    const expected = {
+      ok: false,
+      attempts: 0,
+      error: {
+        code: "invalid_args",
+        retryable: false,
+        connector: "remote_strict",
+        validation: {
+          issues: [
+            { path: "/title", code: "required", expected: "string" },
+            {
+              path: "/options/enabled",
+              code: "type",
+              expected: "boolean",
+            },
+          ],
+        },
+        nextAction: {
+          tool: "search_tools",
+          arguments: {
+            connector: "remote_strict",
+            includeSchemas: "compact",
+          },
+        },
+      },
+    };
+
+    const direct = textOf(
+      await mt.callTool({ address: "remote_strict.read", args }),
+    );
+    const destructive = textOf(
+      await mt.callDestructiveTool({
+        address: "remote_strict.write",
+        args,
+      }),
+    );
+    expect(direct).toMatchObject({
+      ...expected,
+      error: { ...expected.error, operation: "remote_strict.read" },
+    });
+    expect(destructive).toMatchObject({
+      ...expected,
+      error: { ...expected.error, operation: "remote_strict.write" },
+    });
+
+    const batch = textOf(
+      await mt.batchCall({
+        calls: [
+          { address: "remote_strict.read", args },
+        ],
+      }),
+    ) as {
+      results: Array<{
+        attempts: number;
+        errorDetails: { code: string; validation?: unknown };
+      }>;
+    };
+    expect(batch.results).toHaveLength(1);
+    for (const result of batch.results) {
+      expect(result).toMatchObject({
+        attempts: 0,
+        errorDetails: {
+          code: "invalid_args",
+          validation: expected.error.validation,
+        },
+      });
+    }
+    expect(JSON.stringify([direct, destructive, batch])).not.toContain(
+      "submitted-secret",
+    );
+    expect(calls).toBe(0);
+
+    const providerOnly = textOf(
+      await mt.callTool({
+        address: "remote_strict.provider_only",
+        args: { value: "provider-secret" },
+        resultMode: "value",
+      }),
+    ) as { error: { code: string; validation?: unknown } };
+    expect(providerOnly.error).toMatchObject({
+      code: "connector_call_failed",
+    });
+    expect(providerOnly.error.validation).toBeUndefined();
+    expect(calls).toBe(1);
   });
 });
 

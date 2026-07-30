@@ -165,3 +165,21 @@ stored grant before restarting consent. Static credential values are written
 only through the same-origin, Clerk-operator credential route. After OAuth
 consent or an operator update, retry the original operation; a static update is
 read from the vault on the next call and needs no redeploy.
+
+## Argument recovery
+
+A remote MCP tool's advertised `inputSchema` is checked in the shared
+invocation path before admission and provider dispatch. A mismatch is the
+non-retryable `invalid_args`, consistently across `call_tool`,
+`call_destructive_tool`, batch outcomes, and generated-code failures. The error
+names the connector and operation and carries bounded `validation.issues`:
+JSON Pointer `path`, schema-keyword `code`, and expected shape. Submitted
+values are never copied into those findings.
+
+At most three findings are returned; `validation.truncated` says when more
+exist. `nextAction` points to `search_tools` scoped to the same connector and
+tool name when the compact schema is needed, while `retry` says to correct the
+listed arguments and reissue the original operation. A schema the local
+validator cannot evaluate passes through to the provider. Provider error prose
+is not parsed or guessed, so an unknown format remains
+`connector_call_failed`.

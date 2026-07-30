@@ -53,6 +53,7 @@ function contractConnectors(state: ContractState): Connector[] {
     id: "reader",
     kind: "api",
     description: "Reader",
+    usageGuide: "# Reader usage\n\nRead one value at a time.",
     async listTools() {
       return [
         readOnly("read", {
@@ -97,7 +98,23 @@ function contractConnectors(state: ContractState): Connector[] {
     kind: "mcp",
     description: "Remote echo",
     async listTools() {
-      return [readOnly("echo", { description: "Echo as MCP text content" })];
+      return [
+        readOnly("echo", {
+          description: "Echo as MCP text content",
+          inputSchema: {
+            type: "object",
+            properties: {
+              text: { type: "string" },
+              options: {
+                type: "object",
+                properties: { uppercase: { type: "boolean" } },
+                required: ["uppercase"],
+              },
+            },
+            required: ["text", "options"],
+          },
+        }),
+      ];
     },
     async callTool(name, args) {
       count(`remote.${name}`);
@@ -318,7 +335,10 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: `async () => ({
       canonical: await connecta.call("reader.read", { value: "x" }),
       shortcut: await reader.read({ value: "x" }),
-      unwrapped: await connecta.call("remote.echo", { text: "hi" })
+      unwrapped: await connecta.call("remote.echo", {
+        text: "hi",
+        options: { uppercase: false }
+      })
     })`,
     check(outcome) {
       const result = record(outcome);
@@ -397,7 +417,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "E1, E2, E3, S7, S8, Y2, Y3",
+    clauses: "E1, E2, E3, E8, S7, S8, Y2, Y3",
     name: "batch outcomes carry typed, distinguishable failures",
     code: `async () => {
       const outcomes = await connecta.batch([
@@ -405,7 +425,15 @@ export const CONTRACT_CASES: ContractCase[] = [
         { address: "reader.wipe", args: {} },
         { address: "reader.flaky", args: {} },
         { address: "needsauth.read", args: {} },
-        { address: "nope.read", args: {} }
+        { address: "nope.read", args: {} },
+        {
+          address: "remote.echo",
+          args: {
+            options: {
+              uppercase: "submitted-secret"
+            }
+          }
+        }
       ]);
       return outcomes.map((outcome) => outcome.ok
         ? { address: outcome.address, ok: true, data: outcome.data }
@@ -416,15 +444,16 @@ export const CONTRACT_CASES: ContractCase[] = [
             code: outcome.errorDetails.code,
             retryable: outcome.errorDetails.retryable,
             recovery: outcome.errorDetails.recovery,
+            validation: outcome.errorDetails.validation,
             nextAction: outcome.errorDetails.nextAction
               ? outcome.errorDetails.nextAction.tool
               : undefined
           });
     }`,
-    check(outcome) {
+    check(outcome, state) {
       expect(outcome.isError, outcome.text).toBe(false);
       const outcomes = outcome.result as Array<Record<string, unknown>>;
-      expect(outcomes).toHaveLength(5);
+      expect(outcomes).toHaveLength(6);
       expect(required(outcomes[0])).toMatchObject({
         address: "reader.read",
         ok: true,
@@ -452,6 +481,26 @@ export const CONTRACT_CASES: ContractCase[] = [
         code: "unknown_address",
         retryable: false,
       });
+      expect(required(outcomes[5])).toMatchObject({
+        ok: false,
+        code: "invalid_args",
+        retryable: false,
+        nextAction: "search_tools",
+        validation: {
+          issues: [
+            { path: "/text", code: "required", expected: "string" },
+            {
+              path: "/options/uppercase",
+              code: "type",
+              expected: "boolean",
+            },
+          ],
+        },
+      });
+      expect(JSON.stringify(required(outcomes[5]))).not.toContain(
+        "submitted-secret",
+      );
+      expect(state.calls["remote.echo"]).toBeUndefined();
       // The message a program can log stays beside the type it must branch on.
       expect(String(required(outcomes[2]).error)).toContain("unavailable");
     },
@@ -475,7 +524,7 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "S1, S2",
-    name: "search returns a flat page with code-mode key metadata",
+    name: "search returns guide and code-mode key metadata on flat rows",
     code: `async () => {
       const page = await connecta.search({
         query: "read value",
@@ -495,6 +544,7 @@ export const CONTRACT_CASES: ContractCase[] = [
         inputKeys: match.inputKeys,
         requiredInputKeys: match.requiredInputKeys,
         hasSchema: typeof match.inputSchema,
+        guide: match.guide,
         bareCarriesKeys: bare.tools.some((tool) => tool.inputKeys !== undefined)
       };
     }`,
@@ -507,7 +557,45 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(result.inputKeys).toEqual(["value"]);
       expect(result.requiredInputKeys).toEqual(["value"]);
       expect(result.hasSchema).toBe("string");
+      expect(result.guide).toBe("connector:reader");
       expect(result.bareCarriesKeys).toBe(false);
+    },
+  },
+  {
+    clauses: "E1, E2, E8",
+    name: "an uncaught remote argument mismatch keeps structured recovery",
+    code: `async () => await connecta.call("remote.echo", {
+      text: "private-value",
+      options: { uppercase: "private-secret" }
+    })`,
+    check(outcome, state) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "invalid_args",
+        retryable: false,
+        connector: "remote",
+        operation: "remote.echo",
+        validation: {
+          issues: [
+            {
+              path: "/options/uppercase",
+              code: "type",
+              expected: "boolean",
+            },
+          ],
+        },
+        nextAction: {
+          tool: "search_tools",
+          arguments: {
+            query: "echo",
+            connector: "remote",
+            includeSchemas: "compact",
+          },
+        },
+      });
+      expect(outcome.text).not.toContain("private-value");
+      expect(outcome.text).not.toContain("private-secret");
+      expect(state.calls["remote.echo"]).toBeUndefined();
     },
   },
   {

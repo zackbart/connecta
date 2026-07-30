@@ -374,12 +374,11 @@ exactly first, by containment second — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
 type beats keeping the prose.
 
-**E7.** `retryable` for the four codes connecta frames itself — `unknown_address`,
-`unknown_tool`, `ambiguous_tool_alias`, `destructive_tool_requires_approval` — is
-pinned false in code, never derived from the message. Those messages embed the
-address asked for, and the heuristic that classifies *connector* errors matches
-`503`, `429`, `temporar`; a connector named `svc-503` would otherwise turn a
-policy refusal into `retryable: true`, the exact failure this contract prevents.
+**E7.** `retryable` for `unknown_address`, `unknown_tool`,
+`ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false,
+never inferred from an address containing `503`, `429`, or `temporar`.
+
+**E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
 
 ## Results and projection
 
@@ -652,14 +651,14 @@ the upstream `Executor` shape assignable.
 | `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
 | `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
 | `A5` | verdict; `A1`–`A3` are its enforcement |
-| `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (`$ref`/`allOf`) |
+| `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
 | `S4` | `test/guest-api-contract.test.ts` (unknown address in `describe`) |
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
 | `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |
 | `S8`, `E1` | `test/guest-api-contract.test.ts` (typed batch outcomes) |
-| `E2` | `test/guest-api-contract.test.ts`, `test/errors.test.ts` (code → `retryable`) |
+| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, batch and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
 | `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts` |

@@ -11,6 +11,73 @@ export type ConnectorCallErrorCode =
   | "input_required_unsupported"
   | "connector_call_failed";
 
+/** One bounded, payload-free explanation of an input-schema mismatch. */
+export interface ArgumentValidationIssue {
+  /** JSON Pointer into the submitted arguments; "/" means the root value. */
+  path: string;
+  /** JSON Schema keyword that rejected the argument. */
+  code: string;
+  /** Expected shape only — never the submitted value. */
+  expected: string;
+}
+
+export interface ArgumentValidationDetails {
+  issues: ArgumentValidationIssue[];
+  /** More findings existed but were omitted from the bounded response. */
+  truncated?: true;
+}
+
+export const MAX_ARGUMENT_VALIDATION_ISSUES = 3;
+const MAX_ARGUMENT_ISSUE_PATH_CHARS = 256;
+const MAX_ARGUMENT_ISSUE_CODE_CHARS = 64;
+const MAX_ARGUMENT_ISSUE_EXPECTED_CHARS = 128;
+
+function boundedIssueText(
+  value: string,
+  maxChars: number,
+): { value: string; truncated: boolean } {
+  if (value.length <= maxChars) return { value, truncated: false };
+  return {
+    value: `${value.slice(0, Math.max(0, maxChars - 1))}…`,
+    truncated: true,
+  };
+}
+
+function boundedValidation(
+  details: ArgumentValidationDetails | undefined,
+): ArgumentValidationDetails | undefined {
+  if (!details) return undefined;
+  let truncated =
+    details.truncated === true ||
+    details.issues.length > MAX_ARGUMENT_VALIDATION_ISSUES;
+  const issues = details.issues
+    .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
+    .map((issue) => {
+      const path = boundedIssueText(
+        issue.path,
+        MAX_ARGUMENT_ISSUE_PATH_CHARS,
+      );
+      const code = boundedIssueText(
+        issue.code,
+        MAX_ARGUMENT_ISSUE_CODE_CHARS,
+      );
+      const expected = boundedIssueText(
+        issue.expected,
+        MAX_ARGUMENT_ISSUE_EXPECTED_CHARS,
+      );
+      truncated ||= path.truncated || code.truncated || expected.truncated;
+      return {
+        path: path.value,
+        code: code.value,
+        expected: expected.value,
+      };
+    });
+  return {
+    issues,
+    ...(truncated ? { truncated: true as const } : {}),
+  };
+}
+
 /** Agent-visible recovery class attached only to `auth_required` failures. */
 export type AuthRecoveryMode =
   | "oauth"
@@ -58,11 +125,18 @@ export class ConnectorCallError extends Error {
    * of the wire format is `classifyCallError`'s job, not this constructor's.
    */
   readonly retryAfterMs: number | undefined;
+  /** Bounded schema findings for `invalid_args`; never submitted values. */
+  readonly validation: ArgumentValidationDetails | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,
     message: string,
-    opts: { retryable?: boolean; retryAfterMs?: number; cause?: unknown } = {},
+    opts: {
+      retryable?: boolean;
+      retryAfterMs?: number;
+      cause?: unknown;
+      validation?: ArgumentValidationDetails;
+    } = {},
   ) {
     super(
       message,
@@ -72,6 +146,8 @@ export class ConnectorCallError extends Error {
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
+    this.validation =
+      code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
   }
 }
 
@@ -86,6 +162,8 @@ export interface CallErrorDetails {
    * window so it can schedule a re-issue.
    */
   retryAfterMs?: number;
+  /** Bounded input-schema findings; paths and expectations, never values. */
+  validation?: ArgumentValidationDetails;
   /** Connector whose failed operation needs recovery. */
   connector?: string;
   /** Canonical downstream address the agent may retry after recovery. */
@@ -97,6 +175,14 @@ export interface CallErrorDetails {
     tool: "authorize_connector";
     arguments: { connector: string };
     operatorHandoff: string;
+  } | {
+    tool: "search_tools";
+    arguments: {
+      query: string;
+      connector: string;
+      includeSchemas: "compact";
+    };
+    purpose: string;
   };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */
   retry?: string;
@@ -156,6 +242,7 @@ export function classifyCallError(
       ...(err.retryAfterMs !== undefined
         ? { retryAfterMs: err.retryAfterMs }
         : {}),
+      ...(err.validation ? { validation: err.validation } : {}),
     };
   }
   // An aborted fetch rejects with a DOMException named "AbortError" whose

@@ -790,7 +790,10 @@ export function groupedSearchResult(page: CatalogSearchPage) {
 
 export function flatSearchResult(page: CatalogSearchPage) {
   return {
-    tools: page.entries.map((entry) => entry.tool),
+    tools: page.entries.map((entry) => ({
+      ...entry.tool,
+      ...(entry.guide ? { guide: entry.guide } : {}),
+    })),
     total: page.total,
     offset: page.offset,
     limit: page.limit,

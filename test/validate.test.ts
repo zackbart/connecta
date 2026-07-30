@@ -33,6 +33,59 @@ describe("validateToolInput", () => {
     expect(err!.retryable).toBe(false);
     expect(err!.message).toContain("acme.create_note");
     expect(err!.message).toContain("/title");
+    expect(err!.validation).toEqual({
+      issues: [{ path: "/title", code: "type", expected: "string" }],
+    });
+  });
+
+  it("returns structured missing, nested, and multiple findings without values", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        title: { type: "string" },
+        settings: {
+          type: "object",
+          properties: {
+            enabled: { type: "boolean" },
+            retries: { type: "integer" },
+          },
+          required: ["enabled", "retries"],
+        },
+      },
+      required: ["title", "settings"],
+    };
+    const err = validateToolInput(
+      schema,
+      {
+        settings: {
+          enabled: "submitted-secret",
+          retries: "also-secret",
+        },
+      },
+      OPTS,
+    );
+    expect(err?.validation).toEqual({
+      issues: [
+        { path: "/title", code: "required", expected: "string" },
+        { path: "/settings/enabled", code: "type", expected: "boolean" },
+        { path: "/settings/retries", code: "type", expected: "integer" },
+      ],
+    });
+    expect(JSON.stringify(err?.validation)).not.toContain("submitted-secret");
+    expect(JSON.stringify(err?.validation)).not.toContain("also-secret");
+  });
+
+  it("bounds multiple validation findings", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: Object.fromEntries(
+        ["a", "b", "c", "d"].map((name) => [name, { type: "string" }]),
+      ),
+      required: ["a", "b", "c", "d"],
+    };
+    const validation = validateToolInput(schema, {}, OPTS)?.validation;
+    expect(validation?.issues).toHaveLength(3);
+    expect(validation?.truncated).toBe(true);
   });
 
   it("returns rather than throws, so the caller owns the failure", () => {
@@ -54,6 +107,15 @@ describe("validateToolInput", () => {
     const err = validateToolInput(schema, { noteId: "n_1" }, OPTS);
     expect(err?.code).toBe("invalid_args");
     expect(err?.message).toContain("noteId");
+    expect(err?.validation).toEqual({
+      issues: [
+        {
+          path: "/noteId",
+          code: "additionalProperties",
+          expected: "no additional properties",
+        },
+      ],
+    });
   });
 
   it("a schema the validator cannot compile warns once and passes through", () => {

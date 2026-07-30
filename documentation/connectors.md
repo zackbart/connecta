@@ -53,6 +53,12 @@ Tool calls must use the shared invocation path. That keeps direct calls, batch
 children, and code-mode host calls aligned on safety, retries, admission,
 timeouts, validation, result guards, and typed failures.
 
+For remote MCP tools, that path checks the catalog's advertised `inputSchema`
+before provider dispatch. Supported mismatches become bounded, payload-free
+`invalid_args` findings; a schema the local validator cannot evaluate passes
+through unchanged. Connecta does not parse provider error prose to invent a
+validation classification.
+
 ## Authentication
 
 OAuth-backed MCP connectors persist their registration and tokens through the
