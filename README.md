@@ -2,104 +2,48 @@
 
 ![A monochrome clay Connecta hub joining many tools](./assets/connecta-clay-hero.png)
 
-One MCP endpoint in front of every integration you've deliberately chosen.
-Agents see a handful of meta-tools instead of hundreds of definitions, and each
-client is configured once instead of once per integration.
+One place for AI agents to connect to the tools you choose.
 
-## What connecta is
+Connecta gives an agent a single MCP endpoint instead of making it connect to
+every service separately. You decide which integrations are available,
+Connecta keeps their credentials and connections in one place, and the agent
+discovers what it needs as it works.
 
-An agent connected to N MCP servers pays for all N before it does anything:
-every server's full tool list lands in the context window at connect time, and
-every client is pointed at every server separately, each with its own auth.
-Connecta is one endpoint you deploy instead — a Cloudflare Worker or a Node
-process, same code either way — aggregating your connectors behind nine
-meta-tools. A connector is a remote MCP server connecta proxies or a plain
-HTTP API with hand-written tool definitions; both come out identical,
-addressed as `<connectorId>.<toolName>`.
-
-```
-                                        ┌── remoteMcp("notion")   → mcp.notion.com
-Claude / Cursor ── MCP ──▶  connecta ───┼── remoteMcp("linear")   → mcp.linear.app
-  sees 9 tools             /mcp         ├── api("resend")         → fetch(...)
-                                        └── api("internal")       → fetch(...)
+```mermaid
+flowchart LR
+    Agent["AI agent"] --> Connecta
+    Connecta --> Work["Work tools"]
+    Connecta --> Data["Data sources"]
+    Connecta --> Services["Internal services"]
+    Operator["You"] --> Connecta
 ```
 
-The agent discovers instead of preloading: `search_tools` ranks matches and can
-return their compact schemas in the same response, while `describe_tools`
-expands only schemas that remain unclear. `call_tool` / `batch_call` /
-`call_destructive_tool` invoke them, and `list_connectors`,
-`authorize_connector`, `get_result`, and `skills` round out the nine. An
-optional tenth, `execute_code`, runs model-written JavaScript in a sandbox with
-no network, filesystem, or environment access — only the read-only tools in
-scope. Context holds nine definitions whether ten tools sit behind them or a
-thousand.
+## Why Connecta
 
-Three properties are load-bearing enough to name here; the rest live in the
-[ethos](./ethos.md). **Read-only is fail-closed**: anything not explicitly
-annotated read-only crosses `call_destructive_tool`, which is annotated so the
-MCP host can ask a human. **Credentials stay server-side**: an encrypted
-vault, rotated from an operator page, and no surface ever returns a secret.
-**Config is code**: adding a connector is an edit and a deploy you can review
-in a pull request.
+- **One connection.** Configure clients once, even as integrations change.
+- **Less clutter.** Agents discover capabilities when needed instead of
+  loading every tool up front.
+- **Safer access.** Credentials stay server-side and consequential actions
+  remain explicit.
+- **Your deployment.** Connecta runs on Node, Docker, or Cloudflare Workers,
+  with configuration you can review and version.
 
-## Getting started
+## Start here
 
-Node deployments require Node.js 20.9 or newer.
+- [Node example](./examples/node/)
+- [Docker example](./examples/docker/)
+- [Cloudflare Worker example](./examples/worker/)
+- [Documentation](./documentation/)
 
-```sh
-npm install @zackbart/connecta
-```
+Connecta is moving toward a simpler, code-first experience. That direction is
+being measured before it becomes the default; the current interfaces remain
+supported during the transition.
 
-A minimal server with one hand-written connector:
+## Project status
 
-```ts
-import { api, bearerToken, createConnecta } from "@zackbart/connecta";
-import { fileStorage, listen } from "@zackbart/connecta/node";
+Connecta is built for its author's deployments first and is still evolving.
+Breaking changes are expected before 1.0.
 
-const connecta = createConnecta({
-  storage: fileStorage("./.connecta-state.json"), // or memoryStorage()
-  auth: bearerToken(process.env.CONNECTA_TOKEN ?? "dev-token"),
-  connectors: [
-    api("time", {
-      description: "Time — current timestamp",
-      tools: [
-        {
-          name: "get_now",
-          description: "Return the current time as an ISO 8601 timestamp.",
-          inputSchema: { type: "object", properties: {} },
-          annotations: { readOnlyHint: true },
-          handler: async () => ({ now: new Date().toISOString() }),
-        },
-      ],
-    }),
-  ],
-});
-
-listen(connecta, 8787); // MCP at /mcp; Connections at http://localhost:8787/
-```
-
-Point an MCP client at `http://localhost:8787/mcp` with an
-`Authorization: Bearer` header and `time.get_now` is discoverable through
-`search_tools`.
-
-Runnable deployments live in
-[`examples/`](https://github.com/zackbart/connecta/tree/main/examples): a
-free-tier-compatible Cloudflare Worker with KV and D1 adapters, a Node server
-extending the one above, and a single-service Docker compose stack.
-Heavyweight extras are optional peers behind subpaths (`/auth/clerk`,
-`/quickjs`), and connecta ships no service-specific connectors — endpoint,
-credential, and tool choices stay in your project.
-
-A candid note on maturity: connecta is built for its author's deployments
-first and published openly. Breaking changes are cheap and the version number
-signals change, not stability — the [ethos](./ethos.md) says so on purpose.
-
-## Learn more
-
-- **[ethos.md](./ethos.md)** — what this is, what it refuses to be, the
-  decisions table, and the invariants. Read it before proposing anything.
-- **[documentation/](./documentation/)** — per-subsystem guides (currently
-  stubs; the prior manual lives in git history).
-- **[CHANGELOG](./CHANGELOG.md)** — what changed in each release.
-- **[SECURITY](./SECURITY.md)** — supported versions and how to report a
-  vulnerability.
+Read the [ethos](./ethos.md) for the product's principles, the
+[changelog](./CHANGELOG.md) for releases, and [security policy](./SECURITY.md)
+for vulnerability reporting.
