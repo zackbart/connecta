@@ -1794,6 +1794,7 @@ describe("search_tools", () => {
     expect(compactText).not.toContain("connector-prose");
     expect(tools).toHaveLength(8);
     expect(tools.every((tool) => tool.inputSchemaTruncated)).toBe(true);
+    expect(tools.every((tool) => !("inputKeys" in tool))).toBe(true);
     expect(
       tools.every(
         (tool) =>
@@ -1881,15 +1882,20 @@ describe("search_tools", () => {
         tools: Array<{
           inputSchema: string;
           outputSchema?: string;
+          inputKeys?: string[];
+          requiredInputKeys?: string[];
+          outputKeys?: string[];
           annotations?: Record<string, unknown>;
         }>;
       }>;
     };
     const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
     expect(required(required(byId.weather).tools[0]).inputSchema).toBe("{ city: string }");
-    expect(required(required(byId.weather).tools[0])).not.toHaveProperty(
-      "inputKeys",
-    );
+    expect(required(required(byId.weather).tools[0])).toMatchObject({
+      inputKeys: ["city"],
+      requiredInputKeys: ["city"],
+      outputKeys: ["temperature"],
+    });
     expect(required(required(byId.weather).tools[0]).outputSchema).toContain("temperature");
     expect(required(required(byId.weather).tools[0]).annotations).toEqual({
       readOnlyHint: true,
@@ -3402,6 +3408,35 @@ describe("call_tool fields selection", () => {
     });
     expect(parsed.$connecta.availableFields).toContain("user.address.city");
     expect(parsed.$connecta.availableFields).toContain("results[].id");
+  });
+
+  it("teaches array traversal when a plausible dot path misses", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const missed = textOf(
+      await mt.callTool({
+        address: "data.get",
+        fields: ["results.id"],
+      }),
+    ) as {
+      $connecta: {
+        unmatchedFields: string[];
+        hint: string;
+      };
+    };
+    expect(missed.$connecta).toMatchObject({
+      unmatchedFields: ["results.id"],
+      hint:
+        'Traverse arrays with [] after the array field name, for example "results[].id".',
+    });
+
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "data.get",
+          fields: ["results[].id"],
+        }),
+      ),
+    ).toEqual({ "results[].id": [1, 2, 3] });
   });
 
   it("reports all-unmatched API projections in value mode", async () => {

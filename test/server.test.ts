@@ -580,10 +580,9 @@ describe("server /mcp end-to-end", () => {
     expect(payload.total).toBe(1);
   });
 
-  it("search_tools drops a client-requested includeSchemaKeys", async () => {
-    // The code-mode-only claim rests on this boundary, not on the default
-    // response shape: the declared input schema is what refuses the flag, so a
-    // client that asks for the metadata by name still must not receive it.
+  it("search_tools ignores the private flag and includes keys with schemas", async () => {
+    // The undeclared flag is still dropped at the MCP boundary. Key metadata
+    // follows includeSchemas rather than a private client control.
     const c = makeConnecta();
     const res = await rpc(
       c,
@@ -602,8 +601,8 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.isError).toBeFalsy();
     const tool = body.result.structuredContent.connectors[0].tools[0];
     expect(tool.inputSchema).toBe("{ a: number, b: number }");
-    expect(tool).not.toHaveProperty("inputKeys");
-    expect(tool).not.toHaveProperty("requiredInputKeys");
+    expect(tool.inputKeys).toEqual(["a", "b"]);
+    expect(tool.requiredInputKeys).toEqual(["a", "b"]);
     expect(tool).not.toHaveProperty("outputKeys");
   });
 

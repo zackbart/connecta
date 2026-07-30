@@ -55,8 +55,11 @@ or generated code; `safety: "approvalRequired"` finds the complementary set
 that must cross `call_destructive_tool`. Omitting `safety`, or setting it to
 `"all"`, preserves the complete configured catalog. This is only a discovery
 filter: it neither grants authority nor changes invocation admission.
-`includeSchemas: "compact"` adds each match's input and any
-declared output shape; matches also carry declared behavior annotations. When
+`includeSchemas: "compact"` adds each match's input and any declared output
+shape. Bounded plain-object schemas also expose `inputKeys`,
+`requiredInputKeys`, and `outputKeys`; a truncated shape omits its corresponding
+list rather than repeating a large partial inventory. Matches carry declared
+behavior annotations. When
 that shape is sufficient, call the returned address directly. Reserve schema
 expansion — `connecta.describe` in a program, `describe_tools` on the classic
 surface — for a search without schemas, an ambiguous compact shape, or exact
@@ -87,11 +90,14 @@ downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
 `fields` keeps its historical flat `{ "<path>": value }` result when every
-requested dot-path resolves, except that an exact downstream `$connecta` field
-is always escaped under `data`. If any path misses—or that reserved name is
-selected—the result carries matches under `data` and reserves `$connecta` for a
+requested dot-path resolves. Dot notation traverses objects; append `[]` to an
+array field before continuing, as in `results[].id`. An exact downstream
+`$connecta` field is always escaped under `data`. If any path misses—or that
+reserved name is selected—the result carries matches under `data` and reserves `$connecta` for a
 `type: "field_projection"` recovery record naming each `unmatchedFields`
-entry. The discriminator means downstream fields named `data`, `projection`,
+entry. When a miss matches a declared array path except for `[]`, the record
+also carries the traversal hint. The discriminator means downstream fields
+named `data`, `projection`,
 or `$connecta` remain ordinary values nested under `data`, never apparent
 metadata. A declared output schema contributes a bounded `availableFields`
 list and a `schemaCoverage` verdict. Only a completely analyzed, closed schema

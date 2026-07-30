@@ -240,9 +240,10 @@ means "read the schema" where `[]` would claim the tool takes no fields. The
 lists come from the same walk that renders the compact schema, so a top-level
 `$ref` resolves and an `allOf` composes rather than reporting an empty list
 beside a schema that plainly shows fields; an object with no properties is the
-one case where `[]` is the truth. This metadata is code-mode-only:
-`search_tools` never carries it, and `includeSchemaKeys: false` buys the bytes
-back.
+one case where `[]` is the truth. A truncated schema omits the corresponding
+key list rather than repeating a large partial inventory. `search_tools`
+carries the same metadata whenever schemas are requested. Code-mode callers
+can set `includeSchemaKeys: false` to buy the bytes back.
 
 **S3.** Discovery is bounded and the bounds throw rather than silently shrink: a
 `limit` outside 1–100 is `invalid_args`, and a page whose serialized form
@@ -253,6 +254,8 @@ ask for less. As with every failure, the *thrown* error carries only the message
 ### connecta.describe
 
 ```js
+const one = await connecta.describe({ address: "ci.get_run" });
+
 const { tools } = await connecta.describe({
   addresses: ["ci.get_run", "ci.get_job_logs"],  // ≤ 100
   format: "compact",                             // or "json"
