@@ -15,6 +15,7 @@ import {
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
 import {
+  hostCallLabel,
   MAX_QUICKJS_LOG_TRANSPORT_BYTES,
   serializedBytes,
 } from "./quickjs-protocol.js";
@@ -245,18 +246,21 @@ function installBridge(
           : undefined;
       if (!f) throw new Error(`Unknown function ${ns}.${fn}`);
       const args = JSON.parse(argsJson) as unknown[];
+      // Name the address the program called, never the internal dispatcher the
+      // lazy connector namespaces share.
+      const label = hostCallLabel({ namespace: ns, functionName: fn, args });
       const value = await f(...args);
       let json: string;
       try {
         json = JSON.stringify({ ok: true, value });
       } catch (err) {
         throw new Error(
-          `Host result from ${ns}.${fn} could not be serialized: ${msg(err)}`,
+          `Host result from ${label} could not be serialized: ${msg(err)}`,
         );
       }
       if (exceedsUtf8ByteLimit(json, MAX_HOST_RESULT_BYTES)) {
         throw new Error(
-          `Host result from ${ns}.${fn} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
+          `Host result from ${label} exceeds the ${MAX_HOST_RESULT_BYTES}-byte serialized bridge limit.`,
         );
       }
       return json;

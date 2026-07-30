@@ -568,6 +568,43 @@ describe("quickJsExecutor", () => {
     expect(catalogs).toEqual(["calc"]);
   });
 
+  it("names the called address when a host result breaks the bridge bound", async () => {
+    // The child proxies host calls to the parent, so the parent's message is
+    // the one a program reads. Every shortcut namespace dispatches through one
+    // internal function; reporting that name would tell a program nothing about
+    // which call was too large.
+    const bulky: Connector = {
+      id: "reader",
+      kind: "api",
+      async listTools() {
+        return [{ name: "big", annotations: { readOnlyHint: true } }];
+      },
+      async callTool() {
+        return { blob: "x".repeat(400_000) };
+      },
+    };
+    const ex = quickJsExecutor({ cpuTimeMs: 2_000 });
+    const out = await createExecuteTool(
+      makeRegistry([bulky]),
+      "https://connecta.test",
+      ex,
+      silentLogger,
+    )({
+      code: `async () => {
+        try { await reader.big({}); } catch (err) { return err.message; }
+        return "no failure";
+      }`,
+    });
+
+    expect(out.isError).toBeUndefined();
+    const message = String(
+      (out.structuredContent as { result?: unknown }).result,
+    );
+    expect(message).toContain("serialized bridge limit");
+    expect(message).toContain("reader.big");
+    expect(message).not.toContain("__callNamespace");
+  });
+
   it("bounds the final guest result before child-to-parent IPC", async () => {
     const ex = quickJsExecutor({
       memoryLimitBytes: 16 * 1024 * 1024,

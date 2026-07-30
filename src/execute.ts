@@ -4,6 +4,7 @@ import type { ActivityRequestContext } from "./activity.js";
 import {
   boundedDiscoveryText,
   CatalogService,
+  DiscoveryPolicyError,
   flatSearchResult,
 } from "./catalog-service.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
@@ -16,6 +17,7 @@ import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
+import { classifyCallError } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -205,6 +207,29 @@ export async function buildSandboxProviders(
       }
     },
   });
+  /**
+   * A discovery bound is as typed a failure as a tool call is, and a program
+   * that lets one escape deserves the same envelope: register it on the same
+   * request-local channel so an unhandled `invalid_args`/`result_too_large`
+   * reaches the model with its code instead of as prose. The guest still sees
+   * only the message — that is the bridge's limit, not a policy.
+   */
+  const typedDiscovery = async <T>(operation: () => Promise<T>): Promise<T> => {
+    try {
+      return await operation();
+    } catch (err) {
+      if (err instanceof DiscoveryPolicyError) {
+        limits.onInvocationFailure?.(
+          new InvocationFailure({
+            code: err.code,
+            message: err.message,
+            retryable: false,
+          }),
+        );
+      }
+      throw err;
+    }
+  };
   const callAddress = async (address: unknown, args: unknown) => {
     const outcome = await invocation.invoke(
       String(address),
@@ -262,53 +287,65 @@ export async function buildSandboxProviders(
                   data: await callAddress(item.address, item.args),
                 };
               } catch (err) {
+                // Same failure shape batch_call reports: the message a program
+                // can log, plus the typed details it must classify by. A
+                // thrown host error crosses the sandbox bridge as a bare
+                // message string in every executor, so this is the one place a
+                // program can tell a policy refusal from a transient failure.
+                const details =
+                  err instanceof InvocationFailure
+                    ? err.details
+                    : classifyCallError(err, "batch_call_failed");
                 return {
                   address: String(item.address),
                   ok: false,
-                  error: msg(err),
+                  error: details.message,
+                  errorDetails: details,
                 };
               }
             }),
           );
         },
-        search: async (raw: unknown) => {
-          const args = (raw ?? {}) as {
-            query?: string;
-            connector?: string;
-            limit?: number;
-            offset?: number;
-            fullDescriptions?: boolean;
-            includeSchemas?: "compact" | "json";
-            includeSchemaKeys?: boolean;
-          };
-          const result = flatSearchResult(
-            await catalog.search({
-              ...args,
-              // Key metadata rides along with schemas by default, since that is
-              // the whole point of it in code mode. It stays opt-out because it
-              // counts against the same hard discovery-byte ceiling.
-              includeSchemaKeys: args.includeSchemaKeys !== false,
-            }),
-          );
-          boundedDiscoveryText(
-            result,
-            "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-          );
-          return result;
-        },
-        describe: async (raw: unknown) => {
-          const args = (raw ?? {}) as {
-            addresses?: unknown;
-            format?: "compact" | "json";
-            fullDescriptions?: boolean;
-          };
-          const result = { tools: await catalog.describe(args) };
-          boundedDiscoveryText(
-            result,
-            'Split the address list or use format: "compact".',
-          );
-          return result;
-        },
+        search: async (raw: unknown) =>
+          typedDiscovery(async () => {
+            const args = (raw ?? {}) as {
+              query?: string;
+              connector?: string;
+              limit?: number;
+              offset?: number;
+              fullDescriptions?: boolean;
+              includeSchemas?: "compact" | "json";
+              includeSchemaKeys?: boolean;
+            };
+            const result = flatSearchResult(
+              await catalog.search({
+                ...args,
+                // Key metadata rides along with schemas by default, since that
+                // is the whole point of it in code mode. It stays opt-out
+                // because it counts against the same discovery-byte ceiling.
+                includeSchemaKeys: args.includeSchemaKeys !== false,
+              }),
+            );
+            boundedDiscoveryText(
+              result,
+              "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+            );
+            return result;
+          }),
+        describe: async (raw: unknown) =>
+          typedDiscovery(async () => {
+            const args = (raw ?? {}) as {
+              addresses?: unknown;
+              format?: "compact" | "json";
+              fullDescriptions?: boolean;
+            };
+            const result = { tools: await catalog.describe(args) };
+            boundedDiscoveryText(
+              result,
+              'Split the address list or use format: "compact".',
+            );
+            return result;
+          }),
       },
     },
   ];
@@ -413,13 +450,26 @@ export function createExecuteTool(
       // an unhandled tool failure keeps the same structured contract as
       // call_tool and batch_call. Failures caught by model code never reach
       // outcome.error and therefore remain under that code's control.
+      //
+      // An error the program let through unchanged matches exactly, and an
+      // exact match always wins: a program that wrapped one failure's message
+      // around another's must not have the wrong type attached. Containment is
+      // the fallback, so a wrapped message still reports its underlying type
+      // rather than losing it to prose.
       let invocationFailure: InvocationFailure | undefined;
-      for (let i = invocationFailures.length - 1; i >= 0; i--) {
-        const candidate = invocationFailures[i];
-        if (candidate && outcome.error.includes(candidate.message)) {
-          invocationFailure = candidate;
-          break;
+      for (const match of [
+        (candidate: InvocationFailure) => outcome.error === candidate.message,
+        (candidate: InvocationFailure) =>
+          outcome.error?.includes(candidate.message) === true,
+      ]) {
+        for (let i = invocationFailures.length - 1; i >= 0; i--) {
+          const candidate = invocationFailures[i];
+          if (candidate && match(candidate)) {
+            invocationFailure = candidate;
+            break;
+          }
         }
+        if (invocationFailure) break;
       }
       if (invocationFailure) {
         const result = jsonResult({
@@ -459,7 +509,7 @@ Write an async arrow function. It runs with NO network, filesystem, timers, or i
 - connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
 - console.log(...) — captured and returned alongside the result.
 
-Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
+Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. A thrown error carries only a message; connecta.batch reports each call as { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }, so use it when the program must tell a policy refusal from a transient failure. Never retry a failure whose retryable is false, and never retry a rate_limited one immediately — the sandbox has no timers. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
 
 Plain JavaScript only — no TypeScript syntax. For unknown-address dependent work, use one execute_code call: search inside it, read the compact schemas, and continue to the dependent calls; do not return search results for a second execute_code call. Compact schemas are TypeScript-like strings, not JSON Schema objects: write the property names they display, never a positional guess or an invented alias.
 Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", includeSchemas: "compact" }); const pick = (suffix) => { const match = tools.find((tool) => tool.address.endsWith(suffix)); if (!match) throw new Error("no tool matching " + suffix); return match.address; }; const run = await connecta.call(pick(".get_run"), { runId: 42 }); const logs = await connecta.call(pick(".get_job_logs"), { jobId: run.failedJobId }); return [run, logs]; }`;

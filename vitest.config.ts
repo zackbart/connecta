@@ -20,6 +20,7 @@ export const WORKERS_SUITES = [
   "test/errors.test.ts",
   "test/executor-admission.test.ts",
   "test/execute.test.ts",
+  "test/guest-api-contract.test.ts",
   "test/meta-tools.test.ts",
   "test/registry.test.ts",
   "test/request-admission.test.ts",
@@ -40,6 +41,10 @@ export const NODE_ONLY_SUITES = [
   {
     file: "test/file-storage.test.ts",
     reason: "exercises the Node filesystem storage adapter",
+  },
+  {
+    file: "test/guest-api-contract-quickjs.test.ts",
+    reason: "runs the guest API contract cases on the Node QuickJS executor",
   },
   {
     file: "test/node.test.ts",
@@ -97,9 +102,13 @@ export default defineConfig({
         plugins: [
           cloudflareTest({
             miniflare: {
-              // Match the Worker example's runtime configuration.
+              // Match the Worker example's runtime configuration, plus a
+              // Worker Loader so the guest API contract suite can run its
+              // cases against a real Dynamic Worker executor rather than a
+              // stand-in.
               compatibilityDate: "2025-01-01",
               compatibilityFlags: ["nodejs_compat"],
+              workerLoaders: { LOADER: {} },
             },
           }),
         ],

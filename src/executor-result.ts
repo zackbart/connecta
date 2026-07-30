@@ -13,15 +13,59 @@ function serializeExecuteValue(value: unknown): string {
   return serialized === undefined ? String(value) : serialized;
 }
 
+const TRUNCATION_HINT =
+  "filter/map/slice data inside execute_code and return only what you need";
+
+/**
+ * Shape the over-cap notice so the **serialized envelope** fits the same cap
+ * the raw value missed. Escaping matters: a preview sliced to the cap is JSON
+ * text whose quotes and newlines re-escape to well over it, so a fixed slice
+ * would leave the envelope over-cap and a second pass through this guard would
+ * truncate the truncation — reporting the envelope's length as `totalChars` and
+ * burying the real size. Shrinking proportionally until it fits keeps the guard
+ * idempotent by construction: `totalChars` is always the true serialized size
+ * of what the program returned, and truncation happens exactly once no matter
+ * how many hops the value takes.
+ */
+function truncationEnvelope(text: string): {
+  truncated: true;
+  preview: string;
+  totalChars: number;
+  hint: string;
+} {
+  const base = {
+    truncated: true as const,
+    preview: "",
+    totalChars: text.length,
+    hint: TRUNCATION_HINT,
+  };
+  let budget = Math.max(
+    0,
+    MAX_EXECUTE_RESULT_CHARS - JSON.stringify(base).length,
+  );
+  for (let attempt = 0; attempt < 8 && budget > 0; attempt += 1) {
+    const candidate = { ...base, preview: text.slice(0, budget) };
+    const size = JSON.stringify(candidate).length;
+    if (size <= MAX_EXECUTE_RESULT_CHARS) return candidate;
+    // Every character costs at least one serialized character, so scaling by
+    // the overshoot ratio (minus a step) strictly shrinks the budget.
+    budget = Math.max(
+      0,
+      Math.floor(budget * (MAX_EXECUTE_RESULT_CHARS / size)) - 8,
+    );
+  }
+  // The loop shrinks monotonically, so this is unreachable in practice — but an
+  // unchecked slice is exactly how a "bounded" envelope stops being bounded.
+  const clamped = { ...base, preview: text.slice(0, Math.max(0, budget)) };
+  return JSON.stringify(clamped).length <= MAX_EXECUTE_RESULT_CHARS
+    ? clamped
+    : { ...base, preview: "" };
+}
+
 export function guardExecuteResultValue(value: unknown): unknown {
   const text = serializeExecuteValue(value);
   if (text.length <= MAX_EXECUTE_RESULT_CHARS) return value;
-  return {
-    truncated: true,
-    preview: text.slice(0, MAX_EXECUTE_RESULT_CHARS),
-    totalChars: text.length,
-    hint: "filter/map/slice data inside execute_code and return only what you need",
-  };
+  return truncationEnvelope(text);
 }
 
 export function truncateExecuteText(text: string, max: number): string {
