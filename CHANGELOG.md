@@ -2,6 +2,38 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+The code-mode guest API is now specified rather than merely described:
+[`documentation/code-mode.md`](./documentation/code-mode.md) states what a
+program is promised — surface, addressing, error shapes, projection, retry,
+cancellation, limits, activity — with clause identifiers the tests cite, and
+names the QuickJS/Dynamic Worker divergences as documented exceptions instead of
+leaving them to be discovered. Both executors now run the same contract case
+table, the Workers arm against a real Dynamic Worker in workerd. A deployment
+running programs today sees two behavior changes, both additive or corrective.
+
+### Added
+
+- **Typed failures inside `connecta.batch`.** A failed call now reports
+  `{ address, ok: false, error, errorDetails }`, where `errorDetails` is the
+  same typed object `batch_call` returns (`code`, `retryable`, `retryAfterMs`,
+  and the `auth_required` recovery envelope). A thrown host error crosses the
+  sandbox bridge as a bare message in every executor, so this is the one channel
+  through which a program can tell a policy refusal from a transient failure
+  instead of cheerfully retrying the refusal. Programs reading `error` are
+  unaffected.
+
+### Fixed
+
+- **An oversized program result is truncated once.** The over-cap notice is now
+  sized so its *serialized* form fits the 24,000-character result cap.
+  Previously the QuickJS path truncated in the child and again in the parent, so
+  a very large result came back as a truncation envelope wrapped in a truncation
+  envelope whose `totalChars` reported the inner envelope's length rather than
+  the real size. Previews are somewhat shorter; `totalChars` is now the true
+  serialized size of what the program returned.
+
 ## 0.9.1 — 2026-07-29
 
 A code-mode routing release. Agents that needed an unknown address *and* a

@@ -1,33 +1,38 @@
-# Code mode
+# Code mode — the guest API contract
 
-Code mode adds one optional meta-tool, `execute_code`, for dependent read-only
-workflows, loops, joins, and reducing large connector results before they enter
-the model context. It is a deploy-time capability, not a runtime preference.
+This is the normative description of what a program written for `execute_code`
+is promised: what it can reach, what it gets back, how failures look, what it
+may retry, what bounds it runs under, and what its execution leaves behind in
+the activity surface. It is the interface a model actually programs against, so
+it is specified in prose first and implemented second — the same discipline the
+[MCP spec bump](./mcp-2026-07-28.md) followed.
 
-The [code-first exploration](./code-first-exploration.md) documents the
-evidence and design direction for potentially making this the primary Connecta
-interface. It is a research recommendation, not the current production
-contract described below.
+Two executors implement this document: QuickJS in a child process on Node, and
+`DynamicWorkerExecutor` from `@cloudflare/codemode` on Workers. Divergence
+between them is a bug unless it appears in
+[Executor exceptions](#executor-exceptions), which names the reason. Anyone can
+implement a third executor from this document without reading either.
 
-## Capability contract
+The [code-first exploration](./code-first-exploration.md) is the evidence behind
+the direction and the record of what it left open; [`ethos.md`](../ethos.md)
+carries the verdicts. Where the exploration's prototype and this document
+disagree, this document wins.
+
+Clause identifiers (`A1`, `E3`, …) are stable and cited by the tests listed in
+[Verification](#verification).
+
+## Deploy-time capability
 
 The `executor` passed to `createConnecta()` is the complete switch:
 
 - omit `executor` and `tools/list` contains exactly the nine base meta-tools;
 - provide a live `Executor` and `tools/list` also contains `execute_code`.
 
-There is no separate feature flag. Connecta never advertises a code tool that
-it plans to discover or initialize later. Changing whether a deployment offers
-code mode means changing its executor configuration and redeploying.
-
-The always-loaded instructions and tool descriptions say “when available”
-because clients connected to an executor-free deployment retain the normal
-`call_tool` and `batch_call` paths. One straightforward call belongs in
-`call_tool`; two to ten independent calls belong in `batch_call`. Code mode
-earns its larger definition only when the workflow has dependencies, loops,
-joins, branching, or meaningful result reduction.
-
-## Configure an executor
+There is no separate feature flag. Connecta never advertises a code tool that it
+plans to discover or initialize later. Changing whether a deployment offers code
+mode means changing its executor configuration and redeploying. Executor-free
+deployments keep the classic `call_tool`/`batch_call` paths, which is why the
+always-loaded instructions say "when available".
 
 On Node, install the optional `quickjs-emscripten` peer and use the package's
 QuickJS subpath:
@@ -42,15 +47,15 @@ const connecta = createConnecta({
 });
 ```
 
-`quickJsExecutor()` runs each program in a disposable child-process sandbox.
-Its CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are
-configured on the executor. Server bundlers must keep the
-`@zackbart/connecta/quickjs` package files external so the child entry remains
-on disk. The [Node example](../examples/node/README.md) is enabled; remove its
-`executor` field to see the nine-tool deployment.
+`quickJsExecutor()` runs each program in a disposable child-process sandbox. Its
+CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are configured
+on the executor. Server bundlers must keep the `@zackbart/connecta/quickjs`
+package files external so the child entry remains on disk. The
+[Node example](../examples/node/README.md) is enabled; remove its `executor`
+field to see the nine-tool deployment.
 
-On Cloudflare Workers, the Worker Loader binding is both the paid capability
-and the configuration switch:
+On Cloudflare Workers, the Worker Loader binding is both the paid capability and
+the configuration switch:
 
 ```ts
 createConnecta({
@@ -66,45 +71,519 @@ represented as optional in the deployment's `Env` type. The
 [Worker example](../examples/worker/README.md#code-mode) carries the complete
 binding and package setup.
 
-## Sandbox boundary
+## The program
 
-Model-written code has no ambient network, filesystem, environment, timers, or
-imports. Its only capabilities are:
+**P1.** A program is one JavaScript `async` arrow-function expression. It is
+evaluated once and its resolved value is the program's result. Both executors
+also accept markdown-fenced code and a bare statement body, and each normalizes
+those differently; that leniency is a courtesy to model output, not contract. A
+program that is not an async arrow expression may be accepted, rejected, or
+reinterpreted, so do not rely on it.
 
-- lazy connector globals for explicitly read-only tools;
-- `connecta.call()` and `connecta.batch()` for exact-address read-only calls;
-- `connecta.search()` and `connecta.describe()` for request-local discovery;
-  schema-bearing search matches also expose `inputKeys`,
-  `requiredInputKeys`, and `outputKeys` so one program can check exact field
-  names before continuing to a dependent call;
-- captured `console.*` output.
+**P2.** The only capabilities in the contract are:
 
-The key lists are derived by the same walk that renders the compact schema, so
-they resolve a top-level `$ref` and compose `allOf` instead of disagreeing with
-the shape printed beside them. A schema that is not an object at all — a union,
-an array, an unresolvable `$ref` — gets no lists rather than empty ones: absent
-means "read the schema", where `[]` would claim the tool takes no fields. The
-metadata is code-mode-only; `search_tools` never carries it, and a program that
-wants the bytes back can pass `includeSchemaKeys: false`.
+- one lazy global per connector (see [Addressing](#addressing));
+- `connecta.search`, `connecta.describe`, `connecta.call`, `connecta.batch`;
+- `console.log`, `console.warn`, `console.error`, captured and returned.
 
-All calls use the same catalog, fail-closed read-only predicate, admission,
-cancellation, timeout classification, health, credential containment, and
-payload-free activity events as the ordinary meta-tools. Unannotated,
-write-capable, or destructive work must leave the sandbox and cross
-`call_destructive_tool`, where the MCP host can ask a human.
+Anything else a runtime happens to expose is outside the contract and must not
+be used, even where it exists. Neither executor grants network egress,
+filesystem access, credentials, or deployment configuration; what they leave
+lying around otherwise differs (`X5`).
 
-Never implement this seam with unsandboxed `eval` or `node:vm`.
+**P3.** Values cross the host bridge as JSON. Arguments must be
+JSON-serializable and results arrive as plain JSON values. A value outside JSON —
+a cycle, a `BigInt`, a function, a class instance — never round-trips: it either
+ends the run with an error or is converted lossily, executor's choice (`X9`).
+Return JSON-shaped data and the question does not arise.
 
-## Verify the surface
+**P4.** Nothing survives an execution. There is no module scope, cache, or
+scratch storage carried to the next program, and no request-bound object outlives
+the request that created it. Within one execution, host calls share one
+downstream request scope.
 
-`test/server.test.ts` calls `tools/list` with and without a live executor and
-asserts the exact nine- and ten-tool surfaces. The current-version release audit
-supports the same comparison:
+**P5.** Plain JavaScript only. TypeScript syntax is a syntax error, and there is
+no `import` or `require` to reach for.
+
+## Addressing
+
+**A1.** The canonical address `<connectorId>.<toolName>` — byte-for-byte what
+`search_tools` and `connecta.search` print — is always callable through
+`connecta.call` and `connecta.batch`. This is never optional and never
+sanitized. It is what prevents sanitized-name collisions and what gives a
+generated program a stable escape hatch when a shortcut is ambiguous, absent, or
+wrong. A program that can only reach a tool through a convenience name is one
+rename away from broken.
+
+**A2.** Shortcut namespaces are sugar over `A1`: every connector gets one lazy
+global whose properties are its tools, so `<connectorId>.<toolName>(args)` works
+with both parts sanitized into JavaScript identifiers — characters outside
+`[A-Za-z0-9_$]` become `_`, a leading digit gets `_` prefixed, and a reserved
+word gets `_` appended (`my-service.get.thing` → `my_service.get_thing`). The
+globals are lazy: no catalog is fetched until a program touches one.
+
+**A3.** A shortcut that resolves to more than one tool fails closed with
+`ambiguous_tool_alias`, naming the colliding tool names and pointing at
+`connecta.call`. It never picks one. The canonical addresses of both tools
+remain callable.
+
+**A4.** A deployment whose connector ids collide with each other after
+sanitization, or that sanitize onto a name the sandbox reserves, fails *every*
+`execute_code` request with an error naming the offending ids. Failing loudly on
+the deployment's mistake beats silently answering from whichever connector
+sorted first.
+
+**A5 (verdict: shortcut namespaces are kept, and frozen).** They cost nothing to
+keep, a working ergonomic surface should not be removed mid-arc, and the
+exploration's cold-start sample used them naturally. They are frozen: no typed
+method lists, no per-tool closures, no generated `.d.ts`, no second sanitization
+rule — every expansion invents a new collision class over an addressing scheme
+`A1` already solves. Whether they survive the default flip is
+[#222](https://github.com/zackbart/connecta/issues/222)'s evidence to settle:
+if programs reach for `connecta.call` anyway, or shortcut ambiguity shows up in
+failures, they lose.
+
+## The surface
+
+Four functions, all `async`. The surface is closed: any other property of
+`connecta` throws (`E6`), including inherited `Object.prototype` members.
+
+### connecta.search
+
+```js
+const page = await connecta.search({
+  query: "pipeline run job logs",   // 2–4 distinctive action/object terms
+  connector: "ci",                  // optional single-connector filter
+  limit: 8,                         // 1–100, default 8
+  offset: 0,
+  fullDescriptions: false,
+  includeSchemas: "compact",        // or "json"
+  includeSchemaKeys: true,          // default true in code mode
+});
+```
+
+**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus
+`nextOffset` when more remains and `matchMode: "partial"` when no tool matched
+every term. Each entry in `tools` carries `address`, `name`, and — when
+requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the
+connector's `guide`.
+
+**S2.** With schemas requested, a match whose input (or output) schema resolves
+to an object shape also carries `inputKeys`, `requiredInputKeys`, and
+`outputKeys`: the same names the rendered schema shows, ready to check before
+building arguments. A schema that is not an object shape — a union, an array, an
+unresolvable `$ref` — carries no lists rather than empty ones, because absent
+means "read the schema" where `[]` would claim the tool takes no fields. This
+metadata is code-mode-only: `search_tools` never carries it, and
+`includeSchemaKeys: false` buys the bytes back.
+
+**S3.** Discovery is bounded and the bounds throw rather than silently shrink: a
+`limit` outside 1–100 is `invalid_args`, and a page whose serialized form exceeds
+256,000 bytes is `result_too_large` with a hint naming the ways to ask for less.
+
+### connecta.describe
+
+```js
+const { tools } = await connecta.describe({
+  addresses: ["ci.get_run", "ci.get_job_logs"],  // ≤ 100
+  format: "compact",                             // or "json"
+  fullDescriptions: false,
+});
+```
+
+**S4.** Returns `{ tools }` in the order asked, one entry per address. An
+address that is unknown, or whose connector's catalog could not be loaded,
+returns an entry carrying `error` — one bad address never fails the whole call.
+More than 100 addresses is `invalid_args`; the same 256,000-byte ceiling applies.
+
+### connecta.call
+
+```js
+const run = await connecta.call("ci.get_run", { runId: 42 });
+```
+
+**S5.** Takes a canonical address and one arguments object; returns the tool's
+value already unwrapped. For an MCP connector that means `structuredContent`
+when present, otherwise text content JSON-parsed when it parses and the raw text
+when it does not; a downstream result flagged `isError` throws. Omitted `args`
+is treated as `{}`.
+
+**S6.** Every call — canonical or shortcut — goes through the same catalog,
+fail-closed read-only predicate, admission, credential containment, timeout
+classification, health accounting, and activity recording as an ordinary
+meta-tool call. The sandbox is an additional containment layer, not a second
+implementation of the boundary, and nothing a program does widens what it can
+reach.
+
+### connecta.batch
+
+```js
+const outcomes = await connecta.batch([
+  { address: "ci.get_run", args: { runId: 42 } },
+  { address: "ci.list_jobs", args: { runId: 42 } },
+]);
+```
+
+**S7.** Runs 1–10 independent calls in parallel and returns their outcomes in
+order. A success is `{ address, ok: true, data }`. A failure is
+`{ address, ok: false, error, errorDetails }`, where `error` is the message and
+`errorDetails` is the typed object described in [Errors](#errors) — the same two
+field names `batch_call` uses. One failing call never rejects the batch, and more
+than ten calls throws.
+
+**S8.** `connecta.batch` is the classification channel. Because a thrown host
+error crosses the sandbox bridge as a bare message (`E1`), a batch of one is the
+supported way for a program to *decide* something about a failure rather than
+merely report it.
+
+## Errors
+
+**E1.** There are three error channels, and only two of them are typed.
+
+| Channel | Shape | Typed? |
+| --- | --- | --- |
+| A throw inside the program | `Error` with `message` only | no |
+| `connecta.batch` outcome | `{ ok: false, error, errorDetails }` | yes |
+| An uncaught failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
+
+The first is a hard limit of the guest bridge: both executors reduce a rejected
+host call to `new Error(message)`, dropping every own property. A program must
+therefore never branch on an error's fields and never parse its message. To
+classify, use `errorDetails`; to hand a failure to the model with its type
+intact, let it escape uncaught — connecta re-attaches the typed details on the
+way out.
+
+The model-facing statement of `E1` lives in `execute_code`'s own description,
+which is loaded only where code mode is enabled. It is deliberately not repeated
+in the always-loaded usage skill: that skill is capped at 1,800 bytes by
+`test/meta-tools.test.ts` and has three bytes of headroom, so anything added
+there has to be paid for by cutting routing guidance the
+[#222](https://github.com/zackbart/connecta/issues/222) eval is measuring.
+
+**E2.** The taxonomy. `retryable` is what connecta reports; `Y3` says what a
+program may do about it.
+
+| Code | Raised when | `retryable` |
+| --- | --- | --- |
+| `unknown_address` | no connector owns the address | false |
+| `unknown_tool` | the connector has no such tool | false |
+| `ambiguous_tool_alias` | a shortcut matches two tools (`A3`) | false |
+| `destructive_tool_requires_approval` | the tool is not explicitly read-only | false |
+| `auth_required` | the credential is missing, expired, or rejected | false |
+| `invalid_args` | arguments or discovery bounds were rejected | false |
+| `input_required_unsupported` | a downstream asked for mid-call input | false |
+| `rate_limited` | the downstream reported a rate limit | true |
+| `unavailable` | the downstream is down or unreachable | true |
+| `timeout` | the per-call 15-second deadline expired | true |
+| `connector_call_failed` | anything else the connector threw | per message |
+| `catalog_lookup_failed` | the connector's catalog could not be loaded | per cause |
+| `result_processing_failed` | the result could not be prepared | per message |
+
+**E3.** `auth_required` carries the same recovery envelope as `call_tool`:
+`connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
+`unavailable`), `nextAction` naming `authorize_connector`, and a `retry`
+sentence. A program cannot recover credentials — only an operator can — so the
+right move is to stop and let the failure reach the model.
+
+**E4.** A read-only refusal is not a downstream failure. A tool that is
+unannotated, write-capable, or destructive is refused inside the sandbox with
+`destructive_tool_requires_approval` and stays refused; the program returns and
+the model crosses `call_destructive_tool`, where the host can ask a human.
+Generated code cannot mint that capability.
+
+**E5.** Failures of the *execution*, not of a call, never appear inside the
+guest: admission rejection (`executor_overloaded`, retryable, with
+`retryAfterMs`), cancellation (`executor_cancelled`), shutdown
+(`executor_closed`), deadline expiry, and sandbox crashes end the run and are
+reported to the model as an error result. The one seam between the two: a host
+call still in flight when the run is cancelled fails with `cancelled`, which a
+program can technically catch on its way out — there is nothing useful to do with
+it (`Y3`).
+
+**E6.** An error the program raises itself — a `TypeError`, an unknown
+`connecta` property, a `throw` of its own — ends the run with an error result
+carrying that message. It is not typed, because it is not a connector failure.
+
+## Results and projection
+
+**R1 (verdict: projection stays explicit).** A program's return value reaches
+the model unchanged except for the size guard in `R2`. Connecta does not
+summarize, reshape, or field-select it, and there is no automatic projection
+mode. The 93%-byte win the exploration measured came from *program-authored*
+projection; a host heuristic would silently drop fields a program deliberately
+returned and would be invisible in the transcript. Host-side projection helpers
+earn their way in only if [#222](https://github.com/zackbart/connecta/issues/222)
+shows programs failing to project on their own.
+
+**R2.** The boundary is 24,000 serialized characters (~6k tokens) for the
+result. A value over it is replaced by exactly one envelope:
+
+```json
+{
+  "truncated": true,
+  "preview": "…",
+  "totalChars": 5242880,
+  "hint": "filter/map/slice data inside execute_code and return only what you need"
+}
+```
+
+The envelope is itself bounded as serialized, so `totalChars` is always the true
+size of what the program returned and truncation happens exactly once no matter
+how many hops the value takes.
+
+**R3.** Truncation is a *successful* result, not an error: the program ran, and
+what came back is the honest report that its answer was too large. The fix is a
+program that returns less, which is why the envelope says so.
+
+**R4 (verdict: no result paging for programs).** A truncated program result
+carries no `get_result` handle, unlike `call_tool`. `get_result` exists so a
+model can page an oversized *downstream payload* it could not shrink; a program
+can shrink anything, so paging its result would reward the one behavior code mode
+exists to remove, and stashing a multi-megabyte return value from every
+unprojected program would spend the result store on data nobody asked for.
+
+**R5.** `console.log`, `console.warn`, and `console.error` are captured in call
+order and returned as a single `logs` string, capped at 4,000 characters with a
+truncation marker. Logs survive failure: they are attached to the error result
+too, which is what makes them worth writing. How a non-string argument is
+rendered is not contract (`X4`).
+
+**R6.** Nothing else is added to a program's result. There is no timing or
+diagnostics block; per-call durations live in activity (`V2`).
+
+## Retry semantics
+
+**Y1.** Connecta retries nothing beneath a program. `call_tool` accepts an
+annotation-gated `maxRetries`; code mode fixes it at zero, so one
+`connecta.call` is exactly one downstream attempt. The program is the retry
+loop, and its budget is visible to it (`L4`).
+
+**Y2.** A program may retry a failure whose `errorDetails.retryable` is true,
+learned through `connecta.batch` (`S8`). Every attempt spends host-call budget,
+so a retry loop that ignores the budget converts a transient failure into a
+budget failure.
+
+**Y3.** What must never be retried automatically:
+
+- anything with `retryable: false` — a policy refusal, a missing credential, a
+  bad address, or malformed arguments will fail identically forever;
+- `rate_limited`, immediately. The sandbox has no timers, so a program cannot
+  wait out a window; retrying inside it is the harm the signal exists to
+  prevent. Return the failure and let the model, which can wait, re-issue with
+  `retryAfterMs` in hand.
+- a cancelled or timed-out *execution*: it is already over (`L1`).
+
+**Y4.** Connecta's own retry machinery beneath the meta-tools honours a
+connector-reported `Retry-After` exactly or not at all, and declines windows
+longer than 10 seconds rather than shortening them. A program sees the window
+verbatim as `errorDetails.retryAfterMs`.
+
+## Cancellation and limits
+
+**L1.** Cancellation is not observable inside a program. There is no signal to
+poll, no cancellation exception to catch, and no guarantee that a `finally`
+block runs — a cancelled QuickJS child is terminated outright. Write programs
+that need no cleanup.
+
+**L2.** What cancellation does guarantee: in-flight host calls abort, no further
+host call is admitted, the admission lease is released, and nothing
+request-bound survives the request.
+
+**L3.** Every execution runs under a wall-clock deadline that includes time spent
+waiting on host calls. Expiry ends the run with an execution error and no
+partial result; the deadline's length is executor configuration (`X1`).
+
+**L4.** Per-execution bounds that are contract, identical in both executors
+because connecta enforces them above the sandbox:
+
+| Bound | Value |
+| --- | --- |
+| Host calls per execution | 20 |
+| Calls per `connecta.batch` | 10 |
+| Deadline per host call | 15 s |
+| Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
+| `describe` addresses | ≤ 100 |
+| Result | 24,000 serialized characters |
+| Logs presented to the model | 4,000 characters |
+
+**L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
+exhausts a bound ends the run with an error instead of degrading the host. The
+mechanism is the executor's: QuickJS enforces an explicit heap (64 MiB default),
+stack (1 MiB), and guest-CPU budget (250 ms, which host waits do not consume);
+the Dynamic Worker inherits the platform isolate's limits (`X2`). A third
+executor must bound all three somehow — this is the clause that makes untrusted
+code safe to run at all.
+
+**L6.** A single host call's serialized result is bounded (QuickJS: 256 KiB).
+Exceeding it fails that call, not the execution, so a program can catch it and
+ask for less.
+
+**L7.** Executions are admitted, not queued indefinitely: bounded concurrency
+plus a bounded queue with a wait timeout. Overload is a retryable
+`executor_overloaded` carrying `retryAfterMs`; cancellation and shutdown are
+terminal. Admission happens *before* any catalog or provider is built, so a
+queued request holds no request state.
+
+**L8.** Bounds are deployment configuration, not program inputs: a program cannot
+raise one by asking, and `execute_code`'s description states the ones it must
+plan around.
+
+## Activity
+
+**V1.** One payload-free activity event per *resolved* downstream call, with
+`source: "execute_code"`. A program that calls ten tools is ten events — exactly
+as legible as ten `call_tool` calls, which is the property that makes moving work
+into the sandbox an optimization rather than a blindfold.
+
+**V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
+`outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
+`attempts`, and `errorCode` when there was one — plus the request's id, actor,
+and server identity. It has nowhere to put arguments, results, program source,
+or raw error text, by construction. A failure the program *caught* is still
+recorded: the call happened.
+
+**V3.** A call that never resolved to a connector — an unknown address — emits
+nothing. There is no connector to attribute it to, and the address a program
+guessed is not something activity stores.
+
+**V4.** The execution itself emits no event. It has no address, and its one
+distinctive artifact is the program source, which is exactly what a payload-free
+history must never keep.
+
+## Executor exceptions
+
+Documented divergences, with reasons. Everything else must match.
+
+**X1. Deadline default.** QuickJS defaults to 30 s wall clock and terminates the
+child; the Dynamic Worker defaults to 60 s and races the program against an
+in-isolate timer. Both satisfy `L3`; the numbers are each executor's
+configuration and the error text differs.
+
+**X2. Memory, stack, and CPU mechanism.** QuickJS exposes explicit heap, stack,
+and guest-CPU limits (`L5`). The Dynamic Worker has no such knobs: workerd's
+isolate limits apply and connecta cannot tune them. A deployment that needs a
+specific heap ceiling gets it only on Node.
+
+**X3. Mid-flight cancellation.** The QuickJS pool receives the request's
+`AbortSignal` and kills the child. The Dynamic Worker executor's `execute()`
+takes no signal, so a cancelled request's program keeps running until its host
+calls fail or the deadline expires. `L2` still holds — the calls abort and the
+response does not wait — but `L1`'s "the run ends" is best-effort on Workers.
+
+**X4. Log rendering and capture.** QuickJS JSON-stringifies non-string
+arguments and captures `log`, `info`, `warn`, `error`, and `debug`; the Dynamic
+Worker renders arguments with `String()` (so an object logs as
+`[object Object]`) and captures only `log`, `warn`, and `error`, prefixing the
+latter two. Only the three captured everywhere are contract (`R5`); rendering is
+not.
+
+**X5. Leftover globals.** The QuickJS guest has no `fetch`, `process`, timers,
+`crypto`, or `WebSocket` at all. The Dynamic Worker guest has all of them:
+`fetch` exists but throws on use because outbound access is disabled,
+`process.env` is empty, and timers work. `P2` is the contract — a program that
+uses `setTimeout` is writing Workers-only code, and it will fail on Node.
+
+**X6. Stall detection.** QuickJS notices when a program awaits something that
+can never settle and fails fast with an explicit message. The Dynamic Worker
+waits for its deadline instead. A fast failure is strictly better; requiring it
+would mean requiring a host-driven job loop, which is not a reasonable demand on
+a platform sandbox.
+
+**X7. Value codec.** QuickJS is JSON-only. `@cloudflare/codemode` tunnels
+binary values through a tagged envelope, so a `Uint8Array` may survive there.
+`P3` is the contract: JSON-serializable values only, or the program is
+Workers-only.
+
+**X8. Unknown-property message.** An unknown `connecta` property throws
+`Unknown function connecta.x` on QuickJS and `Tool "x" not found` on the Dynamic
+Worker. Both satisfy `E6`; the text is not contract.
+
+**X9. Refusing a value outside JSON.** The Dynamic Worker ends the run with an
+error when a program returns something its codec cannot carry. QuickJS converts
+lossily instead — a cyclic object comes back as the string `"[object Object]"`,
+because the guest-to-host dump happens before any serializer can object.
+Normalizing this would mean walking every returned value in the child for
+JSON-representability, which spends real CPU on every program to improve the
+error message of a program that is already wrong. `P3` is the contract: neither
+behavior returns the value.
+
+## Changes from earlier code mode
+
+Two behaviors changed with this contract. Programs that ran before still run.
+
+- **`connecta.batch` failures gained `errorDetails`.** They previously carried
+  only `{ address, ok: false, error }` with the message, which left a program
+  unable to tell a policy refusal from a transient failure — it could only
+  retry blindly or give up blindly. The typed object is additive and uses
+  `batch_call`'s field names, so one shape covers both surfaces.
+- **An oversized result is truncated once.** The envelope is now sized so its
+  *serialized* form fits the 24,000-character cap. Previously the QuickJS path
+  truncated in the child and again in the parent, so a very large result came
+  back as a truncation envelope wrapped in a truncation envelope, reporting the
+  inner envelope's length as `totalChars`. Previews are somewhat shorter now;
+  `totalChars` is the real size.
+
+## Verification
+
+Every clause has a test. `test/guest-contract-cases.ts` holds the case table,
+written once and run twice: `test/guest-api-contract-quickjs.test.ts` runs it
+against the Node QuickJS executor, and `test/guest-api-contract.test.ts` runs it
+against a real `DynamicWorkerExecutor` in workerd — a Miniflare Worker Loader
+binding makes the Workers arm real rather than simulated — alongside the clauses
+connecta enforces above any executor. Rows below naming
+`test/guest-api-contract.test.ts` are covered by both arms; each case's title
+carries the clauses it verifies.
+
+| Clauses | Test |
+| --- | --- |
+| `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax), `test/quickjs-executor.test.ts` (`normalizeCode`) |
+| `P2`, `X5` | `test/guest-api-contract.test.ts` (no usable network, no config) |
+| `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
+| `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
+| `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing) |
+| `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
+| `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
+| `A5` | verdict; `A1`–`A3` are its enforcement |
+| `S1`, `S2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (schema keys) |
+| `S3` | `test/execute.test.ts` (discovery count limits, fan-out bound) |
+| `S4` | `test/guest-api-contract.test.ts` (unknown address in `describe`) |
+| `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
+| `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
+| `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |
+| `S8`, `E1` | `test/guest-api-contract.test.ts` (typed batch outcomes) |
+| `E2` | `test/guest-api-contract.test.ts`, `test/errors.test.ts` (code → `retryable`) |
+| `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
+| `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
+| `E5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (admission), `test/executor-admission.test.ts` |
+| `E6`, `X8` | `test/guest-api-contract.test.ts`, `test/quickjs-executor.test.ts` |
+| `R1`, `R3` | `test/guest-api-contract.test.ts` (pass-through, truncation is success) |
+| `R2` | `test/guest-api-contract.test.ts` (envelope fits the cap, idempotent) |
+| `R4` | verdict; `R2` is its enforcement |
+| `R5` | `test/guest-api-contract.test.ts`, `test/quickjs-log-limits.test.ts` |
+| `R6` | `test/guest-api-contract.test.ts` (result keys) |
+| `Y1` | `test/guest-api-contract.test.ts` (one attempt per call) |
+| `Y2`, `Y3` | `test/guest-api-contract.test.ts` (retryable flags by code) |
+| `Y4` | `test/meta-tools.test.ts` (`retryBackoffMs`, `MAX_RETRY_BACKOFF_MS`) |
+| `L1`, `L2` | `test/execute.test.ts` (cancels outstanding host calls) |
+| `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors) |
+| `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (budgets) |
+| `L5`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap) |
+| `L6` | `test/quickjs-executor.test.ts` (bridge and IPC bounds) |
+| `L7` | `test/execute.test.ts`, `test/executor-admission.test.ts` |
+| `V1`, `V2` | `test/guest-api-contract.test.ts`, `test/activity.test.ts` |
+| `V3`, `V4` | `test/guest-api-contract.test.ts` (no event without a connector) |
+| `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
+| `X4` | `test/guest-api-contract.test.ts` (string logs only) |
+| `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
+| `X7` | `P3`'s tests; the Workers superset is deliberately unused |
+
+The surface count itself is checked by `test/server.test.ts`, which calls
+`tools/list` with and without a live executor. The release audit supports the
+same comparison:
 
 ```sh
 npm --prefix eval/current-version run audit
 npm --prefix eval/current-version run audit -- --executor disabled
 ```
 
-The results record whether `execute_code` was advertised plus the complete
-definition, request, response, latency, and task-success surfaces.
+Never implement this seam with unsandboxed `eval` or `node:vm`.

@@ -16,6 +16,7 @@ import {
   ExecutorAdmissionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
+import { classifyCallError } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -262,10 +263,20 @@ export async function buildSandboxProviders(
                   data: await callAddress(item.address, item.args),
                 };
               } catch (err) {
+                // Same failure shape batch_call reports: the message a program
+                // can log, plus the typed details it must classify by. A
+                // thrown host error crosses the sandbox bridge as a bare
+                // message string in every executor, so this is the one place a
+                // program can tell a policy refusal from a transient failure.
+                const details =
+                  err instanceof InvocationFailure
+                    ? err.details
+                    : classifyCallError(err, "batch_call_failed");
                 return {
                   address: String(item.address),
                   ok: false,
-                  error: msg(err),
+                  error: details.message,
+                  errorDetails: details,
                 };
               }
             }),
@@ -459,7 +470,7 @@ Write an async arrow function. It runs with NO network, filesystem, timers, or i
 - connecta.search(args) and connecta.describe(args) — load and inspect request-local catalogs on demand. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
 - console.log(...) — captured and returned alongside the result.
 
-Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
+Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. A thrown error carries only a message; connecta.batch reports each call as { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }, so use it when the program must tell a policy refusal from a transient failure. Never retry a failure whose retryable is false, and never retry a rate_limited one immediately — the sandbox has no timers. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
 
 Plain JavaScript only — no TypeScript syntax. For unknown-address dependent work, use one execute_code call: search inside it, read the compact schemas, and continue to the dependent calls; do not return search results for a second execute_code call. Compact schemas are TypeScript-like strings, not JSON Schema objects: write the property names they display, never a positional guess or an invented alias.
 Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", includeSchemas: "compact" }); const pick = (suffix) => { const match = tools.find((tool) => tool.address.endsWith(suffix)); if (!match) throw new Error("no tool matching " + suffix); return match.address; }; const run = await connecta.call(pick(".get_run"), { runId: 42 }); const logs = await connecta.call(pick(".get_job_logs"), { jobId: run.failedJobId }); return [run, logs]; }`;
