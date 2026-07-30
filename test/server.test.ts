@@ -1526,6 +1526,29 @@ describe("execute_code registration (code mode)", () => {
     const executeTool = listed2.find(
       (tool: { name: string }) => tool.name === "execute_code",
     );
+    expect(executeTool.title).toBe("Execute Code with Connecta");
+    const deferredDiscoveryMetadata = [
+      executeTool.name,
+      executeTool.title,
+      executeTool.description.split(". ", 1)[0],
+    ]
+      .join(" ")
+      .toLowerCase();
+    for (const query of [
+      "execute_code",
+      "execute code",
+      "connecta program",
+      "integration discovery",
+      "batching reduction",
+      "dependent joins",
+    ]) {
+      expect(
+        query.split(/\s+/).every((term) =>
+          deferredDiscoveryMetadata.includes(term),
+        ),
+        `deferred metadata must cover "${query}"`,
+      ).toBe(true);
+    }
     expect(executeTool.description).toContain("The primary surface.");
     expect(
       listed3.find((tool: { name: string }) => tool.name === "execute_code")
