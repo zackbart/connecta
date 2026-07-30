@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.10.0 — 2026-07-30
 
 **Code-first is what a model sees.** A deployment with an executor now serves
 seven meta-tools instead of ten: `list_connectors`, `describe_tools`, and
