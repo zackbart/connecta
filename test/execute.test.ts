@@ -647,6 +647,18 @@ describe("buildSandboxProviders", () => {
       "calc.add",
       "remote.echo",
     ]);
+    const describedOne = (await required(connecta.fns.describe)({
+      address: "calc.add",
+    })) as { tools: Array<{ address: string }> };
+    expect(describedOne.tools.map((tool) => tool.address)).toEqual([
+      "calc.add",
+    ]);
+    await expect(
+      required(connecta.fns.describe)({
+        address: "calc.add",
+        addresses: ["remote.echo"],
+      }),
+    ).rejects.toThrow("either address or addresses, not both");
 
     const batch = (await required(connecta.fns.batch)([
       { address: "calc.add", args: { a: 1, b: 2 } },

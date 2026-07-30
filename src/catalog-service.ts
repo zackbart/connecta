@@ -71,12 +71,24 @@ function discoverySearchLimit(value: unknown): number {
   return value;
 }
 
-/** Validate the raw list so duplicate addresses consume the same bound. */
-function discoveryAddresses(value: unknown): unknown[] {
+/** Normalize the single-address convenience form, then validate the bounded list. */
+function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
+  if (args.address !== undefined && args.addresses !== undefined) {
+    throw new DiscoveryPolicyError(
+      "invalid_args",
+      "describe takes either address or addresses, not both.",
+    );
+  }
+  const value =
+    args.address !== undefined
+      ? typeof args.address === "string"
+        ? [args.address]
+        : undefined
+      : args.addresses;
   if (!Array.isArray(value)) {
     throw new DiscoveryPolicyError(
       "invalid_args",
-      'describe takes { addresses: ["<connectorId>.<toolName>", ...] }; addresses must be an array.',
+      'describe takes { address: "<connectorId>.<toolName>" } or { addresses: ["<connectorId>.<toolName>", ...] }.',
     );
   }
   if (value.length > MAX_DESCRIBE_ADDRESSES) {
@@ -150,6 +162,7 @@ function toolsForSafety(
 }
 
 export interface CatalogDescribeArgs {
+  address?: unknown;
   addresses?: unknown;
   format?: "compact" | "json";
   fullDescriptions?: boolean;
@@ -542,6 +555,10 @@ export class CatalogService {
         args.includeSchemas && match.tool.outputSchema
           ? renderSearchSchema(match.tool.outputSchema, args.includeSchemas)
           : undefined;
+      const schemaKeys =
+        args.includeSchemas && args.includeSchemaKeys
+          ? schemaKeyMetadata(input, match.tool.outputSchema)
+          : undefined;
       const description = summarizeDiscoveryDescription(
         match.tool.description,
         args.fullDescriptions === true,
@@ -571,8 +588,18 @@ export class CatalogService {
           ...(renderedOutput?.truncated
             ? { outputSchemaTruncated: true as const }
             : {}),
-          ...(args.includeSchemas && args.includeSchemaKeys
-            ? schemaKeyMetadata(input, match.tool.outputSchema)
+          ...(schemaKeys && !renderedInput?.truncated
+            ? {
+                ...(schemaKeys.inputKeys
+                  ? { inputKeys: schemaKeys.inputKeys }
+                  : {}),
+                ...(schemaKeys.requiredInputKeys
+                  ? { requiredInputKeys: schemaKeys.requiredInputKeys }
+                  : {}),
+              }
+            : {}),
+          ...(schemaKeys?.outputKeys && !renderedOutput?.truncated
+            ? { outputKeys: schemaKeys.outputKeys }
             : {}),
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
@@ -677,7 +704,7 @@ export class CatalogService {
   }
 
   async describe(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
-    const addresses = discoveryAddresses(args.addresses);
+    const addresses = discoveryAddresses(args);
     const format = args.format ?? "compact";
     const resolved = addresses.map((rawAddress) => {
       const address = String(rawAddress);
