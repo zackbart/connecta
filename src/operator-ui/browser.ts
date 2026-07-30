@@ -214,8 +214,7 @@ function clearIdentityState(): void {
   $("tokenList").innerHTML = "";
   $("tokenList").setAttribute("aria-busy", "false");
   $("tokenNotice").textContent = "";
-  $("tokenReveal").classList.add("hidden");
-  $("createdToken").textContent = "";
+  clearCreatedAccessToken();
   $("tokenName").value = "";
   $("tokenUnavailable").textContent = "";
   $("tokenUnavailable").classList.add("hidden");
@@ -274,6 +273,17 @@ function accessTokenUnavailableCopy(
   return "Access token management requires an eligible Clerk operator. A Bearer token can connect to MCP, but it cannot create or revoke other tokens.";
 }
 
+function setTokenNotice(message: string, error = false): void {
+  $("tokenNotice").textContent = message;
+  $("tokenNotice").setAttribute("role", error ? "alert" : "status");
+}
+
+function clearCreatedAccessToken(): void {
+  $("createdToken").textContent = "";
+  $("tokenReveal").classList.add("hidden");
+  $("tokenCreateForm").classList.remove("hidden");
+}
+
 function updateCapabilities(): void {
   const credentialsAvailable =
     DATA?.credentialManagement === "available";
@@ -328,6 +338,7 @@ function activatePage(
     $("credentialList").innerHTML = "";
     setNotice("");
   }
+  if (next !== "tokens") clearCreatedAccessToken();
   // Focus what is actually on screen. While gated the page views are hidden, so
   // focusing their heading is a silent no-op that drops focus to <body> and
   // restarts the next Tab from the top of the document — the gate's own h1 is
@@ -694,7 +705,7 @@ function renderAccessTokens(): void {
 async function loadAccessTokens(): Promise<void> {
   const generation = SESSION_GENERATION;
   $("tokenList").setAttribute("aria-busy", "true");
-  $("tokenNotice").textContent = "Loading access tokens…";
+  setTokenNotice("Loading access tokens…");
   try {
     const payload = await operatorRequest(
       "/ui/access-tokens",
@@ -704,15 +715,14 @@ async function loadAccessTokens(): Promise<void> {
     if (generation !== SESSION_GENERATION) return;
     ACCESS_TOKENS = payload?.accessTokens || [];
     ACCESS_TOKENS_LOADED = true;
-    $("tokenNotice").textContent = "";
+    setTokenNotice("");
     renderAccessTokens();
   } catch (error) {
     if (generation !== SESSION_GENERATION) return;
-    $("tokenNotice").setAttribute("role", "alert");
-    $("tokenNotice").textContent = errorMessage(
+    setTokenNotice(errorMessage(
       error,
       "Access tokens could not be loaded.",
-    );
+    ), true);
   } finally {
     if (generation === SESSION_GENERATION) {
       $("tokenList").setAttribute("aria-busy", "false");
@@ -724,13 +734,12 @@ $("tokenCreateForm").onsubmit = async (event) => {
   event.preventDefault();
   const name = $("tokenName").value.trim();
   if (!name) {
-    $("tokenNotice").textContent = "Name the MCP client before creating a token.";
-    $("tokenNotice").setAttribute("role", "alert");
+    setTokenNotice("Name the MCP client before creating a token.", true);
     return;
   }
   const generation = SESSION_GENERATION;
   $("createToken").disabled = true;
-  $("tokenNotice").textContent = "";
+  setTokenNotice("");
   try {
     const payload = await operatorRequest(
       "/ui/access-tokens",
@@ -749,17 +758,17 @@ $("tokenCreateForm").onsubmit = async (event) => {
     ACCESS_TOKENS_LOADED = true;
     $("tokenName").value = "";
     $("createdToken").textContent = payload.token;
+    $("tokenCreateForm").classList.add("hidden");
     $("tokenReveal").classList.remove("hidden");
-    $("tokenNotice").textContent = "Access token created.";
+    setTokenNotice("Access token created.");
     renderAccessTokens();
     $("tokenRevealHeading").focus();
   } catch (error) {
     if (generation !== SESSION_GENERATION) return;
-    $("tokenNotice").setAttribute("role", "alert");
-    $("tokenNotice").textContent = errorMessage(
+    setTokenNotice(errorMessage(
       error,
       "Access token could not be created.",
-    );
+    ), true);
     $("tokenNotice").focus();
   } finally {
     if (generation === SESSION_GENERATION) $("createToken").disabled = false;
@@ -779,8 +788,7 @@ $("copyCreatedToken").onclick = async () => {
 };
 
 $("dismissCreatedToken").onclick = () => {
-  $("createdToken").textContent = "";
-  $("tokenReveal").classList.add("hidden");
+  clearCreatedAccessToken();
   $("tokenName").focus();
 };
 
@@ -803,6 +811,9 @@ $("tokenList").onclick = async (event) => {
     return;
   }
   if (action === "cancel-name") {
+    const current = ACCESS_TOKENS.find((token) => token.id === id);
+    const input = form.querySelector<HTMLInputElement>("input");
+    if (input && current) input.value = current.name;
     form.classList.add("hidden");
     return;
   }
@@ -824,16 +835,15 @@ $("tokenList").onclick = async (event) => {
       ACCESS_TOKENS = ACCESS_TOKENS.map((token) =>
         token.id === id ? payload.accessToken! : token);
     }
-    $("tokenNotice").textContent = "Access token revoked.";
+    setTokenNotice("Access token revoked.");
     renderAccessTokens();
     $("tokenNotice").focus();
   } catch (error) {
     if (generation !== SESSION_GENERATION) return;
-    $("tokenNotice").setAttribute("role", "alert");
-    $("tokenNotice").textContent = errorMessage(
+    setTokenNotice(errorMessage(
       error,
       "Access token could not be revoked.",
-    );
+    ), true);
   }
 };
 
@@ -857,16 +867,15 @@ $("tokenList").onsubmit = async (event) => {
       ACCESS_TOKENS = ACCESS_TOKENS.map((token) =>
         token.id === id ? payload.accessToken! : token);
     }
-    $("tokenNotice").textContent = "Access token renamed.";
+    setTokenNotice("Access token renamed.");
     renderAccessTokens();
     $("tokenNotice").focus();
   } catch (error) {
     if (generation !== SESSION_GENERATION) return;
-    $("tokenNotice").setAttribute("role", "alert");
-    $("tokenNotice").textContent = errorMessage(
+    setTokenNotice(errorMessage(
       error,
       "Access token could not be renamed.",
-    );
+    ), true);
   }
 };
 
@@ -1213,6 +1222,9 @@ document.addEventListener("click", (event) => {
 window.addEventListener("popstate", () => {
   activatePage(pageForPath(window.location.pathname), { focus: true });
 });
+// A document restored from the back-forward cache must not restore a
+// one-time secret that was visible when the operator left the page.
+window.addEventListener("pagehide", clearCreatedAccessToken);
 
 async function init(): Promise<void> {
   if (AUTH.kind === "clerk") {

@@ -34,6 +34,10 @@ Creation, rename, and revocation require the same eligible Clerk identity and
 same-origin mutation boundary as connector credentials. `maxActive` defaults
 to 100 and can be set from 1 through 1,000.
 
+Issuance and revocation inherit the consistency guarantees of the configured
+storage adapter. Use strongly consistent storage when either change must take
+effect globally without a convergence window.
+
 Operator credential mutation is a separate, narrower boundary. The
 `/credentials` shell contains no secret data before authentication, and the
 mutation API requires same-origin requests from an admitted Clerk user. An MCP

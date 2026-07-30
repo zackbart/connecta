@@ -7,8 +7,8 @@ import type { KVStorage } from "@zackbart/connecta";
  *
  * Workers KV is eventually consistent across locations. It is suitable for
  * this example's durable state, but cannot promise immediate global OAuth
- * disconnect, credential rotation, or access-token revocation; use a strongly
- * consistent adapter when that is required.
+ * disconnect, credential rotation, or access-token issuance/revocation; use a
+ * strongly consistent adapter when that is required.
  */
 export function cloudflareKvStorage(namespace: KVNamespace): KVStorage {
   return {

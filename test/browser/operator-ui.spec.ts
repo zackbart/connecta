@@ -376,12 +376,16 @@ test("creates, reveals once, renames, and revokes an access token", async ({
   await expect(page.locator("#createdToken")).toHaveText(
     "cta_browser_test_secret_value",
   );
+  await expect(page.locator("#tokenCreateForm")).toBeHidden();
   await expect(page.getByRole("heading", { name: "Claude desktop" }))
     .toBeVisible();
 
-  await page.getByRole("button", { name: "I stored it" }).click();
+  await page.getByRole("link", { name: "Connections" }).click();
   await expect(page.locator("#tokenReveal")).toBeHidden();
   await expect(page.locator("#createdToken")).toHaveText("");
+
+  await page.getByRole("link", { name: "Access tokens" }).click();
+  await expect(page.locator("#tokenCreateForm")).toBeVisible();
 
   await page.getByRole("button", { name: "Rename" }).click();
   await page.getByLabel("Token name").fill("ChatGPT production");
@@ -399,6 +403,23 @@ test("creates, reveals once, renames, and revokes an access token", async ({
       .filter((request) => request.path.startsWith("/ui/access-tokens"))
       .map(({ method }) => method),
   ).toEqual(["GET", "POST", "PUT", "DELETE"]);
+});
+
+test("clears a one-time access token before the document is cached", async ({
+  page,
+}) => {
+  await openAuthenticated(page, "/tokens");
+  await page.getByLabel("Client name").fill("Claude desktop");
+  await page.getByRole("button", { name: "Create token" }).click();
+  await expect(page.locator("#createdToken")).not.toHaveText("");
+
+  await page.evaluate(
+    "window.dispatchEvent(new PageTransitionEvent('pagehide'))",
+  );
+
+  await expect(page.locator("#tokenReveal")).toBeHidden();
+  await expect(page.locator("#createdToken")).toHaveText("");
+  await expect(page.locator("#tokenCreateForm")).toBeVisible();
 });
 
 test("navigates to the activity list and back without a shell reload", async ({

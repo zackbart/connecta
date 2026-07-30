@@ -24,8 +24,8 @@ migrations, and secrets. See [deployment architecture](../../documentation/opera
 the package: storage backends are deployment-owned, so the package ships only
 the generic `KVStorage` and `ActivityStore` contracts. Workers KV is eventually
 consistent across locations; use a strongly consistent `KVStorage` adapter when
-OAuth disconnect, credential rotation, or access-token revocation must become
-globally visible immediately.
+OAuth disconnect, credential rotation, or access-token issuance/revocation must
+become globally visible immediately.
 
 ## Deploy
 
