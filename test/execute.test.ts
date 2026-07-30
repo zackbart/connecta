@@ -145,6 +145,111 @@ describe("unwrapMcpResult", () => {
 });
 
 describe("buildSandboxProviders", () => {
+  it("keeps connector guide identifiers on every flat search shape", async () => {
+    const connector = (
+      id: string,
+      usageGuide?: string,
+    ): Connector => ({
+      id,
+      kind: "api",
+      ...(usageGuide ? { usageGuide } : {}),
+      async listTools() {
+        return [
+          {
+            name: "find_alpha",
+            description: "Find alpha records",
+            annotations: { readOnlyHint: true },
+          },
+          {
+            name: "list_beta",
+            description: "List beta records",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool() {
+        return {};
+      },
+    });
+    const providers = await buildSandboxProviders(
+      makeRegistry([
+        connector("guided", "# Guided usage"),
+        connector("plain"),
+      ]),
+      BASE,
+      silentLogger,
+    );
+    const search = required(connectaProvider(providers).fns.search);
+
+    const browse = (await search({ limit: 100 })) as {
+      tools: Array<{ address: string; guide?: string }>;
+    };
+    expect(
+      browse.tools
+        .filter((tool) => tool.address.startsWith("guided."))
+        .map((tool) => tool.guide),
+    ).toEqual(["connector:guided", "connector:guided"]);
+    expect(
+      browse.tools
+        .filter((tool) => tool.address.startsWith("plain."))
+        .every((tool) => !Object.hasOwn(tool, "guide")),
+    ).toBe(true);
+
+    const firstPage = (await search({
+      connector: "guided",
+      limit: 1,
+    })) as {
+      tools: Array<{ guide?: string }>;
+      hasMore: boolean;
+      nextOffset?: number;
+    };
+    const secondPage = (await search({
+      connector: "guided",
+      limit: 1,
+      offset: firstPage.nextOffset,
+    })) as { tools: Array<{ guide?: string }>; hasMore: boolean };
+    expect(firstPage.tools[0]?.guide).toBe("connector:guided");
+    expect(firstPage.hasMore).toBe(true);
+    expect(secondPage.tools[0]?.guide).toBe("connector:guided");
+    expect(secondPage.hasMore).toBe(false);
+
+    const partial = (await search({
+      query: "alpha unmatched",
+      connector: "guided",
+    })) as {
+      tools: Array<{ guide?: string }>;
+      matchMode?: string;
+    };
+    expect(partial.matchMode).toBe("partial");
+    expect(partial.tools[0]?.guide).toBe("connector:guided");
+
+    const noMatch = (await search({
+      query: "unfindable",
+      connector: "guided",
+    })) as { tools: unknown[] };
+    expect(noMatch.tools).toEqual([]);
+
+    const searchBytes = async (usageGuide?: string) => {
+      const sized = await buildSandboxProviders(
+        makeRegistry([connector("sized", usageGuide)]),
+        BASE,
+        silentLogger,
+      );
+      return JSON.stringify(
+        await required(connectaProvider(sized).fns.search)({
+          connector: "sized",
+          limit: 100,
+        }),
+      ).length;
+    };
+    const guidedBytes = await searchBytes("# Sized usage");
+    const plainBytes = await searchBytes();
+    expect(guidedBytes - plainBytes).toBe(
+      2 * ',"guide":"connector:sized"'.length,
+    );
+    expect(guidedBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
+  });
+
   it("touches no catalog at setup and only the requested connector at call time", async () => {
     const catalogCalls = new Map<string, number>();
     const counted = (connector: Connector): Connector => ({

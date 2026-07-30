@@ -2,6 +2,25 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+Two agent-recovery gaps are closed without changing the seven-tool surface.
+Code-mode search now points directly at connector guides, and predictable
+remote argument mistakes return bounded schema findings before provider
+dispatch. Deployments without connector guides and calls with valid arguments
+are unchanged.
+
+### Fixed
+
+- **Connector guides survive code-mode search.** Every guided tool returned by
+  `connecta.search` carries the same `connector:<id>` identifier as
+  `search_tools`, including scoped, paginated, and partial results.
+- **Remote argument mistakes are structured and non-retryable.** Supported
+  advertised input schemas produce `invalid_args` with bounded JSON Pointer,
+  keyword, and expected-shape findings across direct, destructive, batch, and
+  generated-code calls. Submitted values are not copied into recovery metadata,
+  and unknown provider error formats remain generic.
+
 ## 0.10.2 — 2026-07-30
 
 A prescribed deployment path for agents and operators. `connecta init` now

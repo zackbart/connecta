@@ -1,5 +1,10 @@
 import { Validator } from "@cfworker/json-schema";
 import { ConnectorCallError } from "./errors.js";
+import type {
+  ArgumentValidationDetails,
+  ArgumentValidationIssue,
+} from "./errors.js";
+import { MAX_ARGUMENT_VALIDATION_ISSUES } from "./errors.js";
 import type { JsonSchema, Logger } from "./types.js";
 
 export interface ValidateToolInputOptions {
@@ -42,6 +47,128 @@ export interface PrecompileValidatorOptions {
 // breaking a working tool). A WeakMap so schemas belonging to a discarded
 // connector are collectable, the same pattern compactSchema uses.
 const validators = new WeakMap<JsonSchema, Validator | null>();
+const REQUIRED_PROPERTY_RE =
+  /^Instance does not have required property "([^"]+)"\.$/;
+
+interface ValidationUnit {
+  keyword: string;
+  keywordLocation: string;
+  instanceLocation: string;
+  error: string;
+}
+
+function decodePointerPart(value: string): string {
+  return value.replaceAll("~1", "/").replaceAll("~0", "~");
+}
+
+function encodePointerPart(value: string): string {
+  return value.replaceAll("~", "~0").replaceAll("/", "~1");
+}
+
+function pointerValue(value: unknown, pointer: string): unknown {
+  if (pointer === "#") return value;
+  if (!pointer.startsWith("#/")) return undefined;
+  let current = value;
+  for (const part of pointer.slice(2).split("/").map(decodePointerPart)) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function argumentPath(location: string): string {
+  if (location === "#") return "/";
+  return location.startsWith("#") ? location.slice(1) || "/" : "/";
+}
+
+function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefined {
+  if (unit.keyword === "type") {
+    const value = pointerValue(schema, unit.keywordLocation);
+    if (typeof value === "string") return value;
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      return value.join(" | ");
+    }
+  }
+  if (unit.keyword === "required") {
+    const missing = REQUIRED_PROPERTY_RE.exec(unit.error)?.[1];
+    if (!missing) return undefined;
+    const parentLocation = unit.keywordLocation.replace(/\/required$/, "");
+    const value = pointerValue(
+      schema,
+      `${parentLocation}/properties/${encodePointerPart(missing)}/type`,
+    );
+    if (typeof value === "string") return value;
+    if (Array.isArray(value) && value.every((item) => typeof item === "string")) {
+      return value.join(" | ");
+    }
+    return "present";
+  }
+  const fixed: Record<string, string> = {
+    additionalProperties: "no additional properties",
+    enum: "one of the declared values",
+    const: "the declared constant",
+    minLength: "the declared minimum length",
+    maxLength: "the declared maximum length",
+    minimum: "the declared minimum",
+    maximum: "the declared maximum",
+    pattern: "the declared string pattern",
+  };
+  return fixed[unit.keyword];
+}
+
+function validationDetails(
+  schema: JsonSchema,
+  units: ValidationUnit[],
+): ArgumentValidationDetails {
+  const leafUnits = units.filter(
+    (unit) =>
+      ![
+        "properties",
+        "items",
+        "allOf",
+        "anyOf",
+        "oneOf",
+        "if",
+        "not",
+        "patternProperties",
+        "additionalProperties",
+      ].includes(unit.keyword),
+  );
+  const issues: ArgumentValidationIssue[] = [];
+  for (const unit of leafUnits) {
+    const missing =
+      unit.keyword === "required"
+        ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1]
+        : undefined;
+    const path =
+      missing !== undefined
+        ? `${argumentPath(unit.instanceLocation).replace(/\/$/, "")}/${encodePointerPart(missing)}`
+        : argumentPath(unit.instanceLocation);
+    const code = unit.keyword === "false" ? "additionalProperties" : unit.keyword;
+    const expected =
+      expectedType(schema, unit) ??
+      (code === "additionalProperties"
+        ? "no additional properties"
+        : "the declared schema constraint");
+    const issue = { path, code, expected };
+    if (
+      !issues.some(
+        (existing) =>
+          existing.path === issue.path &&
+          existing.code === issue.code &&
+          existing.expected === issue.expected,
+      )
+    ) {
+      issues.push(issue);
+    }
+  }
+  return {
+    issues: issues.slice(0, MAX_ARGUMENT_VALIDATION_ISSUES),
+    ...(issues.length > MAX_ARGUMENT_VALIDATION_ISSUES
+      ? { truncated: true as const }
+      : {}),
+  };
+}
 
 function unevaluableSchema(address: string): ConnectorCallError {
   return new ConnectorCallError(
@@ -127,6 +254,7 @@ export function validateToolInput(
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
+      { validation: validationDetails(schema, result.errors) },
     );
   }
   return null;

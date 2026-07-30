@@ -66,6 +66,45 @@ describe("classifyCallError", () => {
     });
   });
 
+  it("preserves structured validation findings", () => {
+    const validation = {
+      issues: [{ path: "/title", code: "type", expected: "string" }],
+    };
+    expect(
+      classifyCallError(
+        new ConnectorCallError("invalid_args", "invalid title", {
+          validation,
+        }),
+      ),
+    ).toEqual({
+      code: "invalid_args",
+      message: "invalid title",
+      retryable: false,
+      validation,
+    });
+  });
+
+  it("bounds validation issue count and fields in the typed constructor", () => {
+    const details = classifyCallError(
+      new ConnectorCallError("invalid_args", "invalid", {
+        validation: {
+          issues: Array.from({ length: 5 }, (_, index) => ({
+            path: `/${"p".repeat(300)}${index}`,
+            code: "c".repeat(100),
+            expected: "e".repeat(200),
+          })),
+        },
+      }),
+    );
+    expect(details.validation?.issues).toHaveLength(3);
+    expect(details.validation?.truncated).toBe(true);
+    expect(details.validation?.issues[0]?.path.length).toBeLessThanOrEqual(256);
+    expect(details.validation?.issues[0]?.code.length).toBeLessThanOrEqual(64);
+    expect(
+      details.validation?.issues[0]?.expected.length,
+    ).toBeLessThanOrEqual(128);
+  });
+
   it("falls back to the message heuristic for plain errors", () => {
     expect(classifyCallError(new Error("request timed out"))).toMatchObject({
       code: "timeout",

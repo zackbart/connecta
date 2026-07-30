@@ -20,6 +20,7 @@ import { unwrapMcpResult } from "./mcp-result.js";
 import type { RegistryView } from "./registry.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type { ToolDef } from "./types.js";
+import { validateToolInput } from "./validate.js";
 
 /**
  * The longest the engine will park a synchronous inbound request in *waiting
@@ -299,6 +300,25 @@ export class InvocationService {
                 `Retry ${target.connector.id}.${target.toolName} after ` +
                 "the operator completes recovery.",
             }
+          : error.code === "invalid_args" && error.validation && target
+            ? {
+                ...error,
+                connector: target.connector.id,
+                operation: `${target.connector.id}.${target.toolName}`,
+                nextAction: {
+                  tool: "search_tools" as const,
+                  arguments: {
+                    query: target.toolName,
+                    connector: target.connector.id,
+                    includeSchemas: "compact" as const,
+                  },
+                  purpose:
+                    "Inspect the current input shape if the validation findings are not sufficient.",
+                },
+                retry:
+                  `Correct the listed arguments and retry ` +
+                  `${target.connector.id}.${target.toolName}.`,
+              }
           : error;
       record(
         details.code === "timeout"
@@ -360,6 +380,30 @@ export class InvocationService {
           `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
         ),
       );
+    }
+
+    // Remote MCP tools advertise their input schema in the catalog. Validate
+    // against that same request-local definition before admission or provider
+    // dispatch, so a predictable mismatch stays structured instead of being
+    // flattened into provider-specific error prose. Unsupported schemas retain
+    // validateToolInput's fail-open behavior and reach the downstream normally.
+    if (
+      resolved.connector.kind === "mcp" &&
+      resolved.definition.inputSchema
+    ) {
+      const invalid = validateToolInput(
+        resolved.definition.inputSchema,
+        args ?? {},
+        {
+          address: `${resolved.connector.id}.${resolved.toolName}`,
+          logger: this.registry.contextFor(
+            resolved.connector.id,
+            this.catalog.baseUrl,
+            this.catalog.requestScope,
+          ).logger,
+        },
+      );
+      if (invalid) return failed(classifyCallError(invalid));
     }
 
     try {

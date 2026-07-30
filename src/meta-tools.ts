@@ -1114,6 +1114,7 @@ export function createMetaTools(
     if (!outcome.ok) {
       const failedResult =
         outcome.error.code === "auth_required" ||
+        outcome.error.code === "invalid_args" ||
         outcome.error.code === "input_required_unsupported" ||
         call.resultMode === "value"
           ? jsonResult({
@@ -1126,6 +1127,7 @@ export function createMetaTools(
           : errorResult(outcome.error.message);
       if (
         outcome.error.code === "auth_required" ||
+        outcome.error.code === "invalid_args" ||
         outcome.error.code === "input_required_unsupported"
       ) {
         failedResult.isError = true;
