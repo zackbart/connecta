@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
 import {
+  compactDiscoverySchema,
+  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+} from "../src/catalog.js";
+import {
   CredentialVault,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
 } from "../src/credentials.js";
@@ -36,6 +40,36 @@ const CREDENTIAL_KEY = Buffer.alloc(32, 11).toString("base64");
 
 function textOf(result: { content: { text: string }[] }): unknown {
   return JSON.parse(required(result.content[0]).text);
+}
+
+function expectStructurallyCompleteTypeShape(text: string): void {
+  const pairs = new Map([
+    ["}", "{"],
+    ["]", "["],
+    [")", "("],
+  ]);
+  const stack: string[] = [];
+  let inString = false;
+  let escaped = false;
+  for (const char of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[" || char === "(") {
+      stack.push(char);
+    } else {
+      const opener = pairs.get(char);
+      if (opener) expect(stack.pop()).toBe(opener);
+    }
+  }
+  expect(inString).toBe(false);
+  expect(stack).toEqual([]);
+  expect(text).not.toContain("\uFFFD");
 }
 
 function registry() {
@@ -1604,6 +1638,94 @@ describe("search_tools", () => {
     expect(required(required(full.connectors[0]).tools[0]).description).toBe(longDescription);
   });
 
+  it("keeps a representative compact page within an agent-context budget", async () => {
+    const propertyProse = `redundant-property-prose-${"detail ".repeat(16)}`;
+    const inputSchema = {
+      type: "object",
+      properties: Object.fromEntries([
+        ...Array.from({ length: 80 }, (_, index) => [
+          `optionalField${index}`,
+          { type: "string", description: propertyProse },
+        ]),
+        [
+          "recordId",
+          { type: "string", description: `${propertyProse} required` },
+        ],
+      ]),
+      required: ["recordId"],
+    };
+    const connector: Connector = {
+      id: "context_budget",
+      description: `connector-prose-${"background ".repeat(100)}`,
+      staticTools: Array.from({ length: 8 }, (_, index) => ({
+        name: `read_record_${index}`,
+        description: `Read one record ${index}. ${"Long operational detail. ".repeat(30)}`,
+        inputSchema,
+        annotations: { readOnlyHint: true },
+      })),
+      async listTools() {
+        return [];
+      },
+      async callTool(name, args) {
+        return {
+          name,
+          recordId: (args as Record<string, unknown>).recordId,
+        };
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const compactResult = await mt.searchTools({
+      includeSchemas: "compact",
+    });
+    const compactText = required(compactResult.content[0]).text;
+    const compact = textOf(compactResult) as SearchResult;
+    const tools = required(compact.connectors[0]).tools as Array<
+      SearchResult["connectors"][number]["tools"][number] & {
+        inputSchema: string;
+        inputSchemaTruncated?: true;
+      }
+    >;
+
+    expect(new TextEncoder().encode(compactText).length).toBeLessThan(14_000);
+    expect(compactText).not.toContain("redundant-property-prose");
+    expect(compactText).not.toContain("connector-prose");
+    expect(tools).toHaveLength(8);
+    expect(tools.every((tool) => tool.inputSchemaTruncated)).toBe(true);
+    expect(
+      tools.every(
+        (tool) =>
+          new TextEncoder().encode(tool.inputSchema).length <=
+          MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+      ),
+    ).toBe(true);
+    expect(required(tools[0]).inputSchema).toMatch(
+      /^\{ "recordId": unknown, "optionalField0"\?: unknown/,
+    );
+
+    // The required-first routing shape is enough for the simple read; no
+    // describe round trip is needed.
+    expect(
+      textOf(
+        await mt.callTool({
+          address: required(tools[0]).address,
+          args: { recordId: "rec_123" },
+        }),
+      ),
+    ).toEqual({ name: "read_record_0", recordId: "rec_123" });
+
+    const exactResult = await mt.searchTools({
+      limit: 8,
+      fullDescriptions: true,
+      includeSchemas: "json",
+    });
+    const exactText = required(exactResult.content[0]).text;
+    expect(exactText).toContain("redundant-property-prose");
+    expect(exactText).toContain("Long operational detail");
+    expect(new TextEncoder().encode(compactText).length).toBeLessThan(
+      new TextEncoder().encode(exactText).length * 0.15,
+    );
+  });
+
   it("optionally includes compact schemas and annotations for API and MCP tools", async () => {
     const apiConnector = api("weather", {
       description: "Weather API",
@@ -1843,6 +1965,54 @@ describe("compact schema rendering", () => {
     };
     const shape = await shapeOf(schema);
     expect(shape).toBe("{ pt: { x?: number } }");
+  });
+
+  it("keeps truncated emoji enums and nested objects structurally complete", () => {
+    const emojiEnum = compactDiscoverySchema({
+      enum: Array.from(
+        { length: 80 },
+        (_, index) => `${"😀".repeat(12)}-${index}`,
+      ),
+    });
+    expect(emojiEnum).toEqual({
+      text: "unknown /* truncated */",
+      truncated: true,
+    });
+    expectStructurallyCompleteTypeShape(emojiEnum.text);
+
+    const nestedObject = compactDiscoverySchema({
+      type: "object",
+      properties: {
+        payload: {
+          type: "object",
+          properties: Object.fromEntries(
+            Array.from({ length: 120 }, (_, index) => [
+              `nestedField${index}`,
+              {
+                type: "object",
+                properties: {
+                  alpha: { type: "string" },
+                  beta: { type: "integer" },
+                },
+              },
+            ]),
+          ),
+        },
+        traceId: { type: "string" },
+      },
+      required: ["payload"],
+    });
+    expect(nestedObject.truncated).toBe(true);
+    expect(nestedObject.text).toBe(
+      '{ "payload": unknown, "traceId"?: unknown } /* truncated */',
+    );
+    expectStructurallyCompleteTypeShape(nestedObject.text);
+
+    for (const shape of [emojiEnum.text, nestedObject.text]) {
+      expect(new TextEncoder().encode(shape).length).toBeLessThanOrEqual(
+        MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+      );
+    }
   });
 });
 
