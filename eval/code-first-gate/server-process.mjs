@@ -8,16 +8,51 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 
+/**
+ * The three surfaces. `classic` is the control. `classic-plus-code` is today's
+ * ten-tool deployment and answers only "does adding execute_code help or hurt?"
+ * — it is reported and never gates the flip. `code-first` is the seven-tool
+ * consolidated surface #224 accepts, and it is the arm the verdict keys on.
+ */
 export const ARMS = {
-  code: { executor: "enabled", control: false },
-  classic: { executor: "disabled", control: true },
+  classic: {
+    executor: "disabled",
+    suppress: [],
+    role: "control",
+    expectedToolCount: 9,
+  },
+  "classic-plus-code": {
+    executor: "enabled",
+    suppress: [],
+    role: "incremental",
+    expectedToolCount: 10,
+  },
+  "code-first": {
+    executor: "enabled",
+    suppress: ["list_connectors", "describe_tools", "batch_call"],
+    role: "candidate",
+    expectedToolCount: 7,
+  },
 };
 
+export const ARM_NAMES = Object.keys(ARMS);
+export const CANDIDATE_ARM = "code-first";
+export const CONTROL_ARM = "classic";
+
 /** Start one gate server on an ephemeral port; resolve when it reports ready. */
-export function startGateServer({ arm, token, sourceCommit }) {
+export function startGateServer({
+  arm,
+  token,
+  activityToken,
+  sourceCommit,
+  catalog = "core",
+  downstreamDelayMs = 0,
+}) {
   const configuration = ARMS[arm];
   if (!configuration) {
-    throw new Error(`Unknown arm "${arm}". Choose code and/or classic.`);
+    throw new Error(
+      `Unknown arm "${arm}". Choose one or more of ${ARM_NAMES.join(", ")}.`,
+    );
   }
   const child = spawn(
     process.execPath,
@@ -28,8 +63,12 @@ export function startGateServer({ arm, token, sourceCommit }) {
         ...process.env,
         CONNECTA_GATE_PORT: "0",
         CONNECTA_GATE_TOKEN: token,
+        CONNECTA_GATE_ACTIVITY_TOKEN: activityToken,
         CONNECTA_GATE_SOURCE_COMMIT: sourceCommit,
         CONNECTA_GATE_EXECUTOR: configuration.executor,
+        CONNECTA_GATE_SUPPRESS: configuration.suppress.join(","),
+        CONNECTA_GATE_CATALOG: catalog,
+        CONNECTA_GATE_DOWNSTREAM_DELAY_MS: String(downstreamDelayMs),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -93,12 +132,15 @@ export async function stopGateServer(child) {
 }
 
 /**
- * Read the connecta activity events this deployment recorded. Payload-free by
- * construction — the event type has nowhere to put arguments, results, or code.
+ * Read the connecta activity events this deployment recorded, plus the fixtures'
+ * own mutation counters. Payload-free by construction — the event type has
+ * nowhere to put arguments, results, or code. Guarded by its own token, never the
+ * MCP bearer: the agent under test holds that one, and an instrument the subject
+ * can read is not an instrument.
  */
-export async function readActivity(activityUrl, token) {
+export async function readActivity(activityUrl, activityToken) {
   const response = await fetch(activityUrl, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { Authorization: `Bearer ${activityToken}` },
   });
   if (!response.ok) {
     throw new Error(`Activity read failed with HTTP ${response.status}.`);
@@ -107,5 +149,8 @@ export async function readActivity(activityUrl, token) {
   if (!Array.isArray(body?.events)) {
     throw new Error("Activity response did not contain an events array.");
   }
-  return { events: body.events, rollbacks: body.rollbacks ?? 0 };
+  return {
+    events: body.events,
+    mutations: body.mutations ?? { rollbacks: 0, purgeAttempts: 0 },
+  };
 }

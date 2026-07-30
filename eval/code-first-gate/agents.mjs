@@ -4,17 +4,26 @@
 //
 // Both drivers are configured to strip everything that is not connecta: no user
 // configuration, no built-in tools, no session persistence, no host features,
-// and — for the Claude driver — the corpus system prompt in place of the
-// harness's own. What is being measured is connecta's surface, not the coding
-// agent wrapped around it.
+// and the corpus system prompt in place of the harness's own. What is being
+// measured is connecta's surface, not the coding agent wrapped around it.
 //
 // The transcript is the client seat: every tool call the model issued, every
 // result it saw, and the provider's own token accounting. Nothing here asks
-// connecta to record a payload.
+// connecta to record a payload, and no driver is handed the token that reads the
+// activity feed.
 
 import { spawn, execFileSync } from "node:child_process";
 
 const DEFAULT_TIMEOUT_MS = 300_000;
+
+/**
+ * How a driver installed the corpus system prompt. `replaced` means the harness's
+ * own instructions are gone; `prepended` means they are still there and the
+ * sample is confounded by them. The report refuses to issue an absolute verdict
+ * for a model whose samples are `prepended`.
+ */
+const PROMPT_REPLACED = "replaced";
+const PROMPT_PREPENDED = "prepended";
 
 function parseJson(text) {
   try {
@@ -81,15 +90,6 @@ async function streamJsonProcess(command, args, options, onEvent) {
     });
   });
   return { exitCode, stderr: stderr.slice(-4_000) };
-}
-
-function mcpToolName(driver, rawName) {
-  if (driver === "claude") {
-    const match = rawName.match(/^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/);
-    if (match) return { server: match[1], tool: match[2] };
-    return { server: null, tool: rawName };
-  }
-  return { server: null, tool: rawName };
 }
 
 // ---------------------------------------------------------------------------
@@ -160,40 +160,72 @@ const claudeDriver = {
             if (block.type === "text" && typeof block.text === "string") {
               if (block.text.trim() !== "") {
                 finalText = block.text;
-                events.push({ kind: "assistant_text", atMs: at(), text: block.text });
+                events.push({
+                  kind: "assistant_text",
+                  atMs: at(),
+                  text: block.text,
+                });
               }
               continue;
             }
-            if (block.type === "tool_use") {
-              const { server, tool } = mcpToolName("claude", block.name ?? "");
-              pending.set(block.id, { server, tool, atMs: at() });
+            if (block.type !== "tool_use") continue;
+            const name = block.name ?? "";
+            const match = name.match(/^mcp__([^_]+(?:_[^_]+)*?)__(.+)$/);
+            if (!match) {
+              // `--tools ""` should have left nothing but MCP tools. If a
+              // built-in shows up anyway, the isolation assumption is wrong and
+              // the sample must say so rather than counting it as connecta work.
               events.push({
-                kind: "tool_call",
+                kind: "other_action",
                 atMs: at(),
-                server,
-                tool,
-                args: block.input ?? {},
+                type: `non_mcp_tool:${name}`,
               });
+              continue;
             }
+            pending.set(block.id, { server: match[1], tool: match[2], atMs: at() });
+            events.push({
+              kind: "tool_call",
+              atMs: at(),
+              mcp: true,
+              server: match[1],
+              tool: match[2],
+              args: block.input ?? {},
+            });
           }
           return;
         }
         if (event.type === "user") {
-          for (const block of event.message?.content ?? []) {
-            if (block.type !== "tool_result") continue;
+          // One user turn carries every tool_result of a parallel batch. Stamping
+          // each result with "now minus its own start" would charge k parallel
+          // calls k times the batch's wall clock, which would flatter whichever
+          // arm fans out least. Attribute the batch's elapsed time once, split
+          // evenly, so the per-sample sum is the wall-clock cost.
+          const results = (event.message?.content ?? []).filter(
+            (block) => block.type === "tool_result",
+          );
+          if (results.length === 0) return;
+          const now = at();
+          const starts = results.map(
+            (block) => pending.get(block.tool_use_id)?.atMs ?? now,
+          );
+          const groupElapsed = Math.max(0, now - Math.min(...starts));
+          const share = groupElapsed / results.length;
+          for (const block of results) {
             const call = pending.get(block.tool_use_id) ?? {
               server: null,
               tool: "unknown",
-              atMs: at(),
+              atMs: now,
             };
             pending.delete(block.tool_use_id);
             events.push({
               kind: "tool_result",
-              atMs: at(),
+              atMs: now,
+              mcp: true,
               server: call.server,
               tool: call.tool,
               isError: block.is_error === true,
-              durationMs: at() - call.atMs,
+              durationMs: share,
+              parallelGroupSize: results.length,
               result: block.content ?? null,
             });
           }
@@ -206,13 +238,10 @@ const claudeDriver = {
             ? event.permission_denials.length
             : 0;
           apiErrorStatus = event.api_error_status ?? null;
-          if (typeof event.result === "string" && event.result.trim() !== "") {
-            finalText = event.result;
-          }
-          // The session model comes from the init event, not from modelUsage:
-          // a harness that quietly bills a helper model for a side task puts a
-          // second entry in there, and picking one arbitrarily would mislabel
-          // the sample. Keep the whole breakdown instead.
+          // The session model comes from the init event, not from modelUsage: a
+          // harness that quietly bills a helper model for a side task puts a
+          // second entry in there, and picking one arbitrarily would mislabel the
+          // sample. Keep the whole breakdown instead.
           usageByModel = Object.fromEntries(
             Object.entries(event.modelUsage ?? {}).map(([name, entry]) => [
               name,
@@ -227,7 +256,9 @@ const claudeDriver = {
             const dominant = Object.entries(usageByModel).sort(
               (left, right) => right[1].outputTokens - left[1].outputTokens,
             )[0];
-            if (dominant) resolvedModel = dominant[0];
+            resolvedModel = dominant
+              ? dominant[0]
+              : `unresolved:${model ?? "default"}`;
           }
         }
       },
@@ -236,7 +267,8 @@ const claudeDriver = {
     return {
       driver: "claude",
       requestedModel: model ?? null,
-      resolvedModel: resolvedModel ?? model ?? "claude-default",
+      resolvedModel: resolvedModel ?? `unresolved:${model ?? "default"}`,
+      systemPromptMechanism: PROMPT_REPLACED,
       usageByModel,
       events,
       usage: claudeUsage(usage),
@@ -294,12 +326,30 @@ const CODEX_DISABLED_FEATURES = [
   "goals",
   "tool_suggest",
   "skill_search",
+  // The read-only sandbox still executes commands, and a shell is a route to the
+  // MCP endpoint and to the harness's own files. Disabling it is best-effort —
+  // `--disable` is sugar for `-c features.<name>=false` and an unrecognised name
+  // is a no-op without `--strict-config`. `hostActions` is the enforcement, and
+  // it is reported per arm whether or not this flag bites.
+  "command_execution",
 ];
+
+/**
+ * `prepend` is the known-working mechanism and `base_instructions` is the one
+ * that actually replaces Codex's own instructions. Default to replacement, with
+ * an escape hatch, and record which one a sample used — a `prepend` sample is
+ * confounded and the report says so instead of pretending otherwise.
+ */
+const codexPromptMode =
+  process.env.CONNECTA_GATE_CODEX_SYSTEM_PROMPT === "prepend"
+    ? "prepend"
+    : "base_instructions";
 
 const codexDriver = {
   name: "codex",
   version: () => commandVersion("codex", ["--version"]),
   async run({ prompt, systemPrompt, mcpUrl, token, model, timeoutMs, cwd }) {
+    const replaces = codexPromptMode === "base_instructions";
     const args = [
       "exec",
       "--json",
@@ -313,20 +363,24 @@ const codexDriver = {
       "--config",
       `mcp_servers.connecta.url="${mcpUrl}"`,
       "--config",
-      'mcp_servers.connecta.bearer_token_env_var="CONNECTA_GATE_TOKEN"',
+      'mcp_servers.connecta.bearer_token_env_var="CONNECTA_GATE_MCP_TOKEN"',
       "--config",
       'approval_policy="never"',
+      ...(replaces
+        ? ["--config", `base_instructions=${JSON.stringify(systemPrompt)}`]
+        : []),
       ...CODEX_DISABLED_FEATURES.flatMap((feature) => ["--disable", feature]),
       ...(model ? ["--model", model] : []),
-      // Codex has no system-prompt replacement flag, so the corpus prompt rides
-      // in front of the ask. Recorded in the results either way.
-      `${systemPrompt}\n\n${prompt}`,
+      replaces ? prompt : `${systemPrompt}\n\n${prompt}`,
     ];
     const started = performance.now();
     const events = [];
     const startedItems = new Map();
     let finalText = "";
-    let usage = {};
+    let resolvedModel;
+    let requestTokens = 0;
+    let responseTokens = 0;
+    let cachedInputTokens = 0;
     let turns = 0;
     const at = () => Math.round(performance.now() - started);
 
@@ -335,16 +389,29 @@ const codexDriver = {
       args,
       {
         cwd,
-        env: { ...process.env, CONNECTA_GATE_TOKEN: token },
+        // Only the MCP bearer. The activity token stays in the runner.
+        env: { ...process.env, CONNECTA_GATE_MCP_TOKEN: token },
         timeoutMs: timeoutMs ?? DEFAULT_TIMEOUT_MS,
       },
       (event) => {
+        if (resolvedModel === undefined) {
+          const candidate =
+            typeof event.model === "string"
+              ? event.model
+              : typeof event.session?.model === "string"
+                ? event.session.model
+                : typeof event.thread?.model === "string"
+                  ? event.thread.model
+                  : undefined;
+          if (candidate) resolvedModel = candidate;
+        }
         if (event.type === "item.started") {
           startedItems.set(event.item?.id, at());
           if (event.item?.type === "mcp_tool_call") {
             events.push({
               kind: "tool_call",
               atMs: at(),
+              mcp: true,
               server: event.item.server ?? null,
               tool: event.item.tool,
               args: event.item.arguments ?? {},
@@ -359,10 +426,12 @@ const codexDriver = {
             events.push({
               kind: "tool_result",
               atMs: at(),
+              mcp: true,
               server: item.server ?? null,
               tool: item.tool,
               isError: item.status !== "completed" || item.error != null,
-              durationMs: itemStarted === undefined ? null : at() - itemStarted,
+              durationMs: itemStarted === undefined ? 0 : at() - itemStarted,
+              parallelGroupSize: 1,
               result: item.result ?? null,
             });
             return;
@@ -380,25 +449,32 @@ const codexDriver = {
           return;
         }
         if (event.type === "turn.completed") {
-          usage = event.usage ?? {};
+          // Summed, not overwritten: a multi-turn tool loop reports usage once
+          // per turn and keeping only the last one undercounts the transcript.
+          const usage = event.usage ?? {};
+          requestTokens += usage.input_tokens ?? 0;
+          responseTokens +=
+            (usage.output_tokens ?? 0) + (usage.reasoning_output_tokens ?? 0);
+          cachedInputTokens += usage.cached_input_tokens ?? 0;
           turns += 1;
         }
       },
     );
 
-    const requestTokens = usage.input_tokens ?? 0;
-    const responseTokens = usage.output_tokens ?? 0;
     return {
       driver: "codex",
       requestedModel: model ?? null,
-      resolvedModel: model ?? "codex-default",
+      // Never fall back to the requested alias: an alias silently standing in for
+      // a version is exactly how two model versions get pooled into one number.
+      resolvedModel: resolvedModel ?? `unresolved:${model ?? "default"}`,
+      systemPromptMechanism: replaces ? PROMPT_REPLACED : PROMPT_PREPENDED,
       usageByModel: {},
       events,
       usage: {
         requestTokens,
         responseTokens,
         totalTokens: requestTokens + responseTokens,
-        cachedInputTokens: usage.cached_input_tokens ?? 0,
+        cachedInputTokens,
         modelCalls: turns,
       },
       finalText,
@@ -413,6 +489,7 @@ const codexDriver = {
 };
 
 export const DRIVERS = { claude: claudeDriver, codex: codexDriver };
+export { PROMPT_PREPENDED, PROMPT_REPLACED };
 
 export function driverFor(name) {
   const driver = DRIVERS[name];

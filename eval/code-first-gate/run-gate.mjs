@@ -4,15 +4,15 @@
 //   node run-gate.mjs --models claude:opus,codex:gpt-5 --samples 20
 //
 // Jobs are ordered sample-major: after five of twenty samples you have five
-// samples of every scenario, arm, and model rather than a complete picture of
-// the first model and nothing about the second. A campaign interrupted halfway
-// is therefore still balanced evidence.
+// samples of every task, arm, and model rather than a complete picture of the
+// first model and nothing about the second. A campaign interrupted halfway is
+// therefore still balanced evidence.
 //
 // A failed job becomes a recorded sample with `harnessError`, never an aborted
-// campaign — four hundred agent runs is too much spend to lose to one flake.
+// campaign — hundreds of agent runs is too much spend to lose to one flake.
 
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -25,6 +25,9 @@ import { measureSample, payloadFreeViolations } from "./measure.mjs";
 import { renderReport } from "./report.mjs";
 import {
   ARMS,
+  ARM_NAMES,
+  CANDIDATE_ARM,
+  CONTROL_ARM,
   readActivity,
   startGateServer,
   stopGateServer,
@@ -55,10 +58,10 @@ function flag(name) {
   return argv.includes(name);
 }
 
-function positiveInteger(name, fallback) {
+function nonNegativeInteger(name, fallback, minimum = 1) {
   const value = Number(option(name, String(fallback)));
-  if (!Number.isInteger(value) || value < 1) {
-    throw new Error(`${name} must be a positive integer.`);
+  if (!Number.isInteger(value) || value < minimum) {
+    throw new Error(`${name} must be an integer >= ${minimum}.`);
   }
   return value;
 }
@@ -83,27 +86,39 @@ if (requestedModels === "") {
   throw new Error('--models is required, e.g. --models "claude:opus,claude:sonnet".');
 }
 const modelSpecs = list(requestedModels).map(parseModelSpec);
-const samples = positiveInteger("--samples", 20);
-const concurrency = positiveInteger("--concurrency", 2);
-const timeoutMs = positiveInteger("--timeout-ms", 300_000);
-const armNames = list(option("--arms", "code,classic"));
+const samples = nonNegativeInteger("--samples", 20);
+const concurrency = nonNegativeInteger("--concurrency", 2);
+const timeoutMs = nonNegativeInteger("--timeout-ms", 300_000);
+const downstreamDelayMs = nonNegativeInteger("--downstream-delay-ms", 0, 0);
+const catalog = option("--catalog", "core");
+const armNames = list(option("--arms", ARM_NAMES.join(",")));
 const scenarioFilter = option("--scenarios", "all");
 const label = option("--label", "gate");
 const dryRun = flag("--dry-run");
 const keepTranscripts = flag("--keep-transcripts");
 const tokenizerName = process.env.CONNECTA_GATE_TOKENIZER ?? "o200k_base";
+// The MCP bearer goes to the agent under test. The activity token never does —
+// an instrument the subject can read is not an instrument.
 const bearer = "connecta-code-first-gate-token";
+const activityToken = `gate-activity-${randomBytes(16).toString("hex")}`;
 const outputPath = resolve(here, option("--output", `results/${label}.json`));
 const reportPath = resolve(here, option("--report", `results/${label}.md`));
 
 for (const arm of armNames) {
   if (!ARMS[arm]) {
-    throw new Error(`Unknown arm "${arm}". Choose code and/or classic.`);
+    throw new Error(
+      `Unknown arm "${arm}". Choose one or more of ${ARM_NAMES.join(", ")}.`,
+    );
   }
 }
-if (!armNames.includes("classic")) {
+if (!armNames.includes(CONTROL_ARM)) {
   process.stderr.write(
-    "warning: running without the classic control arm — token and round-trip deltas will be absent.\n",
+    `warning: running without the ${CONTROL_ARM} control arm — token, round-trip, and regression comparisons will be absent.\n`,
+  );
+}
+if (!armNames.includes(CANDIDATE_ARM)) {
+  process.stderr.write(
+    `warning: running without the ${CANDIDATE_ARM} arm — no flip verdict is available from this run.\n`,
   );
 }
 
@@ -117,32 +132,6 @@ if (scenarios.length === 0) {
       (scenario) => scenario.id,
     ).join(", ")}, or all.`,
   );
-}
-
-/**
- * The fixed cost of an arm: what its tool list actually advertises. Measured
- * once per arm from the client seat, because it is identical for every sample.
- */
-async function probeArm(arm) {
-  const server = startGateServer({ arm, token: bearer, sourceCommit });
-  try {
-    const ready = await server.ready;
-    const client = new Client({ name: "connecta-code-first-gate", version: "1.0.0" });
-    const transport = new StreamableHTTPClientTransport(new URL(ready.url), {
-      requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
-    });
-    await client.connect(transport);
-    const listed = await client.listTools();
-    await transport.close();
-    return {
-      arm,
-      toolCount: listed.tools.length,
-      tools: listed.tools.map((tool) => tool.name).sort(),
-      toolDefinitionTokens: tokens(JSON.stringify(listed.tools)),
-    };
-  } finally {
-    await stopGateServer(server.child);
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,6 +150,59 @@ const productDirty =
   ).trim() !== "";
 const tokenizer = getEncoding(tokenizerName);
 const tokens = (text) => tokenizer.encode(text).length;
+
+const serverOptions = {
+  token: bearer,
+  activityToken,
+  sourceCommit,
+  catalog,
+  downstreamDelayMs,
+};
+
+/**
+ * The fixed cost of an arm: what its tool list actually advertises, read from the
+ * client seat because that is what the model sees. Identical for every sample, so
+ * it is measured once. A surface that does not match its declared shape is a
+ * harness bug, not a finding, so it fails here rather than skewing a campaign.
+ */
+async function probeArm(arm) {
+  const server = startGateServer({ arm, ...serverOptions });
+  try {
+    const ready = await server.ready;
+    const client = new Client({
+      name: "connecta-code-first-gate",
+      version: "1.0.0",
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(ready.url), {
+      requestInit: { headers: { Authorization: `Bearer ${bearer}` } },
+    });
+    await client.connect(transport);
+    const listed = await client.listTools();
+    await transport.close();
+    const names = listed.tools.map((tool) => tool.name).sort();
+    const expected = ARMS[arm].expectedToolCount;
+    if (names.length !== expected) {
+      throw new Error(
+        `Arm "${arm}" advertised ${names.length} tools, expected ${expected}: ${names.join(", ")}.`,
+      );
+    }
+    for (const hidden of ARMS[arm].suppress) {
+      if (names.includes(hidden)) {
+        throw new Error(`Arm "${arm}" still advertises suppressed "${hidden}".`);
+      }
+    }
+    return {
+      arm,
+      role: ARMS[arm].role,
+      toolCount: names.length,
+      tools: names,
+      suppressed: [...ARMS[arm].suppress].sort(),
+      toolDefinitionTokens: tokens(JSON.stringify(listed.tools)),
+    };
+  } finally {
+    await stopGateServer(server.child);
+  }
+}
 
 const driverVersions = Object.fromEntries(
   [...new Set(modelSpecs.map((spec) => spec.driver))].map((name) => [
@@ -198,6 +240,7 @@ if (dryRun) {
         scenarios: scenarios.map((scenario) => scenario.id),
         samplesPerTaskPerModelPerArm: samples,
         agentSessions: jobs.length,
+        sessionsPerModel: jobs.length / modelSpecs.length,
       },
       null,
       2,
@@ -220,13 +263,48 @@ const invariantViolations = [];
 let nextJob = 0;
 let completed = 0;
 
-async function runJob(job) {
-  const server = startGateServer({
+function measureFor(job, transcript, activity, mutations, harnessError) {
+  return measureSample({
+    scenario: job.scenario,
+    variant: job.variant,
     arm: job.arm,
-    token: bearer,
-    sourceCommit,
+    transcript,
+    activity,
+    mutations,
+    advertisedTools: arms[job.arm].tools,
+    toolDefinitionTokens: arms[job.arm].toolDefinitionTokens,
+    tokenizer: tokens,
+    harnessError,
   });
-  const prompt = promptFor(job.scenario, job.variant);
+}
+
+function record(job, transcript, measured) {
+  return {
+    model: job.spec.spec,
+    driver: job.spec.driver,
+    requestedModel: job.spec.model,
+    resolvedModel: transcript?.resolvedModel ?? `unresolved:${job.spec.model}`,
+    usageByModel: transcript?.usageByModel ?? {},
+    sample: job.sample,
+    promptSha256: sha256(promptFor(job.scenario, job.variant)),
+    ...measured,
+    // Transcripts are the audit trail for a disputed sample. They are large, so
+    // they are opt-in — and a failed sample keeps its transcript either way,
+    // because that is the one you will want to read.
+    ...(keepTranscripts || !measured.success
+      ? {
+          transcript: {
+            events: transcript?.events ?? [],
+            finalText: transcript?.finalText ?? "",
+            stderr: transcript?.stderr ?? "",
+          },
+        }
+      : {}),
+  };
+}
+
+async function runJob(job) {
+  const server = startGateServer({ arm: job.arm, ...serverOptions });
   try {
     const ready = await server.ready;
     const driver = driverFor(job.spec.driver);
@@ -234,7 +312,7 @@ async function runJob(job) {
     let harnessError;
     try {
       transcript = await driver.run({
-        prompt,
+        prompt: promptFor(job.scenario, job.variant),
         systemPrompt: SYSTEM_PROMPT,
         mcpUrl: ready.url,
         token: bearer,
@@ -248,69 +326,31 @@ async function runJob(job) {
     } catch (error) {
       harnessError = error instanceof Error ? error.message : String(error);
     }
-    const { events: activity, rollbacks } = await readActivity(
+    const { events: activity, mutations } = await readActivity(
       ready.activityUrl,
-      bearer,
+      activityToken,
     );
     const violations = payloadFreeViolations(activity);
     if (violations.length > 0) {
       invariantViolations.push({ job: job.index, keys: violations });
     }
-    const measured = measureSample({
-      scenario: job.scenario,
-      variant: job.variant,
-      arm: job.arm,
+    return record(
+      job,
       transcript,
-      activity,
-      rollbacks,
-      advertisedTools: arms[job.arm].tools,
-      toolDefinitionTokens: arms[job.arm].toolDefinitionTokens,
-      tokenizer: tokens,
-      harnessError,
-    });
-    return {
-      model: job.spec.spec,
-      driver: job.spec.driver,
-      requestedModel: job.spec.model,
-      resolvedModel: transcript?.resolvedModel ?? job.spec.model,
-      usageByModel: transcript?.usageByModel ?? {},
-      sample: job.sample,
-      promptSha256: sha256(prompt),
-      ...measured,
-      // Transcripts are the audit trail for a disputed sample. They are large,
-      // so they are opt-in — and a failed sample keeps its transcript either
-      // way, because that is the one you will want to read.
-      ...(keepTranscripts || !measured.success
-        ? {
-            transcript: {
-              events: transcript?.events ?? [],
-              finalText: transcript?.finalText ?? "",
-              stderr: transcript?.stderr ?? "",
-            },
-          }
-        : {}),
-    };
+      measureFor(job, transcript, activity, mutations, harnessError),
+    );
   } catch (error) {
-    return {
-      model: job.spec.spec,
-      driver: job.spec.driver,
-      requestedModel: job.spec.model,
-      resolvedModel: job.spec.model,
-      sample: job.sample,
-      promptSha256: sha256(prompt),
-      ...measureSample({
-        scenario: job.scenario,
-        variant: job.variant,
-        arm: job.arm,
-        transcript: undefined,
-        activity: [],
-        rollbacks: 0,
-        advertisedTools: arms[job.arm].tools,
-        toolDefinitionTokens: arms[job.arm].toolDefinitionTokens,
-        tokenizer: tokens,
-        harnessError: error instanceof Error ? error.message : String(error),
-      }),
-    };
+    return record(
+      job,
+      undefined,
+      measureFor(
+        job,
+        undefined,
+        [],
+        { rollbacks: 0, purgeAttempts: 0 },
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
   } finally {
     await stopGateServer(server.child);
   }
@@ -336,7 +376,7 @@ await Promise.all(
 );
 
 const run = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   generatedAt: new Date().toISOString(),
   label,
   corpusVersion: CORPUS_VERSION,
@@ -352,8 +392,11 @@ const run = {
     samplesPerTask: samples,
     concurrency,
     timeoutMs,
-    keepTranscripts,
+    catalog,
+    downstreamDelayMs,
     arms: armNames,
+    candidateArm: CANDIDATE_ARM,
+    controlArm: CONTROL_ARM,
     models: modelSpecs.map((spec) => spec.spec),
     scenarios: scenarios.map((scenario) => scenario.id),
     variantsPerScenario: Object.fromEntries(
@@ -362,6 +405,10 @@ const run = {
         scenario.variants.map((variant) => variant.id),
       ]),
     ),
+    intendedRoutes: Object.fromEntries(
+      scenarios.map((scenario) => [scenario.id, scenario.intendedRoute ?? {}]),
+    ),
+    keepTranscripts,
     systemPromptSha256: sha256(SYSTEM_PROMPT),
     corpusSha256: await fileHash("scenarios.mjs"),
     gateServerSha256: await fileHash("gate-server.ts"),
@@ -369,9 +416,9 @@ const run = {
     driversSha256: await fileHash("agents.mjs"),
     runnerSha256: await fileHash("run-gate.mjs"),
     isolation:
-      "Fresh gate server and throwaway agent session per sample; user configuration, built-in tools, session persistence, and host features disabled.",
+      "Fresh gate server and throwaway agent session per sample; user configuration, built-in tools, session persistence, and host features disabled. The activity token is never exported to a driver.",
     observation:
-      "Client-seat transcript plus connecta's payload-free activity events. The harness records no connecta-side payloads and asks connecta to record none.",
+      "Client-seat transcript, connecta's payload-free activity events, and the fixtures' own mutation counters. The harness records no connecta-side payloads and asks connecta to record none.",
   },
   arms,
   invariantViolations,
