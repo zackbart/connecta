@@ -41,18 +41,32 @@ and exact JSON-serialized definition, request, and response token surfaces.
 The default tokenizer is `o200k_base`; override it with
 `CONNECTA_EVAL_TOKENIZER`.
 
-The default run enables the isolated QuickJS executor and pins
-`surface: "classic"`, so it measures the ten-tool shape: this audit walks every
-top-level meta-tool by name, and three of them exist only on the classic surface
-([#234](https://github.com/zackbart/connecta/issues/234) is extending it to the
-seven-tool code-first surface a deployment now serves by default). Measure a
-deployment that omits its executor—nine tools, no `execute_code`—with:
+The suite measures the two deployment shapes Connecta intentionally serves:
+
+- The default run enables the isolated QuickJS executor and measures the
+  seven-tool code-first surface. Inventory, schema description, and batching
+  are exercised through `connecta.search`, `connecta.describe`, and
+  `connecta.batch` inside `execute_code`.
+- An executor-free run measures the supported nine-tool classic surface, where
+  `list_connectors`, `describe_tools`, and `batch_call` remain top-level tools.
+
+Run the executor-free shape with:
 
 ```sh
 npm --prefix eval/current-version run audit -- \
   --executor disabled \
   --output results/no-executor.json
 ```
+
+CI runs both commands on Node 20 and 22. The real but intentionally unused
+ten-tool configuration (`surface: "classic"` plus an executor) is not part of
+the release gate: it combines both routing styles without representing a
+deployment shape users are directed to serve.
+
+Every JSON result and Markdown report records its surface and executor mode.
+The harness validates each task's top-level route against the advertised tool
+list before calling it, so a surface/task mismatch fails with an audit-specific
+configuration error.
 
 Choose stable output names for release evidence:
 

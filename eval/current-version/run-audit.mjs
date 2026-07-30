@@ -142,10 +142,15 @@ try {
     token: bearer,
     tokenizerName,
   });
+  const listedNames = new Set(context.listed.tools.map((tool) => tool.name));
+  const surface = listedNames.has("list_connectors")
+    ? "classic"
+    : "code-first";
   const tasks = await runTaskAudit(context, {
     baseUrl: ready.baseUrl,
     operatorToken,
     executorEnabled,
+    surface,
   });
   const discovery = await runDiscoveryBenchmark(context, corpusPath);
   const observations = context.observations;
@@ -208,6 +213,7 @@ try {
       platform: `${process.platform}-${process.arch}`,
       tokenizer: tokenizerName,
       executorMode,
+      surface,
       corpusSha256: createHash("sha256").update(corpusBytes).digest("hex"),
     },
     connection: context.connection,
@@ -273,6 +279,7 @@ try {
       discovery: audit.discovery.metrics,
       totals: audit.totals,
       executorMode,
+      surface,
     })}\n`,
   );
   if (!audit.qualification.passed) {

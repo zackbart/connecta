@@ -11,11 +11,16 @@ function pass(condition, details = {}) {
   return { passed: Boolean(condition), ...details };
 }
 
+function programValue(result) {
+  return objectValue(result).result;
+}
+
 export async function runTaskAudit(
   context,
-  { baseUrl, operatorToken, executorEnabled },
+  { baseUrl, operatorToken, executorEnabled, surface },
 ) {
   const cases = [];
+  const codeFirst = surface === "code-first";
 
   async function task(name, tool, args, classify) {
     const { result, observation } = await context.call(
@@ -40,15 +45,40 @@ export async function runTaskAudit(
       { outcome: "guidance-fetched" },
     ),
   );
-  await task(
-    "inventory configured connectors",
-    "list_connectors",
-    { probe: false },
-    (result) =>
-      pass(Array.isArray(objectValue(result).connectors), {
-        outcome: "inventory-returned",
-      }),
-  );
+  if (codeFirst) {
+    await task(
+      "inventory configured connectors",
+      "execute_code",
+      {
+        code: "async () => await connecta.search({})",
+      },
+      (result) => {
+        const tools = programValue(result)?.tools;
+        return pass(
+          Array.isArray(tools) &&
+            tools.some((tool) => tool.address === "projects.list_issues"),
+          {
+            outcome: "inventory-returned",
+            capability: "list_connectors",
+            route: "connecta.search",
+            returned: tools?.length ?? 0,
+          },
+        );
+      },
+    );
+  } else {
+    await task(
+      "inventory configured connectors",
+      "list_connectors",
+      { probe: false },
+      (result) =>
+        pass(Array.isArray(objectValue(result).connectors), {
+          outcome: "inventory-returned",
+          capability: "list_connectors",
+          route: "list_connectors",
+        }),
+    );
+  }
   await task(
     "focused discovery",
     "search_tools",
@@ -72,17 +102,40 @@ export async function runTaskAudit(
       });
     },
   );
-  await task(
-    "inspect complete schema",
-    "describe_tools",
-    { addresses: ["controlled.records"], format: "json" },
-    (result) =>
-      pass(
-        Array.isArray(objectValue(result).tools) &&
-          objectValue(result).tools.length === 1,
-        { outcome: "schema-described" },
-      ),
-  );
+  if (codeFirst) {
+    await task(
+      "inspect complete schema",
+      "execute_code",
+      {
+        code:
+          'async () => await connecta.describe({ addresses: ["controlled.records"], format: "json" })',
+      },
+      (result) => {
+        const tools = programValue(result)?.tools;
+        return pass(Array.isArray(tools) && tools.length === 1, {
+          outcome: "schema-described",
+          capability: "describe_tools",
+          route: "connecta.describe",
+        });
+      },
+    );
+  } else {
+    await task(
+      "inspect complete schema",
+      "describe_tools",
+      { addresses: ["controlled.records"], format: "json" },
+      (result) =>
+        pass(
+          Array.isArray(objectValue(result).tools) &&
+            objectValue(result).tools.length === 1,
+          {
+            outcome: "schema-described",
+            capability: "describe_tools",
+            route: "describe_tools",
+          },
+        ),
+    );
+  }
   await task(
     "single read-only call",
     "call_tool",
@@ -175,35 +228,68 @@ export async function runTaskAudit(
       );
     },
   );
-  await task(
-    "batch independent reads",
-    "batch_call",
-    {
-      calls: [
-        {
-          address: "controlled.read_record",
-          args: { id: 11 },
-          fields: ["id", "score"],
-        },
-        {
-          address: "controlled.read_record",
-          args: { id: 12 },
-          fields: ["id", "group"],
-        },
-      ],
-      resultMode: "value",
-      diagnostics: true,
-    },
-    (result) => {
-      const value = objectValue(result);
-      return pass(
-        Array.isArray(value.results) &&
-          value.results.length === 2 &&
-          value.results.every((entry) => entry.ok === true),
-        { outcome: "batch-succeeded", resultCount: value.results?.length ?? 0 },
-      );
-    },
-  );
+  if (codeFirst) {
+    await task(
+      "batch independent reads",
+      "execute_code",
+      {
+        code:
+          "async () => await connecta.batch([" +
+          '{ address: "controlled.read_record", args: { id: 11 } },' +
+          '{ address: "controlled.read_record", args: { id: 12 } }' +
+          "])",
+      },
+      (result) => {
+        const value = programValue(result);
+        return pass(
+          Array.isArray(value) &&
+            value.length === 2 &&
+            value.every((entry) => entry.ok === true),
+          {
+            outcome: "batch-succeeded",
+            capability: "batch_call",
+            route: "connecta.batch",
+            resultCount: value?.length ?? 0,
+          },
+        );
+      },
+    );
+  } else {
+    await task(
+      "batch independent reads",
+      "batch_call",
+      {
+        calls: [
+          {
+            address: "controlled.read_record",
+            args: { id: 11 },
+            fields: ["id", "score"],
+          },
+          {
+            address: "controlled.read_record",
+            args: { id: 12 },
+            fields: ["id", "group"],
+          },
+        ],
+        resultMode: "value",
+        diagnostics: true,
+      },
+      (result) => {
+        const value = objectValue(result);
+        return pass(
+          Array.isArray(value.results) &&
+            value.results.length === 2 &&
+            value.results.every((entry) => entry.ok === true),
+          {
+            outcome: "batch-succeeded",
+            capability: "batch_call",
+            route: "batch_call",
+            resultCount: value.results?.length ?? 0,
+          },
+        );
+      },
+    );
+  }
   if (executorEnabled) {
     await task(
       "reduce records in code mode",

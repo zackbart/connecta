@@ -27,7 +27,7 @@ export function renderReport(audit, jsonName) {
 
 Source commit: \`${audit.source.commit}\`
 
-Runtime: Node ${audit.source.nodeVersion}; tokenizer \`${audit.source.tokenizer}\`; executor \`${audit.source.executorMode}\`
+Runtime: Node ${audit.source.nodeVersion}; tokenizer \`${audit.source.tokenizer}\`; surface \`${audit.source.surface}\`; executor \`${audit.source.executorMode}\`
 
 Machine-readable results: [\`${jsonName}\`](./${jsonName})
 
