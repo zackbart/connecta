@@ -450,13 +450,26 @@ export function createExecuteTool(
       // an unhandled tool failure keeps the same structured contract as
       // call_tool and batch_call. Failures caught by model code never reach
       // outcome.error and therefore remain under that code's control.
+      //
+      // An error the program let through unchanged matches exactly, and an
+      // exact match always wins: a program that wrapped one failure's message
+      // around another's must not have the wrong type attached. Containment is
+      // the fallback, so a wrapped message still reports its underlying type
+      // rather than losing it to prose.
       let invocationFailure: InvocationFailure | undefined;
-      for (let i = invocationFailures.length - 1; i >= 0; i--) {
-        const candidate = invocationFailures[i];
-        if (candidate && outcome.error.includes(candidate.message)) {
-          invocationFailure = candidate;
-          break;
+      for (const match of [
+        (candidate: InvocationFailure) => outcome.error === candidate.message,
+        (candidate: InvocationFailure) =>
+          outcome.error?.includes(candidate.message) === true,
+      ]) {
+        for (let i = invocationFailures.length - 1; i >= 0; i--) {
+          const candidate = invocationFailures[i];
+          if (candidate && match(candidate)) {
+            invocationFailure = candidate;
+            break;
+          }
         }
+        if (invocationFailure) break;
       }
       if (invocationFailure) {
         const result = jsonResult({

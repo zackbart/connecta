@@ -156,6 +156,33 @@ function contractConnectors(state: ContractState): Connector[] {
       };
     },
   };
+  const badCatalog: Connector = {
+    id: "badcatalog",
+    kind: "api",
+    description: "Its catalog cannot be loaded",
+    async listTools() {
+      throw new Error("catalog is unreachable");
+    },
+    async callTool() {
+      count("badcatalog.read");
+      return { done: true };
+    },
+  };
+  // Declares a credential with no vault behind it, so connecta cannot supply
+  // one and refuses before dispatch.
+  const needsStore: Connector = {
+    id: "needsstore",
+    kind: "api",
+    description: "Wants a credential this deployment cannot store",
+    credential: { label: "API token" },
+    async listTools() {
+      return [readOnly("read")];
+    },
+    async callTool() {
+      count("needsstore.read");
+      return { done: true };
+    },
+  };
   // An id whose text trips the retryable-message heuristic. A policy refusal
   // about this connector must still report retryable: false.
   const retryableLooking: Connector = {
@@ -188,7 +215,17 @@ function contractConnectors(state: ContractState): Connector[] {
       return new Promise<never>(() => {});
     },
   };
-  return [reader, remote, collide, odd, needsAuth, retryableLooking, hang];
+  return [
+    reader,
+    remote,
+    collide,
+    odd,
+    needsAuth,
+    badCatalog,
+    needsStore,
+    retryableLooking,
+    hang,
+  ];
 }
 
 /** One fresh registry, activity sink, and call counter per case. */
@@ -699,6 +736,26 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "E1, E6",
+    name: "a wrapped failure message still reports the underlying type",
+    code: `async () => {
+      try {
+        await connecta.call("reader.flaky", {});
+      } catch (err) {
+        throw new Error("while summarizing: " + err.message);
+      }
+    }`,
+    check(outcome) {
+      // Documented precedence: exact match first, containment second. Keeping
+      // the type beats keeping the program's prose.
+      expect(outcome.isError).toBe(true);
+      expect(outcome.value.error).toMatchObject({
+        code: "unavailable",
+        retryable: true,
+      });
+    },
+  },
+  {
     clauses: "E2, E7",
     name: "a policy refusal stays non-retryable however the address reads",
     code: `async () => {
@@ -742,13 +799,15 @@ export const CONTRACT_CASES: ContractCase[] = [
     code: `async () => {
       try { await connecta.call("reader.nope", {}); } catch (err) { void err; }
       try { await collide.get_thing({}); } catch (err) { void err; }
+      try { await connecta.call("badcatalog.read", {}); } catch (err) { void err; }
+      try { await connecta.call("needsstore.read", {}); } catch (err) { void err; }
       try { await connecta.call("nope.read", {}); } catch (err) { void err; }
       return "done";
     }`,
     check(outcome, state) {
       expect(outcome.isError, outcome.text).toBe(false);
-      // Two refusals resolved a connector and are recorded; the third never
-      // named a real connector, so there is nothing to attribute it to.
+      // Four refusals named a real connector and are recorded; the last never
+      // did, so there is nothing to attribute it to.
       expect(
         state.events.map((event) => [event.address, event.errorCode]),
       ).toEqual([
@@ -756,7 +815,12 @@ export const CONTRACT_CASES: ContractCase[] = [
         // The sanitized alias, not a canonical address: it is what the program
         // asked for, and no single tool owns it.
         ["collide.get_thing", "ambiguous_tool_alias"],
+        ["badcatalog.read", "catalog_lookup_failed"],
+        // Refused before dispatch, so no connector call happened.
+        ["needsstore.read", "auth_required"],
       ]);
+      expect(state.calls["badcatalog.read"]).toBeUndefined();
+      expect(state.calls["needsstore.read"]).toBeUndefined();
       for (const event of state.events) {
         expect(event.outcome).toBe("error");
         expect(event.source).toBe("execute_code");

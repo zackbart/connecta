@@ -49,7 +49,6 @@ as well as programs.
   the QuickJS 256 KiB bound reported `connecta.__callNamespace` — the internal
   dispatcher every shortcut namespace shares — where it now reports the
   `connector.tool` address the program called.
-
 - **An oversized program result is truncated once.** The over-cap notice is now
   sized so its *serialized* form fits the 24,000-character result cap.
   Previously the QuickJS path truncated in the child and again in the parent, so
