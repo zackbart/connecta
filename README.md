@@ -13,13 +13,17 @@ among them.
 
 ```mermaid
 flowchart LR
-    Agent["AI agent"] -- "writes a program" --> Sandbox
-    Agent -- "one deliberate call" --> Explicit
-    subgraph Connecta["Connecta — one MCP endpoint. Credentials stay here."]
+    Agent["AI agent"]
+    Integrations["The integrations you chose"]
+
+    subgraph Connecta["Connecta: one MCP endpoint; credentials stay here"]
         Sandbox["execute_code<br/>server-side sandbox"]
         Explicit["Explicit tools<br/>destructive calls, search, auth"]
     end
-    Sandbox --> Integrations["The integrations you chose"]
+
+    Agent -->|"writes a program"| Sandbox
+    Agent -->|"one deliberate call"| Explicit
+    Sandbox --> Integrations
     Explicit --> Integrations
 ```
 
