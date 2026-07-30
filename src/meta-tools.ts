@@ -236,23 +236,491 @@ function resolvePath(value: unknown, segments: string[]): unknown {
   return resolvePath(next, rest);
 }
 
-/** Select the given dot-paths from a value → `{ "<path>": value }` (omitting misses). */
+const MAX_PROJECTION_AVAILABLE_FIELDS = 20;
+const MAX_PROJECTION_SCHEMA_DEPTH = 12;
+const MAX_PROJECTION_SCHEMA_NODES = 200;
+const MAX_PROJECTION_SCHEMA_PATHS = 100;
+const MAX_PROJECTION_PATH_CHARS = 256;
+const MAX_PROJECTION_PATH_BYTES = 512;
+const MAX_PROJECTION_TOTAL_PATH_CHARS = 512;
+const MAX_PROJECTION_TOTAL_PATH_BYTES = 768;
+const JSON_SCHEMA_TYPES = new Set([
+  "array",
+  "boolean",
+  "integer",
+  "null",
+  "number",
+  "object",
+  "string",
+]);
+const NON_SEMANTIC_REF_SIBLINGS = new Set([
+  "$anchor",
+  "$comment",
+  "$defs",
+  "$id",
+  "$ref",
+  "$schema",
+  "default",
+  "definitions",
+  "deprecated",
+  "description",
+  "examples",
+  "readOnly",
+  "title",
+  "writeOnly",
+]);
+
+interface FieldProjection {
+  data: Record<string, unknown>;
+  unmatchedFields: string[];
+}
+
+interface ProjectionFeedback {
+  data: Record<string, unknown>;
+  $connecta: {
+    type: "field_projection";
+    unmatchedFields: string[];
+    schemaDeclared?: true;
+    schemaCoverage?: "complete" | "partial";
+    invalidFields?: string[];
+    availableFields?: string[];
+    availableFieldsTruncated?: true;
+  };
+}
+
+interface SchemaFieldAnalysis {
+  paths: string[];
+  complete: boolean;
+  truncated: boolean;
+}
+
+function localSchemaRef(root: unknown, ref: string): unknown | undefined {
+  if (ref === "#") return root;
+  if (
+    !ref.startsWith("#/") ||
+    ref.length > 2_048 ||
+    /~(?![01])/.test(ref)
+  ) {
+    return undefined;
+  }
+  const segments = ref.slice(2).split("/");
+  if (segments.length > MAX_PROJECTION_SCHEMA_DEPTH) return undefined;
+  let current = root;
+  for (const encoded of segments) {
+    if (current === null || typeof current !== "object") return undefined;
+    const key = encoded.replaceAll("~1", "/").replaceAll("~0", "~");
+    if (!Object.prototype.hasOwnProperty.call(current, key)) return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+function hasSchemaType(
+  schema: Record<string, unknown>,
+  wanted: string,
+): boolean {
+  return (
+    schema.type === wanted ||
+    (Array.isArray(schema.type) && schema.type.includes(wanted))
+  );
+}
+
+function selectableFieldName(name: string): boolean {
+  return name.length > 0 && !name.includes(".") && !name.endsWith("[]");
+}
+
+/**
+ * Collect selectable output paths without trusting a schema more than JSON
+ * Schema permits. Traversal is iterative and budgeted before sorting or
+ * rendering, so a cyclic, extremely deep, or extremely broad downstream
+ * schema cannot turn projection feedback into unbounded host work.
+ */
+function analyzeSchemaFields(root: unknown): SchemaFieldAnalysis {
+  interface PendingSchema {
+    schema: unknown;
+    prefix: string;
+    depth: number;
+    ancestors: Set<unknown>;
+  }
+  const pending: PendingSchema[] = [
+    { schema: root, prefix: "", depth: 0, ancestors: new Set() },
+  ];
+  const paths = new Set<string>();
+  let nodes = 0;
+  let totalPathChars = 0;
+  let totalPathBytes = 0;
+  let complete = true;
+  let truncated = false;
+
+  const addPath = (path: string): boolean => {
+    if (paths.has(path)) return true;
+    // Check UTF-16 length before encoding, so a hostile multi-megabyte key
+    // never causes a same-sized temporary allocation merely to reject it.
+    if (
+      path.length > MAX_PROJECTION_PATH_CHARS ||
+      totalPathChars + path.length > MAX_PROJECTION_TOTAL_PATH_CHARS
+    ) {
+      complete = false;
+      truncated = true;
+      return false;
+    }
+    const pathBytes = enc.encode(path).length;
+    if (
+      pathBytes > MAX_PROJECTION_PATH_BYTES ||
+      totalPathBytes + pathBytes > MAX_PROJECTION_TOTAL_PATH_BYTES ||
+      paths.size >= MAX_PROJECTION_SCHEMA_PATHS
+    ) {
+      complete = false;
+      truncated = true;
+      return false;
+    }
+    paths.add(path);
+    totalPathChars += path.length;
+    totalPathBytes += pathBytes;
+    return true;
+  };
+  const enqueue = (item: PendingSchema): boolean => {
+    if (nodes + pending.length >= MAX_PROJECTION_SCHEMA_NODES) {
+      complete = false;
+      truncated = true;
+      return false;
+    }
+    pending.push(item);
+    return true;
+  };
+
+  while (pending.length > 0) {
+    const item = pending.pop()!;
+    if (item.depth > MAX_PROJECTION_SCHEMA_DEPTH) {
+      complete = false;
+      truncated = true;
+      continue;
+    }
+    if (++nodes > MAX_PROJECTION_SCHEMA_NODES) {
+      complete = false;
+      truncated = true;
+      break;
+    }
+    if (item.schema === false) continue;
+    if (
+      item.schema === true ||
+      item.schema === null ||
+      typeof item.schema !== "object" ||
+      item.ancestors.has(item.schema)
+    ) {
+      complete = false;
+      continue;
+    }
+
+    const schema = item.schema as Record<string, unknown>;
+    const ancestors = new Set(item.ancestors).add(item.schema);
+    let recognized = false;
+    if (
+      schema.type !== undefined &&
+      !(
+        (typeof schema.type === "string" &&
+          JSON_SCHEMA_TYPES.has(schema.type)) ||
+        (Array.isArray(schema.type) &&
+          schema.type.length > 0 &&
+          schema.type.every(
+            (type) =>
+              typeof type === "string" && JSON_SCHEMA_TYPES.has(type),
+          ))
+      )
+    ) {
+      complete = false;
+    }
+
+    if (schema.$ref !== undefined) {
+      recognized = true;
+      let hasSemanticSiblings = false;
+      for (const key in schema) {
+        if (
+          Object.prototype.hasOwnProperty.call(schema, key) &&
+          !NON_SEMANTIC_REF_SIBLINGS.has(key)
+        ) {
+          hasSemanticSiblings = true;
+          break;
+        }
+      }
+      if (hasSemanticSiblings) {
+        // Modern JSON Schema applies $ref siblings as an intersection. A
+        // compact field walker cannot prove that intersection's selectable
+        // paths, so do not publish paths from either half as available.
+        complete = false;
+        continue;
+      }
+      const target =
+        typeof schema.$ref === "string"
+          ? localSchemaRef(root, schema.$ref)
+          : undefined;
+      if (target === undefined) complete = false;
+      else {
+        enqueue({
+          schema: target,
+          prefix: item.prefix,
+          depth: item.depth + 1,
+          ancestors,
+        });
+      }
+    }
+
+    for (const keyword of ["allOf", "anyOf", "oneOf"]) {
+      const variants = schema[keyword];
+      if (!Array.isArray(variants)) continue;
+      recognized = true;
+      // Combining schemas can close or conditionally expose fields in ways
+      // this compact recovery walker intentionally does not prove.
+      complete = false;
+      for (const variant of variants) {
+        if (
+          !enqueue({
+            schema: variant,
+            prefix: item.prefix,
+            depth: item.depth + 1,
+            ancestors,
+          })
+        ) {
+          break;
+        }
+      }
+    }
+    if (truncated) break;
+
+    const properties = schema.properties;
+    const propertyRecord =
+      properties !== null &&
+      typeof properties === "object" &&
+      !Array.isArray(properties)
+        ? (properties as Record<string, unknown>)
+        : undefined;
+    if (properties !== undefined && propertyRecord === undefined) {
+      complete = false;
+    }
+    const objectShape =
+      hasSchemaType(schema, "object") || propertyRecord !== undefined;
+    if (objectShape) {
+      recognized = true;
+      const patterns = schema.patternProperties;
+      let hasPatterns = false;
+      if (
+        patterns !== undefined &&
+        (patterns === null ||
+          typeof patterns !== "object" ||
+          Array.isArray(patterns))
+      ) {
+        complete = false;
+      } else if (patterns !== undefined) {
+        for (const key in patterns as Record<string, unknown>) {
+          if (Object.prototype.hasOwnProperty.call(patterns, key)) {
+            hasPatterns = true;
+            break;
+          }
+        }
+      }
+      if (schema.additionalProperties !== false || hasPatterns) {
+        complete = false;
+      }
+      if (propertyRecord) {
+        for (const key in propertyRecord) {
+          if (!Object.prototype.hasOwnProperty.call(propertyRecord, key)) {
+            continue;
+          }
+          if (++nodes > MAX_PROJECTION_SCHEMA_NODES) {
+            complete = false;
+            truncated = true;
+            break;
+          }
+          if (key.length > MAX_PROJECTION_PATH_CHARS) {
+            complete = false;
+            truncated = true;
+            break;
+          }
+          if (!selectableFieldName(key)) {
+            complete = false;
+            continue;
+          }
+          const child = propertyRecord[key];
+          // A false property schema forbids the property; advertising its name
+          // as selectable would turn an impossible value into a valid hint.
+          if (child === false) continue;
+          const path = item.prefix ? `${item.prefix}.${key}` : key;
+          if (!addPath(path)) break;
+          if (
+            !enqueue({
+              schema: child,
+              prefix: path,
+              depth: item.depth + 1,
+              ancestors,
+            })
+          ) {
+            break;
+          }
+        }
+      }
+    }
+    if (truncated) break;
+
+    const arrayShape =
+      hasSchemaType(schema, "array") ||
+      schema.items !== undefined ||
+      schema.prefixItems !== undefined;
+    if (arrayShape) {
+      recognized = true;
+      const arrayPath = `${item.prefix}[]`;
+      if (addPath(arrayPath)) {
+        if (Array.isArray(schema.prefixItems)) {
+          complete = false;
+          for (const child of schema.prefixItems) {
+            if (
+              !enqueue({
+                schema: child,
+                prefix: arrayPath,
+                depth: item.depth + 1,
+                ancestors,
+              })
+            ) {
+              break;
+            }
+          }
+        }
+        if (schema.items === undefined) {
+          if (!Array.isArray(schema.prefixItems)) complete = false;
+        } else if (schema.items === true || Array.isArray(schema.items)) {
+          complete = false;
+          const children = Array.isArray(schema.items)
+            ? schema.items
+            : [];
+          for (const child of children) {
+            if (
+              !enqueue({
+                schema: child,
+                prefix: arrayPath,
+                depth: item.depth + 1,
+                ancestors,
+              })
+            ) {
+              break;
+            }
+          }
+        } else if (schema.items !== false) {
+          enqueue({
+            schema: schema.items,
+            prefix: arrayPath,
+            depth: item.depth + 1,
+            ancestors,
+          });
+        }
+      }
+    }
+
+    const types = Array.isArray(schema.type)
+      ? schema.type
+      : schema.type === undefined
+        ? []
+        : [schema.type];
+    const primitiveOnly =
+      types.length > 0 &&
+      types.every(
+        (type) =>
+          type === "string" ||
+          type === "number" ||
+          type === "integer" ||
+          type === "boolean" ||
+          type === "null",
+      );
+    if (!recognized && !primitiveOnly) complete = false;
+    if (truncated) break;
+  }
+
+  return {
+    paths: [...paths].sort(),
+    complete,
+    truncated,
+  };
+}
+
+function schemaProjectionFeedback(
+  outputSchema: unknown,
+  unmatchedFields: string[],
+): Omit<ProjectionFeedback["$connecta"], "type" | "unmatchedFields"> {
+  const analysis = analyzeSchemaFields(outputSchema);
+  const available = new Set(analysis.paths);
+  const invalidFields = analysis.complete
+    ? unmatchedFields.filter((field) => !available.has(field))
+    : [];
+  return {
+    schemaDeclared: true,
+    schemaCoverage: analysis.complete ? "complete" : "partial",
+    ...(invalidFields.length > 0 ? { invalidFields } : {}),
+    ...(analysis.paths.length > 0
+      ? {
+          availableFields: analysis.paths.slice(
+            0,
+            MAX_PROJECTION_AVAILABLE_FIELDS,
+          ),
+        }
+      : {}),
+    ...(analysis.truncated ||
+    analysis.paths.length > MAX_PROJECTION_AVAILABLE_FIELDS
+      ? { availableFieldsTruncated: true as const }
+      : {}),
+  };
+}
+
+/** Select the given dot-paths, retaining both matches and exact misses. */
 function applyFields(
   value: unknown,
   fields: string[],
-): Record<string, unknown> {
+): FieldProjection {
   const out: Record<string, unknown> = {};
+  const unmatchedFields: string[] = [];
   for (const path of fields) {
     const resolved = resolvePath(value, path.split("."));
-    if (resolved !== undefined) out[path] = resolved;
+    if (resolved === undefined) unmatchedFields.push(path);
+    else out[path] = resolved;
   }
-  return out;
+  return { data: out, unmatchedFields };
+}
+
+/**
+ * Keep the historical flat projection when every path resolves. A miss gets a
+ * wrapper with a reserved discriminator so neither `{}` nor downstream fields
+ * named `data` / `projection` can be mistaken for projection feedback.
+ */
+function projectionValue(
+  value: unknown,
+  fields: string[],
+  outputSchema?: unknown,
+): Record<string, unknown> | ProjectionFeedback {
+  const projected = applyFields(value, fields);
+  // `$connecta` is reserved at the top level of a projection. Even a fully
+  // matched downstream field with that exact name is escaped below `data`, so
+  // no user-controlled value can impersonate Connecta's discriminator.
+  const reservedCollision = Object.prototype.hasOwnProperty.call(
+    projected.data,
+    "$connecta",
+  );
+  if (projected.unmatchedFields.length === 0 && !reservedCollision) {
+    return projected.data;
+  }
+  return {
+    data: projected.data,
+    $connecta: {
+      type: "field_projection",
+      unmatchedFields: projected.unmatchedFields,
+      ...(outputSchema
+        ? schemaProjectionFeedback(outputSchema, projected.unmatchedFields)
+        : {}),
+    },
+  };
 }
 
 /** Apply fields to each JSON-parseable text block; non-JSON blocks pass through. */
 function applyFieldsToContent(
   content: TextContent[],
   fields: string[],
+  outputSchema?: unknown,
 ): TextContent[] {
   return content.map((b) => {
     if (b.type !== "text") return b;
@@ -262,7 +730,10 @@ function applyFieldsToContent(
     } catch {
       return b;
     }
-    return { ...b, text: JSON.stringify(applyFields(parsed, fields)) };
+    return {
+      ...b,
+      text: JSON.stringify(projectionValue(parsed, fields, outputSchema)),
+    };
   });
 }
 
@@ -596,7 +1067,13 @@ export function createMetaTools(
             globalCap,
           );
           if (call.resultMode === "value") {
-            let value = fields ? applyFields(result, fields) : result;
+            let value = fields
+              ? projectionValue(
+                  result,
+                  fields,
+                  resolved.definition.outputSchema,
+                )
+              : result;
             value = await guardValue(value, results, cap);
             return {
               toolResult: jsonResult({ ok: true, data: value }),
@@ -606,10 +1083,22 @@ export function createMetaTools(
           if (resolved.connector.kind === "mcp") {
             const mcpResult = result as { content?: TextContent[] };
             let content = mcpResult?.content ?? [];
-            if (fields) content = applyFieldsToContent(content, fields);
+            if (fields) {
+              content = applyFieldsToContent(
+                content,
+                fields,
+                resolved.definition.outputSchema,
+              );
+            }
             return { toolResult: await guardContent(content, results, cap) };
           }
-          const value = fields ? applyFields(result, fields) : result;
+          const value = fields
+            ? projectionValue(
+                result,
+                fields,
+                resolved.definition.outputSchema,
+              )
+            : result;
           return {
             toolResult: await guardText(
               serializeResultText(value),
@@ -1134,7 +1623,7 @@ const LIST_DESC =
 const SEARCH_DESC = `Unknown address: use 2–4 distinctive action/object terms, not the full request; omit limit initially (default ${DEFAULT_SEARCH_LIMIT}) and page only if needed, up to ${MAX_SEARCH_LIMIT}. Partial and no-match searches report term coverage and next-step guidance. includeSchemas="compact" adds the input and any declared output shape; matches also carry declared annotations. Call directly when sufficient. Empty query browses all.`;
 const DESCRIBE_DESC = `Only when search_tools omitted schemas, a compact shape is ambiguous, or exact JSON constraints are needed. Inspects up to ${MAX_DESCRIBE_ADDRESSES} addresses with schemas and annotations; "compact" is default, while "json" preserves exact constraints.`;
 const CALL_DESC =
-  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; any misses return data plus `$connecta` field-projection feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
@@ -1159,7 +1648,7 @@ const SKILLS_DESC =
  */
 const CODE_FIRST_SEARCH_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
 const CODE_FIRST_CALL_DESC =
-  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths, resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; any misses return data plus `$connecta` field-projection feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CODE_FIRST_GET_RESULT_DESC =
   "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 
