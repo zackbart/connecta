@@ -2365,6 +2365,61 @@ describe("call_tool", () => {
     expect(small.error.nextAction.arguments.args).toEqual({ target: "dupe" });
   });
 
+  it("keeps a routing refusal small when the address is not", async () => {
+    // The argument echo was bounded; the *address* was not. It reaches the
+    // refusal twice over — once in the error message, once as the recovery
+    // record's search query — and each of those lands in both the text content
+    // and structuredContent, so a 50 KB invented address produced a 200 KB
+    // refusal against a deployment that capped results at 1 KB.
+    const mt = createMetaTools(
+      makeRegistry([calcConnector], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const filler = "x".repeat(50_000);
+
+    const unknownAddress = await mt.callTool({ address: `ghost.${filler}` });
+    expect(unknownAddress.isError).toBe(true);
+    expect(JSON.stringify(unknownAddress).length).toBeLessThan(4_000);
+    const address = textOf(unknownAddress) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string } };
+      };
+    };
+    expect(address.error.code).toBe("unknown_address");
+    expect(address.error.message).toContain("Unknown address");
+    // Clamped, not dropped: the caller still learns which address was refused,
+    // and the marker says it is not the whole of what it sent.
+    expect(address.error.message).toContain("…");
+    expect(address.error.nextAction.arguments.query).toContain("…");
+    expect(address.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // Same bypass one resolution step later: the connector exists, the tool
+    // name is the caller's invention.
+    const unknownTool = await mt.callTool({ address: `calc.${filler}` });
+    expect(unknownTool.isError).toBe(true);
+    expect(JSON.stringify(unknownTool).length).toBeLessThan(4_000);
+    const tool = textOf(unknownTool) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string; connector: string } };
+      };
+    };
+    expect(tool.error.code).toBe("unknown_tool");
+    expect(tool.error.message).toContain("Unknown tool");
+    expect(tool.error.nextAction.arguments.connector).toBe("calc");
+    expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // The common case must stay exact — a short address is corrected verbatim.
+    const short = textOf(await mt.callTool({ address: "ghost.read_items" })) as {
+      error: { message: string; nextAction: { arguments: { query: string } } };
+    };
+    expect(short.error.message).toBe('Unknown address "ghost.read_items"');
+    expect(short.error.nextAction.arguments.query).toBe("read items");
+  });
+
   it("keeps call_destructive_tool's reason out of the downstream arguments", async () => {
     const seen: unknown[] = [];
     const dangerous = api("danger", {

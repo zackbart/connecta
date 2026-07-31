@@ -677,7 +677,6 @@ export type {
   ToolAnnotations,
 } from "./types.js";
 export type {
-  AgentFriction,
   ActivityActor,
   ActivityCallSource,
   ActivityOutcome,
@@ -689,6 +688,7 @@ export type {
   ActivityReadPage,
   ActivitySink,
   ActivityStore,
+  AgentFriction,
   ToolCallActivityEvent,
 } from "./activity.js";
 export { InvalidActivityCursorError } from "./activity.js";

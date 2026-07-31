@@ -881,6 +881,10 @@ export function createExecuteTool(
         if (invocationFailure) break;
       }
       if (invocationFailure) {
+        // Handed back whole, with no size guard of its own — the failure was
+        // framed with bounded caller text (`boundedEchoText`) precisely so
+        // this path never needs one. Adding a cap here instead would leave the
+        // top-level surfaces, which have the same amplification, uncovered.
         const result = jsonResult({
           error: invocationFailure.details,
           ...(logs ? { logs } : {}),

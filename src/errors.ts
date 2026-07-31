@@ -53,7 +53,44 @@ function boundedIssueText(
  */
 const MAX_ECHOED_ARGS_BYTES = 512;
 
+/**
+ * The same budget spent on caller-authored *text* — the address it mistyped,
+ * the discovery query derived from it — rather than on its arguments.
+ *
+ * Text is clamped where {@link echoedCallArgs} drops: an address is the thing
+ * the refusal exists to correct, so a refusal that named nothing would be
+ * useless, while a clipped one still carries the prefix that identifies the
+ * mistake. The marker says it was clipped, so nothing reads a clamped address
+ * as the address that was sent. Arguments get the opposite rule because they
+ * end at a human approving one specific call.
+ *
+ * The number is not cosmetic. An error result is not size-guarded the way a
+ * result is, and every echoed byte lands twice (text content *and*
+ * `structuredContent`), so an unbounded address turned a 50 KB typo into a
+ * 200 KB refusal against a deployment that capped results at 1 KB.
+ */
+const MAX_ECHOED_TEXT_BYTES = 512;
+
 const echoEncoder = new TextEncoder();
+const echoDecoder = new TextDecoder();
+
+/**
+ * Clamp a string to a UTF-8 byte budget, appending `…` when it clipped.
+ * Short strings — the common case, and the one that has to stay exact — are
+ * returned unchanged and untagged.
+ */
+export function boundedEchoText(
+  value: string,
+  maxBytes: number = MAX_ECHOED_TEXT_BYTES,
+): string {
+  const bytes = echoEncoder.encode(value);
+  if (bytes.length <= maxBytes) return value;
+  // Never split a codepoint: walk back off UTF-8 continuation bytes (10xxxxxx)
+  // so the clamp cannot manufacture a replacement character.
+  let end = Math.max(0, maxBytes);
+  while (end > 0 && ((bytes[end] ?? 0) & 0xc0) === 0x80) end--;
+  return `${echoDecoder.decode(bytes.slice(0, end))}…`;
+}
 
 /**
  * `{ args }` when the caller's arguments fit {@link MAX_ECHOED_ARGS_BYTES},

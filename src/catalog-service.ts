@@ -13,7 +13,11 @@ import {
   mapSettledWithConcurrency,
   resolveDiscoveryConcurrency,
 } from "./concurrency.js";
-import { classifyCallError, framingError } from "./errors.js";
+import {
+  boundedEchoText,
+  classifyCallError,
+  framingError,
+} from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
   ConnectorOperationOptions,
@@ -123,10 +127,18 @@ function discoveryAddresses(
   return value;
 }
 
+/**
+ * Search terms derived from an address the catalog could not resolve. Bounded
+ * because the address is entirely caller-authored: an invented one can be any
+ * length, and this string is copied into a recovery record that is itself
+ * copied into both halves of the result envelope.
+ */
 function recoveryQuery(address: string): string {
   const separator = address.indexOf(".");
   const candidate = separator >= 0 ? address.slice(separator + 1) : address;
-  return candidate.replaceAll(/[._-]+/g, " ").trim() || address;
+  return boundedEchoText(
+    candidate.replaceAll(/[._-]+/g, " ").trim() || address,
+  );
 }
 
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
@@ -410,7 +422,7 @@ export class CatalogService {
         error: {
           ...framingError(
             "unknown_address",
-            `Unknown address "${address}"`,
+            `Unknown address "${boundedEchoText(address)}"`,
           ),
           nextAction: this.searchRecovery(
             { query: recoveryQuery(address) },
@@ -441,7 +453,7 @@ export class CatalogService {
         error: {
           ...framingError(
             "unknown_tool",
-            `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
+            `Unknown tool "${boundedEchoText(resolved.toolName)}" on connector "${resolved.connector.id}"`,
           ),
           nextAction: this.searchRecovery(
             {
@@ -485,7 +497,7 @@ export class CatalogService {
         error: {
           ...framingError(
             "unknown_address",
-            `Unknown address "${connectorId}.${alias}"`,
+            `Unknown address "${boundedEchoText(`${connectorId}.${alias}`)}"`,
           ),
           nextAction: this.searchRecovery(
             { query: recoveryQuery(alias) },
@@ -518,7 +530,7 @@ export class CatalogService {
         error: {
           ...framingError(
             "unknown_tool",
-            `Unknown tool "${alias}" on connector "${connector.id}"`,
+            `Unknown tool "${boundedEchoText(alias)}" on connector "${connector.id}"`,
           ),
           nextAction: this.searchRecovery(
             { query: recoveryQuery(alias), connector: connector.id },
@@ -538,7 +550,7 @@ export class CatalogService {
         ok: false,
         error: {
           code: "ambiguous_tool_alias",
-          message: `Tool alias "${alias}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
+          message: `Tool alias "${boundedEchoText(alias)}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
           retryable: false,
           nextAction: {
             function: "connecta.call",

@@ -392,7 +392,7 @@ exactly first, by containment second — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
 type beats keeping the prose.
 
-**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to.
+**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. Both the message and the derived `query` clamp the address to 512 UTF-8 bytes with a `…` marker: the address is caller-authored and lands in the message, the query, the text content, and `structuredContent`, so an invented 50 KB one would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake; a short one — the common case — is exact and untagged.
 
 **E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery keyed `function: "connecta.search"` like every other in-program miss. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
 
@@ -601,16 +601,23 @@ calls — which makes moving work into the sandbox an optimization, not a blindf
 `outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
 `attempts`, and `errorCode` when the call *failed* — plus request, actor, and
 server identity. Typed codes derive an optional `friction`: `tool_not_found`,
-`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`.
-Friction also stands alone: a truncated result is friction on a `success` event
-with no `errorCode`, so a consumer counting error codes counts failures, not
-truncations. There is nowhere to put arguments, results, program source, or raw
-error text; a failure the program *caught* is still recorded. `address` is
+`schema_retry`, `destructive_reroute`, or `auth_required`. The fifth class,
+`result_too_large`, cannot reach an `execute_code` event: it belongs to a
+`call_tool` result — or a `batch_call` child's — too large to return inline,
+and a program's own return is refused paging by design rather than truncated
+into friction. There is nowhere to put arguments, results, program source, or
+raw error text; a caught failure is still recorded. `address` is
 canonical (`A1`) where a tool resolved, otherwise the name the program used —
 for a shortcut its sanitized alias, the honest record of what was attempted.
 
 **V3.** A call whose connector does not exist is recorded at the address as
-written: an invented id is the address mistake an operator most needs to see.
+written, *provided* it split into the two fields activity keeps — one with no
+interior dot records nothing. An invented id is the address mistake an operator
+most needs to see. But recording it as written puts caller-authored text in
+fields that are otherwise operator- and connector-authored, so `connectorId`
+and `toolName` clamp at 128 UTF-8 bytes (`address` at 257) with a `…` marker:
+payload-free *by construction* means the event has nowhere to put a payload,
+not merely that connecta declines to.
 
 **V4.** The execution itself emits no event. It has no address, and its one
 distinctive artifact is the program source, which is exactly what a payload-free
@@ -756,7 +763,7 @@ the upstream `Executor` shape assignable.
 | `L5`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message) |
 | `L7` | `test/execute.test.ts`, `test/executor-admission.test.ts` |
-| `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, no event for the execution itself), `test/activity.test.ts` (friction with and without an error code) |
+| `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, and the identity clamp) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
 | `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths) |

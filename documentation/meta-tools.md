@@ -201,6 +201,15 @@ both `call_tool` and the `batch_call` envelope. Over budget, `args` is absent
 and the `purpose` says to re-send what was just sent: the agent already holds
 its own arguments, and half of them would describe a call nobody made.
 
+The address gets the same budget and the opposite rule: 512 bytes, clamped
+with a trailing `…` rather than dropped. It is caller-authored too — an
+invented one can be any length — and it reaches the error message *and* the
+recovery query, each of which lands in both the text content and
+`structuredContent`; unbounded, a 50 KB typo produced a 200 KB refusal under a
+1 KB result cap. Dropping it is not an option the way dropping arguments is:
+the address is the thing being corrected, a clipped one still identifies the
+mistake, and a short one — every real one — comes back exact and untagged.
+
 Shortcut ambiguity inside `execute_code` returns every colliding canonical
 address and points at `connecta.call`; the program or model must still choose
 which one matches the user's intent. `call_destructive_tool` accepts an optional
@@ -226,6 +235,16 @@ into the two fields activity keeps still records nothing. A hallucinated
 connector id is the most common address mistake, and an operator reading
 activity should see it; addresses are already a first-class activity field, so
 nothing new is retained.
+
+What *is* new is that those fields now hold caller-authored text, so the
+recording seam clamps them: `connectorId` and `toolName` at 128 UTF-8 bytes
+each, `address` at 257, with a `…` marker. Far past any real id or tool name,
+and far short of a 40 KB invented one. The clamp is structural rather than a
+policy the writer applies, because "payload-free by construction" has to mean
+the event type has nowhere to put a payload — a 40 KB connector id is a payload
+wearing an id's clothing. Clamped rather than skipped: the invented id is
+exactly what an operator needs to see, and its first 128 bytes say as much
+about the mistake as all 40,000 would.
 
 ## Argument recovery
 

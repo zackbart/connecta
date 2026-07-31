@@ -1,4 +1,24 @@
+import { boundedEchoText } from "./errors.js";
 import type { Logger } from "./types.js";
+
+/**
+ * How long an identity field may be before the store stops believing it.
+ *
+ * `connectorId` and `toolName` are ordinarily operator- and connector-authored,
+ * and 128 bytes is far past any real one. But an address that resolved to
+ * nothing is recorded *as written*, which puts a caller-authored string in both
+ * fields — and "payload-free by construction" has to mean the event type has
+ * nowhere to put a payload, not merely that connecta declines to. A 40 KB
+ * invented connector id is a payload wearing an id's clothing.
+ *
+ * Clamped rather than dropped: the invented id is precisely what an operator
+ * needs to see, and its first 128 bytes identify the mistake as well as all
+ * 40,000 would. The `…` marker keeps a clamped value from reading as a real one.
+ */
+const MAX_ACTIVITY_NAME_BYTES = 128;
+
+/** Two names and the dot between them. */
+const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
 export type ActivityCallSource =
   | "call_tool"
@@ -179,9 +199,9 @@ export function recordToolActivity(
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
     actor: context.actor,
-    connectorId: input.connectorId,
-    toolName: input.toolName,
-    address: input.address,
+    connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
+    toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
+    address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
     source: input.source,
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),

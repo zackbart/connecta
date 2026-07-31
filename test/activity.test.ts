@@ -7,7 +7,7 @@ import {
 } from "../src/activity.js";
 import { api } from "../src/connectors/api.js";
 import { createMetaTools } from "../src/meta-tools.js";
-import { makeRegistry, silentLogger } from "./helpers.js";
+import { makeRegistry, required, silentLogger } from "./helpers.js";
 
 const EVENT: ToolCallActivityEvent = {
   schemaVersion: 1,
@@ -209,5 +209,53 @@ describe("activity delivery", () => {
     const serialized = JSON.stringify(events[0]);
     expect(serialized).not.toContain("top-secret-argument");
     expect(serialized).not.toContain("secret");
+  });
+
+  it("clamps an invented identity so the event cannot carry a payload", async () => {
+    // Recording the address as written puts caller-authored text in fields that
+    // are otherwise operator- and connector-authored. "Payload-free by
+    // construction" has to mean the event has nowhere to put one — a 40 KB
+    // connector id is a payload wearing an id's clothing.
+    const events: ToolCallActivityEvent[] = [];
+    const activity: ActivityRequestContext = {
+      sink: {
+        record(event) {
+          events.push(event);
+        },
+      },
+      actor: { kind: "bearer" },
+      requestId: EVENT.requestId,
+      serverInfo: { name: "connecta", version: "0.1.0" },
+      logger: silentLogger,
+    };
+    const tools = createMetaTools(
+      makeRegistry([
+        api("real", {
+          tools: [
+            {
+              name: "read",
+              annotations: { readOnlyHint: true },
+              handler: () => ({ ok: true }),
+            },
+          ],
+        }),
+      ]),
+      "https://connecta.test",
+      { activity },
+    );
+
+    await tools.callTool({ address: `${"z".repeat(40_000)}.read` });
+
+    const event = required(events[0]);
+    expect(events).toHaveLength(1);
+    expect(JSON.stringify(event).length).toBeLessThan(1_000);
+    // Clamped, not dropped: the invented id is what an operator needs to see,
+    // and its prefix identifies the mistake as well as all 40,000 bytes would.
+    expect(event.connectorId.startsWith("zzzz")).toBe(true);
+    expect(event.connectorId.endsWith("…")).toBe(true);
+    expect(event.toolName).toBe("read");
+    expect(event.address.endsWith("…")).toBe(true);
+    expect(event.errorCode).toBe("unknown_address");
+    expect(event.friction).toBe("tool_not_found");
   });
 });

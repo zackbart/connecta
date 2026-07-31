@@ -1556,6 +1556,54 @@ describe("execute_code handler", () => {
     expect(disabled).toEqual(omitted);
   });
 
+  it("keeps an in-program routing refusal small when the address is not", async () => {
+    // execute_code hands a matched typed failure straight back with no size
+    // guard of its own, so an unbounded address in the message or the recovery
+    // query is amplified here exactly as it is at top level. The bound has to
+    // hold where the failure is framed or it does not hold at all.
+    const filler = "x".repeat(50_000);
+    const attempt = (address: string): Executor => ({
+      async execute(_code, providers) {
+        const connecta = connectaProvider(providers).fns;
+        try {
+          await required(connecta.call)(address, {});
+          return { result: null };
+        } catch (error) {
+          return {
+            result: undefined,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    });
+
+    for (const [address, expectedCode] of [
+      [`ghost.${filler}`, "unknown_address"],
+      [`calc.${filler}`, "unknown_tool"],
+    ] as const) {
+      const out = await createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        attempt(address),
+        silentLogger,
+      )({ code: "async () => null" });
+      expect(out.isError).toBe(true);
+      expect(JSON.stringify(out).length).toBeLessThan(4_000);
+      const parsed = JSON.parse(required(out.content[0]).text) as {
+        error: {
+          code: string;
+          message: string;
+          nextAction: { function: string; arguments: { query: string } };
+        };
+      };
+      expect(parsed.error.code).toBe(expectedCode);
+      expect(parsed.error.message).toContain("…");
+      // The route is still the one a program can take, and still scoped.
+      expect(parsed.error.nextAction.function).toBe("connecta.search");
+      expect(parsed.error.nextAction.arguments.query.length).toBeLessThan(600);
+    }
+  });
+
   it("keeps diagnostics on discovery, batch, and executor failures", async () => {
     const guestFailures: Executor = {
       async execute(_code, providers) {

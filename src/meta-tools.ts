@@ -23,6 +23,7 @@ import {
   type DeferredWork,
 } from "./connector-scope.js";
 import {
+  boundedEchoText,
   classifyCallError,
   echoedCallArgs,
   messageLooksRetryable,
@@ -811,13 +812,13 @@ interface GuardedResult<T> {
   truncated: boolean;
 }
 
-/** Keep an oversized batch's inline outcome summary at fixed string overhead. */
+/**
+ * Keep an oversized batch's inline outcome summary at fixed string overhead.
+ * The same clamp the error envelopes use — one budget, one marker, defined
+ * once in `errors.ts` so the two cannot drift apart.
+ */
 function batchSummaryString(value: string): string {
-  const bytes = enc.encode(value);
-  const maxBytes = 512;
-  if (bytes.length <= maxBytes) return value;
-  const end = alignEndToCharBoundary(bytes, 0, maxBytes, bytes.length);
-  return `${dec.decode(bytes.slice(0, end))}…`;
+  return boundedEchoText(value);
 }
 
 /** Candidate addresses kept in an oversized batch's summary of one ambiguity. */
@@ -845,12 +846,21 @@ function batchSummaryNextAction(
         purpose: batchSummaryString(nextAction.purpose),
       };
     }
+    // Say so when the candidate list is clipped. The unclipped purpose reads
+    // "choose the intended canonical address", which is a lie about a list
+    // that no longer contains every candidate — and the caller has no other
+    // way to learn that the address it wants was the eleventh.
+    const candidates = nextAction.addresses.slice(0, MAX_SUMMARY_ADDRESSES);
     return {
       function: nextAction.function,
-      addresses: nextAction.addresses
-        .slice(0, MAX_SUMMARY_ADDRESSES)
-        .map(batchSummaryString),
-      purpose: batchSummaryString(nextAction.purpose),
+      addresses: candidates.map(batchSummaryString),
+      purpose: batchSummaryString(
+        candidates.length < nextAction.addresses.length
+          ? `${nextAction.purpose} Showing the first ${candidates.length} of ` +
+            `${nextAction.addresses.length} candidates; re-run the call on its ` +
+            "own to see them all."
+          : nextAction.purpose,
+      ),
     };
   }
   if (nextAction.tool === "authorize_connector") {
@@ -2035,12 +2045,13 @@ export function registerMetaTools(
       },
     },
     async (args) => {
-      const { reason, ...call } = args as DestructiveCallArgs;
-      const stated = reason?.trim();
-      return mt.callDestructiveTool({
-        ...call,
-        ...(stated ? { reason: stated } : {}),
-      });
+      // `reason` is the host's to display and connecta's to keep out of the
+      // downstream call, so this destructuring is the whole of its handling:
+      // nothing below reads it. Dropping it is also what makes an empty or
+      // whitespace-only one "absent" rather than a validation failure — there
+      // is no field left for it to be absent from.
+      const { reason: _hostContext, ...call } = args as DestructiveCallArgs;
+      return mt.callDestructiveTool(call);
     },
   );
 

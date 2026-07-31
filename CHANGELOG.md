@@ -48,6 +48,10 @@ which had been probing at the 30-second default no matter what was configured.
   `connecta.call` candidate. The suggested discovery route follows the caller's
   own surface: `search_tools` for a top-level call, `connecta.search` with the
   same arguments for a miss inside `execute_code`, which cannot call a tool.
+  The address gets the same 512-byte budget as the argument echo but the
+  opposite rule — clamped with a `…` marker rather than dropped, since the
+  address is the thing being corrected. Short addresses, which is all real
+  ones, come back exact.
 - **Destructive calls accept explanatory context.** An optional `reason` of at
   most 500 characters gives the MCP host human-readable intent without entering
   downstream arguments or granting authority. An empty or whitespace-only one
@@ -72,9 +76,14 @@ which had been probing at the 30-second default no matter what was configured.
   `nextAction.tool` must handle the function-keyed shapes too.
 - **An address that resolves to nothing is now recorded.** A call to a
   connector id that does not exist emits one activity event at the address as
-  written, with `unknown_address` and `tool_not_found` friction. Previously the
-  single most common address mistake left no trace at all. Addresses were
-  already a first-class activity field; nothing new is retained.
+  written, with `unknown_address` and `tool_not_found` friction — provided the
+  address splits into the `<connectorId>.<toolName>` shape activity keeps; one
+  with no interior dot still records nothing. Previously the single most common
+  address mistake left no trace at all. Addresses were already a first-class
+  activity field; nothing new is retained. Because those fields now hold
+  caller-authored text, the recording seam clamps `connectorId` and `toolName`
+  at 128 UTF-8 bytes each and `address` at 257, marked with `…` — far past any
+  real id, far short of an invented 40 KB one.
 - **A truncated result is friction, not an error.** An oversized result reports
   `friction: "result_too_large"` on an `outcome: "success"` event and writes no
   `errorCode`, so consumers counting error codes stop counting truncated
