@@ -449,7 +449,8 @@ export const CONTRACT_CASES: ContractCase[] = [
             recovery: outcome.errorDetails.recovery,
             validation: outcome.errorDetails.validation,
             nextAction: outcome.errorDetails.nextAction
-              ? outcome.errorDetails.nextAction.tool
+              ? (outcome.errorDetails.nextAction.tool
+                  ?? outcome.errorDetails.nextAction.function)
               : undefined
           });
     }`,
@@ -483,12 +484,14 @@ export const CONTRACT_CASES: ContractCase[] = [
         ok: false,
         code: "unknown_address",
         retryable: false,
+        // A program cannot call search_tools; recovery names the route it owns.
+        nextAction: "connecta.search",
       });
       expect(required(outcomes[5])).toMatchObject({
         ok: false,
         code: "invalid_args",
         retryable: false,
-        nextAction: "search_tools",
+        nextAction: "connecta.search",
         validation: {
           issues: [
             { path: "/text", code: "required", expected: "string" },
@@ -588,7 +591,7 @@ export const CONTRACT_CASES: ContractCase[] = [
           ],
         },
         nextAction: {
-          tool: "search_tools",
+          function: "connecta.search",
           arguments: {
             query: "echo",
             connector: "remote",
@@ -854,10 +857,13 @@ export const CONTRACT_CASES: ContractCase[] = [
     }`,
     check(outcome, state) {
       expect(outcome.isError, outcome.text).toBe(false);
-      expect(state.events).toHaveLength(3);
+      expect(state.events).toHaveLength(4);
       expect(state.events.map((event) => event.address)).toEqual([
         "reader.read",
         "reader.read",
+        // The address as the program wrote it. No connector answered, which is
+        // the event's point: an invented id is the most common address mistake.
+        "nope.read",
         "reader.wipe",
       ]);
       for (const event of state.events) {
@@ -866,7 +872,8 @@ export const CONTRACT_CASES: ContractCase[] = [
         expect(Object.keys(event)).not.toContain("result");
         expect(Object.keys(event)).not.toContain("code");
       }
-      expect(required(state.events[2]).errorCode).toBe(
+      expect(required(state.events[2]).errorCode).toBe("unknown_address");
+      expect(required(state.events[3]).errorCode).toBe(
         "destructive_tool_requires_approval",
       );
     },
@@ -931,7 +938,7 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "V1, V2, V3",
-    name: "a refusal that reached a connector is an event; a guessed connector is not",
+    name: "every refusal is an event, including one at an address nothing owns",
     code: `async () => {
       try { await connecta.call("reader.nope", {}); } catch (err) { void err; }
       try { await collide.get_thing({}); } catch (err) { void err; }
@@ -942,8 +949,8 @@ export const CONTRACT_CASES: ContractCase[] = [
     }`,
     check(outcome, state) {
       expect(outcome.isError, outcome.text).toBe(false);
-      // Four refusals named a real connector and are recorded; the last never
-      // did, so there is nothing to attribute it to.
+      // Four refusals named a real connector; the last named one that does not
+      // exist and is recorded anyway, as the address the program wrote.
       expect(
         state.events.map((event) => [event.address, event.errorCode]),
       ).toEqual([
@@ -954,6 +961,14 @@ export const CONTRACT_CASES: ContractCase[] = [
         ["badcatalog.read", "catalog_lookup_failed"],
         // Refused before dispatch, so no connector call happened.
         ["needsstore.read", "auth_required"],
+        ["nope.read", "unknown_address"],
+      ]);
+      expect(state.events.map((event) => event.friction)).toEqual([
+        "tool_not_found",
+        "tool_not_found",
+        undefined,
+        "auth_required",
+        "tool_not_found",
       ]);
       expect(state.calls["badcatalog.read"]).toBeUndefined();
       expect(state.calls["needsstore.read"]).toBeUndefined();

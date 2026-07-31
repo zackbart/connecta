@@ -688,6 +688,7 @@ export type {
   ActivityReadPage,
   ActivitySink,
   ActivityStore,
+  AgentFriction,
   ToolCallActivityEvent,
 } from "./activity.js";
 export { InvalidActivityCursorError } from "./activity.js";

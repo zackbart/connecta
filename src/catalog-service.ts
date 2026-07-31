@@ -13,7 +13,11 @@ import {
   mapSettledWithConcurrency,
   resolveDiscoveryConcurrency,
 } from "./concurrency.js";
-import { classifyCallError, framingError } from "./errors.js";
+import {
+  boundedEchoText,
+  classifyCallError,
+  framingError,
+} from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
   ConnectorOperationOptions,
@@ -53,6 +57,16 @@ const encoder = new TextEncoder();
  * the route they own.
  */
 export type DescribeRoute = "describe_tools" | "connecta.describe";
+
+/**
+ * The discovery route a routing failure should send a caller back through. Same
+ * rule as {@link DescribeRoute} — the route the *caller* took, not the
+ * deployment's advertised surface — with one difference worth keeping the two
+ * options separate for: `search_tools` exists on both advertised surfaces, so a
+ * top-level handler never has to derive this one, while an in-program caller
+ * still has to be told about `connecta.search` because it cannot call a tool.
+ */
+export type SearchRoute = "search_tools" | "connecta.search";
 
 export class DiscoveryPolicyError extends Error {
   constructor(
@@ -111,6 +125,20 @@ function discoveryAddresses(
     );
   }
   return value;
+}
+
+/**
+ * Search terms derived from an address the catalog could not resolve. Bounded
+ * because the address is entirely caller-authored: an invented one can be any
+ * length, and this string is copied into a recovery record that is itself
+ * copied into both halves of the result envelope.
+ */
+function recoveryQuery(address: string): string {
+  const separator = address.indexOf(".");
+  const candidate = separator >= 0 ? address.slice(separator + 1) : address;
+  return boundedEchoText(
+    candidate.replaceAll(/[._-]+/g, " ").trim() || address,
+  );
 }
 
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
@@ -300,6 +328,7 @@ export class CatalogService {
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
   private readonly describeRoute: DescribeRoute;
+  private readonly searchRoute: SearchRoute;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -312,6 +341,8 @@ export class CatalogService {
       concurrency?: number;
       /** The tool describe-path errors name. Default `describe_tools`. */
       describeRoute?: DescribeRoute;
+      /** The discovery route recovery records name. Default `search_tools`. */
+      searchRoute?: SearchRoute;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
@@ -319,6 +350,32 @@ export class CatalogService {
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.describeRoute = options.describeRoute ?? "describe_tools";
+    this.searchRoute = options.searchRoute ?? "search_tools";
+  }
+
+  /**
+   * Send a caller back to discovery through the surface it can actually reach.
+   * Both variants carry the same scoping arguments because `connecta.search`
+   * takes the same ones `search_tools` does; only the key naming the callable
+   * differs, the way the ambiguous-alias record already names a function.
+   *
+   * Not private: `InvocationService` builds the same class of record when a
+   * call fails schema validation, and it is this catalog's route that decides
+   * which key that record carries. Duplicating the branch there would let the
+   * two drift.
+   */
+  searchRecovery(
+    args: { query: string; connector?: string },
+    purpose: string,
+  ): NonNullable<CallErrorDetails["nextAction"]> {
+    const searchArgs = {
+      query: args.query,
+      ...(args.connector !== undefined ? { connector: args.connector } : {}),
+      includeSchemas: "compact" as const,
+    };
+    return this.searchRoute === "connecta.search"
+      ? { function: "connecta.search", arguments: searchArgs, purpose }
+      : { tool: "search_tools", arguments: searchArgs, purpose };
   }
 
   async loadConnector(
@@ -362,10 +419,16 @@ export class CatalogService {
     if (!resolved) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_address",
-          `Unknown address "${address}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_address",
+            `Unknown address "${boundedEchoText(address)}"`,
+          ),
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(address) },
+            "Find the configured canonical address before retrying.",
+          ),
+        },
         catalogMs: 0,
       };
     }
@@ -387,10 +450,19 @@ export class CatalogService {
     if (!definition) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_tool",
-          `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_tool",
+            `Unknown tool "${boundedEchoText(resolved.toolName)}" on connector "${resolved.connector.id}"`,
+          ),
+          nextAction: this.searchRecovery(
+            {
+              query: recoveryQuery(resolved.toolName),
+              connector: resolved.connector.id,
+            },
+            "Find the connector's current canonical tool address.",
+          ),
+        },
         catalogMs: Date.now() - started,
         connector: resolved.connector,
         toolName: resolved.toolName,
@@ -422,10 +494,16 @@ export class CatalogService {
     if (!connector) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_address",
-          `Unknown address "${connectorId}.${alias}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_address",
+            `Unknown address "${boundedEchoText(`${connectorId}.${alias}`)}"`,
+          ),
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(alias) },
+            "Find the configured canonical address before retrying.",
+          ),
+        },
         catalogMs: 0,
       };
     }
@@ -449,10 +527,16 @@ export class CatalogService {
     if (!definition) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_tool",
-          `Unknown tool "${alias}" on connector "${connector.id}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_tool",
+            `Unknown tool "${boundedEchoText(alias)}" on connector "${connector.id}"`,
+          ),
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(alias), connector: connector.id },
+            "Find the connector's current canonical tool address.",
+          ),
+        },
         catalogMs: Date.now() - started,
         connector,
         toolName: alias,
@@ -466,8 +550,16 @@ export class CatalogService {
         ok: false,
         error: {
           code: "ambiguous_tool_alias",
-          message: `Tool alias "${alias}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
+          message: `Tool alias "${boundedEchoText(alias)}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
           retryable: false,
+          nextAction: {
+            function: "connecta.call",
+            addresses: [definition, ...collisions].map(
+              (tool) => `${connector.id}.${tool.name}`,
+            ),
+            purpose:
+              "Choose the intended canonical address and call it with the original arguments.",
+          },
         },
         catalogMs: Date.now() - started,
         connector,

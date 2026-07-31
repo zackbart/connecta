@@ -89,6 +89,15 @@ mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
+A `call_tool` or `batch_call` truncation notice carries both the historical
+`resultId` and an exact
+`nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The handle
+is therefore directly actionable without copying an identifier out of prose;
+re-calling with `fields` remains the smaller alternative when projection is
+possible. Program results and oversized discovery responses carry no such
+route — paging a program's return value is a refused shape, because a program
+can shrink anything before it returns.
+
 `fields` keeps its historical flat `{ "<path>": value }` result when every
 requested dot-path resolves. Dot notation traverses objects; append `[]` to an
 array field before continuing, as in `results[].id`. An exact downstream
@@ -172,6 +181,71 @@ only through the same-origin, Clerk-operator credential route. After OAuth
 consent or an operator update, retry the original operation; a static update is
 read from the vault on the next call and needs no redeploy.
 
+## Routing recovery
+
+Predictable local refusals carry structured recovery on both result modes.
+An unknown connector suggests an unscoped discovery query derived from the
+attempted tool name; an unknown tool scopes the same query to the connector that
+answered. The suggested route follows the caller's own surface: `tool:
+"search_tools"` for a top-level call, `function: "connecta.search"` with the same
+arguments when the miss happened inside `execute_code`, which has no way to call
+a tool. A read path that reaches an unannotated, write-capable, or destructive
+tool returns `nextAction` for `call_destructive_tool` with the canonical
+address. Nothing is executed by these records.
+
+That route echoes the caller's own arguments back only while they fit a
+512-byte budget, and then whole — never clipped. An error envelope is not
+size-guarded the way a result is, so an unbounded echo would let a large
+argument object produce a refusal many times the deployment's result cap, on
+both `call_tool` and the `batch_call` envelope. Over budget, `args` is absent
+and the `purpose` says to re-send what was just sent: the agent already holds
+its own arguments, and half of them would describe a call nobody made.
+
+The address gets the same budget and the opposite rule: 512 bytes, clamped
+with a trailing `…` rather than dropped. It is caller-authored too — an
+invented one can be any length — and it reaches the error message *and* the
+recovery query, each of which lands in both the text content and
+`structuredContent`; unbounded, a 50 KB typo produced a 200 KB refusal under a
+1 KB result cap. Dropping it is not an option the way dropping arguments is:
+the address is the thing being corrected, a clipped one still identifies the
+mistake, and a short one — every real one — comes back exact and untagged.
+
+Shortcut ambiguity inside `execute_code` returns every colliding canonical
+address and points at `connecta.call`; the program or model must still choose
+which one matches the user's intent. `call_destructive_tool` accepts an optional
+`reason` of at most 500 characters for the host's human approval view. It is
+outer-call context only: Connecta neither treats it as authority nor passes it
+to the downstream connector, and an empty or whitespace-only one is read as no
+reason rather than as a reason to refuse the call.
+
+Activity carries an optional coarse `friction` class: `tool_not_found`,
+`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`.
+It is derived from the typed error code, except on the one call that has no
+error code to derive from: a `call_tool` result — or a `batch_call` child's —
+too large to return inline is friction for the agent while remaining
+`outcome: "success"`. That is the only source of `result_too_large` friction.
+An oversized *discovery* response and an oversized program return are shaped
+differently and produce none, and an `errorCode` is written only when the call
+actually failed. The category adds no arguments, results, search text,
+generated code, credentials, or raw errors.
+
+An address whose connector does not exist is recorded too, as written, provided
+it has the `<connectorId>.<toolName>` shape at all — a string that never split
+into the two fields activity keeps still records nothing. A hallucinated
+connector id is the most common address mistake, and an operator reading
+activity should see it; addresses are already a first-class activity field, so
+nothing new is retained.
+
+What *is* new is that those fields now hold caller-authored text, so the
+recording seam clamps them: `connectorId` and `toolName` at 128 UTF-8 bytes
+each, `address` at 257, with a `…` marker. Far past any real id or tool name,
+and far short of a 40 KB invented one. The clamp is structural rather than a
+policy the writer applies, because "payload-free by construction" has to mean
+the event type has nowhere to put a payload — a 40 KB connector id is a payload
+wearing an id's clothing. Clamped rather than skipped: the invented id is
+exactly what an operator needs to see, and its first 128 bytes say as much
+about the mistake as all 40,000 would.
+
 ## Argument recovery
 
 A remote MCP tool's advertised `inputSchema` is checked in the shared
@@ -183,9 +257,11 @@ JSON Pointer `path`, schema-keyword `code`, and expected shape. Submitted
 values are never copied into those findings.
 
 At most three findings are returned; `validation.truncated` says when more
-exist. `nextAction` points to `search_tools` scoped to the same connector and
-tool name when the compact schema is needed, while `retry` says to correct the
-listed arguments and reissue the original operation. A schema the local
+exist. `nextAction` points to discovery scoped to the same connector and tool
+name when the compact schema is needed — routed like any other miss, so a
+program is sent to `connecta.search` and a top-level call to `search_tools` —
+while `retry` says to correct the listed arguments and reissue the original
+operation. A schema the local
 validator cannot evaluate passes through to the provider. Provider error prose
 is not parsed or guessed, so an unknown format remains
 `connector_call_failed`.

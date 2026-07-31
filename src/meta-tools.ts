@@ -23,7 +23,9 @@ import {
   type DeferredWork,
 } from "./connector-scope.js";
 import {
+  boundedEchoText,
   classifyCallError,
+  echoedCallArgs,
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
@@ -786,6 +788,10 @@ async function stashResult(
   resultId: string;
   totalBytes: number;
   hint: string;
+  nextAction: {
+    tool: "get_result";
+    arguments: { id: string; offset: 0 };
+  };
 }> {
   const id = crypto.randomUUID();
   await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
@@ -794,16 +800,108 @@ async function stashResult(
     resultId: id,
     totalBytes,
     hint: "use get_result {id, offset} to page, or re-call with fields to select less",
+    nextAction: {
+      tool: "get_result",
+      arguments: { id, offset: 0 },
+    },
   };
 }
 
-/** Keep an oversized batch's inline outcome summary at fixed string overhead. */
+interface GuardedResult<T> {
+  result: T;
+  truncated: boolean;
+}
+
+/**
+ * Keep an oversized batch's inline outcome summary at fixed string overhead.
+ * The same clamp the error envelopes use — one budget, one marker, defined
+ * once in `errors.ts` so the two cannot drift apart.
+ */
 function batchSummaryString(value: string): string {
-  const bytes = enc.encode(value);
-  const maxBytes = 512;
-  if (bytes.length <= maxBytes) return value;
-  const end = alignEndToCharBoundary(bytes, 0, maxBytes, bytes.length);
-  return `${dec.decode(bytes.slice(0, end))}…`;
+  return boundedEchoText(value);
+}
+
+/** Candidate addresses kept in an oversized batch's summary of one ambiguity. */
+const MAX_SUMMARY_ADDRESSES = 10;
+
+/**
+ * A recovery route rebuilt field by field so the summary above keeps its
+ * promise. Spreading `nextAction` through raw would reopen the hole this
+ * function closes: every variant carries free-form strings, and one of them
+ * carries the caller's arguments, which is exactly the payload an oversized
+ * batch was already too large to hold.
+ */
+function batchSummaryNextAction(
+  nextAction: NonNullable<CallErrorDetails["nextAction"]>,
+): NonNullable<CallErrorDetails["nextAction"]> {
+  if ("function" in nextAction) {
+    // A batch runs on the top-level catalog, whose search route is the tool, so
+    // the function-keyed discovery variant does not arrive here today. Rebuild
+    // it anyway: a guard that silently dropped an unrecognized route would turn
+    // a recovery record into nothing at exactly the moment one is needed.
+    if (nextAction.function === "connecta.search") {
+      return {
+        function: "connecta.search",
+        arguments: batchSummarySearchArgs(nextAction.arguments),
+        purpose: batchSummaryString(nextAction.purpose),
+      };
+    }
+    // Say so when the candidate list is clipped. The unclipped purpose reads
+    // "choose the intended canonical address", which is a lie about a list
+    // that no longer contains every candidate — and the caller has no other
+    // way to learn that the address it wants was the eleventh.
+    const candidates = nextAction.addresses.slice(0, MAX_SUMMARY_ADDRESSES);
+    return {
+      function: nextAction.function,
+      addresses: candidates.map(batchSummaryString),
+      purpose: batchSummaryString(
+        candidates.length < nextAction.addresses.length
+          ? `${nextAction.purpose} Showing the first ${candidates.length} of ` +
+            `${nextAction.addresses.length} candidates; re-run the call on its ` +
+            "own to see them all."
+          : nextAction.purpose,
+      ),
+    };
+  }
+  if (nextAction.tool === "authorize_connector") {
+    return {
+      tool: "authorize_connector",
+      arguments: {
+        connector: batchSummaryString(nextAction.arguments.connector),
+      },
+      operatorHandoff: batchSummaryString(nextAction.operatorHandoff),
+    };
+  }
+  if (nextAction.tool === "call_destructive_tool") {
+    return {
+      tool: "call_destructive_tool",
+      arguments: {
+        address: batchSummaryString(nextAction.arguments.address),
+        ...echoedCallArgs(nextAction.arguments.args),
+      },
+      purpose: batchSummaryString(nextAction.purpose),
+    };
+  }
+  return {
+    tool: "search_tools",
+    arguments: batchSummarySearchArgs(nextAction.arguments),
+    purpose: batchSummaryString(nextAction.purpose),
+  };
+}
+
+/** The scoping arguments both discovery routes carry, bounded the same way. */
+function batchSummarySearchArgs(args: {
+  query: string;
+  connector?: string;
+  includeSchemas: "compact";
+}): { query: string; connector?: string; includeSchemas: "compact" } {
+  return {
+    query: batchSummaryString(args.query),
+    ...(args.connector !== undefined
+      ? { connector: batchSummaryString(args.connector) }
+      : {}),
+    includeSchemas: "compact",
+  };
 }
 
 /**
@@ -817,16 +915,22 @@ async function guardEncoded(
   bytes: Uint8Array,
   results: KVStorage,
   cap: number,
-): Promise<ToolResult> {
+): Promise<GuardedResult<ToolResult>> {
   if (bytes.length <= cap) {
-    return { content: [{ type: "text", text }] };
+    return {
+      result: { content: [{ type: "text", text }] },
+      truncated: false,
+    };
   }
   const notice = await stashResult(text, results, bytes.length);
   const head = dec.decode(
     bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
   );
   return {
-    content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
+    result: {
+      content: [{ type: "text", text: `${head}\n${JSON.stringify(notice)}` }],
+    },
+    truncated: true,
   };
 }
 
@@ -835,7 +939,7 @@ async function guardText(
   text: string,
   results: KVStorage,
   cap: number,
-): Promise<ToolResult> {
+): Promise<GuardedResult<ToolResult>> {
   // `JSON.stringify`'s type says `string` where its behavior says `string |
   // undefined`, so TypeScript alone does not keep a non-string out of here.
   // Normalizing at the door means the size check below always measures exactly
@@ -851,11 +955,14 @@ async function guardValue(
   value: unknown,
   results: KVStorage,
   cap: number,
-): Promise<unknown> {
+): Promise<GuardedResult<unknown>> {
   const text = serializeResultText(value);
   const bytes = enc.encode(text);
-  if (bytes.length <= cap) return value;
-  return stashResult(text, results, bytes.length);
+  if (bytes.length <= cap) return { result: value, truncated: false };
+  return {
+    result: await stashResult(text, results, bytes.length),
+    truncated: true,
+  };
 }
 
 /**
@@ -880,7 +987,7 @@ async function guardContent(
   content: TextContent[],
   results: KVStorage,
   cap: number,
-): Promise<ToolResult> {
+): Promise<GuardedResult<ToolResult>> {
   let text: string;
   try {
     text = JSON.stringify(content);
@@ -889,17 +996,22 @@ async function guardContent(
     // be measured, stashed, or paged either — there is nothing this guard could
     // do with it. Pass it through as the old text-only measure did, rather than
     // turning a call that used to succeed into result_processing_failed.
-    return { content };
+    return { result: { content }, truncated: false };
   }
   const bytes = enc.encode(text);
   // Under the cap the downstream blocks pass through untouched, non-text ones
   // included, in their original order.
-  if (bytes.length <= cap) return { content };
+  if (bytes.length <= cap) {
+    return { result: { content }, truncated: false };
+  }
   if (content.every((b) => b.type === "text")) {
     return guardEncoded(text, bytes, results, cap);
   }
   const notice = await stashResult(text, results, bytes.length);
-  return { content: [{ type: "text", text: JSON.stringify(notice) }] };
+  return {
+    result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
+    truncated: true,
+  };
 }
 
 // --- compact schema rendering (feature 3a) --------------------------------
@@ -937,6 +1049,10 @@ export interface CallArgs {
   maxRetries?: number;
   /** Include connector/catalog/result-processing timing segments. */
   diagnostics?: boolean;
+}
+export interface DestructiveCallArgs extends CallArgs {
+  /** Short model-authored context for the host's approval UI; never downstream input. */
+  reason?: string;
 }
 export interface GetResultArgs {
   id: string;
@@ -1038,6 +1154,9 @@ export function createMetaTools(
     // are built with their own CatalogService in execute.ts.
     describeRoute:
       surface === "code-first" ? "connecta.describe" : "describe_tools",
+    // searchRoute keeps its default: unlike describe_tools, search_tools is
+    // served by both advertised surfaces, so a top-level handler has nothing to
+    // derive. Only an in-program caller needs to be sent to connecta.search.
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(
@@ -1065,6 +1184,12 @@ export function createMetaTools(
   interface ProcessedCallResult {
     toolResult: ToolResult;
     value?: unknown;
+    /**
+     * Friction on a call that *succeeded*. It travels as a friction class, not
+     * as an `errorCode`, so persistence keyed on "this row has an error code"
+     * keeps counting failures rather than truncations.
+     */
+    friction?: "result_too_large";
   }
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
@@ -1111,10 +1236,14 @@ export function createMetaTools(
                   resolved.definition.outputSchema,
                 )
               : result;
-            value = await guardValue(value, results, cap);
+            const guarded = await guardValue(value, results, cap);
+            value = guarded.result;
             return {
               toolResult: jsonResult({ ok: true, data: value }),
               value,
+              ...(guarded.truncated
+                ? { friction: "result_too_large" as const }
+                : {}),
             };
           }
           if (resolved.connector.kind === "mcp") {
@@ -1127,7 +1256,13 @@ export function createMetaTools(
                 resolved.definition.outputSchema,
               );
             }
-            return { toolResult: await guardContent(content, results, cap) };
+            const guarded = await guardContent(content, results, cap);
+            return {
+              toolResult: guarded.result,
+              ...(guarded.truncated
+                ? { friction: "result_too_large" as const }
+                : {}),
+            };
           }
           const value = fields
             ? projectionValue(
@@ -1136,19 +1271,26 @@ export function createMetaTools(
                 resolved.definition.outputSchema,
               )
             : result;
+          const guarded = await guardText(
+            serializeResultText(value),
+            results,
+            cap,
+          );
           return {
-            toolResult: await guardText(
-              serializeResultText(value),
-              results,
-              cap,
-            ),
+            toolResult: guarded.result,
             value,
+            ...(guarded.truncated
+              ? { friction: "result_too_large" as const }
+              : {}),
           };
         },
+        activityFriction: (processed) => processed.friction,
       },
     );
     if (!outcome.ok) {
+      const structuredRecovery = outcome.error.nextAction !== undefined;
       const failedResult =
+        structuredRecovery ||
         outcome.error.code === "auth_required" ||
         outcome.error.code === "invalid_args" ||
         outcome.error.code === "input_required_unsupported" ||
@@ -1162,6 +1304,7 @@ export function createMetaTools(
             })
           : errorResult(outcome.error.message);
       if (
+        structuredRecovery ||
         outcome.error.code === "auth_required" ||
         outcome.error.code === "invalid_args" ||
         outcome.error.code === "input_required_unsupported"
@@ -1368,7 +1511,9 @@ export function createMetaTools(
       return (await runCall(args, "call_tool")).toolResult;
     },
 
-    async callDestructiveTool(args: CallArgs): Promise<ToolResult> {
+    async callDestructiveTool(args: DestructiveCallArgs): Promise<ToolResult> {
+      // `reason` is read by the host's approval view and stops there — runCall
+      // forwards only the call fields, so it never reaches the connector.
       return (
         await runCall(args, "call_destructive_tool", { allowDestructive: true })
       ).toolResult;
@@ -1557,7 +1702,7 @@ export function createMetaTools(
                 ? { recovery: details.recovery }
                 : {}),
               ...(details.nextAction !== undefined
-                ? { nextAction: details.nextAction }
+                ? { nextAction: batchSummaryNextAction(details.nextAction) }
                 : {}),
               ...(details.retry !== undefined
                 ? { retry: batchSummaryString(details.retry) }
@@ -1670,7 +1815,7 @@ const DESCRIBE_DESC = `Only when search_tools omitted schemas, a compact shape i
 const CALL_DESC =
   'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
-  "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
+  "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. Include a short reason explaining the intended consequence for the human reviewer; it grants no authority and is never passed downstream. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
   "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 const BATCH_DESC =
@@ -1885,14 +2030,29 @@ export function registerMetaTools(
     "call_destructive_tool",
     {
       description: CALL_DESTRUCTIVE_DESC,
-      inputSchema: z.object(CALL_INPUT_SCHEMA),
+      inputSchema: z.object({
+        ...CALL_INPUT_SCHEMA,
+        // Bounded above, but with no lower bound: a model that sends `""` or
+        // whitespace has written no reason, and failing an entire consequential
+        // call over a cosmetic field the host merely displays is the wrong
+        // trade. It is normalized to absent below instead.
+        reason: z.string().max(500).optional(),
+      }),
       annotations: {
         destructiveHint: true,
         readOnlyHint: false,
         openWorldHint: true,
       },
     },
-    async (args) => mt.callDestructiveTool(args as CallArgs),
+    async (args) => {
+      // `reason` is the host's to display and connecta's to keep out of the
+      // downstream call, so this destructuring is the whole of its handling:
+      // nothing below reads it. Dropping it is also what makes an empty or
+      // whitespace-only one "absent" rather than a validation failure — there
+      // is no field left for it to be absent from.
+      const { reason: _hostContext, ...call } = args as DestructiveCallArgs;
+      return mt.callDestructiveTool(call);
+    },
   );
 
   server.registerTool(

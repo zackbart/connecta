@@ -14,7 +14,13 @@ nothing get sensible budgets. The design record is
 `documentation/rich-output-design.md` (#267); the contract is `code-mode.md`'s
 "Emitted output" clauses (#270).
 
-Alongside it, three pieces of runtime text stop naming tools the receiving
+Agent recovery is now executable data instead of prose at the remaining local
+failure points. Address mistakes, approval reroutes, shortcut collisions, and
+paged results identify their next call directly; activity classifies those
+moments without retaining payloads. Connector behavior and approval authority
+are unchanged.
+
+Alongside both, three pieces of runtime text stop naming tools the receiving
 surface does not serve — a routing failure connecta authored itself, and one the
 always-loaded-text sweep missed because it only reads descriptions, not error
 strings and tool results. All three fixes are agent-visible wording; no wire
@@ -34,6 +40,56 @@ which had been probing at the 30-second default no matter what was configured.
   run.
 - **`diagnostics.emitted`.** With `diagnostics: true`, one payload-free
   aggregate (block count and serialized bytes) when a program emitted.
+- **Local routing failures carry structured recovery.** Unknown addresses and
+  tools suggest scoped discovery, read-path policy refusals preserve the
+  canonical address for `call_destructive_tool` — with the original arguments
+  when they fit a 512-byte echo budget, and an instruction to re-send them when
+  they do not — and ambiguous code-mode aliases list every canonical
+  `connecta.call` candidate. The suggested discovery route follows the caller's
+  own surface: `search_tools` for a top-level call, `connecta.search` with the
+  same arguments for a miss inside `execute_code`, which cannot call a tool.
+  The address gets the same 512-byte budget as the argument echo but the
+  opposite rule — clamped with a `…` marker rather than dropped, since the
+  address is the thing being corrected. Short addresses, which is all real
+  ones, come back exact.
+- **Destructive calls accept explanatory context.** An optional `reason` of at
+  most 500 characters gives the MCP host human-readable intent without entering
+  downstream arguments or granting authority. An empty or whitespace-only one
+  is treated as absent rather than failing the call.
+- **Activity exposes coarse agent friction.** Typed codes derive
+  `tool_not_found`, `schema_retry`, `destructive_reroute`, `auth_required`, or
+  `result_too_large`; no payload or raw error text is added.
+
+### Changed
+
+- **Paged results name the exact next call.** `call_tool` and `batch_call`
+  truncation notices include `get_result` arguments with the generated id and
+  byte offset zero. Program results and oversized discovery responses still
+  carry no `get_result` route: paging a program's return value is refused by
+  design, and a program can shrink anything.
+- **`nextAction` is a wider union than it was.** `search_tools` routes may now
+  omit `arguments.connector` (an unknown *connector* cannot scope discovery to
+  itself), the ambiguous-alias route is keyed `function: "connecta.call"` with
+  no `tool` at all, and in-program discovery recovery is keyed
+  `function: "connecta.search"` carrying the same `{ query, connector?,
+  includeSchemas }` arguments the tool route does. A consumer that narrowed on
+  `nextAction.tool` must handle the function-keyed shapes too.
+- **An address that resolves to nothing is now recorded.** A call to a
+  connector id that does not exist emits one activity event at the address as
+  written, with `unknown_address` and `tool_not_found` friction — provided the
+  address splits into the `<connectorId>.<toolName>` shape activity keeps; one
+  with no interior dot still records nothing. Previously the single most common
+  address mistake left no trace at all. Addresses were already a first-class
+  activity field; nothing new is retained. Because those fields now hold
+  caller-authored text, the recording seam clamps `connectorId` and `toolName`
+  at 128 UTF-8 bytes each and `address` at 257, marked with `…` — far past any
+  real id, far short of an invented 40 KB one.
+- **A truncated result is friction, not an error.** An oversized result reports
+  `friction: "result_too_large"` on an `outcome: "success"` event and writes no
+  `errorCode`, so consumers counting error codes stop counting truncated
+  successes as failures. The Worker D1 example gains a `friction` column;
+  existing tables need `ALTER TABLE tool_call_activity ADD COLUMN friction
+  TEXT` before deploying it.
 
 ### Fixed
 

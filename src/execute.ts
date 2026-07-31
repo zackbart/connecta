@@ -429,6 +429,9 @@ export async function buildSandboxProviders(
     // code-first and a classic-with-executor deployment alike, so the retry
     // advice names connecta.describe regardless of what this server advertises.
     describeRoute: "connecta.describe",
+    // Same reasoning for the discovery route a routing failure hands back: the
+    // program that just missed an address cannot call search_tools.
+    searchRoute: "connecta.search",
     ...(limits.discoveryConcurrency !== undefined
       ? { concurrency: limits.discoveryConcurrency }
       : {}),
@@ -878,6 +881,10 @@ export function createExecuteTool(
         if (invocationFailure) break;
       }
       if (invocationFailure) {
+        // Handed back whole, with no size guard of its own — the failure was
+        // framed with bounded caller text (`boundedEchoText`) precisely so
+        // this path never needs one. Adding a cap here instead would leave the
+        // top-level surfaces, which have the same amplification, uncovered.
         const result = jsonResult({
           error: invocationFailure.details,
           ...(logs ? { logs } : {}),

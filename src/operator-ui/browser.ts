@@ -58,6 +58,7 @@ interface UiActivityEvent {
   durationMs: number;
   attempts: number;
   errorCode?: string;
+  friction?: string;
 }
 
 interface UiActivityResponse {
@@ -425,6 +426,7 @@ function renderActivity(): void {
       event.source,
       event.outcome,
       event.errorCode,
+      event.friction,
       actor.kind,
       actor.id,
       actor.namespace,
@@ -454,7 +456,13 @@ function renderActivity(): void {
     const retryCopy = event.attempts > 1
       ? " · " + esc(event.attempts) + " attempts"
       : "";
-    const errorCopy = event.errorCode ? " · " + esc(event.errorCode) : "";
+    const frictionCopy = event.friction ? " · " + esc(event.friction) : "";
+    // The friction class and the code coincide for auth_required and
+    // result_too_large. Printing "· auth_required · auth_required" says nothing
+    // twice, so the coarse class stands in for both when they agree.
+    const errorCopy = event.errorCode && event.errorCode !== event.friction
+      ? " · " + esc(event.errorCode)
+      : "";
     const actorId = event.actor?.id
       ? (event.actor.namespace
         ? event.actor.namespace + " · " + event.actor.id
@@ -474,7 +482,7 @@ function renderActivity(): void {
       "</div>" + stableActorId + "</div></div>" +
       '<div><div class="activity-address">' + esc(event.address) +
       '</div><div class="activity-detail">' + esc(event.source) + retryCopy +
-      errorCopy + '</div></div>' +
+      frictionCopy + errorCopy + '</div></div>' +
       '<div><div class="activity-outcome">' + esc(event.outcome) +
       '</div><div class="activity-detail">' + esc(event.durationMs) + ' ms</div></div>';
     list.appendChild(item);

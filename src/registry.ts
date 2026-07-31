@@ -39,9 +39,12 @@ const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
 
 /**
  * Split `"<connectorId>.<toolName>"` on the first dot. Connector ids contain
- * no dots, so a downstream tool name may.
+ * no dots, so a downstream tool name may. Exported because an address that
+ * resolves to nothing is still an address the invocation path has to record
+ * activity for — a connector id an agent invented is the most common address
+ * mistake, and the one an operator most needs to see.
  */
-function splitAddress(
+export function splitAddress(
   address: string,
 ): { connectorId: string; toolName: string } | null {
   const dot = address.indexOf(".");

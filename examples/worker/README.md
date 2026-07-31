@@ -111,6 +111,7 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
      duration_ms    INTEGER NOT NULL,
      attempts       INTEGER NOT NULL,
      error_code     TEXT,
+     friction       TEXT,
      server_name    TEXT NOT NULL,
      server_version TEXT NOT NULL,
      deployment_id  TEXT
@@ -120,13 +121,20 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
      ON tool_call_activity (occurred_at_ms DESC, id DESC);
    ```
 
-   **Already have this table?** `actor_namespace` was added after the original
-   example, and `CREATE TABLE IF NOT EXISTS` will not add it to a table that
-   already exists. Add it as a migration:
+   **Already have this table?** `actor_namespace` and `friction` were added
+   after the original example, and `CREATE TABLE IF NOT EXISTS` will not add
+   them to a table that already exists. Add them as migrations:
 
    ```sql
    ALTER TABLE tool_call_activity ADD COLUMN actor_namespace TEXT;
+   ALTER TABLE tool_call_activity ADD COLUMN friction TEXT;
    ```
+
+   `friction` is stored rather than derived because one of its classes belongs
+   to a call that *succeeded*: a result too large to return inline is friction
+   for the agent and carries no error code. Rows written before the column keep
+   working — the mapping module derives their friction from `error_code` — and
+   `error_code IS NOT NULL` remains an honest count of failures.
 
    Do this **before** deploying the updated `d1-activity.ts`: its `INSERT`
    names the column, so against an un-migrated table every write fails with

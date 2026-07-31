@@ -2200,6 +2200,38 @@ describe("call_tool", () => {
     expect(parsed.error.retryable).toBe(false);
   });
 
+  it("returns actionable recovery for unknown addresses and tools", async () => {
+    const mt = createMetaTools(registry(), BASE);
+    const address = textOf(
+      await mt.callTool({ address: "ghost.read_items" }),
+    ) as {
+      error: { nextAction: Record<string, unknown> };
+    };
+    expect(address.error.nextAction).toEqual({
+      tool: "search_tools",
+      arguments: {
+        query: "read items",
+        includeSchemas: "compact",
+      },
+      purpose: "Find the configured canonical address before retrying.",
+    });
+
+    const tool = textOf(
+      await mt.callTool({ address: "calc.missing_sum" }),
+    ) as {
+      error: { nextAction: Record<string, unknown> };
+    };
+    expect(tool.error.nextAction).toEqual({
+      tool: "search_tools",
+      arguments: {
+        query: "missing sum",
+        connector: "calc",
+        includeSchemas: "compact",
+      },
+      purpose: "Find the connector's current canonical tool address.",
+    });
+  });
+
   it("routes annotated destructive tools through the approval-specific handler", async () => {
     let calls = 0;
     const dangerous = api("danger", {
@@ -2219,9 +2251,22 @@ describe("call_tool", () => {
     });
     const mt = createMetaTools(makeRegistry([dangerous]), BASE);
 
-    const ordinary = await mt.callTool({ address: "danger.erase" });
+    const ordinary = await mt.callTool({
+      address: "danger.erase",
+      args: { target: "duplicate" },
+    });
     expect(ordinary.isError).toBe(true);
-    expect(required(ordinary.content[0]).text).toContain("call_destructive_tool");
+    expect(textOf(ordinary)).toMatchObject({
+      error: {
+        nextAction: {
+          tool: "call_destructive_tool",
+          arguments: {
+            address: "danger.erase",
+            args: { target: "duplicate" },
+          },
+        },
+      },
+    });
     expect(calls).toBe(0);
 
     const batch = textOf(
@@ -2235,10 +2280,172 @@ describe("call_tool", () => {
 
     const approved = await mt.callDestructiveTool({
       address: "danger.erase",
+      args: { target: "duplicate" },
+      reason: "Remove the duplicate selected by the user.",
     });
     expect(approved.isError).toBeFalsy();
     expect(textOf(approved)).toEqual({ erased: true });
     expect(calls).toBe(1);
+  });
+
+  it("keeps a destructive refusal small when the arguments are not", async () => {
+    // An error result is not size-guarded the way a result is, so echoing the
+    // caller's arguments back unbounded once turned a 50 KB argument object
+    // into a 101 KB refusal against a 1 KB cap — twice over, since it lands in
+    // both the text content and structuredContent.
+    const dangerous = api("danger", {
+      tools: [
+        {
+          name: "erase",
+          annotations: { destructiveHint: true, readOnlyHint: false },
+          handler: () => ({ erased: true }),
+        },
+      ],
+    });
+    const mt = createMetaTools(
+      makeRegistry([dangerous], {
+        maxResultBytes: 1_000,
+        maxBatchResultBytes: 1_000,
+      }),
+      BASE,
+    );
+    const huge = { blob: "x".repeat(50_000) };
+
+    const direct = await mt.callTool({ address: "danger.erase", args: huge });
+    const directBytes = JSON.stringify(direct).length;
+    expect(direct.isError).toBe(true);
+    expect(directBytes).toBeLessThan(4_000);
+    expect(JSON.stringify(direct)).not.toContain("xxxxx");
+    const refusal = textOf(direct) as {
+      error: {
+        nextAction: {
+          arguments: { address: string; args?: unknown };
+          purpose: string;
+        };
+      };
+    };
+    expect(refusal.error.nextAction.arguments).toEqual({
+      address: "danger.erase",
+    });
+    expect(refusal.error.nextAction.purpose).toContain(
+      "Re-send the arguments you just sent",
+    );
+
+    // Same bypass, other cap: a batch child's refusal rides in the final
+    // envelope, so an unbounded echo would defeat maxBatchResultBytes too.
+    const batch = await mt.batchCall({
+      calls: [{ address: "danger.erase", args: huge }],
+    });
+    expect(JSON.stringify(batch).length).toBeLessThan(4_000);
+    expect(JSON.stringify(batch)).not.toContain("xxxxx");
+
+    // And once the envelope is genuinely oversized, the inline summary keeps
+    // its fixed-overhead promise: the route survives, the payload does not.
+    const summarized = textOf(
+      await createMetaTools(
+        makeRegistry([dangerous], { maxBatchResultBytes: 200 }),
+        BASE,
+      ).batchCall({ calls: [{ address: "danger.erase", args: huge }] }),
+    ) as {
+      truncated: true;
+      results: Array<{
+        errorDetails: { nextAction: { arguments: Record<string, unknown> } };
+      }>;
+    };
+    expect(summarized.truncated).toBe(true);
+    expect(
+      required(summarized.results[0]).errorDetails.nextAction.arguments,
+    ).toEqual({ address: "danger.erase" });
+    expect(JSON.stringify(summarized).length).toBeLessThan(4_000);
+
+    // Arguments that fit the echo budget still come back whole.
+    const small = textOf(
+      await mt.callTool({ address: "danger.erase", args: { target: "dupe" } }),
+    ) as { error: { nextAction: { arguments: { args?: unknown } } } };
+    expect(small.error.nextAction.arguments.args).toEqual({ target: "dupe" });
+  });
+
+  it("keeps a routing refusal small when the address is not", async () => {
+    // The argument echo was bounded; the *address* was not. It reaches the
+    // refusal twice over — once in the error message, once as the recovery
+    // record's search query — and each of those lands in both the text content
+    // and structuredContent, so a 50 KB invented address produced a 200 KB
+    // refusal against a deployment that capped results at 1 KB.
+    const mt = createMetaTools(
+      makeRegistry([calcConnector], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const filler = "x".repeat(50_000);
+
+    const unknownAddress = await mt.callTool({ address: `ghost.${filler}` });
+    expect(unknownAddress.isError).toBe(true);
+    expect(JSON.stringify(unknownAddress).length).toBeLessThan(4_000);
+    const address = textOf(unknownAddress) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string } };
+      };
+    };
+    expect(address.error.code).toBe("unknown_address");
+    expect(address.error.message).toContain("Unknown address");
+    // Clamped, not dropped: the caller still learns which address was refused,
+    // and the marker says it is not the whole of what it sent.
+    expect(address.error.message).toContain("…");
+    expect(address.error.nextAction.arguments.query).toContain("…");
+    expect(address.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // Same bypass one resolution step later: the connector exists, the tool
+    // name is the caller's invention.
+    const unknownTool = await mt.callTool({ address: `calc.${filler}` });
+    expect(unknownTool.isError).toBe(true);
+    expect(JSON.stringify(unknownTool).length).toBeLessThan(4_000);
+    const tool = textOf(unknownTool) as {
+      error: {
+        code: string;
+        message: string;
+        nextAction: { arguments: { query: string; connector: string } };
+      };
+    };
+    expect(tool.error.code).toBe("unknown_tool");
+    expect(tool.error.message).toContain("Unknown tool");
+    expect(tool.error.nextAction.arguments.connector).toBe("calc");
+    expect(tool.error.nextAction.arguments.query.length).toBeLessThan(600);
+
+    // The common case must stay exact — a short address is corrected verbatim.
+    const short = textOf(await mt.callTool({ address: "ghost.read_items" })) as {
+      error: { message: string; nextAction: { arguments: { query: string } } };
+    };
+    expect(short.error.message).toBe('Unknown address "ghost.read_items"');
+    expect(short.error.nextAction.arguments.query).toBe("read items");
+  });
+
+  it("keeps call_destructive_tool's reason out of the downstream arguments", async () => {
+    const seen: unknown[] = [];
+    const dangerous = api("danger", {
+      tools: [
+        {
+          name: "erase",
+          annotations: { destructiveHint: true, readOnlyHint: false },
+          handler: (args: unknown) => {
+            seen.push(args);
+            return { erased: true };
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([dangerous]), BASE);
+
+    await mt.callDestructiveTool({
+      address: "danger.erase",
+      args: { target: "duplicate" },
+      reason: "The user asked to remove the duplicate they selected.",
+    });
+
+    // `reason` is context for the host's approval view and stops there. It is
+    // not authority, and a connector must never see it as an input.
+    expect(seen).toEqual([{ target: "duplicate" }]);
+    expect(Object.keys(required(seen[0]) as object)).toEqual(["target"]);
   });
 
   it("requires approval for unannotated and contradictory tools", async () => {
@@ -3729,9 +3936,17 @@ describe("call_tool size guard + get_result", () => {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
+      nextAction: {
+        tool: string;
+        arguments: { id: string; offset: number };
+      };
     };
     expect(notice.truncated).toBe(true);
     expect(notice.totalBytes).toBeGreaterThan(100);
+    expect(notice.nextAction).toEqual({
+      tool: "get_result",
+      arguments: { id: notice.resultId, offset: 0 },
+    });
 
     // Round-trip the full text back through get_result.
     let offset = 0;
@@ -3772,6 +3987,12 @@ describe("call_tool size guard + get_result", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.data.truncated).toBe(true);
     expect(parsed.data.totalBytes).toBeGreaterThan(100);
+    expect(parsed.data).toMatchObject({
+      nextAction: {
+        tool: "get_result",
+        arguments: { id: parsed.data.resultId, offset: 0 },
+      },
+    });
     const page = textOf(
       await mt.getResult({ id: parsed.data.resultId, maxBytes: 1_000 }),
     ) as { text: string };

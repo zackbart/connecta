@@ -1,4 +1,24 @@
+import { boundedEchoText } from "./errors.js";
 import type { Logger } from "./types.js";
+
+/**
+ * How long an identity field may be before the store stops believing it.
+ *
+ * `connectorId` and `toolName` are ordinarily operator- and connector-authored,
+ * and 128 bytes is far past any real one. But an address that resolved to
+ * nothing is recorded *as written*, which puts a caller-authored string in both
+ * fields — and "payload-free by construction" has to mean the event type has
+ * nowhere to put a payload, not merely that connecta declines to. A 40 KB
+ * invented connector id is a payload wearing an id's clothing.
+ *
+ * Clamped rather than dropped: the invented id is precisely what an operator
+ * needs to see, and its first 128 bytes identify the mistake as well as all
+ * 40,000 would. The `…` marker keeps a clamped value from reading as a real one.
+ */
+const MAX_ACTIVITY_NAME_BYTES = 128;
+
+/** Two names and the dot between them. */
+const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 
 export type ActivityCallSource =
   | "call_tool"
@@ -11,6 +31,35 @@ export type ActivityOutcome =
   | "error"
   | "timeout"
   | "cancelled";
+
+export type AgentFriction =
+  | "tool_not_found"
+  | "schema_retry"
+  | "destructive_reroute"
+  | "auth_required"
+  | "result_too_large";
+
+/** Coarse recovery class derived without inspecting payloads or error prose. */
+export function agentFrictionForCode(
+  code: string | undefined,
+): AgentFriction | undefined {
+  switch (code) {
+    case "unknown_address":
+    case "unknown_tool":
+    case "ambiguous_tool_alias":
+      return "tool_not_found";
+    case "invalid_args":
+      return "schema_retry";
+    case "destructive_tool_requires_approval":
+      return "destructive_reroute";
+    case "auth_required":
+      return "auth_required";
+    case "result_too_large":
+      return "result_too_large";
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Authenticated identity attached to an activity event. `id` is intentionally
@@ -48,7 +97,14 @@ export interface ToolCallActivityEvent {
   outcome: ActivityOutcome;
   durationMs: number;
   attempts: number;
+  /** Set only when the call actually failed; a truncated success has none. */
   errorCode?: string;
+  /**
+   * Payload-free recovery class. Usually derived from `errorCode`, but it can
+   * also stand alone: a result too large to return inline is friction for the
+   * agent while remaining an `outcome: "success"` call with no error code.
+   */
+  friction?: AgentFriction;
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
@@ -121,6 +177,7 @@ export type ActivityEventInput = Pick<
   | "durationMs"
   | "attempts"
   | "errorCode"
+  | "friction"
 >;
 
 /**
@@ -133,20 +190,24 @@ export function recordToolActivity(
   input: ActivityEventInput,
 ): void {
   if (!context) return;
+  // A caller-supplied class wins because it knows something the code table
+  // cannot: friction that belongs to a call which did not fail.
+  const friction = input.friction ?? agentFrictionForCode(input.errorCode);
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
     occurredAt: new Date().toISOString(),
     requestId: context.requestId,
     actor: context.actor,
-    connectorId: input.connectorId,
-    toolName: input.toolName,
-    address: input.address,
+    connectorId: boundedEchoText(input.connectorId, MAX_ACTIVITY_NAME_BYTES),
+    toolName: boundedEchoText(input.toolName, MAX_ACTIVITY_NAME_BYTES),
+    address: boundedEchoText(input.address, MAX_ACTIVITY_ADDRESS_BYTES),
     source: input.source,
     outcome: input.outcome,
     durationMs: Math.max(0, Math.trunc(input.durationMs)),
     attempts: Math.max(1, Math.trunc(input.attempts)),
     ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(friction ? { friction } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(context.deploymentId

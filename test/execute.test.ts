@@ -481,6 +481,10 @@ describe("buildSandboxProviders", () => {
       message: expect.stringContaining(
         "Use connecta.call with an exact address",
       ),
+      nextAction: {
+        function: "connecta.call",
+        addresses: ["colliding.get.thing", "colliding.get-thing"],
+      },
     });
     await expect(
       required(connectaProvider(providers).fns.call)("colliding.get.thing", {}),
@@ -493,12 +497,63 @@ describe("buildSandboxProviders", () => {
       BASE,
       silentLogger,
     );
+    // A program cannot call search_tools, so both shortcut misses route
+    // recovery through the function it can actually reach.
     await expect(
       callNamespace(providers, "missing", "read"),
-    ).rejects.toMatchObject({ code: "unknown_address" });
+    ).rejects.toMatchObject({
+      code: "unknown_address",
+      nextAction: {
+        function: "connecta.search",
+        arguments: { query: "read", includeSchemas: "compact" },
+        purpose: "Find the configured canonical address before retrying.",
+      },
+    });
     await expect(
       callNamespace(providers, "calc", "missing"),
-    ).rejects.toMatchObject({ code: "unknown_tool" });
+    ).rejects.toMatchObject({
+      code: "unknown_tool",
+      nextAction: {
+        function: "connecta.search",
+        arguments: {
+          query: "missing",
+          connector: "calc",
+          includeSchemas: "compact",
+        },
+        purpose: "Find the connector's current canonical tool address.",
+      },
+    });
+  });
+
+  it("routes connecta.call address failures to connecta.search", async () => {
+    const providers = await buildSandboxProviders(
+      makeRegistry([calcConnector]),
+      BASE,
+      silentLogger,
+    );
+    const call = required(connectaProvider(providers).fns.call);
+    await expect(call("ghost.read_items", {})).rejects.toMatchObject({
+      code: "unknown_address",
+      nextAction: {
+        function: "connecta.search",
+        arguments: { query: "read items", includeSchemas: "compact" },
+      },
+    });
+    await expect(call("calc.missing_sum", {})).rejects.toMatchObject({
+      code: "unknown_tool",
+      nextAction: {
+        function: "connecta.search",
+        arguments: {
+          query: "missing sum",
+          connector: "calc",
+          includeSchemas: "compact",
+        },
+      },
+    });
+    // The route a program cannot take never appears on the in-program surface.
+    await expect(call("calc.missing_sum", {})).rejects.not.toHaveProperty(
+      "nextAction.tool",
+    );
   });
 
   it("surfaces connector namespace collisions after sanitization", async () => {
@@ -1499,6 +1554,54 @@ describe("execute_code handler", () => {
     });
     expect(required(omitted.content[0]).text).toBe('{"result":{"ok":true}}');
     expect(disabled).toEqual(omitted);
+  });
+
+  it("keeps an in-program routing refusal small when the address is not", async () => {
+    // execute_code hands a matched typed failure straight back with no size
+    // guard of its own, so an unbounded address in the message or the recovery
+    // query is amplified here exactly as it is at top level. The bound has to
+    // hold where the failure is framed or it does not hold at all.
+    const filler = "x".repeat(50_000);
+    const attempt = (address: string): Executor => ({
+      async execute(_code, providers) {
+        const connecta = connectaProvider(providers).fns;
+        try {
+          await required(connecta.call)(address, {});
+          return { result: null };
+        } catch (error) {
+          return {
+            result: undefined,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      },
+    });
+
+    for (const [address, expectedCode] of [
+      [`ghost.${filler}`, "unknown_address"],
+      [`calc.${filler}`, "unknown_tool"],
+    ] as const) {
+      const out = await createExecuteTool(
+        makeRegistry([calcConnector]),
+        BASE,
+        attempt(address),
+        silentLogger,
+      )({ code: "async () => null" });
+      expect(out.isError).toBe(true);
+      expect(JSON.stringify(out).length).toBeLessThan(4_000);
+      const parsed = JSON.parse(required(out.content[0]).text) as {
+        error: {
+          code: string;
+          message: string;
+          nextAction: { function: string; arguments: { query: string } };
+        };
+      };
+      expect(parsed.error.code).toBe(expectedCode);
+      expect(parsed.error.message).toContain("…");
+      // The route is still the one a program can take, and still scoped.
+      expect(parsed.error.nextAction.function).toBe("connecta.search");
+      expect(parsed.error.nextAction.arguments.query.length).toBeLessThan(600);
+    }
   });
 
   it("keeps diagnostics on discovery, batch, and executor failures", async () => {
