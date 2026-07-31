@@ -395,8 +395,8 @@ export class InvocationService {
         // A connector whose catalog cannot be fetched is as unusable as one
         // whose execution fails, so it feeds health accounting the same way the
         // attempt catch below does — otherwise a connector every call fails
-        // against (a revoked downstream grant, say) still reads clean from the
-        // cheap `list_connectors({ probe: false })` signal.
+        // against (a revoked downstream grant, say) still reads clean in the
+        // deployment's health log.
         //
         // Recorded HERE rather than inside the registry's catalog fetch because
         // a cache hit that avoids a live listTools call records nothing — it is

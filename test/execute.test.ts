@@ -145,7 +145,7 @@ describe("unwrapMcpResult", () => {
 });
 
 describe("buildSandboxProviders", () => {
-  it("keeps connector guide identifiers on every flat search shape", async () => {
+  it("keeps connector guide identifiers on every flat search and describe shape", async () => {
     const connector = (
       id: string,
       usageGuide?: string,
@@ -228,6 +228,14 @@ describe("buildSandboxProviders", () => {
       connector: "guided",
     })) as { tools: unknown[] };
     expect(noMatch.tools).toEqual([]);
+
+    const described = (await required(
+      connectaProvider(providers).fns.describe,
+    )({
+      addresses: ["guided.find_alpha", "plain.find_alpha"],
+    })) as { tools: Array<{ address: string; guide?: string }> };
+    expect(required(described.tools[0]).guide).toBe("connector:guided");
+    expect(described.tools[1]).not.toHaveProperty("guide");
 
     const searchBytes = async (usageGuide?: string) => {
       const sized = await buildSandboxProviders(
@@ -697,11 +705,30 @@ describe("buildSandboxProviders", () => {
 
     const described = (await required(connecta.fns.describe)({
       addresses: ["calc.add", "remote.echo"],
-    })) as { tools: Array<{ address: string }> };
+    })) as { tools: Array<{ address: string; inputSchema: string }> };
     expect(described.tools.map((tool) => tool.address)).toEqual([
       "calc.add",
       "remote.echo",
     ]);
+    // format: "json" hands back the raw JSON Schema; the default renders the
+    // compact TypeScript-like shape.
+    const raw = (await required(connecta.fns.describe)({
+      addresses: ["calc.add"],
+      format: "json",
+    })) as { tools: Array<{ inputSchema: { properties: { a: { type: string } } } }> };
+    expect(required(raw.tools[0]).inputSchema.properties.a.type).toBe("number");
+    expect(required(described.tools[0]).inputSchema).toBe(
+      "{ a: number, b: number }",
+    );
+
+    // An address that resolves to nothing is one entry's error, not a throw
+    // that costs the caller every other description it asked for.
+    const missing = (await required(connecta.fns.describe)({
+      addresses: ["calc.nope", "ghost.x"],
+    })) as { tools: Array<{ error?: string }> };
+    expect(required(missing.tools[0]).error).toContain("Unknown tool");
+    expect(required(missing.tools[1]).error).toContain("Unknown address");
+
     const describedOne = (await required(connecta.fns.describe)({
       address: "calc.add",
     })) as { tools: Array<{ address: string }> };
@@ -944,6 +971,38 @@ describe("buildSandboxProviders", () => {
       required(connecta.fns.search)({
         connector: "verbose",
         fullDescriptions: true,
+      }),
+    ).rejects.toMatchObject({ code: "result_too_large" });
+    // The same ceiling applies to a full JSON schema, which is the other way a
+    // single description can outgrow the discovery budget.
+    const wide = await buildSandboxProviders(
+      makeRegistry([
+        {
+          id: "wide",
+          staticTools: [
+            {
+              name: "read",
+              inputSchema: {
+                type: "object",
+                description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
+              },
+            },
+          ],
+          async listTools() {
+            return [];
+          },
+          async callTool() {
+            return null;
+          },
+        },
+      ]),
+      BASE,
+      silentLogger,
+    );
+    await expect(
+      required(connectaProvider(wide).fns.describe)({
+        addresses: ["wide.read"],
+        format: "json",
       }),
     ).rejects.toMatchObject({ code: "result_too_large" });
   });

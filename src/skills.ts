@@ -55,9 +55,7 @@ export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
 }
 
 /** The built-in usage guide, plus the guides section when there is one to point at. */
-function usageSkill(
-  connectors: readonly Connector[],
-): string {
+function usageSkill(connectors: readonly Connector[]): string {
   if (!hasConnectorGuides(connectors)) return USAGE_SKILL;
   return USAGE_SKILL + CONNECTOR_GUIDES_SECTION;
 }
@@ -156,9 +154,7 @@ export interface SkillListing {
  * carries a usage guide. Derived from the connector list passed in — the single
  * place guide visibility is decided.
  */
-export function listSkills(
-  connectors: readonly Connector[],
-): SkillListing[] {
+export function listSkills(connectors: readonly Connector[]): SkillListing[] {
   const listing: SkillListing[] = AVAILABLE_SKILLS.map((skill) => ({
     name: skill.name,
     description: skill.description,

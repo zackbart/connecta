@@ -354,22 +354,6 @@ describe("remoteMcp() connector", () => {
       },
     });
 
-    const batch = await meta.batchCall({
-      calls: [{ address: "mrtr.needs_input", args: {} }],
-    });
-    expect(batch.structuredContent).toMatchObject({
-      results: [
-        {
-          address: "mrtr.needs_input",
-          ok: false,
-          errorDetails: {
-            code: "input_required_unsupported",
-            retryable: false,
-          },
-        },
-      ],
-    });
-
     const providers = await buildSandboxProviders(
       makeRegistry([connector]),
       BASE,
@@ -473,13 +457,14 @@ describe("remoteMcp() connector", () => {
     });
     const registry = makeRegistry([c]);
     const firstRequest = createMetaTools(registry, BASE);
-    const firstResult = await firstRequest.batchCall({
-      calls: [
-        { address: "down.echo", args: { text: "first" } },
-        { address: "down.echo", args: { text: "same request" } },
-      ],
-    });
-    expect(firstResult.isError).toBeFalsy();
+    const firstResults = await Promise.all([
+      firstRequest.callTool({ address: "down.echo", args: { text: "first" } }),
+      firstRequest.callTool({
+        address: "down.echo",
+        args: { text: "same request" },
+      }),
+    ]);
+    expect(firstResults.every((result) => !result.isError)).toBe(true);
     expect(builds).toBe(1);
 
     // Production creates a fresh meta-tool set for every inbound MCP request.
@@ -577,44 +562,6 @@ describe("remoteMcp() connector", () => {
 });
 
 describe("probe scope teardown", () => {
-  it("closes a half-open transport after a probe deadline", async () => {
-    const counts = { connect: 0, close: 0 };
-    const connector = remoteMcp("down", {
-      url: "https://unused.example/mcp",
-      description: "Downstream",
-      _transportFactory: () =>
-        ({
-          async start() {
-            counts.connect++;
-            await new Promise<never>(() => {});
-          },
-          async send() {},
-          async close() {
-            counts.close++;
-          },
-        }) as unknown as Transport,
-    });
-
-    const result = await createMetaTools(makeRegistry([connector]), BASE, {
-      probeTimeoutMs: 10,
-    }).listConnectors({ probe: true });
-
-    expect(result.isError).toBeFalsy();
-    expect(required(result.content[0]).text).toContain("timed out");
-    expect(counts).toEqual({ connect: 1, close: 1 });
-  });
-
-  it("closes the remote session opened by list_connectors({ probe: true })", async () => {
-    const { connector, counts } = await makeTrackedConnector();
-    const result = await createMetaTools(
-      makeRegistry([connector]),
-      BASE,
-    ).listConnectors({ probe: true });
-
-    expect(result.isError).toBeFalsy();
-    expect(counts).toEqual({ connect: 1, close: 1 });
-  });
-
   it("closes the remote session opened by buildUiData", async () => {
     const { connector, counts } = await makeTrackedConnector();
     const data = await buildUiData(
@@ -630,7 +577,6 @@ describe("probe scope teardown", () => {
     });
     expect(counts).toEqual({ connect: 1, close: 1 });
   });
-
 });
 
 describe("downstream session termination", () => {

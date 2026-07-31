@@ -46,9 +46,12 @@ surface. Inventory, schema description, and batching are exercised through
 `connecta.search`, `connecta.describe`, and `connecta.batch` inside
 `execute_code`. CI runs the command on Node 20 and 22.
 
-Every JSON result and Markdown report records the advertised surface.
-The harness validates each task's top-level route against the advertised tool
-list before calling it, so a surface/task mismatch fails with an audit-specific
+Every JSON result and Markdown report records the advertised surface, and the
+qualification gate asserts that the connected server advertises exactly the
+seven expected meta-tool names — a deployment that regressed to another surface
+fails the audit instead of being filed as seven-tool evidence. The harness also
+validates each task's top-level route against the advertised tool list before
+calling it, so a surface/task mismatch fails with an audit-specific
 configuration error.
 
 Choose stable output names for release evidence:

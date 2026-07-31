@@ -275,18 +275,44 @@ async function benchmarkProfile(profile) {
       (_, index) =>
         `connector_${lastConnector}.lookup_record_${profile.toolsPerConnector - index - 1}`,
     );
+    // Batching has no top-level tool: a program calls connecta.batch, so this
+    // measures the whole execute_code round trip for the same ten independent
+    // calls. One priming execution absorbs the QuickJS child cold start, which
+    // benchmarkExecutor measures on its own below, and proves the program
+    // really batched — a failing program returns a result, not an RPC error,
+    // and would otherwise be timed as if it were work.
+    const batchProgram =
+      "async () => await connecta.batch(" +
+      JSON.stringify(
+        batchAddresses.map((batchAddress, value) => ({
+          address: batchAddress,
+          args: { value },
+        })),
+      ) +
+      ")";
+    const primed = await toolCall(
+      ready.port,
+      "execute_code",
+      { code: batchProgram },
+      2_999,
+    );
+    const primedCalls = primed.result?.structuredContent?.result;
+    if (
+      primed.result?.isError === true ||
+      !Array.isArray(primedCalls) ||
+      primedCalls.length !== batchAddresses.length ||
+      !primedCalls.every((entry) => entry.ok === true)
+    ) {
+      throw new Error(
+        `Batch program did not complete ${batchAddresses.length} calls: ${JSON.stringify(primed.result).slice(0, 500)}`,
+      );
+    }
     const batch = await sample(
       (index) =>
         toolCall(
           ready.port,
-          "batch_call",
-          {
-            calls: batchAddresses.map((batchAddress, value) => ({
-              address: batchAddress,
-              args: { value },
-              resultMode: "value",
-            })),
-          },
+          "execute_code",
+          { code: batchProgram },
           index + 3_000,
         ),
       Math.min(samples, 20),

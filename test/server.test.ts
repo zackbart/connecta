@@ -1,4 +1,4 @@
-import { createConnecta, required } from "./helpers.js";
+import { createTestConnecta, required } from "./helpers.js";
 import {
   Client,
   StreamableHTTPClientTransport,
@@ -53,7 +53,7 @@ function calc() {
 }
 
 function makeConnecta() {
-  return createConnecta({
+  return createTestConnecta({
     connectors: [calc()],
     auth: bearerToken(TOKEN),
     storage: memoryStorage(),
@@ -222,7 +222,7 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -378,7 +378,15 @@ describe("server /mcp end-to-end", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
+    // Both halves of the routing each of these descriptions performs: where
+    // the tool sends work it declines to do, and the narrow case it admits.
     expect(byName.call_tool.description).toContain("connecta.batch");
+    expect(byName.call_tool.description).toContain(
+      "ONE tool explicitly annotated",
+    );
+    expect(byName.get_result.description).toContain(
+      "reduce it in code instead",
+    );
   });
 
   it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {
@@ -504,7 +512,7 @@ describe("server /mcp end-to-end", () => {
 
   it("mentions per-connector guides only when the deployment has one", async () => {
     async function skillsSurface(connectors: Connector[]) {
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors,
         auth: bearerToken(TOKEN),
         storage: memoryStorage(),
@@ -632,7 +640,7 @@ describe("server /mcp end-to-end", () => {
         events.push(event);
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN, { subjectId: "cli-zack" }),
       storage: memoryStorage(),
@@ -704,7 +712,7 @@ describe("server /mcp end-to-end", () => {
             };
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth,
       storage: memoryStorage(),
@@ -747,7 +755,7 @@ describe("server /mcp end-to-end", () => {
         throw new Error("customer secret appeared in the provider response");
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [failing],
       auth: bearerToken(TOKEN),
       activity: {
@@ -796,7 +804,7 @@ describe("server /mcp end-to-end", () => {
         };
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc(), authConn],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -822,7 +830,7 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("gives a bearer-only deployment a safe handoff but keeps mutation Clerk-only", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -864,7 +872,7 @@ describe("server /mcp end-to-end", () => {
   });
 
   it("recovers a bearer agent after a Clerk operator update without redeploy", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
       auth: [bearerToken(TOKEN), fakeClerkOperator()],
       storage: memoryStorage(),
@@ -979,7 +987,7 @@ describe("server /mcp end-to-end", () => {
     // was given — a client paging on nextOffset would never terminate. The
     // schema is the only thing that kept that off the wire, so it should not
     // be loosened without noticing.
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1002,7 +1010,7 @@ describe("server /mcp end-to-end", () => {
     // refused here as well as in process. The schema already carried
     // `nonnegative().int()`, so this pins pre-existing wire behavior in place
     // rather than changing it.
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1026,7 +1034,7 @@ describe("server /mcp end-to-end", () => {
     // the cap — `createMetaTools` takes no override (issue #44) — so this pins
     // that the configured value reaches call_tool through serve() and stashes a
     // pageable result.
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [
         api("blob", {
           description: "Blobs",
@@ -1080,7 +1088,7 @@ describe("server /mcp end-to-end", () => {
 
   it("forwards calls.defaultTimeoutMs into connector call context", async () => {
     const seen: Array<{ timeoutMs?: number; hasSignal: boolean }> = [];
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [
         api("budget", {
           description: "Budget",
@@ -1118,6 +1126,53 @@ describe("server /mcp end-to-end", () => {
     expect(seen).toEqual([{ timeoutMs: 1_234, hasSignal: true }]);
   });
 
+  it("forwards discovery.probeTimeoutMs to the discovery fan-out", async () => {
+    const hanging: Connector = {
+      id: "hang",
+      kind: "mcp",
+      description: "Never resolves",
+      listTools() {
+        return new Promise<never>(() => {});
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const c = createTestConnecta({
+      connectors: [hanging, calc()],
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+      discovery: { probeTimeoutMs: 10 },
+    });
+    const started = Date.now();
+
+    const response = await rpc(
+      c,
+      "tools/call",
+      {
+        name: "search_tools",
+        arguments: { query: "add impossible" },
+      },
+      { token: TOKEN },
+    );
+    const body = await readBody(response);
+    const payload = JSON.parse(body.result.content[0].text) as {
+      connectors: Array<{ id: string }>;
+      queryAnalysis?: { unavailableConnectorCount?: number };
+    };
+
+    // The deadline is honored end to end: the search returns on the healthy
+    // catalog rather than waiting on the one that never answers, and reports
+    // the connector it could not reach.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    const ids = payload.connectors.map((connector) => connector.id);
+    expect(ids).toContain("calc");
+    expect(ids).not.toContain("hang");
+    expect(payload.queryAnalysis).toMatchObject({
+      unavailableConnectorCount: 1,
+    });
+  });
+
   it("forwards discovery.concurrency to catalog fan-out", async () => {
     let active = 0;
     let maxActive = 0;
@@ -1139,7 +1194,7 @@ describe("server /mcp end-to-end", () => {
         },
       }),
     );
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors,
       auth: bearerToken(TOKEN),
       publicUrl: BASE,
@@ -1211,7 +1266,7 @@ describe("server open routes", () => {
         return new Response("body", { headers: { "Content-Type": "text/plain" } });
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [withRoute],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1229,7 +1284,7 @@ describe("server open routes", () => {
   });
 
   it("declining connector routes fall through to 404", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [{ ...calc(), async handleRequest() { return null; } }],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1245,7 +1300,7 @@ describe("server open routes", () => {
         return new Response("hijacked", { status: 200 });
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [greedy],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1267,7 +1322,7 @@ describe("server open routes", () => {
   });
 
   it("a throwing connector route is a 500, not a 404", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [
         {
           ...calc(),
@@ -1294,7 +1349,7 @@ describe("server open routes", () => {
   });
 
   it("keeps HTTP available when no HTTPS public URL is configured", async () => {
-    const c = createConnecta({ connectors: [calc()] });
+    const c = createTestConnecta({ connectors: [calc()] });
     const res = await c.fetch(new Request("http://localhost:8787/health"));
     expect(res.status).toBe(200);
     expect(res.headers.get("Strict-Transport-Security")).toBeNull();
@@ -1336,7 +1391,7 @@ describe("server open routes", () => {
   });
 
   it("/health exposes additive server and deployment version metadata", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       deploymentInfo: {
         id: "worker-version-123",
@@ -1371,7 +1426,7 @@ describe("clerk metadata routes (no network)", () => {
   const pk = "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
 
   function makeClerkConnecta() {
-    return createConnecta({
+    return createTestConnecta({
       connectors: [calc()],
       auth: [
         bearerToken(TOKEN),
@@ -1430,7 +1485,7 @@ describe("clerk metadata routes (no network)", () => {
 describe("execute_code registration (code mode)", () => {
   it("advertises and runs execute_code on the seven-tool surface", async () => {
     let executions = 0;
-    const withExec = createConnecta({
+    const withExec = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1482,9 +1537,12 @@ describe("execute_code registration (code mode)", () => {
     // required key of a multi-argument tool is not the one the value belongs to.
     expect(executeTool.description).toContain("{ jobId: run.failedJobId }");
     expect(executeTool.description).not.toContain("requiredInputKeys[0]");
-    expect(executeTool.description).not.toContain(
-      "search_tools → connecta.describe (schemas) → execute_code",
-    );
+    // The classic three-step funnel (search_tools → describe_tools → …) is
+    // gone with the tool that anchored it; naming it here would teach a route
+    // no deployment serves. Guard the tool name itself, not the sentence.
+    expect(executeTool.description).not.toContain("describe_tools");
+    expect(executeTool.description).not.toContain("list_connectors");
+    expect(executeTool.description).not.toContain("batch_call");
 
     const executed = await rpc(
       withExec,
@@ -1506,7 +1564,7 @@ describe("execute_code registration (code mode)", () => {
   it.skipIf(WORKERD)("runs code against connectors end to end", async () => {
     const { quickJsExecutor } = await loadQuickJsExecutor();
     const events: ToolCallActivityEvent[] = [];
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1548,7 +1606,7 @@ describe("execute_code registration (code mode)", () => {
 
   it.skipIf(WORKERD)("discovers and calls an API tool inside one execute_code request", async () => {
     const { quickJsExecutor } = await loadQuickJsExecutor();
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1603,7 +1661,7 @@ describe("execute_code registration (code mode)", () => {
         cpuTimeMs: 200,
         timeoutMs: 2_000,
       });
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors: [calc()],
         auth: bearerToken(TOKEN),
         storage: memoryStorage(),

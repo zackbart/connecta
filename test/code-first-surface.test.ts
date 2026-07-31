@@ -72,11 +72,21 @@ async function rpc(
 
 describe("construction", () => {
   it("requires an executor and names both runtime configurations", () => {
-    expect(() =>
+    const construct = () =>
       (createConnecta as (config: unknown) => unknown)({
         connectors: connectors(),
-      }),
-    ).toThrow(/quickJsExecutor\(\).*DynamicWorkerExecutor/);
+      });
+    expect(construct).toThrow("ConnectaConfig.executor is required");
+    // The refusal has to say what to configure on either runtime, or the
+    // operator's next move is a guess. Assert the load-bearing fragments
+    // rather than the whole sentence, which is free to grow.
+    for (const fragment of [
+      "quickJsExecutor()",
+      "@zackbart/connecta/quickjs",
+      "DynamicWorkerExecutor",
+    ]) {
+      expect(construct).toThrow(fragment);
+    }
   });
 
   it("rejects the removed surface option even when its value is undefined", () => {
@@ -89,6 +99,16 @@ describe("construction", () => {
         }),
       ).toThrow("ConnectaConfig.surface was removed in issue #273");
     }
+  });
+
+  it("rejects the batch cap that left with batch_call", () => {
+    expect(() =>
+      (createConnecta as (config: unknown) => unknown)({
+        connectors: connectors(),
+        executor: stubExecutor,
+        calls: { maxBatchResultBytes: 1_000 },
+      }),
+    ).toThrow("`calls.maxBatchResultBytes` was removed in issue #273");
   });
 });
 
@@ -115,13 +135,23 @@ describe("the advertised surface", () => {
       capabilities: {},
       clientInfo: { name: "surface-test", version: "0" },
     });
+    // The skill is swept as it is *served*, not as it is imported: pinning the
+    // served text to the constant first is what makes the sweep below evidence
+    // about this deployment rather than about a string literal.
+    const skill = await rpc(connecta, "tools/call", {
+      name: "skills",
+      arguments: { name: "usage" },
+    });
+    const servedSkill = skill.result.content[0].text as string;
+    expect(servedSkill).toBe(USAGE_SKILL);
+
     const advertised = [
       initialized.result.instructions,
       ...listed.result.tools.map(
         (tool: { name: string; description: string }) =>
           `${tool.name} ${tool.description}`,
       ),
-      USAGE_SKILL,
+      servedSkill,
     ].join("\n");
     expect(initialized.result.instructions).toBe(CONNECTA_INSTRUCTIONS);
     for (const removed of REMOVED_TOOLS) {
@@ -136,7 +166,12 @@ describe("the advertised surface", () => {
         name: removed,
         arguments: {},
       });
+      // The MCP server owns this refusal: an unregistered name is a JSON-RPC
+      // error, not a tool result. What matters is that it fails loudly and
+      // names the tool that was called, rather than resolving to something
+      // else or refusing anonymously.
       expect(body.error ?? body.result?.isError).toBeTruthy();
+      expect(JSON.stringify(body)).toContain(removed);
     }
   });
 });

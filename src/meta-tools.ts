@@ -14,21 +14,8 @@ import {
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
 } from "./catalog-service.js";
-import {
-  mapSettledWithConcurrency,
-  resolveDiscoveryConcurrency,
-} from "./concurrency.js";
-import {
-  closeConnectorScope,
-  type DeferredWork,
-} from "./connector-scope.js";
-import {
-  boundedEchoText,
-  classifyCallError,
-  echoedCallArgs,
-  messageLooksRetryable,
-  type CallErrorDetails,
-} from "./errors.js";
+import { resolveDiscoveryConcurrency } from "./concurrency.js";
+import type { CallErrorDetails } from "./errors.js";
 import {
   InvocationService,
   MAX_RETRY_BACKOFF_MS,
@@ -49,9 +36,8 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
-  withAbortableTimeout,
 } from "./timeout.js";
-import type { ConnectorStatus, KVStorage } from "./types.js";
+import type { KVStorage } from "./types.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -93,10 +79,6 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function errorDetails(code: string, message: string): CallErrorDetails {
-  return { code, message, retryable: messageLooksRetryable(message) };
-}
-
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   const result = jsonResult({
     error: {
@@ -129,7 +111,6 @@ async function discoveryResult(
     throw err;
   }
 }
-
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number | undefined): boolean {
@@ -809,98 +790,6 @@ interface GuardedResult<T> {
 }
 
 /**
- * Keep an oversized batch's inline outcome summary at fixed string overhead.
- * The same clamp the error envelopes use — one budget, one marker, defined
- * once in `errors.ts` so the two cannot drift apart.
- */
-function batchSummaryString(value: string): string {
-  return boundedEchoText(value);
-}
-
-/** Candidate addresses kept in an oversized batch's summary of one ambiguity. */
-const MAX_SUMMARY_ADDRESSES = 10;
-
-/**
- * A recovery route rebuilt field by field so the summary above keeps its
- * promise. Spreading `nextAction` through raw would reopen the hole this
- * function closes: every variant carries free-form strings, and one of them
- * carries the caller's arguments, which is exactly the payload an oversized
- * batch was already too large to hold.
- */
-function batchSummaryNextAction(
-  nextAction: NonNullable<CallErrorDetails["nextAction"]>,
-): NonNullable<CallErrorDetails["nextAction"]> {
-  if ("function" in nextAction) {
-    // A batch runs on the top-level catalog, whose search route is the tool, so
-    // the function-keyed discovery variant does not arrive here today. Rebuild
-    // it anyway: a guard that silently dropped an unrecognized route would turn
-    // a recovery record into nothing at exactly the moment one is needed.
-    if (nextAction.function === "connecta.search") {
-      return {
-        function: "connecta.search",
-        arguments: batchSummarySearchArgs(nextAction.arguments),
-        purpose: batchSummaryString(nextAction.purpose),
-      };
-    }
-    // Say so when the candidate list is clipped. The unclipped purpose reads
-    // "choose the intended canonical address", which is a lie about a list
-    // that no longer contains every candidate — and the caller has no other
-    // way to learn that the address it wants was the eleventh.
-    const candidates = nextAction.addresses.slice(0, MAX_SUMMARY_ADDRESSES);
-    return {
-      function: nextAction.function,
-      addresses: candidates.map(batchSummaryString),
-      purpose: batchSummaryString(
-        candidates.length < nextAction.addresses.length
-          ? `${nextAction.purpose} Showing the first ${candidates.length} of ` +
-            `${nextAction.addresses.length} candidates; re-run the call on its ` +
-            "own to see them all."
-          : nextAction.purpose,
-      ),
-    };
-  }
-  if (nextAction.tool === "authorize_connector") {
-    return {
-      tool: "authorize_connector",
-      arguments: {
-        connector: batchSummaryString(nextAction.arguments.connector),
-      },
-      operatorHandoff: batchSummaryString(nextAction.operatorHandoff),
-    };
-  }
-  if (nextAction.tool === "call_destructive_tool") {
-    return {
-      tool: "call_destructive_tool",
-      arguments: {
-        address: batchSummaryString(nextAction.arguments.address),
-        ...echoedCallArgs(nextAction.arguments.args),
-      },
-      purpose: batchSummaryString(nextAction.purpose),
-    };
-  }
-  return {
-    tool: "search_tools",
-    arguments: batchSummarySearchArgs(nextAction.arguments),
-    purpose: batchSummaryString(nextAction.purpose),
-  };
-}
-
-/** The scoping arguments both discovery routes carry, bounded the same way. */
-function batchSummarySearchArgs(args: {
-  query: string;
-  connector?: string;
-  includeSchemas: "compact";
-}): { query: string; connector?: string; includeSchemas: "compact" } {
-  return {
-    query: batchSummaryString(args.query),
-    ...(args.connector !== undefined
-      ? { connector: batchSummaryString(args.connector) }
-      : {}),
-    includeSchemas: "compact",
-  };
-}
-
-/**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return the first `cap` bytes followed by a JSON truncation
  * notice pointing at get_result. `bytes` is `text` already encoded, so a caller
@@ -1023,17 +912,6 @@ export interface SearchArgs {
   fullDescriptions?: boolean;
   includeSchemas?: "compact" | "json";
 }
-export type DescribeArgs = (
-  | { address: string; addresses?: never }
-  | { address?: never; addresses: string[] }
-) & {
-  format?: "compact" | "json";
-  fullDescriptions?: boolean;
-};
-export interface ListArgs {
-  /** When false, return cached/observed health without downstream I/O. */
-  probe?: boolean;
-}
 type ResultMode = "mcp" | "value";
 export interface CallArgs {
   address: string;
@@ -1060,14 +938,6 @@ export interface GetResultArgs {
   /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
 }
-export type BatchCall = CallArgs;
-export interface BatchArgs {
-  calls: BatchCall[];
-  resultMode?: ResultMode;
-  timeoutMs?: number;
-  maxRetries?: number;
-  diagnostics?: boolean;
-}
 export interface AuthorizeArgs {
   connector: string;
   force?: boolean;
@@ -1085,17 +955,19 @@ function oauthFollowUp(connectorId: string): string {
 }
 
 /**
- * Every meta-tool handler over a registry. Discovery and batching handlers are
- * shared with execute_code even though they are not registered as top-level
- * tools. Exported for direct testing; registerMetaTools() wires the six explicit
- * tools onto an McpServer. `opts.defaultToolTimeoutMs`
- * supplies a deadline for calls that don't carry one. (execute_code is
- * registered separately by registerExecuteTool.)
+ * Every meta-tool handler over a registry, one per registered tool. Exported for
+ * direct testing; registerMetaTools() wires the six explicit tools onto an
+ * McpServer. `opts.defaultToolTimeoutMs` supplies a deadline for calls that
+ * don't carry one. (execute_code is registered separately by
+ * registerExecuteTool, and builds its own services over the same registry.)
+ *
+ * What execute_code shares with these handlers is the services layer beneath
+ * them — `CatalogService` and `InvocationService` — not the handlers, which no
+ * in-program path calls.
  *
  * Deployment-wide result-size caps are read off the registry view rather than
- * passed in: `ConnectaConfig.calls.maxResultBytes`, its per-connector override,
- * and the independent `calls.maxBatchResultBytes` final-envelope boundary each
- * have one runtime source of truth.
+ * passed in: `ConnectaConfig.calls.maxResultBytes` and its per-connector
+ * override each have one runtime source of truth.
  */
 export function createMetaTools(
   registry: RegistryView,
@@ -1103,20 +975,17 @@ export function createMetaTools(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number;
-    /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
+    /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number;
     /** Maximum simultaneous connector discovery operations. Default 4. */
     discoveryConcurrency?: number;
     activity?: ActivityRequestContext;
-    /** Inbound request cancellation shared by direct and batch child calls. */
+    /** Inbound request cancellation shared by every call this request makes. */
     requestSignal?: AbortSignal;
-    /** Runtime continuation for the bounded tail of probe-owned teardown. */
-    defer?: DeferredWork;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
-  const batchCap = registry.maxBatchResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -1135,18 +1004,6 @@ export function createMetaTools(
     // separate CatalogService configured for connecta.search.
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
-  const withProbeDeadline = <T>(
-    label: string,
-    operation: (options: {
-      signal: AbortSignal;
-      timeoutMs: number;
-    }) => Promise<T>,
-  ) =>
-    withAbortableTimeout(
-      (signal) => operation({ signal, timeoutMs: probeTimeoutMs }),
-      probeTimeoutMs,
-      label,
-    );
 
   interface RunCallOutcome {
     toolResult: ToolResult;
@@ -1170,7 +1027,7 @@ export function createMetaTools(
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
   async function runCall(
-    call: BatchCall,
+    call: CallArgs,
     source: ActivityCallSource,
     options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
@@ -1196,7 +1053,7 @@ export function createMetaTools(
         processResult: async (result, resolved) => {
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
-          // folded into `globalCap`). Resolved per call so one batch_call can
+          // folded into `globalCap`). Resolved per call so one request can
           // mix a tight-capped connector with siblings on the global cap. An
           // override the registry already warned about at startup is dropped
           // here, so the connector simply inherits `globalCap`.
@@ -1338,131 +1195,6 @@ export function createMetaTools(
       return { content: [{ type: "text", text: skill.content }] };
     },
 
-    async listConnectors(args: ListArgs = {}): Promise<ToolResult> {
-      const probe = args.probe ?? true;
-      // Live inventory owns a short-lived scope separate from the request's
-      // call scope. Closing it cannot defeat call_tool/batch/execute_code reuse.
-      const connectors = registry.listConnectors();
-      const scope = probe ? {} : requestScope;
-      const inspect = async (c: (typeof connectors)[number]) => {
-        const statusStarted = Date.now();
-        const observed = registry.healthFor(c.id);
-        const drift = await registry.credentialDriftFor(c.id);
-        let status:
-          | ConnectorStatus
-          | { state: "ok" | "error" | "unknown"; message?: string };
-        if (drift) {
-          status = { state: "auth_required", message: drift };
-        } else if (probe) {
-          try {
-            status = await withProbeDeadline(
-              `list_connectors probe of "${c.id}"`,
-              (options) =>
-                registry.statusFor(c.id, baseUrl, scope, options),
-            );
-          } catch (err) {
-            // A probe that outran probeTimeoutMs (or otherwise threw)
-            // degrades this connector to an error status rather than
-            // hanging the whole list_connectors call.
-            status = { state: "error", message: msg(err) };
-          }
-        } else {
-          const derived =
-            observed?.consecutiveFailures && observed.consecutiveFailures > 0
-              ? ("error" as const)
-              : registry.hasObservedSuccess(c.id) || c.kind === "api"
-                ? ("ok" as const)
-                : ("unknown" as const);
-          status = {
-            state: derived,
-            ...(observed?.lastError ? { message: observed.lastError } : {}),
-          };
-        }
-        // Stamped after any live probe so the response reports when its
-        // observation completed, not when a potentially slow request began.
-        const checkedAt = new Date().toISOString();
-        let tools = registry.peekTools(c.id);
-        // An auth_required status may have just started OAuth. A second
-        // listTools probe would overwrite its state/verifier while returning
-        // the first (now stale) authorization URL.
-        if (probe && status.state === "ok") {
-          try {
-            tools = await withProbeDeadline(
-              `list_connectors catalog refresh of "${c.id}"`,
-              (options) =>
-                registry.refreshTools(c.id, baseUrl, scope, options),
-            );
-            registry.recordSuccess(c.id, Date.now() - statusStarted);
-          } catch (err) {
-            const details = classifyCallError(err);
-            if (details.code === "auth_required") {
-              let authStatus: ConnectorStatus | undefined;
-              try {
-                authStatus = await withProbeDeadline(
-                  `list_connectors authorization status of "${c.id}"`,
-                  (options) =>
-                    registry.statusFor(c.id, baseUrl, scope, options),
-                );
-              } catch {
-                // The typed auth verdict is still authoritative; this second
-                // read exists only to recover the connector's pending URL.
-              }
-              status =
-                authStatus?.state === "auth_required"
-                  ? authStatus
-                  : {
-                      state: "auth_required" as const,
-                      message: details.message,
-                    };
-            } else {
-              status = { state: "error" as const, message: msg(err) };
-            }
-            registry.recordFailure(c.id, Date.now() - statusStarted, err);
-          }
-        }
-        const latencyMs = Date.now() - statusStarted;
-        const latestObserved = registry.healthFor(c.id);
-        return {
-          id: c.id,
-          ...(c.title ? { title: c.title } : {}),
-          description: c.description,
-          toolCount: tools?.length ?? 0,
-          status: status.state,
-          checkedAt,
-          latencyMs,
-          probe,
-          ...(latestObserved ?? observed),
-          ...("authorizationUrl" in status &&
-            status.authorizationUrl && {
-              authorizationUrl: status.authorizationUrl,
-            }),
-          ...(status.message && { message: status.message }),
-        };
-      };
-      const settled = await mapSettledWithConcurrency(
-        connectors,
-        discoveryConcurrency,
-        inspect,
-      );
-      if (probe) {
-        await mapSettledWithConcurrency(
-          connectors,
-          discoveryConcurrency,
-          (connector) =>
-            closeConnectorScope(
-              connector,
-              registry.contextFor(connector.id, baseUrl, scope),
-              opts.defer,
-            ),
-        );
-      }
-      const out = settled.map((result) => {
-        if (result.status === "rejected") throw result.reason;
-        return result.value;
-      });
-      return jsonResult({ connectors: out });
-    },
-
     async searchTools(args: SearchArgs): Promise<ToolResult> {
       return discoveryResult(
         async () =>
@@ -1473,13 +1205,6 @@ export function createMetaTools(
             }),
           ),
         "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-      );
-    },
-
-    async describeTools(args: DescribeArgs): Promise<ToolResult> {
-      return discoveryResult(
-        async () => ({ tools: await catalog.describe(args) }),
-        'Split the address list or use format: "compact".',
       );
     },
 
@@ -1551,143 +1276,6 @@ export function createMetaTools(
         ...(nextOffset !== undefined ? { nextOffset } : {}),
         totalBytes: total,
         text: slice,
-      });
-    },
-
-    async batchCall(args: BatchArgs): Promise<ToolResult> {
-      const batchStarted = Date.now();
-      const settled = await Promise.allSettled(
-        args.calls.map((c) =>
-          runCall(
-            {
-              ...c,
-              ...((c.resultMode ?? args.resultMode) !== undefined
-                ? { resultMode: c.resultMode ?? args.resultMode }
-                : {}),
-              ...((c.timeoutMs ?? args.timeoutMs) !== undefined
-                ? { timeoutMs: c.timeoutMs ?? args.timeoutMs }
-                : {}),
-              ...((c.maxRetries ?? args.maxRetries) !== undefined
-                ? { maxRetries: c.maxRetries ?? args.maxRetries }
-                : {}),
-              ...((c.diagnostics ?? args.diagnostics) !== undefined
-                ? { diagnostics: c.diagnostics ?? args.diagnostics }
-                : {}),
-            },
-            "batch_call",
-          ),
-        ),
-      );
-      const results = settled.map((s, i) => {
-        const call = args.calls[i];
-        if (!call) {
-          throw new Error("Batch result has no corresponding call");
-        }
-        const { address } = call;
-        if (s.status === "rejected") {
-          return {
-            address,
-            ok: false,
-            error: msg(s.reason),
-            errorDetails: classifyCallError(s.reason, "batch_call_failed"),
-          };
-        }
-        const r = s.value;
-        if (r.error) {
-          return {
-            address,
-            ok: false,
-            error: r.error.message,
-            errorDetails: r.error,
-            durationMs: r.durationMs,
-            attempts: r.attempts,
-            ...((call.diagnostics ?? args.diagnostics)
-              ? { timing: r.timing }
-              : {}),
-          };
-        }
-        if ((call.resultMode ?? args.resultMode) === "value") {
-          return {
-            address,
-            ok: true,
-            data: r.value,
-            durationMs: r.durationMs,
-            attempts: r.attempts,
-            ...((call.diagnostics ?? args.diagnostics)
-              ? { timing: r.timing }
-              : {}),
-          };
-        }
-        return {
-          address,
-          ok: true,
-          result: r.toolResult.content,
-          durationMs: r.durationMs,
-          attempts: r.attempts,
-          ...((call.diagnostics ?? args.diagnostics)
-            ? { timing: r.timing }
-            : {}),
-        };
-      });
-      const envelope = {
-        results,
-        durationMs: Date.now() - batchStarted,
-      };
-      const text = serializeResultText(envelope);
-      const bytes = enc.encode(text);
-      if (bytes.length <= batchCap) return jsonResult(envelope);
-
-      const notice = await stashResult(
-        text,
-        registry.resultsStorage(),
-        bytes.length,
-      );
-      return jsonResult({
-        results: results.map((result) => {
-          const common = {
-            address: batchSummaryString(result.address),
-            ok: !("error" in result),
-            ...("durationMs" in result
-              ? { durationMs: result.durationMs }
-              : {}),
-            ...("attempts" in result ? { attempts: result.attempts } : {}),
-            ...("timing" in result ? { timing: result.timing } : {}),
-          };
-          if (!("error" in result)) return common;
-          const error = result.error ?? "Batch call failed";
-          const details =
-            result.errorDetails ??
-            errorDetails("batch_call_failed", error);
-          return {
-            ...common,
-            error: batchSummaryString(error),
-            errorDetails: {
-              code: batchSummaryString(details.code),
-              message: batchSummaryString(details.message),
-              retryable: details.retryable,
-              ...(details.retryAfterMs !== undefined
-                ? { retryAfterMs: details.retryAfterMs }
-                : {}),
-              ...(details.connector !== undefined
-                ? { connector: batchSummaryString(details.connector) }
-                : {}),
-              ...(details.operation !== undefined
-                ? { operation: batchSummaryString(details.operation) }
-                : {}),
-              ...(details.recovery !== undefined
-                ? { recovery: details.recovery }
-                : {}),
-              ...(details.nextAction !== undefined
-                ? { nextAction: batchSummaryNextAction(details.nextAction) }
-                : {}),
-              ...(details.retry !== undefined
-                ? { retry: batchSummaryString(details.retry) }
-                : {}),
-            },
-          };
-        }),
-        durationMs: envelope.durationMs,
-        ...notice,
       });
     },
 
@@ -1856,10 +1444,11 @@ const CALL_INPUT_SCHEMA = {
 
 /**
  * Register the six explicit meta-tools onto an McpServer instance.
- * `registerExecuteTool` adds the seventh, `execute_code`. Discovery and batch
- * handlers still exist on the object `createMetaTools` returns and are reached through
- * `connecta.search` / `connecta.describe` / `connecta.batch` inside a program —
- * the same code paths, one layer down.
+ * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
+ * multi-call work is reached through `connecta.search` / `connecta.describe` /
+ * `connecta.batch` inside a program, which `execute_code` builds over the same
+ * `CatalogService` and `InvocationService` these handlers use — one shared
+ * services layer, two adapters above it.
  */
 export function registerMetaTools(
   server: McpServer,
@@ -1871,7 +1460,6 @@ export function registerMetaTools(
     discoveryConcurrency?: number;
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
-    defer?: DeferredWork;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
@@ -1888,7 +1476,6 @@ export function registerMetaTools(
     ...(ctx.requestSignal !== undefined
       ? { requestSignal: ctx.requestSignal }
       : {}),
-    ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
   });
 
   server.registerTool(
@@ -2002,5 +1589,4 @@ export function registerMetaTools(
     },
     async (args) => mt.getResult(args as GetResultArgs),
   );
-
 }

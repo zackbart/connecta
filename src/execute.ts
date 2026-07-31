@@ -582,8 +582,8 @@ export async function buildSandboxProviders(
                     ),
                   };
                 } catch (err) {
-                  // Same failure shape batch_call reports: the message a program
-                  // can log, plus the typed details it must classify by. A
+                  // The failure shape connecta.batch reports: the message a
+                  // program can log, plus the typed details it must classify by. A
                   // thrown host error crosses the sandbox bridge as a bare
                   // message string in every executor, so this is the one place a
                   // program can tell a policy refusal from a transient failure.
@@ -851,7 +851,7 @@ export function createExecuteTool(
       // Executor bridges necessarily reduce thrown host errors to strings.
       // Match that terminal string back to the request-local typed failure so
       // an unhandled tool failure keeps the same structured contract as
-      // call_tool and batch_call. Failures caught by model code never reach
+      // call_tool. Failures caught by model code never reach
       // outcome.error and therefore remain under that code's control.
       //
       // An error the program let through unchanged matches exactly, and an

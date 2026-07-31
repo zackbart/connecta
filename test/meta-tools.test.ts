@@ -5,6 +5,7 @@ import {
   compactDiscoverySchema,
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
 } from "../src/catalog.js";
+import { CatalogService } from "../src/catalog-service.js";
 import {
   CredentialVault,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -15,7 +16,6 @@ import {
   alignStartToCharBoundary,
   createMetaTools,
   jsonResult,
-  MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_RETRY_BACKOFF_MS,
   MAX_SEARCH_LIMIT,
@@ -24,7 +24,6 @@ import {
 import { Registry } from "../src/registry.js";
 import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withTimeout } from "../src/timeout.js";
 import type { Connector } from "../src/types.js";
 import { required,
   authConnector,
@@ -340,7 +339,7 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(await mt.skills({ name: "connector:usage" }))).toBe(guide);
   });
 
-  it("names the guide in search_tools and describe_tools output", async () => {
+  it("names the guide in search_tools output", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("notion", NOTION_GUIDE), guided("plain")]),
       BASE,
@@ -356,343 +355,11 @@ Prefer \`notion.search\` over listing databases.
         await mt.skills({ name: required(required(byId.notion).guide) }),
       ),
     ).toBe(NOTION_GUIDE);
-
-    const described = textOf(
-      await mt.describeTools({ addresses: ["notion.search", "plain.search"] }),
-    ) as { tools: Array<{ address: string; guide?: string }> };
-    expect(required(described.tools[0]).guide).toBe("connector:notion");
-    expect(described.tools[1]).not.toHaveProperty("guide");
   });
 });
 
-describe("list_connectors", () => {
-  it("bounds live connector probes by discovery concurrency", async () => {
-    let active = 0;
-    let maxActive = 0;
-    const connectors = Array.from(
-      { length: 8 },
-      (_, index): Connector => ({
-        id: `probe_${index}`,
-        kind: "mcp",
-        description: `Probe ${index}`,
-        async status() {
-          active++;
-          maxActive = Math.max(maxActive, active);
-          await new Promise((resolve) => setTimeout(resolve, 5));
-          active--;
-          return { state: "ok" };
-        },
-        async listTools() {
-          return [{ name: "read" }];
-        },
-        async callTool() {
-          return null;
-        },
-      }),
-    );
-    const result = await createMetaTools(
-      makeRegistry(connectors),
-      BASE,
-      { discoveryConcurrency: 2 },
-    ).listConnectors({ probe: true });
-    expect(result.isError).toBeFalsy();
-    expect(maxActive).toBe(2);
-  });
-
-  it("reports tool counts and per-connector status", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(await mt.listConnectors()) as {
-      connectors: Array<{
-        id: string;
-        title?: string;
-        toolCount: number;
-        status: string;
-        checkedAt: string;
-        latencyMs: number;
-        authorizationUrl?: string;
-      }>;
-    };
-    const byId = Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
-
-    expect(required(byId.calc).status).toBe("ok");
-    expect(required(byId.calc).toolCount).toBe(1);
-    expect(Number.isNaN(Date.parse(required(byId.calc).checkedAt))).toBe(false);
-    expect(required(byId.calc).latencyMs).toBeGreaterThanOrEqual(0);
-    expect(required(byId.remote).status).toBe("ok");
-    expect(required(byId.broken).status).toBe("error");
-    expect(required(byId.broken).toolCount).toBe(0);
-    expect(required(byId.needsauth).status).toBe("auth_required");
-    expect(required(byId.needsauth).authorizationUrl).toContain("auth.example");
-  });
-
-  it("keeps probe results when best-effort scope teardown throws", async () => {
-    let probeScope: object | undefined;
-    let callScope: object | undefined;
-    let closes = 0;
-    const connector: Connector = {
-      id: "scoped",
-      kind: "mcp",
-      description: "Scoped downstream",
-      async status(ctx) {
-        probeScope = ctx.requestScope;
-        return { state: "ok" };
-      },
-      async listTools(ctx) {
-        expect(ctx.requestScope).toBe(probeScope);
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool(_name, _args, ctx) {
-        callScope = ctx.requestScope;
-        return { content: [{ type: "text", text: "ok" }] };
-      },
-      async closeScope(ctx) {
-        closes++;
-        expect(ctx.requestScope).toBe(probeScope);
-        throw new Error("teardown failed");
-      },
-    };
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
-
-    const parsed = textOf(await mt.listConnectors({ probe: true })) as {
-      connectors: Array<{ status: string; toolCount: number }>;
-    };
-    expect(parsed.connectors[0]).toMatchObject({
-      status: "ok",
-      toolCount: 1,
-    });
-    expect(closes).toBe(1);
-
-    const called = await mt.callTool({ address: "scoped.read" });
-    expect(called.isError).toBeFalsy();
-    expect(callScope).not.toBe(probeScope);
-    // Per-request call scope is not a pure-probe scope and stays reusable.
-    expect(closes).toBe(1);
-  });
-
-  it("bounds a never-settling probe teardown", async () => {
-    let closes = 0;
-    const connector: Connector = {
-      id: "hungclose",
-      kind: "mcp",
-      description: "Hung teardown",
-      async status() {
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return null;
-      },
-      async closeScope() {
-        closes++;
-        await new Promise<never>(() => {});
-      },
-    };
-
-    const result = await withTimeout(
-      createMetaTools(makeRegistry([connector]), BASE).listConnectors({
-        probe: true,
-      }),
-      1_000,
-      "list_connectors with hung teardown",
-    );
-
-    expect(result.isError).toBeFalsy();
-    expect(closes).toBe(1);
-  });
-
-  it("defers the bounded teardown tail without extending the probe result", async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    const deferred: Promise<unknown>[] = [];
-    const connector: Connector = {
-      id: "slowclose",
-      kind: "mcp",
-      description: "Slow teardown",
-      async status() {
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return null;
-      },
-      async closeScope() {
-        await gate;
-      },
-    };
-
-    const result = await withTimeout(
-      createMetaTools(makeRegistry([connector]), BASE, {
-        defer: (promise) => deferred.push(promise),
-      }).listConnectors({ probe: true }),
-      1_000,
-      "list_connectors with deferred teardown",
-    );
-
-    expect(result.isError).toBeFalsy();
-    expect(deferred).toHaveLength(1);
-    await expect(
-      Promise.race([
-        required(deferred[0]).then(() => "settled"),
-        Promise.resolve("pending"),
-      ]),
-    ).resolves.toBe("pending");
-    release();
-    await expect(deferred[0]).resolves.toBeUndefined();
-  });
-
-  it("waits for every sibling probe before tearing down after a rejection", async () => {
-    let slowStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      slowStarted = resolve;
-    });
-    let releaseSlow!: () => void;
-    const release = new Promise<void>((resolve) => {
-      releaseSlow = resolve;
-    });
-    let slowFinished = false;
-    let closedMidProbe = false;
-    const rejecting: Connector = {
-      id: "rejecting",
-      description: "Rejecting connector",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const slow: Connector = {
-      id: "slow",
-      description: "Slow connector",
-      async status() {
-        slowStarted();
-        await release;
-        slowFinished = true;
-        return { state: "ok" };
-      },
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-      async closeScope() {
-        if (!slowFinished) closedMidProbe = true;
-      },
-    };
-    const registry = makeRegistry([rejecting, slow]);
-    const credentialDriftFor = registry.credentialDriftFor.bind(registry);
-    registry.credentialDriftFor = async (id) => {
-      if (id === "rejecting") throw new Error("future unguarded rejection");
-      return credentialDriftFor(id);
-    };
-
-    const listing = createMetaTools(registry, BASE).listConnectors({
-      probe: true,
-    });
-    await started;
-    await Promise.resolve();
-    expect(closedMidProbe).toBe(false);
-
-    releaseSlow();
-    await expect(listing).rejects.toThrow("future unguarded rejection");
-    expect(slowFinished).toBe(true);
-    expect(closedMidProbe).toBe(false);
-  });
-
-  it("reports a connector's display title separately from its address id", async () => {
-    const titled = api("billing", {
-      title: "Acme Billing",
-      description: "Acme billing management",
-      tools: [
-        {
-          name: "list",
-          description: "List billing records",
-          inputSchema: { type: "object" },
-          handler: () => [],
-        },
-      ],
-    });
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([titled]), BASE).listConnectors(),
-    ) as { connectors: Array<{ id: string; title?: string }> };
-
-    expect(parsed.connectors[0]).toMatchObject({
-      id: "billing",
-      title: "Acme Billing",
-    });
-  });
-
-  it("does not probe tools after auth_required status", async () => {
-    let listToolsCalls = 0;
-    const oauth: Connector = {
-      id: "oauth",
-      async status() {
-        return {
-          state: "auth_required",
-          authorizationUrl: "https://provider.test/authorize?state=first",
-        };
-      },
-      async listTools() {
-        listToolsCalls += 1;
-        throw new Error("would overwrite OAuth state");
-      },
-      async callTool() {
-        throw new Error("n/a");
-      },
-    };
-    const mt = createMetaTools(makeRegistry([oauth]), BASE);
-
-    const parsed = textOf(await mt.listConnectors()) as {
-      connectors: Array<{
-        toolCount: number;
-        authorizationUrl?: string;
-      }>;
-    };
-
-    expect(required(parsed.connectors[0]).authorizationUrl).toContain("state=first");
-    expect(required(parsed.connectors[0]).toolCount).toBe(0);
-    expect(listToolsCalls).toBe(0);
-  });
-
-  it("can return cached/observed status without downstream I/O", async () => {
-    let statusCalls = 0;
-    let listCalls = 0;
-    const remote: Connector = {
-      id: "quiet",
-      kind: "mcp",
-      async status() {
-        statusCalls++;
-        return { state: "ok" };
-      },
-      async listTools() {
-        listCalls++;
-        return [{ name: "read" }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const parsed = textOf(
-      await createMetaTools(makeRegistry([remote]), BASE).listConnectors({
-        probe: false,
-      }),
-    ) as { connectors: Array<{ status: string; probe: boolean }> };
-    expect(parsed.connectors[0]).toMatchObject({
-      status: "unknown",
-      probe: false,
-    });
-    expect(statusCalls).toBe(0);
-    expect(listCalls).toBe(0);
-  });
-
-  it("reports stored-shape drift and refuses drifted credential reads", async () => {
+describe("stored credential drift", () => {
+  it("refuses drifted credential reads", async () => {
     let tests = 0;
     const connector: Connector = {
       id: "drift",
@@ -731,16 +398,10 @@ describe("list_connectors", () => {
     });
     const mt = createMetaTools(registry, BASE);
 
-    const listed = textOf(await mt.listConnectors({ probe: false })) as {
-      connectors: Array<{
-        status: string;
-        message?: string;
-      }>;
-    };
-    expect(listed.connectors[0]).toMatchObject({
-      status: "auth_required",
-      message: STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-    });
+    // The drift is observed without touching the connector: no test hook runs.
+    expect(await registry.credentialDriftFor("drift")).toBe(
+      STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
+    );
     expect(tests).toBe(0);
 
     const called = textOf(
@@ -757,42 +418,37 @@ describe("list_connectors", () => {
       },
     });
   });
-
-  it("reports health observed from real generic tool calls", async () => {
-    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
-    await mt.callTool({
-      address: "calc.add",
-      args: { a: 1, b: 2 },
-    });
-    const parsed = textOf(await mt.listConnectors({ probe: false })) as {
-      connectors: Array<{
-        status: string;
-        lastSuccessAt?: string;
-        consecutiveFailures: number;
-      }>;
-    };
-    expect(required(parsed.connectors[0]).status).toBe("ok");
-    expect(required(parsed.connectors[0]).lastSuccessAt).toBeTruthy();
-    expect(required(parsed.connectors[0]).consecutiveFailures).toBe(0);
-  });
 });
 
 interface ObservedConnector {
-  id: string;
   status: string;
   message?: string;
   lastSuccessAt?: string;
   consecutiveFailures: number;
 }
 
-/** The cheap health signal every operator and agent consults. */
-async function observe(
-  mt: ReturnType<typeof createMetaTools>,
-): Promise<Record<string, ObservedConnector>> {
-  const parsed = textOf(await mt.listConnectors({ probe: false })) as {
-    connectors: ObservedConnector[];
+/**
+ * The health a connector's real calls left behind. Read straight off the
+ * registry: the log has no meta-tool reader since #273 removed list_connectors,
+ * but it is still what `InvocationService` writes on every attempt, and the
+ * derived state below is the one every consumer of it has to compute.
+ */
+function observe(
+  registry: ReturnType<typeof makeRegistry>,
+  id: string,
+): ObservedConnector {
+  const health = registry.healthFor(id);
+  return {
+    status:
+      health?.consecutiveFailures && health.consecutiveFailures > 0
+        ? "error"
+        : registry.hasObservedSuccess(id)
+          ? "ok"
+          : "unknown",
+    ...(health?.lastError ? { message: health.lastError } : {}),
+    ...(health?.lastSuccessAt ? { lastSuccessAt: health.lastSuccessAt } : {}),
+    consecutiveFailures: health?.consecutiveFailures ?? 0,
   };
-  return Object.fromEntries(parsed.connectors.map((c) => [c.id, c]));
 }
 
 describe("catalog-lookup health accounting", () => {
@@ -827,21 +483,19 @@ describe("catalog-lookup health accounting", () => {
         throw new Error("downstream exploded");
       },
     };
-    const mt = createMetaTools(
-      makeRegistry([catalogFlaky(state), executionBroken]),
-      BASE,
-    );
+    const registry = makeRegistry([catalogFlaky(state), executionBroken]);
+    const mt = createMetaTools(registry, BASE);
     for (let i = 0; i < 2; i++) {
       await mt.callTool({ address: "catalog.read", resultMode: "value" });
       await mt.callTool({ address: "execution.read", resultMode: "value" });
     }
-    const observed = await observe(mt);
-    expect(required(observed.catalog).consecutiveFailures).toBe(
-      required(observed.execution).consecutiveFailures,
+    const catalog = observe(registry, "catalog");
+    expect(catalog.consecutiveFailures).toBe(
+      observe(registry, "execution").consecutiveFailures,
     );
-    expect(required(observed.catalog).consecutiveFailures).toBe(2);
-    expect(required(observed.catalog).status).toBe("error");
-    expect(required(observed.catalog).message).toContain("catalog unavailable");
+    expect(catalog.consecutiveFailures).toBe(2);
+    expect(catalog.status).toBe("error");
+    expect(catalog.message).toContain("catalog unavailable");
   });
 
   it("records a typed auth_required from the catalog without changing its code", async () => {
@@ -858,41 +512,44 @@ describe("catalog-lookup health accounting", () => {
         return null;
       },
     };
-    const mt = createMetaTools(makeRegistry([expired]), BASE);
+    const registry = makeRegistry([expired]);
     const parsed = textOf(
-      await mt.callTool({ address: "expired.read", resultMode: "value" }),
+      await createMetaTools(registry, BASE).callTool({
+        address: "expired.read",
+        resultMode: "value",
+      }),
     ) as { ok: boolean; error: { code: string; message: string } };
     expect(parsed.ok).toBe(false);
     expect(parsed.error.code).toBe("auth_required");
     expect(parsed.error.message).toContain("authorize_connector");
-    const observed = await observe(mt);
-    expect(required(observed.expired).status).toBe("error");
-    expect(required(observed.expired).consecutiveFailures).toBe(1);
+    expect(observe(registry, "expired")).toMatchObject({
+      status: "error",
+      consecutiveFailures: 1,
+    });
   });
 
   it("returns to healthy once the catalog answers again", async () => {
     const state = { failing: true, listCalls: 0 };
-    const mt = createMetaTools(makeRegistry([catalogFlaky(state)]), BASE);
+    const registry = makeRegistry([catalogFlaky(state)]);
+    const mt = createMetaTools(registry, BASE);
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
-    expect(required((await observe(mt)).catalog).status).toBe("error");
+    expect(observe(registry, "catalog").status).toBe("error");
 
     state.failing = false;
     const parsed = textOf(
       await mt.callTool({ address: "catalog.read", resultMode: "value" }),
     ) as { ok: boolean };
     expect(parsed.ok).toBe(true);
-    const recovered = (await observe(mt)).catalog;
-    expect(required(recovered).status).toBe("ok");
-    expect(required(recovered).consecutiveFailures).toBe(0);
-    expect(required(recovered).lastSuccessAt).toBeTruthy();
+    const recovered = observe(registry, "catalog");
+    expect(recovered.status).toBe("ok");
+    expect(recovered.consecutiveFailures).toBe(0);
+    expect(recovered.lastSuccessAt).toBeTruthy();
   });
 
   it("leaves health alone for static catalogs and warm-cache hits", async () => {
     const state = { failing: false, listCalls: 0 };
-    const mt = createMetaTools(
-      makeRegistry([catalogFlaky(state), calcConnector]),
-      BASE,
-    );
+    const registry = makeRegistry([catalogFlaky(state), calcConnector]);
+    const mt = createMetaTools(registry, BASE);
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
     // The cache is warm now, so a catalog that starts failing is never asked
     // again — and a cache hit is neither a failure nor evidence of health.
@@ -904,15 +561,26 @@ describe("catalog-lookup health accounting", () => {
     expect(state.listCalls).toBe(1);
 
     await mt.callTool({ address: "calc.add", args: { a: 1, b: 2 } });
-    const observed = await observe(mt);
-    expect(observed.catalog).toMatchObject({
+    expect(observe(registry, "catalog")).toMatchObject({
       status: "ok",
       consecutiveFailures: 0,
     });
-    expect(observed.calc).toMatchObject({
+    expect(observe(registry, "calc")).toMatchObject({
       status: "ok",
       consecutiveFailures: 0,
     });
+  });
+
+  it("reports health observed from real generic tool calls", async () => {
+    const registry = makeRegistry([calcConnector]);
+    await createMetaTools(registry, BASE).callTool({
+      address: "calc.add",
+      args: { a: 1, b: 2 },
+    });
+    const observed = observe(registry, "calc");
+    expect(observed.status).toBe("ok");
+    expect(observed.lastSuccessAt).toBeTruthy();
+    expect(observed.consecutiveFailures).toBe(0);
   });
 });
 
@@ -1913,6 +1581,30 @@ describe("search_tools", () => {
     });
   });
 
+  it("reports a connector's display title separately from its address id", async () => {
+    const titled = api("billing", {
+      title: "Acme Billing",
+      description: "Acme billing management",
+      tools: [
+        {
+          name: "list",
+          description: "List billing records",
+          annotations: { readOnlyHint: true },
+          inputSchema: { type: "object" },
+          handler: () => [],
+        },
+      ],
+    });
+    const parsed = textOf(
+      await createMetaTools(makeRegistry([titled]), BASE).searchTools({}),
+    ) as { connectors: Array<{ id: string; title?: string }> };
+
+    expect(parsed.connectors[0]).toMatchObject({
+      id: "billing",
+      title: "Acme Billing",
+    });
+  });
+
   it("loads independent connector catalogs in parallel", async () => {
     let started = 0;
     let release!: () => void;
@@ -1951,96 +1643,6 @@ describe("search_tools", () => {
   });
 });
 
-describe("describe_tools", () => {
-  it("returns the raw JSON Schema for a known address (format: json)", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(
-      await mt.describeTools({ addresses: ["calc.add"], format: "json" }),
-    ) as { tools: Array<{ address: string; inputSchema: any }> };
-    expect(required(parsed.tools[0]).address).toBe("calc.add");
-    expect(required(parsed.tools[0]).inputSchema.properties.a.type).toBe("number");
-  });
-
-  it("renders a compact TypeScript-like shape by default", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(
-      await mt.describeTools({ addresses: ["calc.add"] }),
-    ) as { tools: Array<{ address: string; inputSchema: string }> };
-    // a and b are required numbers → no `?`.
-    expect(required(parsed.tools[0]).inputSchema).toBe("{ a: number, b: number }");
-  });
-
-  it("returns an error entry for unknown addresses without throwing", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    const parsed = textOf(
-      await mt.describeTools({ addresses: ["calc.nope", "ghost.x"] }),
-    ) as { tools: Array<{ address: string; error?: string }> };
-    expect(required(parsed.tools[0]).error).toContain("Unknown tool");
-    expect(required(parsed.tools[1]).error).toContain("Unknown address");
-  });
-
-  it("bounds the raw address list, including duplicates", async () => {
-    const mt = createMetaTools(registry(), BASE);
-    for (const count of [
-      MAX_DESCRIBE_ADDRESSES - 1,
-      MAX_DESCRIBE_ADDRESSES,
-    ]) {
-      const result = await mt.describeTools({
-        addresses: Array.from({ length: count }, () => "calc.add"),
-      });
-      expect(result.isError).toBeFalsy();
-      expect((textOf(result) as { tools: unknown[] }).tools).toHaveLength(count);
-    }
-
-    const oversized = await mt.describeTools({
-      addresses: Array.from(
-        { length: MAX_DESCRIBE_ADDRESSES + 1 },
-        () => "calc.add",
-      ),
-    });
-    expect(oversized.isError).toBe(true);
-    expect(textOf(oversized)).toMatchObject({
-      error: {
-        code: "invalid_args",
-        retryable: false,
-        message: expect.stringContaining(
-          "Split a larger list across connecta.describe calls",
-        ),
-      },
-    });
-  });
-
-  it("applies the UTF-8 result ceiling to full JSON schemas", async () => {
-    const connector: Connector = {
-      id: "wide",
-      staticTools: [
-        {
-          name: "read",
-          inputSchema: {
-            type: "object",
-            description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
-          },
-        },
-      ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const result = await createMetaTools(
-      makeRegistry([connector]),
-      BASE,
-    ).describeTools({ addresses: ["wide.read"], format: "json" });
-
-    expect(result.isError).toBe(true);
-    expect(textOf(result)).toMatchObject({
-      error: { code: "result_too_large", retryable: false },
-    });
-  });
-});
-
 describe("compact schema rendering", () => {
   async function shapeOf(schema: any): Promise<string> {
     const conn: Connector = {
@@ -2054,10 +1656,15 @@ describe("compact schema rendering", () => {
         return {};
       },
     };
-    const mt = createMetaTools(makeRegistry([conn]), BASE);
-    const r = await mt.describeTools({ addresses: ["shape.t"] });
-    return (JSON.parse(required(r.content[0]).text) as { tools: any[] }).tools[0]
-      .inputSchema as string;
+    // The describe renderer, read at the layer that owns it: `connecta.describe`
+    // inside execute_code is the only surface that reaches it now, and it
+    // renders property descriptions where search's bounded compact schema
+    // deliberately does not.
+    const described = await new CatalogService(
+      makeRegistry([conn]),
+      BASE,
+    ).describe({ addresses: ["shape.t"] });
+    return required(described[0]).inputSchema as string;
   }
 
   it("renders optionals, enums, arrays and property descriptions", async () => {
@@ -2275,15 +1882,6 @@ describe("call_tool", () => {
     });
     expect(calls).toBe(0);
 
-    const batch = textOf(
-      await mt.batchCall({ calls: [{ address: "danger.erase" }] }),
-    ) as { results: Array<{ ok: boolean; errorDetails: { code: string } }> };
-    expect(batch.results[0]).toMatchObject({
-      ok: false,
-      errorDetails: { code: "destructive_tool_requires_approval" },
-    });
-    expect(calls).toBe(0);
-
     const approved = await mt.callDestructiveTool({
       address: "danger.erase",
       args: { target: "duplicate" },
@@ -2309,10 +1907,7 @@ describe("call_tool", () => {
       ],
     });
     const mt = createMetaTools(
-      makeRegistry([dangerous], {
-        maxResultBytes: 1_000,
-        maxBatchResultBytes: 1_000,
-      }),
+      makeRegistry([dangerous], { maxResultBytes: 1_000 }),
       BASE,
     );
     const huge = { blob: "x".repeat(50_000) };
@@ -2336,33 +1931,6 @@ describe("call_tool", () => {
     expect(refusal.error.nextAction.purpose).toContain(
       "Re-send the arguments you just sent",
     );
-
-    // Same bypass, other cap: a batch child's refusal rides in the final
-    // envelope, so an unbounded echo would defeat maxBatchResultBytes too.
-    const batch = await mt.batchCall({
-      calls: [{ address: "danger.erase", args: huge }],
-    });
-    expect(JSON.stringify(batch).length).toBeLessThan(4_000);
-    expect(JSON.stringify(batch)).not.toContain("xxxxx");
-
-    // And once the envelope is genuinely oversized, the inline summary keeps
-    // its fixed-overhead promise: the route survives, the payload does not.
-    const summarized = textOf(
-      await createMetaTools(
-        makeRegistry([dangerous], { maxBatchResultBytes: 200 }),
-        BASE,
-      ).batchCall({ calls: [{ address: "danger.erase", args: huge }] }),
-    ) as {
-      truncated: true;
-      results: Array<{
-        errorDetails: { nextAction: { arguments: Record<string, unknown> } };
-      }>;
-    };
-    expect(summarized.truncated).toBe(true);
-    expect(
-      required(summarized.results[0]).errorDetails.nextAction.arguments,
-    ).toEqual({ address: "danger.erase" });
-    expect(JSON.stringify(summarized).length).toBeLessThan(4_000);
 
     // Arguments that fit the echo budget still come back whole.
     const small = textOf(
@@ -2516,16 +2084,17 @@ describe("call_tool", () => {
         return { ok: true };
       },
     };
-    const result = await createMetaTools(
+    // One meta-tool set is one inbound request, so its two concurrent calls
+    // share the request-local catalog rather than each loading their own.
+    const mt = createMetaTools(
       makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
       BASE,
-    ).batchCall({
-      calls: [
-        { address: "shared.read", resultMode: "value" },
-        { address: "shared.read", resultMode: "value" },
-      ],
-    });
-    expect(result.isError).toBeFalsy();
+    );
+    const results = await Promise.all([
+      mt.callTool({ address: "shared.read", resultMode: "value" }),
+      mt.callTool({ address: "shared.read", resultMode: "value" }),
+    ]);
+    expect(results.every((result) => !result.isError)).toBe(true);
     expect(catalogLoads).toBe(1);
   });
 
@@ -2711,12 +2280,6 @@ describe("call_tool", () => {
       defaultToolTimeoutMs: 5_000,
     }).callTool({ ...call, timeoutMs: 25 });
     expect(seen[2]).toEqual({ timeoutMs: 25, hasSignal: true });
-
-    // Including through batch_call, which fans out through the same path.
-    await createMetaTools(makeRegistry([connector]), BASE, {
-      defaultToolTimeoutMs: 5_000,
-    }).batchCall({ calls: [{ address: "budget.peek" }] });
-    expect(seen[3]).toEqual({ timeoutMs: 5_000, hasSignal: true });
   });
 
   it("a configured default deadline aborts and times out a hanging call", async () => {
@@ -2776,14 +2339,6 @@ describe("call_tool", () => {
       attempts: 1,
       error: { code: "rate_limited", retryable: true, retryAfterMs: 3_600_000 },
     });
-
-    const batched = textOf(
-      await mt.batchCall({
-        calls: [{ address: "limited.read" }],
-        resultMode: "value",
-      }),
-    ) as { results: Array<{ errorDetails: { retryAfterMs?: number } }> };
-    expect(required(batched.results[0]).errorDetails.retryAfterMs).toBe(3_600_000);
   });
 
   it("omits retryAfterMs when the connector reports no window", async () => {
@@ -3271,29 +2826,7 @@ describe("call_tool", () => {
       error: { ...expected.error, operation: "remote_strict.write" },
     });
 
-    const batch = textOf(
-      await mt.batchCall({
-        calls: [
-          { address: "remote_strict.read", args },
-        ],
-      }),
-    ) as {
-      results: Array<{
-        attempts: number;
-        errorDetails: { code: string; validation?: unknown };
-      }>;
-    };
-    expect(batch.results).toHaveLength(1);
-    for (const result of batch.results) {
-      expect(result).toMatchObject({
-        attempts: 0,
-        errorDetails: {
-          code: "invalid_args",
-          validation: expected.error.validation,
-        },
-      });
-    }
-    expect(JSON.stringify([direct, destructive, batch])).not.toContain(
+    expect(JSON.stringify([direct, destructive])).not.toContain(
       "submitted-secret",
     );
     expect(calls).toBe(0);
@@ -4169,30 +3702,6 @@ describe("per-connector maxResultBytes override", () => {
     expect(required(result.content[0]).text).toBe(FULL);
   });
 
-  it("applies each connector's own cap within one batch_call", async () => {
-    const mt = createMetaTools(
-      makeRegistry(
-        [capped("tight", 100), capped("plain"), capped("wide", 1_000)],
-        { maxResultBytes: 300 },
-      ),
-      BASE,
-    );
-    const parsed = textOf(
-      await mt.batchCall({
-        calls: [
-          { address: "tight.big" },
-          { address: "plain.big" },
-          { address: "wide.big" },
-        ],
-      }),
-    ) as { results: Array<{ address: string; result: { text: string }[] }> };
-    const [tight, plain, wide] = parsed.results.map((r) => required(r.result[0]).text);
-
-    expect(required(tight).split("\n")[0]).toBe(FULL.slice(0, 100));
-    expect(required(plain).split("\n")[0]).toBe(FULL.slice(0, 300));
-    expect(wide).toBe(FULL);
-  });
-
   it("pages a result truncated under an override through get_result", async () => {
     const mt = createMetaTools(
       makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }),
@@ -4833,201 +4342,6 @@ describe("get_result offset validation and alignment", () => {
   });
 });
 
-describe("batch_call", () => {
-  it("runs calls in parallel, isolates failures, and applies per-call fields", async () => {
-    const mt = createMetaTools(
-      makeRegistry([dataConnector, calcConnector]),
-      BASE,
-    );
-    const parsed = textOf(
-      await mt.batchCall({
-        calls: [
-          { address: "calc.add", args: { a: 1, b: 2 } },
-          { address: "data.get", fields: ["user.name"] },
-          { address: "calc.bogus" },
-        ],
-      }),
-    ) as {
-      results: Array<{
-        address: string;
-        ok: boolean;
-        result?: { text: string }[];
-        error?: string;
-        errorDetails?: {
-          code: string;
-          message: string;
-          retryable: boolean;
-        };
-        durationMs: number;
-      }>;
-      durationMs: number;
-    };
-    expect(parsed.results.map((r) => r.address)).toEqual([
-      "calc.add",
-      "data.get",
-      "calc.bogus",
-    ]);
-    expect(JSON.parse(required(required(parsed.results[0]).result![0]).text)).toEqual({ sum: 3 });
-    expect(JSON.parse(required(required(parsed.results[1]).result![0]).text)).toEqual({
-      "user.name": "Ada",
-    });
-    expect(required(parsed.results[2]).ok).toBe(false);
-    expect(required(parsed.results[2]).error).toContain("Unknown tool");
-    expect(required(parsed.results[2]).errorDetails?.code).toBe("unknown_tool");
-    expect(parsed.results.every((r) => r.durationMs >= 0)).toBe(true);
-    expect(parsed.durationMs).toBeGreaterThanOrEqual(0);
-  });
-
-  it("returns unwrapped data for the whole batch in value mode", async () => {
-    const mt = createMetaTools(
-      makeRegistry([jsonMcpConnector, calcConnector]),
-      BASE,
-    );
-    const parsed = textOf(
-      await mt.batchCall({
-        resultMode: "value",
-        calls: [
-          { address: "calc.add", args: { a: 2, b: 4 } },
-          { address: "jm.rec", fields: ["b"] },
-        ],
-      }),
-    ) as {
-      results: Array<{
-        address: string;
-        ok: boolean;
-        data: unknown;
-        durationMs: number;
-      }>;
-    };
-
-    expect(required(parsed.results[0]).data).toEqual({ sum: 6 });
-    expect(required(parsed.results[1]).data).toEqual({ b: 2 });
-  });
-
-  it("stashes an oversized final envelope and keeps ordered failures inline", async () => {
-    const payload = `start-${"界".repeat(280)}-end`;
-    const connector = (id: string, maxResultBytes: number): Connector => ({
-      id,
-      kind: "api",
-      maxResultBytes,
-      async listTools() {
-        return [
-          {
-            name: "read",
-            annotations: { readOnlyHint: true },
-          },
-        ];
-      },
-      async callTool() {
-        return { payload };
-      },
-    });
-    const mt = createMetaTools(
-      makeRegistry(
-        [connector("tight", 500), connector("wide", 900)],
-        {
-          maxResultBytes: 1_000,
-          maxBatchResultBytes: 2_000,
-        },
-      ),
-      BASE,
-    );
-    const addresses = [
-      "tight.read",
-      "wide.read",
-      "wide.read",
-      "wide.read",
-      "wide.read",
-      "tight.missing",
-    ];
-    const inline = textOf(
-      await mt.batchCall({
-        calls: addresses.map((address) => ({ address })),
-      }),
-    ) as {
-      truncated: true;
-      resultId: string;
-      totalBytes: number;
-      results: Array<{
-        address: string;
-        ok: boolean;
-        result?: unknown;
-        data?: unknown;
-        error?: string;
-        errorDetails?: { code: string; message: string };
-      }>;
-    };
-
-    expect(inline.truncated).toBe(true);
-    expect(inline.totalBytes).toBeGreaterThan(2_000);
-    expect(inline.results.map((result) => result.address)).toEqual(addresses);
-    expect(inline.results.slice(0, 5).every((result) => result.ok)).toBe(true);
-    expect(inline.results.slice(0, 5).every((result) => {
-      return result.result === undefined && result.data === undefined;
-    })).toBe(true);
-    expect(inline.results[5]).toMatchObject({
-      ok: false,
-      errorDetails: { code: "unknown_tool" },
-    });
-
-    let offset = 0;
-    let fullText = "";
-    for (;;) {
-      const page = textOf(
-        await mt.getResult({
-          id: inline.resultId,
-          offset,
-          maxBytes: 37,
-        }),
-      ) as { text: string; nextOffset?: number; totalBytes: number };
-      expect(page.text).not.toContain("�");
-      expect(page.totalBytes).toBe(inline.totalBytes);
-      fullText += page.text;
-      if (page.nextOffset === undefined) break;
-      offset = page.nextOffset;
-    }
-
-    expect(new TextEncoder().encode(fullText)).toHaveLength(inline.totalBytes);
-    const full = JSON.parse(fullText) as {
-      results: Array<{
-        address: string;
-        ok: boolean;
-        result?: Array<{ text: string }>;
-        errorDetails?: { code: string };
-      }>;
-    };
-    expect(full.results.map((result) => result.address)).toEqual(addresses);
-    expect(required(required(full.results[0]).result?.[0]).text).toContain('"truncated":true');
-    expect(required(required(full.results[1]).result?.[0]).text).toContain("界");
-    expect(required(required(full.results[1]).result?.[0]).text).not.toContain('"truncated":true');
-    expect(required(full.results[5]).errorDetails?.code).toBe("unknown_tool");
-  });
-
-  it("preserves the existing envelope below the aggregate cap", async () => {
-    const mt = createMetaTools(
-      makeRegistry([calcConnector], { maxBatchResultBytes: 10_000 }),
-      BASE,
-    );
-    const parsed = textOf(
-      await mt.batchCall({
-        calls: [
-          { address: "calc.add", args: { a: 1, b: 2 } },
-          { address: "calc.add", args: { a: 3, b: 4 } },
-        ],
-      }),
-    ) as {
-      truncated?: boolean;
-      resultId?: string;
-      results: Array<{ result: Array<{ text: string }> }>;
-    };
-
-    expect(parsed.truncated).toBeUndefined();
-    expect(parsed.resultId).toBeUndefined();
-    expect(parsed.results.map((result) => JSON.parse(required(result.result[0]).text)))
-      .toEqual([{ sum: 3 }, { sum: 7 }]);
-  });
-});
-
 describe("authorize_connector", () => {
   it("starts the flow and returns the authorization URL with instructions", async () => {
     authConnector.startAuthCalls.length = 0;
@@ -5250,6 +4564,60 @@ describe("authorize_connector", () => {
     expect(result.isError).toBe(true);
     expect(invalidated).toBe(1);
   });
+
+  // #261: the surface sweeps in test/code-first-surface.test.ts read tool
+  // DESCRIPTIONS and instructions. A meta-tool RESULT is always-followed text
+  // too — an agent handed "then call list_connectors" does exactly that, gets an
+  // unknown-tool error, and has no route left. The OAuth handoff named a removed
+  // tool once already, so every recovery string these handlers return is swept
+  // here, at the one place results are produced.
+  it("names no removed tool in any recovery payload it returns", async () => {
+    const removed = ["list_connectors", "describe_tools", "batch_call"];
+    const vaultStorage = memoryStorage();
+    const configured = createMetaTools(
+      makeRegistry([
+        {
+          id: "vaulted",
+          kind: "api",
+          description: "Operator credential",
+          credential: { label: "API key" },
+          async listTools() {
+            return [];
+          },
+          async callTool() {
+            return null;
+          },
+        },
+      ], {
+        storage: vaultStorage,
+        credentialVault: new CredentialVault(vaultStorage, CREDENTIAL_KEY),
+      }),
+      BASE,
+    );
+    const mt = createMetaTools(registry(), BASE);
+    const payloads = [
+      // The OAuth handoff, which is where the regression happened.
+      await mt.authorizeConnector({ connector: "needsauth" }),
+      // The operator-credential handoff, and the two dead ends beside it.
+      await configured.authorizeConnector({ connector: "vaulted" }),
+      await mt.authorizeConnector({ connector: "calc" }),
+      await mt.authorizeConnector({ connector: "ghost" }),
+      // Recovery records an agent follows after a failed call.
+      await mt.callTool({ address: "ghost.read_items" }),
+      await mt.callTool({ address: "calc.missing_sum" }),
+      await mt.searchTools({ query: "nothing matches this at all" }),
+      await mt.skills({}),
+      await mt.skills({ name: "usage" }),
+      await mt.getResult({ id: "expired" }),
+    ];
+
+    for (const payload of payloads) {
+      const serialized = JSON.stringify(payload);
+      for (const tool of removed) {
+        expect(serialized).not.toContain(tool);
+      }
+    }
+  });
 });
 
 describe("probe timeout", () => {
@@ -5301,34 +4669,6 @@ describe("probe timeout", () => {
     });
     expect(required(scoped.queryAnalysis).guidance).not.toContain(
       "No matching capability",
-    );
-  });
-
-  it("list_connectors reports a hung connector as errored within the timeout", async () => {
-    const mt = createMetaTools(makeRegistry([hangingConnector]), BASE, {
-      probeTimeoutMs: 50,
-    });
-    const started = Date.now();
-    const parsed = textOf(await mt.listConnectors({ probe: true })) as {
-      connectors: Array<{ id: string; status: string; message?: string }>;
-    };
-    expect(Date.now() - started).toBeLessThan(2_000);
-    expect(parsed.connectors[0]).toMatchObject({ id: "hang", status: "error" });
-    expect(required(parsed.connectors[0]).message).toContain("timed out");
-  });
-
-  it("describe_tools reports a hung connector's tool as errored within the timeout", async () => {
-    const mt = createMetaTools(makeRegistry([hangingConnector]), BASE, {
-      probeTimeoutMs: 50,
-    });
-    const started = Date.now();
-    const parsed = textOf(await mt.describeTools({ addresses: ["hang.read"] })) as {
-      tools: Array<{ address: string; error?: string }>;
-    };
-    expect(Date.now() - started).toBeLessThan(2_000);
-    expect(required(parsed.tools[0]).address).toBe("hang.read");
-    expect(required(parsed.tools[0]).error).toContain(
-      'connecta.describe probe of "hang" timed out',
     );
   });
 });

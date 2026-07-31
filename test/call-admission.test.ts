@@ -10,7 +10,7 @@ import type {
   ConnectorCallAdmissionPolicy,
   ToolDef,
 } from "../src/types.js";
-import { createConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
+import { createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const READ_TOOL: ToolDef = {
@@ -316,13 +316,18 @@ describe("connector call admission integration", () => {
       },
     };
     const registry = makeRegistry([connector]);
-    const batch = createMetaTools(registry, BASE).batchCall({
-      resultMode: "value",
-      calls: [0, 1, 2, 3].map((index) => ({
+    const providers = await buildSandboxProviders(
+      registry,
+      BASE,
+      silentLogger,
+    );
+    const connecta = providers.find(({ name }) => name === "connecta")!;
+    const batch = required(connecta.fns.batch)(
+      [0, 1, 2, 3].map((index) => ({
         address: "limited.read",
         args: { index },
       })),
-    });
+    );
 
     await waitFor(() => releases.length === 2);
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({
@@ -333,13 +338,12 @@ describe("connector call admission integration", () => {
     await waitFor(() => releases.length === 2);
     releases.splice(0, 2).forEach((release) => release());
 
-    const result = JSON.parse(required((await batch).content[0]).text) as {
-      results: Array<{ data: { index: number } }>;
-    };
+    const results = (await batch) as Array<{
+      ok: boolean;
+      data: { index: number };
+    }>;
     expect(maxActive).toBe(2);
-    expect(result.results.map((entry) => entry.data.index)).toEqual([
-      0, 1, 2, 3,
-    ]);
+    expect(results.map((entry) => entry.data.index)).toEqual([0, 1, 2, 3]);
   });
 
   it("shares one base-registry limiter between direct and code-mode calls", async () => {
@@ -571,7 +575,7 @@ describe("connector call admission integration", () => {
         return {};
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       logger: silentLogger,
     });

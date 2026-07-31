@@ -122,10 +122,12 @@ export function createFetchHandler(
       }
 
       if (path === "/health") {
-        const codeAdmission =
-          opts.executor && isAdmittingExecutor(opts.executor)
-            ? opts.executor.admissionSnapshot?.()
-            : undefined;
+        // The executor is required, so code admission always has a shape to
+        // report: either the executor's own pool or the fallback controller
+        // wrapped around it at construction.
+        const codeAdmission = isAdmittingExecutor(opts.executor)
+          ? opts.executor.admissionSnapshot?.()
+          : undefined;
         return Response.json({
           status: "ok",
           connectors: registry.listConnectors().length,
@@ -133,9 +135,7 @@ export function createFetchHandler(
           admission: {
             policy: "global-fifo",
             requests: opts.requestAdmission.snapshot(),
-            code: opts.executor
-              ? (codeAdmission ?? { managedByExecutor: true })
-              : null,
+            code: codeAdmission ?? { managedByExecutor: true },
             downstreamCalls: {
               policy: "connector-partitioned-per-runtime",
               connectors: registry.callAdmissionSnapshot(),

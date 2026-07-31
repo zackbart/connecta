@@ -83,9 +83,7 @@ function discoverySearchLimit(value: unknown): number {
 }
 
 /** Normalize the single-address convenience form, then validate the bounded list. */
-function discoveryAddresses(
-  args: CatalogDescribeArgs,
-): unknown[] {
+function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
   if (args.address !== undefined && args.addresses !== undefined) {
     throw new DiscoveryPolicyError(
       "invalid_args",

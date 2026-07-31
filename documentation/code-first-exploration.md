@@ -38,7 +38,8 @@ The recommendation is to evolve Connecta toward:
   and result retrieval;
 - policy, credentials, egress, and auditing enforced below generated code; and
 - the current tool surface retained as a compatibility path and evaluation
-  control while the new path matures.
+  control while the new path matures — a retention that ended with #273, which
+  made the executor mandatory and deleted the classic surface outright.
 
 This was an exploratory spike, not a production implementation. The next agent
 should use these findings as a design brief rather than porting the prototype
@@ -195,7 +196,10 @@ It did not establish:
   complexity.
 
 The existing surface should therefore remain available during the transition
-as a compatibility mode, rollback path, and experimental control.
+as a compatibility mode, rollback path, and experimental control. It was, and
+then it was not: #224 made code-first the default and #273 removed the second
+shape entirely. The open questions above outlived the control arm rather than
+being settled by it.
 
 ## Recommended product shape
 

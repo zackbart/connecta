@@ -292,8 +292,8 @@ const outcomes = await connecta.batch([
 order. A success is `{ address, ok: true, data }`. A failure is
 `{ address, ok: false, error, errorDetails }`, where `error` is the message and
 `errorDetails` is the typed object described in [Errors](#errors) — the same two
-field names `batch_call` uses. One failing call never rejects the batch, and more
-than ten calls throws.
+field names the host's internal batch path uses. One failing call never rejects
+the batch, and more than ten calls throws.
 
 **S8.** `connecta.batch` is the classification channel: because a thrown host
 error crosses the bridge as a bare message (`E1`), a batch of one is the supported
@@ -590,9 +590,9 @@ calls — which makes moving work into the sandbox an optimization, not a blindf
 server identity. Typed codes derive an optional `friction`: `tool_not_found`,
 `schema_retry`, `destructive_reroute`, or `auth_required`. The fifth class,
 `result_too_large`, cannot reach an `execute_code` event: it belongs to a
-`call_tool` result — or a `batch_call` child's — too large to return inline,
-and a program's own return is refused paging by design rather than truncated
-into friction. There is nowhere to put arguments, results, program source, or
+`call_tool` result too large to return inline, and a program's own
+return is refused paging by design rather than truncated into friction. There is
+nowhere to put arguments, results, program source, or
 raw error text; a caught failure is still recorded. `address` is
 canonical (`A1`) where a tool resolved, otherwise the name the program used —
 for a shortcut its sanitized alias, the honest record of what was attempted.
@@ -679,8 +679,8 @@ entry. Programs that ran before still run.
 
 - **`connecta.batch` failures gained `errorDetails`** (`S7`). They carried only a
   message, which left a program unable to tell a policy refusal from a transient
-  failure. Additive, and it reuses `batch_call`'s field names so one shape covers
-  both surfaces.
+  failure. Additive, and it reuses the host's internal batch field names, so a
+  program and the host describe a failed call the same way.
 - **A policy refusal can no longer look retryable** (`E7`). Pinned in code rather
   than read out of message text, so a connector named `svc-503` stops flipping a
   permanent refusal to `retryable: true`. This reaches the call tools too.
@@ -763,12 +763,11 @@ the upstream `Executor` shape assignable.
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact seven, nine, and
-ten tool lists) and `test/code-first-surface.test.ts` (the fold's construction
-rules, refusals, copy, and measured size). The release audit compares the same
-two shapes:
+The surface itself is checked by `test/server.test.ts` (the exact seven-tool
+list) and `test/code-first-surface.test.ts` (the fold's construction rules, the
+required executor, the refusals a removed top-level tool now gets, copy, and
+measured size). There is one shape left to audit, so there is one audit:
 
 ```sh
 npm --prefix eval/current-version run audit
-npm --prefix eval/current-version run audit -- --executor disabled
 ```

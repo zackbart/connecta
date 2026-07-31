@@ -38,7 +38,7 @@ export interface RemoteMcpOptions {
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
-   * call_tool/batch_call truncate and stash the full text for get_result
+   * call_tool truncates and stashes the full text for get_result
    * paging. Overrides the deployment's `calls.maxResultBytes`; omit to inherit
    * it. Must be a whole number of bytes >= 1; anything else warns at startup
    * and is ignored.

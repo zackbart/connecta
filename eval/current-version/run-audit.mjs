@@ -5,6 +5,7 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createAuditClient, round } from "./audit-lib.mjs";
+import { codeFirstTools } from "./agent-benchmark-scoring.mjs";
 import { runTaskAudit } from "./audit-all-tools.mjs";
 import { runDiscoveryBenchmark } from "./discovery-benchmark.mjs";
 import { renderReport } from "./report.mjs";
@@ -156,7 +157,22 @@ try {
   const activityCase = tasks.cases.find(
     (entry) => entry.outcome === "activity-payload-free",
   );
+  // The `surface` stamp below is a constant; without this check a server that
+  // regressed to the classic nine would still be filed as seven-tool evidence.
+  const advertisedTools = context.connection.tools
+    .map((tool) => tool.name)
+    .sort();
+  const expectedTools = [...codeFirstTools].sort();
+  const surfaceMatches =
+    advertisedTools.length === expectedTools.length &&
+    advertisedTools.every((name, index) => name === expectedTools[index]);
   const qualificationChecks = [
+    {
+      name: "advertised surface is exactly the seven meta-tools",
+      actual: advertisedTools,
+      expected: expectedTools,
+      passed: surfaceMatches,
+    },
     {
       name: "all behavioral scenarios pass",
       actual: tasks.summary.taskSuccessRate,

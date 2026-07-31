@@ -283,7 +283,11 @@ try {
     join(generatedRoot, "src", "index.ts"),
     "utf8",
   );
-  const executorLine = "  executor: quickJsExecutor(),\n";
+  // Strip the comment with the line it annotates; leaving it orphaned above a
+  // deleted executor would make the fixture read as a deliberate omission.
+  const executorLine =
+    "  // Required: model-written programs run in a bounded QuickJS child.\n" +
+    "  executor: quickJsExecutor(),\n";
   if (!generatedSource.includes(executorLine)) {
     throw new Error("Generated deployment is missing its required executor");
   }
@@ -298,11 +302,18 @@ try {
     "ConnectaConfig.executor is required",
     { CONNECTA_TOKEN: "package-smoke-token" },
   );
+  const createCall = "const connecta = createConnecta({\n";
+  if (!generatedSource.includes(createCall)) {
+    throw new Error(
+      "Generated deployment no longer opens createConnecta on its own line; " +
+        "the removed-surface fixture cannot be built",
+    );
+  }
   await writeFile(
     join(generatedRoot, "src", "removed-surface.ts"),
     generatedSource.replace(
-      "const connecta = createConnecta({\n",
-      'const connecta = createConnecta({\n  surface: "classic",\n',
+      createCall,
+      `${createCall}  surface: "classic",\n`,
     ),
   );
   expectFailure(
@@ -381,7 +392,6 @@ try {
     "export interface ConnectaCallsConfig {",
     "    defaultTimeoutMs?: number;",
     "    maxResultBytes?: number;",
-    "    maxBatchResultBytes?: number;",
     "    activity?: ConnectaActivityConfig;",
     "    credentials?: ConnectaCredentialsConfig;",
     "    discovery?: ConnectaDiscoveryConfig;",

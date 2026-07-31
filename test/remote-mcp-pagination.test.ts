@@ -12,6 +12,7 @@ import type {
 import { Server } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -454,17 +455,19 @@ describe("remoteMcp() tools/list pagination", () => {
 
     const pending = createMetaTools(makeRegistry([connector]), BASE, {
       probeTimeoutMs: 25,
-    }).listConnectors({ probe: true });
+    }).searchTools({ query: "alpha" });
     await atPageTwo;
     try {
-      const entry = JSON.parse(required((await pending).content[0]).text).connectors[0];
-      expect(entry).toMatchObject({
-        status: "error",
-        toolCount: 0,
+      const payload = JSON.parse(required((await pending).content[0]).text) as {
+        connectors: unknown[];
+        queryAnalysis?: { unavailableConnectorCount?: number };
+      };
+      // The stalled catalog is reported unavailable rather than searched, and
+      // no partial page of it reaches the caller.
+      expect(payload.connectors).toEqual([]);
+      expect(payload.queryAnalysis).toMatchObject({
+        unavailableConnectorCount: 1,
       });
-      expect(entry.message).toMatch(
-        /list_connectors catalog refresh of "paged" timed out after 25ms/,
-      );
       // Page two was cancelled in flight; the expired walk never starts p3.
       expect(cursors).toEqual([undefined, "p2"]);
     } finally {
@@ -477,13 +480,15 @@ describe("remoteMcp() tools/list pagination", () => {
       tools: [tool("only")],
     }));
 
-    const listed = await createMetaTools(makeRegistry([connector]), BASE, {
+    const searched = await createMetaTools(makeRegistry([connector]), BASE, {
       probeTimeoutMs: 100,
-    }).listConnectors({ probe: true });
+    }).searchTools({});
 
-    expect(JSON.parse(required(listed.content[0]).text).connectors[0]).toMatchObject({
-      status: "ok",
-      toolCount: 1,
+    expect(
+      JSON.parse(required(searched.content[0]).text).connectors[0],
+    ).toMatchObject({
+      id: "paged",
+      tools: [{ address: "paged.only" }],
     });
     expect(cursors).toEqual([undefined]);
   });
@@ -506,11 +511,13 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(tools.map((t) => t.name)).toEqual(["alpha", "beta", "gamma"]);
     expect(required(tools[1]).description).toBe("first");
 
-    const listed = await createMetaTools(
+    const searched = await createMetaTools(
       makeRegistry([connector]),
       BASE,
-    ).listConnectors({ probe: true });
-    expect(JSON.parse(required(listed.content[0]).text).connectors[0].toolCount).toBe(3);
+    ).searchTools({});
+    expect(
+      JSON.parse(required(searched.content[0]).text).connectors[0].tools,
+    ).toHaveLength(3);
   });
 
   it("fails immediately when a cursor is handed back a second time", async () => {
@@ -802,18 +809,9 @@ describe("tool metadata across a paginated catalog", () => {
 });
 
 describe("paginated catalogs through the discovery path", () => {
-  it("exposes a last-page-only tool to list/search/describe and to call_tool", async () => {
+  it("exposes a last-page-only tool to search/describe and to call_tool", async () => {
     const { connector } = fixture(threePages());
     const registry = makeRegistry([connector]);
-
-    const listed = await createMetaTools(registry, BASE).listConnectors({
-      probe: true,
-    });
-    expect(JSON.parse(required(listed.content[0]).text).connectors[0]).toMatchObject({
-      id: "paged",
-      status: "ok",
-      toolCount: 3,
-    });
 
     const meta = createMetaTools(registry, BASE);
     const searched = await meta.searchTools({ query: "gamma" });
@@ -824,8 +822,13 @@ describe("paginated catalogs through the discovery path", () => {
       ),
     ).toContain("paged.gamma");
 
-    const described = await meta.describeTools({ addresses: ["paged.gamma"] });
-    const describePayload = JSON.parse(required(described.content[0]).text);
+    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
+    const connecta = required(
+      providers.find((provider) => provider.name === "connecta"),
+    );
+    const describePayload = (await required(connecta.fns.describe)({
+      addresses: ["paged.gamma"],
+    })) as { tools: Array<Record<string, unknown>> };
     expect(describePayload.tools[0]).toMatchObject({
       address: "paged.gamma",
       name: "gamma",
@@ -949,7 +952,7 @@ describe("paginated catalogs through the discovery path", () => {
     }
   });
 
-  it("reports a later-page authorization failure with its recovery URL", async () => {
+  it("reports a later-page authorization failure with a route to its URL", async () => {
     const authUrl = "https://auth.example/authorize?client_id=paged";
     const storage = memoryStorage();
     await storage.set("conn:paged:oauth:pending", authUrl);
@@ -965,17 +968,32 @@ describe("paginated catalogs through the discovery path", () => {
       logger: silentLogger,
     });
 
-    const listed = await createMetaTools(registry, BASE).listConnectors({
-      probe: true,
-    });
-    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
-
-    expect(entry).toMatchObject({
-      status: "auth_required",
-      authorizationUrl: authUrl,
-      toolCount: 0,
+    // The failed walk is typed as an authorization failure and caches nothing.
+    await expect(registry.getTools("paged", BASE, {})).rejects.toMatchObject({
+      code: "auth_required",
     });
     expect(registry.peekTools("paged")).toBeUndefined();
+
+    // An agent meets it as a call failure carrying the route to the URL: the
+    // catalog is unreachable, so the recovery is authorize_connector, and that
+    // is what hands back the address an operator has to open.
+    const mt = createMetaTools(registry, BASE);
+    const called = JSON.parse(
+      required(
+        (await mt.callTool({ address: "paged.gamma", resultMode: "value" }))
+          .content[0],
+      ).text,
+    ) as {
+      error: { code: string; nextAction?: { tool?: string } };
+    };
+    expect(called.error.code).toBe("auth_required");
+    expect(called.error.nextAction?.tool).toBe("authorize_connector");
+    const authorized = JSON.parse(
+      required(
+        (await mt.authorizeConnector({ connector: "paged" })).content[0],
+      ).text,
+    ) as { authorizationUrl?: string };
+    expect(authorized.authorizationUrl).toBe(authUrl);
   });
 
   it("keeps a later-page non-auth failure classified as error", async () => {
@@ -986,15 +1004,16 @@ describe("paginated catalogs through the discovery path", () => {
           : undefined,
     });
 
-    const listed = await createMetaTools(
-      makeRegistry([connector]),
-      BASE,
-    ).listConnectors({ probe: true });
-    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
+    const registry = makeRegistry([connector]);
+    const failure = await registry
+      .getTools("paged", BASE, {})
+      .then(() => undefined, (error: unknown) => error);
 
-    expect(entry.status).toBe("error");
-    expect(entry.authorizationUrl).toBeUndefined();
-    expect(entry.message).toContain("page two transport failed");
+    // Not an authorization problem, so it must not be dressed as one: no
+    // auth_required code and no recovery URL to open.
+    expect((failure as Error).message).toContain("page two transport failed");
+    expect((failure as { code?: string }).code).not.toBe("auth_required");
+    expect(registry.peekTools("paged")).toBeUndefined();
   });
 
   it("surfaces a non-terminating downstream as a connector error, not a truncated catalog", async () => {
@@ -1004,14 +1023,11 @@ describe("paginated catalogs through the discovery path", () => {
     }));
     const registry = makeRegistry([connector]);
 
-    const listed = await createMetaTools(registry, BASE).listConnectors({
-      probe: true,
-    });
-    const entry = JSON.parse(required(listed.content[0]).text).connectors[0];
-
-    expect(entry.status).toBe("error");
-    expect(entry.message).toMatch(/pagination chain loops/);
-    expect(entry.toolCount).toBe(0);
+    await expect(registry.getTools("paged", BASE, {})).rejects.toThrow(
+      /pagination chain loops/,
+    );
+    // A truncated catalog is worse than none: nothing is cached for the next
+    // reader to mistake for the connector's real tool list.
     expect(registry.peekTools("paged")).toBeUndefined();
   });
 });

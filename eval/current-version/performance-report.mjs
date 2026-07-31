@@ -156,9 +156,9 @@ ${findings.map((finding) => `- ${finding}`).join("\n")}
 
 ## Connecta logic
 
-All figures are client-observed over stateless Streamable HTTP on loopback. Search and call columns are p50 / p95 after warm-up.
+All figures are client-observed over stateless Streamable HTTP on loopback. Search and call columns are p50 / p95 after warm-up. Batching has no top-level tool, so the batch column is a warm \`execute_code\` program calling \`connecta.batch\` with ten independent calls; the sandbox round trip is inside that number.
 
-| Catalog shape | Tools | Startup ms | Cold search ms | Warm search ms | Direct call ms | 10-call batch ms | RSS after GC MB | Live heap MB |
+| Catalog shape | Tools | Startup ms | Cold search ms | Warm search ms | Direct call ms | 10-call batch program ms | RSS after GC MB | Live heap MB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${logicRows}
 

@@ -25,9 +25,9 @@ export interface ServerOptions {
   activityReadGate?: ActivityReadGate;
   activityDeploymentId?: string;
   deploymentInfo?: Record<string, unknown>;
-  /** Deadline for call_tool/batch_call calls that pass no timeoutMs. Off when unset. */
+  /** Deadline for call_tool/call_destructive_tool calls that pass no timeoutMs. Off when unset. */
   defaultToolTimeoutMs?: number;
-  /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
+  /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
   probeTimeoutMs?: number;
   /** Maximum simultaneous connector discovery operations. Default 4. */
   discoveryConcurrency?: number;

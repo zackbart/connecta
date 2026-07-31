@@ -905,7 +905,6 @@ const connecta = createConnecta({
   calls: {
     defaultTimeoutMs: 15_000,
     maxResultBytes: 8_000,
-    maxBatchResultBytes: 12_000,
   },
   activity: {
     deploymentId: "current-version-eval",

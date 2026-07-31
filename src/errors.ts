@@ -221,7 +221,7 @@ export class ConnectorCallError extends Error {
   }
 }
 
-/** The `error` object surfaced in call_tool/batch_call value-mode results. */
+/** The `error` object surfaced in value-mode call results and connecta.batch entries. */
 export interface CallErrorDetails {
   code: string;
   message: string;
@@ -322,7 +322,7 @@ const RETRYABLE_MESSAGE_RE =
 const TIMEOUT_MESSAGE_RE = /timed out|timeout/i;
 
 /** Message-text fallback used when an error carries no typed classification. */
-export function messageLooksRetryable(message: string): boolean {
+function messageLooksRetryable(message: string): boolean {
   return RETRYABLE_MESSAGE_RE.test(message);
 }
 

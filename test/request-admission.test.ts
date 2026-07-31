@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Executor, InboundAuth } from "../src/types.js";
-import { calcConnector, createConnecta, silentLogger } from "./helpers.js";
+import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -64,7 +64,7 @@ describe("request admission", () => {
       warn: vi.fn(),
       debug: vi.fn(),
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [calcConnector],
       auth: gate.auth,
       logger,
@@ -147,7 +147,7 @@ describe("request admission", () => {
 
   it("removes a cancelled queued request without consuming a permit", async () => {
     const gate = blockingAuth();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth: gate.auth,
       logger: silentLogger,
@@ -200,7 +200,7 @@ describe("request admission", () => {
         };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth,
       logger: silentLogger,
@@ -232,7 +232,7 @@ describe("request admission", () => {
 
   it("close rejects queued and future MCP work while active work drains", async () => {
     const gate = blockingAuth();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth: gate.auth,
       logger: silentLogger,
@@ -278,7 +278,7 @@ describe("request admission", () => {
         return { result: "ok" };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [calcConnector],
       executor,
       logger: silentLogger,

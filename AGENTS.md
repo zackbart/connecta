@@ -15,8 +15,10 @@ Cloudflare Workers.
   designing or building anything: a `refused` row is a "no" with the reason
   attached, and a `removed` row (toolkits
   [#178](https://github.com/zackbart/connecta/issues/178), proactive credential
-  liveness [#179](https://github.com/zackbart/connecta/issues/179)) records a
-  surface that no longer exists — do not reintroduce it without a new decision.
+  liveness [#179](https://github.com/zackbart/connecta/issues/179), the classic
+  executor-free surface
+  [#273](https://github.com/zackbart/connecta/issues/273)) records a surface
+  that no longer exists — do not reintroduce it without a new decision.
 - There is no TODO.md — the roadmap lives in
   [GitHub issues](https://github.com/zackbart/connecta/issues). When you find
   TODO items (in code comments, docs, or conversation), don't accumulate them

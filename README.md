@@ -69,7 +69,8 @@ my-connecta/
 For an agent setting this up, the contract is:
 
 1. Edit `src/index.ts`; do not copy Connecta internals into the deployment.
-2. Keep `executor: quickJsExecutor()` for the prescribed seven-tool surface.
+2. Keep the required `executor: quickJsExecutor()` configuration; without an
+   executor the deployment refuses to boot.
 3. Keep secrets in environment variables or a secret store, never source.
 4. Add code only for deliberate `api()` connectors.
 5. Run `npm run typecheck`, start the server, and run

@@ -1,4 +1,4 @@
-import { createConnecta, required } from "./helpers.js";
+import { createTestConnecta, required } from "./helpers.js";
 import { request as httpRequest } from "node:http";
 import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -93,7 +93,7 @@ describe("Node listen adapter", () => {
         return { result: value };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: [],
       executor,

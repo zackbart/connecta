@@ -35,8 +35,8 @@ export interface ToolDef {
   /**
    * Standard MCP tool behavior hints plus provider-specific extensions.
    * Connecta fails closed: only readOnlyHint === true (without a contradictory
-   * destructiveHint) may use call_tool, batch_call, or execute_code. Every
-   * other tool must cross the call_destructive_tool approval boundary.
+   * destructiveHint) may use call_tool or execute_code. Every other tool must
+   * cross the call_destructive_tool approval boundary.
    */
   annotations?: ToolAnnotations;
 }
@@ -198,7 +198,7 @@ export interface Connector {
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
-   * call_tool/batch_call truncate and stash the full text for get_result
+   * call_tool truncates and stashes the full text for get_result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 50_000). Must be a whole
    * number of bytes >= 1; anything else warns at startup and is ignored, so
@@ -207,8 +207,8 @@ export interface Connector {
   maxResultBytes?: number;
   /**
    * Optional per-runtime admission policy for downstream tool calls. It covers
-   * call_tool, every batch_call child, and execute_code host calls, but not
-   * catalog/status/auth operations.
+   * call_tool, call_destructive_tool, and every execute_code host call, but
+   * not catalog/status/auth operations.
    */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -255,7 +255,7 @@ export interface Connector {
    * request-local reuse remains in force until the request boundary.
    */
   closeScope?(ctx: ConnectorContext): Promise<void>;
-  /** Optional connector-level health/auth status for list_connectors. */
+  /** Optional connector-level health/auth status for the operator UI. */
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;
   /**
    * Optional: start (or with force, restart from scratch) a downstream OAuth

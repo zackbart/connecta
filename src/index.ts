@@ -76,10 +76,11 @@ export interface ConnectaDiscoveryConfig {
   staleCatalogSeconds?: number;
   /**
    * Deadline (ms) for each downstream probe/catalog call fanned out by
-   * `list_connectors`, `search_tools`, and `describe_tools`. Defaults to
-   * 30_000. A timed-out connector degrades independently; this does not apply
-   * to tool calls. Catalog walks receive the same cancellation signal, which
-   * aborts an in-flight page where supported and prevents another from starting.
+   * `search_tools` and by `connecta.search`/`connecta.describe` inside
+   * `execute_code`. Defaults to 30_000. A timed-out connector degrades
+   * independently; this does not apply to tool calls. Catalog walks receive the
+   * same cancellation signal, which aborts an in-flight page where supported and
+   * prevents another from starting.
    */
   probeTimeoutMs?: number;
 }
@@ -87,9 +88,9 @@ export interface ConnectaDiscoveryConfig {
 /** Deployment-wide call deadlines and inline-result paging thresholds. */
 export interface ConnectaCallsConfig {
   /**
-   * Deadline (ms) for `call_tool`/`batch_call` calls that pass no `timeoutMs`.
-   * An explicit per-call value wins. Opt-in: unset by default, so existing
-   * long-running calls gain no surprise deadline.
+   * Deadline (ms) for `call_tool`/`call_destructive_tool` calls that pass no
+   * `timeoutMs`. An explicit per-call value wins. Opt-in: unset by default, so
+   * existing long-running calls gain no surprise deadline.
    *
    * This bounds one attempt, not all retries. `execute_code` host calls are
    * unaffected because they already carry their own bound.
@@ -101,13 +102,6 @@ export interface ConnectaCallsConfig {
    * 50_000. Connectors may override it individually.
    */
   maxResultBytes?: number;
-  /**
-   * Max serialized `batch_call` envelope size (bytes) before the full batch is
-   * stashed for `get_result` and only an ordered outcome summary is returned
-   * inline. Must be a finite whole number >= 1; invalid values warn and fall
-   * back to 100_000. This cap is independent of per-connector child caps.
-   */
-  maxBatchResultBytes?: number;
 }
 
 /** Budgets for rich output emitted by execute_code programs (`connecta.emit`). */
@@ -295,6 +289,20 @@ function assertNoLegacyConfig(config: ConnectaConfig): void {
         "issue #179. Credentials now fail at use; see ethos.md.",
     );
   }
+  const calls = candidate.calls;
+  if (
+    typeof calls === "object" &&
+    calls !== null &&
+    hasOwn(calls, "maxBatchResultBytes")
+  ) {
+    throw new Error(
+      "`calls.maxBatchResultBytes` was removed in issue #273 along with " +
+        "batch_call. Remove it; a program's batching is bounded by " +
+        "execute_code's own limits — connecta.batch's per-run call ceiling " +
+        "and the executor result cap — while each call inside it still honours " +
+        "calls.maxResultBytes and any per-connector override.",
+    );
+  }
   const found: Array<readonly [string, string]> = [];
   if (hasOwn(candidate, "activity")) {
     const activity = candidate.activity;
@@ -445,7 +453,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     throw new Error(
       "ConnectaConfig.executor is required. Configure quickJsExecutor() from " +
         '"@zackbart/connecta/quickjs" on Node, or ' +
-        "new DynamicWorkerExecutor({ loader: env.LOADER }) on Workers.",
+        "new DynamicWorkerExecutor({ loader: env.LOADER }) from " +
+        '"@cloudflare/codemode" on Workers.',
     );
   }
   const storage = config.storage ?? memoryStorage();
@@ -490,9 +499,6 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       : {}),
     ...(config.calls?.maxResultBytes !== undefined
       ? { maxResultBytes: config.calls.maxResultBytes }
-      : {}),
-    ...(config.calls?.maxBatchResultBytes !== undefined
-      ? { maxBatchResultBytes: config.calls.maxBatchResultBytes }
       : {}),
   });
   const inboundAuth = normalizeAuth(

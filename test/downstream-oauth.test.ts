@@ -25,7 +25,7 @@ import type {
   KVStorage,
   Logger,
 } from "../src/types.js";
-import { createConnecta, required, silentLogger } from "./helpers.js";
+import { createTestConnecta, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
@@ -957,7 +957,7 @@ describe("remoteMcp() startAuth", () => {
             };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: clerk,
       storage,
@@ -1347,7 +1347,7 @@ describe("/oauth/callback/<id> route", () => {
     storage = memoryStorage(),
     logger: Logger = silentLogger,
   ) {
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       publicUrl: BASE,
       storage,
       logger,
@@ -1386,7 +1386,7 @@ describe("/oauth/callback/<id> route", () => {
     const { connecta, storage } = makeConnecta(spy);
     const unverifiedFinish = vi.fn();
     const throwingFinish = vi.fn();
-    const edgeConnecta = createConnecta({
+    const edgeConnecta = createTestConnecta({
       publicUrl: BASE,
       storage: memoryStorage(),
       logger: silentLogger,
@@ -1534,7 +1534,7 @@ describe("/oauth/callback/<id> route", () => {
       set: (k, v, o) => inner.set(k, v, o),
       delete: (k) => inner.delete(k),
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       publicUrl: BASE,
       storage: counting,
       logger: silentLogger,
@@ -1603,7 +1603,7 @@ describe("/oauth/callback/<id> route", () => {
     const warn = vi.fn();
     const finishAuth = vi.fn();
     const thrownMessage = `bad\n${"x".repeat(100)}`;
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       publicUrl: BASE,
       storage: memoryStorage(),
       logger: { ...silentLogger, warn },
