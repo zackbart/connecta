@@ -457,7 +457,12 @@ function renderActivity(): void {
       ? " · " + esc(event.attempts) + " attempts"
       : "";
     const frictionCopy = event.friction ? " · " + esc(event.friction) : "";
-    const errorCopy = event.errorCode ? " · " + esc(event.errorCode) : "";
+    // The friction class and the code coincide for auth_required and
+    // result_too_large. Printing "· auth_required · auth_required" says nothing
+    // twice, so the coarse class stands in for both when they agree.
+    const errorCopy = event.errorCode && event.errorCode !== event.friction
+      ? " · " + esc(event.errorCode)
+      : "";
     const actorId = event.actor?.id
       ? (event.actor.namespace
         ? event.actor.namespace + " · " + event.actor.id

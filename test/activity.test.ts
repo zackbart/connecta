@@ -153,9 +153,61 @@ describe("activity delivery", () => {
     expect(events[0]).toMatchObject({
       address: "large.read",
       outcome: "success",
-      errorCode: "result_too_large",
       friction: "result_too_large",
     });
+    // The call succeeded. An error code here would make every consumer that
+    // counts `errorCode`/`error_code IS NOT NULL` report truncations as
+    // failures — including the D1 example this repository ships.
+    expect(events[0]).not.toHaveProperty("errorCode");
     expect(JSON.stringify(events[0])).not.toContain("xxxxx");
+  });
+
+  it("records a hallucinated connector id as attempted, with no payload", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const activity: ActivityRequestContext = {
+      sink: {
+        record(event) {
+          events.push(event);
+        },
+      },
+      actor: { kind: "bearer" },
+      requestId: EVENT.requestId,
+      serverInfo: { name: "connecta", version: "0.1.0" },
+      logger: silentLogger,
+    };
+    const tools = createMetaTools(
+      makeRegistry([
+        api("real", {
+          tools: [
+            {
+              name: "read",
+              annotations: { readOnlyHint: true },
+              handler: () => ({ ok: true }),
+            },
+          ],
+        }),
+      ]),
+      "https://connecta.test",
+      { activity },
+    );
+
+    await tools.callTool({
+      address: "ghost.read",
+      args: { secret: "top-secret-argument" },
+    });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      connectorId: "ghost",
+      toolName: "read",
+      address: "ghost.read",
+      source: "call_tool",
+      outcome: "error",
+      errorCode: "unknown_address",
+      friction: "tool_not_found",
+    });
+    const serialized = JSON.stringify(events[0]);
+    expect(serialized).not.toContain("top-secret-argument");
+    expect(serialized).not.toContain("secret");
   });
 });

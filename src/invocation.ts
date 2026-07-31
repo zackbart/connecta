@@ -2,6 +2,7 @@ import {
   recordToolActivity,
   type ActivityCallSource,
   type ActivityRequestContext,
+  type AgentFriction,
 } from "./activity.js";
 import { isCallAdmissionError } from "./call-admission.js";
 import {
@@ -12,12 +13,13 @@ import {
 import {
   classifyCallError,
   ConnectorCallError,
+  echoedCallArgs,
   framingError,
   type AuthRecoveryMode,
   type CallErrorDetails,
 } from "./errors.js";
 import { unwrapMcpResult } from "./mcp-result.js";
-import type { RegistryView } from "./registry.js";
+import { splitAddress, type RegistryView } from "./registry.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type { ToolDef } from "./types.js";
 import { validateToolInput } from "./validate.js";
@@ -150,8 +152,13 @@ export interface InvocationContext<T> {
     value: unknown,
     resolved: ResolvedCatalogTool,
   ) => T | Promise<T>;
-  /** Optional payload-free classification derived from the processed result. */
-  activityCode?: (value: T) => string | undefined;
+  /**
+   * Optional payload-free friction class derived from a *successful* result —
+   * today only an oversized one that had to be paged. It is deliberately not an
+   * `errorCode`: the call succeeded, and a consumer that keys its dashboards on
+   * "has an error code" must not count a truncation as a failure.
+   */
+  activityFriction?: (value: T) => AgentFriction | undefined;
   /**
    * Called after address/catalog/safety admission and before the first provider
    * attempt. Code mode uses it for its host-call budget.
@@ -254,6 +261,10 @@ export class InvocationService {
     let activityTarget:
       | Pick<ResolvedCatalogTool, "connector" | "toolName">
       | undefined;
+    // The address as written, used for activity when resolution never reached
+    // a connector. Only its two halves are recorded — the same fields activity
+    // has always carried — so no new class of payload enters the log.
+    const attempted = splitAddress(address);
     const timing = (): InvocationTiming => ({
       catalogMs,
       admissionMs,
@@ -264,23 +275,38 @@ export class InvocationService {
     });
     const record = (
       outcome: "success" | "error" | "timeout" | "cancelled",
-      errorCode?: string,
+      classification: { errorCode?: string; friction?: AgentFriction } = {},
     ) => {
-      if (!activityTarget) return;
+      const identity = activityTarget
+        ? {
+            connectorId: activityTarget.connector.id,
+            toolName: activityTarget.toolName,
+          }
+        : attempted;
+      if (!identity) return;
       recordToolActivity(this.activity, {
-        connectorId: activityTarget.connector.id,
-        toolName: activityTarget.toolName,
-        address: `${activityTarget.connector.id}.${activityTarget.toolName}`,
+        connectorId: identity.connectorId,
+        toolName: identity.toolName,
+        address: `${identity.connectorId}.${identity.toolName}`,
         source: context.source,
         outcome,
         durationMs: Date.now() - started,
         attempts,
-        ...(errorCode ? { errorCode } : {}),
+        ...(classification.errorCode
+          ? { errorCode: classification.errorCode }
+          : {}),
+        ...(classification.friction
+          ? { friction: classification.friction }
+          : {}),
       });
     };
     const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
       const diagnostics = timing();
       const target = resolved ?? activityTarget;
+      const echoed =
+        error.code === "destructive_tool_requires_approval"
+          ? echoedCallArgs(args)
+          : {};
       const details =
         error.code === "destructive_tool_requires_approval" && target
           ? {
@@ -289,10 +315,13 @@ export class InvocationService {
                 tool: "call_destructive_tool" as const,
                 arguments: {
                   address: `${target.connector.id}.${target.toolName}`,
-                  args,
+                  ...echoed,
                 },
                 purpose:
-                  "Ask the MCP host to approve this consequential call. Add a short reason for the human reviewer.",
+                  "Ask the MCP host to approve this consequential call. " +
+                  ("args" in echoed
+                    ? "Re-send these arguments and add a short reason for the human reviewer."
+                    : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
               },
             }
           : error.code === "auth_required" && target
@@ -341,7 +370,7 @@ export class InvocationService {
           : details.code === "cancelled"
             ? "cancelled"
             : "error",
-        details.code,
+        { errorCode: details.code },
       );
       return {
         ok: false,
@@ -606,7 +635,8 @@ export class InvocationService {
         : (result as T);
       resultProcessingMs += Date.now() - processingStarted;
       const diagnostics = timing();
-      record("success", context.activityCode?.(value));
+      const friction = context.activityFriction?.(value);
+      record("success", friction ? { friction } : {});
       return {
         ok: true,
         value,

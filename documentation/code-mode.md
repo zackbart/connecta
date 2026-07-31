@@ -370,8 +370,10 @@ right move is to stop and let the failure reach the model.
 
 **E4.** An unannotated, write-capable, or destructive tool stays refused with
 `destructive_tool_requires_approval`; `nextAction` carries its canonical address
-and arguments to `call_destructive_tool`. The model adds a short `reason` for the
-human reviewer; it grants no authority, never goes downstream, and generated code cannot mint the capability.
+to `call_destructive_tool`, plus the original arguments when they fit the
+512-byte echo budget — whole or not at all, since a clipped copy is a different
+call. The model's short `reason` for the human reviewer grants no authority,
+never goes downstream, and generated code cannot mint the capability.
 
 **E5.** Failures of the *execution*, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
@@ -590,28 +592,27 @@ itself (`R2`, `R5`).
 
 ## Activity
 
-**V1.** One payload-free activity event per call that named a real connector,
-with `source: "execute_code"` — every dispatched call, plus every refusal
-connecta could attribute to a connector: a read-only refusal, an unknown tool on
-a known connector, an ambiguous shortcut, a connector whose catalog could not be
-loaded, a credential connecta could not supply, an exhausted host-call budget. A
-program that calls ten tools is ten events — as legible as ten `call_tool` calls,
-which is what makes moving work into the sandbox an optimization, not a
-blindfold.
+**V1.** One payload-free activity event per attempted call, with
+`source: "execute_code"` — every dispatched call plus every local refusal: a
+read-only refusal, an unknown tool, an ambiguous shortcut, an unloadable
+catalog, a missing credential, an exhausted host-call budget, an address no
+connector owns. Ten tools called is ten events, as legible as ten `call_tool`
+calls — which makes moving work into the sandbox an optimization, not a blindfold.
 
 **V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
 `outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
-`attempts`, and `errorCode` when there was one — plus request, actor, and server
-identity. Typed codes derive optional `friction`: `tool_not_found`,
-`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`. A paged oversized result records the last while retaining `outcome: "success"`.
-It has nowhere to put arguments, results, program source, or raw error text. A failure the program *caught* is still
-recorded: the call happened. `address` is canonical (`A1`) for every call that
-resolved to a tool; for the refusals that never resolved to one it is the name the
-program used, which for a shortcut is the sanitized alias — the honest record of
-what was attempted.
+`attempts`, and `errorCode` when the call *failed* — plus request, actor, and
+server identity. Typed codes derive an optional `friction`: `tool_not_found`,
+`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`.
+Friction also stands alone: a truncated result is friction on a `success` event
+with no `errorCode`, so a consumer counting error codes counts failures, not
+truncations. There is nowhere to put arguments, results, program source, or raw
+error text; a failure the program *caught* is still recorded. `address` is
+canonical (`A1`) where a tool resolved, otherwise the name the program used —
+for a shortcut its sanitized alias, the honest record of what was attempted.
 
-**V3.** A call whose connector does not exist — an unknown address — emits
-nothing. There is no connector to attribute it to.
+**V3.** A call whose connector does not exist is recorded at the address as
+written: an invented id is the address mistake an operator most needs to see.
 
 **V4.** The execution itself emits no event. It has no address, and its one
 distinctive artifact is the program source, which is exactly what a payload-free
@@ -757,8 +758,7 @@ the upstream `Executor` shape assignable.
 | `L5`, `X2` | `test/quickjs-executor.test.ts` (CPU, heap) |
 | `L6`, `X10` | `test/quickjs-executor.test.ts` (bridge and IPC bounds for arguments and result; the address in the over-bound message) |
 | `L7` | `test/execute.test.ts`, `test/executor-admission.test.ts` |
-| `V1`, `V2` | `test/guest-api-contract.test.ts` (dispatched calls, and the four refusal classes that name a connector), `test/activity.test.ts` |
-| `V3`, `V4` | `test/guest-api-contract.test.ts` (no event without a connector) |
+| `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, no event for the execution itself), `test/activity.test.ts` (friction with and without an error code) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
 | `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths) |

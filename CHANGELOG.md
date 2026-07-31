@@ -42,19 +42,41 @@ which had been probing at the 30-second default no matter what was configured.
   aggregate (block count and serialized bytes) when a program emitted.
 - **Local routing failures carry structured recovery.** Unknown addresses and
   tools suggest scoped discovery, read-path policy refusals preserve the
-  canonical address and original arguments for `call_destructive_tool`, and
-  ambiguous code-mode aliases list every canonical `connecta.call` candidate.
-- **Destructive calls accept explanatory context.** An optional bounded
-  `reason` gives the MCP host human-readable intent without entering downstream
-  arguments or granting authority.
+  canonical address for `call_destructive_tool` — with the original arguments
+  when they fit a 512-byte echo budget, and an instruction to re-send them when
+  they do not — and ambiguous code-mode aliases list every canonical
+  `connecta.call` candidate.
+- **Destructive calls accept explanatory context.** An optional `reason` of at
+  most 500 characters gives the MCP host human-readable intent without entering
+  downstream arguments or granting authority. An empty or whitespace-only one
+  is treated as absent rather than failing the call.
 - **Activity exposes coarse agent friction.** Typed codes derive
   `tool_not_found`, `schema_retry`, `destructive_reroute`, `auth_required`, or
   `result_too_large`; no payload or raw error text is added.
 
 ### Changed
 
-- **Paged results name the exact next call.** Every truncation notice includes
-  `get_result` arguments with its generated id and byte offset zero.
+- **Paged results name the exact next call.** `call_tool` and `batch_call`
+  truncation notices include `get_result` arguments with the generated id and
+  byte offset zero. Program results and oversized discovery responses still
+  carry no `get_result` route: paging a program's return value is refused by
+  design, and a program can shrink anything.
+- **`nextAction` is a wider union than it was.** `search_tools` routes may now
+  omit `arguments.connector` (an unknown *connector* cannot scope discovery to
+  itself), and the ambiguous-alias route is keyed `function: "connecta.call"`
+  with no `tool` at all. A consumer that narrowed on `nextAction.tool` must
+  handle both shapes.
+- **An address that resolves to nothing is now recorded.** A call to a
+  connector id that does not exist emits one activity event at the address as
+  written, with `unknown_address` and `tool_not_found` friction. Previously the
+  single most common address mistake left no trace at all. Addresses were
+  already a first-class activity field; nothing new is retained.
+- **A truncated result is friction, not an error.** An oversized result reports
+  `friction: "result_too_large"` on an `outcome: "success"` event and writes no
+  `errorCode`, so consumers counting error codes stop counting truncated
+  successes as failures. The Worker D1 example gains a `friction` column;
+  existing tables need `ALTER TABLE tool_call_activity ADD COLUMN friction
+  TEXT` before deploying it.
 
 ### Fixed
 

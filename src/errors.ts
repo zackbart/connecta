@@ -43,6 +43,39 @@ function boundedIssueText(
   };
 }
 
+/**
+ * How many bytes of the caller's own arguments an error envelope will echo
+ * back to it. Small on purpose: an error result is not size-guarded the way a
+ * *result* is, so an unbounded echo turns a 50 KB argument object into a 100 KB
+ * refusal against a deployment that capped results at 1 KB — twice over, since
+ * the payload lands in both the text content and `structuredContent`. The agent
+ * already holds what it sent; the echo is a convenience, never the record.
+ */
+const MAX_ECHOED_ARGS_BYTES = 512;
+
+const echoEncoder = new TextEncoder();
+
+/**
+ * `{ args }` when the caller's arguments fit {@link MAX_ECHOED_ARGS_BYTES},
+ * `{}` when they do not. All or nothing: a clipped echo would be a *different*
+ * call than the one that was refused, and the routes this feeds end at a human
+ * approving one. Unserializable arguments are treated the same way as oversized
+ * ones — there is nothing honest to put in the field.
+ */
+export function echoedCallArgs(args: unknown): { args?: unknown } {
+  if (args === undefined) return {};
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(args);
+  } catch {
+    return {};
+  }
+  if (text === undefined) return {};
+  return echoEncoder.encode(text).length <= MAX_ECHOED_ARGS_BYTES
+    ? { args }
+    : {};
+}
+
 function boundedValidation(
   details: ArgumentValidationDetails | undefined,
 ): ArgumentValidationDetails | undefined {
@@ -187,7 +220,13 @@ export interface CallErrorDetails {
     tool: "call_destructive_tool";
     arguments: {
       address: string;
-      args: unknown;
+      /**
+       * The caller's own arguments, echoed only when they fit
+       * {@link MAX_ECHOED_ARGS_BYTES} — and then whole, never clipped. Absent
+       * means "re-send exactly what you sent": a half-copied argument object
+       * routed into a human approval prompt would describe a call nobody made.
+       */
+      args?: unknown;
     };
     purpose: string;
   } | {

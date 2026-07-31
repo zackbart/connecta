@@ -89,11 +89,14 @@ mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
-Every truncation notice carries both the historical `resultId` and an exact
+A `call_tool` or `batch_call` truncation notice carries both the historical
+`resultId` and an exact
 `nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The handle
 is therefore directly actionable without copying an identifier out of prose;
 re-calling with `fields` remains the smaller alternative when projection is
-possible.
+possible. Program results and oversized discovery responses carry no such
+route — paging a program's return value is a refused shape, because a program
+can shrink anything before it returns.
 
 `fields` keeps its historical flat `{ "<path>": value }` result when every
 requested dot-path resolves. Dot notation traverses objects; append `[]` to an
@@ -184,20 +187,42 @@ Predictable local refusals carry structured recovery on both result modes.
 An unknown connector suggests an unscoped `search_tools` query derived from the
 attempted tool name; an unknown tool scopes the same query to the connector that
 answered. A read path that reaches an unannotated, write-capable, or destructive
-tool returns `nextAction` for `call_destructive_tool` with the original arguments
-and canonical address. Nothing is executed by these records.
+tool returns `nextAction` for `call_destructive_tool` with the canonical
+address. Nothing is executed by these records.
+
+That route echoes the caller's own arguments back only while they fit a
+512-byte budget, and then whole — never clipped. An error envelope is not
+size-guarded the way a result is, so an unbounded echo would let a large
+argument object produce a refusal many times the deployment's result cap, on
+both `call_tool` and the `batch_call` envelope. Over budget, `args` is absent
+and the `purpose` says to re-send what was just sent: the agent already holds
+its own arguments, and half of them would describe a call nobody made.
 
 Shortcut ambiguity inside `execute_code` returns every colliding canonical
 address and points at `connecta.call`; the program or model must still choose
 which one matches the user's intent. `call_destructive_tool` accepts an optional
-1–500 character `reason` for the host's human approval view. It is outer-call
-context only: Connecta neither treats it as authority nor passes it to the
-downstream connector.
+`reason` of at most 500 characters for the host's human approval view. It is
+outer-call context only: Connecta neither treats it as authority nor passes it
+to the downstream connector, and an empty or whitespace-only one is read as no
+reason rather than as a reason to refuse the call.
 
-Activity derives an optional coarse `friction` class from typed codes only:
-`tool_not_found`, `schema_retry`, `destructive_reroute`, `auth_required`, or
-`result_too_large`. The exact code remains available, while the category adds no
-arguments, results, search text, generated code, credentials, or raw errors.
+Activity carries an optional coarse `friction` class: `tool_not_found`,
+`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`.
+It is derived from the typed error code, except on the one call that has no
+error code to derive from: a `call_tool` result — or a `batch_call` child's —
+too large to return inline is friction for the agent while remaining
+`outcome: "success"`. That is the only source of `result_too_large` friction.
+An oversized *discovery* response and an oversized program return are shaped
+differently and produce none, and an `errorCode` is written only when the call
+actually failed. The category adds no arguments, results, search text,
+generated code, credentials, or raw errors.
+
+An address whose connector does not exist is recorded too, as written, provided
+it has the `<connectorId>.<toolName>` shape at all — a string that never split
+into the two fields activity keeps still records nothing. A hallucinated
+connector id is the most common address mistake, and an operator reading
+activity should see it; addresses are already a first-class activity field, so
+nothing new is retained.
 
 ## Argument recovery
 

@@ -34,6 +34,14 @@ export interface ActivityEvent {
   deploymentId?: string;
 }
 
+/**
+ * Backfill for rows written before `friction` had a column of its own. Every
+ * arm must agree with the package's own `agentFrictionForCode`; the repository
+ * test suite pins that, because a dashboard that groups by friction should not
+ * change its answer depending on which side of a migration a row landed on.
+ * Friction that never had an error code — an oversized but successful result —
+ * is only recoverable from the column, which is why the column exists.
+ */
 function frictionForCode(code: string | null): ActivityEvent["friction"] {
   switch (code) {
     case "unknown_address":
@@ -67,6 +75,7 @@ export interface ActivityRow {
   duration_ms: number;
   attempts: number;
   error_code: string | null;
+  friction: ActivityEvent["friction"] | null;
   server_name: string;
   server_version: string;
   deployment_id: string | null;
@@ -89,6 +98,10 @@ export function activityEventToRow(
     duration_ms: event.durationMs,
     attempts: event.attempts,
     error_code: event.errorCode ?? null,
+    // Stored beside the code rather than derived from it: a truncated result is
+    // friction on a call that succeeded, so it has no error code to derive from
+    // — and `error_code IS NOT NULL` stays an honest count of failures.
+    friction: event.friction ?? null,
     server_name: event.serverName,
     server_version: event.serverVersion,
     deployment_id: event.deploymentId ?? null,
@@ -98,7 +111,7 @@ export function activityEventToRow(
 export function activityRowToEvent(
   row: ActivityRow,
 ): ActivityEvent {
-  const friction = frictionForCode(row.error_code);
+  const friction = row.friction ?? frictionForCode(row.error_code);
   return {
     schemaVersion: 1,
     id: row.id,

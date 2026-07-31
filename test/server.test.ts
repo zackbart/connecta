@@ -376,9 +376,14 @@ describe("server /mcp end-to-end", () => {
       destructiveHint: true,
       readOnlyHint: false,
     });
+    // Bounded above only: an empty reason is treated as no reason, never as a
+    // validation failure that refuses the call.
     expect(
       byName.call_destructive_tool.inputSchema.properties.reason,
-    ).toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
+    ).toMatchObject({ type: "string", maxLength: 500 });
+    expect(
+      byName.call_destructive_tool.inputSchema.properties.reason,
+    ).not.toHaveProperty("minLength");
     expect(byName.call_destructive_tool.description).toContain(
       "reason explaining the intended consequence",
     );
@@ -394,6 +399,28 @@ describe("server /mcp end-to-end", () => {
     expect(byName.batch_call.description).toContain(
       "use execute_code when available instead for dependencies",
     );
+  });
+
+  it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {
+    // A model that sends "" or whitespace has written no reason. Refusing the
+    // whole consequential call over a field the host merely displays would be
+    // a validation error where a shrug belongs.
+    const c = makeConnecta();
+    for (const reason of ["", "   "]) {
+      const res = await rpc(
+        c,
+        "tools/call",
+        {
+          name: "call_destructive_tool",
+          arguments: { address: "calc.add", args: { a: 1, b: 2 }, reason },
+        },
+        { token: TOKEN },
+      );
+      const body = await readBody(res);
+      expect(body.error, JSON.stringify(body)).toBeUndefined();
+      expect(body.result.isError).toBeFalsy();
+      expect(JSON.parse(body.result.content[0].text)).toMatchObject({ sum: 3 });
+    }
   });
 
   it("serves a modern-era (2026-07-28) client the same nine-tool surface", async () => {

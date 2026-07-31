@@ -24,6 +24,7 @@ import {
 } from "./connector-scope.js";
 import {
   classifyCallError,
+  echoedCallArgs,
   messageLooksRetryable,
   type CallErrorDetails,
 } from "./errors.js";
@@ -819,6 +820,60 @@ function batchSummaryString(value: string): string {
   return `${dec.decode(bytes.slice(0, end))}…`;
 }
 
+/** Candidate addresses kept in an oversized batch's summary of one ambiguity. */
+const MAX_SUMMARY_ADDRESSES = 10;
+
+/**
+ * A recovery route rebuilt field by field so the summary above keeps its
+ * promise. Spreading `nextAction` through raw would reopen the hole this
+ * function closes: every variant carries free-form strings, and one of them
+ * carries the caller's arguments, which is exactly the payload an oversized
+ * batch was already too large to hold.
+ */
+function batchSummaryNextAction(
+  nextAction: NonNullable<CallErrorDetails["nextAction"]>,
+): NonNullable<CallErrorDetails["nextAction"]> {
+  if ("function" in nextAction) {
+    return {
+      function: nextAction.function,
+      addresses: nextAction.addresses
+        .slice(0, MAX_SUMMARY_ADDRESSES)
+        .map(batchSummaryString),
+      purpose: batchSummaryString(nextAction.purpose),
+    };
+  }
+  if (nextAction.tool === "authorize_connector") {
+    return {
+      tool: "authorize_connector",
+      arguments: {
+        connector: batchSummaryString(nextAction.arguments.connector),
+      },
+      operatorHandoff: batchSummaryString(nextAction.operatorHandoff),
+    };
+  }
+  if (nextAction.tool === "call_destructive_tool") {
+    return {
+      tool: "call_destructive_tool",
+      arguments: {
+        address: batchSummaryString(nextAction.arguments.address),
+        ...echoedCallArgs(nextAction.arguments.args),
+      },
+      purpose: batchSummaryString(nextAction.purpose),
+    };
+  }
+  return {
+    tool: "search_tools",
+    arguments: {
+      query: batchSummaryString(nextAction.arguments.query),
+      ...(nextAction.arguments.connector !== undefined
+        ? { connector: batchSummaryString(nextAction.arguments.connector) }
+        : {}),
+      includeSchemas: "compact",
+    },
+    purpose: batchSummaryString(nextAction.purpose),
+  };
+}
+
 /**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return the first `cap` bytes followed by a JSON truncation
@@ -1096,7 +1151,12 @@ export function createMetaTools(
   interface ProcessedCallResult {
     toolResult: ToolResult;
     value?: unknown;
-    activityCode?: "result_too_large";
+    /**
+     * Friction on a call that *succeeded*. It travels as a friction class, not
+     * as an `errorCode`, so persistence keyed on "this row has an error code"
+     * keeps counting failures rather than truncations.
+     */
+    friction?: "result_too_large";
   }
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
@@ -1149,7 +1209,7 @@ export function createMetaTools(
               toolResult: jsonResult({ ok: true, data: value }),
               value,
               ...(guarded.truncated
-                ? { activityCode: "result_too_large" as const }
+                ? { friction: "result_too_large" as const }
                 : {}),
             };
           }
@@ -1167,7 +1227,7 @@ export function createMetaTools(
             return {
               toolResult: guarded.result,
               ...(guarded.truncated
-                ? { activityCode: "result_too_large" as const }
+                ? { friction: "result_too_large" as const }
                 : {}),
             };
           }
@@ -1187,11 +1247,11 @@ export function createMetaTools(
             toolResult: guarded.result,
             value,
             ...(guarded.truncated
-              ? { activityCode: "result_too_large" as const }
+              ? { friction: "result_too_large" as const }
               : {}),
           };
         },
-        activityCode: (processed) => processed.activityCode,
+        activityFriction: (processed) => processed.friction,
       },
     );
     if (!outcome.ok) {
@@ -1419,6 +1479,8 @@ export function createMetaTools(
     },
 
     async callDestructiveTool(args: DestructiveCallArgs): Promise<ToolResult> {
+      // `reason` is read by the host's approval view and stops there — runCall
+      // forwards only the call fields, so it never reaches the connector.
       return (
         await runCall(args, "call_destructive_tool", { allowDestructive: true })
       ).toolResult;
@@ -1607,7 +1669,7 @@ export function createMetaTools(
                 ? { recovery: details.recovery }
                 : {}),
               ...(details.nextAction !== undefined
-                ? { nextAction: details.nextAction }
+                ? { nextAction: batchSummaryNextAction(details.nextAction) }
                 : {}),
               ...(details.retry !== undefined
                 ? { retry: batchSummaryString(details.retry) }
@@ -1937,7 +1999,11 @@ export function registerMetaTools(
       description: CALL_DESTRUCTIVE_DESC,
       inputSchema: z.object({
         ...CALL_INPUT_SCHEMA,
-        reason: z.string().min(1).max(500).optional(),
+        // Bounded above, but with no lower bound: a model that sends `""` or
+        // whitespace has written no reason, and failing an entire consequential
+        // call over a cosmetic field the host merely displays is the wrong
+        // trade. It is normalized to absent below instead.
+        reason: z.string().max(500).optional(),
       }),
       annotations: {
         destructiveHint: true,
@@ -1945,7 +2011,14 @@ export function registerMetaTools(
         openWorldHint: true,
       },
     },
-    async (args) => mt.callDestructiveTool(args as DestructiveCallArgs),
+    async (args) => {
+      const { reason, ...call } = args as DestructiveCallArgs;
+      const stated = reason?.trim();
+      return mt.callDestructiveTool({
+        ...call,
+        ...(stated ? { reason: stated } : {}),
+      });
+    },
   );
 
   server.registerTool(

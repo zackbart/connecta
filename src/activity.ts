@@ -77,8 +77,13 @@ export interface ToolCallActivityEvent {
   outcome: ActivityOutcome;
   durationMs: number;
   attempts: number;
+  /** Set only when the call actually failed; a truncated success has none. */
   errorCode?: string;
-  /** Payload-free recovery class, derived only from `errorCode`. */
+  /**
+   * Payload-free recovery class. Usually derived from `errorCode`, but it can
+   * also stand alone: a result too large to return inline is friction for the
+   * agent while remaining an `outcome: "success"` call with no error code.
+   */
   friction?: AgentFriction;
   serverName: string;
   serverVersion: string;
@@ -152,6 +157,7 @@ export type ActivityEventInput = Pick<
   | "durationMs"
   | "attempts"
   | "errorCode"
+  | "friction"
 >;
 
 /**
@@ -164,7 +170,9 @@ export function recordToolActivity(
   input: ActivityEventInput,
 ): void {
   if (!context) return;
-  const friction = agentFrictionForCode(input.errorCode);
+  // A caller-supplied class wins because it knows something the code table
+  // cannot: friction that belongs to a call which did not fail.
+  const friction = input.friction ?? agentFrictionForCode(input.errorCode);
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),

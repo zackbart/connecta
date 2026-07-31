@@ -2288,6 +2288,111 @@ describe("call_tool", () => {
     expect(calls).toBe(1);
   });
 
+  it("keeps a destructive refusal small when the arguments are not", async () => {
+    // An error result is not size-guarded the way a result is, so echoing the
+    // caller's arguments back unbounded once turned a 50 KB argument object
+    // into a 101 KB refusal against a 1 KB cap — twice over, since it lands in
+    // both the text content and structuredContent.
+    const dangerous = api("danger", {
+      tools: [
+        {
+          name: "erase",
+          annotations: { destructiveHint: true, readOnlyHint: false },
+          handler: () => ({ erased: true }),
+        },
+      ],
+    });
+    const mt = createMetaTools(
+      makeRegistry([dangerous], {
+        maxResultBytes: 1_000,
+        maxBatchResultBytes: 1_000,
+      }),
+      BASE,
+    );
+    const huge = { blob: "x".repeat(50_000) };
+
+    const direct = await mt.callTool({ address: "danger.erase", args: huge });
+    const directBytes = JSON.stringify(direct).length;
+    expect(direct.isError).toBe(true);
+    expect(directBytes).toBeLessThan(4_000);
+    expect(JSON.stringify(direct)).not.toContain("xxxxx");
+    const refusal = textOf(direct) as {
+      error: {
+        nextAction: {
+          arguments: { address: string; args?: unknown };
+          purpose: string;
+        };
+      };
+    };
+    expect(refusal.error.nextAction.arguments).toEqual({
+      address: "danger.erase",
+    });
+    expect(refusal.error.nextAction.purpose).toContain(
+      "Re-send the arguments you just sent",
+    );
+
+    // Same bypass, other cap: a batch child's refusal rides in the final
+    // envelope, so an unbounded echo would defeat maxBatchResultBytes too.
+    const batch = await mt.batchCall({
+      calls: [{ address: "danger.erase", args: huge }],
+    });
+    expect(JSON.stringify(batch).length).toBeLessThan(4_000);
+    expect(JSON.stringify(batch)).not.toContain("xxxxx");
+
+    // And once the envelope is genuinely oversized, the inline summary keeps
+    // its fixed-overhead promise: the route survives, the payload does not.
+    const summarized = textOf(
+      await createMetaTools(
+        makeRegistry([dangerous], { maxBatchResultBytes: 200 }),
+        BASE,
+      ).batchCall({ calls: [{ address: "danger.erase", args: huge }] }),
+    ) as {
+      truncated: true;
+      results: Array<{
+        errorDetails: { nextAction: { arguments: Record<string, unknown> } };
+      }>;
+    };
+    expect(summarized.truncated).toBe(true);
+    expect(
+      required(summarized.results[0]).errorDetails.nextAction.arguments,
+    ).toEqual({ address: "danger.erase" });
+    expect(JSON.stringify(summarized).length).toBeLessThan(4_000);
+
+    // Arguments that fit the echo budget still come back whole.
+    const small = textOf(
+      await mt.callTool({ address: "danger.erase", args: { target: "dupe" } }),
+    ) as { error: { nextAction: { arguments: { args?: unknown } } } };
+    expect(small.error.nextAction.arguments.args).toEqual({ target: "dupe" });
+  });
+
+  it("keeps call_destructive_tool's reason out of the downstream arguments", async () => {
+    const seen: unknown[] = [];
+    const dangerous = api("danger", {
+      tools: [
+        {
+          name: "erase",
+          annotations: { destructiveHint: true, readOnlyHint: false },
+          handler: (args: unknown) => {
+            seen.push(args);
+            return { erased: true };
+          },
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([dangerous]), BASE);
+
+    await mt.callDestructiveTool({
+      address: "danger.erase",
+      args: { target: "duplicate" },
+      reason: "The user asked to remove the duplicate they selected.",
+    });
+
+    // `reason` is context for the host's approval view and stops there. It is
+    // not authority, and a connector must never see it as an input.
+    expect(seen).toEqual([{ target: "duplicate" }]);
+    expect(Object.keys(required(seen[0]) as object)).toEqual(["target"]);
+  });
+
   it("requires approval for unannotated and contradictory tools", async () => {
     const calls: string[] = [];
     const ambiguous = api("ambiguous", {
