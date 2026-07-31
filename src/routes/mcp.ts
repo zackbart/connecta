@@ -250,6 +250,12 @@ async function serveMcp(
         ...(opts.discoveryConcurrency !== undefined
           ? { discoveryConcurrency: opts.discoveryConcurrency }
           : {}),
+        ...(opts.maxEmittedBytes !== undefined
+          ? { maxEmittedBytes: opts.maxEmittedBytes }
+          : {}),
+        ...(opts.maxEmittedBlocks !== undefined
+          ? { maxEmittedBlocks: opts.maxEmittedBlocks }
+          : {}),
       });
     }
     return server;

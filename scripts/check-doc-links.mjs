@@ -19,7 +19,10 @@ const staleReferenceDirectoryPrefixes = ["src/", "documentation/", "examples/"];
 
 // The ethos is deliberately terse — the cap is the point, not a formality.
 const ethosLineLimit = 150;
-const guideLineLimit = 700;
+// Raised from 700 when code-mode.md gained the emitted-output clauses (#270):
+// the contract grew a real surface, not prose. The pressure stays — a guide
+// approaching this wall gets compressed before the wall moves again.
+const guideLineLimit = 800;
 
 function usage(message) {
   if (message) console.error(message);

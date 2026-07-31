@@ -5,10 +5,11 @@ whether and how an `execute_code` program may deliver MCP-native output — text
 images, audio — instead of only a single JSON return value. The verdicts live in
 [`ethos.md`](../ethos.md); this document carries the argument, the contract
 precisely enough to implement, and the shapes that were considered and refused.
-The contract clauses below (`M1`–`M10`) are drafted in
-[`code-mode.md`](./code-mode.md)'s clause style and fold into that document when
-the implementation lands — code-mode.md describes what is, and until the
-implementation issue closes, this is a design, not a promise.
+The implementation landed via
+[#270](https://github.com/zackbart/connecta/issues/270): the contract clauses
+below (`M1`–`M10`) are now normative in [`code-mode.md`](./code-mode.md)'s
+"Emitted output" section, which wins where the two disagree. This document
+remains the argument and the record of rejected shapes.
 
 ## The problem
 

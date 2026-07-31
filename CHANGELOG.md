@@ -2,6 +2,31 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+Programs gained a rich-output channel. `execute_code` code can now call
+`connecta.emit(block)` to deliver text, image, and audio MCP content blocks
+alongside its JSON return value — the piece code mode was missing for output
+that cannot be projected, like a screenshot a downstream tool returned. The
+channel is additive: a program that never emits produces the byte-for-byte
+prior response, no executor changed to carry it, and deployments that do
+nothing get sensible budgets. The design record is
+`documentation/rich-output-design.md` (#267); the contract is `code-mode.md`'s
+"Emitted output" clauses (#270).
+
+### Added
+
+- **`connecta.emit(block)` inside `execute_code`.** Strictly validated
+  `text` / `image` / `audio` blocks, collected host-side and appended to the
+  result after the JSON envelope on success only; a failed program discards
+  them visibly (`emittedDiscarded`). Budgets fail loudly at the emit call and
+  spend no host-call budget.
+- **`ConnectaConfig.execute.maxEmittedBytes` / `.maxEmittedBlocks`.** The
+  emission budgets, defaulting to 4,000,000 serialized bytes and 32 blocks per
+  run.
+- **`diagnostics.emitted`.** With `diagnostics: true`, one payload-free
+  aggregate (block count and serialized bytes) when a program emitted.
+
 ## 0.10.5 — 2026-07-30
 
 A consumer-audit recovery release. Schema discovery now provides the bounded

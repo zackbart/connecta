@@ -24,6 +24,8 @@ export interface ContractOutcome {
   text: string;
   value: Record<string, unknown>;
   result: unknown;
+  /** The full content array, envelope first — where emitted blocks land. */
+  content: Array<Record<string, unknown>>;
 }
 
 export interface ContractCase {
@@ -289,6 +291,7 @@ export function contractHarness(): {
         text,
         value,
         result: value.result,
+        content: out.content as unknown as Array<Record<string, unknown>>,
       };
     },
   };
@@ -976,6 +979,95 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(result.inheritedType).toBe("function");
       expect(String(result.unknown).length).toBeGreaterThan(0);
       expect(String(result.inherited).length).toBeGreaterThan(0);
+    },
+  },
+  {
+    clauses: "M1, M2, M3",
+    name: "emitted blocks are delivered after the envelope, in order",
+    code: `async () => {
+      await connecta.emit({ type: "text", text: "caption" });
+      await connecta.emit({
+        type: "image",
+        data: "aGVsbG8=",
+        mimeType: "image/png"
+      });
+      return { done: true };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ done: true });
+      expect(outcome.value.emitted).toBe(2);
+      expect(outcome.content).toHaveLength(3);
+      expect(required(outcome.content[1])).toEqual({
+        type: "text",
+        text: "caption",
+      });
+      expect(required(outcome.content[2])).toEqual({
+        type: "image",
+        data: "aGVsbG8=",
+        mimeType: "image/png",
+      });
+    },
+  },
+  {
+    clauses: "M1",
+    name: "an invalid emit throws catchably and accepts nothing",
+    code: `async () => {
+      const out = {};
+      try { await connecta.emit("bare"); } catch (err) { out.bare = err.message; }
+      try {
+        await connecta.emit({ type: "resource_link", uri: "https://lure.example/" });
+      } catch (err) { out.link = err.message; }
+      try {
+        await connecta.emit({ type: "text", text: "x", annotations: {} });
+      } catch (err) { out.annotated = err.message; }
+      try {
+        await connecta.emit({ type: "image", data: "aGk=" });
+      } catch (err) { out.partial = err.message; }
+      await connecta.emit({ type: "text", text: "still fine" });
+      return out;
+    }`,
+    check(outcome) {
+      const result = record(outcome);
+      expect(String(result.bare)).toContain("content block");
+      expect(String(result.link)).toContain('"text", "image", and "audio"');
+      expect(String(result.annotated)).toContain("annotations");
+      expect(String(result.partial)).toContain("mimeType");
+      // Only the valid block survived the four refused ones.
+      expect(outcome.value.emitted).toBe(1);
+      expect(outcome.content).toHaveLength(2);
+      expect(required(outcome.content[1]).text).toBe("still fine");
+    },
+  },
+  {
+    clauses: "M2, M3",
+    name: "a truncated return value does not suppress emitted blocks",
+    code: `async () => {
+      await connecta.emit({ type: "text", text: "alongside" });
+      const big = await reader.big({ chars: 200000 });
+      return { blob: big.blob };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect((outcome.result as { truncated?: boolean }).truncated).toBe(true);
+      expect(outcome.value.emitted).toBe(1);
+      expect(outcome.content).toHaveLength(2);
+      expect(required(outcome.content[1]).text).toBe("alongside");
+    },
+  },
+  {
+    clauses: "M4",
+    name: "a failed program delivers no blocks, visibly",
+    code: `async () => {
+      await connecta.emit({ type: "text", text: "doomed block" });
+      throw new Error("after emitting");
+    }`,
+    check(outcome) {
+      expect(outcome.isError).toBe(true);
+      expect(outcome.text).toContain("after emitting");
+      expect(outcome.text).toContain("emittedDiscarded: 1");
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.text).not.toContain("doomed block");
     },
   },
   {
