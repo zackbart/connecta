@@ -1018,6 +1018,7 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
+    surface,
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(

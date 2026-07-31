@@ -31,6 +31,7 @@ import {
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Connector,
+  ConnectaSurface,
   JsonSchema,
   ToolDef,
 } from "./types.js";
@@ -72,7 +73,10 @@ function discoverySearchLimit(value: unknown): number {
 }
 
 /** Normalize the single-address convenience form, then validate the bounded list. */
-function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
+function discoveryAddresses(
+  args: CatalogDescribeArgs,
+  describeRoute: "describe_tools" | "connecta.describe",
+): unknown[] {
   if (args.address !== undefined && args.addresses !== undefined) {
     throw new DiscoveryPolicyError(
       "invalid_args",
@@ -94,7 +98,7 @@ function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
   if (value.length > MAX_DESCRIBE_ADDRESSES) {
     throw new DiscoveryPolicyError(
       "invalid_args",
-      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across describe_tools calls.`,
+      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across ${describeRoute} calls.`,
     );
   }
   return value;
@@ -286,6 +290,7 @@ export class CatalogService {
   readonly requestScope: object;
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
+  private readonly describeRoute: "describe_tools" | "connecta.describe";
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -296,12 +301,15 @@ export class CatalogService {
       requestScope?: object;
       probeTimeoutMs?: number;
       concurrency?: number;
+      surface?: ConnectaSurface;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
+    this.describeRoute =
+      options.surface === "code-first" ? "connecta.describe" : "describe_tools";
   }
 
   async loadConnector(
@@ -704,7 +712,7 @@ export class CatalogService {
   }
 
   async describe(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
-    const addresses = discoveryAddresses(args);
+    const addresses = discoveryAddresses(args, this.describeRoute);
     const format = args.format ?? "compact";
     const resolved = addresses.map((rawAddress) => {
       const address = String(rawAddress);
@@ -721,7 +729,7 @@ export class CatalogService {
       connectorIds,
       this.concurrency,
       (id) =>
-        this.loadForDiscovery(id, `describe_tools probe of "${id}"`),
+        this.loadForDiscovery(id, `${this.describeRoute} probe of "${id}"`),
     );
     const catalogs = new Map<string, ToolDef[] | Error>();
     loaded.forEach((result, index) => {

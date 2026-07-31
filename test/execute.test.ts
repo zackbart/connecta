@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { CatalogService } from "../src/catalog-service.js";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -882,13 +883,40 @@ describe("buildSandboxProviders", () => {
           () => "calc.add",
         ),
       }),
-    ).rejects.toThrow(`at most ${MAX_DESCRIBE_ADDRESSES}`);
+    ).rejects.toThrow(
+      `at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across connecta.describe calls.`,
+    );
     await expect(
       required(connecta.fns.search)({
         connector: "verbose",
         fullDescriptions: true,
       }),
     ).rejects.toMatchObject({ code: "result_too_large" });
+  });
+
+  it("names connecta.describe when a code-mode catalog probe times out", async () => {
+    const hanging: Connector = {
+      id: "hang",
+      kind: "mcp",
+      async listTools() {
+        return new Promise<never>(() => {});
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const catalog = new CatalogService(makeRegistry([hanging]), BASE, {
+      probeTimeoutMs: 25,
+      surface: "code-first",
+    });
+    const result = {
+      tools: await catalog.describe({ addresses: ["hang.read"] }),
+    };
+
+    expect(required(result.tools[0]).error).toContain(
+      'connecta.describe probe of "hang" timed out',
+    );
+    expect(required(result.tools[0]).error).not.toContain("describe_tools");
   });
 
   it("bounds total host calls and connecta.batch size", async () => {

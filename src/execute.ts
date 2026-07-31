@@ -423,6 +423,7 @@ export async function buildSandboxProviders(
   const requestScope = {};
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
+    surface: "code-first",
     ...(limits.discoveryConcurrency !== undefined
       ? { concurrency: limits.discoveryConcurrency }
       : {}),

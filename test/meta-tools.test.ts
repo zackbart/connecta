@@ -1994,7 +1994,13 @@ describe("describe_tools", () => {
     });
     expect(oversized.isError).toBe(true);
     expect(textOf(oversized)).toMatchObject({
-      error: { code: "invalid_args", retryable: false },
+      error: {
+        code: "invalid_args",
+        retryable: false,
+        message: expect.stringContaining(
+          "Split a larger list across describe_tools calls",
+        ),
+      },
     });
   });
 
@@ -5090,6 +5096,8 @@ describe("probe timeout", () => {
     };
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(required(parsed.tools[0]).address).toBe("hang.read");
-    expect(required(parsed.tools[0]).error).toContain("timed out");
+    expect(required(parsed.tools[0]).error).toContain(
+      'describe_tools probe of "hang" timed out',
+    );
   });
 });
