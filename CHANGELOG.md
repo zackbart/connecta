@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.10.6 — 2026-07-31
 
 Programs gained a rich-output channel. `execute_code` code can now call
 `connecta.emit(block)` to deliver text, image, and audio MCP content blocks
