@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentFrictionForCode,
   recordToolActivity,
   type ActivityRequestContext,
   type ToolCallActivityEvent,
@@ -27,6 +28,22 @@ const EVENT: ToolCallActivityEvent = {
 };
 
 describe("activity delivery", () => {
+  it("derives coarse agent friction from typed codes only", () => {
+    expect(agentFrictionForCode("unknown_tool")).toBe("tool_not_found");
+    expect(agentFrictionForCode("ambiguous_tool_alias")).toBe(
+      "tool_not_found",
+    );
+    expect(agentFrictionForCode("invalid_args")).toBe("schema_retry");
+    expect(agentFrictionForCode("destructive_tool_requires_approval")).toBe(
+      "destructive_reroute",
+    );
+    expect(agentFrictionForCode("auth_required")).toBe("auth_required");
+    expect(agentFrictionForCode("result_too_large")).toBe(
+      "result_too_large",
+    );
+    expect(agentFrictionForCode("connector_call_failed")).toBeUndefined();
+  });
+
   it("attaches rejected async writes to waitUntil without throwing", async () => {
     const deferred: Promise<unknown>[] = [];
     const warnings: unknown[][] = [];
@@ -100,5 +117,45 @@ describe("activity delivery", () => {
       source: "call_destructive_tool",
       outcome: "success",
     });
+  });
+
+  it("records result-size friction without retaining the result", async () => {
+    const events: ToolCallActivityEvent[] = [];
+    const large = api("large", {
+      tools: [
+        {
+          name: "read",
+          annotations: { readOnlyHint: true },
+          handler: () => ({ value: "x".repeat(500) }),
+        },
+      ],
+    });
+    const activity: ActivityRequestContext = {
+      sink: {
+        record(event) {
+          events.push(event);
+        },
+      },
+      actor: { kind: "bearer" },
+      requestId: EVENT.requestId,
+      serverInfo: { name: "connecta", version: "0.1.0" },
+      logger: silentLogger,
+    };
+    const tools = createMetaTools(
+      makeRegistry([large], { maxResultBytes: 64 }),
+      "https://connecta.test",
+      { activity },
+    );
+
+    await tools.callTool({ address: "large.read" });
+
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({
+      address: "large.read",
+      outcome: "success",
+      errorCode: "result_too_large",
+      friction: "result_too_large",
+    });
+    expect(JSON.stringify(events[0])).not.toContain("xxxxx");
   });
 });

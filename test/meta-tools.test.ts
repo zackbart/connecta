@@ -2200,6 +2200,38 @@ describe("call_tool", () => {
     expect(parsed.error.retryable).toBe(false);
   });
 
+  it("returns actionable recovery for unknown addresses and tools", async () => {
+    const mt = createMetaTools(registry(), BASE);
+    const address = textOf(
+      await mt.callTool({ address: "ghost.read_items" }),
+    ) as {
+      error: { nextAction: Record<string, unknown> };
+    };
+    expect(address.error.nextAction).toEqual({
+      tool: "search_tools",
+      arguments: {
+        query: "read items",
+        includeSchemas: "compact",
+      },
+      purpose: "Find the configured canonical address before retrying.",
+    });
+
+    const tool = textOf(
+      await mt.callTool({ address: "calc.missing_sum" }),
+    ) as {
+      error: { nextAction: Record<string, unknown> };
+    };
+    expect(tool.error.nextAction).toEqual({
+      tool: "search_tools",
+      arguments: {
+        query: "missing sum",
+        connector: "calc",
+        includeSchemas: "compact",
+      },
+      purpose: "Find the connector's current canonical tool address.",
+    });
+  });
+
   it("routes annotated destructive tools through the approval-specific handler", async () => {
     let calls = 0;
     const dangerous = api("danger", {
@@ -2219,9 +2251,22 @@ describe("call_tool", () => {
     });
     const mt = createMetaTools(makeRegistry([dangerous]), BASE);
 
-    const ordinary = await mt.callTool({ address: "danger.erase" });
+    const ordinary = await mt.callTool({
+      address: "danger.erase",
+      args: { target: "duplicate" },
+    });
     expect(ordinary.isError).toBe(true);
-    expect(required(ordinary.content[0]).text).toContain("call_destructive_tool");
+    expect(textOf(ordinary)).toMatchObject({
+      error: {
+        nextAction: {
+          tool: "call_destructive_tool",
+          arguments: {
+            address: "danger.erase",
+            args: { target: "duplicate" },
+          },
+        },
+      },
+    });
     expect(calls).toBe(0);
 
     const batch = textOf(
@@ -2235,6 +2280,8 @@ describe("call_tool", () => {
 
     const approved = await mt.callDestructiveTool({
       address: "danger.erase",
+      args: { target: "duplicate" },
+      reason: "Remove the duplicate selected by the user.",
     });
     expect(approved.isError).toBeFalsy();
     expect(textOf(approved)).toEqual({ erased: true });
@@ -3729,9 +3776,17 @@ describe("call_tool size guard + get_result", () => {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
+      nextAction: {
+        tool: string;
+        arguments: { id: string; offset: number };
+      };
     };
     expect(notice.truncated).toBe(true);
     expect(notice.totalBytes).toBeGreaterThan(100);
+    expect(notice.nextAction).toEqual({
+      tool: "get_result",
+      arguments: { id: notice.resultId, offset: 0 },
+    });
 
     // Round-trip the full text back through get_result.
     let offset = 0;
@@ -3772,6 +3827,12 @@ describe("call_tool size guard + get_result", () => {
     expect(parsed.ok).toBe(true);
     expect(parsed.data.truncated).toBe(true);
     expect(parsed.data.totalBytes).toBeGreaterThan(100);
+    expect(parsed.data).toMatchObject({
+      nextAction: {
+        tool: "get_result",
+        arguments: { id: parsed.data.resultId, offset: 0 },
+      },
+    });
     const page = textOf(
       await mt.getResult({ id: parsed.data.resultId, maxBytes: 1_000 }),
     ) as { text: string };

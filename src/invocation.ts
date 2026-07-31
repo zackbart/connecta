@@ -150,6 +150,8 @@ export interface InvocationContext<T> {
     value: unknown,
     resolved: ResolvedCatalogTool,
   ) => T | Promise<T>;
+  /** Optional payload-free classification derived from the processed result. */
+  activityCode?: (value: T) => string | undefined;
   /**
    * Called after address/catalog/safety admission and before the first provider
    * attempt. Code mode uses it for its host-call budget.
@@ -280,7 +282,20 @@ export class InvocationService {
       const diagnostics = timing();
       const target = resolved ?? activityTarget;
       const details =
-        error.code === "auth_required" && target
+        error.code === "destructive_tool_requires_approval" && target
+          ? {
+              ...error,
+              nextAction: {
+                tool: "call_destructive_tool" as const,
+                arguments: {
+                  address: `${target.connector.id}.${target.toolName}`,
+                  args,
+                },
+                purpose:
+                  "Ask the MCP host to approve this consequential call. Add a short reason for the human reviewer.",
+              },
+            }
+          : error.code === "auth_required" && target
           ? {
               ...error,
               connector: target.connector.id,
@@ -591,7 +606,7 @@ export class InvocationService {
         : (result as T);
       resultProcessingMs += Date.now() - processingStarted;
       const diagnostics = timing();
-      record("success");
+      record("success", context.activityCode?.(value));
       return {
         ok: true,
         value,

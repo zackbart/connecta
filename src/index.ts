@@ -677,6 +677,7 @@ export type {
   ToolAnnotations,
 } from "./types.js";
 export type {
+  AgentFriction,
   ActivityActor,
   ActivityCallSource,
   ActivityOutcome,

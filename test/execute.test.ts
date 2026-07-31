@@ -481,6 +481,10 @@ describe("buildSandboxProviders", () => {
       message: expect.stringContaining(
         "Use connecta.call with an exact address",
       ),
+      nextAction: {
+        function: "connecta.call",
+        addresses: ["colliding.get.thing", "colliding.get-thing"],
+      },
     });
     await expect(
       required(connectaProvider(providers).fns.call)("colliding.get.thing", {}),

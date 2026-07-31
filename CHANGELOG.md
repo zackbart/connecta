@@ -14,7 +14,13 @@ nothing get sensible budgets. The design record is
 `documentation/rich-output-design.md` (#267); the contract is `code-mode.md`'s
 "Emitted output" clauses (#270).
 
-Alongside it, three pieces of runtime text stop naming tools the receiving
+Agent recovery is now executable data instead of prose at the remaining local
+failure points. Address mistakes, approval reroutes, shortcut collisions, and
+paged results identify their next call directly; activity classifies those
+moments without retaining payloads. Connector behavior and approval authority
+are unchanged.
+
+Alongside both, three pieces of runtime text stop naming tools the receiving
 surface does not serve — a routing failure connecta authored itself, and one the
 always-loaded-text sweep missed because it only reads descriptions, not error
 strings and tool results. All three fixes are agent-visible wording; no wire
@@ -34,6 +40,21 @@ which had been probing at the 30-second default no matter what was configured.
   run.
 - **`diagnostics.emitted`.** With `diagnostics: true`, one payload-free
   aggregate (block count and serialized bytes) when a program emitted.
+- **Local routing failures carry structured recovery.** Unknown addresses and
+  tools suggest scoped discovery, read-path policy refusals preserve the
+  canonical address and original arguments for `call_destructive_tool`, and
+  ambiguous code-mode aliases list every canonical `connecta.call` candidate.
+- **Destructive calls accept explanatory context.** An optional bounded
+  `reason` gives the MCP host human-readable intent without entering downstream
+  arguments or granting authority.
+- **Activity exposes coarse agent friction.** Typed codes derive
+  `tool_not_found`, `schema_retry`, `destructive_reroute`, `auth_required`, or
+  `result_too_large`; no payload or raw error text is added.
+
+### Changed
+
+- **Paged results name the exact next call.** Every truncation notice includes
+  `get_result` arguments with its generated id and byte offset zero.
 
 ### Fixed
 

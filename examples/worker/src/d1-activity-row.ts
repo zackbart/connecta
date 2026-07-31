@@ -23,9 +23,34 @@ export interface ActivityEvent {
   durationMs: number;
   attempts: number;
   errorCode?: string;
+  friction?:
+    | "tool_not_found"
+    | "schema_retry"
+    | "destructive_reroute"
+    | "auth_required"
+    | "result_too_large";
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
+}
+
+function frictionForCode(code: string | null): ActivityEvent["friction"] {
+  switch (code) {
+    case "unknown_address":
+    case "unknown_tool":
+    case "ambiguous_tool_alias":
+      return "tool_not_found";
+    case "invalid_args":
+      return "schema_retry";
+    case "destructive_tool_requires_approval":
+      return "destructive_reroute";
+    case "auth_required":
+      return "auth_required";
+    case "result_too_large":
+      return "result_too_large";
+    default:
+      return undefined;
+  }
 }
 
 export interface ActivityRow {
@@ -73,6 +98,7 @@ export function activityEventToRow(
 export function activityRowToEvent(
   row: ActivityRow,
 ): ActivityEvent {
+  const friction = frictionForCode(row.error_code);
   return {
     schemaVersion: 1,
     id: row.id,
@@ -91,6 +117,7 @@ export function activityRowToEvent(
     durationMs: row.duration_ms,
     attempts: row.attempts,
     ...(row.error_code ? { errorCode: row.error_code } : {}),
+    ...(friction ? { friction } : {}),
     serverName: row.server_name,
     serverVersion: row.server_version,
     ...(row.deployment_id

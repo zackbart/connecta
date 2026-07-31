@@ -89,6 +89,12 @@ mode; they are not a duplicated Connecta object result. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
+Every truncation notice carries both the historical `resultId` and an exact
+`nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The handle
+is therefore directly actionable without copying an identifier out of prose;
+re-calling with `fields` remains the smaller alternative when projection is
+possible.
+
 `fields` keeps its historical flat `{ "<path>": value }` result when every
 requested dot-path resolves. Dot notation traverses objects; append `[]` to an
 array field before continuing, as in `results[].id`. An exact downstream
@@ -171,6 +177,27 @@ stored grant before restarting consent. Static credential values are written
 only through the same-origin, Clerk-operator credential route. After OAuth
 consent or an operator update, retry the original operation; a static update is
 read from the vault on the next call and needs no redeploy.
+
+## Routing recovery
+
+Predictable local refusals carry structured recovery on both result modes.
+An unknown connector suggests an unscoped `search_tools` query derived from the
+attempted tool name; an unknown tool scopes the same query to the connector that
+answered. A read path that reaches an unannotated, write-capable, or destructive
+tool returns `nextAction` for `call_destructive_tool` with the original arguments
+and canonical address. Nothing is executed by these records.
+
+Shortcut ambiguity inside `execute_code` returns every colliding canonical
+address and points at `connecta.call`; the program or model must still choose
+which one matches the user's intent. `call_destructive_tool` accepts an optional
+1–500 character `reason` for the host's human approval view. It is outer-call
+context only: Connecta neither treats it as authority nor passes it to the
+downstream connector.
+
+Activity derives an optional coarse `friction` class from typed codes only:
+`tool_not_found`, `schema_retry`, `destructive_reroute`, `auth_required`, or
+`result_too_large`. The exact code remains available, while the category adds no
+arguments, results, search text, generated code, credentials, or raw errors.
 
 ## Argument recovery
 

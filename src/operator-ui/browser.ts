@@ -58,6 +58,7 @@ interface UiActivityEvent {
   durationMs: number;
   attempts: number;
   errorCode?: string;
+  friction?: string;
 }
 
 interface UiActivityResponse {
@@ -425,6 +426,7 @@ function renderActivity(): void {
       event.source,
       event.outcome,
       event.errorCode,
+      event.friction,
       actor.kind,
       actor.id,
       actor.namespace,
@@ -454,6 +456,7 @@ function renderActivity(): void {
     const retryCopy = event.attempts > 1
       ? " · " + esc(event.attempts) + " attempts"
       : "";
+    const frictionCopy = event.friction ? " · " + esc(event.friction) : "";
     const errorCopy = event.errorCode ? " · " + esc(event.errorCode) : "";
     const actorId = event.actor?.id
       ? (event.actor.namespace
@@ -474,7 +477,7 @@ function renderActivity(): void {
       "</div>" + stableActorId + "</div></div>" +
       '<div><div class="activity-address">' + esc(event.address) +
       '</div><div class="activity-detail">' + esc(event.source) + retryCopy +
-      errorCopy + '</div></div>' +
+      frictionCopy + errorCopy + '</div></div>' +
       '<div><div class="activity-outcome">' + esc(event.outcome) +
       '</div><div class="activity-detail">' + esc(event.durationMs) + ' ms</div></div>';
     list.appendChild(item);

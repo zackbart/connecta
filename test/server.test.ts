@@ -376,6 +376,12 @@ describe("server /mcp end-to-end", () => {
       destructiveHint: true,
       readOnlyHint: false,
     });
+    expect(
+      byName.call_destructive_tool.inputSchema.properties.reason,
+    ).toMatchObject({ type: "string", minLength: 1, maxLength: 500 });
+    expect(byName.call_destructive_tool.description).toContain(
+      "reason explaining the intended consequence",
+    );
     expect(byName.skills.annotations).toMatchObject({
       readOnlyHint: true,
       destructiveHint: false,

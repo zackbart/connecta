@@ -12,6 +12,35 @@ export type ActivityOutcome =
   | "timeout"
   | "cancelled";
 
+export type AgentFriction =
+  | "tool_not_found"
+  | "schema_retry"
+  | "destructive_reroute"
+  | "auth_required"
+  | "result_too_large";
+
+/** Coarse recovery class derived without inspecting payloads or error prose. */
+export function agentFrictionForCode(
+  code: string | undefined,
+): AgentFriction | undefined {
+  switch (code) {
+    case "unknown_address":
+    case "unknown_tool":
+    case "ambiguous_tool_alias":
+      return "tool_not_found";
+    case "invalid_args":
+      return "schema_retry";
+    case "destructive_tool_requires_approval":
+      return "destructive_reroute";
+    case "auth_required":
+      return "auth_required";
+    case "result_too_large":
+      return "result_too_large";
+    default:
+      return undefined;
+  }
+}
+
 /**
  * Authenticated identity attached to an activity event. `id` is intentionally
  * optional: open deployments and shared bearer tokens cannot honestly identify
@@ -49,6 +78,8 @@ export interface ToolCallActivityEvent {
   durationMs: number;
   attempts: number;
   errorCode?: string;
+  /** Payload-free recovery class, derived only from `errorCode`. */
+  friction?: AgentFriction;
   serverName: string;
   serverVersion: string;
   deploymentId?: string;
@@ -133,6 +164,7 @@ export function recordToolActivity(
   input: ActivityEventInput,
 ): void {
   if (!context) return;
+  const friction = agentFrictionForCode(input.errorCode);
   const event: ToolCallActivityEvent = {
     schemaVersion: 1,
     id: crypto.randomUUID(),
@@ -147,6 +179,7 @@ export function recordToolActivity(
     durationMs: Math.max(0, Math.trunc(input.durationMs)),
     attempts: Math.max(1, Math.trunc(input.attempts)),
     ...(input.errorCode ? { errorCode: input.errorCode } : {}),
+    ...(friction ? { friction } : {}),
     serverName: context.serverInfo.name,
     serverVersion: context.serverInfo.version,
     ...(context.deploymentId

@@ -179,9 +179,20 @@ export interface CallErrorDetails {
     tool: "search_tools";
     arguments: {
       query: string;
-      connector: string;
+      connector?: string;
       includeSchemas: "compact";
     };
+    purpose: string;
+  } | {
+    tool: "call_destructive_tool";
+    arguments: {
+      address: string;
+      args: unknown;
+    };
+    purpose: string;
+  } | {
+    function: "connecta.call";
+    addresses: string[];
     purpose: string;
   };
   /** Explicit retry guidance; recovery never retries or mutates by itself. */

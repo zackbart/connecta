@@ -113,6 +113,12 @@ function discoveryAddresses(
   return value;
 }
 
+function recoveryQuery(address: string): string {
+  const separator = address.indexOf(".");
+  const candidate = separator >= 0 ? address.slice(separator + 1) : address;
+  return candidate.replaceAll(/[._-]+/g, " ").trim() || address;
+}
+
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
 export function boundedDiscoveryText(value: unknown, hint: string): string {
   const text = JSON.stringify(value);
@@ -362,10 +368,20 @@ export class CatalogService {
     if (!resolved) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_address",
-          `Unknown address "${address}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_address",
+            `Unknown address "${address}"`,
+          ),
+          nextAction: {
+            tool: "search_tools",
+            arguments: {
+              query: recoveryQuery(address),
+              includeSchemas: "compact",
+            },
+            purpose: "Find the configured canonical address before retrying.",
+          },
+        },
         catalogMs: 0,
       };
     }
@@ -387,10 +403,21 @@ export class CatalogService {
     if (!definition) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_tool",
-          `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_tool",
+            `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
+          ),
+          nextAction: {
+            tool: "search_tools",
+            arguments: {
+              query: recoveryQuery(resolved.toolName),
+              connector: resolved.connector.id,
+              includeSchemas: "compact",
+            },
+            purpose: "Find the connector's current canonical tool address.",
+          },
+        },
         catalogMs: Date.now() - started,
         connector: resolved.connector,
         toolName: resolved.toolName,
@@ -422,10 +449,20 @@ export class CatalogService {
     if (!connector) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_address",
-          `Unknown address "${connectorId}.${alias}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_address",
+            `Unknown address "${connectorId}.${alias}"`,
+          ),
+          nextAction: {
+            tool: "search_tools",
+            arguments: {
+              query: recoveryQuery(alias),
+              includeSchemas: "compact",
+            },
+            purpose: "Find the configured canonical address before retrying.",
+          },
+        },
         catalogMs: 0,
       };
     }
@@ -449,10 +486,21 @@ export class CatalogService {
     if (!definition) {
       return {
         ok: false,
-        error: framingError(
-          "unknown_tool",
-          `Unknown tool "${alias}" on connector "${connector.id}"`,
-        ),
+        error: {
+          ...framingError(
+            "unknown_tool",
+            `Unknown tool "${alias}" on connector "${connector.id}"`,
+          ),
+          nextAction: {
+            tool: "search_tools",
+            arguments: {
+              query: recoveryQuery(alias),
+              connector: connector.id,
+              includeSchemas: "compact",
+            },
+            purpose: "Find the connector's current canonical tool address.",
+          },
+        },
         catalogMs: Date.now() - started,
         connector,
         toolName: alias,
@@ -468,6 +516,14 @@ export class CatalogService {
           code: "ambiguous_tool_alias",
           message: `Tool alias "${alias}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
           retryable: false,
+          nextAction: {
+            function: "connecta.call",
+            addresses: [definition, ...collisions].map(
+              (tool) => `${connector.id}.${tool.name}`,
+            ),
+            purpose:
+              "Choose the intended canonical address and call it with the original arguments.",
+          },
         },
         catalogMs: Date.now() - started,
         connector,

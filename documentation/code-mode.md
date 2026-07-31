@@ -368,11 +368,10 @@ program may do about it.
 sentence. A program cannot recover credentials — only an operator can — so the
 right move is to stop and let the failure reach the model.
 
-**E4.** A read-only refusal is not a downstream failure. An unannotated,
-write-capable, or destructive tool is refused in the sandbox with
-`destructive_tool_requires_approval` and stays refused; the program returns and
-the model crosses `call_destructive_tool`, where the host can ask a human.
-Generated code cannot mint that capability.
+**E4.** An unannotated, write-capable, or destructive tool stays refused with
+`destructive_tool_requires_approval`; `nextAction` carries its canonical address
+and arguments to `call_destructive_tool`. The model adds a short `reason` for the
+human reviewer; it grants no authority, never goes downstream, and generated code cannot mint the capability.
 
 **E5.** Failures of the *execution*, not of a call, never appear inside the
 guest: admission rejection (`executor_overloaded`, retryable, with
@@ -602,9 +601,10 @@ blindfold.
 
 **V2.** Each event carries `connectorId`, `toolName`, `address`, `source`,
 `outcome` (`success`, `error`, `timeout`, `cancelled`), `durationMs`,
-`attempts`, and `errorCode` when there was one — plus the request's id, actor,
-and server identity. It has nowhere to put arguments, results, program source,
-or raw error text, by construction. A failure the program *caught* is still
+`attempts`, and `errorCode` when there was one — plus request, actor, and server
+identity. Typed codes derive optional `friction`: `tool_not_found`,
+`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`. A paged oversized result records the last while retaining `outcome: "success"`.
+It has nowhere to put arguments, results, program source, or raw error text. A failure the program *caught* is still
 recorded: the call happened. `address` is canonical (`A1`) for every call that
 resolved to a tool; for the refusals that never resolved to one it is the name the
 program used, which for a shortcut is the sanitized alias — the honest record of
