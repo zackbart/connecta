@@ -111,6 +111,19 @@ export interface ConnectaCallsConfig {
   maxBatchResultBytes?: number;
 }
 
+/** Budgets for rich output emitted by execute_code programs (`connecta.emit`). */
+export interface ConnectaExecuteConfig {
+  /**
+   * Aggregate serialized bytes `connecta.emit` accepts per run. Default
+   * 4_000_000 — a transport bound, not a context bound: emitted image/audio
+   * blocks reach the model as media, not base64 text. Invalid values fall
+   * back to the default.
+   */
+  maxEmittedBytes?: number;
+  /** Content blocks `connecta.emit` accepts per run. Default 32. */
+  maxEmittedBlocks?: number;
+}
+
 export interface AdmissionPoolConfig {
   /** Simultaneous work admitted to this pool. */
   concurrency?: number;
@@ -164,6 +177,8 @@ export interface ConnectaConfig {
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
   calls?: ConnectaCallsConfig;
+  /** Budgets for the `connecta.emit` rich-output channel in execute_code. */
+  execute?: ConnectaExecuteConfig;
   /** Bounded MCP and fallback code-mode admission. */
   admission?: ConnectaAdmissionConfig;
   /** Optional browser UI and OAuth result-page labels. */
@@ -567,6 +582,12 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       : {}),
     ...(config.discovery?.concurrency !== undefined
       ? { discoveryConcurrency: config.discovery.concurrency }
+      : {}),
+    ...(config.execute?.maxEmittedBytes !== undefined
+      ? { maxEmittedBytes: config.execute.maxEmittedBytes }
+      : {}),
+    ...(config.execute?.maxEmittedBlocks !== undefined
+      ? { maxEmittedBlocks: config.execute.maxEmittedBlocks }
       : {}),
     ...(credentialVault !== undefined ? { credentialVault } : {}),
     ...(accessTokens !== undefined ? { accessTokens } : {}),

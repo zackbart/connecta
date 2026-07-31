@@ -34,6 +34,15 @@ import type {
 const EXECUTE_MAX_HOST_CALLS = 20;
 export const EXECUTE_MAX_BATCH_CALLS = 10;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+/**
+ * Default budgets for `connecta.emit`. The byte budget is a transport bound,
+ * not a context bound — emitted image/audio blocks reach the model as media,
+ * not base64 text — so it sits far above the 24k return-value guard: room for
+ * two or three real screenshots after base64's 4/3 inflation, well short of a
+ * file-hosting ambition (design record M5).
+ */
+export const EXECUTE_MAX_EMITTED_BYTES = 4_000_000;
+export const EXECUTE_MAX_EMITTED_BLOCKS = 32;
 const diagnosticsEncoder = new TextEncoder();
 
 type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "batch";
@@ -60,6 +69,13 @@ class ExecuteDiagnostics {
   admissionMs = 0;
   setupMs = 0;
   executorWallMs = 0;
+  private emitted?: { count: number; bytes: number };
+
+  /** Numbers only, per R8 — and only once something was emitted, so a
+   * non-emitting run's diagnostics stay byte-for-byte what they were. */
+  recordEmitted(count: number, bytes: number): void {
+    if (count > 0) this.emitted = { count, bytes };
+  }
 
   private stats(operation: ExecuteDiagnosticOperation) {
     let stats = this.operations.get(operation);
@@ -142,6 +158,7 @@ class ExecuteDiagnostics {
       connectorMs: number;
     };
     operations: ExecuteOperationDiagnostics[];
+    emitted?: { count: number; bytes: number };
   } {
     const operations = [...this.operations.values()];
     return {
@@ -157,8 +174,107 @@ class ExecuteDiagnostics {
         ),
       },
       operations,
+      ...(this.emitted ? { emitted: this.emitted } : {}),
     };
   }
+}
+
+/**
+ * One MCP content block a program may emit. The complete set, by design:
+ * `resource` and `resource_link` are refused in ethos.md — pointers get
+ * followed, and connecta serves no resources for them to point at.
+ */
+export type EmittedBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; data: string; mimeType: string }
+  | { type: "audio"; data: string; mimeType: string };
+
+const EMIT_SHAPE_HINT =
+  '{ type: "text", text } or { type: "image" | "audio", data (base64), mimeType }';
+
+/**
+ * Strict M1 validation: required fields present and string-valued, nothing
+ * else — no `annotations`, no `_meta`, no sugar forms. Rejected rather than
+ * stripped, because silently deleting fields would deliver something the
+ * program did not ask to emit.
+ */
+function requireEmittedBlock(raw: unknown): EmittedBlock {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new Error(
+      `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`,
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  const fields =
+    block.type === "text"
+      ? ["type", "text"]
+      : block.type === "image" || block.type === "audio"
+        ? ["type", "data", "mimeType"]
+        : undefined;
+  if (!fields) {
+    throw new Error(
+      `connecta.emit supports content types "text", "image", and "audio"; got ${JSON.stringify(block.type)}`,
+    );
+  }
+  for (const field of fields) {
+    if (typeof block[field] !== "string") {
+      throw new Error(
+        `connecta.emit block field "${field}" must be a string: ${EMIT_SHAPE_HINT}`,
+      );
+    }
+  }
+  const extra = Object.keys(block).filter((key) => !fields.includes(key));
+  if (extra.length > 0) {
+    throw new Error(
+      `connecta.emit block carries unsupported field(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}; a "${String(block.type)}" block is exactly { ${fields.join(", ")} }`,
+    );
+  }
+  return raw as EmittedBlock;
+}
+
+/**
+ * Request-local collection for `connecta.emit`. Budgets fail loudly at the
+ * crossing call — the block is not partially accepted and prior blocks are
+ * unaffected — so a program learns it is over budget while it can still
+ * choose differently (M5). Accepted blocks never ride `ExecuteResult`; the
+ * handler that owns this collector appends them to the final tool result.
+ */
+export class EmitCollector {
+  readonly blocks: EmittedBlock[] = [];
+  bytes = 0;
+  constructor(
+    private readonly maxBytes: number,
+    private readonly maxBlocks: number,
+    private readonly diagnostics?: ExecuteDiagnostics,
+  ) {}
+
+  accept(raw: unknown): void {
+    const block = requireEmittedBlock(raw);
+    if (this.blocks.length >= this.maxBlocks) {
+      throw new Error(
+        `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 remaining`,
+      );
+    }
+    const size = diagnosticsEncoder.encode(JSON.stringify(block)).byteLength;
+    if (this.bytes + size > this.maxBytes) {
+      throw new Error(
+        `connecta.emit byte budget exceeded: block is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
+      );
+    }
+    this.blocks.push(block);
+    this.bytes += size;
+    this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
+  }
+}
+
+/** A configured emit budget must be a finite number >= 1; anything else falls back. */
+function resolveEmitBudget(
+  value: number | undefined,
+  fallback: number,
+): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 1
+    ? Math.trunc(value)
+    : fallback;
 }
 
 function serializedDiagnosticBytes(value: unknown): number {
@@ -294,6 +410,12 @@ export async function buildSandboxProviders(
     discoveryConcurrency?: number;
     onInvocationFailure?: (failure: InvocationFailure) => void;
     diagnostics?: ExecuteDiagnostics;
+    /**
+     * Where `connecta.emit` collects. The handler that will deliver the
+     * blocks owns it; without one, emit fails loudly rather than accept
+     * blocks nobody will ever return.
+     */
+    emitCollector?: EmitCollector;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
@@ -418,6 +540,18 @@ export async function buildSandboxProviders(
         __callNamespace: callNamespace,
         call: (address: unknown, args: unknown) =>
           callAddress(address, args),
+        // Emission is a provider function, never an ExecuteResult field —
+        // that is what keeps the Executor contract untouched and parity
+        // structural (M8). It spends no host-call budget (M7); its own
+        // budgets live in the collector.
+        emit: async (block: unknown) => {
+          if (!limits.emitCollector) {
+            throw new Error(
+              "connecta.emit is unavailable: no emission collector was configured for this execution",
+            );
+          }
+          limits.emitCollector.accept(block);
+        },
         batch: async (calls: unknown) => {
           const started = Date.now();
           const callCount = Array.isArray(calls) ? calls.length : 0;
@@ -566,7 +700,11 @@ export function createExecuteTool(
   executor: Executor,
   logger: Logger,
   activity?: ActivityRequestContext,
-  config: { discoveryConcurrency?: number } = {},
+  config: {
+    discoveryConcurrency?: number;
+    maxEmittedBytes?: number;
+    maxEmittedBlocks?: number;
+  } = {},
 ) {
   return async (
     { code, diagnostics: diagnosticsRequested }: {
@@ -584,6 +722,11 @@ export function createExecuteTool(
     let lease;
     let outcome;
     const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
+    const emitted = new EmitCollector(
+      resolveEmitBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
+      resolveEmitBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
+      diagnostics,
+    );
     const invocationFailures: InvocationFailure[] = [];
     try {
       // Admission comes before provider construction: queued calls retain no
@@ -616,6 +759,7 @@ export function createExecuteTool(
             onInvocationFailure: (failure) => {
               invocationFailures.push(failure);
             },
+            emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
             ...(config.discoveryConcurrency !== undefined
               ? { discoveryConcurrency: config.discoveryConcurrency }
@@ -670,12 +814,15 @@ export function createExecuteTool(
             message: `Executor failed: ${msg(err)}`,
             retryable: false,
           },
+          ...discardedEmits(emitted),
           diagnostics: diagnostics.finish(),
         });
         result.isError = true;
         return result;
       }
-      return errorResult(`Executor failed: ${msg(err)}`);
+      return errorResult(
+        `Executor failed: ${msg(err)}${discardedEmitsText(emitted)}`,
+      );
     } finally {
       // A sandbox timeout or early return must also release any outstanding
       // host waits and signal cooperative connectors to stop their work.
@@ -721,6 +868,7 @@ export function createExecuteTool(
         const result = jsonResult({
           error: invocationFailure.details,
           ...(logs ? { logs } : {}),
+          ...discardedEmits(emitted),
           ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
         });
         result.isError = true;
@@ -735,12 +883,15 @@ export function createExecuteTool(
             retryable: false,
           },
           ...(logs ? { logs } : {}),
+          ...discardedEmits(emitted),
           diagnostics: diagnostics.finish(),
         });
         result.isError = true;
         return result;
       }
-      return errorResult(`${message}${logs ? `\n\nLogs:\n${logs}` : ""}`);
+      return errorResult(
+        `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${discardedEmitsText(emitted)}`,
+      );
     }
     // A result crossing back as a host BigInt (or otherwise unserializable
     // value) makes JSON.stringify throw — keep that inside the structured
@@ -758,19 +909,48 @@ export function createExecuteTool(
             retryable: false,
           },
           ...(logs ? { logs } : {}),
+          ...discardedEmits(emitted),
           diagnostics: diagnostics.finish(),
         });
         response.isError = true;
         return response;
       }
-      return errorResult(`${message}${logs ? `\n\nLogs:\n${logs}` : ""}`);
+      return errorResult(
+        `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${discardedEmitsText(emitted)}`,
+      );
     }
-    return jsonResult({
+    const response = jsonResult({
       result,
+      ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
       ...(logs ? { logs } : {}),
       ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
     });
+    if (emitted.blocks.length > 0) {
+      // Emitted image/audio blocks are valid MCP content that ToolResult's
+      // text-only typing does not model — the same acknowledged gap
+      // guardContent lives with for downstream block passthrough.
+      response.content.push(
+        ...(emitted.blocks as unknown as typeof response.content),
+      );
+    }
+    return response;
   };
+}
+
+/** M4: a failed program delivers no blocks, but the discard is visible. */
+function discardedEmits(emitted: EmitCollector): {
+  emittedDiscarded?: number;
+} {
+  return emitted.blocks.length > 0
+    ? { emittedDiscarded: emitted.blocks.length }
+    : {};
+}
+
+/** The same visibility for the plain-text error paths. */
+function discardedEmitsText(emitted: EmitCollector): string {
+  return emitted.blocks.length > 0
+    ? `\n\nemittedDiscarded: ${emitted.blocks.length}`
+    : "";
 }
 
 /**
@@ -795,12 +975,14 @@ const EXECUTE_SCHEMA_SOURCE = {
 
 const executeDescription = (
   surface: ConnectaSurface,
+  emitBudgets: { maxBytes: number; maxBlocks: number },
 ) => `${EXECUTE_ROUTING[surface]} Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from ${EXECUTE_SCHEMA_SOURCE[surface]}. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
 - connecta.search(args), connecta.describe({ address: "<connectorId>.<toolName>" }), and connecta.describe({ addresses: [...] }) — load and inspect request-local catalogs on demand. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute; the filter changes results, not authority. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
+- connecta.emit(block) — deliver rich MCP content alongside the JSON return: exactly { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }, no other fields. Blocks are appended to the result on success only, spend no host calls, and are budgeted per run (${emitBudgets.maxBlocks} blocks, ${emitBudgets.maxBytes} serialized bytes); an over-budget or invalid emit throws catchably and accepts nothing.
 - console.log(...) — captured and returned alongside the result.
 
 Tool calls return plain values (MCP text content is JSON-parsed when possible) and throw on downstream errors — use try/catch to handle them. A thrown error carries only a message; connecta.batch reports each call as { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }, so use it when the program must tell a policy refusal from a transient failure. Never retry a failure whose retryable is false, and never retry a rate_limited one immediately — the sandbox has no timers. Return a JSON-serializable value; large results are truncated, so reduce data in code instead of returning raw payloads.
@@ -819,24 +1001,41 @@ export function registerExecuteTool(
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
     discoveryConcurrency?: number;
+    /** Aggregate serialized-byte budget for connecta.emit. Default 4_000_000. */
+    maxEmittedBytes?: number;
+    /** Block-count budget for connecta.emit. Default 32. */
+    maxEmittedBlocks?: number;
     /** The advertised surface, which decides this tool's routing copy. */
     surface?: ConnectaSurface;
   },
 ): void {
+  // Resolved once so the description and the collector cannot disagree about
+  // the budgets this deployment actually enforces.
+  const emitBudgets = {
+    maxBytes: resolveEmitBudget(ctx.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
+    maxBlocks: resolveEmitBudget(
+      ctx.maxEmittedBlocks,
+      EXECUTE_MAX_EMITTED_BLOCKS,
+    ),
+  };
   const handler = createExecuteTool(
     registry,
     ctx.baseUrl,
     ctx.executor,
     ctx.logger,
     ctx.activity,
-    ctx.discoveryConcurrency !== undefined
-      ? { discoveryConcurrency: ctx.discoveryConcurrency }
-      : {},
+    {
+      ...(ctx.discoveryConcurrency !== undefined
+        ? { discoveryConcurrency: ctx.discoveryConcurrency }
+        : {}),
+      maxEmittedBytes: emitBudgets.maxBytes,
+      maxEmittedBlocks: emitBudgets.maxBlocks,
+    },
   );
   server.registerTool(
     "execute_code",
     {
-      description: executeDescription(ctx.surface ?? "classic"),
+      description: executeDescription(ctx.surface ?? "classic", emitBudgets),
       inputSchema: z.object({
         code: z
           .string()

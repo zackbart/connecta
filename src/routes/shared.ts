@@ -32,6 +32,10 @@ export interface ServerOptions {
   probeTimeoutMs?: number;
   /** Maximum simultaneous connector discovery operations. Default 4. */
   discoveryConcurrency?: number;
+  /** Aggregate serialized-byte budget for connecta.emit per run. Default 4_000_000. */
+  maxEmittedBytes?: number;
+  /** Block-count budget for connecta.emit per run. Default 32. */
+  maxEmittedBlocks?: number;
   /** When set, the execute_code meta-tool is registered on top of the base surface. */
   executor?: Executor;
   /**

@@ -214,7 +214,7 @@ describe("documentation link checker", () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
       "ethos.md": Array(150).fill("ethos line").join("\n"),
-      "documentation/architecture.md": Array(700)
+      "documentation/architecture.md": Array(800)
         .fill("architecture line")
         .join("\n"),
     });
@@ -225,7 +225,7 @@ describe("documentation link checker", () => {
       "ethos.md:1: ethos.md has 150 lines; expected fewer than 150 — terseness is the point",
     );
     expect(result.output).toContain(
-      "documentation/architecture.md:1: guide has 700 lines; expected fewer than 700",
+      "documentation/architecture.md:1: guide has 800 lines; expected fewer than 800",
     );
   });
 

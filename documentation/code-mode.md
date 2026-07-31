@@ -98,7 +98,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 1. **Expose each provider as a guest global** whose properties are its `fns`,
    called with the program's arguments and awaited. Connecta's provider carries
-   `search`, `describe`, `call`, `batch`, and `__callNamespace` — see point 3.
+   `search`, `describe`, `call`, `batch`, `emit`, and `__callNamespace` — see
+   point 3.
 2. **Evaluate `prelude` after the provider globals exist and before the
    program**, in a scope where those globals are reachable. It is host-authored
    trusted code, never model input, and skipping it is not an option: connecta's
@@ -126,6 +127,10 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 Optionally implement `AdmittingExecutor` (`acquire()` returning a lease whose
 `execute` runs once) for bounded admission (`L7`) and `close()` for shutdown;
 connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise.
+
+Note what is *not* on this list: [emitted output](#emitted-output) asks
+nothing of an executor — `connecta.emit` is just another provider function
+(`M8`).
 
 ## The program
 
@@ -307,6 +312,15 @@ than ten calls throws.
 error crosses the bridge as a bare message (`E1`), a batch of one is the supported
 way for a program to *decide* something about a failure rather than report it.
 
+### connecta.emit
+
+```js
+await connecta.emit({ type: "image", data: shot.data, mimeType: "image/png" });
+```
+
+The rich-output channel, delivered after the JSON envelope on success. Its
+clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
+
 ## Errors
 
 **E1.** There are four error channels, and only two of them are typed.
@@ -423,11 +437,69 @@ on data nobody asked for.
 
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call order and returned as a single `logs` string, capped at 4,000 characters with a truncation marker. Logs survive failure — they ride along with the error result, which is what makes them worth writing. How a non-string argument renders is not contract (`X4`).
 
-**R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; omitted and `false` are byte-for-byte the ordinary response path.
+**R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; a program that emitted adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are byte-for-byte the ordinary response path.
 
 **R7.** Timing separates admission, provider setup, total executor wall time, catalog work, and connector work. Catalog and connector values are cumulative, so parallel work can exceed executor wall time. Each used operation kind (`search`, `describe`, `call`, `batch`) gets one aggregate with count, failures, duration, returned serialized bytes, and catalog/connector time; batch adds only its total child count.
 
 **R8.** Diagnostics contain measurements and fixed operation names only: no addresses, arguments, results, code, credentials, logs, or raw errors. Result sizes are numbers, never previews. The collector exists only for the opted-in request; it is not activity, a session, or a stream.
+
+## Emitted output
+
+MCP-native output a return value cannot carry: base64 is not projectable, so a
+block that survives intake uncapped (`S5`) must not die at the `R2` exit
+guard. The argument and the refused alternatives live in the
+[design record](./rich-output-design.md) and `ethos.md`
+([#267](https://github.com/zackbart/connecta/issues/267),
+[#270](https://github.com/zackbart/connecta/issues/270)).
+
+**M1.** `connecta.emit(block)` accepts exactly one block: `{ type: "text",
+text }` or `{ type: "image" | "audio", data /* base64 */, mimeType }`, every
+field a string, no extra fields, no `annotations`, no `_meta`, no sugar forms.
+An invalid block throws catchably and nothing is accepted — rejected, not
+stripped. The refused types are pointers: a guest-minted `resource_link` URI
+is a lure a client may dereference.
+
+**M2.** Blocks collect on the host in emission order and are delivered only
+with a successful result, appended to `content` after the JSON envelope, which
+gains `emitted: N`. A program that never emits produces the byte-for-byte
+ordinary response (`R6`). `structuredContent` stays the envelope alone —
+emission is presentation, not a second data channel.
+
+**M3.** Return value and emission are independent: `R2` never measures emitted
+bytes, a truncated return does not suppress delivered blocks, and blocks do
+not shrink the return budget.
+
+**M4.** A failed program delivers no blocks. The error result reports
+`emittedDiscarded: N` when N > 0 — a field on the structured envelope, a
+trailing line on the plain-text paths — never silently.
+
+**M5.** Two budgets (`ConnectaConfig.execute.maxEmittedBytes` /
+`.maxEmittedBlocks`, defaults 4,000,000 serialized bytes and 32 blocks) fail
+loudly at the `emit` call, naming the budget and the room remaining; nothing
+is partially accepted and prior blocks stand. No `get_result` stash: the
+program learns while it can still choose differently. The byte default is a
+transport bound, not a context bound — emitted media reaches the model as
+media, not base64 text.
+
+**M6.** No provenance is claimed: every emitted block is program output,
+trusted exactly as much as the return value. Preservation is re-emission of
+the raw downstream block, so `S5`'s uncapped fallthrough is contract.
+
+**M7.** `emit` spends no host-call budget (`L4`); `M5`'s bounds are its only
+bounds.
+
+**M8.** Emission asks nothing of an executor: `emit` is a provider function,
+blocks cross the guest boundary once as an argument, and `ExecuteResult` is
+unchanged — `Executor` stays assignable from `@cloudflare/codemode`'s
+`DynamicWorkerExecutor`, and any executor that bridges provider calls gets
+emission for free.
+
+**M9.** Request-local and unstreamed: blocks exist only in the finished
+response, and `emit` resolving means "accepted," never "delivered."
+
+**M10.** Activity stays payload-free. `diagnostics: true` adds one `emitted`
+aggregate — count and serialized bytes, numbers only (`R8`), present only
+when something was emitted.
 
 ## Retry semantics
 
@@ -632,6 +704,10 @@ The middle three were places where the contract described behavior the code did
 not quite have. The code moved, because the described behavior is the one worth
 having.
 
+One surface was added since: [emitted output](#emitted-output) (`M1`–`M10`,
+[#270](https://github.com/zackbart/connecta/issues/270)) — additive by
+construction, with the byte-for-byte no-emit promise pinned by test.
+
 ## Verification
 
 Every clause has a test. `test/guest-contract-cases.ts` holds the case table,
@@ -683,6 +759,13 @@ the upstream `Executor` shape assignable.
 | `L7` | `test/execute.test.ts`, `test/executor-admission.test.ts` |
 | `V1`, `V2` | `test/guest-api-contract.test.ts` (dispatched calls, and the four refusal classes that name a connector), `test/activity.test.ts` |
 | `V3`, `V4` | `test/guest-api-contract.test.ts` (no event without a connector) |
+| `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
+| `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
+| `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths) |
+| `M5`, `M7` | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched) |
+| `M6`, `M9` | verdicts; `M1`'s strict typing and `M2`'s collect-then-deliver are their enforcement |
+| `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
+| `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
