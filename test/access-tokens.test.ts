@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AccessTokenManager } from "../src/access-tokens.js";
-import { createConnecta } from "../src/index.js";
+import { createTestConnecta } from "./helpers.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   ActivityPage,
@@ -106,7 +106,7 @@ describe("AccessTokenManager", () => {
 describe("managed access token routes", () => {
   it("refuses a deployment with no Clerk operator", () => {
     expect(() =>
-      createConnecta({
+      createTestConnecta({
         connectors: [],
         storage: memoryStorage(),
         accessTokens: {},
@@ -115,7 +115,7 @@ describe("managed access token routes", () => {
   });
 
   it("reveals token configuration only to an eligible Clerk operator", async () => {
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth: [fakeClerk()],
       storage: memoryStorage(),
@@ -132,7 +132,7 @@ describe("managed access token routes", () => {
   });
 
   it("creates with Clerk, admits MCP reads, renames, and revokes", async () => {
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth: [fakeClerk()],
       storage: memoryStorage(),
@@ -242,7 +242,7 @@ describe("managed access token routes", () => {
       record: vi.fn(),
       async list() { return page; },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [],
       auth: [fakeClerk()],
       storage: memoryStorage(),

@@ -5,6 +5,7 @@ import { basename, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createAuditClient, round } from "./audit-lib.mjs";
+import { codeFirstTools } from "./agent-benchmark-scoring.mjs";
 import { runTaskAudit } from "./audit-all-tools.mjs";
 import { runDiscoveryBenchmark } from "./discovery-benchmark.mjs";
 import { renderReport } from "./report.mjs";
@@ -45,11 +46,8 @@ const reportPath = resolve(
 );
 const tokenizerName =
   process.env.CONNECTA_EVAL_TOKENIZER ?? "o200k_base";
-const executorMode = option("--executor", "enabled");
-if (executorMode !== "enabled" && executorMode !== "disabled") {
-  throw new Error('--executor must be "enabled" or "disabled".');
-}
-const executorEnabled = executorMode === "enabled";
+const executorMode = "required";
+const surface = "seven-tool";
 const bearer = process.env.CONNECTA_EVAL_TOKEN ?? "connecta-eval-token";
 const operatorToken =
   process.env.CONNECTA_EVAL_OPERATOR_TOKEN ?? "connecta-eval-operator";
@@ -68,7 +66,6 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_OPERATOR_TOKEN: operatorToken,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
-        CONNECTA_EVAL_EXECUTOR: executorMode,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -142,15 +139,9 @@ try {
     token: bearer,
     tokenizerName,
   });
-  const listedNames = new Set(context.listed.tools.map((tool) => tool.name));
-  const surface = listedNames.has("list_connectors")
-    ? "classic"
-    : "code-first";
   const tasks = await runTaskAudit(context, {
     baseUrl: ready.baseUrl,
     operatorToken,
-    executorEnabled,
-    surface,
   });
   const discovery = await runDiscoveryBenchmark(context, corpusPath);
   const observations = context.observations;
@@ -166,7 +157,22 @@ try {
   const activityCase = tasks.cases.find(
     (entry) => entry.outcome === "activity-payload-free",
   );
+  // The `surface` stamp below is a constant; without this check a server that
+  // regressed to the classic nine would still be filed as seven-tool evidence.
+  const advertisedTools = context.connection.tools
+    .map((tool) => tool.name)
+    .sort();
+  const expectedTools = [...codeFirstTools].sort();
+  const surfaceMatches =
+    advertisedTools.length === expectedTools.length &&
+    advertisedTools.every((name, index) => name === expectedTools[index]);
   const qualificationChecks = [
+    {
+      name: "advertised surface is exactly the seven meta-tools",
+      actual: advertisedTools,
+      expected: expectedTools,
+      passed: surfaceMatches,
+    },
     {
       name: "all behavioral scenarios pass",
       actual: tasks.summary.taskSuccessRate,

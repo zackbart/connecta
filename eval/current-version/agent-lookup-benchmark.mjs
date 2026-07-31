@@ -307,7 +307,6 @@ function startServer() {
         CONNECTA_EVAL_PORT: "0",
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
-        CONNECTA_EVAL_EXECUTOR: "enabled",
         CONNECTA_EVAL_TRACE: "enabled",
       },
       stdio: ["ignore", "pipe", "pipe"],

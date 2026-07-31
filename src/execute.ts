@@ -24,7 +24,6 @@ import {
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import type {
-  ConnectaSurface,
   Executor,
   ExecutorProvider,
   Logger,
@@ -425,12 +424,7 @@ export async function buildSandboxProviders(
   const requestScope = {};
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
-    // Every describe reaching this catalog came from inside a program, on a
-    // code-first and a classic-with-executor deployment alike, so the retry
-    // advice names connecta.describe regardless of what this server advertises.
-    describeRoute: "connecta.describe",
-    // Same reasoning for the discovery route a routing failure hands back: the
-    // program that just missed an address cannot call search_tools.
+    // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
     ...(limits.discoveryConcurrency !== undefined
       ? { concurrency: limits.discoveryConcurrency }
@@ -588,8 +582,8 @@ export async function buildSandboxProviders(
                     ),
                   };
                 } catch (err) {
-                  // Same failure shape batch_call reports: the message a program
-                  // can log, plus the typed details it must classify by. A
+                  // The failure shape connecta.batch reports: the message a
+                  // program can log, plus the typed details it must classify by. A
                   // thrown host error crosses the sandbox bridge as a bare
                   // message string in every executor, so this is the one place a
                   // program can tell a policy refusal from a transient failure.
@@ -857,7 +851,7 @@ export function createExecuteTool(
       // Executor bridges necessarily reduce thrown host errors to strings.
       // Match that terminal string back to the request-local typed failure so
       // an unhandled tool failure keeps the same structured contract as
-      // call_tool and batch_call. Failures caught by model code never reach
+      // call_tool. Failures caught by model code never reach
       // outcome.error and therefore remain under that code's control.
       //
       // An error the program let through unchanged matches exactly, and an
@@ -973,33 +967,12 @@ function discardedEmitsText(emitted: EmitCollector): string {
     : "";
 }
 
-/**
- * How the tool opens, and where a program's argument schemas come from. Both
- * differ by surface: on the classic surface `execute_code` is the tool of last
- * resort and its neighbours (`batch_call`, `describe_tools`) own the simpler
- * jobs, while on the code-first surface those tools are gone and the program is
- * where all of that work happens. Everything after these two phrases is
- * identical, so the shared body below has one source of truth.
- */
-const EXECUTE_ROUTING = {
-  classic:
-    "Use for dependent multi-step calls, loops, joins, branching, or reducing large results in a sandbox. Never use execute_code for search-only discovery or one downstream call: use search_tools, then call_tool when needed. For 2–10 independent calls use batch_call.",
-  "code-first":
-    "The primary surface. Use for discovery beyond one lookup, two or more calls, dependent steps, loops, joins, branching, or reducing large results before they reach the model — connecta.search and connecta.describe browse and expand catalogs in the run, and connecta.batch replaces a separate batch tool. The exception is a single call at an address already in hand: search_tools then one call_tool is cheaper than a program.",
-} as const;
-
-const EXECUTE_SCHEMA_SOURCE = {
-  classic: "describe_tools",
-  "code-first": "connecta.describe",
-} as const;
-
 const executeDescription = (
-  surface: ConnectaSurface,
   emitBudgets: { maxBytes: number; maxBlocks: number },
-) => `${EXECUTE_ROUTING[surface]} Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
+) => `The primary surface. Use for discovery beyond one lookup, two or more calls, dependent steps, loops, joins, branching, or reducing large results before they reach the model — connecta.search and connecta.describe browse and expand catalogs in the run, and connecta.batch handles independent calls. The exception is a single call at an address already in hand: search_tools then one call_tool is cheaper than a program. Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls; connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
-- One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from ${EXECUTE_SCHEMA_SOURCE[surface]}. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
+- One global per connector: every address <connectorId>.<toolName> from search_tools is callable as <connectorId>.<toolName>(args) with a single args object matching the schema from connecta.describe. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (e.g. my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words get "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses.
 - connecta.search(args), connecta.describe({ address: "<connectorId>.<toolName>" }), and connecta.describe({ addresses: [...] }) — load and inspect request-local catalogs on demand. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute; the filter changes results, not authority. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the same names the schema shows, ready to check against before building args. They are absent when a schema is not a plain object shape, so read the schema itself rather than assuming a missing list means no fields.
 - connecta.emit(block) — deliver rich MCP content alongside the JSON return: exactly { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }, no other fields. Blocks are appended to the result on success only, spend no host calls, and are budgeted per run (${emitBudgets.maxBlocks} blocks, ${emitBudgets.maxBytes} serialized bytes); an over-budget or invalid emit throws catchably and accepts nothing.
@@ -1032,8 +1005,6 @@ export function registerExecuteTool(
     maxEmittedBytes?: number;
     /** Block-count budget for connecta.emit. Default 32. */
     maxEmittedBlocks?: number;
-    /** The advertised surface, which decides this tool's routing copy. */
-    surface?: ConnectaSurface;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -1065,7 +1036,7 @@ export function registerExecuteTool(
   server.registerTool(
     "execute_code",
     {
-      description: executeDescription(ctx.surface ?? "classic", emitBudgets),
+      description: executeDescription(emitBudgets),
       inputSchema: z.object({
         code: z
           .string()

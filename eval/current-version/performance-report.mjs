@@ -156,9 +156,9 @@ ${findings.map((finding) => `- ${finding}`).join("\n")}
 
 ## Connecta logic
 
-All figures are client-observed over stateless Streamable HTTP on loopback. Search and call columns are p50 / p95 after warm-up.
+All figures are client-observed over stateless Streamable HTTP on loopback. Search and call columns are p50 / p95 after warm-up. Batching has no top-level tool, so the batch column is a warm \`execute_code\` program calling \`connecta.batch\` with ten independent calls; the sandbox round trip is inside that number.
 
-| Catalog shape | Tools | Startup ms | Cold search ms | Warm search ms | Direct call ms | 10-call batch ms | RSS after GC MB | Live heap MB |
+| Catalog shape | Tools | Startup ms | Cold search ms | Warm search ms | Direct call ms | 10-call batch program ms | RSS after GC MB | Live heap MB |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${logicRows}
 
@@ -182,7 +182,7 @@ ${loadRows}
 
 ## Agent experience
 
-Each run starts a fresh Connecta server and a fresh non-interactive Codex session. The user prompt states the task, not the Connecta routing procedure. The current schema-v2 scorer accepts any route on the advertised seven-tool surface that produces the expected execution and answer safely, without foreign tools, inside task-specific round-trip and result-token envelopes. Exact routes and duplicate, failed, foreign, unavailable-surface, and unexpected calls remain visible as diagnostics. Classic-only top-level tools are a separate comparison surface, never an expected route here. Legacy schema-v1 artifacts are labeled as such because they did not record execution safety or advertised-surface validity.
+Each run starts a fresh Connecta server and a fresh non-interactive Codex session. The user prompt states the task, not the Connecta routing procedure. The current schema-v2 scorer accepts any route on the advertised seven-tool surface that produces the expected execution and answer safely, without foreign tools, inside task-specific round-trip and result-token envelopes. Exact routes and duplicate, failed, foreign, unavailable-surface, removed-tool, and unexpected calls remain visible as diagnostics. Legacy schema-v1 artifacts are labeled as such because they did not record execution safety or advertised-surface validity.
 
 | Task | Runs | Correct | Safe | Surface | Cost | Observed outer routes | RT p50 (range) | MCP tokens p50 / budget | Wall p50 (range) |
 | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: |
@@ -194,7 +194,7 @@ Codex reported ${integer(agent.summary.totalInputTokens)} total input tokens and
 
 1. **Use the harness to evaluate discovery changes without trading away recall.** The unchanged baseline has a ${pct(audit.discovery.metrics.falsePositiveRate)} held-out false-positive rate, and the natural reduction query exceeded its MCP-result budget. Select candidates on independently authored corpora and reserve the release holdout for final regression checks.
 2. **Keep the routing contract in server instructions and measure it across repeated fresh sessions.** This sample stayed within its cost envelopes in ${agent.summary.costEfficient}/${agent.summary.runs} runs without prescribing one exact tool sequence. The on-demand skill should remain a fallback, not required ceremony.
-3. **Treat code mode as a latency/context trade.** The scripted audit reduced 120 records to a tiny answer in one MCP execution, but code mode pays a roughly ${ms(logic.executor.coldNoopMs)} ms cold start and had ${ms(logic.executor.warmHostCall.p95Ms)} ms p95 in this small sample. Keep it optional and compare it against equivalent direct-call response tokens on real workloads.
+3. **Treat program routing as a latency/context trade.** The scripted audit reduced 120 records to a tiny answer in one MCP execution, but it pays a roughly ${ms(logic.executor.coldNoopMs)} ms cold start and had ${ms(logic.executor.warmHostCall.p95Ms)} ms p95 in this small sample. Compare it against equivalent direct-call response tokens on real workloads.
 4. **Benchmark more hosts before changing the public tool surface.** The Codex lane showed unrelated filesystem exploration in ${locallyExploratory.length}/${agent.summary.runs} runs and an approval stop at \`authorize_connector\`. Add an interactive host and at least one non-coding agent to distinguish Connecta affordances from host policy and coding-agent bias.
 5. **Set performance budgets in CI, not machine-specific absolute gates.** Track percentage regression from a pinned runner for 10,000-tool cold/warm search, 16-in-flight p95, definition tokens, discovery quality, and fresh-agent route success.
 

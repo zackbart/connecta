@@ -20,13 +20,13 @@ program cannot "return less" of a screenshot — so any rich block a downstream
 tool produces dies at the exit guard, converted to a truncation envelope whose
 preview is the head of a base64 string, which is of use to no one.
 
-The asymmetry is already visible in the classic surface. `call_tool` forwards
+The asymmetry is already visible in the direct-call surface. `call_tool` forwards
 non-text downstream blocks to the client untouched when they fit the result cap
 (the fix for issue #43 made the guard measure every block, then pass them
 through in original order). And on the intake side, a host call **inside** a
 program is not size-capped at all: `unwrapMcpResult` hands mixed content
 through as a raw object, base64 and all. So today a downstream image survives
-the trip *into* the sandbox and survives the classic surface entirely — the one
+the trip *into* the sandbox and survives the explicit tool boundary — the one
 place it cannot survive is the exit of the surface connecta calls primary.
 
 ## The shape: `connecta.emit(block)`
@@ -103,8 +103,8 @@ uncapped) and emits it. The host attaches no attribution.
 **M7.** `emit` does not spend the host-call budget (`L4`). Its bounds are
 `M5`'s and only `M5`'s.
 
-**M8.** `ExecuteResult` is unchanged. No executor — QuickJS, Dynamic Worker,
-or third-party — needs modification, and the parity suite runs the same
+**M8.** `ExecuteResult` is unchanged. Neither QuickJS, Dynamic Worker, nor a
+third-party executor needs modification, and the parity suite runs the same
 emitting program through both vitest projects and asserts identical delivered
 content.
 

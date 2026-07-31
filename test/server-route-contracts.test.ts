@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
-import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import { silentLogger } from "./helpers.js";
+import { createTestConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
@@ -93,8 +92,8 @@ function mcpRequest(
         id: ++requestId,
         method: "tools/call",
         params: {
-          name: "list_connectors",
-          arguments: { probe: false },
+          name: "search_tools",
+          arguments: { query: "read" },
         },
       }),
     }),
@@ -118,7 +117,7 @@ describe("server route contracts", () => {
         return new Response("connector-owned");
       },
     });
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -183,7 +182,7 @@ describe("server route contracts", () => {
   });
 
   it("keeps operator shells open, framed off, and data-free", async () => {
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -219,7 +218,7 @@ describe("server route contracts", () => {
   });
 
   it("pins authentication and same-origin requirements per private route", async () => {
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [surfaceConnector()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -337,7 +336,7 @@ describe("server route contracts", () => {
 
   it("refuses ?toolkit= on /mcp with an explicit 404 after the retirement", async () => {
     const warn = vi.fn();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [testConnector("alpha")],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -374,16 +373,24 @@ describe("server route contracts", () => {
     });
     expect(unauthenticated.status).toBe(401);
 
-    // The same credential without the param reaches the endpoint normally.
+    // The same credential without the param reaches the endpoint normally —
+    // and the call actually succeeds, which is the only way this contrasts
+    // with the 404 above rather than with some other refusal.
     const clean = await mcpRequest(connecta, { token: TOKEN });
     expect(clean.status).toBe(200);
+    const cleanBody = (await clean.json()) as {
+      error?: unknown;
+      result?: { isError?: boolean };
+    };
+    expect(cleanBody.error, JSON.stringify(cleanBody)).toBeUndefined();
+    expect(cleanBody.result?.isError).toBeFalsy();
   });
 
   it("verifies OAuth callback state before exchange and keeps all unverifiable callbacks opaque", async () => {
     const acceptedOrder: string[] = [];
     const rejectedFinish = vi.fn();
     const throwingFinish = vi.fn();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [
         testConnector("plain"),
         {

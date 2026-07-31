@@ -166,31 +166,6 @@ describe("result-cap startup warnings", () => {
     }
   });
 
-  it("warns and falls back independently for an unusable batch cap", () => {
-    for (const maxBatchResultBytes of BAD_CAPS) {
-      const { logger, warnings } = spyLogger();
-      const registry = new Registry([calcConnector], {
-        storage: memoryStorage(),
-        logger,
-        maxResultBytes: 400,
-        maxBatchResultBytes,
-      });
-      expect(
-        registry.maxBatchResultBytes,
-        `cap ${String(maxBatchResultBytes)}`,
-      ).toBe(100_000);
-      expect(
-        warnings.some(
-          (warning) =>
-            warning.includes(
-              `maxBatchResultBytes ${maxBatchResultBytes}`,
-            ) && warning.includes("100000"),
-        ),
-        `cap ${String(maxBatchResultBytes)}`,
-      ).toBe(true);
-    }
-  });
-
   it("warns and names the connector for an unusable per-connector override", () => {
     for (const maxResultBytes of BAD_CAPS) {
       const { logger, warnings } = spyLogger();
@@ -220,11 +195,9 @@ describe("result-cap startup warnings", () => {
           storage: memoryStorage(),
           logger,
           maxResultBytes: cap,
-          maxBatchResultBytes: cap,
         },
       );
       expect(registry.maxResultBytes).toBe(cap);
-      expect(registry.maxBatchResultBytes).toBe(cap);
       expect(warnings, `cap ${cap}`).toEqual([]);
     }
   });
@@ -236,7 +209,6 @@ describe("result-cap startup warnings", () => {
       logger,
     });
     expect(registry.maxResultBytes).toBe(50_000);
-    expect(registry.maxBatchResultBytes).toBe(100_000);
     expect(warnings).toEqual([]);
   });
 });

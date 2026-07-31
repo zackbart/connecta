@@ -4,6 +4,13 @@ All notable changes to this package are documented here.
 
 ## 0.10.6 — 2026-07-31
 
+**This is a breaking deployment change.** Connecta now has one seven-tool
+surface and requires an executor at construction. A deployment that never
+configured one stops booting and must add `quickJsExecutor()` on Node or a
+`DynamicWorkerExecutor` on Workers; `surface: "classic"` is no longer accepted
+and must be removed. Deployments already using the default executor-backed
+surface keep the same model-facing tools. (#273)
+
 Programs gained a rich-output channel. `execute_code` code can now call
 `connecta.emit(block)` to deliver text, image, and audio MCP content blocks
 alongside its JSON return value — the piece code mode was missing for output
@@ -45,8 +52,8 @@ which had been probing at the 30-second default no matter what was configured.
   canonical address for `call_destructive_tool` — with the original arguments
   when they fit a 512-byte echo budget, and an instruction to re-send them when
   they do not — and ambiguous code-mode aliases list every canonical
-  `connecta.call` candidate. The suggested discovery route follows the caller's
-  own surface: `search_tools` for a top-level call, `connecta.search` with the
+  `connecta.call` candidate. The suggested discovery route follows the route the
+  caller took: `search_tools` for a top-level call, `connecta.search` with the
   same arguments for a miss inside `execute_code`, which cannot call a tool.
   The address gets the same 512-byte budget as the argument echo but the
   opposite rule — clamped with a `…` marker rather than dropped, since the
@@ -62,11 +69,18 @@ which had been probing at the 30-second default no matter what was configured.
 
 ### Changed
 
-- **Paged results name the exact next call.** `call_tool` and `batch_call`
-  truncation notices include `get_result` arguments with the generated id and
-  byte offset zero. Program results and oversized discovery responses still
-  carry no `get_result` route: paging a program's return value is refused by
-  design, and a program can shrink anything.
+- **The executor is mandatory and the surface selector is gone.**
+  `ConnectaConfig.executor` is required, supplying the removed `surface` option
+  throws, and every MCP connection advertises exactly seven tools. The former
+  top-level inventory, schema-expansion, and batch registrations now exist only
+  through `connecta.search`, `connecta.describe`, and `connecta.batch` inside a
+  program.
+- **Paged results name the exact next call.** A `call_tool` truncation notice
+  includes `get_result` arguments with the generated id and byte offset zero.
+  Program results and
+  oversized discovery responses still carry no `get_result` route: paging a
+  program's return value is refused by design, and a program can shrink
+  anything.
 - **`nextAction` is a wider union than it was.** `search_tools` routes may now
   omit `arguments.connector` (an unknown *connector* cannot scope discovery to
   itself), the ambiguous-alias route is keyed `function: "connecta.call"` with
@@ -93,20 +107,17 @@ which had been probing at the 30-second default no matter what was configured.
 
 ### Fixed
 
-- **Discovery errors stay on their advertised surface.** The over-100-address
-  rejection and the catalog-probe timeout label now name `describe_tools` or
-  `connecta.describe` according to the route the caller actually took, so a
-  program is never told to split its list across a tool it cannot call. The
-  route is passed in explicitly rather than inferred from the deployment's
-  surface: a classic deployment with an executor serves `describe_tools` at top
-  level while every in-program describe still arrives through
-  `connecta.describe`.
-- **The OAuth handoff points at a check the caller can run.** `authorize_connector`
-  is registered on both surfaces, but its success instructions told every agent
-  to "re-run `list_connectors`" — a tool the code-first surface folded away. A
-  code-first deployment is now told to retry the original call and confirm the
-  catalog loads with `connecta.search` inside `execute_code`; the classic
-  wording is unchanged.
+- **Discovery errors name a route the caller can actually take.** The
+  over-100-address rejection and the catalog-probe timeout label now say
+  `connecta.describe`, so a program is never told to split its list across a
+  tool it cannot call. Search-path recovery still carries the route the caller
+  took — `search_tools` from a top-level call, `connecta.search` from inside a
+  program — because that one really does have two answers.
+- **The OAuth handoff points at a check the caller can run.**
+  `authorize_connector`'s success instructions told every agent to "re-run
+  `list_connectors`", a tool no deployment serves any more. It now says to
+  retry the original call and confirm the catalog loads with `connecta.search`
+  inside `execute_code`.
 - **`discovery.probeTimeoutMs` reaches code mode.** The sandbox's catalog
   service received the deployment's discovery concurrency but not its probe
   deadline, so an in-program `connecta.describe` against a hung connector waited

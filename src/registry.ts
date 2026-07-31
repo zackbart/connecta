@@ -34,8 +34,6 @@ const DEFAULT_STALE_SECONDS = 3600;
 const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
 const DEFAULT_MAX_RESULT_BYTES = 50_000;
 const encoder = new TextEncoder();
-/** Independent final-envelope boundary for `batch_call`. */
-const DEFAULT_MAX_BATCH_RESULT_BYTES = 100_000;
 
 /**
  * Split `"<connectorId>.<toolName>"` on the first dot. Connector ids contain
@@ -189,11 +187,6 @@ export interface RegistryOptions {
    * to the default 50_000.
    */
   maxResultBytes?: number;
-  /**
-   * Cap on the complete serialized batch_call envelope. Must be a whole number
-   * of bytes >= 1; anything else warns and falls back to 100_000.
-   */
-  maxBatchResultBytes?: number;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -225,8 +218,6 @@ export type ConnectorOperationOptions = Pick<
 export interface RegistryView {
   /** Deployment-wide result-size cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  /** Independent cap for the complete serialized batch_call envelope. */
-  readonly maxBatchResultBytes: number;
   listConnectors(): Connector[];
   getConnector(id: string): Connector | undefined;
   resolveAddress(
@@ -302,8 +293,6 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
-  /** Final batch envelope cap threaded to the meta-tools. */
-  readonly maxBatchResultBytes: number;
 
   constructor(
     connectors: Connector[],
@@ -317,10 +306,6 @@ export class Registry implements RegistryView {
     this.maxResultBytes = resolveMaxResultBytes(
       opts.maxResultBytes,
       DEFAULT_MAX_RESULT_BYTES,
-    );
-    this.maxBatchResultBytes = resolveMaxResultBytes(
-      opts.maxBatchResultBytes,
-      DEFAULT_MAX_BATCH_RESULT_BYTES,
     );
     for (const c of connectors) {
       if (!ID_RE.test(c.id)) {
@@ -340,11 +325,7 @@ export class Registry implements RegistryView {
       }
     }
     this.checkConventions(opts.logger);
-    this.checkResultCaps(
-      opts.logger,
-      opts.maxResultBytes,
-      opts.maxBatchResultBytes,
-    );
+    this.checkResultCaps(opts.logger, opts.maxResultBytes);
   }
 
   /**
@@ -358,7 +339,6 @@ export class Registry implements RegistryView {
   private checkResultCaps(
     logger: Logger,
     configured: number | undefined,
-    configuredBatch: number | undefined,
   ): void {
     if (configured !== undefined && !isValidMaxResultBytes(configured)) {
       logger.warn(
@@ -366,17 +346,6 @@ export class Registry implements RegistryView {
           `bytes >= ${MIN_MAX_RESULT_BYTES}: it would serve an empty, ` +
           "oversized, or unguarded result instead of truncating. Using the " +
           `default ${DEFAULT_MAX_RESULT_BYTES} instead.`,
-      );
-    }
-    if (
-      configuredBatch !== undefined &&
-      !isValidMaxResultBytes(configuredBatch)
-    ) {
-      logger.warn(
-        `[connecta] calls.maxBatchResultBytes ${configuredBatch} is not a whole ` +
-          `number of bytes >= ${MIN_MAX_RESULT_BYTES}: it would leave the final ` +
-          "batch envelope unbounded or serve an unusable page. Using the " +
-          `default ${DEFAULT_MAX_BATCH_RESULT_BYTES} instead.`,
       );
     }
     for (const c of this.connectors.values()) {
@@ -1059,7 +1028,7 @@ export class Registry implements RegistryView {
     }
   }
 
-  /** Best-effort connector status for list_connectors. */
+  /** Best-effort connector status for the operator UI. */
   async statusFor(
     id: string,
     baseUrl: string,

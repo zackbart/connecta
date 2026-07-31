@@ -14,21 +14,8 @@ import {
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
 } from "./catalog-service.js";
-import {
-  mapSettledWithConcurrency,
-  resolveDiscoveryConcurrency,
-} from "./concurrency.js";
-import {
-  closeConnectorScope,
-  type DeferredWork,
-} from "./connector-scope.js";
-import {
-  boundedEchoText,
-  classifyCallError,
-  echoedCallArgs,
-  messageLooksRetryable,
-  type CallErrorDetails,
-} from "./errors.js";
+import { resolveDiscoveryConcurrency } from "./concurrency.js";
+import type { CallErrorDetails } from "./errors.js";
 import {
   InvocationService,
   MAX_RETRY_BACKOFF_MS,
@@ -49,13 +36,8 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
-  withAbortableTimeout,
 } from "./timeout.js";
-import type {
-  ConnectaSurface,
-  ConnectorStatus,
-  KVStorage,
-} from "./types.js";
+import type { KVStorage } from "./types.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -97,10 +79,6 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function errorDetails(code: string, message: string): CallErrorDetails {
-  return { code, message, retryable: messageLooksRetryable(message) };
-}
-
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {
   const result = jsonResult({
     error: {
@@ -133,7 +111,6 @@ async function discoveryResult(
     throw err;
   }
 }
-
 
 /** True if `b` is a UTF-8 continuation byte (0b10xxxxxx). */
 function isContinuationByte(b: number | undefined): boolean {
@@ -813,98 +790,6 @@ interface GuardedResult<T> {
 }
 
 /**
- * Keep an oversized batch's inline outcome summary at fixed string overhead.
- * The same clamp the error envelopes use — one budget, one marker, defined
- * once in `errors.ts` so the two cannot drift apart.
- */
-function batchSummaryString(value: string): string {
-  return boundedEchoText(value);
-}
-
-/** Candidate addresses kept in an oversized batch's summary of one ambiguity. */
-const MAX_SUMMARY_ADDRESSES = 10;
-
-/**
- * A recovery route rebuilt field by field so the summary above keeps its
- * promise. Spreading `nextAction` through raw would reopen the hole this
- * function closes: every variant carries free-form strings, and one of them
- * carries the caller's arguments, which is exactly the payload an oversized
- * batch was already too large to hold.
- */
-function batchSummaryNextAction(
-  nextAction: NonNullable<CallErrorDetails["nextAction"]>,
-): NonNullable<CallErrorDetails["nextAction"]> {
-  if ("function" in nextAction) {
-    // A batch runs on the top-level catalog, whose search route is the tool, so
-    // the function-keyed discovery variant does not arrive here today. Rebuild
-    // it anyway: a guard that silently dropped an unrecognized route would turn
-    // a recovery record into nothing at exactly the moment one is needed.
-    if (nextAction.function === "connecta.search") {
-      return {
-        function: "connecta.search",
-        arguments: batchSummarySearchArgs(nextAction.arguments),
-        purpose: batchSummaryString(nextAction.purpose),
-      };
-    }
-    // Say so when the candidate list is clipped. The unclipped purpose reads
-    // "choose the intended canonical address", which is a lie about a list
-    // that no longer contains every candidate — and the caller has no other
-    // way to learn that the address it wants was the eleventh.
-    const candidates = nextAction.addresses.slice(0, MAX_SUMMARY_ADDRESSES);
-    return {
-      function: nextAction.function,
-      addresses: candidates.map(batchSummaryString),
-      purpose: batchSummaryString(
-        candidates.length < nextAction.addresses.length
-          ? `${nextAction.purpose} Showing the first ${candidates.length} of ` +
-            `${nextAction.addresses.length} candidates; re-run the call on its ` +
-            "own to see them all."
-          : nextAction.purpose,
-      ),
-    };
-  }
-  if (nextAction.tool === "authorize_connector") {
-    return {
-      tool: "authorize_connector",
-      arguments: {
-        connector: batchSummaryString(nextAction.arguments.connector),
-      },
-      operatorHandoff: batchSummaryString(nextAction.operatorHandoff),
-    };
-  }
-  if (nextAction.tool === "call_destructive_tool") {
-    return {
-      tool: "call_destructive_tool",
-      arguments: {
-        address: batchSummaryString(nextAction.arguments.address),
-        ...echoedCallArgs(nextAction.arguments.args),
-      },
-      purpose: batchSummaryString(nextAction.purpose),
-    };
-  }
-  return {
-    tool: "search_tools",
-    arguments: batchSummarySearchArgs(nextAction.arguments),
-    purpose: batchSummaryString(nextAction.purpose),
-  };
-}
-
-/** The scoping arguments both discovery routes carry, bounded the same way. */
-function batchSummarySearchArgs(args: {
-  query: string;
-  connector?: string;
-  includeSchemas: "compact";
-}): { query: string; connector?: string; includeSchemas: "compact" } {
-  return {
-    query: batchSummaryString(args.query),
-    ...(args.connector !== undefined
-      ? { connector: batchSummaryString(args.connector) }
-      : {}),
-    includeSchemas: "compact",
-  };
-}
-
-/**
  * Return `text` as a single content block; if it exceeds `cap` bytes, stash the
  * full text and return the first `cap` bytes followed by a JSON truncation
  * notice pointing at get_result. `bytes` is `text` already encoded, so a caller
@@ -1027,17 +912,6 @@ export interface SearchArgs {
   fullDescriptions?: boolean;
   includeSchemas?: "compact" | "json";
 }
-export type DescribeArgs = (
-  | { address: string; addresses?: never }
-  | { address?: never; addresses: string[] }
-) & {
-  format?: "compact" | "json";
-  fullDescriptions?: boolean;
-};
-export interface ListArgs {
-  /** When false, return cached/observed health without downstream I/O. */
-  probe?: boolean;
-}
 type ResultMode = "mcp" | "value";
 export interface CallArgs {
   address: string;
@@ -1064,14 +938,6 @@ export interface GetResultArgs {
   /** Page size in bytes; a whole number >= 1. Defaults to the deployment cap. */
   maxBytes?: number;
 }
-export type BatchCall = CallArgs;
-export interface BatchArgs {
-  calls: BatchCall[];
-  resultMode?: ResultMode;
-  timeoutMs?: number;
-  maxRetries?: number;
-  diagnostics?: boolean;
-}
 export interface AuthorizeArgs {
   connector: string;
   force?: boolean;
@@ -1082,31 +948,26 @@ export interface SkillArgs {
 
 /**
  * The sentence that closes the OAuth handoff, telling the operator's agent how
- * to confirm the flow landed. `authorize_connector` is registered on both
- * surfaces but `list_connectors` is not, so the classic status check cannot be
- * the only one offered: a code-first agent handed that advice gets an
- * unknown-tool error at exactly the moment it is trying to recover. It gets the
- * check its own surface serves instead — the same folded-name defect as the
- * describe path (#261), one tool result further along.
+ * to confirm the flow landed through the one surface it can call.
  */
-function oauthFollowUp(surface: ConnectaSurface, connectorId: string): string {
-  return surface === "code-first"
-    ? `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`
-    : "Re-run list_connectors afterwards to confirm status is ok.";
+function oauthFollowUp(connectorId: string): string {
+  return `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`;
 }
 
 /**
- * Every base meta-tool handler over a registry — all nine, whichever surface is
- * advertised, since folding a tool away only skips its registration and never
- * its handler. Exported for direct testing; registerMetaTools() wires the ones
- * this surface advertises onto an McpServer. `opts.defaultToolTimeoutMs`
- * supplies a deadline for calls that don't carry one. (execute_code is
- * registered separately by registerExecuteTool.)
+ * Every meta-tool handler over a registry, one per registered tool. Exported for
+ * direct testing; registerMetaTools() wires the six explicit tools onto an
+ * McpServer. `opts.defaultToolTimeoutMs` supplies a deadline for calls that
+ * don't carry one. (execute_code is registered separately by
+ * registerExecuteTool, and builds its own services over the same registry.)
+ *
+ * What execute_code shares with these handlers is the services layer beneath
+ * them — `CatalogService` and `InvocationService` — not the handlers, which no
+ * in-program path calls.
  *
  * Deployment-wide result-size caps are read off the registry view rather than
- * passed in: `ConnectaConfig.calls.maxResultBytes`, its per-connector override,
- * and the independent `calls.maxBatchResultBytes` final-envelope boundary each
- * have one runtime source of truth.
+ * passed in: `ConnectaConfig.calls.maxResultBytes` and its per-connector
+ * override each have one runtime source of truth.
  */
 export function createMetaTools(
   registry: RegistryView,
@@ -1114,27 +975,17 @@ export function createMetaTools(
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
     defaultToolTimeoutMs?: number;
-    /** Per-connector deadline for the list/search/describe probe fan-out. Default 30_000. */
+    /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
     probeTimeoutMs?: number;
     /** Maximum simultaneous connector discovery operations. Default 4. */
     discoveryConcurrency?: number;
     activity?: ActivityRequestContext;
-    /** Inbound request cancellation shared by direct and batch child calls. */
+    /** Inbound request cancellation shared by every call this request makes. */
     requestSignal?: AbortSignal;
-    /** Runtime continuation for the bounded tail of probe-owned teardown. */
-    defer?: DeferredWork;
-    /**
-     * The advertised surface, which the `skills` guidance must match: a
-     * code-first deployment never gets guidance naming a tool it does not
-     * advertise. Default `classic`.
-     */
-    surface?: ConnectaSurface;
   } = {},
 ) {
-  const surface: ConnectaSurface = opts.surface ?? "classic";
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
-  const batchCap = registry.maxBatchResultBytes;
   const defaultToolTimeoutMs = normalizeTimeoutMs(opts.defaultToolTimeoutMs);
   const probeTimeoutMs =
     normalizeTimeoutMs(opts.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
@@ -1149,28 +1000,10 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
-    // These handlers are the top-level tools, so the route is the advertised
-    // one; in-program describes route through connecta.describe instead and
-    // are built with their own CatalogService in execute.ts.
-    describeRoute:
-      surface === "code-first" ? "connecta.describe" : "describe_tools",
-    // searchRoute keeps its default: unlike describe_tools, search_tools is
-    // served by both advertised surfaces, so a top-level handler has nothing to
-    // derive. Only an in-program caller needs to be sent to connecta.search.
+    // searchRoute keeps its top-level default. In-program callers use a
+    // separate CatalogService configured for connecta.search.
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
-  const withProbeDeadline = <T>(
-    label: string,
-    operation: (options: {
-      signal: AbortSignal;
-      timeoutMs: number;
-    }) => Promise<T>,
-  ) =>
-    withAbortableTimeout(
-      (signal) => operation({ signal, timeoutMs: probeTimeoutMs }),
-      probeTimeoutMs,
-      label,
-    );
 
   interface RunCallOutcome {
     toolResult: ToolResult;
@@ -1194,7 +1027,7 @@ export function createMetaTools(
 
   /** MCP adapter: shared invocation semantics plus MCP-only result shaping. */
   async function runCall(
-    call: BatchCall,
+    call: CallArgs,
     source: ActivityCallSource,
     options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
@@ -1220,7 +1053,7 @@ export function createMetaTools(
         processResult: async (result, resolved) => {
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
-          // folded into `globalCap`). Resolved per call so one batch_call can
+          // folded into `globalCap`). Resolved per call so one request can
           // mix a tight-capped connector with siblings on the global cap. An
           // override the registry already warned about at startup is dropped
           // here, so the connector simply inherits `globalCap`.
@@ -1350,141 +1183,16 @@ export function createMetaTools(
               type: "text",
               text:
                 'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                listSkills(connectors, surface)
+                listSkills(connectors)
                   .map((skill) => `- \`${skill.name}\` — ${skill.description}`)
                   .join("\n"),
             },
           ],
         };
       }
-      const skill = resolveSkill(args.name, connectors, surface);
+      const skill = resolveSkill(args.name, connectors);
       if (!skill.found) return errorResult(skill.message);
       return { content: [{ type: "text", text: skill.content }] };
-    },
-
-    async listConnectors(args: ListArgs = {}): Promise<ToolResult> {
-      const probe = args.probe ?? true;
-      // Live inventory owns a short-lived scope separate from the request's
-      // call scope. Closing it cannot defeat call_tool/batch/execute_code reuse.
-      const connectors = registry.listConnectors();
-      const scope = probe ? {} : requestScope;
-      const inspect = async (c: (typeof connectors)[number]) => {
-        const statusStarted = Date.now();
-        const observed = registry.healthFor(c.id);
-        const drift = await registry.credentialDriftFor(c.id);
-        let status:
-          | ConnectorStatus
-          | { state: "ok" | "error" | "unknown"; message?: string };
-        if (drift) {
-          status = { state: "auth_required", message: drift };
-        } else if (probe) {
-          try {
-            status = await withProbeDeadline(
-              `list_connectors probe of "${c.id}"`,
-              (options) =>
-                registry.statusFor(c.id, baseUrl, scope, options),
-            );
-          } catch (err) {
-            // A probe that outran probeTimeoutMs (or otherwise threw)
-            // degrades this connector to an error status rather than
-            // hanging the whole list_connectors call.
-            status = { state: "error", message: msg(err) };
-          }
-        } else {
-          const derived =
-            observed?.consecutiveFailures && observed.consecutiveFailures > 0
-              ? ("error" as const)
-              : registry.hasObservedSuccess(c.id) || c.kind === "api"
-                ? ("ok" as const)
-                : ("unknown" as const);
-          status = {
-            state: derived,
-            ...(observed?.lastError ? { message: observed.lastError } : {}),
-          };
-        }
-        // Stamped after any live probe so the response reports when its
-        // observation completed, not when a potentially slow request began.
-        const checkedAt = new Date().toISOString();
-        let tools = registry.peekTools(c.id);
-        // An auth_required status may have just started OAuth. A second
-        // listTools probe would overwrite its state/verifier while returning
-        // the first (now stale) authorization URL.
-        if (probe && status.state === "ok") {
-          try {
-            tools = await withProbeDeadline(
-              `list_connectors catalog refresh of "${c.id}"`,
-              (options) =>
-                registry.refreshTools(c.id, baseUrl, scope, options),
-            );
-            registry.recordSuccess(c.id, Date.now() - statusStarted);
-          } catch (err) {
-            const details = classifyCallError(err);
-            if (details.code === "auth_required") {
-              let authStatus: ConnectorStatus | undefined;
-              try {
-                authStatus = await withProbeDeadline(
-                  `list_connectors authorization status of "${c.id}"`,
-                  (options) =>
-                    registry.statusFor(c.id, baseUrl, scope, options),
-                );
-              } catch {
-                // The typed auth verdict is still authoritative; this second
-                // read exists only to recover the connector's pending URL.
-              }
-              status =
-                authStatus?.state === "auth_required"
-                  ? authStatus
-                  : {
-                      state: "auth_required" as const,
-                      message: details.message,
-                    };
-            } else {
-              status = { state: "error" as const, message: msg(err) };
-            }
-            registry.recordFailure(c.id, Date.now() - statusStarted, err);
-          }
-        }
-        const latencyMs = Date.now() - statusStarted;
-        const latestObserved = registry.healthFor(c.id);
-        return {
-          id: c.id,
-          ...(c.title ? { title: c.title } : {}),
-          description: c.description,
-          toolCount: tools?.length ?? 0,
-          status: status.state,
-          checkedAt,
-          latencyMs,
-          probe,
-          ...(latestObserved ?? observed),
-          ...("authorizationUrl" in status &&
-            status.authorizationUrl && {
-              authorizationUrl: status.authorizationUrl,
-            }),
-          ...(status.message && { message: status.message }),
-        };
-      };
-      const settled = await mapSettledWithConcurrency(
-        connectors,
-        discoveryConcurrency,
-        inspect,
-      );
-      if (probe) {
-        await mapSettledWithConcurrency(
-          connectors,
-          discoveryConcurrency,
-          (connector) =>
-            closeConnectorScope(
-              connector,
-              registry.contextFor(connector.id, baseUrl, scope),
-              opts.defer,
-            ),
-        );
-      }
-      const out = settled.map((result) => {
-        if (result.status === "rejected") throw result.reason;
-        return result.value;
-      });
-      return jsonResult({ connectors: out });
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
@@ -1497,13 +1205,6 @@ export function createMetaTools(
             }),
           ),
         "Request a smaller limit, omit fullDescriptions, or use compact schemas.",
-      );
-    },
-
-    async describeTools(args: DescribeArgs): Promise<ToolResult> {
-      return discoveryResult(
-        async () => ({ tools: await catalog.describe(args) }),
-        'Split the address list or use format: "compact".',
       );
     },
 
@@ -1575,143 +1276,6 @@ export function createMetaTools(
         ...(nextOffset !== undefined ? { nextOffset } : {}),
         totalBytes: total,
         text: slice,
-      });
-    },
-
-    async batchCall(args: BatchArgs): Promise<ToolResult> {
-      const batchStarted = Date.now();
-      const settled = await Promise.allSettled(
-        args.calls.map((c) =>
-          runCall(
-            {
-              ...c,
-              ...((c.resultMode ?? args.resultMode) !== undefined
-                ? { resultMode: c.resultMode ?? args.resultMode }
-                : {}),
-              ...((c.timeoutMs ?? args.timeoutMs) !== undefined
-                ? { timeoutMs: c.timeoutMs ?? args.timeoutMs }
-                : {}),
-              ...((c.maxRetries ?? args.maxRetries) !== undefined
-                ? { maxRetries: c.maxRetries ?? args.maxRetries }
-                : {}),
-              ...((c.diagnostics ?? args.diagnostics) !== undefined
-                ? { diagnostics: c.diagnostics ?? args.diagnostics }
-                : {}),
-            },
-            "batch_call",
-          ),
-        ),
-      );
-      const results = settled.map((s, i) => {
-        const call = args.calls[i];
-        if (!call) {
-          throw new Error("Batch result has no corresponding call");
-        }
-        const { address } = call;
-        if (s.status === "rejected") {
-          return {
-            address,
-            ok: false,
-            error: msg(s.reason),
-            errorDetails: classifyCallError(s.reason, "batch_call_failed"),
-          };
-        }
-        const r = s.value;
-        if (r.error) {
-          return {
-            address,
-            ok: false,
-            error: r.error.message,
-            errorDetails: r.error,
-            durationMs: r.durationMs,
-            attempts: r.attempts,
-            ...((call.diagnostics ?? args.diagnostics)
-              ? { timing: r.timing }
-              : {}),
-          };
-        }
-        if ((call.resultMode ?? args.resultMode) === "value") {
-          return {
-            address,
-            ok: true,
-            data: r.value,
-            durationMs: r.durationMs,
-            attempts: r.attempts,
-            ...((call.diagnostics ?? args.diagnostics)
-              ? { timing: r.timing }
-              : {}),
-          };
-        }
-        return {
-          address,
-          ok: true,
-          result: r.toolResult.content,
-          durationMs: r.durationMs,
-          attempts: r.attempts,
-          ...((call.diagnostics ?? args.diagnostics)
-            ? { timing: r.timing }
-            : {}),
-        };
-      });
-      const envelope = {
-        results,
-        durationMs: Date.now() - batchStarted,
-      };
-      const text = serializeResultText(envelope);
-      const bytes = enc.encode(text);
-      if (bytes.length <= batchCap) return jsonResult(envelope);
-
-      const notice = await stashResult(
-        text,
-        registry.resultsStorage(),
-        bytes.length,
-      );
-      return jsonResult({
-        results: results.map((result) => {
-          const common = {
-            address: batchSummaryString(result.address),
-            ok: !("error" in result),
-            ...("durationMs" in result
-              ? { durationMs: result.durationMs }
-              : {}),
-            ...("attempts" in result ? { attempts: result.attempts } : {}),
-            ...("timing" in result ? { timing: result.timing } : {}),
-          };
-          if (!("error" in result)) return common;
-          const error = result.error ?? "Batch call failed";
-          const details =
-            result.errorDetails ??
-            errorDetails("batch_call_failed", error);
-          return {
-            ...common,
-            error: batchSummaryString(error),
-            errorDetails: {
-              code: batchSummaryString(details.code),
-              message: batchSummaryString(details.message),
-              retryable: details.retryable,
-              ...(details.retryAfterMs !== undefined
-                ? { retryAfterMs: details.retryAfterMs }
-                : {}),
-              ...(details.connector !== undefined
-                ? { connector: batchSummaryString(details.connector) }
-                : {}),
-              ...(details.operation !== undefined
-                ? { operation: batchSummaryString(details.operation) }
-                : {}),
-              ...(details.recovery !== undefined
-                ? { recovery: details.recovery }
-                : {}),
-              ...(details.nextAction !== undefined
-                ? { nextAction: batchSummaryNextAction(details.nextAction) }
-                : {}),
-              ...(details.retry !== undefined
-                ? { retry: batchSummaryString(details.retry) }
-                : {}),
-            },
-          };
-        }),
-        durationMs: envelope.durationMs,
-        ...notice,
       });
     },
 
@@ -1792,7 +1356,7 @@ export function createMetaTools(
                 authorizationUrl: status.authorizationUrl,
                 instructions:
                   "Have the operator open authorizationUrl in a browser and complete the consent flow. The provider then redirects back to this server's /oauth/callback/<connector> route, which finishes the flow automatically. " +
-                  oauthFollowUp(surface, connector.id),
+                  oauthFollowUp(connector.id),
               }
             : {}),
           ...(status.message ? { message: status.message } : {}),
@@ -1808,39 +1372,19 @@ export function createMetaTools(
   };
 }
 
-const LIST_DESC =
-  "List connectors with status, cached tool count, and recent real-call health. Use probe=false for a fast inventory; use probe=true (default) only to diagnose live health or authorization.";
 const SEARCH_DESC = `Unknown address: use 2–4 distinctive action/object terms, not the full request; omit limit initially (default ${DEFAULT_SEARCH_LIMIT}) and page only if needed, up to ${MAX_SEARCH_LIMIT}. Partial and no-match searches report term coverage and next-step guidance. safety="readOnly" returns only calls available to call_tool and generated code; "approvalRequired" returns everything else; omitted or "all" preserves the complete catalog. This filters results, not authority. includeSchemas="compact" adds the input and any declared output shape, each bounded; plain-object schemas also expose inputKeys, requiredInputKeys, and outputKeys, while inputSchemaTruncated/outputSchemaTruncated mark shapes that need exact retrieval; matches also carry declared annotations. Call directly when sufficient. Empty query browses all.`;
-const DESCRIBE_DESC = `Only when search_tools omitted schemas, a compact shape is ambiguous, or exact JSON constraints are needed. Inspects up to ${MAX_DESCRIBE_ADDRESSES} addresses with schemas and annotations; "compact" is default, while "json" preserves exact constraints.`;
 const CALL_DESC =
-  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. Include a short reason explaining the intended consequence for the human reviewer; it grants no authority and is never passed downstream. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
-const BATCH_DESC =
-  "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call. An oversized final envelope returns ordered outcome summaries plus a get_result page handle.";
+  "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 
-/**
- * Code-first replacements for the descriptions that route work between tools.
- * Every one of these mentions a tool the consolidated surface removed, so on a
- * code-first deployment the routing sentence has to point at the in-program
- * function that took the work over — a description naming `batch_call` on a
- * surface without one teaches a call that cannot succeed.
- *
- * The classic strings above are left byte-for-byte alone: classic is the
- * compatibility surface and the eval's control arm, and rewording it would
- * change what that control measures.
- */
-const CODE_FIRST_SEARCH_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
-const CODE_FIRST_CALL_DESC =
-  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
-const CODE_FIRST_GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
+const SEARCH_WITH_DESCRIBE_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1855,8 +1399,6 @@ const GUIDE_NOTES = {
     ' skills({}) also lists this deployment\'s per-connector usage guides as "connector:<connectorId>"; fetch the guide for a connector before working with it for the first time.',
   search:
     " A connector group carrying `guide` has a usage guide; fetch it with skills({ name: <guide> }).",
-  describe:
-    " An entry carrying `guide` belongs to a connector with a usage guide; fetch it with skills({ name: <guide> }).",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
@@ -1901,15 +1443,12 @@ const CALL_INPUT_SCHEMA = {
 };
 
 /**
- * Register the base meta-tools onto an McpServer instance: nine on the classic
- * surface, six on the code-first one, where `list_connectors`,
- * `describe_tools`, and `batch_call` have folded into the program surface
- * (`registerExecuteTool` adds the seventh, `execute_code`).
- *
- * Only the registrations differ. Every handler still exists on the object
- * `createMetaTools` returns, and a folded tool's behavior is reached through
- * `connecta.search` / `connecta.describe` / `connecta.batch` inside a program —
- * the same code paths, one layer down.
+ * Register the six explicit meta-tools onto an McpServer instance.
+ * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
+ * multi-call work is reached through `connecta.search` / `connecta.describe` /
+ * `connecta.batch` inside a program, which `execute_code` builds over the same
+ * `CatalogService` and `InvocationService` these handlers use — one shared
+ * services layer, two adapters above it.
  */
 export function registerMetaTools(
   server: McpServer,
@@ -1921,15 +1460,9 @@ export function registerMetaTools(
     discoveryConcurrency?: number;
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
-    defer?: DeferredWork;
-    /** The advertised surface. Default `classic`. */
-    surface?: ConnectaSurface;
   },
 ): void {
-  const surface: ConnectaSurface = ctx.surface ?? "classic";
-  const codeFirst = surface === "code-first";
   const mt = createMetaTools(registry, ctx.baseUrl, {
-    surface,
     ...(ctx.defaultToolTimeoutMs !== undefined
       ? { defaultToolTimeoutMs: ctx.defaultToolTimeoutMs }
       : {}),
@@ -1943,7 +1476,6 @@ export function registerMetaTools(
     ...(ctx.requestSignal !== undefined
       ? { requestSignal: ctx.requestSignal }
       : {}),
-    ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
   });
 
   server.registerTool(
@@ -1956,28 +1488,12 @@ export function registerMetaTools(
     async (args) => mt.skills(args as SkillArgs),
   );
 
-  // Folded on the code-first surface: a program browses the same inventory with
-  // connecta.search({}) (every catalog) or connecta.search({ connector }) (one).
-  // Live connector probing is an operator concern, not a model one — it stays on
-  // the operator pages and /health, which is where the ethos puts observability.
-  if (!codeFirst) {
-    server.registerTool(
-      "list_connectors",
-      {
-        description: LIST_DESC,
-        inputSchema: z.object({ probe: z.boolean().optional() }),
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.listConnectors(args as ListArgs),
-    );
-  }
-
   server.registerTool(
     "search_tools",
     {
       description: describedFor(
         registry,
-        codeFirst ? CODE_FIRST_SEARCH_DESC : SEARCH_DESC,
+        SEARCH_WITH_DESCRIBE_DESC,
         "search",
       ),
       inputSchema: z.object({
@@ -1996,28 +1512,10 @@ export function registerMetaTools(
     async (args) => mt.searchTools(args as SearchArgs),
   );
 
-  // Folded on the code-first surface: connecta.describe takes the same
-  // addresses, format, and per-address error reporting inside a program.
-  if (!codeFirst) {
-    server.registerTool(
-      "describe_tools",
-      {
-        description: describedFor(registry, DESCRIBE_DESC, "describe"),
-        inputSchema: z.object({
-          addresses: z.array(z.string()).max(MAX_DESCRIBE_ADDRESSES),
-          format: z.enum(["compact", "json"]).optional(),
-          fullDescriptions: z.boolean().optional(),
-        }),
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.describeTools(args as DescribeArgs),
-    );
-  }
-
   server.registerTool(
     "call_tool",
     {
-      description: codeFirst ? CODE_FIRST_CALL_DESC : CALL_DESC,
+      description: CALL_DESC,
       inputSchema: z.object(CALL_INPUT_SCHEMA),
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
@@ -2077,7 +1575,7 @@ export function registerMetaTools(
   server.registerTool(
     "get_result",
     {
-      description: codeFirst ? CODE_FIRST_GET_RESULT_DESC : GET_RESULT_DESC,
+      description: GET_RESULT_DESC,
       inputSchema: z.object({
         id: z.string(),
         // Both bounds are the shared rules (isValidResultOffset,
@@ -2091,29 +1589,4 @@ export function registerMetaTools(
     },
     async (args) => mt.getResult(args as GetResultArgs),
   );
-
-  // Folded on the code-first surface: connecta.batch runs the same 1–10
-  // parallel read-only calls and returns the same typed per-call outcomes.
-  if (!codeFirst) {
-    server.registerTool(
-      "batch_call",
-      {
-        description: BATCH_DESC,
-        inputSchema: z.object({
-          calls: z
-            .array(z.object(CALL_INPUT_SCHEMA))
-            .min(1)
-            .max(10),
-          resultMode: z.enum(["mcp", "value"]).optional(),
-          timeoutMs: z.number().int().positive().optional(),
-          maxRetries: z.number().int().min(0).max(2).optional(),
-          diagnostics: z.boolean().optional(),
-        }),
-        // Same gate as call_tool: every call in the batch must be explicitly
-        // read-only or the batch is refused.
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.batchCall(args as BatchArgs),
-    );
-  }
 }

@@ -188,7 +188,6 @@ function startServer() {
         CONNECTA_EVAL_PORT: "0",
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
-        CONNECTA_EVAL_EXECUTOR: "enabled",
         CONNECTA_EVAL_TRACE: "enabled",
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -613,15 +612,15 @@ const result = {
     tokenizer: tokenizerName,
   },
   benchmark: {
-    surface: "code-first",
+    surface: "seven-tool",
     comparisonClass: "seven-tool-with-executor",
     advertisedTools: benchmarkSurface,
     repetitions,
     concurrency,
     scoring:
       "Outcome, safety, advertised-surface validity, foreign-tool use, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
-    classicComparison:
-      "Classic-only top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes on this deployment.",
+    removedToolPolicy:
+      "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes.",
   },
   summary: {
     cases: caseResults.length,

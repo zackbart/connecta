@@ -186,13 +186,6 @@ async function doctor() {
   if (health.status !== "ok") {
     throw new Error(`Unexpected health status: ${String(health.status)}`);
   }
-  if (health.admission?.code === null) {
-    throw new Error(
-      "The server has no executor and is serving classic compatibility. " +
-        "Keep executor: quickJsExecutor() for the prescribed surface.",
-    );
-  }
-
   let requestId = 0;
   const mcp = async (method, params) =>
     jsonResponse(

@@ -33,7 +33,7 @@ Connecta deliberately sits between protocol generations
   [#206](https://github.com/zackbart/connecta/issues/206).
 - **Multi-round-trip results:** a downstream `input_required` result becomes a
   non-retryable `input_required_unsupported` failure. `call_tool`, the
-  `execute_code` host bridge, and classic's `batch_call` all preserve the
+  `execute_code` host bridge and internal batch path both preserve the
   structured code. Relaying the
   opaque `requestState` is architecturally possible but gated until real hosts
   and downstreams adopt it.

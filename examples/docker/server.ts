@@ -62,8 +62,7 @@ const connecta = createConnecta({
   storage: fileStorage(stateFile),
   auth,
   ...(publicUrl !== undefined ? { publicUrl } : {}),
-  // The prescribed surface: generated read-only programs run in a bounded,
-  // disposable QuickJS child. Removing this opts into classic compatibility.
+  // Required: generated read-only programs run in a bounded QuickJS child.
   executor: quickJsExecutor(),
   connectors: [
     api("time", {

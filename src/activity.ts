@@ -23,6 +23,11 @@ const MAX_ACTIVITY_ADDRESS_BYTES = MAX_ACTIVITY_NAME_BYTES * 2 + 1;
 export type ActivityCallSource =
   | "call_tool"
   | "call_destructive_tool"
+  // Read-only history. Nothing emits `batch_call` since issue #273 removed the
+  // tool, but activity storage is append-only: rows written by older
+  // deployments are still read back — the D1 example maps a stored row straight
+  // into this type — and an operator's timeline should not have to lie about
+  // where a call came from. Never widen this member back into a live source.
   | "batch_call"
   | "execute_code";
 

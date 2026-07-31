@@ -69,7 +69,8 @@ my-connecta/
 For an agent setting this up, the contract is:
 
 1. Edit `src/index.ts`; do not copy Connecta internals into the deployment.
-2. Keep `executor: quickJsExecutor()` for the prescribed seven-tool surface.
+2. Keep the required `executor: quickJsExecutor()` configuration; without an
+   executor the deployment refuses to boot.
 3. Keep secrets in environment variables or a secret store, never source.
 4. Add code only for deliberate `api()` connectors.
 5. Run `npm run typecheck`, start the server, and run
@@ -92,9 +93,9 @@ Other supported deployment shapes:
 - [Cloudflare Worker deployment](./examples/worker/)
 - [Subsystem documentation](./documentation/)
 
-Configuring a sandbox — QuickJS on Node or a Dynamic Worker on Cloudflare — is
-what selects the code-first surface and is the assumed posture. A deployment
-without one keeps the earlier nine-tool compatibility interface.
+Every deployment configures a sandbox: QuickJS on Node or a Dynamic Worker on
+Cloudflare. Construction fails with an actionable error when the executor is
+missing, so the model-facing interface is always the same seven tools.
 
 ## Project status
 

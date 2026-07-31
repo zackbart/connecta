@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
+import { createTestConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
 
@@ -79,13 +79,13 @@ const credentialConnector: Connector = {
 describe("open-mode credential-exposure warning", () => {
   it("warns when open mode has an OAuth-capable connector", () => {
     const logger = spyLogger();
-    createConnecta({ connectors: [oauthWithState], publicUrl: BASE, logger });
+    createTestConnecta({ connectors: [oauthWithState], publicUrl: BASE, logger });
     expect(warnings(logger)).toContain("no inbound authentication");
   });
 
   it("warns when open mode has a credential connector", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [credentialConnector],
       credentials: { encryptionKey: CREDENTIAL_KEY },
       logger,
@@ -95,7 +95,7 @@ describe("open-mode credential-exposure warning", () => {
 
   it("does not warn when inbound auth is configured", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [oauthWithState],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -106,7 +106,7 @@ describe("open-mode credential-exposure warning", () => {
 
   it("does not warn in open mode without credentials or OAuth", () => {
     const logger = spyLogger();
-    createConnecta({ connectors: [plainConnector], logger });
+    createTestConnecta({ connectors: [plainConnector], logger });
     expect(warnings(logger)).not.toContain("no inbound authentication");
   });
 });
@@ -114,7 +114,7 @@ describe("open-mode credential-exposure warning", () => {
 describe("publicUrl-unset OAuth warning", () => {
   it("warns when an OAuth connector exists and publicUrl is unset", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [oauthWithState],
       auth: bearerToken("secret"),
       logger,
@@ -124,7 +124,7 @@ describe("publicUrl-unset OAuth warning", () => {
 
   it("does not warn when publicUrl is set", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [oauthWithState],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -135,7 +135,7 @@ describe("publicUrl-unset OAuth warning", () => {
 
   it("does not warn when no OAuth connector exists", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       logger,
@@ -147,7 +147,7 @@ describe("publicUrl-unset OAuth warning", () => {
 describe("dropped-branding-URL warning", () => {
   it("names every branding URL that failed the scheme gate", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -165,7 +165,7 @@ describe("dropped-branding-URL warning", () => {
 
   it("does not warn for accepted branding URLs", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -182,7 +182,7 @@ describe("dropped-branding-URL warning", () => {
   it("reports non-string branding URLs without throwing", () => {
     const logger = spyLogger();
     expect(() =>
-      createConnecta({
+      createTestConnecta({
         connectors: [plainConnector],
         auth: bearerToken("secret"),
         publicUrl: BASE,
@@ -201,7 +201,7 @@ describe("dropped-branding-URL warning", () => {
 
   it("does not warn when no branding is configured", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -233,7 +233,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("names the provider whose sign-in loader origin was dropped", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("javascript:alert(1)"),
       publicUrl: BASE,
@@ -247,7 +247,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("names each dropped sign-in/sign-up navigation target", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("https://clerk.example.com", {
         signInUrl: "javascript:alert(1)",
@@ -266,7 +266,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("does not warn for https URLs in every uiAuth position", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("https://clerk.example.com", {
         signInUrl: "https://accounts.example.com/sign-in",
@@ -280,7 +280,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("does not warn for unset sign-in/sign-up URLs", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("https://clerk.example.com"),
       publicUrl: BASE,
@@ -294,7 +294,7 @@ describe("dropped uiAuth URL warnings", () => {
   // supply. A blank is indistinguishable from leaving the field alone.
   it("treats a blank sign-in URL as unset rather than as a drop", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("https://clerk.example.com", {
         signInUrl: "   ",
@@ -307,7 +307,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("warns for a non-string sign-in URL rather than dropping it silently", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: uiAuthProvider("https://clerk.example.com", {
         // A custom InboundAuth is untyped at a JS call site; 0 is falsy, so
@@ -322,7 +322,7 @@ describe("dropped uiAuth URL warnings", () => {
 
   it("does not warn for a provider that offers no browser sign-in", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -335,7 +335,7 @@ describe("dropped uiAuth URL warnings", () => {
 describe("missing-verifyState CSRF warning", () => {
   it("warns and names a connector whose OAuth callback has no state check", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [oauthNoState],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -349,7 +349,7 @@ describe("missing-verifyState CSRF warning", () => {
 
   it("does not warn when the OAuth connector implements verifyState", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [oauthWithState],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -387,7 +387,7 @@ describe("credential test-hook mismatch warning", () => {
 
   it("warns when named fields are paired with only testCredential", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [fieldsWithSingleHook],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -402,7 +402,7 @@ describe("credential test-hook mismatch warning", () => {
 
   it("warns when a single-value credential is paired with only testCredentials", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [singleWithFieldsHook],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -416,7 +416,7 @@ describe("credential test-hook mismatch warning", () => {
 
   it("stays quiet when a connector declares both hooks, on either shape", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [
         {
           ...fieldsWithSingleHook,
@@ -459,7 +459,7 @@ describe("credential test-hook mismatch warning", () => {
       },
     };
     delete matchedSingle.testCredentials;
-    createConnecta({
+    createTestConnecta({
       connectors: [
         credentialConnector,
         matchedFields,
@@ -477,7 +477,7 @@ describe("credential test-hook mismatch warning", () => {
 describe("unusable calls.maxResultBytes warning", () => {
   it("warns that a zero deployment cap fell back to the default", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [plainConnector],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -491,7 +491,7 @@ describe("unusable calls.maxResultBytes warning", () => {
 
   it("warns and names a connector whose override cannot be honoured", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [{ ...plainConnector, maxResultBytes: -1 }],
       auth: bearerToken("secret"),
       publicUrl: BASE,
@@ -505,27 +505,13 @@ describe("unusable calls.maxResultBytes warning", () => {
 
   it("does not warn for caps in range", () => {
     const logger = spyLogger();
-    createConnecta({
+    createTestConnecta({
       connectors: [{ ...plainConnector, maxResultBytes: 1 }],
       auth: bearerToken("secret"),
       publicUrl: BASE,
       logger,
-      calls: { maxResultBytes: 10_000, maxBatchResultBytes: 20_000 },
+      calls: { maxResultBytes: 10_000 },
     });
     expect(warnings(logger)).not.toContain("maxResultBytes");
-  });
-
-  it("warns that an unusable aggregate batch cap fell back independently", () => {
-    const logger = spyLogger();
-    createConnecta({
-      connectors: [plainConnector],
-      auth: bearerToken("secret"),
-      publicUrl: BASE,
-      logger,
-      calls: { maxResultBytes: 400, maxBatchResultBytes: 0 },
-    });
-    const text = warnings(logger);
-    expect(text).toContain("calls.maxBatchResultBytes 0");
-    expect(text).toContain("100000");
   });
 });

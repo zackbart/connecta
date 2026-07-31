@@ -13,7 +13,8 @@ Then point an MCP client at `http://localhost:8787/mcp` with
 ## Deployment contract
 
 - Edit `src/index.ts` for connectors, auth, storage, and the public URL.
-- Keep `executor: quickJsExecutor()` for the seven-tool code-first surface.
+- Keep the required `executor: quickJsExecutor()` configuration; a deployment
+  without an executor refuses to boot.
 - Keep secrets in environment variables or an external secret store.
 - Add application code only inside deliberate `api()` connector handlers.
 - Do not copy Connecta package internals into this deployment.

@@ -15,7 +15,6 @@ const connectorCount = Number(
 const toolsPerConnector = Number(
   process.env.CONNECTA_PERF_TOOLS_PER_CONNECTOR ?? "100",
 );
-const executorEnabled = process.env.CONNECTA_PERF_EXECUTOR === "enabled";
 const requestConcurrency = Number(
   process.env.CONNECTA_PERF_REQUEST_CONCURRENCY ?? "64",
 );
@@ -97,20 +96,18 @@ const connectors: Connector[] = Array.from(
   },
 );
 
-const executor = executorEnabled
-  ? quickJsExecutor({
-      timeoutMs: 10_000,
-      cpuTimeMs: 2_000,
-      concurrency: 4,
-      maxQueueSize: 32,
-    })
-  : undefined;
+const executor = quickJsExecutor({
+  timeoutMs: 10_000,
+  cpuTimeMs: 2_000,
+  concurrency: 4,
+  maxQueueSize: 32,
+});
 const silent = { debug() {}, info() {}, warn() {}, error() {} };
 const connecta = createConnecta({
   connectors,
   storage: memoryStorage(),
   logger: silent,
-  ...(executor ? { executor } : {}),
+  executor,
   admission: {
     requests: {
       concurrency: requestConcurrency,
@@ -147,7 +144,6 @@ process.send?.({
   connectorCount,
   toolsPerConnector,
   totalTools: connectorCount * toolsPerConnector,
-  executorEnabled,
 });
 
 let nextSnapshotId = 1;

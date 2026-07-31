@@ -279,6 +279,50 @@ try {
     generatedRoot,
     "CONNECTA_TOKEN is required",
   );
+  const generatedSource = await readFile(
+    join(generatedRoot, "src", "index.ts"),
+    "utf8",
+  );
+  // Strip the comment with the line it annotates; leaving it orphaned above a
+  // deleted executor would make the fixture read as a deliberate omission.
+  const executorLine =
+    "  // Required: model-written programs run in a bounded QuickJS child.\n" +
+    "  executor: quickJsExecutor(),\n";
+  if (!generatedSource.includes(executorLine)) {
+    throw new Error("Generated deployment is missing its required executor");
+  }
+  await writeFile(
+    join(generatedRoot, "src", "no-executor.ts"),
+    generatedSource.replace(executorLine, ""),
+  );
+  expectFailure(
+    generatedTsx,
+    ["src/no-executor.ts"],
+    generatedRoot,
+    "ConnectaConfig.executor is required",
+    { CONNECTA_TOKEN: "package-smoke-token" },
+  );
+  const createCall = "const connecta = createConnecta({\n";
+  if (!generatedSource.includes(createCall)) {
+    throw new Error(
+      "Generated deployment no longer opens createConnecta on its own line; " +
+        "the removed-surface fixture cannot be built",
+    );
+  }
+  await writeFile(
+    join(generatedRoot, "src", "removed-surface.ts"),
+    generatedSource.replace(
+      createCall,
+      `${createCall}  surface: "classic",\n`,
+    ),
+  );
+  expectFailure(
+    generatedTsx,
+    ["src/removed-surface.ts"],
+    generatedRoot,
+    "ConnectaConfig.surface was removed in issue #273",
+    { CONNECTA_TOKEN: "package-smoke-token" },
+  );
 
   const port = await freePort();
   const smokeToken = "package-smoke-token";
@@ -348,7 +392,6 @@ try {
     "export interface ConnectaCallsConfig {",
     "    defaultTimeoutMs?: number;",
     "    maxResultBytes?: number;",
-    "    maxBatchResultBytes?: number;",
     "    activity?: ConnectaActivityConfig;",
     "    credentials?: ConnectaCredentialsConfig;",
     "    discovery?: ConnectaDiscoveryConfig;",
@@ -419,12 +462,16 @@ try {
     "probeTimeoutMs",
     "defaultToolTimeoutMs",
     "maxResultBytes",
+    "surface",
   ]) {
     if (new RegExp(`^\\s+${legacyName}\\??:`, "m").test(publicConfig)) {
       throw new Error(
         `Packed ConnectaConfig still exposes legacy field ${legacyName}`,
       );
     }
+  }
+  if (!/^\s+executor: Executor;/m.test(publicConfig)) {
+    throw new Error("Packed ConnectaConfig does not require executor");
   }
   for (const dependency of ["@clerk/backend", "quickjs-emscripten"]) {
     if (existsSync(join(work, "node_modules", dependency))) {

@@ -21,7 +21,7 @@ const connecta = createConnecta({
   storage: fileStorage("./.connecta-state.json"),
   auth: bearerToken(token, { subjectId: "operator" }),
   publicUrl: `http://localhost:${port}`,
-  // Keep this for the prescribed seven-tool code-first surface.
+  // Required: model-written programs run in a bounded QuickJS child.
   executor: quickJsExecutor(),
   connectors: [
     api("time", {

@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
@@ -31,7 +30,7 @@ import type {
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
-import { required, makeRegistry } from "./helpers.js";
+import { createTestConnecta, required, makeRegistry } from "./helpers.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -84,7 +83,7 @@ function authUrlConnector(id: string, url: string): Connector {
 }
 
 function makeConnecta(extra: Connector[] = []) {
-  return createConnecta({
+  return createTestConnecta({
     connectors: [calc(), broken(), ...extra],
     auth: bearerToken(TOKEN),
     storage: memoryStorage(),
@@ -197,7 +196,7 @@ function credentialConnector(): Connector {
 
 function makeCredentialConnecta() {
   const storage = memoryStorage();
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [credentialConnector()],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
@@ -240,7 +239,7 @@ function makeMultiCredentialConnecta() {
       },
     ],
   });
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [connector],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
@@ -274,7 +273,7 @@ function makeFieldsWithSingleHookConnecta() {
     testCredential,
     tools: [],
   });
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [connector],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
@@ -298,7 +297,7 @@ function makeSingleWithFieldsHookConnecta() {
     testCredentials,
     tools: [],
   });
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [connector],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
@@ -339,7 +338,7 @@ function makeBothHooksConnecta(shape: "single" | "multiple") {
     testCredentials,
     tools: [],
   });
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [connector],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage: memoryStorage(),
@@ -375,7 +374,7 @@ function makeShapeDriftConnecta(
           testCredentials,
           tools: [],
         });
-  const connecta = createConnecta({
+  const connecta = createTestConnecta({
     connectors: [connector],
     auth: [bearerToken(TOKEN), fakeClerk()],
     storage,
@@ -388,7 +387,7 @@ function makeShapeDriftConnecta(
 }
 
 function credentialRequest(
-  connecta: ReturnType<typeof createConnecta>,
+  connecta: ReturnType<typeof createTestConnecta>,
   path: string,
   init: RequestInit = {},
 ) {
@@ -568,7 +567,7 @@ describe("status UI", () => {
   });
 
   it("keeps deployment and operator data out of every open shell", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [
         api("sentinel_connector", {
           description: "SENTINEL_CONNECTOR_DESCRIPTION",
@@ -644,7 +643,7 @@ describe("status UI", () => {
   });
 
   it("supports deployment-specific branding", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -665,7 +664,7 @@ describe("status UI", () => {
   });
 
   it("the Connections shell derives the MCP URL from the request origin", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -682,7 +681,7 @@ describe("status UI", () => {
     const domain = "clerk.example.com$";
     const publishableKey =
       "pk_test_" + Buffer.from(domain, "utf8").toString("base64");
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [
         bearerToken(TOKEN),
@@ -732,7 +731,7 @@ describe("status UI", () => {
   });
 
   it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage: memoryStorage(),
@@ -762,7 +761,7 @@ describe("status UI", () => {
       "//clerk.example.com",
       "clerk.example.com",
     ]) {
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors: [calc()],
         auth: [bearerToken(TOKEN), fakeClerk(frontendApiUrl)],
         storage: memoryStorage(),
@@ -781,7 +780,7 @@ describe("status UI", () => {
   });
 
   it("still emits the loader for an https frontendApiUrl", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage: memoryStorage(),
@@ -802,7 +801,7 @@ describe("status UI", () => {
       "//accounts.example.com/sign-in",
       "/sign-in",
     ]) {
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors: [calc()],
         auth: [
           bearerToken(TOKEN),
@@ -826,7 +825,7 @@ describe("status UI", () => {
   });
 
   it("passes a hosted Account Portal signInUrl/signUpUrl through unchanged", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [
         bearerToken(TOKEN),
@@ -848,7 +847,7 @@ describe("status UI", () => {
   });
 
   it("drops only the sign-in URL that failed, keeping the valid sibling", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [
         bearerToken(TOKEN),
@@ -1485,7 +1484,7 @@ describe("status UI", () => {
     expect(clerk.credentialManagement).toBe("available");
     expect(clerk.connectors[0].credential.label).toBe("API token");
 
-    const withoutSlots = createConnecta({
+    const withoutSlots = createTestConnecta({
       connectors: [calc()],
       auth: [fakeClerk()],
       storage: memoryStorage(),
@@ -1524,7 +1523,7 @@ describe("status UI", () => {
       startAuth,
     };
     const storage = memoryStorage();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage,
@@ -1595,7 +1594,7 @@ describe("status UI", () => {
       },
     };
     const storage = memoryStorage();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerk(),
       storage,
@@ -1634,7 +1633,7 @@ describe("status UI", () => {
         };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage: memoryStorage(),
@@ -1702,7 +1701,7 @@ describe("status UI", () => {
       },
       closeScope,
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: fakeClerk(),
       storage: memoryStorage(),
@@ -1749,7 +1748,7 @@ describe("status UI", () => {
         };
       },
     };
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [credentialConnector()],
       auth: handRolledClerk,
       storage: memoryStorage(),
@@ -1794,7 +1793,7 @@ describe("status UI", () => {
         throw new Error("teardown failed");
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [connector],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1834,7 +1833,7 @@ describe("status UI", () => {
         await new Promise<never>(() => {});
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [connector],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1878,7 +1877,7 @@ describe("status UI", () => {
         await gate;
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [connector],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -1937,7 +1936,7 @@ describe("status UI", () => {
         },
       }),
     );
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors,
       auth: bearerToken(TOKEN),
       publicUrl: BASE,
@@ -2041,7 +2040,7 @@ describe("status UI", () => {
         return { events: [event], nextCursor: "next" };
       },
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
@@ -2116,7 +2115,7 @@ describe("status UI", () => {
       event("event-3", { kind: "clerk", id: "user_offline" }),
       event("event-4", { kind: "bearer", id: "ci-runner" }),
     ];
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth,
       activity: {
@@ -2207,7 +2206,7 @@ describe("status UI", () => {
       serverName: "connecta",
       serverVersion: "0.1.0",
     };
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [providerA, providerB, providerBSecondGate],
       activity: {
@@ -2299,7 +2298,7 @@ describe("status UI", () => {
         serverName: "connecta",
         serverVersion: "0.1.0",
       };
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors: [calc()],
         auth: [ownerWithoutResolver, otherDirectory],
         activity: {
@@ -2354,7 +2353,7 @@ describe("status UI", () => {
         serverName: "connecta",
         serverVersion: "0.1.0",
       };
-      const c = createConnecta({
+      const c = createTestConnecta({
         connectors: [calc()],
         auth,
         activity: {
@@ -2383,7 +2382,7 @@ describe("status UI", () => {
   });
 
   it("supports a Clerk-only activity read gate", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: [bearerToken(TOKEN), fakeClerk()],
       activity: {
@@ -2415,7 +2414,7 @@ describe("status UI", () => {
   });
 
   it("returns 400 for an invalid activity cursor", async () => {
-    const c = createConnecta({
+    const c = createTestConnecta({
       connectors: [calc()],
       auth: bearerToken(TOKEN),
       activity: {
@@ -2526,7 +2525,7 @@ describe("status UI credential management", () => {
       "user_123",
     );
     const testCredentials = vi.fn(async () => ({ ok: true }));
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [
         api("superset", {
           description: "Dropped a field",
@@ -2600,7 +2599,7 @@ describe("status UI credential management", () => {
       "user_123",
     );
     const testCredential = vi.fn(async () => ({ ok: true }));
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [
         api("legacy", {
           description: "Single value beside a leftover",
@@ -2657,7 +2656,7 @@ describe("status UI credential management", () => {
       testCredentials,
       tools: [],
     });
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [connector],
       auth: [bearerToken(TOKEN), fakeClerk()],
       storage: memoryStorage(),
@@ -3250,7 +3249,7 @@ describe("status UI credential management", () => {
 
   it("boots without a vault and reports credential management unavailable", async () => {
     const warn = vi.fn();
-    const connecta = createConnecta({
+    const connecta = createTestConnecta({
       connectors: [credentialConnector()],
       auth: fakeClerk(),
       storage: memoryStorage(),

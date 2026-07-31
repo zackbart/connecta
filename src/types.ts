@@ -35,8 +35,8 @@ export interface ToolDef {
   /**
    * Standard MCP tool behavior hints plus provider-specific extensions.
    * Connecta fails closed: only readOnlyHint === true (without a contradictory
-   * destructiveHint) may use call_tool, batch_call, or execute_code. Every
-   * other tool must cross the call_destructive_tool approval boundary.
+   * destructiveHint) may use call_tool or execute_code. Every other tool must
+   * cross the call_destructive_tool approval boundary.
    */
   annotations?: ToolAnnotations;
 }
@@ -198,7 +198,7 @@ export interface Connector {
   description?: string;
   /**
    * Max inline result size (bytes) for this connector's tools before
-   * call_tool/batch_call truncate and stash the full text for get_result
+   * call_tool truncates and stashes the full text for get_result
    * paging. Overrides `ConnectaConfig.calls.maxResultBytes`;
    * omit to inherit it (which itself defaults to 50_000). Must be a whole
    * number of bytes >= 1; anything else warns at startup and is ignored, so
@@ -207,8 +207,8 @@ export interface Connector {
   maxResultBytes?: number;
   /**
    * Optional per-runtime admission policy for downstream tool calls. It covers
-   * call_tool, every batch_call child, and execute_code host calls, but not
-   * catalog/status/auth operations.
+   * call_tool, call_destructive_tool, and every execute_code host call, but
+   * not catalog/status/auth operations.
    */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
@@ -255,7 +255,7 @@ export interface Connector {
    * request-local reuse remains in force until the request boundary.
    */
   closeScope?(ctx: ConnectorContext): Promise<void>;
-  /** Optional connector-level health/auth status for list_connectors. */
+  /** Optional connector-level health/auth status for the operator UI. */
   status?(ctx: ConnectorContext): Promise<ConnectorStatus>;
   /**
    * Optional: start (or with force, restart from scratch) a downstream OAuth
@@ -308,21 +308,6 @@ export interface Connector {
     ctx: ConnectorContext,
   ): Promise<Response | null>;
 }
-
-/**
- * Which model-facing surface a deployment advertises. The `executor` decides
- * it; this type is how a deployment overrides that.
- *
- * - `code-first`: seven tools, the default wherever an executor is configured.
- *   `list_connectors`, `describe_tools`, and `batch_call` are not top-level
- *   tools; their behavior lives in `connecta.search`, `connecta.describe`, and
- *   `connecta.batch` inside a program.
- * - `classic`: the nine base meta-tools, plus `execute_code` when an executor
- *   is configured. Without an executor it is what a deployment necessarily
- *   serves and the eval gate's control arm; with one it is the ten-tool shape
- *   the gate's incremental arm measures, and the only thing `surface` is for.
- */
-export type ConnectaSurface = "classic" | "code-first";
 
 /** Result of one sandboxed code execution. */
 export interface ExecuteResult {

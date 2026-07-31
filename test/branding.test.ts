@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
+import { createTestConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { api } from "../src/connectors/api.js";
@@ -17,7 +17,7 @@ const PAGES = [
 ];
 
 function make(branding?: ConnectaBranding, extra?: { logger?: Logger }) {
-  return createConnecta({
+  return createTestConnecta({
     connectors: [api("calc", { description: "Calculator", tools: [] })],
     auth: bearerToken("test-token-123"),
     storage: memoryStorage(),

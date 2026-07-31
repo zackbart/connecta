@@ -45,10 +45,6 @@ jobs:
           npm --prefix eval/current-version run audit -- \
             --output "$RUNNER_TEMP/current-version.json" \
             --report "$RUNNER_TEMP/current-version.md"
-          npm --prefix eval/current-version run audit -- \
-            --executor disabled \
-            --output "$RUNNER_TEMP/current-version-no-executor.json" \
-            --report "$RUNNER_TEMP/current-version-no-executor.md"
 
   docker:
     runs-on: ubuntu-latest

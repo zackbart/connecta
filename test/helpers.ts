@@ -1,7 +1,33 @@
 import { Registry } from "../src/registry.js";
+import {
+  createConnecta as createRuntimeConnecta,
+  type ConnectaConfig,
+} from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { CredentialVault } from "../src/credentials.js";
-import type { Connector, KVStorage, Logger } from "../src/types.js";
+import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
+
+/** Minimal executor for server tests that do not exercise generated code. */
+const stubExecutor: Executor = {
+  execute: async () => ({ result: null }),
+};
+
+/**
+ * Construct a valid deployment while allowing a test to override the executor.
+ *
+ * Deliberately not named `createConnecta`: shadowing the real export while
+ * silently supplying an executor would hide the required-executor contract
+ * from every suite that imports it. A suite that wants to observe that
+ * refusal must call the real `createConnecta` from `../src/index.js`.
+ */
+export function createTestConnecta(
+  config: Omit<ConnectaConfig, "executor"> & { executor?: Executor },
+) {
+  return createRuntimeConnecta({
+    ...config,
+    executor: config.executor ?? stubExecutor,
+  });
+}
 
 export const silentLogger: Logger = {
   debug: () => {},
@@ -28,15 +54,14 @@ export function required<T>(
 
 /**
  * A registry over `connectors`. `opts` carries the flat internal settings that
- * `ConnectaConfig` adapts into — including both `ConnectaConfig.calls` result
- * caps — so cap tests configure them exactly the way production does.
+ * `ConnectaConfig` adapts into — including the `ConnectaConfig.calls` result
+ * cap — so cap tests configure them exactly the way production does.
  */
 export function makeRegistry(
   connectors: Connector[],
   opts: {
     toolCacheTtlSeconds?: number;
     maxResultBytes?: number;
-    maxBatchResultBytes?: number;
     /** Share one store between a registry and a credential vault. */
     storage?: KVStorage;
     credentialVault?: CredentialVault;
