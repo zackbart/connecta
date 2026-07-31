@@ -1,14 +1,10 @@
-import { required } from "./helpers.js";
+import { createConnecta, required } from "./helpers.js";
 import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
-import { createConnecta } from "../src/index.js";
-import {
-  MAX_DESCRIBE_ADDRESSES,
-  MAX_SEARCH_LIMIT,
-} from "../src/meta-tools.js";
+import { MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 
 // True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
 // executor (emscripten WASM loaded from disk) — Workers deployments use
@@ -213,12 +209,11 @@ describe("server /mcp end-to-end", () => {
     const body = await readBody(res);
     expect(body.result.serverInfo.name).toBe("connecta");
     expect(body.result.instructions).toContain(
-      "Use call_tool for one explicitly read-only call",
+      "then one call_tool",
     );
     expect(body.result.instructions).toContain(
       "2–4 distinctive action/object terms",
     );
-    expect(body.result.instructions).toContain("no initial limit");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
       "If this routing is unfamiliar",
@@ -294,7 +289,7 @@ describe("server /mcp end-to-end", () => {
       await client.connect(transport);
       const result = await client.listTools();
 
-      expect(result.tools).toHaveLength(9);
+      expect(result.tools).toHaveLength(7);
       expect(client.getProtocolEra()).toBe("modern");
       expect(methods).toContain("server/discover");
       expect(methods).not.toContain("initialize");
@@ -308,19 +303,17 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("tools/list shows exactly the 9 base meta-tools", async () => {
+  it("tools/list shows exactly the seven meta-tools", async () => {
     const c = makeConnecta();
     const res = await rpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readBody(res);
     const names = body.result.tools.map((t: { name: string }) => t.name).sort();
     expect(names).toEqual([
       "authorize_connector",
-      "batch_call",
       "call_destructive_tool",
       "call_tool",
-      "describe_tools",
+      "execute_code",
       "get_result",
-      "list_connectors",
       "search_tools",
       "skills",
     ]);
@@ -353,17 +346,9 @@ describe("server /mcp end-to-end", () => {
     expect(byName.search_tools.description).toContain(
       "filters results, not authority",
     );
-    expect(byName.describe_tools.description).toContain(
-      "Only when search_tools omitted schemas",
-    );
-    expect(byName.describe_tools.description).toContain(
-      '"json" preserves exact constraints',
-    );
+    expect(byName.search_tools.description).toContain("connecta.describe");
     expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
       MAX_SEARCH_LIMIT,
-    );
-    expect(byName.describe_tools.inputSchema.properties.addresses.maxItems).toBe(
-      MAX_DESCRIBE_ADDRESSES,
     );
     expect(byName.call_tool.inputSchema.properties).toHaveProperty("timeoutMs");
     expect(byName.call_tool.inputSchema.properties).toHaveProperty(
@@ -393,12 +378,7 @@ describe("server /mcp end-to-end", () => {
       idempotentHint: true,
       openWorldHint: false,
     });
-    expect(byName.call_tool.description).toContain(
-      "For 2–10 independent read-only calls use batch_call",
-    );
-    expect(byName.batch_call.description).toContain(
-      "use execute_code when available instead for dependencies",
-    );
+    expect(byName.call_tool.description).toContain("connecta.batch");
   });
 
   it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {
@@ -423,7 +403,7 @@ describe("server /mcp end-to-end", () => {
     }
   });
 
-  it("serves a modern-era (2026-07-28) client the same nine-tool surface", async () => {
+  it("serves a modern-era (2026-07-28) client the same seven-tool surface", async () => {
     // Every other test in this suite sends bare JSON-RPC, which the entry
     // classifies as legacy traffic — so this is the one automated proof that
     // the modern createMcpHandler leg of serveMcp works at all. PR B owns the
@@ -453,12 +433,10 @@ describe("server /mcp end-to-end", () => {
       expect(client.getProtocolEra()).toBe("modern");
       expect(listed.tools.map((t) => t.name).sort()).toEqual([
         "authorize_connector",
-        "batch_call",
         "call_destructive_tool",
         "call_tool",
-        "describe_tools",
+        "execute_code",
         "get_result",
-        "list_connectors",
         "search_tools",
         "skills",
       ]);
@@ -485,7 +463,7 @@ describe("server /mcp end-to-end", () => {
     const listedBody = await readBody(listed);
     expect(listedBody.result.isError).toBeFalsy();
     expect(listedBody.result.content[0].text).toContain(
-      "`usage` — How to choose among Connecta",
+      "`usage` — How to route work between one execute_code program",
     );
 
     const fetched = await rpc(
@@ -497,23 +475,17 @@ describe("server /mcp end-to-end", () => {
     const fetchedBody = await readBody(fetched);
     const skill = fetchedBody.result.content[0].text as string;
     expect(skill).toContain("# Connecta usage");
-    expect(skill).toContain("One explicitly read-only call: `call_tool`");
-    expect(skill).toContain(
-      "Dependent read-only calls, loops, joins, branching, or large-result reduction",
-    );
+    expect(skill).toContain("then `call_tool` once");
+    expect(skill).toContain("Anything wider — two or more calls");
     expect(skill).toContain(
       "Any unannotated, write-capable, or destructive call: `call_destructive_tool`",
     );
     expect(skill).toContain(
-      "Connector namespace calls and `connecta.call` use the same read-only gate",
+      "Only tools annotated `readOnlyHint: true` are reachable",
     );
     expect(skill).toContain("2–4 distinctive action/object terms");
-    expect(skill).toContain("omit `limit` initially");
     expect(skill).toContain(
-      "every match then includes its input shape plus any declared output shape and annotations",
-    );
-    expect(skill).toContain(
-      'use `format: "json"` only for exact constraints',
+      '`format: "json"` only for exact constraints',
     );
     expect(skill).not.toContain("## Examples");
 
@@ -555,7 +527,6 @@ describe("server /mcp end-to-end", () => {
       return {
         description: byName.skills.description as string,
         search: byName.search_tools.description as string,
-        describe: byName.describe_tools.description as string,
         usage: usage.result.content[0].text as string,
       };
     }
@@ -564,7 +535,6 @@ describe("server /mcp end-to-end", () => {
     expect(plain.description).not.toContain("connector:<connectorId>");
     expect(plain.usage).not.toContain("## Per-connector guides");
     expect(plain.search).not.toContain("`guide`");
-    expect(plain.describe).not.toContain("`guide`");
 
     const guided = await skillsSurface([
       api("notion", {
@@ -584,7 +554,6 @@ describe("server /mcp end-to-end", () => {
     expect(guided.description).toContain("connector:<connectorId>");
     expect(guided.usage).toContain("## Per-connector guides");
     expect(guided.search).toContain("`guide`");
-    expect(guided.describe).toContain("`guide`");
   });
 
   it("tools/call search_tools returns results grouped by connector", async () => {
@@ -687,13 +656,17 @@ describe("server /mcp end-to-end", () => {
       c,
       "tools/call",
       {
-        name: "batch_call",
-        arguments: {
-          calls: [
-            { address: "calc.add", args: { a: 1, b: 2 } },
-            { address: "calc.add", args: { a: 3, b: 4 } },
-          ],
-        },
+        name: "call_tool",
+        arguments: { address: "calc.add", args: { a: 1, b: 2 } },
+      },
+      { token: TOKEN },
+    );
+    await rpc(
+      c,
+      "tools/call",
+      {
+        name: "call_tool",
+        arguments: { address: "calc.add", args: { a: 3, b: 4 } },
       },
       { token: TOKEN },
     );
@@ -710,9 +683,7 @@ describe("server /mcp end-to-end", () => {
       attempts: 1,
       deploymentId: "test",
     });
-    expect(
-      events.slice(1).every((event) => event.source === "batch_call"),
-    ).toBe(true);
+    expect(events.every((event) => event.source === "call_tool")).toBe(true);
     expect(JSON.stringify(events)).not.toContain("never-store-this");
   });
 
@@ -1147,45 +1118,6 @@ describe("server /mcp end-to-end", () => {
     expect(seen).toEqual([{ timeoutMs: 1_234, hasSignal: true }]);
   });
 
-  it("forwards discovery.probeTimeoutMs to the discovery fan-out", async () => {
-    const hanging: Connector = {
-      id: "hang",
-      kind: "mcp",
-      description: "Never resolves",
-      listTools() {
-        return new Promise<never>(() => {});
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const c = createConnecta({
-      connectors: [hanging],
-      auth: bearerToken(TOKEN),
-      publicUrl: BASE,
-      discovery: { probeTimeoutMs: 10 },
-    });
-    const started = Date.now();
-
-    const response = await rpc(
-      c,
-      "tools/call",
-      {
-        name: "list_connectors",
-        arguments: { probe: true },
-      },
-      { token: TOKEN },
-    );
-    const body = await readBody(response);
-    const payload = JSON.parse(body.result.content[0].text) as {
-      connectors: Array<{ status: string; message?: string }>;
-    };
-
-    expect(Date.now() - started).toBeLessThan(2_000);
-    expect(payload.connectors[0]).toMatchObject({ status: "error" });
-    expect(required(payload.connectors[0]).message).toContain("timed out after 10ms");
-  });
-
   it("forwards discovery.concurrency to catalog fan-out", async () => {
     let active = 0;
     let maxActive = 0;
@@ -1491,42 +1423,12 @@ describe("clerk metadata routes (no network)", () => {
     const c = makeClerkConnecta();
     const res = await rpc(c, "tools/list", {}, { token: TOKEN });
     const body = await readBody(res);
-    expect(body.result.tools).toHaveLength(9);
+    expect(body.result.tools).toHaveLength(7);
   });
 });
 
 describe("execute_code registration (code mode)", () => {
-  it("advertises seven tools with an executor, nine without, and ten when classic is asked for", async () => {
-    const baseTools = [
-      "authorize_connector",
-      "batch_call",
-      "call_destructive_tool",
-      "call_tool",
-      "describe_tools",
-      "get_result",
-      "list_connectors",
-      "search_tools",
-      "skills",
-    ];
-    // The consolidated surface (#224): the three folded tools are gone and
-    // `call_tool` stays, because one cold call is cheaper direct than through
-    // a program.
-    const codeFirstTools = [
-      "authorize_connector",
-      "call_destructive_tool",
-      "call_tool",
-      "execute_code",
-      "get_result",
-      "search_tools",
-      "skills",
-    ];
-    const plain = makeConnecta();
-    const res1 = await rpc(plain, "tools/list", {}, { token: TOKEN });
-    const names1 = (await readBody(res1)).result.tools.map(
-      (t: { name: string }) => t.name,
-    );
-    expect(names1.sort()).toEqual(baseTools);
-
+  it("advertises and runs execute_code on the seven-tool surface", async () => {
     let executions = 0;
     const withExec = createConnecta({
       connectors: [calc()],
@@ -1545,37 +1447,20 @@ describe("execute_code registration (code mode)", () => {
     const names2 = listed2.map(
       (t: { name: string }) => t.name,
     );
-    expect(names2.sort()).toEqual(codeFirstTools);
+    expect(names2.sort()).toEqual([
+      "authorize_connector",
+      "call_destructive_tool",
+      "call_tool",
+      "execute_code",
+      "get_result",
+      "search_tools",
+      "skills",
+    ]);
 
-    // An executor plus an explicit `surface: "classic"`: the ten-tool shape,
-    // which exists so the eval gate can measure "classic plus execute_code"
-    // against both other arms.
-    const classicWithExec = createConnecta({
-      connectors: [calc()],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      surface: "classic",
-      executor: { execute: async () => ({ result: null }) },
-    });
-    const res3 = await rpc(classicWithExec, "tools/list", {}, { token: TOKEN });
-    const listed3 = (await readBody(res3)).result.tools;
-    expect(listed3.map((t: { name: string }) => t.name).sort()).toEqual(
-      [...baseTools, "execute_code"].sort(),
-    );
-
-    // The same tool, two routing stories: on the classic surface it is the tool
-    // of last resort, on the code-first one it is where the work happens.
     const executeTool = listed2.find(
       (tool: { name: string }) => tool.name === "execute_code",
     );
     expect(executeTool.description).toContain("The primary surface.");
-    expect(
-      listed3.find((tool: { name: string }) => tool.name === "execute_code")
-        .description,
-    ).toContain(
-      "Never use execute_code for search-only discovery or one downstream call",
-    );
     expect(executeTool.description).toContain("use one execute_code call");
     expect(executeTool.description).toContain(
       "do not return search results for a second execute_code call",
@@ -1598,7 +1483,7 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain("{ jobId: run.failedJobId }");
     expect(executeTool.description).not.toContain("requiredInputKeys[0]");
     expect(executeTool.description).not.toContain(
-      "search_tools → describe_tools (schemas) → execute_code",
+      "search_tools → connecta.describe (schemas) → execute_code",
     );
 
     const executed = await rpc(

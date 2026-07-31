@@ -1,7 +1,26 @@
 import { Registry } from "../src/registry.js";
+import {
+  createConnecta as createRuntimeConnecta,
+  type ConnectaConfig,
+} from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { CredentialVault } from "../src/credentials.js";
-import type { Connector, KVStorage, Logger } from "../src/types.js";
+import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
+
+/** Minimal executor for server tests that do not exercise generated code. */
+const stubExecutor: Executor = {
+  execute: async () => ({ result: null }),
+};
+
+/** Construct a valid deployment while allowing a test to override the executor. */
+export function createConnecta(
+  config: Omit<ConnectaConfig, "executor"> & { executor?: Executor },
+) {
+  return createRuntimeConnecta({
+    ...config,
+    executor: config.executor ?? stubExecutor,
+  });
+}
 
 export const silentLogger: Logger = {
   debug: () => {},

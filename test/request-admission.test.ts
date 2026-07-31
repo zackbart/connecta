@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
 import type { Executor, InboundAuth } from "../src/types.js";
-import { calcConnector, silentLogger } from "./helpers.js";
+import { calcConnector, createConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 

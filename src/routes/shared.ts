@@ -7,7 +7,6 @@ import type { AdmissionController } from "../executor-admission.js";
 import type { Registry } from "../registry.js";
 import type {
   ConnectaBranding,
-  ConnectaSurface,
   Executor,
   InboundAuth,
   Logger,
@@ -36,14 +35,8 @@ export interface ServerOptions {
   maxEmittedBytes?: number;
   /** Block-count budget for connecta.emit per run. Default 32. */
   maxEmittedBlocks?: number;
-  /** When set, the execute_code meta-tool is registered on top of the base surface. */
-  executor?: Executor;
-  /**
-   * The advertised model-facing surface. createConnecta() always resolves it
-   * from the executor; absent (a direct createFetchHandler() caller) is
-   * classic, and `code-first` is only ever set alongside an `executor`.
-   */
-  surface?: ConnectaSurface;
+  /** Required sandbox backing the execute_code meta-tool. */
+  executor: Executor;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
   requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */

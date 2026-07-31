@@ -1,46 +1,9 @@
-import type { Connector, ConnectaSurface } from "./types.js";
+import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes integrations behind meta-tools. Unknown address: use search_tools with 2–4 distinctive action/object terms, no initial limit, and includeSchemas="compact"; describe_tools only if that shape is ambiguous or exact JSON constraints are needed. Use call_tool for one explicitly read-only call, batch_call for 2–10 independent read-only calls, and execute_code (when available) only for dependencies, loops, joins, or substantial reduction — searching inside that one run rather than searching first. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools. authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
-
-/**
- * The instructions a code-first deployment loads (#224). It never names
- * `list_connectors`, `describe_tools`, or `batch_call` — not even to say they
- * are gone. Always-loaded text describes the surface that exists; a sentence
- * about three tools this deployment does not have is context paid for the past,
- * and a model that names one anyway gets an unknown-tool error, which is a
- * cheaper correction than the tokens the disclaimer costs every request.
- */
-export const CODE_FIRST_INSTRUCTIONS =
   'Connecta exposes integrations behind seven meta-tools, and execute_code is the primary one: write an async arrow function and use connecta.search (empty query browses every catalog), connecta.describe, connecta.call, and connecta.batch inside it for discovery, two or more calls, dependent steps, loops, joins, and reducing large results before they reach you. For a single read at an unknown address, search_tools with 2–4 distinctive action/object terms and includeSchemas="compact", then one call_tool — a lone cold call is cheaper direct than through a program. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools; authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
 
 export const USAGE_SKILL = `# Connecta usage
-
-## Choose the smallest execution tool
-
-Use exact addresses returned by discovery; never invent one. Search with 2–4 distinctive action/object terms rather than the full request, and omit \`limit\` initially so the default page stays small.
-
-- Unknown address: \`search_tools({ query, includeSchemas: "compact" })\`; every match then includes its input shape plus any declared output shape and annotations.
-- Compact shape still ambiguous: \`describe_tools({ addresses: [...] })\`; use \`format: "json"\` only for exact constraints.
-- One explicitly read-only call: \`call_tool\`.
-- Two to ten independent explicitly read-only calls: \`batch_call\`.
-- Dependent read-only calls, loops, joins, branching, or large-result reduction: \`execute_code\` when available.
-- Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, individually and only after reviewing its schema and consequences.
-- Truncated result: retry with \`fields\` when possible; otherwise page it with \`get_result\`.
-- \`auth_required\`: use \`authorize_connector\`, give its recovery handoff to the operator, then retry the original call.
-
-Use \`list_connectors({ probe: false })\` for a fast observed-health inventory; use \`probe: true\` only to diagnose live health or authorization.
-
-## Code mode
-
-Unknown addresses plus dependent calls: search inside the run, not in an outer \`search_tools\`. Parallelize independent calls with \`Promise.all\` or \`connecta.batch\`.
-
-Connector namespace calls and \`connecta.call\` use the same read-only gate and throw on downstream errors. Catch only failures the workflow can handle; let authorization failures return to the agent for recovery.
-
-Skip code mode for one call, calls suited to \`batch_call\`, or tools lacking \`readOnlyHint: true\`. Return only the needed reduction.
-`;
-
-export const CODE_FIRST_USAGE_SKILL = `# Connecta usage
 
 ## The surface
 
@@ -76,21 +39,12 @@ One async arrow function. The only capabilities are one global per connector (\`
 export const CONNECTOR_GUIDES_SECTION = `
 ## Per-connector guides
 
-Some connectors here ship their own usage guide — preferred tools, address quirks, pagination conventions, rate-limit etiquette, query patterns. \`skills({})\` lists each one as \`connector:<connectorId>\`; fetch it with \`skills({ name: "connector:<connectorId>" })\`. \`search_tools\` and \`describe_tools\` set \`guide\` on matches whose connector has one. Read a connector's guide before working with it for the first time in a task.
-`;
-
-/** The same section, naming only surfaces a code-first deployment has. */
-const CODE_FIRST_CONNECTOR_GUIDES_SECTION = `
-## Per-connector guides
-
 Some connectors here ship their own usage guide — preferred tools, address quirks, pagination conventions, rate-limit etiquette, query patterns. \`skills({})\` lists each one as \`connector:<connectorId>\`; fetch it with \`skills({ name: "connector:<connectorId>" })\`. \`search_tools\`, \`connecta.search\`, and \`connecta.describe\` set \`guide\` on matches whose connector has one. Read a connector's guide before working with it for the first time in a task.
 `;
 
-/** The always-loaded MCP `instructions` string for `surface`. */
-export function instructionsFor(surface: ConnectaSurface): string {
-  return surface === "code-first"
-    ? CODE_FIRST_INSTRUCTIONS
-    : CONNECTA_INSTRUCTIONS;
+/** The always-loaded MCP `instructions` string. */
+export function instructionsFor(): string {
+  return CONNECTA_INSTRUCTIONS;
 }
 
 /** True when at least one of `connectors` carries a usage guide. */
@@ -103,25 +57,15 @@ export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
 /** The built-in usage guide, plus the guides section when there is one to point at. */
 function usageSkill(
   connectors: readonly Connector[],
-  surface: ConnectaSurface,
 ): string {
-  const base =
-    surface === "code-first" ? CODE_FIRST_USAGE_SKILL : USAGE_SKILL;
-  if (!hasConnectorGuides(connectors)) return base;
-  return (
-    base +
-    (surface === "code-first"
-      ? CODE_FIRST_CONNECTOR_GUIDES_SECTION
-      : CONNECTOR_GUIDES_SECTION)
-  );
+  if (!hasConnectorGuides(connectors)) return USAGE_SKILL;
+  return USAGE_SKILL + CONNECTOR_GUIDES_SECTION;
 }
 
 const AVAILABLE_SKILLS = [
   {
     name: "usage",
     description:
-      "How to choose among Connecta discovery, direct, batch, destructive, and code-mode tools.",
-    codeFirstDescription:
       "How to route work between one execute_code program and Connecta's explicit call, authorization, and result tools.",
     content: usageSkill,
   },
@@ -214,12 +158,10 @@ export interface SkillListing {
  */
 export function listSkills(
   connectors: readonly Connector[],
-  surface: ConnectaSurface = "classic",
 ): SkillListing[] {
   const listing: SkillListing[] = AVAILABLE_SKILLS.map((skill) => ({
     name: skill.name,
-    description:
-      surface === "code-first" ? skill.codeFirstDescription : skill.description,
+    description: skill.description,
   }));
   for (const connector of connectors) {
     const guide = connectorGuide(connector);
@@ -244,14 +186,13 @@ export type SkillLookup =
 export function resolveSkill(
   name: string,
   connectors: readonly Connector[],
-  surface: ConnectaSurface = "classic",
 ): SkillLookup {
   const builtIn = AVAILABLE_SKILLS.find((skill) => skill.name === name);
   if (builtIn) {
-    return { found: true, content: builtIn.content(connectors, surface) };
+    return { found: true, content: builtIn.content(connectors) };
   }
   const available = () =>
-    listSkills(connectors, surface)
+    listSkills(connectors)
       .map((skill) => skill.name)
       .join(", ");
   if (name.startsWith(CONNECTOR_SKILL_PREFIX)) {

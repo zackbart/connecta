@@ -4,6 +4,13 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+**This is a breaking deployment change.** Connecta now has one seven-tool
+surface and requires an executor at construction. A deployment that never
+configured one stops booting and must add `quickJsExecutor()` on Node or a
+`DynamicWorkerExecutor` on Workers; `surface: "classic"` is no longer accepted
+and must be removed. Deployments already using the default executor-backed
+surface keep the same model-facing tools. (#273)
+
 Programs gained a rich-output channel. `execute_code` code can now call
 `connecta.emit(block)` to deliver text, image, and audio MCP content blocks
 alongside its JSON return value — the piece code mode was missing for output
@@ -121,6 +128,13 @@ array syntax when that is the likely mistake. Discovery payload ceilings and
 write admission are unchanged.
 
 ### Changed
+
+- **The executor is mandatory and the surface selector is gone.**
+  `ConnectaConfig.executor` is required, supplying the removed `surface` option
+  throws, and every MCP connection advertises exactly seven tools. The former
+  top-level inventory, schema-expansion, and batch registrations now exist only
+  through `connecta.search`, `connecta.describe`, and `connecta.batch` inside a
+  program.
 
 - **Schema search exposes usable key contracts on both surfaces.**
   `search_tools` now includes `inputKeys`, `requiredInputKeys`, and `outputKeys`

@@ -41,29 +41,12 @@ and exact JSON-serialized definition, request, and response token surfaces.
 The default tokenizer is `o200k_base`; override it with
 `CONNECTA_EVAL_TOKENIZER`.
 
-The suite measures the two deployment shapes Connecta intentionally serves:
+The suite measures the required isolated QuickJS executor and seven-tool
+surface. Inventory, schema description, and batching are exercised through
+`connecta.search`, `connecta.describe`, and `connecta.batch` inside
+`execute_code`. CI runs the command on Node 20 and 22.
 
-- The default run enables the isolated QuickJS executor and measures the
-  seven-tool code-first surface. Inventory, schema description, and batching
-  are exercised through `connecta.search`, `connecta.describe`, and
-  `connecta.batch` inside `execute_code`.
-- An executor-free run measures the supported nine-tool classic surface, where
-  `list_connectors`, `describe_tools`, and `batch_call` remain top-level tools.
-
-Run the executor-free shape with:
-
-```sh
-npm --prefix eval/current-version run audit -- \
-  --executor disabled \
-  --output results/no-executor.json
-```
-
-CI runs both commands on Node 20 and 22. The real but intentionally unused
-ten-tool configuration (`surface: "classic"` plus an executor) is not part of
-the release gate: it combines both routing styles without representing a
-deployment shape users are directed to serve.
-
-Every JSON result and Markdown report records its surface and executor mode.
+Every JSON result and Markdown report records the advertised surface.
 The harness validates each task's top-level route against the advertised tool
 list before calling it, so a surface/task mismatch fails with an audit-specific
 configuration error.
@@ -137,8 +120,8 @@ unexpected failures, foreign tools, non-MCP host actions, unavailable-surface
 calls, unexpected connector executions, correctness, safety, round trips,
 Connecta/whole-agent tokens, and latency.
 Per-case summaries report rates plus min, p50, p95, max, mean, and standard
-deviation. Classic-only top-level tools remain a distinct comparison surface:
-they are never treated as expected code-first routes.
+deviation. Calls to removed top-level tools remain visible as unavailable-route
+diagnostics; they are never treated as expected routes.
 
 Set `CONNECTA_EVAL_AGENT_MODEL` to pin a model. If omitted, the current Codex
 default is used and recorded as `codex-default`; for comparable trend data,

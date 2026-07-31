@@ -88,7 +88,7 @@ const codeFirst = scoreAgentRun({
   mcpResultTokens: 40,
 });
 assert.equal(codeFirst.passed, true, "the code-first route is valid");
-assert.deepEqual(codeFirst.classicSurfaceCalls, []);
+assert.deepEqual(codeFirst.removedToolCalls, []);
 
 const partialBatchFailure = scoreAgentRun({
   fixture,
@@ -161,7 +161,7 @@ assert.equal(modeledBatchFailure.executionCorrect, true);
 assert.equal(modeledBatchFailure.taskCorrect, true);
 assert.equal(modeledBatchFailure.passed, true);
 
-const unavailableClassic = scoreAgentRun({
+const unavailableRemoved = scoreAgentRun({
   fixture,
   advertisedTools,
   metaToolTraces: [
@@ -181,9 +181,9 @@ const unavailableClassic = scoreAgentRun({
   finalCorrect: true,
   mcpResultTokens: 40,
 });
-assert.equal(unavailableClassic.surfaceValid, false);
-assert.deepEqual(unavailableClassic.unavailableSurfaceCalls, ["batch_call"]);
-assert.deepEqual(unavailableClassic.classicSurfaceCalls, ["batch_call"]);
+assert.equal(unavailableRemoved.surfaceValid, false);
+assert.deepEqual(unavailableRemoved.unavailableSurfaceCalls, ["batch_call"]);
+assert.deepEqual(unavailableRemoved.removedToolCalls, ["batch_call"]);
 
 const expectedAuthFailure = scoreAgentRun({
   fixture: {
@@ -342,7 +342,7 @@ assert.throws(
       [fixture],
       [...advertisedTools, "batch_call"],
     ),
-  /code-first surface mismatch.*classic-only advertised: batch_call/,
+  /seven-tool surface mismatch.*removed tools advertised: batch_call/,
 );
 
 process.stdout.write("agent benchmark scoring self-test passed\n");

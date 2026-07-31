@@ -222,11 +222,10 @@ Turn the exploratory scenarios into a repeatable evaluation suite before
 changing the default surface. Run at least 20 independent samples per task and
 model, with prompt variation.
 
-That suite now exists as
-[`eval/code-first-gate`](../eval/code-first-gate/README.md): these ten scenarios
-as versioned tasks with three phrasings each, the classic nine-tool surface as
-the control arm, and a per-model report that ends in a flip/hold verdict without
-flipping anything.
+That suite was built under
+[`eval/code-first-gate`](../eval/code-first-gate/README.md). Its recorded results
+remain as measurement history; the runnable comparison was retired when #273
+removed the alternate deployment shapes.
 
 Capture:
 
@@ -254,16 +253,13 @@ catalogs, centralized invocation, admission control, and lazy connector
 capabilities. Build the new surface on those rather than recreating parallel
 logic in the executor.
 
-### Phase 3: ship behind an explicit surface choice
+### Phase 3: consolidate the surface
 
-Offer code-first and classic modes initially. Executor-backed deployments can
-opt into code-first while deployments without a safe executor remain classic.
-Keep consequential writes outside the sandbox in both modes.
-
-Once the repeated model eval and production telemetry are healthy, make
-code-first the executor-backed default. Avoid adding new top-level read tools
-unless a measured case cannot be expressed safely or clearly through the
-programmable surface.
+This phase is complete: code-first became the default in #224, then #273 made
+the executor mandatory and removed the deployment choice. Consequential writes
+remain outside the sandbox. New top-level read tools still require a measured
+case that cannot be expressed safely or clearly through the programmable
+surface.
 
 ### Phase 4: stabilize successful workflows
 

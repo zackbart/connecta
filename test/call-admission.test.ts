@@ -4,14 +4,13 @@ import {
   ConnectorCallAdmissionController,
 } from "../src/call-admission.js";
 import { buildSandboxProviders } from "../src/execute.js";
-import { createConnecta } from "../src/index.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
   ToolDef,
 } from "../src/types.js";
-import { required, makeRegistry, silentLogger } from "./helpers.js";
+import { createConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const READ_TOOL: ToolDef = {

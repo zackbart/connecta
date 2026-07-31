@@ -17,7 +17,6 @@ import {
 } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
-import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   Connector,
@@ -26,7 +25,7 @@ import type {
   KVStorage,
   Logger,
 } from "../src/types.js";
-import { required, silentLogger } from "./helpers.js";
+import { createConnecta, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;

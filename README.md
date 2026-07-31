@@ -92,9 +92,9 @@ Other supported deployment shapes:
 - [Cloudflare Worker deployment](./examples/worker/)
 - [Subsystem documentation](./documentation/)
 
-Configuring a sandbox — QuickJS on Node or a Dynamic Worker on Cloudflare — is
-what selects the code-first surface and is the assumed posture. A deployment
-without one keeps the earlier nine-tool compatibility interface.
+Every deployment configures a sandbox: QuickJS on Node or a Dynamic Worker on
+Cloudflare. Construction fails with an actionable error when the executor is
+missing, so the model-facing interface is always the same seven tools.
 
 ## Project status
 

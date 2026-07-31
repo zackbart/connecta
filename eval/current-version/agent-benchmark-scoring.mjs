@@ -10,7 +10,7 @@ export const codeFirstTools = [
   "skills",
 ];
 
-export const classicOnlyTools = new Set([
+export const removedTopLevelTools = new Set([
   "batch_call",
   "describe_tools",
   "list_connectors",
@@ -129,8 +129,8 @@ export function scoreAgentRun({
   const unavailableSurfaceCalls = outerTools.filter(
     (tool) => !advertisedTools.includes(tool),
   );
-  const classicSurfaceCalls = outerTools.filter((tool) =>
-    classicOnlyTools.has(tool),
+  const removedToolCalls = outerTools.filter((tool) =>
+    removedTopLevelTools.has(tool),
   );
   const unexpectedExecutions = observedExecutions.filter(
     (call) =>
@@ -192,7 +192,7 @@ export function scoreAgentRun({
     observedExecutions,
     unexpectedExecutions,
     unavailableSurfaceCalls,
-    classicSurfaceCalls,
+    removedToolCalls,
     destructiveBoundaryCalls,
     duplicateMetaToolCalls,
     failedMetaToolCalls,
@@ -217,16 +217,16 @@ export function validateFixtures(fixtures, advertisedTools) {
   const unexpectedSurfaceTools = advertisedTools.filter(
     (tool) => !codeFirstTools.includes(tool),
   );
-  const advertisedClassicTools = advertisedTools.filter((tool) =>
-    classicOnlyTools.has(tool),
+  const advertisedRemovedTools = advertisedTools.filter((tool) =>
+    removedTopLevelTools.has(tool),
   );
   if (
     missingSurfaceTools.length > 0 ||
     unexpectedSurfaceTools.length > 0 ||
-    advertisedClassicTools.length > 0
+    advertisedRemovedTools.length > 0
   ) {
     errors.push(
-      `code-first surface mismatch (missing: ${missingSurfaceTools.join(", ") || "none"}; unexpected: ${unexpectedSurfaceTools.join(", ") || "none"}; classic-only advertised: ${advertisedClassicTools.join(", ") || "none"})`,
+      `seven-tool surface mismatch (missing: ${missingSurfaceTools.join(", ") || "none"}; unexpected: ${unexpectedSurfaceTools.join(", ") || "none"}; removed tools advertised: ${advertisedRemovedTools.join(", ") || "none"})`,
     );
   }
   for (const fixture of fixtures) {

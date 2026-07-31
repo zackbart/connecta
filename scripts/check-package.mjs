@@ -279,6 +279,39 @@ try {
     generatedRoot,
     "CONNECTA_TOKEN is required",
   );
+  const generatedSource = await readFile(
+    join(generatedRoot, "src", "index.ts"),
+    "utf8",
+  );
+  const executorLine = "  executor: quickJsExecutor(),\n";
+  if (!generatedSource.includes(executorLine)) {
+    throw new Error("Generated deployment is missing its required executor");
+  }
+  await writeFile(
+    join(generatedRoot, "src", "no-executor.ts"),
+    generatedSource.replace(executorLine, ""),
+  );
+  expectFailure(
+    generatedTsx,
+    ["src/no-executor.ts"],
+    generatedRoot,
+    "ConnectaConfig.executor is required",
+    { CONNECTA_TOKEN: "package-smoke-token" },
+  );
+  await writeFile(
+    join(generatedRoot, "src", "removed-surface.ts"),
+    generatedSource.replace(
+      "const connecta = createConnecta({\n",
+      'const connecta = createConnecta({\n  surface: "classic",\n',
+    ),
+  );
+  expectFailure(
+    generatedTsx,
+    ["src/removed-surface.ts"],
+    generatedRoot,
+    "ConnectaConfig.surface was removed in issue #273",
+    { CONNECTA_TOKEN: "package-smoke-token" },
+  );
 
   const port = await freePort();
   const smokeToken = "package-smoke-token";
@@ -419,12 +452,16 @@ try {
     "probeTimeoutMs",
     "defaultToolTimeoutMs",
     "maxResultBytes",
+    "surface",
   ]) {
     if (new RegExp(`^\\s+${legacyName}\\??:`, "m").test(publicConfig)) {
       throw new Error(
         `Packed ConnectaConfig still exposes legacy field ${legacyName}`,
       );
     }
+  }
+  if (!/^\s+executor: Executor;/m.test(publicConfig)) {
+    throw new Error("Packed ConnectaConfig does not require executor");
   }
   for (const dependency of ["@clerk/backend", "quickjs-emscripten"]) {
     if (existsSync(join(work, "node_modules", dependency))) {

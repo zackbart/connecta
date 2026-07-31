@@ -85,7 +85,7 @@ function alphabetic(value) {
   return result;
 }
 
-function startServer(profile, executorEnabled = false) {
+function startServer(profile) {
   const started = performance.now();
   const child = fork(new URL("./performance-server.ts", import.meta.url), {
     execArgv: ["--import", "tsx", "--expose-gc"],
@@ -93,7 +93,6 @@ function startServer(profile, executorEnabled = false) {
       ...process.env,
       CONNECTA_PERF_CONNECTORS: String(profile.connectors),
       CONNECTA_PERF_TOOLS_PER_CONNECTOR: String(profile.toolsPerConnector),
-      CONNECTA_PERF_EXECUTOR: executorEnabled ? "enabled" : "disabled",
     },
     stdio: ["ignore", "inherit", "inherit", "ipc"],
   });
@@ -352,7 +351,7 @@ async function benchmarkExecutor() {
     connectors: 25,
     toolsPerConnector: 40,
   };
-  const server = startServer(profile, true);
+  const server = startServer(profile);
   try {
     const ready = await server.ready;
     const calls = [];

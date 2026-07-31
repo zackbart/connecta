@@ -12,6 +12,8 @@ import type { ActivityStore } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 
+const executor = { execute: async () => ({ result: null }) };
+
 type UnsafeCreateConnecta = (
   config: Record<PropertyKey, unknown>,
 ) => unknown;
@@ -67,6 +69,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     };
     const config: ConnectaConfig = {
       connectors: [],
+      executor,
       activity,
       credentials,
       discovery,
@@ -84,18 +87,21 @@ describe("ConnectaConfig v0.7 shape", () => {
     expect(() =>
       createConnecta({
         connectors: [],
+        executor,
         admission: { requests: { concurrency: 0 } },
       }),
     ).toThrow("concurrency must be a positive whole number");
     expect(() =>
       createConnecta({
         connectors: [],
+        executor,
         admission: { requests: { maxQueueSize: -1 } },
       }),
     ).toThrow("maxQueueSize must be a non-negative whole number");
     expect(() =>
       createConnecta({
         connectors: [],
+        executor,
         admission: { code: { queueTimeoutMs: Number.NaN } },
       }),
     ).toThrow("queueTimeoutMs must be a positive whole number");
@@ -115,6 +121,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     };
     const persisted = createConnecta({
       connectors: [connector],
+      executor,
       storage,
       discovery: {
         catalogTtlSeconds: 10,
@@ -141,6 +148,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     const noPersistenceStorage = memoryStorage();
     const memoryOnly = createConnecta({
       connectors: [{ ...connector, id: "memory-only" }],
+      executor,
       storage: noPersistenceStorage,
       discovery: { persistCatalog: false },
     });
@@ -222,7 +230,7 @@ describe("ConnectaConfig v0.7 shape", () => {
   it("ignores inherited legacy names because only own properties are config", () => {
     const config = Object.assign(
       Object.create({ maxResultBytes: 1 }),
-      { connectors: [] },
+      { connectors: [], executor },
     ) as Record<PropertyKey, unknown>;
 
     expect(() => unsafeCreateConnecta(config)).not.toThrow();
@@ -230,7 +238,7 @@ describe("ConnectaConfig v0.7 shape", () => {
 
   it("accepts an explicitly undefined activity group as omitted", () => {
     expect(() =>
-      unsafeCreateConnecta({ connectors: [], activity: undefined }),
+      unsafeCreateConnecta({ connectors: [], executor, activity: undefined }),
     ).not.toThrow();
   });
 
@@ -243,6 +251,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     expect(() =>
       unsafeCreateConnecta({
         connectors: [],
+        executor,
         activity: new LegacyActivityStore(),
       }),
     ).toThrow("- activity -> activity.store");
@@ -257,31 +266,37 @@ if (false) {
 
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error v0.6 activity stores now belong at activity.store
     activity: store,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     activityReadGate: () => true,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     activityDeploymentId: "test",
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     credentialEncryptionKey: "key",
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.9
     credentialHealth: {},
   });
   createConnecta({
     connectors: [],
+    executor,
     credentials: {
       // @ts-expect-error removed in v0.9
       health: {},
@@ -289,36 +304,43 @@ if (false) {
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     toolCacheTtlSeconds: 1,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     persistToolCatalog: false,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     toolCatalogStaleSeconds: 1,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     probeTimeoutMs: 1,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     defaultToolTimeoutMs: 1,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.7
     maxResultBytes: 1,
   });
   createConnecta({
     connectors: [],
+    executor,
     // @ts-expect-error removed in v0.9
     toolkits: {},
   });

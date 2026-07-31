@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
+import { createConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
 

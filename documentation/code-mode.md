@@ -20,19 +20,11 @@ are stable and cited by the tests in [Verification](#verification).
 
 ## Deploy-time capability
 
-The `executor` passed to `createConnecta()` is the complete switch, and it selects
-the whole surface rather than one tool
-([#224](https://github.com/zackbart/connecta/issues/224)): with a live `Executor`,
-`tools/list` is exactly seven — `execute_code`, `search_tools`, `call_tool`,
-`call_destructive_tool`, `authorize_connector`, `get_result`, `skills`; without one
-it is the nine base meta-tools, whose `list_connectors`, `describe_tools`, and
-`batch_call` are what seven folds into `connecta.search`, `connecta.describe`, and
-`connecta.batch`.
-
-No feature flag, and no code tool advertised before it can be honored.
-`surface: "classic"` beside an executor is the one override (ten tools, the eval
-gate's incremental arm); `surface: "code-first"` without one throws at
-construction rather than advertise an absent program surface.
+The `executor` passed to `createConnecta()` is required. `tools/list` is exactly
+seven — `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
+`authorize_connector`, `get_result`, and `skills`. Construction fails when the
+executor is missing, and the removed `surface` option is rejected rather than
+ignored ([#273](https://github.com/zackbart/connecta/issues/273)).
 
 On Node, install the optional `quickjs-emscripten` peer and use the package's
 QuickJS subpath:
@@ -51,25 +43,20 @@ const connecta = createConnecta({
 CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are configured
 on the executor. Server bundlers must keep the `@zackbart/connecta/quickjs`
 package files external so the child entry stays on disk. The
-[Node example](../examples/node/README.md) is enabled; remove its `executor` field
-for the nine-tool compatibility deployment.
+[Node example](../examples/node/README.md) carries the complete setup.
 
-On Cloudflare Workers, the Worker Loader binding is both the paid capability and
-the configuration switch:
+On Cloudflare Workers, the Worker Loader binding provides the required sandbox:
 
 ```ts
 createConnecta({
-  ...(env.LOADER
-    ? { executor: new DynamicWorkerExecutor({ loader: env.LOADER }) }
-    : {}),
+  executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
   // connectors, auth, storage…
 });
 ```
 
-Leave the binding absent on the Workers Free plan. Its absence must also be
-represented as optional in the deployment's `Env` type. The
+Dynamic Workers require the Workers Paid plan. The
 [Worker example](../examples/worker/README.md#code-mode) carries the complete
-binding and package setup.
+required binding and package setup.
 
 ## What an executor must implement
 

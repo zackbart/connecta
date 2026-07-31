@@ -32,8 +32,7 @@ value outside this local example.
 Keep this deployment small:
 
 - Edit `src/index.ts` to change connectors, auth, storage, and the public URL.
-- Keep `executor: quickJsExecutor()` unless you deliberately want the classic
-  compatibility surface.
+- Keep the required `executor: quickJsExecutor()` configuration.
 - Keep secrets in environment variables or an external secret store. Never put
   tokens in `src/index.ts`, connector guides, or committed JSON.
 - Add application code only when implementing a deliberate `api()` connector.

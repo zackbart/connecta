@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { AccessTokenManager } from "../src/access-tokens.js";
-import { createConnecta } from "../src/index.js";
+import { createConnecta } from "./helpers.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   ActivityPage,

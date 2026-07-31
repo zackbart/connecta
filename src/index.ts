@@ -18,7 +18,6 @@ import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
   Connector,
   ConnectaBranding,
-  ConnectaSurface,
   Executor,
   InboundAuth,
   KVStorage,
@@ -197,22 +196,12 @@ export interface ConnectaConfig {
   /** Deployment metadata exposed by /health (for example a Worker version). */
   deploymentInfo?: Record<string, unknown>;
   /**
-   * Sandbox for `execute_code`, and the switch that decides the surface: with
-   * an executor a model sees the seven code-first tools, without one the nine
-   * classic ones. Workers: `new DynamicWorkerExecutor({ loader: env.LOADER })`
-   * from `@cloudflare/codemode`. Node: `quickJsExecutor()` from
-   * "@zackbart/connecta/quickjs".
+   * Required sandbox for `execute_code`. Workers use
+   * `new DynamicWorkerExecutor({ loader: env.LOADER })` from
+   * `@cloudflare/codemode`; Node uses `quickJsExecutor()` from
+   * `@zackbart/connecta/quickjs`.
    */
-  executor?: Executor;
-  /**
-   * Override the surface the `executor` implies. The only reason to set it is
-   * `"classic"` alongside an executor — ten tools, the shape the eval gate's
-   * *incremental* arm measures ("does adding `execute_code` to classic help on
-   * its own?"). The gate's control arm is executor-free classic, which needs no
-   * override. `"code-first"` is the default wherever an executor exists and
-   * throws without one.
-   */
-  surface?: ConnectaSurface;
+  executor: Executor;
 }
 
 export interface Connecta {
@@ -444,43 +433,21 @@ function warnInsecureConfig(
   }
 }
 
-/**
- * The advertised surface: the executor is the switch. Configure one and the
- * deployment serves the seven-tool code-first surface; omit it and there is no
- * program to fold discovery and batching into, so it serves classic.
- *
- * Two mistakes are structural rather than recoverable, so neither is warned
- * past: a surface name connecta does not implement, which would otherwise
- * resolve to something the operator did not ask for; and `code-first` without
- * an executor, which would advertise six tools and no program surface.
- */
-function resolveSurface(config: ConnectaConfig): ConnectaSurface {
-  const surface = config.surface;
-  if (surface === undefined) {
-    return config.executor ? "code-first" : "classic";
-  }
-  if (surface !== "classic" && surface !== "code-first") {
-    throw new Error(
-      `ConnectaConfig.surface must be "classic" or "code-first", not ` +
-        `${JSON.stringify(surface)}.`,
-    );
-  }
-  if (surface === "code-first" && !config.executor) {
-    throw new Error(
-      'ConnectaConfig.surface "code-first" requires an executor: it folds ' +
-        "list_connectors, describe_tools, and batch_call into connecta.search, " +
-        "connecta.describe, and connecta.batch inside execute_code, so without " +
-        "an executor there is nothing left to reach them through. Configure " +
-        "one (quickJsExecutor() from \"@zackbart/connecta/quickjs\" on Node, " +
-        "new DynamicWorkerExecutor({ loader: env.LOADER }) on Workers).",
-    );
-  }
-  return surface;
-}
-
 export function createConnecta(config: ConnectaConfig): Connecta {
   assertNoLegacyConfig(config);
-  const surface = resolveSurface(config);
+  if (Object.prototype.hasOwnProperty.call(config, "surface")) {
+    throw new Error(
+      "ConnectaConfig.surface was removed in issue #273. Remove it; connecta " +
+        "now serves one seven-tool surface.",
+    );
+  }
+  if (!config.executor) {
+    throw new Error(
+      "ConnectaConfig.executor is required. Configure quickJsExecutor() from " +
+        '"@zackbart/connecta/quickjs" on Node, or ' +
+        "new DynamicWorkerExecutor({ loader: env.LOADER }) on Workers.",
+    );
+  }
   const storage = config.storage ?? memoryStorage();
   const logger = config.logger ?? defaultLogger();
   const credentialConnectors = config.connectors.filter((c) => c.credential);
@@ -542,10 +509,10 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   );
   let codeAdmission: AdmissionController | undefined;
   let executor = config.executor;
-  if (executor && !isAdmittingExecutor(executor)) {
+  if (!isAdmittingExecutor(executor)) {
     codeAdmission = configuredCodeAdmission;
     executor = withExecutorAdmission(executor, codeAdmission);
-  } else if (executor && config.admission?.code) {
+  } else if (config.admission?.code) {
     logger.warn(
       "[connecta] admission.code is ignored because the configured executor " +
         "implements acquire() and owns its admission pool; configure that " +
@@ -571,8 +538,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     ...(config.activity?.deploymentId !== undefined
       ? { activityDeploymentId: config.activity.deploymentId }
       : {}),
-    ...(executor !== undefined ? { executor } : {}),
-    surface,
+    executor,
     requestAdmission,
     ...(config.calls?.defaultTimeoutMs !== undefined
       ? { defaultToolTimeoutMs: config.calls.defaultTimeoutMs }
@@ -653,7 +619,6 @@ export type {
   ConnectorCallAdmissionRule,
   ConnectorRollingWindowBudget,
   ConnectaBranding,
-  ConnectaSurface,
   ConnectorCredentialAccess,
   ConnectorCredentialConfig,
   ConnectorCredentialFieldConfig,

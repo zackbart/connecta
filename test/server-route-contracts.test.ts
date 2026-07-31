@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
-import { createConnecta } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import { silentLogger } from "./helpers.js";
+import { createConnecta, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";

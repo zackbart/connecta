@@ -147,7 +147,9 @@ Prefer \`notion.search\` over listing databases.
       BASE,
     );
     const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).toContain(
+      "`usage` — How to route work between one execute_code program",
+    );
     expect(listed).toContain("`connector:notion` — Notion usage");
     expect(listed).not.toContain("connector:plain");
   });
@@ -254,9 +256,11 @@ Prefer \`notion.search\` over listing databases.
       "Per-connector guides",
     );
     const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).toContain(
+      "`usage` — How to route work between one execute_code program",
+    );
     expect(listed).not.toContain("connector:");
-    expect(new TextEncoder().encode(USAGE_SKILL).length).toBeLessThan(1_800);
+    expect(new TextEncoder().encode(USAGE_SKILL).length).toBeLessThan(2_500);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
@@ -325,7 +329,9 @@ Prefer \`notion.search\` over listing databases.
     const mt = createMetaTools(makeRegistry([guided("usage", guide)]), BASE);
 
     const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain("`usage` — How to choose among Connecta");
+    expect(listed).toContain(
+      "`usage` — How to route work between one execute_code program",
+    );
     expect(listed).toContain("`connector:usage` — Usage-service quirks");
 
     expect(textFrom(await mt.skills({ name: "usage" }))).toBe(
@@ -1998,7 +2004,7 @@ describe("describe_tools", () => {
         code: "invalid_args",
         retryable: false,
         message: expect.stringContaining(
-          "Split a larger list across describe_tools calls",
+          "Split a larger list across connecta.describe calls",
         ),
       },
     });
@@ -5040,29 +5046,11 @@ describe("authorize_connector", () => {
     expect(parsed.status).toBe("auth_required");
     expect(parsed.authorizationUrl).toContain("auth.example");
     expect(parsed.instructions).toContain("/oauth/callback/");
-    expect(parsed.instructions).toContain(
-      "Re-run list_connectors afterwards to confirm status is ok.",
-    );
-    expect(authConnector.startAuthCalls).toEqual([{ force: undefined }]);
-  });
-
-  // authorize_connector is registered on both surfaces, so its result text is
-  // the one place a code-first agent could still be told to run a tool the
-  // deployment does not serve (#261). The always-loaded-text sweep in
-  // test/code-first-surface.test.ts reads descriptions, never tool results.
-  it("points a code-first deployment at a check its own surface serves", async () => {
-    authConnector.startAuthCalls.length = 0;
-    const mt = createMetaTools(registry(), BASE, { surface: "code-first" });
-    const parsed = textOf(
-      await mt.authorizeConnector({ connector: "needsauth" }),
-    ) as { instructions?: string };
-
-    expect(parsed.instructions).toContain("/oauth/callback/");
     expect(parsed.instructions).toContain("Then retry the original call");
     expect(parsed.instructions).toContain(
       'connecta.search({ connector: "needsauth" }) inside execute_code',
     );
-    expect(parsed.instructions).not.toContain("list_connectors");
+    expect(authConnector.startAuthCalls).toEqual([{ force: undefined }]);
   });
 
   it("passes force through to the connector", async () => {
@@ -5340,7 +5328,7 @@ describe("probe timeout", () => {
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(required(parsed.tools[0]).address).toBe("hang.read");
     expect(required(parsed.tools[0]).error).toContain(
-      'describe_tools probe of "hang" timed out',
+      'connecta.describe probe of "hang" timed out',
     );
   });
 });

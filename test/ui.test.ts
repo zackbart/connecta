@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { clerkAuth } from "../src/auth/clerk.js";
@@ -31,7 +30,7 @@ import type {
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
-import { required, makeRegistry } from "./helpers.js";
+import { createConnecta, required, makeRegistry } from "./helpers.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";

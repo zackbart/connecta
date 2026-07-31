@@ -69,7 +69,6 @@ const token = process.env.CONNECTA_EVAL_TOKEN ?? "connecta-eval-token";
 const operatorToken =
   process.env.CONNECTA_EVAL_OPERATOR_TOKEN ?? "connecta-eval-operator";
 const sourceCommit = process.env.CONNECTA_EVAL_SOURCE_COMMIT ?? "working-tree";
-const executorEnabled = process.env.CONNECTA_EVAL_EXECUTOR !== "disabled";
 const traceEnabled = process.env.CONNECTA_EVAL_TRACE === "enabled";
 const port = Number(process.env.CONNECTA_EVAL_PORT ?? "0");
 const host = "127.0.0.1";
@@ -879,15 +878,11 @@ const staticUnavailable = staticCredentialConnector(
   false,
 );
 
-const executor = executorEnabled
-  ? (() => {
-      const base = quickJsExecutor({
-        timeoutMs: 10_000,
-        cpuTimeMs: 2_000,
-      });
-      return traceEnabled ? tracedExecutor(base) : base;
-    })()
-  : undefined;
+const baseExecutor = quickJsExecutor({
+  timeoutMs: 10_000,
+  cpuTimeMs: 2_000,
+});
+const executor = traceEnabled ? tracedExecutor(baseExecutor) : baseExecutor;
 
 const connecta = createConnecta({
   auth: [
@@ -903,7 +898,7 @@ const connecta = createConnecta({
     staticUnavailable,
   ],
   storage,
-  ...(executor ? { executor } : {}),
+  executor,
   credentials: {
     encryptionKey: credentialEncryptionKey,
   },
@@ -961,7 +956,6 @@ console.log(
     baseUrl: `http://${host}:${address.port}`,
     sourceCommit,
     connectorCount: discoveryConnectors.length + 5,
-    executorEnabled,
     traceEnabled,
   }),
 );

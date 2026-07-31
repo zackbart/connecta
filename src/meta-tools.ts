@@ -51,11 +51,7 @@ import {
   normalizeTimeoutMs,
   withAbortableTimeout,
 } from "./timeout.js";
-import type {
-  ConnectaSurface,
-  ConnectorStatus,
-  KVStorage,
-} from "./types.js";
+import type { ConnectorStatus, KVStorage } from "./types.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -1082,24 +1078,17 @@ export interface SkillArgs {
 
 /**
  * The sentence that closes the OAuth handoff, telling the operator's agent how
- * to confirm the flow landed. `authorize_connector` is registered on both
- * surfaces but `list_connectors` is not, so the classic status check cannot be
- * the only one offered: a code-first agent handed that advice gets an
- * unknown-tool error at exactly the moment it is trying to recover. It gets the
- * check its own surface serves instead — the same folded-name defect as the
- * describe path (#261), one tool result further along.
+ * to confirm the flow landed through the one surface it can call.
  */
-function oauthFollowUp(surface: ConnectaSurface, connectorId: string): string {
-  return surface === "code-first"
-    ? `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`
-    : "Re-run list_connectors afterwards to confirm status is ok.";
+function oauthFollowUp(connectorId: string): string {
+  return `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`;
 }
 
 /**
- * Every base meta-tool handler over a registry — all nine, whichever surface is
- * advertised, since folding a tool away only skips its registration and never
- * its handler. Exported for direct testing; registerMetaTools() wires the ones
- * this surface advertises onto an McpServer. `opts.defaultToolTimeoutMs`
+ * Every meta-tool handler over a registry. Discovery and batching handlers are
+ * shared with execute_code even though they are not registered as top-level
+ * tools. Exported for direct testing; registerMetaTools() wires the six explicit
+ * tools onto an McpServer. `opts.defaultToolTimeoutMs`
  * supplies a deadline for calls that don't carry one. (execute_code is
  * registered separately by registerExecuteTool.)
  *
@@ -1123,15 +1112,8 @@ export function createMetaTools(
     requestSignal?: AbortSignal;
     /** Runtime continuation for the bounded tail of probe-owned teardown. */
     defer?: DeferredWork;
-    /**
-     * The advertised surface, which the `skills` guidance must match: a
-     * code-first deployment never gets guidance naming a tool it does not
-     * advertise. Default `classic`.
-     */
-    surface?: ConnectaSurface;
   } = {},
 ) {
-  const surface: ConnectaSurface = opts.surface ?? "classic";
   // Already normalized and warned about at registry construction.
   const globalCap = registry.maxResultBytes;
   const batchCap = registry.maxBatchResultBytes;
@@ -1149,14 +1131,8 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
-    // These handlers are the top-level tools, so the route is the advertised
-    // one; in-program describes route through connecta.describe instead and
-    // are built with their own CatalogService in execute.ts.
-    describeRoute:
-      surface === "code-first" ? "connecta.describe" : "describe_tools",
-    // searchRoute keeps its default: unlike describe_tools, search_tools is
-    // served by both advertised surfaces, so a top-level handler has nothing to
-    // derive. Only an in-program caller needs to be sent to connecta.search.
+    // searchRoute keeps its top-level default. In-program callers use a
+    // separate CatalogService configured for connecta.search.
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(
@@ -1350,14 +1326,14 @@ export function createMetaTools(
               type: "text",
               text:
                 'Available skills. Fetch one with skills({ name: "<name>" }).\n\n' +
-                listSkills(connectors, surface)
+                listSkills(connectors)
                   .map((skill) => `- \`${skill.name}\` — ${skill.description}`)
                   .join("\n"),
             },
           ],
         };
       }
-      const skill = resolveSkill(args.name, connectors, surface);
+      const skill = resolveSkill(args.name, connectors);
       if (!skill.found) return errorResult(skill.message);
       return { content: [{ type: "text", text: skill.content }] };
     },
@@ -1792,7 +1768,7 @@ export function createMetaTools(
                 authorizationUrl: status.authorizationUrl,
                 instructions:
                   "Have the operator open authorizationUrl in a browser and complete the consent flow. The provider then redirects back to this server's /oauth/callback/<connector> route, which finishes the flow automatically. " +
-                  oauthFollowUp(surface, connector.id),
+                  oauthFollowUp(connector.id),
               }
             : {}),
           ...(status.message ? { message: status.message } : {}),
@@ -1808,39 +1784,19 @@ export function createMetaTools(
   };
 }
 
-const LIST_DESC =
-  "List connectors with status, cached tool count, and recent real-call health. Use probe=false for a fast inventory; use probe=true (default) only to diagnose live health or authorization.";
 const SEARCH_DESC = `Unknown address: use 2–4 distinctive action/object terms, not the full request; omit limit initially (default ${DEFAULT_SEARCH_LIMIT}) and page only if needed, up to ${MAX_SEARCH_LIMIT}. Partial and no-match searches report term coverage and next-step guidance. safety="readOnly" returns only calls available to call_tool and generated code; "approvalRequired" returns everything else; omitted or "all" preserves the complete catalog. This filters results, not authority. includeSchemas="compact" adds the input and any declared output shape, each bounded; plain-object schemas also expose inputKeys, requiredInputKeys, and outputKeys, while inputSchemaTruncated/outputSchemaTruncated mark shapes that need exact retrieval; matches also carry declared annotations. Call directly when sufficient. Empty query browses all.`;
-const DESCRIBE_DESC = `Only when search_tools omitted schemas, a compact shape is ambiguous, or exact JSON constraints are needed. Inspects up to ${MAX_DESCRIBE_ADDRESSES} addresses with schemas and annotations; "compact" is default, while "json" preserves exact constraints.`;
 const CALL_DESC =
-  'Use for one tool explicitly annotated readOnlyHint: true. For 2–10 independent read-only calls use batch_call; for dependent steps or data reduction use execute_code when available. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
 const CALL_DESTRUCTIVE_DESC =
   "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. Include a short reason explaining the intended consequence for the human reviewer; it grants no authority and is never passed downstream. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
 const GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool/batch_call. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
-const BATCH_DESC =
-  "Use for 2–10 independent tools explicitly annotated readOnlyHint: true. Calls run in parallel with shared request-scoped clients; use execute_code when available instead for dependencies or in-sandbox reduction. Unannotated, write-capable, and destructive tools are refused. Batch timeout, safe retry, result mode, and diagnostics defaults may be overridden per call. An oversized final envelope returns ordered outcome summaries plus a get_result page handle.";
+  "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =
   'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
 
-/**
- * Code-first replacements for the descriptions that route work between tools.
- * Every one of these mentions a tool the consolidated surface removed, so on a
- * code-first deployment the routing sentence has to point at the in-program
- * function that took the work over — a description naming `batch_call` on a
- * surface without one teaches a call that cannot succeed.
- *
- * The classic strings above are left byte-for-byte alone: classic is the
- * compatibility surface and the eval's control arm, and rewording it would
- * change what that control measures.
- */
-const CODE_FIRST_SEARCH_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
-const CODE_FIRST_CALL_DESC =
-  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
-const CODE_FIRST_GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
+const SEARCH_WITH_DESCRIBE_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1855,8 +1811,6 @@ const GUIDE_NOTES = {
     ' skills({}) also lists this deployment\'s per-connector usage guides as "connector:<connectorId>"; fetch the guide for a connector before working with it for the first time.',
   search:
     " A connector group carrying `guide` has a usage guide; fetch it with skills({ name: <guide> }).",
-  describe:
-    " An entry carrying `guide` belongs to a connector with a usage guide; fetch it with skills({ name: <guide> }).",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
@@ -1901,13 +1855,9 @@ const CALL_INPUT_SCHEMA = {
 };
 
 /**
- * Register the base meta-tools onto an McpServer instance: nine on the classic
- * surface, six on the code-first one, where `list_connectors`,
- * `describe_tools`, and `batch_call` have folded into the program surface
- * (`registerExecuteTool` adds the seventh, `execute_code`).
- *
- * Only the registrations differ. Every handler still exists on the object
- * `createMetaTools` returns, and a folded tool's behavior is reached through
+ * Register the six explicit meta-tools onto an McpServer instance.
+ * `registerExecuteTool` adds the seventh, `execute_code`. Discovery and batch
+ * handlers still exist on the object `createMetaTools` returns and are reached through
  * `connecta.search` / `connecta.describe` / `connecta.batch` inside a program —
  * the same code paths, one layer down.
  */
@@ -1922,14 +1872,9 @@ export function registerMetaTools(
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
     defer?: DeferredWork;
-    /** The advertised surface. Default `classic`. */
-    surface?: ConnectaSurface;
   },
 ): void {
-  const surface: ConnectaSurface = ctx.surface ?? "classic";
-  const codeFirst = surface === "code-first";
   const mt = createMetaTools(registry, ctx.baseUrl, {
-    surface,
     ...(ctx.defaultToolTimeoutMs !== undefined
       ? { defaultToolTimeoutMs: ctx.defaultToolTimeoutMs }
       : {}),
@@ -1956,28 +1901,12 @@ export function registerMetaTools(
     async (args) => mt.skills(args as SkillArgs),
   );
 
-  // Folded on the code-first surface: a program browses the same inventory with
-  // connecta.search({}) (every catalog) or connecta.search({ connector }) (one).
-  // Live connector probing is an operator concern, not a model one — it stays on
-  // the operator pages and /health, which is where the ethos puts observability.
-  if (!codeFirst) {
-    server.registerTool(
-      "list_connectors",
-      {
-        description: LIST_DESC,
-        inputSchema: z.object({ probe: z.boolean().optional() }),
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.listConnectors(args as ListArgs),
-    );
-  }
-
   server.registerTool(
     "search_tools",
     {
       description: describedFor(
         registry,
-        codeFirst ? CODE_FIRST_SEARCH_DESC : SEARCH_DESC,
+        SEARCH_WITH_DESCRIBE_DESC,
         "search",
       ),
       inputSchema: z.object({
@@ -1996,28 +1925,10 @@ export function registerMetaTools(
     async (args) => mt.searchTools(args as SearchArgs),
   );
 
-  // Folded on the code-first surface: connecta.describe takes the same
-  // addresses, format, and per-address error reporting inside a program.
-  if (!codeFirst) {
-    server.registerTool(
-      "describe_tools",
-      {
-        description: describedFor(registry, DESCRIBE_DESC, "describe"),
-        inputSchema: z.object({
-          addresses: z.array(z.string()).max(MAX_DESCRIBE_ADDRESSES),
-          format: z.enum(["compact", "json"]).optional(),
-          fullDescriptions: z.boolean().optional(),
-        }),
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.describeTools(args as DescribeArgs),
-    );
-  }
-
   server.registerTool(
     "call_tool",
     {
-      description: codeFirst ? CODE_FIRST_CALL_DESC : CALL_DESC,
+      description: CALL_DESC,
       inputSchema: z.object(CALL_INPUT_SCHEMA),
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
@@ -2077,7 +1988,7 @@ export function registerMetaTools(
   server.registerTool(
     "get_result",
     {
-      description: codeFirst ? CODE_FIRST_GET_RESULT_DESC : GET_RESULT_DESC,
+      description: GET_RESULT_DESC,
       inputSchema: z.object({
         id: z.string(),
         // Both bounds are the shared rules (isValidResultOffset,
@@ -2092,28 +2003,4 @@ export function registerMetaTools(
     async (args) => mt.getResult(args as GetResultArgs),
   );
 
-  // Folded on the code-first surface: connecta.batch runs the same 1–10
-  // parallel read-only calls and returns the same typed per-call outcomes.
-  if (!codeFirst) {
-    server.registerTool(
-      "batch_call",
-      {
-        description: BATCH_DESC,
-        inputSchema: z.object({
-          calls: z
-            .array(z.object(CALL_INPUT_SCHEMA))
-            .min(1)
-            .max(10),
-          resultMode: z.enum(["mcp", "value"]).optional(),
-          timeoutMs: z.number().int().positive().optional(),
-          maxRetries: z.number().int().min(0).max(2).optional(),
-          diagnostics: z.boolean().optional(),
-        }),
-        // Same gate as call_tool: every call in the batch must be explicitly
-        // read-only or the batch is refused.
-        annotations: READ_ONLY_REMOTE,
-      },
-      async (args) => mt.batchCall(args as BatchArgs),
-    );
-  }
 }

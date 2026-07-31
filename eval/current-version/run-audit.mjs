@@ -45,11 +45,8 @@ const reportPath = resolve(
 );
 const tokenizerName =
   process.env.CONNECTA_EVAL_TOKENIZER ?? "o200k_base";
-const executorMode = option("--executor", "enabled");
-if (executorMode !== "enabled" && executorMode !== "disabled") {
-  throw new Error('--executor must be "enabled" or "disabled".');
-}
-const executorEnabled = executorMode === "enabled";
+const executorMode = "required";
+const surface = "seven-tool";
 const bearer = process.env.CONNECTA_EVAL_TOKEN ?? "connecta-eval-token";
 const operatorToken =
   process.env.CONNECTA_EVAL_OPERATOR_TOKEN ?? "connecta-eval-operator";
@@ -68,7 +65,6 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_OPERATOR_TOKEN: operatorToken,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
-        CONNECTA_EVAL_EXECUTOR: executorMode,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -142,15 +138,9 @@ try {
     token: bearer,
     tokenizerName,
   });
-  const listedNames = new Set(context.listed.tools.map((tool) => tool.name));
-  const surface = listedNames.has("list_connectors")
-    ? "classic"
-    : "code-first";
   const tasks = await runTaskAudit(context, {
     baseUrl: ready.baseUrl,
     operatorToken,
-    executorEnabled,
-    surface,
   });
   const discovery = await runDiscoveryBenchmark(context, corpusPath);
   const observations = context.observations;

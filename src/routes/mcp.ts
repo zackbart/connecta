@@ -192,13 +192,9 @@ async function serveMcp(
   registry: RegistryView,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
-  // One deployment-wide value, read once here so the instructions, the
-  // registered tools, and the guidance the `skills` tool serves cannot
-  // disagree about which surface this deployment advertises.
-  const surface = opts.surface ?? "classic";
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
-      instructions: instructionsFor(surface),
+      instructions: instructionsFor(),
       cacheHints: {
         "tools/list": {
           ttlMs: 3_600_000,
@@ -223,7 +219,6 @@ async function serveMcp(
       : undefined;
     registerMetaTools(server, registry, {
       baseUrl,
-      surface,
       ...(activity ? { activity } : {}),
       ...(opts.defaultToolTimeoutMs !== undefined
         ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
@@ -239,28 +234,25 @@ async function serveMcp(
         ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
         : {}),
     });
-    if (opts.executor) {
-      registerExecuteTool(server, registry, {
-        baseUrl,
-        surface,
-        executor: opts.executor,
-        logger: opts.logger,
-        ...(activity ? { activity } : {}),
-        requestSignal: request.signal,
-        ...(opts.discoveryConcurrency !== undefined
-          ? { discoveryConcurrency: opts.discoveryConcurrency }
-          : {}),
-        ...(opts.probeTimeoutMs !== undefined
-          ? { probeTimeoutMs: opts.probeTimeoutMs }
-          : {}),
-        ...(opts.maxEmittedBytes !== undefined
-          ? { maxEmittedBytes: opts.maxEmittedBytes }
-          : {}),
-        ...(opts.maxEmittedBlocks !== undefined
-          ? { maxEmittedBlocks: opts.maxEmittedBlocks }
-          : {}),
-      });
-    }
+    registerExecuteTool(server, registry, {
+      baseUrl,
+      executor: opts.executor,
+      logger: opts.logger,
+      ...(activity ? { activity } : {}),
+      requestSignal: request.signal,
+      ...(opts.discoveryConcurrency !== undefined
+        ? { discoveryConcurrency: opts.discoveryConcurrency }
+        : {}),
+      ...(opts.probeTimeoutMs !== undefined
+        ? { probeTimeoutMs: opts.probeTimeoutMs }
+        : {}),
+      ...(opts.maxEmittedBytes !== undefined
+        ? { maxEmittedBytes: opts.maxEmittedBytes }
+        : {}),
+      ...(opts.maxEmittedBlocks !== undefined
+        ? { maxEmittedBlocks: opts.maxEmittedBlocks }
+        : {}),
+    });
     return server;
   };
 

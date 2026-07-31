@@ -30,9 +30,7 @@ const connecta = createConnecta({
   auth: bearerToken(token, { subjectId: "operator" }),
   // Downstream OAuth callbacks use this deployment origin.
   publicUrl: `http://localhost:${port}`,
-  // Code mode: QuickJS runs model-written JS in a bounded disposable child.
-  // This line is also what selects the seven-tool code-first surface; remove it
-  // to serve the nine classic meta-tools instead.
+  // Required: QuickJS runs model-written JS in a bounded disposable child.
   executor: quickJsExecutor(),
   connectors: [
     api("time", {
