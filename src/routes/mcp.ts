@@ -250,6 +250,9 @@ async function serveMcp(
         ...(opts.discoveryConcurrency !== undefined
           ? { discoveryConcurrency: opts.discoveryConcurrency }
           : {}),
+        ...(opts.probeTimeoutMs !== undefined
+          ? { probeTimeoutMs: opts.probeTimeoutMs }
+          : {}),
         ...(opts.maxEmittedBytes !== undefined
           ? { maxEmittedBytes: opts.maxEmittedBytes }
           : {}),

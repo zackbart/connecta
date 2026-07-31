@@ -882,13 +882,48 @@ describe("buildSandboxProviders", () => {
           () => "calc.add",
         ),
       }),
-    ).rejects.toThrow(`at most ${MAX_DESCRIBE_ADDRESSES}`);
+    ).rejects.toThrow(
+      `at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across connecta.describe calls.`,
+    );
     await expect(
       required(connecta.fns.search)({
         connector: "verbose",
         fullDescriptions: true,
       }),
     ).rejects.toMatchObject({ code: "result_too_large" });
+  });
+
+  it("honors the configured probe deadline and names connecta.describe when a catalog probe times out", async () => {
+    const hanging: Connector = {
+      id: "hang",
+      kind: "mcp",
+      async listTools() {
+        return new Promise<never>(() => {});
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const providers = await buildSandboxProviders(
+      makeRegistry([hanging]),
+      BASE,
+      silentLogger,
+      undefined,
+      { probeTimeoutMs: 25 },
+    );
+    const started = Date.now();
+    const result = (await required(connectaProvider(providers).fns.describe)({
+      addresses: ["hang.read"],
+    })) as { tools: Array<{ address: string; error?: string }> };
+
+    // The deadline reached the sandbox: without the plumbing this hangs to the
+    // 30s default instead of resolving in milliseconds.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(required(result.tools[0]).address).toBe("hang.read");
+    expect(required(result.tools[0]).error).toContain(
+      'connecta.describe probe of "hang" timed out',
+    );
+    expect(required(result.tools[0]).error).not.toContain("describe_tools");
   });
 
   it("bounds total host calls and connecta.batch size", async () => {

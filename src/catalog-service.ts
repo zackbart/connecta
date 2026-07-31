@@ -44,6 +44,16 @@ const MAX_QUERY_ANALYSIS_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
 
+/**
+ * The tool a describe-path error should name when it tells a caller to retry.
+ * This is the route the *caller* took, not the deployment's advertised surface:
+ * a classic deployment with an executor serves `describe_tools` at top level
+ * while every in-program describe still arrives through `connecta.describe`, so
+ * one CatalogService cannot infer the answer from `surface` alone. Callers pass
+ * the route they own.
+ */
+export type DescribeRoute = "describe_tools" | "connecta.describe";
+
 export class DiscoveryPolicyError extends Error {
   constructor(
     readonly code: "invalid_args" | "result_too_large",
@@ -72,7 +82,10 @@ function discoverySearchLimit(value: unknown): number {
 }
 
 /** Normalize the single-address convenience form, then validate the bounded list. */
-function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
+function discoveryAddresses(
+  args: CatalogDescribeArgs,
+  describeRoute: DescribeRoute,
+): unknown[] {
   if (args.address !== undefined && args.addresses !== undefined) {
     throw new DiscoveryPolicyError(
       "invalid_args",
@@ -94,7 +107,7 @@ function discoveryAddresses(args: CatalogDescribeArgs): unknown[] {
   if (value.length > MAX_DESCRIBE_ADDRESSES) {
     throw new DiscoveryPolicyError(
       "invalid_args",
-      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across describe_tools calls.`,
+      `addresses must contain at most ${MAX_DESCRIBE_ADDRESSES} entries. Split a larger list across ${describeRoute} calls.`,
     );
   }
   return value;
@@ -286,6 +299,7 @@ export class CatalogService {
   readonly requestScope: object;
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
+  private readonly describeRoute: DescribeRoute;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -296,12 +310,15 @@ export class CatalogService {
       requestScope?: object;
       probeTimeoutMs?: number;
       concurrency?: number;
+      /** The tool describe-path errors name. Default `describe_tools`. */
+      describeRoute?: DescribeRoute;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
+    this.describeRoute = options.describeRoute ?? "describe_tools";
   }
 
   async loadConnector(
@@ -486,6 +503,10 @@ export class CatalogService {
       connectors,
       this.concurrency,
       (connector) =>
+        // Unlike the describe path, this label never reaches a caller: search
+        // only counts rejected catalogs (`unavailableCatalogs` below) and
+        // renders its own guidance, so the folded name here stays internal and
+        // needs no surface awareness.
         this.loadForDiscovery(
           connector.id,
           `search_tools probe of "${connector.id}"`,
@@ -704,7 +725,7 @@ export class CatalogService {
   }
 
   async describe(args: CatalogDescribeArgs): Promise<CatalogDescription[]> {
-    const addresses = discoveryAddresses(args);
+    const addresses = discoveryAddresses(args, this.describeRoute);
     const format = args.format ?? "compact";
     const resolved = addresses.map((rawAddress) => {
       const address = String(rawAddress);
@@ -721,7 +742,7 @@ export class CatalogService {
       connectorIds,
       this.concurrency,
       (id) =>
-        this.loadForDiscovery(id, `describe_tools probe of "${id}"`),
+        this.loadForDiscovery(id, `${this.describeRoute} probe of "${id}"`),
     );
     const catalogs = new Map<string, ToolDef[] | Error>();
     loaded.forEach((result, index) => {
