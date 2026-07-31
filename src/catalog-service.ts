@@ -31,7 +31,6 @@ import {
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Connector,
-  ConnectaSurface,
   JsonSchema,
   ToolDef,
 } from "./types.js";
@@ -44,6 +43,16 @@ const MAX_QUERY_ANALYSIS_TERMS = 8;
 const MAX_QUERY_ANALYSIS_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
+
+/**
+ * The tool a describe-path error should name when it tells a caller to retry.
+ * This is the route the *caller* took, not the deployment's advertised surface:
+ * a classic deployment with an executor serves `describe_tools` at top level
+ * while every in-program describe still arrives through `connecta.describe`, so
+ * one CatalogService cannot infer the answer from `surface` alone. Callers pass
+ * the route they own.
+ */
+export type DescribeRoute = "describe_tools" | "connecta.describe";
 
 export class DiscoveryPolicyError extends Error {
   constructor(
@@ -75,7 +84,7 @@ function discoverySearchLimit(value: unknown): number {
 /** Normalize the single-address convenience form, then validate the bounded list. */
 function discoveryAddresses(
   args: CatalogDescribeArgs,
-  describeRoute: "describe_tools" | "connecta.describe",
+  describeRoute: DescribeRoute,
 ): unknown[] {
   if (args.address !== undefined && args.addresses !== undefined) {
     throw new DiscoveryPolicyError(
@@ -290,7 +299,7 @@ export class CatalogService {
   readonly requestScope: object;
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
-  private readonly describeRoute: "describe_tools" | "connecta.describe";
+  private readonly describeRoute: DescribeRoute;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -301,15 +310,15 @@ export class CatalogService {
       requestScope?: object;
       probeTimeoutMs?: number;
       concurrency?: number;
-      surface?: ConnectaSurface;
+      /** The tool describe-path errors name. Default `describe_tools`. */
+      describeRoute?: DescribeRoute;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
     this.probeTimeoutMs =
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
-    this.describeRoute =
-      options.surface === "code-first" ? "connecta.describe" : "describe_tools";
+    this.describeRoute = options.describeRoute ?? "describe_tools";
   }
 
   async loadConnector(
@@ -494,6 +503,10 @@ export class CatalogService {
       connectors,
       this.concurrency,
       (connector) =>
+        // Unlike the describe path, this label never reaches a caller: search
+        // only counts rejected catalogs (`unavailableCatalogs` below) and
+        // renders its own guidance, so the folded name here stays internal and
+        // needs no surface awareness.
         this.loadForDiscovery(
           connector.id,
           `search_tools probe of "${connector.id}"`,

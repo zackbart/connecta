@@ -14,6 +14,14 @@ nothing get sensible budgets. The design record is
 `documentation/rich-output-design.md` (#267); the contract is `code-mode.md`'s
 "Emitted output" clauses (#270).
 
+Alongside it, three pieces of runtime text stop naming tools the receiving
+surface does not serve — a routing failure connecta authored itself, and one the
+always-loaded-text sweep missed because it only reads descriptions, not error
+strings and tool results. All three fixes are agent-visible wording; no wire
+shape, tool surface, or policy changes. Operators who tightened
+`discovery.probeTimeoutMs` also get that deadline honored inside `execute_code`,
+which had been probing at the 30-second default no matter what was configured.
+
 ### Added
 
 - **`connecta.emit(block)` inside `execute_code`.** Strictly validated
@@ -26,6 +34,27 @@ nothing get sensible budgets. The design record is
   run.
 - **`diagnostics.emitted`.** With `diagnostics: true`, one payload-free
   aggregate (block count and serialized bytes) when a program emitted.
+
+### Fixed
+
+- **Discovery errors stay on their advertised surface.** The over-100-address
+  rejection and the catalog-probe timeout label now name `describe_tools` or
+  `connecta.describe` according to the route the caller actually took, so a
+  program is never told to split its list across a tool it cannot call. The
+  route is passed in explicitly rather than inferred from the deployment's
+  surface: a classic deployment with an executor serves `describe_tools` at top
+  level while every in-program describe still arrives through
+  `connecta.describe`.
+- **The OAuth handoff points at a check the caller can run.** `authorize_connector`
+  is registered on both surfaces, but its success instructions told every agent
+  to "re-run `list_connectors`" — a tool the code-first surface folded away. A
+  code-first deployment is now told to retry the original call and confirm the
+  catalog loads with `connecta.search` inside `execute_code`; the classic
+  wording is unchanged.
+- **`discovery.probeTimeoutMs` reaches code mode.** The sandbox's catalog
+  service received the deployment's discovery concurrency but not its probe
+  deadline, so an in-program `connecta.describe` against a hung connector waited
+  the 30-second default regardless of operator configuration.
 
 ## 0.10.5 — 2026-07-30
 

@@ -408,6 +408,8 @@ export async function buildSandboxProviders(
     maxHostCalls?: number;
     hostCallTimeoutMs?: number;
     discoveryConcurrency?: number;
+    /** Per-connector deadline for in-program catalog probes. Default 30_000. */
+    probeTimeoutMs?: number;
     onInvocationFailure?: (failure: InvocationFailure) => void;
     diagnostics?: ExecuteDiagnostics;
     /**
@@ -423,9 +425,15 @@ export async function buildSandboxProviders(
   const requestScope = {};
   const catalog = new CatalogService(registry, baseUrl, {
     requestScope,
-    surface: "code-first",
+    // Every describe reaching this catalog came from inside a program, on a
+    // code-first and a classic-with-executor deployment alike, so the retry
+    // advice names connecta.describe regardless of what this server advertises.
+    describeRoute: "connecta.describe",
     ...(limits.discoveryConcurrency !== undefined
       ? { concurrency: limits.discoveryConcurrency }
+      : {}),
+    ...(limits.probeTimeoutMs !== undefined
+      ? { probeTimeoutMs: limits.probeTimeoutMs }
       : {}),
   });
   const invocation = new InvocationService(registry, catalog, activity);
@@ -703,6 +711,7 @@ export function createExecuteTool(
   activity?: ActivityRequestContext,
   config: {
     discoveryConcurrency?: number;
+    probeTimeoutMs?: number;
     maxEmittedBytes?: number;
     maxEmittedBlocks?: number;
   } = {},
@@ -764,6 +773,9 @@ export function createExecuteTool(
             ...(diagnostics ? { diagnostics } : {}),
             ...(config.discoveryConcurrency !== undefined
               ? { discoveryConcurrency: config.discoveryConcurrency }
+              : {}),
+            ...(config.probeTimeoutMs !== undefined
+              ? { probeTimeoutMs: config.probeTimeoutMs }
               : {}),
           },
         );
@@ -1002,6 +1014,13 @@ export function registerExecuteTool(
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
     discoveryConcurrency?: number;
+    /**
+     * The deployment's configured per-connector probe deadline. Programs probe
+     * the same downstream catalogs the top-level tools do, so an operator who
+     * tightened `discovery.probeTimeoutMs` gets it honored inside the sandbox
+     * too rather than silently falling back to the 30s default.
+     */
+    probeTimeoutMs?: number;
     /** Aggregate serialized-byte budget for connecta.emit. Default 4_000_000. */
     maxEmittedBytes?: number;
     /** Block-count budget for connecta.emit. Default 32. */
@@ -1028,6 +1047,9 @@ export function registerExecuteTool(
     {
       ...(ctx.discoveryConcurrency !== undefined
         ? { discoveryConcurrency: ctx.discoveryConcurrency }
+        : {}),
+      ...(ctx.probeTimeoutMs !== undefined
+        ? { probeTimeoutMs: ctx.probeTimeoutMs }
         : {}),
       maxEmittedBytes: emitBudgets.maxBytes,
       maxEmittedBlocks: emitBudgets.maxBlocks,

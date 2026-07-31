@@ -4819,7 +4819,29 @@ describe("authorize_connector", () => {
     expect(parsed.status).toBe("auth_required");
     expect(parsed.authorizationUrl).toContain("auth.example");
     expect(parsed.instructions).toContain("/oauth/callback/");
+    expect(parsed.instructions).toContain(
+      "Re-run list_connectors afterwards to confirm status is ok.",
+    );
     expect(authConnector.startAuthCalls).toEqual([{ force: undefined }]);
+  });
+
+  // authorize_connector is registered on both surfaces, so its result text is
+  // the one place a code-first agent could still be told to run a tool the
+  // deployment does not serve (#261). The always-loaded-text sweep in
+  // test/code-first-surface.test.ts reads descriptions, never tool results.
+  it("points a code-first deployment at a check its own surface serves", async () => {
+    authConnector.startAuthCalls.length = 0;
+    const mt = createMetaTools(registry(), BASE, { surface: "code-first" });
+    const parsed = textOf(
+      await mt.authorizeConnector({ connector: "needsauth" }),
+    ) as { instructions?: string };
+
+    expect(parsed.instructions).toContain("/oauth/callback/");
+    expect(parsed.instructions).toContain("Then retry the original call");
+    expect(parsed.instructions).toContain(
+      'connecta.search({ connector: "needsauth" }) inside execute_code',
+    );
+    expect(parsed.instructions).not.toContain("list_connectors");
   });
 
   it("passes force through to the connector", async () => {

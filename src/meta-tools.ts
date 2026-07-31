@@ -965,6 +965,21 @@ export interface SkillArgs {
 }
 
 /**
+ * The sentence that closes the OAuth handoff, telling the operator's agent how
+ * to confirm the flow landed. `authorize_connector` is registered on both
+ * surfaces but `list_connectors` is not, so the classic status check cannot be
+ * the only one offered: a code-first agent handed that advice gets an
+ * unknown-tool error at exactly the moment it is trying to recover. It gets the
+ * check its own surface serves instead — the same folded-name defect as the
+ * describe path (#261), one tool result further along.
+ */
+function oauthFollowUp(surface: ConnectaSurface, connectorId: string): string {
+  return surface === "code-first"
+    ? `Then retry the original call; connecta.search({ connector: ${JSON.stringify(connectorId)} }) inside execute_code confirms the catalog now loads.`
+    : "Re-run list_connectors afterwards to confirm status is ok.";
+}
+
+/**
  * Every base meta-tool handler over a registry — all nine, whichever surface is
  * advertised, since folding a tool away only skips its registration and never
  * its handler. Exported for direct testing; registerMetaTools() wires the ones
@@ -1018,7 +1033,11 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
-    surface,
+    // These handlers are the top-level tools, so the route is the advertised
+    // one; in-program describes route through connecta.describe instead and
+    // are built with their own CatalogService in execute.ts.
+    describeRoute:
+      surface === "code-first" ? "connecta.describe" : "describe_tools",
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(
@@ -1627,7 +1646,8 @@ export function createMetaTools(
             ? {
                 authorizationUrl: status.authorizationUrl,
                 instructions:
-                  "Have the operator open authorizationUrl in a browser and complete the consent flow. The provider then redirects back to this server's /oauth/callback/<connector> route, which finishes the flow automatically. Re-run list_connectors afterwards to confirm status is ok.",
+                  "Have the operator open authorizationUrl in a browser and complete the consent flow. The provider then redirects back to this server's /oauth/callback/<connector> route, which finishes the flow automatically. " +
+                  oauthFollowUp(surface, connector.id),
               }
             : {}),
           ...(status.message ? { message: status.message } : {}),

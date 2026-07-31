@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from "vitest";
-import { CatalogService } from "../src/catalog-service.js";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -894,7 +893,7 @@ describe("buildSandboxProviders", () => {
     ).rejects.toMatchObject({ code: "result_too_large" });
   });
 
-  it("names connecta.describe when a code-mode catalog probe times out", async () => {
+  it("honors the configured probe deadline and names connecta.describe when a catalog probe times out", async () => {
     const hanging: Connector = {
       id: "hang",
       kind: "mcp",
@@ -905,14 +904,22 @@ describe("buildSandboxProviders", () => {
         return null;
       },
     };
-    const catalog = new CatalogService(makeRegistry([hanging]), BASE, {
-      probeTimeoutMs: 25,
-      surface: "code-first",
-    });
-    const result = {
-      tools: await catalog.describe({ addresses: ["hang.read"] }),
-    };
+    const providers = await buildSandboxProviders(
+      makeRegistry([hanging]),
+      BASE,
+      silentLogger,
+      undefined,
+      { probeTimeoutMs: 25 },
+    );
+    const started = Date.now();
+    const result = (await required(connectaProvider(providers).fns.describe)({
+      addresses: ["hang.read"],
+    })) as { tools: Array<{ address: string; error?: string }> };
 
+    // The deadline reached the sandbox: without the plumbing this hangs to the
+    // 30s default instead of resolving in milliseconds.
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(required(result.tools[0]).address).toBe("hang.read");
     expect(required(result.tools[0]).error).toContain(
       'connecta.describe probe of "hang" timed out',
     );
