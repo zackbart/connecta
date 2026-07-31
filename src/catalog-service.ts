@@ -54,6 +54,16 @@ const encoder = new TextEncoder();
  */
 export type DescribeRoute = "describe_tools" | "connecta.describe";
 
+/**
+ * The discovery route a routing failure should send a caller back through. Same
+ * rule as {@link DescribeRoute} — the route the *caller* took, not the
+ * deployment's advertised surface — with one difference worth keeping the two
+ * options separate for: `search_tools` exists on both advertised surfaces, so a
+ * top-level handler never has to derive this one, while an in-program caller
+ * still has to be told about `connecta.search` because it cannot call a tool.
+ */
+export type SearchRoute = "search_tools" | "connecta.search";
+
 export class DiscoveryPolicyError extends Error {
   constructor(
     readonly code: "invalid_args" | "result_too_large",
@@ -306,6 +316,7 @@ export class CatalogService {
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
   private readonly describeRoute: DescribeRoute;
+  private readonly searchRoute: SearchRoute;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -318,6 +329,8 @@ export class CatalogService {
       concurrency?: number;
       /** The tool describe-path errors name. Default `describe_tools`. */
       describeRoute?: DescribeRoute;
+      /** The discovery route recovery records name. Default `search_tools`. */
+      searchRoute?: SearchRoute;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
@@ -325,6 +338,32 @@ export class CatalogService {
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.describeRoute = options.describeRoute ?? "describe_tools";
+    this.searchRoute = options.searchRoute ?? "search_tools";
+  }
+
+  /**
+   * Send a caller back to discovery through the surface it can actually reach.
+   * Both variants carry the same scoping arguments because `connecta.search`
+   * takes the same ones `search_tools` does; only the key naming the callable
+   * differs, the way the ambiguous-alias record already names a function.
+   *
+   * Not private: `InvocationService` builds the same class of record when a
+   * call fails schema validation, and it is this catalog's route that decides
+   * which key that record carries. Duplicating the branch there would let the
+   * two drift.
+   */
+  searchRecovery(
+    args: { query: string; connector?: string },
+    purpose: string,
+  ): NonNullable<CallErrorDetails["nextAction"]> {
+    const searchArgs = {
+      query: args.query,
+      ...(args.connector !== undefined ? { connector: args.connector } : {}),
+      includeSchemas: "compact" as const,
+    };
+    return this.searchRoute === "connecta.search"
+      ? { function: "connecta.search", arguments: searchArgs, purpose }
+      : { tool: "search_tools", arguments: searchArgs, purpose };
   }
 
   async loadConnector(
@@ -373,14 +412,10 @@ export class CatalogService {
             "unknown_address",
             `Unknown address "${address}"`,
           ),
-          nextAction: {
-            tool: "search_tools",
-            arguments: {
-              query: recoveryQuery(address),
-              includeSchemas: "compact",
-            },
-            purpose: "Find the configured canonical address before retrying.",
-          },
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(address) },
+            "Find the configured canonical address before retrying.",
+          ),
         },
         catalogMs: 0,
       };
@@ -408,15 +443,13 @@ export class CatalogService {
             "unknown_tool",
             `Unknown tool "${resolved.toolName}" on connector "${resolved.connector.id}"`,
           ),
-          nextAction: {
-            tool: "search_tools",
-            arguments: {
+          nextAction: this.searchRecovery(
+            {
               query: recoveryQuery(resolved.toolName),
               connector: resolved.connector.id,
-              includeSchemas: "compact",
             },
-            purpose: "Find the connector's current canonical tool address.",
-          },
+            "Find the connector's current canonical tool address.",
+          ),
         },
         catalogMs: Date.now() - started,
         connector: resolved.connector,
@@ -454,14 +487,10 @@ export class CatalogService {
             "unknown_address",
             `Unknown address "${connectorId}.${alias}"`,
           ),
-          nextAction: {
-            tool: "search_tools",
-            arguments: {
-              query: recoveryQuery(alias),
-              includeSchemas: "compact",
-            },
-            purpose: "Find the configured canonical address before retrying.",
-          },
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(alias) },
+            "Find the configured canonical address before retrying.",
+          ),
         },
         catalogMs: 0,
       };
@@ -491,15 +520,10 @@ export class CatalogService {
             "unknown_tool",
             `Unknown tool "${alias}" on connector "${connector.id}"`,
           ),
-          nextAction: {
-            tool: "search_tools",
-            arguments: {
-              query: recoveryQuery(alias),
-              connector: connector.id,
-              includeSchemas: "compact",
-            },
-            purpose: "Find the connector's current canonical tool address.",
-          },
+          nextAction: this.searchRecovery(
+            { query: recoveryQuery(alias), connector: connector.id },
+            "Find the connector's current canonical tool address.",
+          ),
         },
         catalogMs: Date.now() - started,
         connector,

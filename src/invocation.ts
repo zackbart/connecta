@@ -349,16 +349,13 @@ export class InvocationService {
                 ...error,
                 connector: target.connector.id,
                 operation: `${target.connector.id}.${target.toolName}`,
-                nextAction: {
-                  tool: "search_tools" as const,
-                  arguments: {
+                nextAction: this.catalog.searchRecovery(
+                  {
                     query: target.toolName,
                     connector: target.connector.id,
-                    includeSchemas: "compact" as const,
                   },
-                  purpose:
-                    "Inspect the current input shape if the validation findings are not sufficient.",
-                },
+                  "Inspect the current input shape if the validation findings are not sufficient.",
+                ),
                 retry:
                   `Correct the listed arguments and retry ` +
                   `${target.connector.id}.${target.toolName}.`,

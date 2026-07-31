@@ -449,7 +449,8 @@ export const CONTRACT_CASES: ContractCase[] = [
             recovery: outcome.errorDetails.recovery,
             validation: outcome.errorDetails.validation,
             nextAction: outcome.errorDetails.nextAction
-              ? outcome.errorDetails.nextAction.tool
+              ? (outcome.errorDetails.nextAction.tool
+                  ?? outcome.errorDetails.nextAction.function)
               : undefined
           });
     }`,
@@ -483,12 +484,14 @@ export const CONTRACT_CASES: ContractCase[] = [
         ok: false,
         code: "unknown_address",
         retryable: false,
+        // A program cannot call search_tools; recovery names the route it owns.
+        nextAction: "connecta.search",
       });
       expect(required(outcomes[5])).toMatchObject({
         ok: false,
         code: "invalid_args",
         retryable: false,
-        nextAction: "search_tools",
+        nextAction: "connecta.search",
         validation: {
           issues: [
             { path: "/text", code: "required", expected: "string" },
@@ -588,7 +591,7 @@ export const CONTRACT_CASES: ContractCase[] = [
           ],
         },
         nextAction: {
-          tool: "search_tools",
+          function: "connecta.search",
           arguments: {
             query: "echo",
             connector: "remote",

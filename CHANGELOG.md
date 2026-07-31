@@ -45,7 +45,9 @@ which had been probing at the 30-second default no matter what was configured.
   canonical address for `call_destructive_tool` — with the original arguments
   when they fit a 512-byte echo budget, and an instruction to re-send them when
   they do not — and ambiguous code-mode aliases list every canonical
-  `connecta.call` candidate.
+  `connecta.call` candidate. The suggested discovery route follows the caller's
+  own surface: `search_tools` for a top-level call, `connecta.search` with the
+  same arguments for a miss inside `execute_code`, which cannot call a tool.
 - **Destructive calls accept explanatory context.** An optional `reason` of at
   most 500 characters gives the MCP host human-readable intent without entering
   downstream arguments or granting authority. An empty or whitespace-only one
@@ -63,9 +65,11 @@ which had been probing at the 30-second default no matter what was configured.
   design, and a program can shrink anything.
 - **`nextAction` is a wider union than it was.** `search_tools` routes may now
   omit `arguments.connector` (an unknown *connector* cannot scope discovery to
-  itself), and the ambiguous-alias route is keyed `function: "connecta.call"`
-  with no `tool` at all. A consumer that narrowed on `nextAction.tool` must
-  handle both shapes.
+  itself), the ambiguous-alias route is keyed `function: "connecta.call"` with
+  no `tool` at all, and in-program discovery recovery is keyed
+  `function: "connecta.search"` carrying the same `{ query, connector?,
+  includeSchemas }` arguments the tool route does. A consumer that narrowed on
+  `nextAction.tool` must handle the function-keyed shapes too.
 - **An address that resolves to nothing is now recorded.** A call to a
   connector id that does not exist emits one activity event at the address as
   written, with `unknown_address` and `tool_not_found` friction. Previously the

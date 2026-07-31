@@ -230,6 +230,20 @@ export interface CallErrorDetails {
     };
     purpose: string;
   } | {
+    /**
+     * The same scoped discovery as the `search_tools` route above, addressed to
+     * a caller inside `execute_code`, which cannot call a tool. Which of the two
+     * a routing failure emits follows the route the caller took, not the
+     * deployment's advertised surface.
+     */
+    function: "connecta.search";
+    arguments: {
+      query: string;
+      connector?: string;
+      includeSchemas: "compact";
+    };
+    purpose: string;
+  } | {
     function: "connecta.call";
     addresses: string[];
     purpose: string;

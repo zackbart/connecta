@@ -497,12 +497,63 @@ describe("buildSandboxProviders", () => {
       BASE,
       silentLogger,
     );
+    // A program cannot call search_tools, so both shortcut misses route
+    // recovery through the function it can actually reach.
     await expect(
       callNamespace(providers, "missing", "read"),
-    ).rejects.toMatchObject({ code: "unknown_address" });
+    ).rejects.toMatchObject({
+      code: "unknown_address",
+      nextAction: {
+        function: "connecta.search",
+        arguments: { query: "read", includeSchemas: "compact" },
+        purpose: "Find the configured canonical address before retrying.",
+      },
+    });
     await expect(
       callNamespace(providers, "calc", "missing"),
-    ).rejects.toMatchObject({ code: "unknown_tool" });
+    ).rejects.toMatchObject({
+      code: "unknown_tool",
+      nextAction: {
+        function: "connecta.search",
+        arguments: {
+          query: "missing",
+          connector: "calc",
+          includeSchemas: "compact",
+        },
+        purpose: "Find the connector's current canonical tool address.",
+      },
+    });
+  });
+
+  it("routes connecta.call address failures to connecta.search", async () => {
+    const providers = await buildSandboxProviders(
+      makeRegistry([calcConnector]),
+      BASE,
+      silentLogger,
+    );
+    const call = required(connectaProvider(providers).fns.call);
+    await expect(call("ghost.read_items", {})).rejects.toMatchObject({
+      code: "unknown_address",
+      nextAction: {
+        function: "connecta.search",
+        arguments: { query: "read items", includeSchemas: "compact" },
+      },
+    });
+    await expect(call("calc.missing_sum", {})).rejects.toMatchObject({
+      code: "unknown_tool",
+      nextAction: {
+        function: "connecta.search",
+        arguments: {
+          query: "missing sum",
+          connector: "calc",
+          includeSchemas: "compact",
+        },
+      },
+    });
+    // The route a program cannot take never appears on the in-program surface.
+    await expect(call("calc.missing_sum", {})).rejects.not.toHaveProperty(
+      "nextAction.tool",
+    );
   });
 
   it("surfaces connector namespace collisions after sanitization", async () => {

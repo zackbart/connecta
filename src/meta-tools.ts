@@ -834,6 +834,17 @@ function batchSummaryNextAction(
   nextAction: NonNullable<CallErrorDetails["nextAction"]>,
 ): NonNullable<CallErrorDetails["nextAction"]> {
   if ("function" in nextAction) {
+    // A batch runs on the top-level catalog, whose search route is the tool, so
+    // the function-keyed discovery variant does not arrive here today. Rebuild
+    // it anyway: a guard that silently dropped an unrecognized route would turn
+    // a recovery record into nothing at exactly the moment one is needed.
+    if (nextAction.function === "connecta.search") {
+      return {
+        function: "connecta.search",
+        arguments: batchSummarySearchArgs(nextAction.arguments),
+        purpose: batchSummaryString(nextAction.purpose),
+      };
+    }
     return {
       function: nextAction.function,
       addresses: nextAction.addresses
@@ -863,14 +874,23 @@ function batchSummaryNextAction(
   }
   return {
     tool: "search_tools",
-    arguments: {
-      query: batchSummaryString(nextAction.arguments.query),
-      ...(nextAction.arguments.connector !== undefined
-        ? { connector: batchSummaryString(nextAction.arguments.connector) }
-        : {}),
-      includeSchemas: "compact",
-    },
+    arguments: batchSummarySearchArgs(nextAction.arguments),
     purpose: batchSummaryString(nextAction.purpose),
+  };
+}
+
+/** The scoping arguments both discovery routes carry, bounded the same way. */
+function batchSummarySearchArgs(args: {
+  query: string;
+  connector?: string;
+  includeSchemas: "compact";
+}): { query: string; connector?: string; includeSchemas: "compact" } {
+  return {
+    query: batchSummaryString(args.query),
+    ...(args.connector !== undefined
+      ? { connector: batchSummaryString(args.connector) }
+      : {}),
+    includeSchemas: "compact",
   };
 }
 
@@ -1124,6 +1144,9 @@ export function createMetaTools(
     // are built with their own CatalogService in execute.ts.
     describeRoute:
       surface === "code-first" ? "connecta.describe" : "describe_tools",
+    // searchRoute keeps its default: unlike describe_tools, search_tools is
+    // served by both advertised surfaces, so a top-level handler has nothing to
+    // derive. Only an in-program caller needs to be sent to connecta.search.
   });
   const invocation = new InvocationService(registry, catalog, opts.activity);
   const withProbeDeadline = <T>(

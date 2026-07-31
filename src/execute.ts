@@ -429,6 +429,9 @@ export async function buildSandboxProviders(
     // code-first and a classic-with-executor deployment alike, so the retry
     // advice names connecta.describe regardless of what this server advertises.
     describeRoute: "connecta.describe",
+    // Same reasoning for the discovery route a routing failure hands back: the
+    // program that just missed an address cannot call search_tools.
+    searchRoute: "connecta.search",
     ...(limits.discoveryConcurrency !== undefined
       ? { concurrency: limits.discoveryConcurrency }
       : {}),

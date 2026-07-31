@@ -184,9 +184,12 @@ read from the vault on the next call and needs no redeploy.
 ## Routing recovery
 
 Predictable local refusals carry structured recovery on both result modes.
-An unknown connector suggests an unscoped `search_tools` query derived from the
+An unknown connector suggests an unscoped discovery query derived from the
 attempted tool name; an unknown tool scopes the same query to the connector that
-answered. A read path that reaches an unannotated, write-capable, or destructive
+answered. The suggested route follows the caller's own surface: `tool:
+"search_tools"` for a top-level call, `function: "connecta.search"` with the same
+arguments when the miss happened inside `execute_code`, which has no way to call
+a tool. A read path that reaches an unannotated, write-capable, or destructive
 tool returns `nextAction` for `call_destructive_tool` with the canonical
 address. Nothing is executed by these records.
 
@@ -235,9 +238,11 @@ JSON Pointer `path`, schema-keyword `code`, and expected shape. Submitted
 values are never copied into those findings.
 
 At most three findings are returned; `validation.truncated` says when more
-exist. `nextAction` points to `search_tools` scoped to the same connector and
-tool name when the compact schema is needed, while `retry` says to correct the
-listed arguments and reissue the original operation. A schema the local
+exist. `nextAction` points to discovery scoped to the same connector and tool
+name when the compact schema is needed — routed like any other miss, so a
+program is sent to `connecta.search` and a top-level call to `search_tools` —
+while `retry` says to correct the listed arguments and reissue the original
+operation. A schema the local
 validator cannot evaluate passes through to the provider. Provider error prose
 is not parsed or guessed, so an unknown format remains
 `connector_call_failed`.

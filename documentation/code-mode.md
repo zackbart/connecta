@@ -392,11 +392,9 @@ exactly first, by containment second — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
 type beats keeping the prose.
 
-**E7.** `retryable` for `unknown_address`, `unknown_tool`,
-`ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false,
-never inferred from an address containing `503`, `429`, or `temporar`.
+**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to.
 
-**E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
+**E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery keyed `function: "connecta.search"` like every other in-program miss. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
 
 ## Results and projection
 
