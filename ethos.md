@@ -18,13 +18,15 @@ order, and amending it is a design decision, not a drive-by edit.
 - **Two equal ways in.** `remoteMcp()` proxies a downstream MCP server;
   `api()` hand-writes a deliberate tool surface over a plain HTTP API. Both
   come out identical: same addresses, same catalog, same safety rules.
-- **Every meta-tool earns its keep**, and the bar has gone up. The default
-  answer to "agents need X" is the program surface: a capability has to be
-  shown inexpressible through it before it earns a top-level tool, and one
-  that isn't worth its context cost still goes. Seven tools counting
-  `execute_code` where a deployment has an executor, which is what a model
-  sees by default; nine where it doesn't
-  ([#224](https://github.com/zackbart/connecta/issues/224)).
+- **Seven tools, an executor required.** The primary surface is a program, so
+  every deployment runs an executor — a Dynamic Worker on Cloudflare, QuickJS
+  behind its optional-peer subpath on Node — and one without refuses to boot
+  ([#273](https://github.com/zackbart/connecta/issues/273)). Every meta-tool
+  earns its keep: the default answer to "agents need X" is the program
+  surface, and a capability has to be shown inexpressible through it before
+  it earns a top-level tool
+  ([#224](https://github.com/zackbart/connecta/issues/224)). Packaging is
+  unchanged: required describes the deployment, never the dependencies.
 - **Safe by default.** Only tools explicitly annotated read-only are callable
   without crossing the destructive boundary — directly or from generated code;
   everything else goes through `call_destructive_tool`, where the MCP host can
@@ -33,12 +35,6 @@ order, and amending it is a design decision, not a drive-by edit.
 - **One fetch-native core, two runtimes.** The same code runs unchanged on
   Cloudflare Workers and in Node — a Worker or a Docker stack, your pick. Web
   APIs only in the core; Node touches live behind explicit subpaths.
-- **An executor is the assumed posture.** The primary surface is a program, so
-  the deployment connecta is written toward has one — a Dynamic Worker on
-  Cloudflare, QuickJS behind its optional-peer subpath on Node. Configuring one
-  is what selects the code-first surface; executor-free stays supported as
-  compatibility, not as an equal citizen. Packaging is unchanged: assumed is
-  about defaults, never about dependencies.
 - **Observable, never administrable.** Operator pages show connector status,
   masked credentials, and payload-free activity. They can rotate a secret;
   they cannot add a connector, change policy, or alter what an agent can call.
@@ -79,12 +75,10 @@ proposing one without a new argument is not.
 | Agent credential recovery | accepted | one `auth_required` route through `authorize_connector`; only an operator handles secrets ([#192](https://github.com/zackbart/connecta/issues/192)) |
 | Operator-issued MCP access tokens | accepted | named, revocable authentication gives header-capable clients a small alternative to OAuth; tokens identify callers but never scope tools or become operator credentials |
 | Structured result surface | accepted | canonical `structuredContent` plus complete compact `content`; summary-only text is gated on host-forwarding evidence ([#191](https://github.com/zackbart/connecta/issues/191)) |
-| Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: smaller serialized definitions (the exploration estimated ~32%, the shipped fold measures 19.6% — see the consolidation row), far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md)) |
-| Code-first as the user-facing default | accepted | owner decision, 2026-07-30: "we don't need a deploy time flip, I'm the only one who uses it… We already decided it's good let's just do it." One operator, one deployment, and the exploration plus the smoke runs were enough judgment for him; the gate below was written for a user base connecta does not have ([#224](https://github.com/zackbart/connecta/issues/224)) |
-| The repeated per-model eval as the flip's gate | removed | it decided a question the owner has now decided himself; [`eval/code-first-gate`](./eval/code-first-gate/README.md) remains as measurement — the arms are real deployment shapes and it still reports which surface performs — but nothing waits on its verdict ([#222](https://github.com/zackbart/connecta/issues/222)) |
-| Surface consolidation to seven tools | accepted | folding `list_connectors`, `describe_tools`, and `batch_call` into the program surface deletes the overlapping routing choice between direct calls, batches, discovery, and execution; `call_tool` stays because a simple call is not cheaper through code. Measured at 19.6% fewer serialized definition bytes than the ten-tool shape the same deployment used to serve (10,675B → 8,587B), correcting the exploration's ~32% ([#224](https://github.com/zackbart/connecta/issues/224)) |
-| Executor-assumed posture | accepted | the primary surface is a program, so a deployment without an executor can only ever be the compatibility shape; packaging invariants are untouched ([#224](https://github.com/zackbart/connecta/issues/224)) |
-| Classic surface retention | accepted | what an executor-free deployment necessarily serves, the rollback path, and the eval's control arm; `surface: "classic"` alongside an executor is the only knob, and whether classic is ever removed is a separate future decision ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: smaller serialized definitions, far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md), [#224](https://github.com/zackbart/connecta/issues/224)) |
+| Code-first as the default; the eval gate retired | accepted | owner decision, 2026-07-30: one operator, no deploy-time flip; [`eval/code-first-gate`](./eval/code-first-gate/README.md) survives as measurement, but nothing waits on its verdict ([#222](https://github.com/zackbart/connecta/issues/222), [#224](https://github.com/zackbart/connecta/issues/224)) |
+| Surface consolidation to seven tools | accepted | `list_connectors`, `describe_tools`, and `batch_call` fold into the program surface, deleting the routing choice between direct calls, batches, discovery, and execution; `call_tool` stays because a simple call is not cheaper through code ([#224](https://github.com/zackbart/connecta/issues/224)) |
+| Classic (executor-free) surface | removed | supersedes its provisional retention under [#224](https://github.com/zackbart/connecta/issues/224) — an executor is mandatory, and a deployment without one refuses to boot rather than serving a fallback shape ([#273](https://github.com/zackbart/connecta/issues/273)) |
 | Connector shortcut namespaces in programs | accepted | sugar over canonical addressing, kept but frozen — every expansion invents a collision class `<connectorId>.<toolName>` already solved ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | Automatic host-side projection of program results | refused | the measured win was program-authored projection; a host heuristic drops fields a program chose to return and is invisible in the transcript ([#223](https://github.com/zackbart/connecta/issues/223)) |
 | Caller-visible execution diagnostics | accepted | optional request-local timing and size aggregates make catalog, connector, and executor costs distinguishable without persisting payloads, adding a tool, or charging normal responses context ([#247](https://github.com/zackbart/connecta/issues/247)) |
@@ -96,7 +90,7 @@ proposing one without a new argument is not.
 | Downstream `ttlMs` cache hints | gated | fixed TTL + fingerprint is battle-tested and catalog reads are ~3 ms; earns its way in with refresh-churn evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Rich program output (`connecta.emit`) | accepted | one host-collected emission channel: programs emit strictly validated text/image/audio blocks, delivered after the result envelope on success only; budgets fail loudly at the emit call ([design record](./documentation/rich-output-design.md), [#267](https://github.com/zackbart/connecta/issues/267)) |
 | Result-channel widening of the `Executor` contract | refused | `ExecuteResult` stays `{ result, error?, logs? }` — structural compatibility with `@cloudflare/codemode` is the parity guarantee; emission rides the provider bridge instead ([#267](https://github.com/zackbart/connecta/issues/267)) |
-| Guest-emitted `resource` / `resource_link` blocks | refused | resources aggregation is already refused, and a guest-minted URI is a lure a client may dereference; text, image, audio only ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Guest-emitted `resource` / `resource_link` blocks | gated | a program can never mint a URI a client may dereference; MCP UI ([#266](https://github.com/zackbart/connecta/issues/266)) may design the one carve-out — programs supply only content, connecta mints the `ui://` address outside the sandbox ([#267](https://github.com/zackbart/connecta/issues/267)) |
 | Provenance tracking for emitted content | refused | everything a program emits is program output; handles or attribution labels are capability-shaped machinery that changes no client's trust posture ([#267](https://github.com/zackbart/connecta/issues/267)) |
 
 ## Invariants
