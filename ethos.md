@@ -94,6 +94,10 @@ proposing one without a new argument is not.
 | MRTR / `input_required` passthrough | gated | statelessly relayable via `requestState`, but no host or downstream emits it yet; fails loudly until adoption evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Native Tasks for oversized results | refused | tasks solve duration, `get_result` solves size; paging on a polling extension adds round trips for nothing ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | fixed TTL + fingerprint is battle-tested and catalog reads are ~3 ms; earns its way in with refresh-churn evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
+| Rich program output (`connecta.emit`) | accepted | one host-collected emission channel: programs emit strictly validated text/image/audio blocks, delivered after the result envelope on success only; budgets fail loudly at the emit call ([design record](./documentation/rich-output-design.md), [#267](https://github.com/zackbart/connecta/issues/267)) |
+| Result-channel widening of the `Executor` contract | refused | `ExecuteResult` stays `{ result, error?, logs? }` — structural compatibility with `@cloudflare/codemode` is the parity guarantee; emission rides the provider bridge instead ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Guest-emitted `resource` / `resource_link` blocks | refused | resources aggregation is already refused, and a guest-minted URI is a lure a client may dereference; text, image, audio only ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Provenance tracking for emitted content | refused | everything a program emits is program output; handles or attribution labels are capability-shaped machinery that changes no client's trust posture ([#267](https://github.com/zackbart/connecta/issues/267)) |
 
 ## Invariants
 
