@@ -436,6 +436,15 @@ describe("server /mcp end-to-end", () => {
       visibility: ["model"],
     });
     expect(execute.description).toContain("connecta.ui(html)");
+    // U12: the model never sees the view, so the description says what the
+    // program owes it instead — a return value that mirrors what was rendered.
+    // A view the return does not mirror is a view nobody can check (#282).
+    expect(execute.description).toContain(
+      "the return value stays the model's only data path",
+    );
+    expect(execute.description).toContain(
+      "built from the same variables the view renders",
+    );
     // No other tool claims a view.
     for (const tool of body.result.tools) {
       if (tool.name !== "execute_code") {
@@ -1669,6 +1678,17 @@ describe("execute_code registration (code mode)", () => {
       "avoid advertising calls this sandbox cannot execute",
     );
     expect(executeTool.description).toContain("requiredInputKeys");
+    // The batch entry envelope rides the capabilities bullet rather than the
+    // prose three paragraphs down. Guessing `{ result }` fails silently through
+    // optional chaining — a run that succeeds and delivers nothing — so the
+    // shape belongs in the line an author actually reads (#282).
+    expect(executeTool.description).toContain(
+      "Every batch entry is { address, ok: true, data }",
+    );
+    // Hosts truncate long descriptions, so the bullets are a fixed budget:
+    // #282 moved weight forward instead of adding it, and this ceiling is what
+    // keeps the next clause paying for itself the same way.
+    expect(executeTool.description.length).toBeLessThan(4_400);
     expect(executeTool.description).toContain(
       "write the property names they display",
     );

@@ -580,6 +580,15 @@ host fetches the shell, and the whole design is inert. Reading the *client's*
 declaration in order to register tool metadata conditionally stays refused
 (`U10`), knowingly against a spec SHOULD.
 
+**U12.** The return value stays the model's only data path. `U3` puts the view
+out of model context, so a program that renders one also returns the summary the
+model should reason over, built from the same variables the view renders — a view
+the return value does not mirror is a view nobody in the loop can check. This
+binds program authors and nothing else: connecta never reads the HTML, diffs it
+against the return, or enforces the correspondence, for the reason automatic
+host-side projection stays refused in `ethos.md` — a host cannot know what a view
+means ([#282](https://github.com/zackbart/connecta/issues/282)).
+
 ## Retry semantics
 
 **Y1.** Connecta retries nothing beneath a program. `call_tool` accepts an

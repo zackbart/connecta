@@ -243,6 +243,16 @@ Prefer \`notion.search\` over listing databases.
     );
     expect(textFrom(fetched)).not.toContain("## Examples");
     expect(textFrom(fetched)).not.toContain("crm.get_account");
+    // The guarded-render recipe, whose whole point is the branch that does not
+    // render: a program that finds the data is not what it expected hands the
+    // model the record instead of a confident, empty view (#282).
+    expect(textFrom(fetched)).toContain("## Rendering a view");
+    expect(textFrom(fetched)).toContain(
+      "return a trimmed first record instead of rendering",
+    );
+    expect(textFrom(fetched)).toContain(
+      "the return value is the model's only data path",
+    );
   });
 
   it("serves the base usage guide byte-identically when no connector has one", async () => {
