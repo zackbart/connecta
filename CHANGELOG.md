@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.12.0 — 2026-08-01
 
 Programs gained a *view*. `execute_code` code can now call `connecta.ui(html)`
 to hand the client one rendered MCP Apps view of the run — the thing
