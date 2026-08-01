@@ -5,6 +5,12 @@ import {
   WebStandardStreamableHTTPServerTransport,
 } from "@modelcontextprotocol/server";
 import type { ActivityActor, ActivityRequestContext } from "../activity.js";
+import {
+  MCP_APPS_EXTENSION,
+  PROGRAM_UI_MIME_TYPE,
+  PROGRAM_UI_RESOURCE_URI,
+  PROGRAM_UI_SHELL_HTML,
+} from "../apps-shell.js";
 import { registerExecuteTool } from "../execute.js";
 import {
   ExecutorAdmissionError,
@@ -184,6 +190,42 @@ function toolkitRetired(logger: Logger): Response {
   );
 }
 
+/**
+ * U5: one static template, served by a handler that answers exactly one URI
+ * and fails on every other. Registering it is also what declares the
+ * `resources` capability — which is why `resources/list` has to answer, and
+ * why it answers with nothing. That is the Apps spec's permitted omission of
+ * UI-only resources from listing, taken exactly: the capability stays honest
+ * because the method answers, and nothing downstream is ever listed or
+ * aggregated. Widening this handler to proxy downstream templates is a
+ * decision (see the design record), not a diff.
+ */
+function registerProgramUiResource(server: McpServer): void {
+  server.registerResource(
+    "connecta-program-ui",
+    PROGRAM_UI_RESOURCE_URI,
+    {
+      title: "connecta program view",
+      description:
+        "The MCP Apps shell that renders HTML an execute_code program handed connecta.ui.",
+      mimeType: PROGRAM_UI_MIME_TYPE,
+    },
+    (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: PROGRAM_UI_MIME_TYPE,
+          text: PROGRAM_UI_SHELL_HTML,
+        },
+      ],
+    }),
+  );
+  // The SDK's generated listing would advertise the template it just
+  // registered. Replace it rather than accept that: the URI reaches the host
+  // through tool metadata, so the listing has nothing to carry.
+  server.server.setRequestHandler("resources/list", () => ({ resources: [] }));
+}
+
 async function serveMcp(
   request: Request,
   opts: ServerOptions,
@@ -195,6 +237,23 @@ async function serveMcp(
   const createServer = (): McpServer => {
     const server = new McpServer(opts.serverInfo, {
       instructions: instructionsFor(),
+      // U11: the Apps extension must be explicitly negotiated, and a
+      // conforming client acts on an extension only when both sides declare
+      // it — without this line no host reads execute_code's _meta.ui, no host
+      // fetches the shell, and the whole design is inert. This is the one
+      // extension connecta advertises; the versioned extensions framework
+      // stays declined as a general surface (documentation/mcp-2026-07-28.md).
+      capabilities: {
+        extensions: {
+          [MCP_APPS_EXTENSION]: { mimeTypes: [PROGRAM_UI_MIME_TYPE] },
+        },
+        // Registering the shell below declares `resources` on its own, but it
+        // would default `listChanged` to true. Connecta serves one build-time
+        // template and never sends a list_changed notification, so say so:
+        // a client that subscribes on the strength of that flag would wait
+        // forever for an event this server has no way to produce.
+        resources: { listChanged: false },
+      },
       cacheHints: {
         "tools/list": {
           ttlMs: 3_600_000,
@@ -202,6 +261,7 @@ async function serveMcp(
         },
       },
     });
+    registerProgramUiResource(server);
     const activity: ActivityRequestContext | undefined = opts.activity
       ? {
           sink: opts.activity,

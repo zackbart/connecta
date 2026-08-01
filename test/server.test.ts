@@ -5,6 +5,12 @@ import {
 } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
 import { MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
+import {
+  MCP_APPS_EXTENSION,
+  PROGRAM_UI_MIME_TYPE,
+  PROGRAM_UI_RESOURCE_URI,
+  PROGRAM_UI_SHELL_HTML,
+} from "../src/apps-shell.js";
 
 // True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
 // executor (emscripten WASM loaded from disk) — Workers deployments use
@@ -387,6 +393,143 @@ describe("server /mcp end-to-end", () => {
     expect(byName.get_result.description).toContain(
       "reduce it in code instead",
     );
+  });
+
+  it("declares exactly one extension, the MCP Apps one (U11)", async () => {
+    const c = makeConnecta();
+    const body = await readBody(
+      await rpc(
+        c,
+        "initialize",
+        {
+          protocolVersion: "2025-06-18",
+          capabilities: {},
+          clientInfo: { name: "test", version: "1.0.0" },
+        },
+        { token: TOKEN },
+      ),
+    );
+    const extensions = body.result.capabilities.extensions as Record<
+      string,
+      unknown
+    >;
+    expect(Object.keys(extensions)).toEqual([MCP_APPS_EXTENSION]);
+    expect(extensions[MCP_APPS_EXTENSION]).toEqual({
+      mimeTypes: [PROGRAM_UI_MIME_TYPE],
+    });
+    // Registering the shell is what puts `resources` on the wire; without it
+    // `resources/list` would be an undeclared method. `listChanged: false` is
+    // declared rather than defaulted: connecta serves one build-time template
+    // and never sends a list_changed notification, so a client that subscribed
+    // on the strength of that flag would wait forever.
+    expect(body.result.capabilities.resources).toEqual({ listChanged: false });
+  });
+
+  it("execute_code declares the Apps template and a model-only visibility (U5, U10)", async () => {
+    const c = makeConnecta();
+    const body = await readBody(await rpc(c, "tools/list", {}, { token: TOKEN }));
+    const execute = body.result.tools.find(
+      (tool: { name: string }) => tool.name === "execute_code",
+    );
+    expect(execute._meta.ui).toEqual({
+      resourceUri: PROGRAM_UI_RESOURCE_URI,
+      visibility: ["model"],
+    });
+    expect(execute.description).toContain("connecta.ui(html)");
+    // No other tool claims a view.
+    for (const tool of body.result.tools) {
+      if (tool.name !== "execute_code") {
+        expect(tool._meta?.ui).toBeUndefined();
+      }
+    }
+  });
+
+  it("serves exactly the shell URI and lists nothing (U5)", async () => {
+    const c = makeConnecta();
+    const read = await readBody(
+      await rpc(
+        c,
+        "resources/read",
+        { uri: PROGRAM_UI_RESOURCE_URI },
+        { token: TOKEN },
+      ),
+    );
+    expect(read.result.contents).toHaveLength(1);
+    const [shell] = read.result.contents;
+    expect(shell.uri).toBe(PROGRAM_UI_RESOURCE_URI);
+    expect(shell.mimeType).toBe(PROGRAM_UI_MIME_TYPE);
+    expect(shell.text).toBe(PROGRAM_UI_SHELL_HTML);
+    expect(String(shell.text).startsWith("<!doctype html>")).toBe(true);
+
+    for (const uri of [
+      "ui://connecta/program-ui/v2",
+      "ui://connecta/program-ui",
+      "ui://elsewhere/view",
+      "https://connecta.test/mcp",
+      "file:///etc/passwd",
+    ]) {
+      const missing = await readBody(
+        await rpc(c, "resources/read", { uri }, { token: TOKEN }),
+      );
+      expect(missing.result, uri).toBeUndefined();
+      expect(missing.error, uri).toBeDefined();
+    }
+
+    // The method answers — the capability stays honest — and carries nothing.
+    const listed = await readBody(
+      await rpc(c, "resources/list", {}, { token: TOKEN }),
+    );
+    expect(listed.result.resources).toEqual([]);
+
+    // The sibling listing has to survive the `resources/list` override: the
+    // resources capability covers both methods, and a client that probes for
+    // templates must get an empty list rather than "method not found".
+    const templates = await readBody(
+      await rpc(c, "resources/templates/list", {}, { token: TOKEN }),
+    );
+    expect(templates.error).toBeUndefined();
+    expect(templates.result.resourceTemplates).toEqual([]);
+  });
+
+  it("delivers the UI payload in result _meta over the wire (U3)", async () => {
+    // The unit tests call the handler directly. This one is the whole path:
+    // an execute_code tools/call through the transport, so a serialization
+    // step that dropped `_meta` — the only channel the shell reads — would be
+    // caught here rather than in a host.
+    const view = "<!doctype html><p>over the wire</p>";
+    const c = createTestConnecta({
+      connectors: [calc()],
+      auth: bearerToken(TOKEN),
+      storage: memoryStorage(),
+      publicUrl: BASE,
+      executor: {
+        execute: async (_code, providers) => {
+          const fns = required(
+            providers.find((provider) => provider.name === "connecta"),
+          ).fns;
+          await required(fns.ui)(view);
+          return { result: { rendered: true } };
+        },
+      },
+    });
+    const body = await readBody(
+      await rpc(
+        c,
+        "tools/call",
+        { name: "execute_code", arguments: { code: "async () => null" } },
+        { token: TOKEN },
+      ),
+    );
+    expect(body.result.isError).toBeFalsy();
+    // Assert the key, not the whole object: the SDK stamps its own
+    // `io.modelcontextprotocol/serverInfo` into the same `_meta`.
+    expect(body.result._meta["connecta/ui"]).toEqual({ html: view });
+    expect(body.result.structuredContent).toEqual({
+      result: { rendered: true },
+      ui: true,
+    });
+    // The model's channel says a view rendered and never carries its bytes.
+    expect(body.result.content[0].text).not.toContain("over the wire");
   });
 
   it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {

@@ -26,6 +26,8 @@ export interface ContractOutcome {
   result: unknown;
   /** The full content array, envelope first — where emitted blocks land. */
   content: Array<Record<string, unknown>>;
+  /** Result `_meta` — where a `connecta.ui` payload rides, out of context. */
+  meta?: Record<string, unknown>;
 }
 
 export interface ContractCase {
@@ -292,6 +294,9 @@ export function contractHarness(): {
         value,
         result: value.result,
         content: out.content as unknown as Array<Record<string, unknown>>,
+        ...(out._meta !== undefined
+          ? { meta: out._meta as Record<string, unknown> }
+          : {}),
       };
     },
   };
@@ -1055,10 +1060,11 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "M2, M3",
-    name: "a truncated return value does not suppress emitted blocks",
+    clauses: "M2, M3, U3",
+    name: "a truncated return value suppresses neither emitted blocks nor a view",
     code: `async () => {
       await connecta.emit({ type: "text", text: "alongside" });
+      await connecta.ui("<!doctype html><p>alongside too</p>");
       const big = await reader.big({ chars: 200000 });
       return { blob: big.blob };
     }`,
@@ -1066,8 +1072,12 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.isError, outcome.text).toBe(false);
       expect((outcome.result as { truncated?: boolean }).truncated).toBe(true);
       expect(outcome.value.emitted).toBe(1);
+      expect(outcome.value.ui).toBe(true);
       expect(outcome.content).toHaveLength(2);
       expect(required(outcome.content[1]).text).toBe("alongside");
+      expect(outcome.meta).toEqual({
+        "connecta/ui": { html: "<!doctype html><p>alongside too</p>" },
+      });
     },
   },
   {
@@ -1083,6 +1093,51 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(outcome.text).toContain("emittedDiscarded: 1");
       expect(outcome.content).toHaveLength(1);
       expect(outcome.text).not.toContain("doomed block");
+    },
+  },
+  {
+    clauses: "U3, U7, U8",
+    name: "a rendered view is delivered in _meta, identically on every executor",
+    code: `async () => {
+      await connecta.ui("<!doctype html><p>rendered</p>");
+      return { done: true };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ done: true });
+      // The model sees a boolean; the bytes ride _meta, out of its window.
+      expect(outcome.value.ui).toBe(true);
+      expect(outcome.content).toHaveLength(1);
+      expect(outcome.text).not.toContain("rendered");
+      expect(outcome.meta).toEqual({
+        "connecta/ui": { html: "<!doctype html><p>rendered</p>" },
+      });
+    },
+  },
+  {
+    clauses: "U1, U2",
+    name: "an invalid or repeated connecta.ui throws catchably, first payload stands",
+    code: `async () => {
+      const out = {};
+      try { await connecta.ui(""); } catch (err) { out.empty = err.message; }
+      try {
+        await connecta.ui({ html: "<p>bag</p>" });
+      } catch (err) { out.bag = err.message; }
+      await connecta.ui("<!doctype html><p>first</p>");
+      try {
+        await connecta.ui("<!doctype html><p>second</p>");
+      } catch (err) { out.second = err.message; }
+      return out;
+    }`,
+    check(outcome) {
+      const result = record(outcome);
+      expect(String(result.empty)).toContain("exactly one argument");
+      expect(String(result.bag)).toContain("exactly one argument");
+      expect(String(result.second)).toContain("at most one payload per run");
+      expect(outcome.value.ui).toBe(true);
+      expect(outcome.meta).toEqual({
+        "connecta/ui": { html: "<!doctype html><p>first</p>" },
+      });
     },
   },
   {

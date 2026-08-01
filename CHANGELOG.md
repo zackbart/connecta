@@ -2,6 +2,40 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+Programs gained a *view*. `execute_code` code can now call `connecta.ui(html)`
+to hand the client one rendered MCP Apps view of the run — the thing
+`connecta.emit` could not do, which is give a human something to look at while
+the model keeps its cheap textual summary. Programs supply HTML content and
+nothing else: the only `ui://` URI in the system is connecta's build-time shell,
+so nothing a client could dereference is derived from anything a program said,
+and the shell forwards no channel from the program's markup back to the host.
+The channel is additive — a program that never calls `connecta.ui` produces the
+byte-for-byte prior response, no executor changed to carry it, and there is no
+new budget knob. Deployments do gain a `resources` capability and one extension
+declaration, both of which the design requires before any host will render.
+The design record is `documentation/mcp-ui-design.md` (#266); the contract is
+`code-mode.md`'s "Rendered output" clauses (#277).
+
+### Added
+
+- **`connecta.ui(html)` inside `execute_code`.** One non-empty HTML string, at
+  most one payload per run, delivered on success only in the tool result's
+  `_meta["connecta/ui"]` with `ui: true` on the JSON envelope. A failed program
+  discards it visibly (`uiDiscarded: true`), alongside `emittedDiscarded` when
+  one failure loses both. The payload spends the existing
+  `execute.maxEmittedBytes` aggregate, no block count, and no host calls.
+- **The MCP Apps shell.** A static connecta-authored HTML5 template at
+  `ui://connecta/program-ui/v1` (`text/html;profile=mcp-app`), served by a
+  `resources/read` handler that answers exactly that URI; `resources/list` is
+  served and returns an empty list. `execute_code` declares it through
+  `_meta.ui.resourceUri` with `_meta.ui.visibility: ["model"]`, and the server
+  declares the `io.modelcontextprotocol/ui` extension — the one extension
+  connecta advertises, without which no host renders anything.
+- **`diagnostics.ui`.** With `diagnostics: true`, the accepted payload's
+  serialized byte size, distinct from the `emitted` aggregate.
+
 ## 0.11.0 — 2026-07-31
 
 **This is a breaking deployment release.** Connecta no longer carries the old

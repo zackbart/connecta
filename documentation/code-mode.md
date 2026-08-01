@@ -487,6 +487,97 @@ response, and `emit` resolving means "accepted," never "delivered."
 aggregate — count and serialized bytes, numbers only (`R8`), present only
 when something was emitted.
 
+## Rendered output
+
+`connecta.emit` gave programs pixels; it did not give them a *view*. This is the
+one the human looks at directly while the model keeps its cheap textual summary:
+one MCP Apps view per successful run, assembled where composition already
+happens. Programs supply HTML content and nothing else — the only `ui://` URI in
+the system is connecta's build-time shell, so nothing a client could dereference
+is derived from anything a program said. The argument, the refused shapes, and
+the security posture live in the [design record](./mcp-ui-design.md)
+([#266](https://github.com/zackbart/connecta/issues/266),
+[#277](https://github.com/zackbart/connecta/issues/277)); this section is the
+contract, and it wins where the two disagree.
+
+**U1.** `connecta.ui(html)` accepts exactly one argument: a non-empty string of
+HTML. A non-string, an empty string, an options bag, or an MCP block object
+throws catchably and nothing is accepted. There is no options parameter and no
+sugar form, for `M1`'s reason: sugar is how a one-shape contract grows hair.
+
+**U2.** At most one payload per run. A second call throws catchably, naming the
+constraint; the first accepted payload stands. One tool result renders one view,
+and last-wins would silently discard a payload the program deliberately
+supplied.
+
+**U3.** Delivered on success only, and out of model context: the tool result
+gains `_meta["connecta/ui"] = { html }` and the JSON envelope gains `ui: true`,
+so the model learns a view rendered without seeing its bytes. `structuredContent`
+stays the envelope alone. The single-label `connecta/ui` prefix is deliberate —
+connecta has no domain to reverse, and fabricating one to satisfy MCP's
+reverse-DNS SHOULD would be a worse answer than the shape the key format's MUST
+already permits. A program that never calls `connecta.ui` produces the
+byte-for-byte ordinary response (`R6`). A failed program delivers nothing and
+reports `uiDiscarded: true` *only* when a payload had been accepted — a field on
+the structured envelope, a trailing line on the plain-text paths — coexisting
+with `emittedDiscarded: N` when one failure discards both.
+
+**U4.** The payload spends the aggregate emit byte budget
+(`ConnectaConfig.execute.maxEmittedBytes`), measured at the call as the
+serialized bytes of `{ html }` — `M5`'s measurement. Over budget throws
+catchably, naming the budget and the room remaining, with nothing partially
+accepted. It spends no block count (`maxEmittedBlocks`: it is not a block) and no
+host-call budget (`L4`). One transport bound covers everything rich a program
+delivers.
+
+**U5.** One static shell: a connecta-authored HTML5 document at
+`ui://connecta/program-ui/v1`, mimeType `text/html;profile=mcp-app`, declared on
+`execute_code` via `_meta.ui.resourceUri` together with an explicit
+`_meta.ui.visibility: ["model"]` — the default `["model","app"]` would tell hosts
+the view may call `execute_code`. A `resources/read` handler answers exactly that
+URI and fails on any other; `resources/list` is served and returns an empty list.
+The version segment bumps whenever the shell's bytes change, because hosts cache
+templates by URI.
+
+**U6.** The shell is display-only. It renders the payload in a nested iframe
+(`srcdoc`, `sandbox="allow-scripts"`, no `allow-same-origin`) and declares no CSP
+domains, so the host applies its restrictive default and the `about:srcdoc` frame
+inherits `default-src 'none'; connect-src 'none'`. Program UI gets scripts and
+local interactivity and nothing else: no network, no tool calls, no conversation
+messages, no host-mediated links. The shell participates in the Apps lifecycle —
+initialize, tool-result, size-changed, resource-teardown — and forwards no
+channel whatsoever from the inner frame to the host. That isolation makes
+program views fixed-height by construction: with no bridge there is no
+content-height signal, the shell reports only its own box, and content taller
+than that scrolls inside the inner frame rather than growing the view.
+
+**U7.** Structural executor parity, per `M8`: `connecta.ui` is a provider
+function, `ExecuteResult` and the `Executor` interface are unchanged, and both
+executors get it through the bridge they already have.
+
+**U8.** Request-local and unstreamed, per `M9`. The payload exists only in the
+finished response, and `connecta.ui` resolving means "accepted," never
+"rendered."
+
+**U9.** `diagnostics: true` adds a distinct `ui` aggregate — the payload's byte
+size, a number and nothing else (`R8`), present only when a payload was accepted.
+UI bytes are not folded into `emitted`: that aggregate pairs a block count with
+the bytes those blocks cost, and bytes without a block would desync the pair.
+
+**U10.** `_meta.ui.resourceUri` is declared unconditionally. A host without the
+extension ignores unknown `_meta` and sees the ordinary envelope, which *is* the
+text fallback the Apps spec mandates; `connecta.ui` never fails because a client
+cannot render. A stateless aggregator cannot reliably know, and connecta is not a
+nanny.
+
+**U11.** connecta declares `io.modelcontextprotocol/ui` in its server capability
+declaration, and that is the one extension it advertises. The Apps extension must
+be explicitly negotiated and a conforming client acts on one only when both sides
+declare it, so without this declaration no host reads `_meta.ui.resourceUri`, no
+host fetches the shell, and the whole design is inert. Reading the *client's*
+declaration in order to register tool metadata conditionally stays refused
+(`U10`), knowingly against a spec SHOULD.
+
 ## Retry semantics
 
 **Y1.** Connecta retries nothing beneath a program. `call_tool` accepts an
@@ -697,9 +788,12 @@ The middle three were places where the contract described behavior the code did
 not quite have. The code moved, because the described behavior is the one worth
 having.
 
-One surface was added since: [emitted output](#emitted-output) (`M1`–`M10`,
-[#270](https://github.com/zackbart/connecta/issues/270)) — additive by
-construction, with the byte-for-byte no-emit promise pinned by test.
+Two surfaces were added since, both additive by construction and each with its
+byte-for-byte no-call promise pinned by test:
+[emitted output](#emitted-output) (`M1`–`M10`,
+[#270](https://github.com/zackbart/connecta/issues/270)) and
+[rendered output](#rendered-output) (`U1`–`U11`,
+[#277](https://github.com/zackbart/connecta/issues/277)).
 
 ## Verification
 
@@ -758,6 +852,13 @@ the upstream `Executor` shape assignable.
 | `M6`, `M9` | verdicts; `M1`'s strict typing and `M2`'s collect-then-deliver are their enforcement |
 | `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
+| `U1`, `U2` | `test/guest-api-contract.test.ts` (invalid and repeated calls throw catchably, first payload stands), `test/execute-ui.test.ts` (every rejected shape) |
+| `U3` | `test/guest-api-contract.test.ts` (`_meta` payload and `ui: true`, identical on both executors), `test/execute-ui.test.ts` (`structuredContent`, byte-for-byte no-call path, discard structured and plain, coexistence with `emittedDiscarded`) |
+| `U4` | `test/execute-ui.test.ts` (one shared byte aggregate crossed in either order; block count and host-call budget untouched) |
+| `U5`, `U10`, `U11` | `test/server.test.ts` (the shell URI, mimeType, and body; every other URI fails; empty listing; `execute_code`'s `_meta.ui`; exactly one declared extension) |
+| `U6` | `test/execute-ui.test.ts` (valid HTML5, `srcdoc` and sandbox attributes, no `allow-same-origin`, no path from the inner frame to the host) |
+| `U7`, `U8` | two arms passing one case table, `test/codemode-compat.test.ts` |
+| `U9` | `test/execute-ui.test.ts` (a `ui` byte aggregate distinct from `emitted`, absent when nothing was accepted) |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
