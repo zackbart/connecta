@@ -67,7 +67,7 @@ proposing one without a new argument is not.
 | Policy engine, approvals, pauses | refused | the host asks the human; connecta only annotates |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Protocol sessions & server push | refused | stateless per request |
-| Resources & prompts aggregation | refused | tools only |
+| Resources & prompts aggregation | refused | tools only; connecta's own Apps shell is the one `resources/read` carve-out ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Elicitation passthrough | refused | no route through a stateless aggregator |
 | Repository formatter | refused | style is authored, not enforced |
 | Toolkits (scoped views) | removed | never earned its keep; deploy per audience ([#178](https://github.com/zackbart/connecta/issues/178)) |
@@ -90,8 +90,13 @@ proposing one without a new argument is not.
 | Downstream `ttlMs` cache hints | gated | fixed TTL + fingerprint is battle-tested and catalog reads are ~3 ms; earns its way in with refresh-churn evidence ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Rich program output (`connecta.emit`) | accepted | one host-collected emission channel: programs emit strictly validated text/image/audio blocks, delivered after the result envelope on success only; budgets fail loudly at the emit call ([design record](./documentation/rich-output-design.md), [#267](https://github.com/zackbart/connecta/issues/267)) |
 | Result-channel widening of the `Executor` contract | refused | `ExecuteResult` stays `{ result, error?, logs? }` — structural compatibility with `@cloudflare/codemode` is the parity guarantee; emission rides the provider bridge instead ([#267](https://github.com/zackbart/connecta/issues/267)) |
-| Guest-emitted `resource` / `resource_link` blocks | gated | a program can never mint a URI a client may dereference; MCP UI ([#266](https://github.com/zackbart/connecta/issues/266)) may design the one carve-out — programs supply only content, connecta mints the `ui://` address outside the sandbox ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Guest-emitted `resource` / `resource_link` blocks | refused | a program can never mint a URI a client may dereference, and the carve-out this row waited on does not need one: `connecta.ui` takes HTML content, and the only `ui://` URI is connecta's build-time shell ([design record](./documentation/mcp-ui-design.md), [#266](https://github.com/zackbart/connecta/issues/266), [#267](https://github.com/zackbart/connecta/issues/267)) |
 | Provenance tracking for emitted content | refused | everything a program emits is program output; handles or attribution labels are capability-shaped machinery that changes no client's trust posture ([#267](https://github.com/zackbart/connecta/issues/267)) |
+| Program-generated UI (`connecta.ui` + the Apps shell) | accepted | one MCP Apps view per successful run: the program supplies HTML only, delivered in result `_meta`, which hosts keep out of model context, and rendered by connecta's static shell inside the host's sandboxed frame ([design record](./documentation/mcp-ui-design.md), [#266](https://github.com/zackbart/connecta/issues/266)) |
+| Serving connecta's own UI template via `resources/read` | accepted | a narrow carve-out from the resources-aggregation refusal, not a reversal of it: one static build-time shell at one URI, an empty `resources/list`, nothing downstream ever listed or aggregated ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Downstream MCP Apps template passthrough | gated | proxying downstream `resources/read` earns its way in when a downstream connector actually ships an Apps template ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| View-initiated tool calls from program UI | gated | the host-mediated path exists and would take the ordinary audit and consent route, but a program-authored UI driving tools needs its own argument; display-only until one arrives ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Legacy embedded `UIResource` delivery | refused | superseded upstream and rendered by none of the clients connecta faces; per-request minted URIs also fight the caching the Apps spec assumes ([#266](https://github.com/zackbart/connecta/issues/266)) |
 
 ## Invariants
 
