@@ -23,6 +23,7 @@ export const WORKERS_SUITES = [
   "test/executor-admission.test.ts",
   "test/execute.test.ts",
   "test/execute-emit.test.ts",
+  "test/execute-ui.test.ts",
   "test/guest-api-contract.test.ts",
   "test/meta-tools.test.ts",
   "test/registry.test.ts",

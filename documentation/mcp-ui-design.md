@@ -14,10 +14,11 @@ it. That record's contract clauses (`M1`–`M10`, now normative in
 [`code-mode.md`](./code-mode.md)'s "Emitted output" section) are cited here,
 not repeated; where the two overlap — provider-bridge delivery, budgets,
 success-only delivery, payload-free diagnostics — this record follows the
-precedent instead of inventing a parallel one. The clauses below (`U1`–`U11`)
-are drafts on the same lifecycle `M1`–`M10` followed: they become normative in
-`code-mode.md` when the implementation issue (#277) lands, and that section
-wins where the two disagree.
+precedent instead of inventing a parallel one. The implementation landed via
+[#277](https://github.com/zackbart/connecta/issues/277): the clauses below
+(`U1`–`U11`) are now normative in [`code-mode.md`](./code-mode.md)'s "Rendered
+output" section, which wins where the two disagree. This document remains the
+argument and the record of rejected shapes.
 
 ## The problem
 
