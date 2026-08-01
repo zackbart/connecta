@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.10.6",
+  "version": "0.11.0",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
