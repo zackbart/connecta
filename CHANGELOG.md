@@ -36,6 +36,12 @@ The design record is `documentation/mcp-ui-design.md` (#266); the contract is
 - **`diagnostics.ui`.** With `diagnostics: true`, the accepted payload's
   serialized byte size, distinct from the `emitted` aggregate.
 
+### Fixed
+
+- **Visible output discarded during QuickJS shutdown.** Closing the executor
+  after a program starts now reports accepted blocks and UI as discarded on
+  both error paths; admission failures before execution remain unchanged. (#279)
+
 ## 0.11.0 — 2026-07-31
 
 **This is a breaking deployment release.** Connecta no longer carries the old

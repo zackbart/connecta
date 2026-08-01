@@ -702,4 +702,63 @@ describe("quickJsExecutor", () => {
       code: "executor_closed",
     });
   });
+
+  it("reports emitted blocks and UI discarded by mid-run shutdown", async () => {
+    let callStarted!: () => void;
+    const started = new Promise<void>((resolve) => {
+      callStarted = resolve;
+    });
+    const connector: Connector = {
+      id: "blocking",
+      kind: "api",
+      async listTools() {
+        return [
+          {
+            name: "read",
+            annotations: { readOnlyHint: true },
+          },
+        ];
+      },
+      async callTool(_name, _args, context) {
+        callStarted();
+        return new Promise((_, reject) => {
+          context.signal?.addEventListener(
+            "abort",
+            () => reject(new Error("call aborted")),
+            { once: true },
+          );
+        });
+      },
+    };
+    const executor = quickJsExecutor({ timeoutMs: 10_000 });
+    const handler = createExecuteTool(
+      makeRegistry([connector]),
+      "https://connecta.test",
+      executor,
+      silentLogger,
+    );
+    const running = handler({
+      code: `async () => {
+        await connecta.emit({ type: "text", text: "doomed" });
+        await connecta.ui("<p>doomed</p>");
+        return blocking.read({});
+      }`,
+    });
+    await started;
+    await executor.close?.();
+    const out = await running;
+    expect(out.isError).toBe(true);
+    expect(out._meta).toBeUndefined();
+    const expected = {
+      error: {
+        code: "executor_closed",
+        message: "Executor is shutting down.",
+        retryable: false,
+      },
+      emittedDiscarded: 1,
+      uiDiscarded: true,
+    };
+    expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
+    expect(out.structuredContent).toEqual(expected);
+  });
 });
