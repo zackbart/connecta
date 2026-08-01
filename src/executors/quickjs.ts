@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   AdmissionController,
   ExecutorAdmissionError,
+  ExecutorExecutionError,
 } from "../executor-admission.js";
 import type {
   AdmittingExecutor,
@@ -737,7 +738,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (!child) return Promise.resolve();
     this.rejectActive(
       slot,
-      new ExecutorAdmissionError(
+      new ExecutorExecutionError(
         "executor_closed",
         "Executor is shutting down.",
       ),

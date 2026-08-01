@@ -36,6 +36,18 @@ export class ExecutorAdmissionError extends Error {
   }
 }
 
+/**
+ * A lifecycle failure after the sandbox started running. It keeps the stable
+ * admission-error envelope while letting response assembly distinguish work
+ * torn down in flight from work that never entered the executor.
+ */
+export class ExecutorExecutionError extends ExecutorAdmissionError {
+  constructor(code: ExecutorAdmissionErrorCode, message: string) {
+    super(code, message);
+    this.name = "ExecutorExecutionError";
+  }
+}
+
 export interface AdmissionLease {
   /** Time spent waiting behind active work. Zero for immediate admission. */
   readonly waitMs: number;

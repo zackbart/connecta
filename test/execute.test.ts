@@ -1360,6 +1360,8 @@ describe("execute_code handler", () => {
       retryable: true,
       retryAfterMs: 321,
     });
+    expect(parsed).not.toHaveProperty("emittedDiscarded");
+    expect(parsed).not.toHaveProperty("uiDiscarded");
     expect(getTools).not.toHaveBeenCalled();
     held.release();
   });

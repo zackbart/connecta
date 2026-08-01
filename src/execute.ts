@@ -19,6 +19,7 @@ import {
 } from "./executor-result.js";
 import {
   ExecutorAdmissionError,
+  ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
 import { classifyCallError } from "./errors.js";
@@ -904,6 +905,9 @@ export function createExecuteTool(
               ? { retryAfterMs: err.retryAfterMs }
               : {}),
           },
+          ...(err instanceof ExecutorExecutionError
+            ? discardedEmits(emitted)
+            : {}),
           ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
         });
         result.isError = true;

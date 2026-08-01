@@ -368,7 +368,9 @@ guest: admission rejection (`executor_overloaded`, retryable, with
 (`executor_closed`), deadline expiry, and sandbox crashes end the run and are
 reported to the model as an error result. One seam: a host call still in flight
 when the run is cancelled fails with `cancelled`, catchable on the way out but
-never worth acting on (`Y3`).
+never worth acting on (`Y3`). When shutdown tears down a program that had
+already started, accepted blocks and UI are reported as discarded under `M4`
+and `U3`; a failure before execution started carries no discard fields.
 
 **E6.** An error the program raises itself — a `TypeError`, a call to a
 `connecta` member that is not a provider function (including an inherited one
@@ -827,7 +829,7 @@ the upstream `Executor` shape assignable.
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, batch and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
 | `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
-| `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts` |
+| `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `E6`, `X8` | `test/guest-api-contract.test.ts` (unknown and inherited members, wrapped-message precedence), `test/quickjs-executor.test.ts` |
 | `E7` | `test/guest-api-contract.test.ts` (refusals about a `503`-named connector), `test/errors.test.ts` |
 | `R1`, `R3` | `test/guest-api-contract.test.ts` (pass-through, truncation is success) |
@@ -847,13 +849,13 @@ the upstream `Executor` shape assignable.
 | `V1`–`V4` | `test/guest-api-contract.test.ts` (dispatched calls, every refusal class including an address no connector owns, the friction each derives, no event for the execution itself), `test/activity.test.ts` (the shared code → friction table, and the identity clamp) |
 | `M1` | `test/guest-api-contract.test.ts` (invalid emits throw catchably, accept nothing), `test/execute-emit.test.ts` (every rejected shape) |
 | `M2`, `M3` | `test/guest-api-contract.test.ts` (delivery order, truncated return plus delivered blocks), `test/execute-emit.test.ts` (envelope, `structuredContent`, byte-for-byte no-emit path) |
-| `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths) |
+| `M4` | `test/guest-api-contract.test.ts` (discard is visible), `test/execute-emit.test.ts` (structured and plain paths), `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `M5`, `M7` | `test/execute-emit.test.ts` (both budgets fail the crossing block; host-call budget untouched) |
 | `M6`, `M9` | verdicts; `M1`'s strict typing and `M2`'s collect-then-deliver are their enforcement |
 | `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
 | `U1`, `U2` | `test/guest-api-contract.test.ts` (invalid and repeated calls throw catchably, first payload stands), `test/execute-ui.test.ts` (every rejected shape) |
-| `U3` | `test/guest-api-contract.test.ts` (`_meta` payload and `ui: true`, identical on both executors), `test/execute-ui.test.ts` (`structuredContent`, byte-for-byte no-call path, discard structured and plain, coexistence with `emittedDiscarded`) |
+| `U3` | `test/guest-api-contract.test.ts` (`_meta` payload and `ui: true`, identical on both executors), `test/execute-ui.test.ts` (`structuredContent`, byte-for-byte no-call path, discard structured and plain, coexistence with `emittedDiscarded`), `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `U4` | `test/execute-ui.test.ts` (one shared byte aggregate crossed in either order; block count and host-call budget untouched) |
 | `U5`, `U10`, `U11` | `test/server.test.ts` (the shell URI, mimeType, and body; every other URI fails; empty listing; `execute_code`'s `_meta.ui`; exactly one declared extension) |
 | `U6` | `test/execute-ui.test.ts` (valid HTML5, `srcdoc` and sandbox attributes, no `allow-same-origin`, no path from the inner frame to the host) |
