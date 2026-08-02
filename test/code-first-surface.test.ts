@@ -159,6 +159,30 @@ describe("the advertised surface", () => {
     }
   });
 
+  it("locates connecta.ui before an agent chooses catalog search (U13)", async () => {
+    const connecta = makeConnecta();
+    const initialized = await rpc(connecta, "initialize", {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "surface-test", version: "0" },
+    });
+    const instructions = initialized.result.instructions as string;
+    expect(instructions).toBe(CONNECTA_INSTRUCTIONS);
+    expect(instructions).toContain(
+      "connecta.ui(html) is a guest function inside execute_code",
+    );
+    expect(instructions).toContain(
+      "never a connector address or search_tools result",
+    );
+    expect(instructions).toContain("pass one HTML string");
+    expect(instructions).toContain(
+      "return the same summary data the HTML renders",
+    );
+    // Always-loaded guidance is a context tax. Keep its total explicit rather
+    // than letting one successful experiment license unbounded additions.
+    expect(instructions.length).toBeLessThanOrEqual(1_000);
+  });
+
   it("rejects calls to every removed top-level tool", async () => {
     const connecta = makeConnecta();
     for (const removed of REMOVED_TOOLS) {

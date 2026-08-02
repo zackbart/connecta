@@ -224,6 +224,16 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain(
       "If this routing is unfamiliar",
     );
+    expect(body.result.instructions).toContain(
+      "connecta.ui(html) is a guest function inside execute_code",
+    );
+    expect(body.result.instructions).toContain(
+      "never a connector address or search_tools result",
+    );
+    expect(body.result.instructions).toContain("pass one HTML string");
+    expect(body.result.instructions).toContain(
+      "return the same summary data the HTML renders",
+    );
     expect(body.result.instructions).not.toContain("once per task");
   });
 
