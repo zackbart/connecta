@@ -436,6 +436,22 @@ describe("server /mcp end-to-end", () => {
       visibility: ["model"],
     });
     expect(execute.description).toContain("connecta.ui(html)");
+    // U12: the model never sees the view, so the description says what the
+    // program owes it instead — a return value that mirrors what was rendered.
+    // A view the return does not mirror is a view nobody can check (#282).
+    expect(execute.description).toContain(
+      "the model reads the return value, not the view",
+    );
+    expect(execute.description).toContain(
+      "built from the same variables the view renders",
+    );
+    // U2 and U4 are the two facts compression keeps eroding: a second call
+    // throws rather than quietly winning, and the payload spends the emit
+    // budget itself rather than a same-sized one of its own.
+    expect(execute.description).toContain(
+      "a second, over-budget, or invalid call throws catchably",
+    );
+    expect(execute.description).toContain("one budget, not two");
     // No other tool claims a view.
     for (const tool of body.result.tools) {
       if (tool.name !== "execute_code") {
@@ -1669,6 +1685,23 @@ describe("execute_code registration (code mode)", () => {
       "avoid advertising calls this sandbox cannot execute",
     );
     expect(executeTool.description).toContain("requiredInputKeys");
+    // The call form itself, not just the address: a bullet that says an
+    // address is "callable" without showing the parentheses teaches nothing,
+    // and the sanitization rule two clauses later makes "as written" false.
+    expect(executeTool.description).toContain(
+      "<connectorId>.<toolName>(args)",
+    );
+    // The batch entry envelope rides the capabilities bullet rather than the
+    // prose three paragraphs down. Guessing `{ result }` fails silently through
+    // optional chaining — a run that succeeds and delivers nothing — so the
+    // shape belongs in the line an author actually reads (#282).
+    expect(executeTool.description).toContain(
+      "Every batch entry is { address, ok: true, data }",
+    );
+    // Hosts truncate long descriptions, so the bullets are a fixed budget:
+    // #282 moved weight forward instead of adding it, and this ceiling is what
+    // keeps the next clause paying for itself the same way.
+    expect(executeTool.description.length).toBeLessThan(4_400);
     expect(executeTool.description).toContain(
       "write the property names they display",
     );

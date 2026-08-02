@@ -7,27 +7,31 @@ export const USAGE_SKILL = `# Connecta usage
 
 ## The surface
 
-Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Broad discovery and multi-call work live inside a program rather than in top-level tools.
+Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Broad discovery and multi-call work live in a program, not in top-level tools.
 
 ## Choose the smallest execution tool
 
-Use exact addresses returned by discovery; never invent one. Search with 2–4 distinctive action/object terms rather than the full request.
+Use exact addresses from discovery; never invent one. Search 2–4 distinctive action/object terms, not the whole request.
 
-- One read at an unknown address: \`search_tools({ query, includeSchemas: "compact" })\`, then \`call_tool\` once. A lone cold call is cheaper direct than through a program.
-- Anything wider — two or more calls, dependent steps, loops, joins, branching, browsing a whole catalog, or a result that must be reduced: one \`execute_code\` run.
-- Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, individually and only after reviewing its schema and consequences. Generated code cannot make one.
-- Truncated result: retry with \`fields\` when possible; otherwise page it with \`get_result\`.
-- \`auth_required\`: use \`authorize_connector\`, give its recovery handoff to the operator, then retry the original call.
+- One read at an unknown address: \`search_tools({ query, includeSchemas: "compact" })\`, then \`call_tool\` once — one cold call is cheaper direct than a program.
+- Anything wider — two or more calls, dependent steps, loops, joins, branching, a whole-catalog browse, or a result to reduce: one \`execute_code\` run.
+- Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, one at a time, after reviewing its schema and consequences.
+- Truncated result: retry with \`fields\`, else page it with \`get_result\`.
+- \`auth_required\`: \`authorize_connector\`, hand its recovery text to the operator, retry the call.
 
 ## Inside a program
 
-One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the four \`connecta\` functions, and \`console.log\`.
+One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the \`connecta\` functions, and \`console.log\`.
 
-- What exists: \`connecta.search({})\` browses every catalog; add \`safety: "readOnly"\` for only calls the program can execute, and \`connector: "<id>"\` to browse one. This filters discovery results, not authority, and each match carries its \`address\` and annotations.
-- Exact schemas for known addresses: \`connecta.describe({ address: "connector.tool" })\` for one or \`connecta.describe({ addresses: [...] })\` for many; \`format: "json"\` only for exact constraints.
-- Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\`, which is also how a program tells a policy refusal from a transient failure.
-- Search inside the run rather than searching first, and return only the reduction the answer needs — never raw payloads.
-- Only tools annotated \`readOnlyHint: true\` are reachable; the read-only gate, credentials, and admission are enforced below the sandbox, so nothing a program does widens what it can reach.
+- \`connecta.search({})\` browses every catalog; \`safety: "readOnly"\` narrows to calls a program can execute, \`connector: "<id>"\` to one. This filters results, not authority; matches carry \`address\` and annotations.
+- Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
+- Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\` — how a program tells a policy refusal from a transient failure.
+- Search inside the run, not before it; return only the reduction the answer needs, never raw payloads.
+- Only tools annotated \`readOnlyHint: true\` are reachable; the gate, credentials, and admission are enforced below the sandbox — nothing a program does widens its reach.
+
+## Rendering a view
+
+\`connecta.ui(html)\` renders one view per successful run for the client, never for the model. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the model reads the return value, not the view.
 `;
 
 /**
