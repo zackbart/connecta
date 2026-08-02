@@ -2,6 +2,42 @@
 
 All notable changes to this package are documented here.
 
+## 0.12.2 — 2026-08-02
+
+Rendered programs can now bind a small, explicit set of read-only connector
+calls into their view. `connecta.ui(html, { reads })` validates every binding
+against the request-local catalog before accepting the UI, and the trusted
+Apps shell exposes only those names and declared view arguments through
+`connecta.read`. The program markup never receives connector addresses or a
+general tool channel, and mutation-capable tools remain unavailable. Existing
+`connecta.ui(html)` calls are byte-for-byte unchanged and remain display-only;
+deployments whose views do not need refresh, pagination, or drill-down reads
+can ignore this release. No deployment configuration changes are required
+(#287, #289, PR #290).
+
+### Added
+
+- **Bounded read bindings for rendered views.** Programs may bind 1–32 names
+  to catalog addresses proven read-only, with optional fixed arguments and an
+  allowlist of view-supplied arguments. The manifest shares the existing
+  emitted-byte budget and binding does not dispatch a call or spend the
+  program's host-call budget.
+- **A narrow `connecta.read(name, args)` view API.** The trusted outer shell
+  translates bound names into ordinary `call_tool` requests, reusing its
+  current authorization, catalog, and safety checks. It rejects unknown names,
+  undeclared arguments, fixed-argument overrides, and more than eight
+  concurrent reads.
+
+### Changed
+
+- **The program UI resource advances to `/v2`.** The new shell requires the
+  host's MCP Apps server-tools capability and makes only `call_tool` visible to
+  the app; the other six meta-tools remain model-only. Display-only views do
+  not receive the read bridge.
+- **The UI security contract is explicit.** The new design record defines the
+  data flow, threat model, validation rules, executor parity, and the boundary
+  between accepted reads and still-gated mutations.
+
 ## 0.12.1 — 2026-08-01
 
 Instructions, not behavior. Calling-side feedback and a first-hand run of the
