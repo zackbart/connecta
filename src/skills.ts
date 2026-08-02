@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes integrations behind seven meta-tools. execute_code is the primary one: write an async arrow function and use connecta.search (empty query browses every catalog), connecta.describe, connecta.call, and connecta.batch inside it for discovery, two or more calls, dependent steps, loops, joins, and reducing large results before they reach you. connecta.ui(html) is a guest function inside execute_code, never a connector address or search_tools result; pass one HTML string and return the same summary data the HTML renders. For one read at an unknown address, search_tools with 2–4 distinctive action/object terms and includeSchemas="compact", then one call_tool — a lone cold call is cheaper direct than a program. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools; authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
+  'Connecta exposes seven meta-tools. execute_code is primary: use connecta.search, describe, call, and batch for discovery, multiple or dependent calls, loops, joins, and result reduction. connecta.ui(html) is a guest function inside execute_code, never a connector address or search_tools result; pass one HTML string for display-only, or bind named read-only refresh/drill-down calls in its optional reads argument, and return the same initial summary data the HTML renders. For one read at an unknown address, search_tools with 2–4 distinctive action/object terms and includeSchemas="compact", then one call_tool — a lone cold call is cheaper direct than a program. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools; authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
 
 export const USAGE_SKILL = `# Connecta usage
 
@@ -31,7 +31,8 @@ One async arrow function. The only capabilities are one global per connector (\`
 
 ## Rendering a view
 
-\`connecta.ui(html)\` renders one view per successful run for the client, never for the model. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the model reads the return value, not the view.
+\`connecta.ui(html)\` renders a display-only view on success for the client, never for the model. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the model reads the return value, not the view.
+
 `;
 
 /**

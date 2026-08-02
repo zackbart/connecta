@@ -28,6 +28,7 @@ import {
   InvocationService,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
+import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Executor,
   ExecutorProvider,
@@ -249,7 +250,23 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
 }
 
 const UI_SHAPE_HINT =
-  "connecta.ui accepts exactly one argument: a non-empty string of HTML";
+  "connecta.ui accepts exactly one HTML argument and, optionally, one read-binding options object";
+
+const MAX_UI_READ_BINDINGS = 32;
+const MAX_UI_VIEW_ARGS = 32;
+const UI_READ_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
+const FORBIDDEN_UI_KEY = new Set(["__proto__", "constructor", "prototype"]);
+
+interface UiReadBinding {
+  address: string;
+  fixedArgs: Record<string, unknown>;
+  viewArgs: string[];
+}
+
+interface UiPayload {
+  html: string;
+  reads?: Record<string, UiReadBinding>;
+}
 
 /** What the argument was, named the way the emit validator names a bad field. */
 function describeUiArgument(raw: unknown): string {
@@ -262,15 +279,134 @@ function describeUiArgument(raw: unknown): string {
 }
 
 /**
- * Strict U1 validation. There is no options parameter and no sugar form, for
- * M1's reason: sugar is how a one-shape contract grows hair. An options bag or
- * an MCP block object is just a non-string, and fails as one.
+ * Strict U1/V1 validation. The first argument remains HTML; the only second
+ * argument is one read-binding manifest. There are no alternate object or MCP
+ * block forms.
  */
 function requireUiHtml(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) {
     throw new Error(`${UI_SHAPE_HINT}; got ${describeUiArgument(raw)}`);
   }
   return raw;
+}
+
+function requireRecord(raw: unknown, label: string): Record<string, unknown> {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    throw new Error(`${label} must be an object`);
+  }
+  return raw as Record<string, unknown>;
+}
+
+function requireExactKeys(
+  value: Record<string, unknown>,
+  allowed: readonly string[],
+  label: string,
+): void {
+  const extras = Object.keys(value).filter((key) => !allowed.includes(key));
+  if (extras.length > 0) {
+    throw new Error(
+      `${label} carries unsupported field(s) ${extras.map((key) => JSON.stringify(key)).join(", ")}`,
+    );
+  }
+}
+
+function requireUiReadKey(raw: unknown, label: string): string {
+  if (
+    typeof raw !== "string" ||
+    raw.length === 0 ||
+    raw.length > 128 ||
+    FORBIDDEN_UI_KEY.has(raw)
+  ) {
+    throw new Error(
+      `${label} must be a non-empty string of at most 128 characters and cannot be __proto__, constructor, or prototype`,
+    );
+  }
+  return raw;
+}
+
+function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
+  const record = requireRecord(raw, "connecta.ui options.reads");
+  const names = Object.keys(record);
+  if (names.length === 0 || names.length > MAX_UI_READ_BINDINGS) {
+    throw new Error(
+      `connecta.ui options.reads must contain from 1 through ${MAX_UI_READ_BINDINGS} named bindings`,
+    );
+  }
+  const reads = Object.create(null) as Record<string, UiReadBinding>;
+  for (const name of names) {
+    if (!UI_READ_NAME.test(name) || FORBIDDEN_UI_KEY.has(name)) {
+      throw new Error(
+        `connecta.ui read binding name ${JSON.stringify(name)} must match ${UI_READ_NAME}`,
+      );
+    }
+    const value = requireRecord(
+      record[name],
+      `connecta.ui read binding ${JSON.stringify(name)}`,
+    );
+    requireExactKeys(
+      value,
+      ["address", "fixedArgs", "viewArgs"],
+      `connecta.ui read binding ${JSON.stringify(name)}`,
+    );
+    if (typeof value.address !== "string" || value.address.length === 0) {
+      throw new Error(
+        `connecta.ui read binding ${JSON.stringify(name)} address must be a non-empty string`,
+      );
+    }
+    const fixedArgs =
+      value.fixedArgs === undefined
+        ? {}
+        : requireRecord(
+            value.fixedArgs,
+            `connecta.ui read binding ${JSON.stringify(name)} fixedArgs`,
+          );
+    const rawViewArgs = value.viewArgs ?? [];
+    if (!Array.isArray(rawViewArgs) || rawViewArgs.length > MAX_UI_VIEW_ARGS) {
+      throw new Error(
+        `connecta.ui read binding ${JSON.stringify(name)} viewArgs must be an array of at most ${MAX_UI_VIEW_ARGS} strings`,
+      );
+    }
+    const viewArgs = rawViewArgs.map((key) =>
+      requireUiReadKey(
+        key,
+        `connecta.ui read binding ${JSON.stringify(name)} viewArgs entry`,
+      )
+    );
+    if (new Set(viewArgs).size !== viewArgs.length) {
+      throw new Error(
+        `connecta.ui read binding ${JSON.stringify(name)} viewArgs must not repeat a key`,
+      );
+    }
+    for (const key of viewArgs) {
+      if (Object.prototype.hasOwnProperty.call(fixedArgs, key)) {
+        throw new Error(
+          `connecta.ui read binding ${JSON.stringify(name)} view argument ${JSON.stringify(key)} cannot override a fixed argument`,
+        );
+      }
+    }
+    reads[name] = {
+      address: value.address,
+      fixedArgs,
+      viewArgs,
+    };
+  }
+  return reads;
+}
+
+function requireUiPayload(values: unknown[]): UiPayload {
+  if (values.length !== 1 && values.length !== 2) {
+    throw new Error(
+      `${UI_SHAPE_HINT}; got ${values.length} arguments`,
+    );
+  }
+  const html = requireUiHtml(values[0]);
+  if (values.length === 1) return { html };
+  const options = requireRecord(values[1], "connecta.ui options");
+  requireExactKeys(options, ["reads"], "connecta.ui options");
+  if (!Object.prototype.hasOwnProperty.call(options, "reads")) {
+    throw new Error("connecta.ui options must contain reads");
+  }
+  return { html, reads: requireUiReads(options.reads) };
 }
 
 /**
@@ -288,7 +424,7 @@ export class EmitCollector {
   /** The shared transport aggregate: emitted blocks plus the UI payload. */
   bytes = 0;
   /** The one accepted UI payload (U2), delivered in result `_meta` on success. */
-  ui?: { html: string };
+  ui?: UiPayload;
   /** What the blocks alone cost, so the `emitted` aggregate stays a true pair. */
   private blockBytes = 0;
   constructor(
@@ -328,14 +464,28 @@ export class EmitCollector {
    * problem worth naming — that there is a second payload at all — and a
    * complaint about its type would send the author to fix the wrong thing.
    */
-  acceptUi(raw: unknown): void {
+  acceptUi(...values: unknown[]): void {
     if (this.ui) {
       throw new Error(
         "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
       );
     }
-    const payload = { html: requireUiHtml(raw) };
-    const size = diagnosticsEncoder.encode(JSON.stringify(payload)).byteLength;
+    this.acceptUiPayload(requireUiPayload(values));
+  }
+
+  acceptUiPayload(payload: UiPayload): void {
+    if (this.ui) {
+      throw new Error(
+        "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
+      );
+    }
+    let serialized: string;
+    try {
+      serialized = JSON.stringify(payload);
+    } catch {
+      throw new Error("connecta.ui payload must be JSON-serializable");
+    }
+    const size = diagnosticsEncoder.encode(serialized).byteLength;
     if (this.bytes + size > this.maxBytes) {
       throw new Error(
         `connecta.ui byte budget exceeded: payload is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
@@ -619,6 +769,41 @@ export async function buildSandboxProviders(
     return outcome.value;
   };
 
+  /**
+   * A read binding is admitted while the program still owns the request. The
+   * shell later calls the ordinary `call_tool`, which repeats this same
+   * fail-closed check against the then-current catalog; validating here keeps
+   * a typo or destructive address from producing a view whose controls can
+   * never work, while validation at use keeps a stale view from retaining old
+   * authority.
+   */
+  const validateUiReads = async (payload: UiPayload): Promise<UiPayload> => {
+    if (!payload.reads) return payload;
+    const reads = Object.create(null) as Record<string, UiReadBinding>;
+    for (const [name, binding] of Object.entries(payload.reads)) {
+      const resolution = await catalog.resolveTool(
+        binding.address,
+        limits.signal !== undefined ? { signal: limits.signal } : {},
+      );
+      if (!resolution.ok) {
+        throw new Error(
+          `connecta.ui read binding ${JSON.stringify(name)} could not resolve ${JSON.stringify(binding.address)}: ${resolution.error.message}`,
+        );
+      }
+      if (!isExplicitlyReadOnly(resolution.resolved.definition)) {
+        throw new Error(
+          `connecta.ui read binding ${JSON.stringify(name)} refuses ${JSON.stringify(binding.address)}: the tool is not explicitly read-only`,
+        );
+      }
+      reads[name] = {
+        ...binding,
+        address:
+          `${resolution.resolved.connector.id}.${resolution.resolved.toolName}`,
+      };
+    }
+    return { html: payload.html, reads };
+  };
+
   return [
     {
       name: "connecta",
@@ -643,13 +828,14 @@ export async function buildSandboxProviders(
         // reason (U7): one more provider fn, no change to ExecuteResult or
         // the Executor contract. Delivery is the handler's job, not the
         // guest's — nothing here becomes addressable.
-        ui: async (html: unknown) => {
+        ui: async (...values: unknown[]) => {
           if (!limits.emitCollector) {
             throw new Error(
               "connecta.ui is unavailable: no emission collector was configured for this execution",
             );
           }
-          limits.emitCollector.acceptUi(html);
+          const payload = await validateUiReads(requireUiPayload(values));
+          limits.emitCollector.acceptUiPayload(payload);
         },
         batch: async (calls: unknown) => {
           const started = Date.now();
@@ -1043,7 +1229,7 @@ export function createExecuteTool(
       // _meta is where the Apps spec's best practices put data "not intended
       // for model context", and how shipped hosts behave. The shell reads
       // exactly this key out of the tool result the host delivers to it.
-      response._meta = { [PROGRAM_UI_META_KEY]: { html: emitted.ui.html } };
+      response._meta = { [PROGRAM_UI_META_KEY]: emitted.ui };
     }
     if (emitted.blocks.length > 0) {
       // Emitted image/audio blocks are valid MCP content that ToolResult's
@@ -1093,7 +1279,7 @@ Write an async arrow function. It runs with NO network, filesystem, timers, or i
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses. Every batch entry is { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }; destructure that, not a bare result.
 - connecta.search(args) and connecta.describe, taking { address: "<connectorId>.<toolName>" } or { addresses: [...] } — load and inspect request-local catalogs on demand. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute; it changes results, not authority. Matches carrying schemas also list inputKeys, requiredInputKeys, and outputKeys — the schema's own names, checkable before building args. A missing list means the schema is not a plain object shape, not that the tool has no fields — read the schema.
 - connecta.emit(block) — deliver MCP content beside the JSON return: exactly { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }, nothing else. Blocks are appended on success only, spend no host calls, and are budgeted per run (${emitBudgets.maxBlocks} blocks, ${emitBudgets.maxBytes} serialized bytes); an over-budget or invalid emit throws catchably and accepts nothing.
-- connecta.ui(html) — hand the client one rendered view: exactly one argument, a non-empty HTML string, no options, no block object. Delivered on success only, spends no host calls, and draws on the same ${emitBudgets.maxBytes}-byte budget connecta.emit does — one budget, not two; a second, over-budget, or invalid call throws catchably and accepts nothing. The view is display-only (no network, no tool calls, no links) and out of model context — the envelope reports only ui: true, so the model reads the return value, not the view: return the summary it should reason over, built from the same variables the view renders.
+- connecta.ui(html, options?) — deliver one view. One argument is display-only; for live reads pass { reads: { name: { address, fixedArgs?, viewArgs? } } }, then markup calls connecta.read(name, args). Read-only is validated; fixed keys cannot be overridden, undeclared keys fail, and discovery, writes, and network stay unavailable. Success-only, no binding call cost, and one budget, not two (${emitBudgets.maxBytes} shared emit bytes); a second, over-budget, or invalid call throws catchably. The bytes stay out of context, so the model reads the return value, not the view: return the initial summary from its variables; later reads update only the view.
 - console.log(...) — captured and returned with the result.
 
 Tool calls return plain values (MCP text is JSON-parsed when possible) and throw on downstream errors — use try/catch. A thrown error carries only a message, so use connecta.batch when a program must tell a policy refusal from a transient failure. Never retry a failure whose retryable is false, and never retry a rate_limited one immediately — the sandbox has no timers. Return a JSON-serializable value; large results are truncated, so reduce data in code rather than return raw payloads.
