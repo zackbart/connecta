@@ -2,6 +2,50 @@
 
 All notable changes to this package are documented here.
 
+## 0.12.1 — 2026-08-01
+
+Instructions, not behavior. Calling-side feedback and a first-hand run of the
+render loop found the same gap twice: a program that renders a view has to guess
+at shapes the text never showed it. Guessing `{ result }` for a batch entry
+fails silently through optional chaining — the run succeeds, the view renders,
+and it is confidently empty — so the entry envelope now rides the
+`connecta.call`/`connecta.batch` capabilities bullet rather than prose three
+paragraphs down. The `connecta.ui` bullet and a new `U12` state the other half:
+the model reads the return value, not the view, so a program that renders one
+also returns the summary built from the same variables the view renders. No
+runtime path changed. The only deltas a deployment ships are the served
+`execute_code` description, the served usage skill, and the docs — upgrade and
+its agents simply read better instructions. Nothing breaks, and a deployment
+whose agents never render a view can ignore all of it; for the ones that do,
+the new text is the entire release (#282, PR #284).
+
+### Changed
+
+- **The batch entry envelope is stated where it is read.**
+  `execute_code`'s `connecta.call`/`connecta.batch` bullet now carries
+  `{ address, ok: true, data }` / `{ address, ok: false, error, errorDetails }`
+  and says to destructure that, not a bare result. Hosts truncate long
+  descriptions, so the bullets are a fixed budget: the text moved weight
+  forward instead of adding it and came out net shorter, now under a
+  4,400-character ceiling test.
+- **The return value is what the model reads.** The `connecta.ui` bullet and
+  the new normative `U12` in `documentation/code-mode.md` bind program authors
+  to returning the summary built from the same variables the view renders — a
+  view the return value does not mirror is a view nobody in the loop can check.
+  Connecta enforces nothing here; it never reads the HTML or diffs it against
+  the return, because a heuristic there would be the host-side projection the
+  ethos already refuses.
+- **The usage skill has a guarded-render recipe.** A "Rendering a view" section
+  says to fetch first and check the shape in code, and on a surprise — empty
+  array, missing key — to return a trimmed first record instead of rendering.
+  The wrong view becomes the sample you needed.
+- **Result sampling on the catalog surface is refused.** The `ethos.md`
+  decisions table records `sample` / `dryRun` as refused: sampling is execution
+  and cannot ride a catalog read, most tools carry required arguments no
+  sampler can invent, and a program that checks the shape before rendering
+  already hands back the first record inside the run it was going to make
+  anyway, at zero new surface.
+
 ## 0.12.0 — 2026-08-01
 
 Programs gained a *view*. `execute_code` code can now call `connecta.ui(html)`
