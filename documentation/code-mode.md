@@ -326,7 +326,8 @@ classify, use `errorDetails`; to hand a failure to the model with its type
 intact, let it escape uncaught — connecta re-attaches the typed details on the
 way out. The model-facing version of this lives in `execute_code`'s description,
 not in the always-loaded usage skill, which `test/meta-tools.test.ts` caps at
-1,800 bytes with three bytes spare.
+2,500 bytes — a budget the guide already spends nearly all of, so new text there
+displaces old rather than adding to what every request pays for.
 
 **E2.** The taxonomy. `retryable` is what connecta reports; `Y3` says what a
 program may do about it.
@@ -580,14 +581,14 @@ host fetches the shell, and the whole design is inert. Reading the *client's*
 declaration in order to register tool metadata conditionally stays refused
 (`U10`), knowingly against a spec SHOULD.
 
-**U12.** The return value stays the model's only data path. `U3` puts the view
-out of model context, so a program that renders one also returns the summary the
-model should reason over, built from the same variables the view renders — a view
-the return value does not mirror is a view nobody in the loop can check. This
-binds program authors and nothing else: connecta never reads the HTML, diffs it
-against the return, or enforces the correspondence, for the reason automatic
-host-side projection stays refused in `ethos.md` — a host cannot know what a view
-means ([#282](https://github.com/zackbart/connecta/issues/282)).
+**U12.** The return value, not the view, is what the model reads. `U3` puts the
+view out of model context, so a program that renders one also returns the summary
+the model should reason over, built from the same variables the view renders — a
+view the return value does not mirror is a view nobody in the loop can check.
+This binds program authors and nothing else: connecta never reads the HTML, diffs
+it against the return, or enforces the correspondence. A heuristic there would be
+the same mistake as automatic host-side projection, refused in `ethos.md`
+([#282](https://github.com/zackbart/connecta/issues/282)).
 
 ## Retry semantics
 
@@ -803,7 +804,7 @@ Two surfaces were added since, both additive by construction and each with its
 byte-for-byte no-call promise pinned by test:
 [emitted output](#emitted-output) (`M1`–`M10`,
 [#270](https://github.com/zackbart/connecta/issues/270)) and
-[rendered output](#rendered-output) (`U1`–`U11`,
+[rendered output](#rendered-output) (`U1`–`U12`,
 [#277](https://github.com/zackbart/connecta/issues/277)).
 
 ## Verification
@@ -870,6 +871,7 @@ the upstream `Executor` shape assignable.
 | `U6` | `test/execute-ui.test.ts` (valid HTML5, `srcdoc` and sandbox attributes, no `allow-same-origin`, no path from the inner frame to the host) |
 | `U7`, `U8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `U9` | `test/execute-ui.test.ts` (a `ui` byte aggregate distinct from `emitted`, absent when nothing was accepted) |
+| `U12` | `test/server.test.ts` (the `connecta.ui` bullet carries the return-value clause); a duty on program authors, so the description is the only place it can be enforced |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |

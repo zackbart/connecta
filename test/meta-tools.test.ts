@@ -251,7 +251,7 @@ Prefer \`notion.search\` over listing databases.
       "return a trimmed first record instead of rendering",
     );
     expect(textFrom(fetched)).toContain(
-      "the return value is the model's only data path",
+      "the model reads the return value, not the view",
     );
   });
 

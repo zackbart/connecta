@@ -14,7 +14,7 @@ Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructi
 Use exact addresses from discovery; never invent one. Search 2–4 distinctive action/object terms, not the whole request.
 
 - One read at an unknown address: \`search_tools({ query, includeSchemas: "compact" })\`, then \`call_tool\` once — one cold call is cheaper direct than a program.
-- Anything wider — two or more calls, dependent steps, loops, joins, a whole-catalog browse, or a result to reduce: one \`execute_code\` run.
+- Anything wider — two or more calls, dependent steps, loops, joins, branching, a whole-catalog browse, or a result to reduce: one \`execute_code\` run.
 - Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, one at a time, after reviewing its schema and consequences.
 - Truncated result: retry with \`fields\`, else page it with \`get_result\`.
 - \`auth_required\`: \`authorize_connector\`, hand its recovery text to the operator, retry the call.
@@ -23,7 +23,7 @@ Use exact addresses from discovery; never invent one. Search 2–4 distinctive a
 
 One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the \`connecta\` functions, and \`console.log\`.
 
-- \`connecta.search({})\` browses every catalog; \`safety: "readOnly"\` narrows to calls a program can execute, \`connector: "<id>"\` to one connector. This filters results, not authority; matches carry \`address\` and annotations.
+- \`connecta.search({})\` browses every catalog; \`safety: "readOnly"\` narrows to calls a program can execute, \`connector: "<id>"\` to one. This filters results, not authority; matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
 - Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\` — how a program tells a policy refusal from a transient failure.
 - Search inside the run, not before it; return only the reduction the answer needs, never raw payloads.
@@ -31,7 +31,7 @@ One async arrow function. The only capabilities are one global per connector (\`
 
 ## Rendering a view
 
-\`connecta.ui(html)\` renders one view per successful run, which the model never sees. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the return value is the model's only data path.
+\`connecta.ui(html)\` renders one view per successful run for the client, never for the model. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the model reads the return value, not the view.
 `;
 
 /**
