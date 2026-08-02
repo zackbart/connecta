@@ -232,7 +232,7 @@ describe("server /mcp end-to-end", () => {
     );
     expect(body.result.instructions).toContain("pass one HTML string");
     expect(body.result.instructions).toContain(
-      "return the same summary data the HTML renders",
+      "return the same initial summary data the HTML renders",
     );
     expect(body.result.instructions).not.toContain("once per task");
   });
@@ -435,7 +435,7 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.capabilities.resources).toEqual({ listChanged: false });
   });
 
-  it("execute_code declares the Apps template and a model-only visibility (U5, U10)", async () => {
+  it("keeps seven tools while exposing only call_tool to program views", async () => {
     const c = makeConnecta();
     const body = await readBody(await rpc(c, "tools/list", {}, { token: TOKEN }));
     const execute = body.result.tools.find(
@@ -445,7 +445,7 @@ describe("server /mcp end-to-end", () => {
       resourceUri: PROGRAM_UI_RESOURCE_URI,
       visibility: ["model"],
     });
-    expect(execute.description).toContain("connecta.ui(html)");
+    expect(execute.description).toContain("connecta.ui(html, options?)");
     // U12: the model never sees the view, so the description says what the
     // program owes it instead — a return value that mirrors what was rendered.
     // A view the return does not mirror is a view nobody can check (#282).
@@ -453,7 +453,7 @@ describe("server /mcp end-to-end", () => {
       "the model reads the return value, not the view",
     );
     expect(execute.description).toContain(
-      "built from the same variables the view renders",
+      "return the initial summary from its variables",
     );
     // U2 and U4 are the two facts compression keeps eroding: a second call
     // throws rather than quietly winning, and the payload spends the emit
@@ -462,11 +462,16 @@ describe("server /mcp end-to-end", () => {
       "a second, over-budget, or invalid call throws catchably",
     );
     expect(execute.description).toContain("one budget, not two");
-    // No other tool claims a view.
+    expect(body.result.tools).toHaveLength(7);
+    // No other tool claims a view. `call_tool` alone accepts app-originated
+    // calls; every other existing model tool says model-only explicitly so
+    // the Apps default cannot widen it by accident.
     for (const tool of body.result.tools) {
-      if (tool.name !== "execute_code") {
-        expect(tool._meta?.ui).toBeUndefined();
-      }
+      if (tool.name === "execute_code") continue;
+      expect(tool._meta?.ui).toEqual({
+        visibility:
+          tool.name === "call_tool" ? ["model", "app"] : ["model"],
+      });
     }
   });
 
@@ -488,7 +493,7 @@ describe("server /mcp end-to-end", () => {
     expect(String(shell.text).startsWith("<!doctype html>")).toBe(true);
 
     for (const uri of [
-      "ui://connecta/program-ui/v2",
+      "ui://connecta/program-ui/v3",
       "ui://connecta/program-ui",
       "ui://elsewhere/view",
       "https://connecta.test/mcp",

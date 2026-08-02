@@ -1115,6 +1115,39 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
+    clauses: "V1, V2, V6",
+    name: "a read-bound view carries the same manifest through every executor",
+    code: `async () => {
+      await connecta.ui("<!doctype html><p>interactive</p>", {
+        reads: {
+          detail: {
+            address: "reader.read",
+            fixedArgs: { value: "initial" },
+            viewArgs: []
+          }
+        }
+      });
+      return { initial: "initial" };
+    }`,
+    check(outcome) {
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({ initial: "initial" });
+      expect(outcome.value.ui).toBe(true);
+      expect(outcome.meta).toEqual({
+        "connecta/ui": {
+          html: "<!doctype html><p>interactive</p>",
+          reads: {
+            detail: {
+              address: "reader.read",
+              fixedArgs: { value: "initial" },
+              viewArgs: [],
+            },
+          },
+        },
+      });
+    },
+  },
+  {
     clauses: "U1, U2",
     name: "an invalid or repeated connecta.ui throws catchably, first payload stands",
     code: `async () => {
@@ -1131,8 +1164,8 @@ export const CONTRACT_CASES: ContractCase[] = [
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(String(result.empty)).toContain("exactly one argument");
-      expect(String(result.bag)).toContain("exactly one argument");
+      expect(String(result.empty)).toContain("exactly one HTML argument");
+      expect(String(result.bag)).toContain("exactly one HTML argument");
       expect(String(result.second)).toContain("at most one payload per run");
       expect(outcome.value.ui).toBe(true);
       expect(outcome.meta).toEqual({

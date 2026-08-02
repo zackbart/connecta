@@ -1484,6 +1484,7 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: z.object({ name: z.string().optional() }),
       annotations: READ_ONLY_LOCAL,
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.skills(args as SkillArgs),
   );
@@ -1508,6 +1509,7 @@ export function registerMetaTools(
         includeSchemas: z.enum(["compact", "json"]).optional(),
       }),
       annotations: READ_ONLY_REMOTE,
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.searchTools(args as SearchArgs),
   );
@@ -1520,6 +1522,10 @@ export function registerMetaTools(
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
+      // The trusted program-view shell delegates bounded named reads here.
+      // It is already one of the seven model tools; app visibility adds no
+      // tool and this handler repeats ordinary fail-closed read admission.
+      _meta: { ui: { visibility: ["model", "app"] } },
     },
     async (args) => mt.callTool(args as CallArgs),
   );
@@ -1541,6 +1547,7 @@ export function registerMetaTools(
         readOnlyHint: false,
         openWorldHint: true,
       },
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => {
       // `reason` is the host's to display and connecta's to keep out of the
@@ -1568,6 +1575,7 @@ export function registerMetaTools(
         destructiveHint: false,
         openWorldHint: true,
       },
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.authorizeConnector(args as AuthorizeArgs),
   );
@@ -1586,6 +1594,7 @@ export function registerMetaTools(
         maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
       }),
       annotations: READ_ONLY_LOCAL,
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.getResult(args as GetResultArgs),
   );

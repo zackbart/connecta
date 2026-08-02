@@ -176,7 +176,7 @@ describe("the advertised surface", () => {
     );
     expect(instructions).toContain("pass one HTML string");
     expect(instructions).toContain(
-      "return the same summary data the HTML renders",
+      "return the same initial summary data the HTML renders",
     );
     // Always-loaded guidance is a context tax. Keep its total explicit rather
     // than letting one successful experiment license unbounded additions.

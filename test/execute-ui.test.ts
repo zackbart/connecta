@@ -72,6 +72,15 @@ function envelopeOf(result: { content: Array<{ text?: string }> }) {
 }
 
 const VIEW = "<!doctype html><p>a rendered view</p>";
+const READ_OPTIONS = {
+  reads: {
+    refresh: {
+      address: "calc.add",
+      fixedArgs: { a: 1 },
+      viewArgs: ["b"],
+    },
+  },
+};
 
 /** HTML5 elements that never take a closing tag. */
 const VOID_ELEMENTS = new Set([
@@ -181,7 +190,7 @@ describe("EmitCollector UI validation (U1)", () => {
     for (const [payload, fragment] of invalid) {
       const sink = collector();
       expect(() => sink.acceptUi(payload), JSON.stringify(payload)).toThrowError(
-        /connecta\.ui accepts exactly one argument/,
+        /connecta\.ui accepts exactly one HTML argument/,
       );
       expect(() => sink.acceptUi(payload)).toThrowError(
         new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
@@ -196,6 +205,68 @@ describe("EmitCollector UI validation (U1)", () => {
     sink.acceptUi(VIEW);
     expect(sink.ui).toEqual({ html: VIEW });
     expect(sink.bytes).toBe(JSON.stringify({ html: VIEW }).length);
+  });
+
+  it("accepts a strict named read manifest as the optional second argument", () => {
+    const sink = collector();
+    sink.acceptUi(VIEW, READ_OPTIONS);
+    expect(sink.ui).toEqual({ html: VIEW, ...READ_OPTIONS });
+    expect(sink.bytes).toBe(
+      JSON.stringify({ html: VIEW, ...READ_OPTIONS }).length,
+    );
+  });
+
+  it("rejects malformed bindings, unsafe keys, overrides, and extra fields", () => {
+    const invalid: Array<[unknown, RegExp]> = [
+      [{}, /must contain reads/],
+      [{ reads: {} }, /from 1 through 32/],
+      [
+        { reads: { "not a name": { address: "calc.add" } } },
+        /must match/,
+      ],
+      [
+        { reads: { ok: { address: "", viewArgs: [] } } },
+        /address must be a non-empty string/,
+      ],
+      [
+        { reads: { ok: { address: "calc.add", surprise: true } } },
+        /unsupported field/,
+      ],
+      [
+        {
+          reads: {
+            ok: {
+              address: "calc.add",
+              fixedArgs: { a: 1 },
+              viewArgs: ["a"],
+            },
+          },
+        },
+        /cannot override a fixed argument/,
+      ],
+      [
+        {
+          reads: {
+            ok: { address: "calc.add", viewArgs: ["__proto__"] },
+          },
+        },
+        /cannot be __proto__/,
+      ],
+      [{ reads: READ_OPTIONS.reads, extra: true }, /unsupported field/],
+    ];
+    for (const [options, pattern] of invalid) {
+      const sink = collector();
+      expect(() => sink.acceptUi(VIEW, options)).toThrowError(pattern);
+      expect(sink.ui).toBeUndefined();
+      expect(sink.bytes).toBe(0);
+    }
+
+    const polluted = JSON.parse(
+      '{"reads":{"__proto__":{"address":"calc.add"}}}',
+    ) as unknown;
+    expect(() => collector().acceptUi(VIEW, polluted)).toThrowError(
+      /must match/,
+    );
   });
 });
 
@@ -256,6 +327,21 @@ describe("EmitCollector UI multiplicity and budget (U2, U4)", () => {
     );
     expect(emitOverflow.blocks).toHaveLength(0);
   });
+
+  it("charges the read manifest to the same UI byte measurement", () => {
+    const payload = { html: VIEW, ...READ_OPTIONS };
+    const bytes = JSON.stringify(payload).length;
+    const exact = new EmitCollector(bytes, 10);
+    exact.acceptUi(VIEW, READ_OPTIONS);
+    expect(exact.bytes).toBe(bytes);
+
+    const short = new EmitCollector(bytes - 1, 10);
+    expect(() => short.acceptUi(VIEW, READ_OPTIONS)).toThrowError(
+      /connecta\.ui byte budget exceeded/,
+    );
+    expect(short.ui).toBeUndefined();
+    expect(short.bytes).toBe(0);
+  });
 });
 
 describe("connecta.ui provider (U4, U7)", () => {
@@ -288,6 +374,56 @@ describe("connecta.ui provider (U4, U7)", () => {
     ).rejects.toThrowError(/host-call budget/);
     expect(sink.ui).toEqual({ html: VIEW });
   });
+
+  it("resolves every binding and refuses anything not explicitly read-only", async () => {
+    const destructive = {
+      id: "writer",
+      kind: "api" as const,
+      async listTools() {
+        return [{ name: "change", annotations: { readOnlyHint: false } }];
+      },
+      async callTool() {
+        throw new Error("must never dispatch");
+      },
+    };
+    const sink = new EmitCollector(10_000, 10);
+    const providers = await buildSandboxProviders(
+      makeRegistry([calcConnector, destructive]),
+      BASE,
+      silentLogger,
+      undefined,
+      { emitCollector: sink },
+    );
+    const ui = required(providers.find((p) => p.name === "connecta")?.fns.ui);
+
+    await expect(ui(VIEW, READ_OPTIONS)).resolves.toBeUndefined();
+    expect(sink.ui).toEqual({ html: VIEW, ...READ_OPTIONS });
+
+    const other = new EmitCollector(10_000, 10);
+    const otherProviders = await buildSandboxProviders(
+      makeRegistry([destructive]),
+      BASE,
+      silentLogger,
+      undefined,
+      { emitCollector: other },
+    );
+    const otherUi = required(
+      otherProviders.find((p) => p.name === "connecta")?.fns.ui,
+    );
+    await expect(
+      otherUi(VIEW, {
+        reads: { mutate: { address: "writer.change" } },
+      }),
+    ).rejects.toThrowError(/not explicitly read-only/);
+    expect(other.ui).toBeUndefined();
+
+    await expect(
+      otherUi(VIEW, {
+        reads: { missing: { address: "writer.missing" } },
+      }),
+    ).rejects.toThrowError(/could not resolve/);
+    expect(other.ui).toBeUndefined();
+  });
 });
 
 describe("createExecuteTool UI delivery (U3, U8, U9)", () => {
@@ -307,6 +443,20 @@ describe("createExecuteTool UI delivery (U3, U8, U9)", () => {
     expect(out.structuredContent).toEqual({ result: { ok: true }, ui: true });
     // The bytes never reach the model's channel.
     expect(required(out.content[0]).text).not.toContain("a rendered view");
+  });
+
+  it("delivers validated read bindings beside the HTML in _meta", async () => {
+    const handler = uiHandler(
+      scriptedExecutor(async (fns) => {
+        await required(fns.ui)(VIEW, READ_OPTIONS);
+        return { initial: true };
+      }),
+    );
+    const out = await handler({ code: "ignored" });
+    expect(out._meta).toEqual({
+      [PROGRAM_UI_META_KEY]: { html: VIEW, ...READ_OPTIONS },
+    });
+    expect(envelopeOf(out)).toEqual({ result: { initial: true }, ui: true });
   });
 
   it("coexists with emitted blocks in one response", async () => {
@@ -417,7 +567,7 @@ describe("createExecuteTool UI delivery (U3, U8, U9)", () => {
 
 describe("the Apps shell (U5, U6)", () => {
   it("is a structurally valid HTML5 document at a versioned address", () => {
-    expect(PROGRAM_UI_RESOURCE_URI).toBe("ui://connecta/program-ui/v1");
+    expect(PROGRAM_UI_RESOURCE_URI).toBe("ui://connecta/program-ui/v2");
     expect(PROGRAM_UI_MIME_TYPE).toBe("text/html;profile=mcp-app");
     expect(MCP_APPS_EXTENSION).toBe("io.modelcontextprotocol/ui");
     expect(PROGRAM_UI_SHELL_HTML.startsWith("<!doctype html>")).toBe(true);
@@ -442,7 +592,8 @@ describe("the Apps shell (U5, U6)", () => {
   it("renders the payload in a sandboxed srcdoc frame with no same-origin", () => {
     expect(PROGRAM_UI_SHELL_HTML).toContain('sandbox="allow-scripts"');
     expect(PROGRAM_UI_SHELL_HTML).toContain('srcdoc=""');
-    expect(PROGRAM_UI_SHELL_HTML).toContain("view.srcdoc = html");
+    expect(PROGRAM_UI_SHELL_HTML).toContain("view.srcdoc = reads");
+    expect(PROGRAM_UI_SHELL_HTML).toContain(": value.html;");
     expect(PROGRAM_UI_SHELL_HTML).not.toContain("allow-same-origin");
     // No declared CSP domains: the host's restrictive default is the offline
     // guarantee, and the srcdoc frame inherits it.
@@ -499,7 +650,7 @@ describe("the Apps shell (U5, U6)", () => {
     );
   });
 
-  it("speaks the Apps lifecycle and forwards no channel from the inner frame", () => {
+  it("speaks the Apps lifecycle and exposes only the bounded read dialect", () => {
     for (const method of [
       "ui/initialize",
       "ui/notifications/initialized",
@@ -510,14 +661,27 @@ describe("the Apps shell (U5, U6)", () => {
       expect(PROGRAM_UI_SHELL_HTML).toContain(method);
     }
     expect(PROGRAM_UI_SHELL_HTML).toContain(`meta["${PROGRAM_UI_META_KEY}"]`);
-    // Every outbound message goes to the host and nowhere else, and anything
-    // arriving from a source that is not the host is dropped before it is
-    // read — so the payload frame has no path to the host at all.
+    expect(PROGRAM_UI_SHELL_HTML).toContain('method: "tools/call"');
+    expect(PROGRAM_UI_SHELL_HTML).toContain('name: "call_tool"');
+    expect(PROGRAM_UI_SHELL_HTML).toContain('type: "connecta/read"');
+    expect(PROGRAM_UI_SHELL_HTML).toContain(
+      'type: "connecta/read-result"',
+    );
+    // The inner frame is recognized by WindowProxy identity, receives no raw
+    // JSON-RPC, and supplies a binding name rather than an address.
+    expect(PROGRAM_UI_SHELL_HTML).toContain(
+      "event.source === view.contentWindow",
+    );
     expect(PROGRAM_UI_SHELL_HTML).toContain("event.source !== host");
-    expect(PROGRAM_UI_SHELL_HTML.match(/postMessage/g)).toEqual([
-      "postMessage",
-    ]);
     expect(PROGRAM_UI_SHELL_HTML).toContain("host.postMessage(message,");
-    expect(PROGRAM_UI_SHELL_HTML).not.toContain("contentWindow");
+    expect(PROGRAM_UI_SHELL_HTML).toContain(
+      "Object.prototype.hasOwnProperty.call(reads, message.name)",
+    );
+    expect(PROGRAM_UI_SHELL_HTML).toContain(
+      "allowed.indexOf(key) === -1",
+    );
+    expect(PROGRAM_UI_SHELL_HTML).not.toContain(
+      'method: "call_destructive_tool"',
+    );
   });
 });

@@ -319,14 +319,14 @@ official spec at all — it survives there as background prose, not as a deferre
 item with a queue position. Adopting a payload format the official spec never
 took, on the path the official spec superseded, is two bets on one square.
 
-**View-initiated tool calls from program UI.** Gated, not refused. The
-host-mediated `tools/call` path exists in the Apps spec and would go through
-the same admission, annotation, and consent path as any other call, so the
-safety story is not the blocker. What is missing is the argument: a
-program-authored UI that drives tools needs its own use case and its own
-consent story, and neither exists yet. Display-only until one arrives, and
-gated twice over: `U5` declares `_meta.ui.visibility: ["model"]` so no host is
-ever told the view may call, and `U6`'s shell has no bridge to call with.
+**View-initiated tool calls from program UI.** This original gate was split by
+[#287](https://github.com/zackbart/connecta/issues/287) on 2026-08-02. Bounded
+refresh, pagination, and drill-down reads are accepted through named bindings
+and the existing `call_tool`; mutations remain gated. The evidence, threat
+trace, and boundary between live reads and Executor's artifact product live in
+[`program-ui-read-calls.md`](./program-ui-read-calls.md). The normative contract
+is `V1`–`V8` in [`code-mode.md`](./code-mode.md); it supersedes this record's
+display-only clauses where they disagree.
 
 **Downstream MCP Apps template passthrough** (downstream connectors declaring
 their own `ui://` templates, proxied through connecta's `resources/read`).
