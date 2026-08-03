@@ -11,6 +11,7 @@ vi.mock("../src/connectors/remote-mcp.js", () => ({
 }));
 
 import { LINEAR_MCP_ENDPOINTS, linear } from "../src/providers/linear.js";
+import { connectorGuideSummary } from "../src/skills.js";
 
 const context = {
   storage: {
@@ -96,6 +97,9 @@ describe("linear()", () => {
       "readonly_tracker",
       expect.objectContaining({
         url: LINEAR_MCP_ENDPOINTS["read-only"],
+        // Browse-time discovery renders the title, not the description, so the
+        // title carries the mode unless the operator names the connection.
+        title: "Linear (read-only)",
         description:
           "Linear issue tracking and project planning (read-only) — Reporting on delivery status",
       }),
@@ -105,6 +109,39 @@ describe("linear()", () => {
     );
     expect(connector.usageGuide).toContain("read-only endpoint");
     expect(connector.usageGuide).not.toContain("call_destructive_tool");
+  });
+
+  it("defaults the title to plain Linear for a read-write connection", () => {
+    linear("tracker", { purpose: "Roadmap questions" });
+    expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
+      title: "Linear",
+    });
+  });
+
+  it("lets an operator title override the read-only default", () => {
+    linear("tracker", {
+      purpose: "Roadmap questions",
+      access: "read-only",
+      title: "Delivery reporting",
+    });
+    expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
+      title: "Delivery reporting",
+    });
+  });
+
+  it("leads the guide with access, so the discovery summary carries it", () => {
+    // `search_tools` shows a connector's guide summary and never its
+    // description, and the summary is the guide's first content line. Leading
+    // with the workspace purpose hid whether the connection could write at all.
+    const readOnly = linear("reporting", {
+      purpose: "Reporting on delivery status",
+      access: "read-only",
+    });
+    const readWrite = linear("tracker", { purpose: "Delivery planning" });
+
+    expect(connectorGuideSummary(readOnly)).toContain("Read-only connection");
+    expect(connectorGuideSummary(readWrite)).toContain("Read-write connection");
+    expect(connectorGuideSummary(readOnly)).not.toContain("Workspace purpose");
   });
 
   it("supports API-key header auth and operator-supplied limits", () => {
@@ -156,8 +193,6 @@ describe("linear()", () => {
       { name: "create_issue_label" },
       // Unfamiliar tool: fails closed regardless of its own claim.
       { name: "summon_new_thing", annotations: { readOnlyHint: true } },
-      // Deliberately unclassified helper: also fails closed.
-      { name: "extract_images" },
     ]);
     const connector = linear("tracker", { purpose: "Delivery planning" });
     const tools = await connector.listTools(context);
@@ -177,7 +212,34 @@ describe("linear()", () => {
     });
     expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
     expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: false });
-    expect(tools[5]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("agrees with the markdown helper's own read-only annotation", async () => {
+    // The hosted server ships `extract_images` with explicit `readOnlyHint`
+    // and `idempotentHint`. It reads images out of content it is handed and
+    // touches no workspace state, so it belongs on the read allowlist —
+    // classifying it as a write would have overruled an explicit downstream
+    // annotation, which a fill-in classification never does.
+    mocks.listTools.mockResolvedValue([
+      {
+        name: "extract_images",
+        annotations: { readOnlyHint: true, idempotentHint: true },
+      },
+      // Same tool from a workspace that reports nothing: filled in, not feared.
+      { name: "extract_images" },
+    ]);
+    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({
+      readOnlyHint: true,
+      idempotentHint: true,
+      destructiveHint: false,
+    });
+    expect(tools[1]?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
   });
 
   it("classifies the plan-gated customer and code-review surfaces", async () => {

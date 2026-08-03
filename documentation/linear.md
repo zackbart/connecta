@@ -43,6 +43,13 @@ linear("delivery_reporting", {
 });
 ```
 
+The mode is legible at browse time, not only after the guide is fetched. A
+read-only connection titles itself `Linear (read-only)` unless the operator
+gives a `title`, and its guide opens with the access note rather than the
+workspace purpose — `search_tools` renders a connector's title and guide
+summary but never its description, and the summary is the guide's first content
+line.
+
 Linear's deprecated `/sse` transport is deliberately unreachable from this
 connection; it now answers 404.
 
@@ -84,17 +91,12 @@ downstream said and stays behind `call_destructive_tool`: the downstream is
 telling you this release's allowlist is stale, and the fail-closed invariant
 does not bend for a maintained connection.
 
-Two details of Linear's own design shape the classification:
-
-- **`save_*` tools are upserts.** Omitting a record id creates; supplying one
-  updates in place. Because an upsert can overwrite, every `save_*` is
-  classified destructive even though some calls only create. The genuine
-  creates are `create_issue_label` and `create_initiative_label`, plus the
-  attachment upload tools, which assert `readOnlyHint: false` without claiming
-  a destruction they do not perform.
-- **`extract_images` is deliberately unclassified.** It is a markdown helper
-  rather than a workspace query, and Linear does not document it as read-only,
-  so it fails closed rather than being assumed safe.
+One detail of Linear's own design shapes the classification: **`save_*` tools
+are upserts.** Omitting a record id creates; supplying one updates in place.
+Because an upsert can overwrite, every `save_*` is classified destructive even
+though some calls only create. The genuine creates are `create_issue_label` and
+`create_initiative_label`, plus the attachment upload tools, which assert
+`readOnlyHint: false` without claiming a destruction they do not perform.
 
 ## The catalog is not a fixed set
 

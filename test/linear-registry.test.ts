@@ -168,14 +168,21 @@ describe("linear() inside a real deployment", () => {
     expect(connecta.registry.healthFor("linear_reporting")).toBeUndefined();
   });
 
-  it("routes the two access modes to different Linear endpoints", () => {
+  // The endpoint each mode binds to is asserted in test/linear-provider.test.ts,
+  // where remote-mcp is stubbed and the url is observable. A constructed
+  // Connector does not carry its url, so what a real deployment can check is
+  // what discovery renders — and the mode has to be legible there too.
+  it("tells the two access modes apart in what discovery renders", () => {
     const connecta = twoWorkspaces(memoryStorage());
-    expect(connecta.registry.getConnector("linear_product")?.description).toBe(
+    const product = connecta.registry.getConnector("linear_product");
+    const reporting = connecta.registry.getConnector("linear_reporting");
+
+    expect(product?.title).toBe("Linear");
+    expect(product?.description).toBe(
       "Linear issue tracking and project planning — Product delivery planning",
     );
-    expect(
-      connecta.registry.getConnector("linear_reporting")?.description,
-    ).toBe(
+    expect(reporting?.title).toBe("Linear (read-only)");
+    expect(reporting?.description).toBe(
       "Linear issue tracking and project planning (read-only) — Executive delivery reporting",
     );
   });

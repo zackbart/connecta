@@ -23,7 +23,10 @@ export const LINEAR_MCP_ENDPOINTS: Readonly<Record<LinearAccess, string>> = {
 };
 
 export interface LinearOptions {
-  /** Human-readable display name; defaults to "Linear". */
+  /**
+   * Human-readable display name; defaults to "Linear", or
+   * "Linear (read-only)" when `access` is `"read-only"`.
+   */
   title?: string;
   /** Which workspace this is and what decisions it answers. */
   purpose: string;
@@ -111,6 +114,11 @@ const READ_ONLY_TOOLS = new Set([
   "search_documentation",
   // Customer requests (plan-gated)
   "list_customers",
+  // Markdown helper. It reads images out of content it is handed and touches
+  // no workspace state; the hosted server ships it annotated `readOnlyHint:
+  // true, idempotentHint: true`, and a fill-in classification agrees rather
+  // than argues.
+  "extract_images",
 ]);
 
 /**
@@ -219,15 +227,21 @@ function usageGuide(
   instructions: string | undefined,
 ): string {
   const accountInstructions = instructions?.trim();
+  // Leads the guide because discovery summarizes a connector by its first
+  // content line: whether this connection can write at all is the one thing an
+  // agent must know before it opens the guide, and `search_tools` shows the
+  // summary without the description.
   const accessNote =
     access === "read-only"
-      ? "- This connection is bound to Linear's read-only endpoint. Its token is scope-limited downstream, so every write fails at Linear regardless of arguments. Route writes to a connector configured for read-write access.\n"
-      : "- Treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until a release classifies them.\n";
+      ? "Read-only connection: bound to Linear's read-only endpoint, whose token is scope-limited downstream, so every write fails at Linear regardless of arguments. Route writes to a connector configured for read-write access."
+      : "Read-write connection: treat every `save_`, `create_`, `delete_`, `resolve_`, `submit_`, and `merge_` operation as a write. Connecta routes the maintained write catalog through `call_destructive_tool`; newly added tools also fail closed until a release classifies them.";
   return `# Linear usage
+
+${accessNote}
 
 Workspace purpose: ${purpose}
 
-${accessNote}- Resolve identity before acting. \`list_teams\`, \`list_users\`, \`list_projects\`, \`list_issue_statuses\`, and \`list_issue_labels\` return the ids that create and update arguments expect; do not guess a team, status, label, or assignee id.
+- Resolve identity before acting. \`list_teams\`, \`list_users\`, \`list_projects\`, \`list_issue_statuses\`, and \`list_issue_labels\` return the ids that create and update arguments expect; do not guess a team, status, label, or assignee id.
 - Issues carry a human identifier like \`ENG-123\` — team key, dash, number — alongside a UUID. Use the identifier the request gave you and resolve it with \`get_issue\` or \`list_issues\` when a tool wants an id; never fabricate an identifier or renumber one.
 - \`save_*\` tools are upserts: omit the record id to create, supply it to update in place. Read the record first when you mean to update, and send only the fields you intend to change — an upsert overwrites what you restate.
 - Labels are the exception to that naming: \`create_issue_label\` and \`create_initiative_label\` only ever create.
@@ -252,7 +266,10 @@ export function linear(id: string, options: LinearOptions): Connector {
   const access = options.access ?? "read-write";
   const connector = remoteMcp(id, {
     url: LINEAR_MCP_ENDPOINTS[access],
-    title: options.title ?? "Linear",
+    // The title is what browse-time discovery renders; a read-only connection
+    // says so there rather than only in a description the caller may not see.
+    title:
+      options.title ?? (access === "read-only" ? "Linear (read-only)" : "Linear"),
     description:
       access === "read-only"
         ? `Linear issue tracking and project planning (read-only) — ${purpose}`
