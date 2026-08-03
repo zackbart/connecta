@@ -148,7 +148,7 @@ describe("buildSandboxProviders", () => {
   it("keeps connector guide identifiers on every flat search and describe shape", async () => {
     const connector = (
       id: string,
-      usageGuide?: string,
+      usageGuide?: Connector["usageGuide"],
     ): Connector => ({
       id,
       kind: "api",
@@ -182,13 +182,18 @@ describe("buildSandboxProviders", () => {
     const search = required(connectaProvider(providers).fns.search);
 
     const browse = (await search({ limit: 100 })) as {
-      tools: Array<{ address: string; guide?: string }>;
+      tools: Array<{ address: string; guide?: string; guideSummary?: string }>;
     };
     expect(
       browse.tools
         .filter((tool) => tool.address.startsWith("guided."))
         .map((tool) => tool.guide),
     ).toEqual(["connector:guided", "connector:guided"]);
+    expect(
+      browse.tools
+        .filter((tool) => tool.address.startsWith("guided."))
+        .map((tool) => tool.guideSummary),
+    ).toEqual(["Guided usage", "Guided usage"]);
     expect(
       browse.tools
         .filter((tool) => tool.address.startsWith("plain."))
@@ -237,7 +242,7 @@ describe("buildSandboxProviders", () => {
     expect(required(described.tools[0]).guide).toBe("connector:guided");
     expect(described.tools[1]).not.toHaveProperty("guide");
 
-    const searchBytes = async (usageGuide?: string) => {
+    const searchBytes = async (usageGuide?: Connector["usageGuide"]) => {
       const sized = await buildSandboxProviders(
         makeRegistry([connector("sized", usageGuide)]),
         BASE,
@@ -253,7 +258,8 @@ describe("buildSandboxProviders", () => {
     const guidedBytes = await searchBytes("# Sized usage");
     const plainBytes = await searchBytes();
     expect(guidedBytes - plainBytes).toBe(
-      2 * ',"guide":"connector:sized"'.length,
+      2 *
+        ',"guide":"connector:sized","guideSummary":"Sized usage"'.length,
     );
     expect(guidedBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
   });

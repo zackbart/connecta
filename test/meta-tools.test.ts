@@ -22,7 +22,7 @@ import {
   retryBackoffMs,
 } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
-import { CONNECTOR_GUIDES_SECTION, USAGE_SKILL } from "../src/skills.js";
+import { USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { required,
@@ -120,7 +120,7 @@ Prefer \`notion.search\` over listing databases.
 - Page results with \`start_cursor\`; never fetch more than 100 at a time.
 `;
 
-  function guided(id: string, guide?: string): Connector {
+  function guided(id: string, guide?: Connector["usageGuide"]): Connector {
     return api(id, {
       description: `${id} connector`,
       ...(guide === undefined ? {} : { usageGuide: guide }),
@@ -149,7 +149,9 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).toContain(
       "`usage` — How to route work between one execute_code program",
     );
-    expect(listed).toContain("`connector:notion` — Notion usage");
+    expect(listed).toContain(
+      "`connector:notion` — Prefer `notion.search` over listing databases.",
+    );
     expect(listed).not.toContain("connector:plain");
   });
 
@@ -220,13 +222,69 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toBe(NOTION_GUIDE);
   });
 
+  it("uses an explicit bounded summary while returning structured guide content verbatim", async () => {
+    const content = "# Cloud API\n\nResolve operation aliases before calling.\n";
+    const mt = createMetaTools(
+      makeRegistry([
+        guided("cloud", {
+          content,
+          summary:
+            "  Generic API aliases, argument units, and pagination.   " +
+            "x".repeat(120),
+        }),
+      ]),
+      BASE,
+    );
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain(
+      "`connector:cloud` — Generic API aliases, argument units, and pagination.",
+    );
+    expect(listed).toContain("…");
+    expect(textFrom(await mt.skills({ name: "connector:cloud" }))).toBe(
+      content,
+    );
+  });
+
+  it("keeps duplicate guide content and deployment-specific summaries isolated", async () => {
+    const content = "# Shared service\n\nUse the deployment's configured alias.\n";
+    const first = createMetaTools(
+      makeRegistry([
+        guided("service", {
+          content,
+          summary: "First deployment aliases.",
+        }),
+      ]),
+      BASE,
+    );
+    const second = createMetaTools(
+      makeRegistry([
+        guided("service", {
+          content,
+          summary: "Second deployment aliases.",
+        }),
+      ]),
+      BASE,
+    );
+
+    expect(textFrom(await first.skills({}))).toContain(
+      "`connector:service` — First deployment aliases.",
+    );
+    expect(textFrom(await second.skills({}))).toContain(
+      "`connector:service` — Second deployment aliases.",
+    );
+    expect(textFrom(await first.skills({ name: "connector:service" }))).toBe(
+      content,
+    );
+    expect(textFrom(await second.skills({ name: "connector:service" }))).toBe(
+      content,
+    );
+  });
+
   it("returns a guide with surrounding whitespace verbatim, padding included", async () => {
     const padded = "\n\n  # Padded\n\nBody.\n   ";
     const mt = createMetaTools(makeRegistry([guided("pad", padded)]), BASE);
     expect(textFrom(await mt.skills({ name: "connector:pad" }))).toBe(padded);
-    expect(textFrom(await mt.skills({}))).toContain(
-      "`connector:pad` — Padded",
-    );
+    expect(textFrom(await mt.skills({}))).toContain("`connector:pad` — Body.");
   });
 
   it("keeps the built-in usage guide unchanged as the default experience", async () => {
@@ -236,10 +294,10 @@ Prefer \`notion.search\` over listing databases.
     );
     const fetched = await mt.skills({ name: "usage" });
     expect(fetched.isError).toBeFalsy();
-    expect(textFrom(fetched)).toBe(USAGE_SKILL + CONNECTOR_GUIDES_SECTION);
+    expect(textFrom(fetched)).toBe(USAGE_SKILL);
     expect(textFrom(fetched)).toContain("# Connecta usage");
     expect(textFrom(fetched)).toContain(
-      'skills({ name: "connector:<connectorId>" })',
+      "never infer one from a connector id",
     );
     expect(textFrom(fetched)).not.toContain("## Examples");
     expect(textFrom(fetched)).not.toContain("crm.get_account");
@@ -255,21 +313,26 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
-  it("serves the base usage guide byte-identically when no connector has one", async () => {
-    const mt = createMetaTools(
+  it("serves byte-identical shared usage guidance across deployments", async () => {
+    const plain = createMetaTools(
       makeRegistry([guided("plain"), guided("other")]),
       BASE,
     );
-    expect(textFrom(await mt.skills({ name: "usage" }))).toBe(USAGE_SKILL);
-    expect(textFrom(await mt.skills({ name: "usage" }))).not.toContain(
-      "Per-connector guides",
+    const guidedDeployment = createMetaTools(
+      makeRegistry([guided("notion", NOTION_GUIDE)]),
+      BASE,
     );
-    const listed = textFrom(await mt.skills({}));
+    const expected = USAGE_SKILL;
+    expect(textFrom(await plain.skills({ name: "usage" }))).toBe(expected);
+    expect(textFrom(await guidedDeployment.skills({ name: "usage" }))).toBe(
+      expected,
+    );
+    const listed = textFrom(await plain.skills({}));
     expect(listed).toContain(
       "`usage` — How to route work between one execute_code program",
     );
     expect(listed).not.toContain("connector:");
-    expect(new TextEncoder().encode(USAGE_SKILL).length).toBeLessThan(2_500);
+    expect(new TextEncoder().encode(expected).length).toBeLessThan(3_500);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
@@ -341,10 +404,10 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).toContain(
       "`usage` — How to route work between one execute_code program",
     );
-    expect(listed).toContain("`connector:usage` — Usage-service quirks");
+    expect(listed).toContain("`connector:usage` — Rate limit: 10 rpm.");
 
     expect(textFrom(await mt.skills({ name: "usage" }))).toBe(
-      USAGE_SKILL + CONNECTOR_GUIDES_SECTION,
+      USAGE_SKILL,
     );
     expect(textFrom(await mt.skills({ name: "connector:usage" }))).toBe(guide);
   });
@@ -355,16 +418,129 @@ Prefer \`notion.search\` over listing databases.
       BASE,
     );
     const searched = textOf(await mt.searchTools({ query: "search" })) as {
-      connectors: Array<{ id: string; guide?: string }>;
+      connectors: Array<{
+        id: string;
+        guide?: string;
+        guideSummary?: string;
+        tools: Array<{ guideRequired?: true; guideRequiredReasons?: string[] }>;
+      }>;
     };
     const byId = Object.fromEntries(searched.connectors.map((c) => [c.id, c]));
     expect(required(byId.notion).guide).toBe("connector:notion");
+    expect(required(byId.notion).guideSummary).toBe(
+      "Prefer `notion.search` over listing databases.",
+    );
+    expect(required(byId.notion).tools[0]).not.toHaveProperty(
+      "guideRequiredReasons",
+    );
+    expect(required(byId.notion).tools[0]).not.toHaveProperty(
+      "guideRequired",
+    );
     expect(byId.plain).not.toHaveProperty("guide");
     expect(
       textFrom(
         await mt.skills({ name: required(required(byId.notion).guide) }),
       ),
     ).toBe(NOTION_GUIDE);
+  });
+
+  it("requires guide review for approval-bound tools and connector-required conventions", async () => {
+    const connector = api("generic", {
+      usageGuide: {
+        content: "# Generic API\n\nRead the operation documentation first.\n",
+        summary: "Generic operation aliases and argument shapes.",
+        required: true,
+      },
+      tools: [
+        {
+          name: "invoke",
+          inputSchema: { type: "object" },
+          handler: () => ({}),
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const searched = textOf(
+      await mt.searchTools({ query: "invoke", includeSchemas: "compact" }),
+    ) as {
+      connectors: Array<{
+        guideSummary?: string;
+        tools: Array<{ guideRequired?: true; guideRequiredReasons?: string[] }>;
+      }>;
+    };
+    expect(required(searched.connectors[0]).guideSummary).toBe(
+      "Generic operation aliases and argument shapes.",
+    );
+    expect(required(required(searched.connectors[0]).tools[0]).guideRequired).toBe(
+      true,
+    );
+    expect(required(required(searched.connectors[0]).tools[0]).guideRequiredReasons).toEqual(
+      ["connector_required", "approval_required"],
+    );
+
+    const missed = textOf(
+      await mt.searchTools({
+        connector: "generic",
+        query: "list open invoices",
+        includeSchemas: "compact",
+      }),
+    ) as {
+      connectors: unknown[];
+      queryAnalysis?: {
+        guide?: string;
+        guideSummary?: string;
+        guideRequired?: true;
+        guideRequiredReasons?: string[];
+        guidance?: string;
+      };
+    };
+    expect(missed.connectors).toEqual([]);
+    expect(missed.queryAnalysis).toMatchObject({
+      guide: "connector:generic",
+      guideSummary: "Generic operation aliases and argument shapes.",
+      guideRequired: true,
+      guideRequiredReasons: ["connector_required"],
+      guidance: expect.stringContaining("Fetch queryAnalysis.guide"),
+    });
+  });
+
+  it("requires guide review when a compact schema is truncated", async () => {
+    const properties = Object.fromEntries(
+      Array.from({ length: 100 }, (_, index) => [
+        `argument_${index}_${"x".repeat(20)}`,
+        { type: "string" },
+      ]),
+    );
+    const connector = api("wide", {
+      usageGuide: {
+        content: "# Wide API\n\nArguments are documented here.\n",
+        summary: "Argument meanings for wide operations.",
+      },
+      tools: [
+        {
+          name: "read",
+          inputSchema: { type: "object", properties },
+          annotations: { readOnlyHint: true },
+          handler: () => ({}),
+        },
+      ],
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const searched = textOf(
+      await mt.searchTools({ query: "read", includeSchemas: "compact" }),
+    ) as {
+      connectors: Array<{
+        tools: Array<{
+          inputSchemaTruncated?: true;
+          guideRequired?: true;
+          guideRequiredReasons?: string[];
+        }>;
+      }>;
+    };
+    const tool = required(required(searched.connectors[0]).tools[0]);
+    expect(tool.inputSchemaTruncated).toBe(true);
+    expect(tool.guideRequired).toBe(true);
+    expect(tool.guideRequiredReasons).toEqual(["schema_truncated"]);
   });
 });
 

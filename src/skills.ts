@@ -3,7 +3,7 @@ import type { Connector } from "./types.js";
 export const CONNECTA_INSTRUCTIONS =
   'Connecta exposes seven meta-tools. execute_code is primary: use connecta.search, describe, call, and batch for discovery, multiple or dependent calls, loops, joins, and result reduction. connecta.ui(html) is a guest function inside execute_code, never a connector address or search_tools result; pass one HTML string for display-only, or bind named read-only refresh/drill-down calls in its optional reads argument, and return the same initial summary data the HTML renders. For one read at an unknown address, search_tools with 2–4 distinctive action/object terms and includeSchemas="compact", then one call_tool — a lone cold call is cheaper direct than a program. Use call_destructive_tool individually for unannotated, write-capable, or destructive tools; authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
 
-export const USAGE_SKILL = `# Connecta usage
+const USAGE_SKILL_BASE = `# Connecta usage
 
 ## The surface
 
@@ -35,17 +35,15 @@ One async arrow function. The only capabilities are one global per connector (\`
 
 `;
 
-/**
- * Appended to USAGE_SKILL only when the deployment actually has at least one
- * connector guide. A deployment with none — every deployment that has not
- * adopted the feature — keeps the base guide byte-for-byte, rather than paying
- * context for an instruction to fetch guides that do not exist.
- */
-export const CONNECTOR_GUIDES_SECTION = `
+/** Deployment-scoped guide routing appended to the shared usage guide. */
+const CONNECTOR_GUIDES_SECTION = `
 ## Per-connector guides
 
-Some connectors here ship their own usage guide — preferred tools, address quirks, pagination conventions, rate-limit etiquette, query patterns. \`skills({})\` lists each one as \`connector:<connectorId>\`; fetch it with \`skills({ name: "connector:<connectorId>" })\`. \`search_tools\`, \`connecta.search\`, and \`connecta.describe\` set \`guide\` on matches whose connector has one. Read a connector's guide before working with it for the first time in a task.
+Some connectors ship a deployment-scoped usage guide. \`skills({})\` and discovery return the exact \`guide\` name plus a bounded \`guideSummary\` saying what it covers. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop: fetch before calling, even if describe can expand the schema; \`guideRequiredReasons\` says why. Otherwise fetch when the summary names a connector-specific sequence, unit, pagination rule, alias, or generic API convention relevant to the task. A read-only call whose compact schema is complete and unambiguous may proceed without fetching an otherwise irrelevant guide. Connector guides do not replace the shared Connecta usage guide and never apply to another deployment implicitly.
 `;
+
+/** Shared Connecta routing guidance, byte-identical across deployments. */
+export const USAGE_SKILL = USAGE_SKILL_BASE + CONNECTOR_GUIDES_SECTION;
 
 /** The always-loaded MCP `instructions` string. */
 export function instructionsFor(): string {
@@ -59,10 +57,14 @@ export function hasConnectorGuides(connectors: readonly Connector[]): boolean {
   );
 }
 
-/** The built-in usage guide, plus the guides section when there is one to point at. */
-function usageSkill(connectors: readonly Connector[]): string {
-  if (!hasConnectorGuides(connectors)) return USAGE_SKILL;
-  return USAGE_SKILL + CONNECTOR_GUIDES_SECTION;
+/**
+ * The built-in usage guide is byte-identical across deployments, so an agent
+ * that has read it once in a task never needs an equivalent deployment-local
+ * copy. Guide-free deployments still pay no fixed tool-description cost: the
+ * conditional notes in meta-tools.ts remain absent.
+ */
+function usageSkill(_connectors: readonly Connector[]): string {
+  return USAGE_SKILL;
 }
 
 const AVAILABLE_SKILLS = [
@@ -91,7 +93,8 @@ export function connectorSkillName(connectorId: string): string {
 /** The connector's guide, or undefined when it declares none (or a blank one). */
 export function connectorGuide(connector: Connector): string | undefined {
   const guide = connector.usageGuide;
-  return guide && guide.trim() !== "" ? guide : undefined;
+  const content = typeof guide === "string" ? guide : guide?.content;
+  return content && content.trim() !== "" ? content : undefined;
 }
 
 const SUMMARY_LENGTH = 120;
@@ -125,8 +128,17 @@ function withoutFrontmatter(lines: string[]): string[] {
  * the connector's own description when the guide opens with nothing but
  * markup.
  */
+function boundedSummary(summary: string): string | undefined {
+  const line = summary.replace(/\s+/g, " ").trim();
+  if (line === "") return undefined;
+  return line.length <= SUMMARY_LENGTH
+    ? line
+    : `${line.slice(0, SUMMARY_LENGTH - 1).trimEnd()}…`;
+}
+
 function summarizeGuide(connector: Connector, guide: string): string {
   let inFence = false;
+  let headingFallback: string | undefined;
   for (const raw of withoutFrontmatter(guide.split("\n"))) {
     if (FENCE_RE.test(raw)) {
       inFence = !inFence;
@@ -134,6 +146,7 @@ function summarizeGuide(connector: Connector, guide: string): string {
     }
     if (inFence) continue;
     if (raw.trim() === "" || NOT_SUMMARY_RE.test(raw)) continue;
+    const heading = /^\s*#{1,6}/.test(raw);
     const line = raw
       // `\s*` (not `\s+`) so a bare `#` strips to nothing and is skipped, and
       // an unspaced `#Heading` is still read as a heading.
@@ -142,11 +155,37 @@ function summarizeGuide(connector: Connector, guide: string): string {
       .replace(/\s+/g, " ")
       .trim();
     if (line === "") continue;
-    return line.length <= SUMMARY_LENGTH
-      ? line
-      : `${line.slice(0, SUMMARY_LENGTH - 1).trimEnd()}…`;
+    if (heading) {
+      headingFallback ??= boundedSummary(line);
+      continue;
+    }
+    return boundedSummary(line) ?? line;
   }
-  return connector.description ?? `Usage guide for "${connector.id}".`;
+  if (headingFallback) return headingFallback;
+  const fallback = connector.description ?? `Usage guide for "${connector.id}".`;
+  return boundedSummary(fallback) ?? `Usage guide for "${connector.id}".`;
+}
+
+/** Bounded, decision-useful discovery summary for a connector guide. */
+export function connectorGuideSummary(
+  connector: Connector,
+): string | undefined {
+  const guide = connectorGuide(connector);
+  if (!guide) return undefined;
+  const configured =
+    typeof connector.usageGuide === "object"
+      ? boundedSummary(connector.usageGuide.summary ?? "")
+      : undefined;
+  return configured ?? summarizeGuide(connector, guide);
+}
+
+/** Whether correct use always depends on conventions outside the tool schema. */
+export function connectorGuideRequired(connector: Connector): boolean {
+  return (
+    connectorGuide(connector) !== undefined &&
+    typeof connector.usageGuide === "object" &&
+    connector.usageGuide.required === true
+  );
 }
 
 export interface SkillListing {
@@ -169,7 +208,7 @@ export function listSkills(connectors: readonly Connector[]): SkillListing[] {
     if (!guide) continue;
     listing.push({
       name: connectorSkillName(connector.id),
-      description: summarizeGuide(connector, guide),
+      description: connectorGuideSummary(connector) ?? summarizeGuide(connector, guide),
     });
   }
   return listing;

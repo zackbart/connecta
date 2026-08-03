@@ -254,6 +254,16 @@ describe("remoteMcp() connector", () => {
         usageGuide: guide,
       }).usageGuide,
     ).toBe(guide);
+    const structured = {
+      content: guide,
+      summary: "Cursor pagination conventions.",
+    } as const;
+    expect(
+      remoteMcp("structured", {
+        url: "https://downstream.test/mcp",
+        usageGuide: structured,
+      }).usageGuide,
+    ).toBe(structured);
   });
 
   it("listTools reflects the downstream server's tools", async () => {

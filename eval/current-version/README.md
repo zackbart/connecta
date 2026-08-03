@@ -132,13 +132,15 @@ pin the same model and machine across runs.
 
 ### Cold-agent connector learning
 
-The seven `perf:agent` cases are the evidence lane for
-[#294](https://github.com/zackbart/connecta/issues/294): an exact-address
-control, a generic API-shaped read, a connector-guide-heavy query, a
-schema-heavy dependent read, an unavailable catalog, an authorization handoff,
-and large-result reduction. Fixtures use nested schemas, typed catalog
-failures, provider query syntax, and deterministic domain-shaped results rather
-than empty synthetic tools. No live account payload enters the lane.
+The eight `perf:agent` cases are the evidence lane for
+[#294](https://github.com/zackbart/connecta/issues/294) and
+[#296](https://github.com/zackbart/connecta/issues/296): an exact-address
+control, a complete point read whose unrelated guide should be skipped, a
+generic API-shaped read, a connector-guide-heavy query, a schema-heavy
+dependent read, an unavailable catalog, an authorization handoff, and
+large-result reduction. Fixtures use nested schemas, typed catalog failures,
+provider query syntax, and deterministic domain-shaped results rather than
+empty synthetic tools. No live account payload enters the lane.
 
 `auth-handoff` is the lane's only coverage of the accepted
 `authorize_connector` recovery route
@@ -195,7 +197,7 @@ fingerprint hashes `src/**`, because a baseline and a candidate cut from one
 working tree record the same commit and the same dirty flag — identical
 fingerprints mean the candidate measured no product change at all.
 
-Run the complete seven-case baseline first. A narrowly scoped candidate may then
+Run the complete eight-case baseline first. A narrowly scoped candidate may then
 use matching repeated `--case` artifacts when its behavior can affect only one
 workflow; retain the complete candidate smoke separately so unrelated routing
 variance stays visible rather than being averaged into the focused verdict.

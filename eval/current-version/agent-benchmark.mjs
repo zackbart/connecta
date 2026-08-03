@@ -158,6 +158,27 @@ const cases = [
     },
   },
   {
+    id: "optional-guide-simple-read",
+    workflow: "simple-read",
+    fixtureClass: "guide-irrelevant-control",
+    prompt:
+      "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+    expectedCalls: [
+      { address: "bookshelf.get_book", args: { id: "bk_eval_7" } },
+    ],
+    validOuterRoutes: [["search_tools", "call_tool"]],
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 700 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      const data = value?.ok === true ? value.data : value;
+      return (
+        data?.id === "bk_eval_7" &&
+        data?.title === "The Selective Guide" &&
+        data?.available === true
+      );
+    },
+  },
+  {
     id: "generic-api-read",
     workflow: "simple-read",
     fixtureClass: "generic-api-style",
@@ -186,7 +207,9 @@ const cases = [
       ["search_tools", "call_tool"],
       ["execute_code"],
     ],
-    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 900 },
+    // Required guide review plus an exact-address browse makes this the honest
+    // four-turn path for a broad wrapper whose tool name lacks endpoint terms.
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 1_000 },
     correct(finalText) {
       const value = parseJson(finalText);
       const data = value?.ok === true ? value.data : value;
@@ -221,7 +244,7 @@ const cases = [
       ["search_tools", "skills", "call_tool"],
       ["skills", "search_tools", "call_tool"],
     ],
-    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 1_200 },
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 2_300 },
     correct(finalText) {
       const value = parseJson(finalText);
       const data = value?.ok === true ? value.data : value;
@@ -271,7 +294,9 @@ const cases = [
       ["execute_code"],
       ["search_tools", "execute_code"],
     ],
-    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 1_300 },
+    // A required guide discovered inside code mode deliberately yields, fetches
+    // the guide through the explicit tool, then resumes with an informed run.
+    costEnvelope: { maxRoundTrips: 5, maxMcpResultTokens: 2_100 },
     correct(finalText) {
       const value = parseJson(finalText);
       return (

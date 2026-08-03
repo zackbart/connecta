@@ -21,6 +21,7 @@ import type {
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
   ConnectorStatus,
+  ConnectorUsageGuide,
   Logger,
   ToolDef,
 } from "../types.js";
@@ -47,10 +48,11 @@ export interface RemoteMcpOptions {
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
-   * Optional agent-facing usage guide (markdown) served by the `skills`
-   * meta-tool as `connector:<id>`. See `Connector.usageGuide`.
+   * Optional agent-facing usage guide served by `skills` as
+   * `connector:<id>`. A string is markdown; the structured form adds bounded
+   * discovery metadata. See `Connector.usageGuide`.
    */
-  usageGuide?: string;
+  usageGuide?: string | ConnectorUsageGuide;
   auth?: RemoteMcpAuth;
   /**
    * Downstream HTTP redirect policy. Defaults to `"none"`: every redirect is

@@ -669,6 +669,45 @@ Example: \`team = ENG AND status = "In Progress"\`.
   ],
 });
 
+const bookshelf = api("bookshelf", {
+  title: "Bookshelf",
+  description: "Point reads and paginated browsing for a deterministic library",
+  usageGuide: `# Bookshelf list pagination
+
+Only \`list_books\` uses cursor pagination. A \`get_book\` point lookup takes
+the stable book id directly and needs no pagination convention.
+`,
+  strictValidation: true,
+  tools: [
+    {
+      name: "get_book",
+      description: "Get one book by its stable id.",
+      inputSchema: {
+        type: "object",
+        properties: { id: { type: "string", minLength: 1 } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          title: { type: "string" },
+          available: { type: "boolean" },
+        },
+        required: ["id", "title", "available"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: { id: string }) => ({
+        id: args.id,
+        title: "The Selective Guide",
+        available: true,
+      }),
+    },
+  ],
+});
+
 const dnsRecordFilterProperties = {
   recordType: {
     type: "string",
@@ -719,6 +758,12 @@ const edgeDns = api("edge-dns", {
   title: "Edge DNS",
   description:
     "Account-scoped zones and DNS records with nested SDK-style arguments",
+  usageGuide: `# Edge DNS usage
+
+Use nested SDK argument objects, not flat ids. Resolve the account's zone with
+\`list_zones({ account: { id } })\`, then pass the returned zone id as
+\`list_dns_records({ zone: { id }, filter: { recordType } })\`.
+`,
   strictValidation: true,
   tools: [
     {
@@ -821,6 +866,17 @@ const genericLedger = api("generic-ledger", {
   title: "Generic Ledger API",
   description:
     "A hand-written API connector exposing a generic HTTP-shaped read tool",
+  usageGuide: {
+    content: `# Generic ledger request usage
+
+The exact address \`generic-ledger.request\` requires an admitted method, path,
+and query shape. Listing open invoices uses \`GET /v1/invoices\` with
+\`query: { status: "open" }\`; do not translate the user's wording into a
+guessed endpoint.
+`,
+    summary: "Required method, path, and query conventions for a generic API wrapper.",
+    required: true,
+  },
   strictValidation: true,
   tools: [
     {
@@ -1176,6 +1232,7 @@ const connecta = createConnecta({
   connectors: [
     ...discoveryConnectors,
     guidedWorkItems,
+    bookshelf,
     edgeDns,
     genericLedger,
     unavailableCatalog,
@@ -1242,7 +1299,7 @@ console.log(
     url: `http://${host}:${address.port}/mcp`,
     baseUrl: `http://${host}:${address.port}`,
     sourceCommit,
-    connectorCount: discoveryConnectors.length + 9,
+    connectorCount: discoveryConnectors.length + 10,
     traceEnabled,
   }),
 );
