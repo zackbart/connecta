@@ -191,8 +191,9 @@ describe("linear()", () => {
       // Maintained additive create: leaves the read path without inflating the
       // host's approval copy with a destruction it does not perform.
       { name: "create_issue_label" },
-      // Unfamiliar tool: fails closed regardless of its own claim.
-      { name: "summon_new_thing", annotations: { readOnlyHint: true } },
+      // Unfamiliar tool the downstream says nothing about: silence fails
+      // closed.
+      { name: "summon_new_thing" },
     ]);
     const connector = linear("tracker", { purpose: "Delivery planning" });
     const tools = await connector.listTools(context);
@@ -211,7 +212,28 @@ describe("linear()", () => {
       destructiveHint: true,
     });
     expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: false });
+    expect(tools[4]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("believes an explicit annotation on a tool no release has classified", async () => {
+    mocks.listTools.mockResolvedValue([
+      // Not on either maintained list, and the downstream calls it read-only.
+      // Rewriting that to `false` would be an overrule, not a fill-in: on a
+      // name no release has reviewed, the downstream's word is the only
+      // evidence there is. `extract_images` was exactly this case before it
+      // was allowlisted.
+      { name: "peek_at_new_thing", annotations: { readOnlyHint: true } },
+      // The same rule in the other direction.
+      { name: "wreck_new_thing", annotations: { destructiveHint: true } },
+    ]);
+    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
+    expect(tools[1]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 
   it("agrees with the markdown helper's own read-only annotation", async () => {

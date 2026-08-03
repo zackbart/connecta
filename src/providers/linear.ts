@@ -175,11 +175,15 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
 /**
  * Fill in what the downstream leaves unsaid; never argue with what it says.
  *
- * A vetted classification may always tighten — that direction only ever routes
- * more calls through `call_destructive_tool`. Loosening is the direction that
- * needs the downstream's silence: an explicit `destructiveHint: true` or
+ * Silence is what a vetted classification is for, and an explicit downstream
+ * annotation wins in both directions. `destructiveHint: true` or
  * `readOnlyHint: false` on an allowlisted read name is the downstream telling
- * us this release's allowlist is wrong, and it wins.
+ * us this release's allowlist is stale; `readOnlyHint: true` on a name no
+ * release has classified says the same thing from the other side. The single
+ * place a vetted verdict still overrides the downstream is a name this release
+ * reviewed and filed destructive: there connecta knows what the tool does, and
+ * a claim to the contrary is a downstream bug rather than news
+ * ([#310](https://github.com/zackbart/connecta/issues/310)).
  */
 function vettedSafety(definition: ToolDef): ToolDef {
   const downstream = definition.annotations ?? {};
@@ -210,13 +214,17 @@ function vettedSafety(definition: ToolDef): ToolDef {
     };
   }
   // Maintained additive creates and tools this release has never seen land
-  // here alike: not read-only, so the ordinary fail-closed path keeps them
-  // approval-visible, without claiming a create destroys anything.
+  // here alike. Fill-in only: a silent tool is not read-only, so drift still
+  // fails closed onto `call_destructive_tool`, and neither population gets a
+  // `destructiveHint` it has not earned. A tool that arrives explicitly
+  // read-only keeps that annotation — on a name no release has reviewed, the
+  // downstream's own word is the only evidence there is, and rewriting it
+  // would be an overrule rather than a fill-in.
   return {
     ...definition,
     annotations: {
       ...downstream,
-      readOnlyHint: false,
+      readOnlyHint: downstream.readOnlyHint ?? false,
     },
   };
 }
