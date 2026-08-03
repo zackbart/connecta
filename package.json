@@ -65,6 +65,10 @@
       "types": "./dist/auth/clerk.d.ts",
       "import": "./dist/auth/clerk.js"
     },
+    "./providers/cloudflare": {
+      "types": "./dist/providers/cloudflare.d.ts",
+      "import": "./dist/providers/cloudflare.js"
+    },
     "./providers/linear": {
       "types": "./dist/providers/linear.d.ts",
       "import": "./dist/providers/linear.js"

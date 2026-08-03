@@ -8,6 +8,7 @@ const packageJson = JSON.parse(
   readFileSync(join(ROOT, "package.json"), "utf8"),
 ) as {
   dependencies?: Record<string, string>;
+  devDependencies?: Record<string, string>;
   peerDependencies?: Record<string, string>;
   peerDependenciesMeta?: Record<string, { optional?: boolean }>;
   exports?: Record<string, unknown>;
@@ -117,7 +118,26 @@ describe("public package boundary", () => {
     expect(typeof Validator).toBe("function");
   });
 
+  // The Cloudflare prebuilt connection is hand-written fetch against the
+  // documented v4 REST API. That is a deliberate choice over wrapping the
+  // generated `cloudflare` SDK, so the SDK must not appear as a dependency, an
+  // optional peer, or a dev dependency — any of the three would make the
+  // no-dependency claim in documentation/cloudflare.md untrue.
   it("does not depend on the Cloudflare service API SDK", () => {
     expect(packageJson.dependencies).not.toHaveProperty("cloudflare");
+    expect(packageJson.peerDependencies).not.toHaveProperty("cloudflare");
+    expect(packageJson.devDependencies).not.toHaveProperty("cloudflare");
+  });
+
+  it("keeps the Cloudflare provider free of bare-specifier imports", () => {
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "cloudflare.ts"),
+      "utf8",
+    );
+    // Every import must be relative: a bare specifier here would be a runtime
+    // dependency the package never declares.
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
   });
 });

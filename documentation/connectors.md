@@ -111,6 +111,7 @@ them. Nothing in the list is privileged by how it was authored.
 
 Maintained provider guides:
 
+- [Cloudflare](./cloudflare.md)
 - [Linear](./linear.md)
 - [Mixpanel](./mixpanel.md)
 - [Notion](./notion.md)
