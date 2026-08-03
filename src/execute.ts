@@ -28,6 +28,7 @@ import {
   InvocationService,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
+import { hasConnectorGuides } from "./skills.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Executor,
@@ -1272,12 +1273,13 @@ function discardedEmitsText(emitted: EmitCollector): string {
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
+  connectorGuides: boolean,
 ) => `The primary surface. Use for discovery beyond one lookup, two or more calls, dependent steps, loops, joins, branching, or reducing large results before they reach the model — connecta.search and connecta.describe browse and expand catalogs in the run, and connecta.batch handles independent calls. The exception is one call at an address already in hand: search_tools then one call_tool is cheaper than a program. Only tools explicitly annotated readOnlyHint: true are available. Each run is limited to ${EXECUTE_MAX_HOST_CALLS} host calls, connecta.batch to at most ${EXECUTE_MAX_BATCH_CALLS}; each host call has a ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second deadline.
 
 Write an async arrow function. It runs with NO network, filesystem, timers, or imports — the only capabilities are:
 - One global per connector: call every address <connectorId>.<toolName> from search_tools as <connectorId>.<toolName>(args), with a single args object matching the schema from connecta.describe. Names are sanitized to JS identifiers: characters outside [A-Za-z0-9_$] become "_" (my-service.get.thing → my_service.get_thing), leading digits get "_" prefixed, reserved words "_" appended.
 - connecta.call(address, args) and connecta.batch(calls) — call raw addresses. Every batch entry is { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }; destructure that, not a bare result.
-- connecta.search(args) loads request-local catalogs; set connector to the obvious id to load one, otherwise it loads all. connecta.describe takes { address: "<connectorId>.<toolName>" } or { addresses: [...] }. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute; it changes results, not authority. Schema matches list inputKeys, requiredInputKeys, and outputKeys — the schema's own names. A missing list means a non-object shape, not no fields — read the schema.
+- connecta.search(args) loads request-local catalogs; set connector to the obvious id to load one, otherwise it loads all. connecta.describe takes { address: "<connectorId>.<toolName>" } or { addresses: [...] }. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute; it changes results, not authority. Schema matches list inputKeys, requiredInputKeys, and outputKeys — the schema's own names. A missing list means a non-object shape, not no fields — read the schema.${connectorGuides ? " A match with guideRequired: true is a hard stop: do not call it; describing the exact schema clears only a schema_truncated reason, so for any other reason return the exact guide name, fetch that guide with the top-level skills tool, then write the informed call." : ""}
 - connecta.emit(block) — deliver MCP content beside the JSON return: exactly { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }, nothing else. Blocks are appended on success only, spend no host calls, and are budgeted per run (${emitBudgets.maxBlocks} blocks, ${emitBudgets.maxBytes} serialized bytes); an over-budget or invalid emit throws catchably and accepts nothing.
 - connecta.ui(html, options?) — deliver one view. One argument is display-only; for live reads pass { reads: { name: { address, fixedArgs?, viewArgs? } } }, then markup calls connecta.read(name, args). Read-only is validated; fixed keys cannot be overridden, undeclared keys fail, and discovery, writes, and network stay unavailable. Success-only, no binding call cost, and one budget, not two (${emitBudgets.maxBytes} shared emit bytes); a second, over-budget, or invalid call throws catchably. The bytes stay out of context, so the model reads the return value, not the view: return the initial summary from its variables; later reads update only the view.
 - console.log(...) — captured and returned with the result.
@@ -1340,7 +1342,10 @@ export function registerExecuteTool(
   server.registerTool(
     "execute_code",
     {
-      description: executeDescription(emitBudgets),
+      description: executeDescription(
+        emitBudgets,
+        hasConnectorGuides(registry.listConnectors()),
+      ),
       inputSchema: z.object({
         code: z
           .string()

@@ -212,13 +212,17 @@ export interface Connector {
    */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /**
-   * Optional agent-facing usage guide (markdown) for this connector — preferred
-   * tools, address quirks, pagination conventions, rate-limit etiquette, good
-   * query patterns. Listed by the `skills` meta-tool as `connector:<id>` and
-   * returned verbatim by `skills({ name: "connector:<id>" })`. Keep it concise
-   * and imperative; it is read by agents, not operators.
+   * Optional agent-facing usage guide for this connector. A string preserves
+   * the original markdown-only contract. The structured form can add a short
+   * discovery summary and require review when even a complete compact schema
+   * cannot describe correct use (for example a generic API wrapper or a
+   * cross-operation sequencing rule).
+   *
+   * Listed by `skills` as `connector:<id>` and returned verbatim by
+   * `skills({ name: "connector:<id>" })`. The guide remains deployment-owned
+   * configuration; no runtime registration or shared mutable copy exists.
    */
-  usageGuide?: string;
+  usageGuide?: string | ConnectorUsageGuide;
   /** Optional operator-managed credential slot rendered on /credentials. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by /credentials' Test action. */
@@ -307,6 +311,23 @@ export interface Connector {
     request: Request,
     ctx: ConnectorContext,
   ): Promise<Response | null>;
+}
+
+export interface ConnectorUsageGuide {
+  /** Markdown returned verbatim by `skills({ name: "connector:<id>" })`. */
+  content: string;
+  /**
+   * Bounded discovery hint describing the conventions the guide covers. When
+   * omitted, Connecta derives a summary from the guide's first meaningful line.
+   */
+  summary?: string;
+  /**
+   * Require review before every operation on this connector. Reserve this for
+   * cases whose correct arguments or sequence cannot be expressed by the
+   * downstream tool schema; mutations and truncated schemas are required
+   * automatically and do not need this flag.
+   */
+  required?: boolean;
 }
 
 /** Result of one sandboxed code execution. */

@@ -690,7 +690,7 @@ describe("server /mcp end-to-end", () => {
     );
   });
 
-  it("mentions per-connector guides only when the deployment has one", async () => {
+  it("keeps shared usage stable while guide-specific tool notes stay conditional", async () => {
     async function skillsSurface(connectors: Connector[]) {
       const c = createTestConnecta({
         connectors,
@@ -715,14 +715,18 @@ describe("server /mcp end-to-end", () => {
       return {
         description: byName.skills.description as string,
         search: byName.search_tools.description as string,
+        destructive: byName.call_destructive_tool.description as string,
+        execute: byName.execute_code.description as string,
         usage: usage.result.content[0].text as string,
       };
     }
 
     const plain = await skillsSurface([calc()]);
     expect(plain.description).not.toContain("connector:<connectorId>");
-    expect(plain.usage).not.toContain("## Per-connector guides");
+    expect(plain.usage).toContain("## Per-connector guides");
     expect(plain.search).not.toContain("`guide`");
+    expect(plain.destructive).not.toContain("connector guide");
+    expect(plain.execute).not.toContain("guideRequired");
 
     const guided = await skillsSurface([
       api("notion", {
@@ -739,9 +743,14 @@ describe("server /mcp end-to-end", () => {
         ],
       }),
     ]);
-    expect(guided.description).toContain("connector:<connectorId>");
+    expect(guided.description).toContain("fetch only an exact name");
     expect(guided.usage).toContain("## Per-connector guides");
-    expect(guided.search).toContain("`guide`");
+    expect(guided.search).toContain("`guideSummary`");
+    expect(guided.search).toContain("`guideRequiredReasons`");
+    expect(guided.search).toContain("`guideRequired: true`");
+    expect(guided.destructive).toContain("fetch any connector guide");
+    expect(guided.execute).toContain("guideRequired: true is a hard stop");
+    expect(guided.usage).toBe(plain.usage);
   });
 
   it("tools/call search_tools returns results grouped by connector", async () => {

@@ -85,6 +85,17 @@ describe("api() connector", () => {
       tools: [{ name: "noop", handler: () => null }],
     });
     expect(guided.usageGuide).toBe(guide);
+    const structured = {
+      content: guide,
+      summary: "Verified sender requirements.",
+      required: true,
+    } as const;
+    expect(
+      api("structured", {
+        usageGuide: structured,
+        tools: [{ name: "noop", handler: () => null }],
+      }).usageGuide,
+    ).toBe(structured);
   });
 
   it("listTools returns the declared tool defs (name/description/schema)", async () => {

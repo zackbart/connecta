@@ -630,6 +630,7 @@ export type {
   ConnectorCredentialFieldConfig,
   ConnectorCredentialValues,
   ConnectorContext,
+  ConnectorUsageGuide,
   ConnectorStatus,
   CredentialTestResult,
   AdmittingExecutor,

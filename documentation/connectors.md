@@ -53,6 +53,17 @@ Tool calls must use the shared invocation path. That keeps direct calls, batch
 children, and code-mode host calls aligned on safety, retries, admission,
 timeouts, validation, result guards, and typed failures.
 
+Connector usage guides are configuration too. `usageGuide` accepts the
+historical markdown string or `{ content, summary?, required? }`; the latter
+lets discovery explain what the guide covers without loading it. The summary
+is only a bounded routing hint. Mark a guide `required` only when no complete
+tool schema can describe correct use, such as a generic operation wrapper or a
+mandatory cross-tool sequence. Mutations and truncated compact schemas already
+produce automatic review requirements. Two deployments may reuse the same
+constant and override its summary or requirement in their own config, but
+Connecta stores no runtime template and never lets one deployment's guide apply
+to another.
+
 For remote MCP tools, that path checks the catalog's advertised `inputSchema`
 before provider dispatch. Supported mismatches become bounded, payload-free
 `invalid_args` findings; a schema the local validator cannot evaluate passes

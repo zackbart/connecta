@@ -1,0 +1,4136 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-03T18:51:56.681Z",
+  "source": {
+    "commit": "147f744e6a612dedad87246c60afdd33e9cb98c9",
+    "nodeVersion": "22.23.2",
+    "platform": "darwin-arm64",
+    "codexVersion": "codex-cli 0.146.0",
+    "model": "codex-default",
+    "tokenizer": "o200k_base",
+    "productDirty": false,
+    "harnessSha256": "e40005c7bedc026eb8b2ef84d9373dfc80d4cdab5f30332bf8a5108a96af0938",
+    "scoringSha256": "868978e23b903d5d3ffcd5a09006faea3dc28d086c7fb1a3a53eb51d28d0b2ba",
+    "sandboxSha256": "f6881a3c9f5c64d0d72d65ba29e1891646f01cecf1a4767d1153af3826a84ddd"
+  },
+  "benchmark": {
+    "surface": "seven-tool",
+    "comparisonClass": "seven-tool-with-executor",
+    "advertisedTools": [
+      "skills",
+      "search_tools",
+      "call_tool",
+      "call_destructive_tool",
+      "authorize_connector",
+      "get_result",
+      "execute_code"
+    ],
+    "repetitions": 3,
+    "concurrency": 2,
+    "scoring": "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+    "removedToolPolicy": "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes."
+  },
+  "summary": {
+    "cases": 1,
+    "runs": 3,
+    "correct": 3,
+    "routeEfficient": 1,
+    "contextEfficient": 3,
+    "safetyPassed": 3,
+    "surfaceValid": 3,
+    "foreignClean": 1,
+    "costEfficient": 3,
+    "passed": 1,
+    "totalLatencyMs": 102559.7,
+    "totalInputTokens": 448274,
+    "totalOutputTokens": 3059,
+    "totalMcpResultTokens": 3309,
+    "totalForeignMcpResultTokens": 86,
+    "learning": {
+      "discoveryCalls": 10,
+      "guideListCalls": 0,
+      "guideFetches": 3,
+      "connectorGuideFetches": 3,
+      "schemaExpansions": 1,
+      "executionCalls": 6,
+      "repairableFailures": 1,
+      "repairs": 1,
+      "repeatedLearningCalls": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "schema-heavy-dependent-read",
+      "workflow": "dependent-read",
+      "fixtureClass": "schema-heavy",
+      "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+      "repetitions": 3,
+      "validOuterRoutes": [
+        [
+          "execute_code"
+        ],
+        [
+          "search_tools",
+          "execute_code"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 5,
+        "maxMcpResultTokens": 2100
+      },
+      "rates": {
+        "taskCorrect": 1,
+        "safetyPassed": 1,
+        "surfaceValid": 1,
+        "foreignClean": 0.333,
+        "costEfficient": 1,
+        "passed": 0.333
+      },
+      "latencyMs": {
+        "min": 29700.1,
+        "p50": 33909.1,
+        "p95": 38950.5,
+        "max": 38950.5,
+        "mean": 34186.6,
+        "stddev": 3781.6
+      },
+      "mcpResultTokens": {
+        "min": 588,
+        "p50": 896,
+        "p95": 1825,
+        "max": 1825,
+        "mean": 1103,
+        "stddev": 525.8
+      },
+      "connectaRoundTrips": {
+        "min": 4,
+        "p50": 4,
+        "p95": 5,
+        "max": 5,
+        "mean": 4.3,
+        "stddev": 0.5
+      },
+      "learning": {
+        "discoveryCalls": {
+          "min": 2,
+          "p50": 4,
+          "p95": 4,
+          "max": 4,
+          "mean": 3.3,
+          "stddev": 0.9
+        },
+        "guideListCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "guideFetches": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "connectorGuideFetches": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "schemaExpansions": {
+          "min": 0,
+          "p50": 0,
+          "p95": 1,
+          "max": 1,
+          "mean": 0.3,
+          "stddev": 0.5
+        },
+        "executionCalls": {
+          "min": 2,
+          "p50": 2,
+          "p95": 2,
+          "max": 2,
+          "mean": 2,
+          "stddev": 0
+        },
+        "repairableFailures": {
+          "min": 0,
+          "p50": 0,
+          "p95": 1,
+          "max": 1,
+          "mean": 0.3,
+          "stddev": 0.5
+        },
+        "repairs": {
+          "min": 0,
+          "p50": 0,
+          "p95": 1,
+          "max": 1,
+          "mean": 0.3,
+          "stddev": 0.5
+        },
+        "repeatedLearningCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        }
+      },
+      "wholeAgentInputTokens": {
+        "min": 133326,
+        "p50": 145930,
+        "p95": 169018,
+        "max": 169018,
+        "mean": 149424.7,
+        "stddev": 14779.2
+      },
+      "wholeAgentOutputTokens": {
+        "min": 967,
+        "p50": 1036,
+        "p95": 1056,
+        "max": 1056,
+        "mean": 1019.7,
+        "stddev": 38.1
+      },
+      "diagnostics": {
+        "failedMetaToolCalls": 1
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 1,
+        "foreignToolCalls": 4,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "observedRoutes": [
+        {
+          "route": "execute_code → skills → execute_code → execute_code",
+          "count": 2
+        },
+        {
+          "route": "execute_code → skills → execute_code → execute_code → execute_code",
+          "count": 1
+        }
+      ],
+      "runs": [
+        {
+          "id": "schema-heavy-dependent-read",
+          "workflow": "dependent-read",
+          "fixtureClass": "schema-heavy",
+          "repetition": 1,
+          "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+          "latencyMs": 38950.5,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": false,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "connectaRoundTrips": 4,
+          "observedExecutions": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 1,
+          "unexpectedFailedMetaToolCalls": 1,
+          "learning": {
+            "discoveryCalls": 2,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 0,
+            "executionCalls": 2,
+            "repairableFailures": 1,
+            "repairs": 1,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 1,
+            "foreignToolCalls": 2,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": false,
+          "expectedCalls": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              }
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "execute_code"
+            ],
+            [
+              "search_tools",
+              "execute_code"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 5,
+            "maxMcpResultTokens": 2100
+          },
+          "mcpResultTokenBudget": 2100,
+          "calledTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [
+            "codex.list_mcp_resource_templates",
+            "codex.list_mcp_resources"
+          ],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "list zones DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 3.2856659999997646
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "list_dns_records",
+                        "address": "edge-dns.list_dns_records",
+                        "description": "List DNS records inside one zone with optional filters.",
+                        "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                        "inputSchemaTruncated": true,
+                        "outputSchema": "{ result: {}[] }",
+                        "outputKeys": [
+                          "result"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guideRequired": true,
+                        "guideRequiredReasons": [
+                          "schema_truncated"
+                        ],
+                        "guide": "connector:edge-dns",
+                        "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                      }
+                    ],
+                    "total": 1,
+                    "offset": 0,
+                    "limit": 8,
+                    "hasMore": false
+                  }
+                }
+              },
+              "durationMs": 86.69599999999991
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+                  }
+                ]
+              },
+              "durationMs": 2.9314590000030876
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "list zones DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.17745799999829615
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 5,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zonesTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zonesTool || !recordsTool) throw new Error(\"Required Edge DNS tools not found\");\n  const zones = await connecta.call(zonesTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(recordsTool.address, { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "Error: Required Edge DNS tools not found"
+                  }
+                ],
+                "isError": true
+              },
+              "durationMs": 4.243249999999534
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 6,
+              "kind": "execution",
+              "address": "edge-dns.list_zones",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 7,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_zones",
+                "args": {
+                  "account": {
+                    "id": "acct_eval_7"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "zone_eval_42",
+                    "name": "example.test",
+                    "status": "active"
+                  }
+                ],
+                "resultInfo": {
+                  "page": 1,
+                  "totalPages": 1
+                }
+              },
+              "durationMs": 1.0959160000056727
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 8,
+              "kind": "execution",
+              "address": "edge-dns.list_dns_records",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 9,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_dns_records",
+                "args": {
+                  "zone": {
+                    "id": "zone_eval_42"
+                  },
+                  "filter": {
+                    "recordType": "TXT"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "dns_eval_9",
+                    "type": "TXT",
+                    "name": "example.test",
+                    "content": "connecta-eval-verification"
+                  }
+                ]
+              },
+              "durationMs": 0.5310420000023441
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 10,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": [
+                    {
+                      "result": [
+                        {
+                          "id": "zone_eval_42",
+                          "name": "example.test",
+                          "status": "active"
+                        }
+                      ],
+                      "resultInfo": {
+                        "page": 1,
+                        "totalPages": 1
+                      }
+                    },
+                    {
+                      "result": [
+                        {
+                          "id": "dns_eval_9",
+                          "type": "TXT",
+                          "name": "example.test",
+                          "content": "connecta-eval-verification"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "durationMs": 5.171957999998995
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "codex",
+              "tool": "list_mcp_resource_templates",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 7.3,
+              "resultBytes": 91,
+              "resultTokens": 22
+            },
+            {
+              "server": "codex",
+              "tool": "list_mcp_resources",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 11.9,
+              "resultBytes": 83,
+              "resultTokens": 21
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 88.6,
+              "resultBytes": 1359,
+              "resultTokens": 328
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 4.3,
+              "resultBytes": 298,
+              "resultTokens": 80
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zonesTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zonesTool || !recordsTool) throw new Error(\"Required Edge DNS tools not found\");\n  const zones = await connecta.call(zonesTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(recordsTool.address, { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "status": "failed",
+              "error": null,
+              "durationMs": 5.4,
+              "resultBytes": 105,
+              "resultTokens": 25
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 5.9,
+              "resultBytes": 567,
+              "resultTokens": 155
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+          "usage": {
+            "input_tokens": 145930,
+            "cached_input_tokens": 131072,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1036,
+            "reasoning_output_tokens": 202
+          },
+          "mcpResultTokens": 588,
+          "foreignMcpResultTokens": 43
+        },
+        {
+          "id": "schema-heavy-dependent-read",
+          "workflow": "dependent-read",
+          "fixtureClass": "schema-heavy",
+          "repetition": 2,
+          "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+          "latencyMs": 29700.1,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": true,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": true,
+          "outerTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "connectaRoundTrips": 4,
+          "observedExecutions": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 4,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 1,
+            "executionCalls": 2,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 0,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": true,
+          "expectedCalls": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              }
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "execute_code"
+            ],
+            [
+              "search_tools",
+              "execute_code"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 5,
+            "maxMcpResultTokens": 2100
+          },
+          "mcpResultTokenBudget": 2100,
+          "calledTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "zone list DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 5.430499999998574
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ query: \"zone list DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "list_dns_records",
+                        "address": "edge-dns.list_dns_records",
+                        "description": "List DNS records inside one zone with optional filters.",
+                        "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                        "inputSchemaTruncated": true,
+                        "outputSchema": "{ result: {}[] }",
+                        "outputKeys": [
+                          "result"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guideRequired": true,
+                        "guideRequiredReasons": [
+                          "schema_truncated"
+                        ],
+                        "guide": "connector:edge-dns",
+                        "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                      }
+                    ],
+                    "total": 1,
+                    "offset": 0,
+                    "limit": 8,
+                    "hasMore": false
+                  }
+                }
+              },
+              "durationMs": 118.76133400000072
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+                  }
+                ]
+              },
+              "durationMs": 4.510749999999462
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "list zones DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.3215830000008282
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 5,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zoneTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const dnsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !dnsTool) return {found};\n  const desc = await connecta.describe({ addresses: [zoneTool.address, dnsTool.address] });\n  const zones = await connecta.call(zoneTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = zones.result || zones;\n  const zone = Array.isArray(zoneList) ? zoneList[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found for account acct_eval_7\");\n  const records = await connecta.call(dnsTool.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"found\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "found": {
+                      "tools": [
+                        {
+                          "name": "list_dns_records",
+                          "address": "edge-dns.list_dns_records",
+                          "description": "List DNS records inside one zone with optional filters.",
+                          "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                          "inputSchemaTruncated": true,
+                          "outputSchema": "{ result: {}[] }",
+                          "outputKeys": [
+                            "result"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          },
+                          "guideRequired": true,
+                          "guideRequiredReasons": [
+                            "schema_truncated"
+                          ],
+                          "guide": "connector:edge-dns",
+                          "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                        }
+                      ],
+                      "total": 1,
+                      "offset": 0,
+                      "limit": 8,
+                      "hasMore": false
+                    }
+                  }
+                }
+              },
+              "durationMs": 5.447874999998021
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 6,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "zones account",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_zones",
+                    "address": "edge-dns.list_zones",
+                    "description": "List DNS zones owned by one account.",
+                    "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                    "outputSchema": "{ result: {}[], resultInfo: {} }",
+                    "inputKeys": [
+                      "account",
+                      "pagination"
+                    ],
+                    "requiredInputKeys": [
+                      "account"
+                    ],
+                    "outputKeys": [
+                      "result",
+                      "resultInfo"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.1735420000004524
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 7,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.1622079999979178
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 8,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "describe_tools",
+              "arguments": {
+                "addresses": [
+                  "edge-dns.list_zones",
+                  "edge-dns.list_dns_records"
+                ]
+              },
+              "result": {
+                "tools": [
+                  {
+                    "address": "edge-dns.list_zones",
+                    "name": "list_zones",
+                    "description": "List DNS zones owned by one account.",
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with",
+                    "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                    "outputSchema": "{ result: {}[], resultInfo: {} }",
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "address": "edge-dns.list_dns_records",
+                    "name": "list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with",
+                    "inputSchema": "{ zone: { id: string }, filter: { recordType?: \"A\" | \"AAAA\" | \"CNAME\" | \"MX\" | \"TXT\", name?: string, content?: string, proxied?: boolean, comment?: string, commentPresent?: boolean, tag?: string, tagPresent?: boolean, page?: integer, perPage?: integer, order?: \"type\" | \"name\" | \"content\" | \"ttl\", direction?: \"asc\" | \"desc\", match?: \"all\" | \"any\", search?: string, since?: string, before?: string, zoneName?: string, recordId?: string, minimumTtl?: integer, maximumTtl?: integer, exportFormat?: \"json\" | \"bind\", includeDisabled?: boolean, includeMetadata?: boolean, flattenSettings?: boolean, exactNameMatch?: boolean, includeRecordSettings?: boolean, includeZoneSettings?: boolean, includePermissionGroups?: boolean, includeActivationStatus?: boolean, includeVerificationState?: boolean, includeDnssecState?: boolean, includeNameserverState?: boolean, includeRegistrarState?: boolean, includeDevelopmentMode?: boolean, includePlanMetadata?: boolean, includeAccountMetadata?: boolean, includeModifiedTimestamps?: boolean, includeCreatedTimestamps?: boolean, includeLockedRecordState?: boolean, includeProviderSpecificMetadata?: boolean } }",
+                    "outputSchema": "{ result: {}[] }",
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  }
+                ]
+              },
+              "durationMs": 0.3349579999994603
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 9,
+              "kind": "execution",
+              "address": "edge-dns.list_zones",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 10,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_zones",
+                "args": {
+                  "account": {
+                    "id": "acct_eval_7"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "zone_eval_42",
+                    "name": "example.test",
+                    "status": "active"
+                  }
+                ],
+                "resultInfo": {
+                  "page": 1,
+                  "totalPages": 1
+                }
+              },
+              "durationMs": 1.1194169999980659
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 11,
+              "kind": "execution",
+              "address": "edge-dns.list_dns_records",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 12,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_dns_records",
+                "args": {
+                  "zone": {
+                    "id": "zone_eval_42"
+                  },
+                  "filter": {
+                    "recordType": "TXT"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "dns_eval_9",
+                    "type": "TXT",
+                    "name": "example.test",
+                    "content": "connecta-eval-verification"
+                  }
+                ]
+              },
+              "durationMs": 0.48395800000071176
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 13,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const a = await connecta.search({ connector: \"edge-dns\", query: \"zones account\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const b = await connecta.search({ connector: \"edge-dns\", query: \"DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const z = a.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const d = b.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!z || !d) return {a,b};\n  await connecta.describe({ addresses: [z.address, d.address] });\n  const zones = await connecta.call(z.address, { account: { id: \"acct_eval_7\" } });\n  const list = zones.result || zones;\n  const zone = Array.isArray(list) ? list[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found\");\n  const records = await connecta.call(d.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": [
+                    {
+                      "result": [
+                        {
+                          "id": "zone_eval_42",
+                          "name": "example.test",
+                          "status": "active"
+                        }
+                      ],
+                      "resultInfo": {
+                        "page": 1,
+                        "totalPages": 1
+                      }
+                    },
+                    {
+                      "result": [
+                        {
+                          "id": "dns_eval_9",
+                          "type": "TXT",
+                          "name": "example.test",
+                          "content": "connecta-eval-verification"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "durationMs": 6.916999999997643
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ query: \"zone list DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 121.2,
+              "resultBytes": 1359,
+              "resultTokens": 328
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 6.9,
+              "resultBytes": 298,
+              "resultTokens": 80
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zoneTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const dnsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !dnsTool) return {found};\n  const desc = await connecta.describe({ addresses: [zoneTool.address, dnsTool.address] });\n  const zones = await connecta.call(zoneTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = zones.result || zones;\n  const zone = Array.isArray(zoneList) ? zoneList[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found for account acct_eval_7\");\n  const records = await connecta.call(dnsTool.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 7.5,
+              "resultBytes": 1381,
+              "resultTokens": 333
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const a = await connecta.search({ connector: \"edge-dns\", query: \"zones account\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const b = await connecta.search({ connector: \"edge-dns\", query: \"DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const z = a.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const d = b.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!z || !d) return {a,b};\n  await connecta.describe({ addresses: [z.address, d.address] });\n  const zones = await connecta.call(z.address, { account: { id: \"acct_eval_7\" } });\n  const list = zones.result || zones;\n  const zone = Array.isArray(list) ? list[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found\");\n  const records = await connecta.call(d.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 7.9,
+              "resultBytes": 567,
+              "resultTokens": 155
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+          "usage": {
+            "input_tokens": 133326,
+            "cached_input_tokens": 119040,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 967,
+            "reasoning_output_tokens": 129
+          },
+          "mcpResultTokens": 896,
+          "foreignMcpResultTokens": 0
+        },
+        {
+          "id": "schema-heavy-dependent-read",
+          "workflow": "dependent-read",
+          "fixtureClass": "schema-heavy",
+          "repetition": 3,
+          "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+          "latencyMs": 33909.1,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": false,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code",
+            "execute_code"
+          ],
+          "connectaRoundTrips": 5,
+          "observedExecutions": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              },
+              "source": "execute_code",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 4,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 0,
+            "executionCalls": 2,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 2,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": false,
+          "expectedCalls": [
+            {
+              "address": "edge-dns.list_zones",
+              "args": {
+                "account": {
+                  "id": "acct_eval_7"
+                }
+              }
+            },
+            {
+              "address": "edge-dns.list_dns_records",
+              "args": {
+                "zone": {
+                  "id": "zone_eval_42"
+                },
+                "filter": {
+                  "recordType": "TXT"
+                }
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "execute_code"
+            ],
+            [
+              "search_tools",
+              "execute_code"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 5,
+            "maxMcpResultTokens": 2100
+          },
+          "mcpResultTokenBudget": 2100,
+          "calledTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code",
+            "execute_code"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [
+            "codex.list_mcp_resources",
+            "codex.list_mcp_resource_templates"
+          ],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "list zones DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 3.0209580000009737
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return s;\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "tools": [
+                      {
+                        "name": "list_dns_records",
+                        "address": "edge-dns.list_dns_records",
+                        "description": "List DNS records inside one zone with optional filters.",
+                        "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                        "inputSchemaTruncated": true,
+                        "outputSchema": "{ result: {}[] }",
+                        "outputKeys": [
+                          "result"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guideRequired": true,
+                        "guideRequiredReasons": [
+                          "schema_truncated"
+                        ],
+                        "guide": "connector:edge-dns",
+                        "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                      }
+                    ],
+                    "total": 1,
+                    "offset": 0,
+                    "limit": 8,
+                    "hasMore": false
+                  }
+                }
+              },
+              "durationMs": 98.93904199999997
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+                  }
+                ]
+              },
+              "durationMs": 6.218000000000757
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "list zones DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact",
+                "limit": 10
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 10,
+                "hasMore": false
+              },
+              "durationMs": 0.5696250000000873
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 5,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({connector:\"edge-dns\", query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\", limit:10});\n  const zoneTool = s.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordTool = s.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !recordTool) return {error:\"Required tools not found\", discovery:s};\n  const d = await connecta.describe({addresses:[zoneTool.address, recordTool.address]});\n  return d;\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"error\":\"Required tools not found\",\"discovery\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":10,\"hasMore\":false}}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "error": "Required tools not found",
+                    "discovery": {
+                      "tools": [
+                        {
+                          "name": "list_dns_records",
+                          "address": "edge-dns.list_dns_records",
+                          "description": "List DNS records inside one zone with optional filters.",
+                          "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                          "inputSchemaTruncated": true,
+                          "outputSchema": "{ result: {}[] }",
+                          "outputKeys": [
+                            "result"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          },
+                          "guideRequired": true,
+                          "guideRequiredReasons": [
+                            "schema_truncated"
+                          ],
+                          "guide": "connector:edge-dns",
+                          "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                        }
+                      ],
+                      "total": 1,
+                      "offset": 0,
+                      "limit": 10,
+                      "hasMore": false
+                    }
+                  }
+                }
+              },
+              "durationMs": 12.297875000000204
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 6,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "list zones",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_zones",
+                    "address": "edge-dns.list_zones",
+                    "description": "List DNS zones owned by one account.",
+                    "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                    "outputSchema": "{ result: {}[], resultInfo: {} }",
+                    "inputKeys": [
+                      "account",
+                      "pagination"
+                    ],
+                    "requiredInputKeys": [
+                      "account"
+                    ],
+                    "outputKeys": [
+                      "result",
+                      "resultInfo"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  },
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 2,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.6924999999973807
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 7,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "edge-dns",
+                "query": "list DNS records",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              },
+              "durationMs": 0.24933299999975134
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 8,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zs = await connecta.search({connector:\"edge-dns\", query:\"list zones\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  const rs = await connecta.search({connector:\"edge-dns\", query:\"list DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return {zs,rs};\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"zs\":{\"tools\":[{\"name\":\"list_zones\",\"address\":\"edge-dns.list_zones\",\"description\":\"List DNS zones owned by one account.\",\"inputSchema\":\"{ account: { id: string }, pagination?: { perPage?: integer } }\",\"outputSchema\":\"{ result: {}[], resultInfo: {} }\",\"inputKeys\":[\"account\",\"pagination\"],\"requiredInputKeys\":[\"account\"],\"outputKeys\":[\"result\",\"resultInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"},{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":2,\"offset\":0,\"limit\":8,\"hasMore\":false},\"rs\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "zs": {
+                      "tools": [
+                        {
+                          "name": "list_zones",
+                          "address": "edge-dns.list_zones",
+                          "description": "List DNS zones owned by one account.",
+                          "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                          "outputSchema": "{ result: {}[], resultInfo: {} }",
+                          "inputKeys": [
+                            "account",
+                            "pagination"
+                          ],
+                          "requiredInputKeys": [
+                            "account"
+                          ],
+                          "outputKeys": [
+                            "result",
+                            "resultInfo"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          },
+                          "guide": "connector:edge-dns",
+                          "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                        },
+                        {
+                          "name": "list_dns_records",
+                          "address": "edge-dns.list_dns_records",
+                          "description": "List DNS records inside one zone with optional filters.",
+                          "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                          "inputSchemaTruncated": true,
+                          "outputSchema": "{ result: {}[] }",
+                          "outputKeys": [
+                            "result"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          },
+                          "guideRequired": true,
+                          "guideRequiredReasons": [
+                            "schema_truncated"
+                          ],
+                          "guide": "connector:edge-dns",
+                          "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                        }
+                      ],
+                      "total": 2,
+                      "offset": 0,
+                      "limit": 8,
+                      "hasMore": false
+                    },
+                    "rs": {
+                      "tools": [
+                        {
+                          "name": "list_dns_records",
+                          "address": "edge-dns.list_dns_records",
+                          "description": "List DNS records inside one zone with optional filters.",
+                          "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                          "inputSchemaTruncated": true,
+                          "outputSchema": "{ result: {}[] }",
+                          "outputKeys": [
+                            "result"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          },
+                          "guideRequired": true,
+                          "guideRequiredReasons": [
+                            "schema_truncated"
+                          ],
+                          "guide": "connector:edge-dns",
+                          "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                        }
+                      ],
+                      "total": 1,
+                      "offset": 0,
+                      "limit": 8,
+                      "hasMore": false
+                    }
+                  }
+                }
+              },
+              "durationMs": 11.524874999999156
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 9,
+              "kind": "execution",
+              "address": "edge-dns.list_zones",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 10,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_zones",
+                "args": {
+                  "account": {
+                    "id": "acct_eval_7"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "zone_eval_42",
+                    "name": "example.test",
+                    "status": "active"
+                  }
+                ],
+                "resultInfo": {
+                  "page": 1,
+                  "totalPages": 1
+                }
+              },
+              "durationMs": 1.0417500000003201
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 11,
+              "kind": "execution",
+              "address": "edge-dns.list_dns_records",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 0,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 12,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "edge-dns.list_dns_records",
+                "args": {
+                  "zone": {
+                    "id": "zone_eval_42"
+                  },
+                  "filter": {
+                    "recordType": "TXT"
+                  }
+                }
+              },
+              "result": {
+                "result": [
+                  {
+                    "id": "dns_eval_9",
+                    "type": "TXT",
+                    "name": "example.test",
+                    "content": "connecta-eval-verification"
+                  }
+                ]
+              },
+              "durationMs": 0.4437080000025162
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 13,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", {account:{id:\"acct_eval_7\"}});\n  if (!zones || !Array.isArray(zones.result) || zones.result.length === 0) {\n    return [zones, {result:[]}];\n  }\n  const zoneId = zones.result[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", {zone:{id:zoneId}, filter:{recordType:\"TXT\"}});\n  return [zones, records];\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": [
+                    {
+                      "result": [
+                        {
+                          "id": "zone_eval_42",
+                          "name": "example.test",
+                          "status": "active"
+                        }
+                      ],
+                      "resultInfo": {
+                        "page": 1,
+                        "totalPages": 1
+                      }
+                    },
+                    {
+                      "result": [
+                        {
+                          "id": "dns_eval_9",
+                          "type": "TXT",
+                          "name": "example.test",
+                          "content": "connecta-eval-verification"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              },
+              "durationMs": 4.754207999998471
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "codex",
+              "tool": "list_mcp_resources",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 10,
+              "resultBytes": 83,
+              "resultTokens": 21
+            },
+            {
+              "server": "codex",
+              "tool": "list_mcp_resource_templates",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 14.7,
+              "resultBytes": 91,
+              "resultTokens": 22
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return s;\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 101.4,
+              "resultBytes": 1359,
+              "resultTokens": 328
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:edge-dns"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 9.3,
+              "resultBytes": 298,
+              "resultTokens": 80
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({connector:\"edge-dns\", query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\", limit:10});\n  const zoneTool = s.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordTool = s.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !recordTool) return {error:\"Required tools not found\", discovery:s};\n  const d = await connecta.describe({addresses:[zoneTool.address, recordTool.address]});\n  return d;\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 12.8,
+              "resultBytes": 1465,
+              "resultTokens": 349
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zs = await connecta.search({connector:\"edge-dns\", query:\"list zones\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  const rs = await connecta.search({connector:\"edge-dns\", query:\"list DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return {zs,rs};\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 14.1,
+              "resultBytes": 3765,
+              "resultTokens": 913
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", {account:{id:\"acct_eval_7\"}});\n  if (!zones || !Array.isArray(zones.result) || zones.result.length === 0) {\n    return [zones, {result:[]}];\n  }\n  const zoneId = zones.result[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", {zone:{id:zoneId}, filter:{recordType:\"TXT\"}});\n  return [zones, records];\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 5.7,
+              "resultBytes": 567,
+              "resultTokens": 155
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+          "usage": {
+            "input_tokens": 169018,
+            "cached_input_tokens": 136960,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 1056,
+            "reasoning_output_tokens": 231
+          },
+          "mcpResultTokens": 1825,
+          "foreignMcpResultTokens": 43
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": "schema-heavy-dependent-read",
+      "workflow": "dependent-read",
+      "fixtureClass": "schema-heavy",
+      "repetition": 1,
+      "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+      "latencyMs": 38950.5,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": false,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "connectaRoundTrips": 4,
+      "observedExecutions": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 1,
+      "unexpectedFailedMetaToolCalls": 1,
+      "learning": {
+        "discoveryCalls": 2,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 0,
+        "executionCalls": 2,
+        "repairableFailures": 1,
+        "repairs": 1,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 1,
+        "foreignToolCalls": 2,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": false,
+      "expectedCalls": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          }
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "execute_code"
+        ],
+        [
+          "search_tools",
+          "execute_code"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 5,
+        "maxMcpResultTokens": 2100
+      },
+      "mcpResultTokenBudget": 2100,
+      "calledTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [
+        "codex.list_mcp_resource_templates",
+        "codex.list_mcp_resources"
+      ],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list zones DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 3.2856659999997646
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              }
+            }
+          },
+          "durationMs": 86.69599999999991
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+              }
+            ]
+          },
+          "durationMs": 2.9314590000030876
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "list zones DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.17745799999829615
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 5,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zonesTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zonesTool || !recordsTool) throw new Error(\"Required Edge DNS tools not found\");\n  const zones = await connecta.call(zonesTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(recordsTool.address, { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "Error: Required Edge DNS tools not found"
+              }
+            ],
+            "isError": true
+          },
+          "durationMs": 4.243249999999534
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 6,
+          "kind": "execution",
+          "address": "edge-dns.list_zones",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 7,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_zones",
+            "args": {
+              "account": {
+                "id": "acct_eval_7"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "zone_eval_42",
+                "name": "example.test",
+                "status": "active"
+              }
+            ],
+            "resultInfo": {
+              "page": 1,
+              "totalPages": 1
+            }
+          },
+          "durationMs": 1.0959160000056727
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 8,
+          "kind": "execution",
+          "address": "edge-dns.list_dns_records",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 9,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_dns_records",
+            "args": {
+              "zone": {
+                "id": "zone_eval_42"
+              },
+              "filter": {
+                "recordType": "TXT"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "dns_eval_9",
+                "type": "TXT",
+                "name": "example.test",
+                "content": "connecta-eval-verification"
+              }
+            ]
+          },
+          "durationMs": 0.5310420000023441
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 10,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+              }
+            ],
+            "structuredContent": {
+              "result": [
+                {
+                  "result": [
+                    {
+                      "id": "zone_eval_42",
+                      "name": "example.test",
+                      "status": "active"
+                    }
+                  ],
+                  "resultInfo": {
+                    "page": 1,
+                    "totalPages": 1
+                  }
+                },
+                {
+                  "result": [
+                    {
+                      "id": "dns_eval_9",
+                      "type": "TXT",
+                      "name": "example.test",
+                      "content": "connecta-eval-verification"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "durationMs": 5.171957999998995
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "codex",
+          "tool": "list_mcp_resource_templates",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 7.3,
+          "resultBytes": 91,
+          "resultTokens": 22
+        },
+        {
+          "server": "codex",
+          "tool": "list_mcp_resources",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.9,
+          "resultBytes": 83,
+          "resultTokens": 21
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 88.6,
+          "resultBytes": 1359,
+          "resultTokens": 328
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 4.3,
+          "resultBytes": 298,
+          "resultTokens": 80
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zonesTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zonesTool || !recordsTool) throw new Error(\"Required Edge DNS tools not found\");\n  const zones = await connecta.call(zonesTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(recordsTool.address, { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "status": "failed",
+          "error": null,
+          "durationMs": 5.4,
+          "resultBytes": 105,
+          "resultTokens": 25
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", { account: { id: \"acct_eval_7\" } });\n  const zoneList = Array.isArray(zones.result) ? zones.result : [];\n  if (!zoneList.length) throw new Error(\"No zone found for account acct_eval_7\");\n  const zoneId = zoneList[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", { zone: { id: zoneId }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5.9,
+          "resultBytes": 567,
+          "resultTokens": 155
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+      "usage": {
+        "input_tokens": 145930,
+        "cached_input_tokens": 131072,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1036,
+        "reasoning_output_tokens": 202
+      },
+      "mcpResultTokens": 588,
+      "foreignMcpResultTokens": 43
+    },
+    {
+      "id": "schema-heavy-dependent-read",
+      "workflow": "dependent-read",
+      "fixtureClass": "schema-heavy",
+      "repetition": 2,
+      "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+      "latencyMs": 29700.1,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": true,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": true,
+      "outerTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "connectaRoundTrips": 4,
+      "observedExecutions": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 4,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 1,
+        "executionCalls": 2,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 0,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": true,
+      "expectedCalls": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          }
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "execute_code"
+        ],
+        [
+          "search_tools",
+          "execute_code"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 5,
+        "maxMcpResultTokens": 2100
+      },
+      "mcpResultTokenBudget": 2100,
+      "calledTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "zone list DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 5.430499999998574
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ query: \"zone list DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              }
+            }
+          },
+          "durationMs": 118.76133400000072
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+              }
+            ]
+          },
+          "durationMs": 4.510749999999462
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "list zones DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.3215830000008282
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 5,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zoneTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const dnsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !dnsTool) return {found};\n  const desc = await connecta.describe({ addresses: [zoneTool.address, dnsTool.address] });\n  const zones = await connecta.call(zoneTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = zones.result || zones;\n  const zone = Array.isArray(zoneList) ? zoneList[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found for account acct_eval_7\");\n  const records = await connecta.call(dnsTool.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"found\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "found": {
+                  "tools": [
+                    {
+                      "name": "list_dns_records",
+                      "address": "edge-dns.list_dns_records",
+                      "description": "List DNS records inside one zone with optional filters.",
+                      "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                      "inputSchemaTruncated": true,
+                      "outputSchema": "{ result: {}[] }",
+                      "outputKeys": [
+                        "result"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      },
+                      "guideRequired": true,
+                      "guideRequiredReasons": [
+                        "schema_truncated"
+                      ],
+                      "guide": "connector:edge-dns",
+                      "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                }
+              }
+            }
+          },
+          "durationMs": 5.447874999998021
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 6,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "zones account",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_zones",
+                "address": "edge-dns.list_zones",
+                "description": "List DNS zones owned by one account.",
+                "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                "outputSchema": "{ result: {}[], resultInfo: {} }",
+                "inputKeys": [
+                  "account",
+                  "pagination"
+                ],
+                "requiredInputKeys": [
+                  "account"
+                ],
+                "outputKeys": [
+                  "result",
+                  "resultInfo"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.1735420000004524
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 7,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.1622079999979178
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 8,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "describe_tools",
+          "arguments": {
+            "addresses": [
+              "edge-dns.list_zones",
+              "edge-dns.list_dns_records"
+            ]
+          },
+          "result": {
+            "tools": [
+              {
+                "address": "edge-dns.list_zones",
+                "name": "list_zones",
+                "description": "List DNS zones owned by one account.",
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with",
+                "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                "outputSchema": "{ result: {}[], resultInfo: {} }",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "address": "edge-dns.list_dns_records",
+                "name": "list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with",
+                "inputSchema": "{ zone: { id: string }, filter: { recordType?: \"A\" | \"AAAA\" | \"CNAME\" | \"MX\" | \"TXT\", name?: string, content?: string, proxied?: boolean, comment?: string, commentPresent?: boolean, tag?: string, tagPresent?: boolean, page?: integer, perPage?: integer, order?: \"type\" | \"name\" | \"content\" | \"ttl\", direction?: \"asc\" | \"desc\", match?: \"all\" | \"any\", search?: string, since?: string, before?: string, zoneName?: string, recordId?: string, minimumTtl?: integer, maximumTtl?: integer, exportFormat?: \"json\" | \"bind\", includeDisabled?: boolean, includeMetadata?: boolean, flattenSettings?: boolean, exactNameMatch?: boolean, includeRecordSettings?: boolean, includeZoneSettings?: boolean, includePermissionGroups?: boolean, includeActivationStatus?: boolean, includeVerificationState?: boolean, includeDnssecState?: boolean, includeNameserverState?: boolean, includeRegistrarState?: boolean, includeDevelopmentMode?: boolean, includePlanMetadata?: boolean, includeAccountMetadata?: boolean, includeModifiedTimestamps?: boolean, includeCreatedTimestamps?: boolean, includeLockedRecordState?: boolean, includeProviderSpecificMetadata?: boolean } }",
+                "outputSchema": "{ result: {}[] }",
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              }
+            ]
+          },
+          "durationMs": 0.3349579999994603
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 9,
+          "kind": "execution",
+          "address": "edge-dns.list_zones",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 10,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_zones",
+            "args": {
+              "account": {
+                "id": "acct_eval_7"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "zone_eval_42",
+                "name": "example.test",
+                "status": "active"
+              }
+            ],
+            "resultInfo": {
+              "page": 1,
+              "totalPages": 1
+            }
+          },
+          "durationMs": 1.1194169999980659
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 11,
+          "kind": "execution",
+          "address": "edge-dns.list_dns_records",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 12,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_dns_records",
+            "args": {
+              "zone": {
+                "id": "zone_eval_42"
+              },
+              "filter": {
+                "recordType": "TXT"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "dns_eval_9",
+                "type": "TXT",
+                "name": "example.test",
+                "content": "connecta-eval-verification"
+              }
+            ]
+          },
+          "durationMs": 0.48395800000071176
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 13,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const a = await connecta.search({ connector: \"edge-dns\", query: \"zones account\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const b = await connecta.search({ connector: \"edge-dns\", query: \"DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const z = a.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const d = b.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!z || !d) return {a,b};\n  await connecta.describe({ addresses: [z.address, d.address] });\n  const zones = await connecta.call(z.address, { account: { id: \"acct_eval_7\" } });\n  const list = zones.result || zones;\n  const zone = Array.isArray(list) ? list[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found\");\n  const records = await connecta.call(d.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+              }
+            ],
+            "structuredContent": {
+              "result": [
+                {
+                  "result": [
+                    {
+                      "id": "zone_eval_42",
+                      "name": "example.test",
+                      "status": "active"
+                    }
+                  ],
+                  "resultInfo": {
+                    "page": 1,
+                    "totalPages": 1
+                  }
+                },
+                {
+                  "result": [
+                    {
+                      "id": "dns_eval_9",
+                      "type": "TXT",
+                      "name": "example.test",
+                      "content": "connecta-eval-verification"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "durationMs": 6.916999999997643
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ query: \"zone list DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  return found;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 121.2,
+          "resultBytes": 1359,
+          "resultTokens": 328
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 6.9,
+          "resultBytes": 298,
+          "resultTokens": 80
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const found = await connecta.search({ connector: \"edge-dns\", query: \"list zones DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const zoneTool = found.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const dnsTool = found.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !dnsTool) return {found};\n  const desc = await connecta.describe({ addresses: [zoneTool.address, dnsTool.address] });\n  const zones = await connecta.call(zoneTool.address, { account: { id: \"acct_eval_7\" } });\n  const zoneList = zones.result || zones;\n  const zone = Array.isArray(zoneList) ? zoneList[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found for account acct_eval_7\");\n  const records = await connecta.call(dnsTool.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 7.5,
+          "resultBytes": 1381,
+          "resultTokens": 333
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const a = await connecta.search({ connector: \"edge-dns\", query: \"zones account\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const b = await connecta.search({ connector: \"edge-dns\", query: \"DNS records\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const z = a.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const d = b.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!z || !d) return {a,b};\n  await connecta.describe({ addresses: [z.address, d.address] });\n  const zones = await connecta.call(z.address, { account: { id: \"acct_eval_7\" } });\n  const list = zones.result || zones;\n  const zone = Array.isArray(list) ? list[0] : null;\n  if (!zone || !zone.id) throw new Error(\"No zone found\");\n  const records = await connecta.call(d.address, { zone: { id: zone.id }, filter: { recordType: \"TXT\" } });\n  return [zones, records];\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 7.9,
+          "resultBytes": 567,
+          "resultTokens": 155
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+      "usage": {
+        "input_tokens": 133326,
+        "cached_input_tokens": 119040,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 967,
+        "reasoning_output_tokens": 129
+      },
+      "mcpResultTokens": 896,
+      "foreignMcpResultTokens": 0
+    },
+    {
+      "id": "schema-heavy-dependent-read",
+      "workflow": "dependent-read",
+      "fixtureClass": "schema-heavy",
+      "repetition": 3,
+      "prompt": "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+      "latencyMs": 33909.1,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": false,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code",
+        "execute_code"
+      ],
+      "connectaRoundTrips": 5,
+      "observedExecutions": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          },
+          "source": "execute_code",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 4,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 0,
+        "executionCalls": 2,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 2,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": false,
+      "expectedCalls": [
+        {
+          "address": "edge-dns.list_zones",
+          "args": {
+            "account": {
+              "id": "acct_eval_7"
+            }
+          }
+        },
+        {
+          "address": "edge-dns.list_dns_records",
+          "args": {
+            "zone": {
+              "id": "zone_eval_42"
+            },
+            "filter": {
+              "recordType": "TXT"
+            }
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "execute_code"
+        ],
+        [
+          "search_tools",
+          "execute_code"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 5,
+        "maxMcpResultTokens": 2100
+      },
+      "mcpResultTokenBudget": 2100,
+      "calledTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code",
+        "execute_code"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [
+        "codex.list_mcp_resources",
+        "codex.list_mcp_resource_templates"
+      ],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list zones DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 3.0209580000009737
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return s;\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "tools": [
+                  {
+                    "name": "list_dns_records",
+                    "address": "edge-dns.list_dns_records",
+                    "description": "List DNS records inside one zone with optional filters.",
+                    "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                    "inputSchemaTruncated": true,
+                    "outputSchema": "{ result: {}[] }",
+                    "outputKeys": [
+                      "result"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guideRequired": true,
+                    "guideRequiredReasons": [
+                      "schema_truncated"
+                    ],
+                    "guide": "connector:edge-dns",
+                    "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                  }
+                ],
+                "total": 1,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": false
+              }
+            }
+          },
+          "durationMs": 98.93904199999997
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Edge DNS usage\n\nUse nested SDK argument objects, not flat ids. Resolve the account's zone with\n`list_zones({ account: { id } })`, then pass the returned zone id as\n`list_dns_records({ zone: { id }, filter: { recordType } })`.\n"
+              }
+            ]
+          },
+          "durationMs": 6.218000000000757
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "list zones DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact",
+            "limit": 10
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 10,
+            "hasMore": false
+          },
+          "durationMs": 0.5696250000000873
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 5,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({connector:\"edge-dns\", query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\", limit:10});\n  const zoneTool = s.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordTool = s.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !recordTool) return {error:\"Required tools not found\", discovery:s};\n  const d = await connecta.describe({addresses:[zoneTool.address, recordTool.address]});\n  return d;\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"error\":\"Required tools not found\",\"discovery\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":10,\"hasMore\":false}}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "error": "Required tools not found",
+                "discovery": {
+                  "tools": [
+                    {
+                      "name": "list_dns_records",
+                      "address": "edge-dns.list_dns_records",
+                      "description": "List DNS records inside one zone with optional filters.",
+                      "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                      "inputSchemaTruncated": true,
+                      "outputSchema": "{ result: {}[] }",
+                      "outputKeys": [
+                        "result"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      },
+                      "guideRequired": true,
+                      "guideRequiredReasons": [
+                        "schema_truncated"
+                      ],
+                      "guide": "connector:edge-dns",
+                      "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 10,
+                  "hasMore": false
+                }
+              }
+            }
+          },
+          "durationMs": 12.297875000000204
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 6,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "list zones",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_zones",
+                "address": "edge-dns.list_zones",
+                "description": "List DNS zones owned by one account.",
+                "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                "outputSchema": "{ result: {}[], resultInfo: {} }",
+                "inputKeys": [
+                  "account",
+                  "pagination"
+                ],
+                "requiredInputKeys": [
+                  "account"
+                ],
+                "outputKeys": [
+                  "result",
+                  "resultInfo"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              },
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 2,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.6924999999973807
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 7,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "edge-dns",
+            "query": "list DNS records",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "list_dns_records",
+                "address": "edge-dns.list_dns_records",
+                "description": "List DNS records inside one zone with optional filters.",
+                "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                "inputSchemaTruncated": true,
+                "outputSchema": "{ result: {}[] }",
+                "outputKeys": [
+                  "result"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guideRequired": true,
+                "guideRequiredReasons": [
+                  "schema_truncated"
+                ],
+                "guide": "connector:edge-dns",
+                "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+              }
+            ],
+            "total": 1,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": false
+          },
+          "durationMs": 0.24933299999975134
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 8,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zs = await connecta.search({connector:\"edge-dns\", query:\"list zones\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  const rs = await connecta.search({connector:\"edge-dns\", query:\"list DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return {zs,rs};\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"zs\":{\"tools\":[{\"name\":\"list_zones\",\"address\":\"edge-dns.list_zones\",\"description\":\"List DNS zones owned by one account.\",\"inputSchema\":\"{ account: { id: string }, pagination?: { perPage?: integer } }\",\"outputSchema\":\"{ result: {}[], resultInfo: {} }\",\"inputKeys\":[\"account\",\"pagination\"],\"requiredInputKeys\":[\"account\"],\"outputKeys\":[\"result\",\"resultInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"},{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":2,\"offset\":0,\"limit\":8,\"hasMore\":false},\"rs\":{\"tools\":[{\"name\":\"list_dns_records\",\"address\":\"edge-dns.list_dns_records\",\"description\":\"List DNS records inside one zone with optional filters.\",\"inputSchema\":\"{ \\\"zone\\\": unknown, \\\"filter\\\": unknown } /* truncated */\",\"inputSchemaTruncated\":true,\"outputSchema\":\"{ result: {}[] }\",\"outputKeys\":[\"result\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guideRequired\":true,\"guideRequiredReasons\":[\"schema_truncated\"],\"guide\":\"connector:edge-dns\",\"guideSummary\":\"Use nested SDK argument objects, not flat ids. Resolve the account's zone with\"}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "zs": {
+                  "tools": [
+                    {
+                      "name": "list_zones",
+                      "address": "edge-dns.list_zones",
+                      "description": "List DNS zones owned by one account.",
+                      "inputSchema": "{ account: { id: string }, pagination?: { perPage?: integer } }",
+                      "outputSchema": "{ result: {}[], resultInfo: {} }",
+                      "inputKeys": [
+                        "account",
+                        "pagination"
+                      ],
+                      "requiredInputKeys": [
+                        "account"
+                      ],
+                      "outputKeys": [
+                        "result",
+                        "resultInfo"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      },
+                      "guide": "connector:edge-dns",
+                      "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                    },
+                    {
+                      "name": "list_dns_records",
+                      "address": "edge-dns.list_dns_records",
+                      "description": "List DNS records inside one zone with optional filters.",
+                      "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                      "inputSchemaTruncated": true,
+                      "outputSchema": "{ result: {}[] }",
+                      "outputKeys": [
+                        "result"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      },
+                      "guideRequired": true,
+                      "guideRequiredReasons": [
+                        "schema_truncated"
+                      ],
+                      "guide": "connector:edge-dns",
+                      "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                    }
+                  ],
+                  "total": 2,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                },
+                "rs": {
+                  "tools": [
+                    {
+                      "name": "list_dns_records",
+                      "address": "edge-dns.list_dns_records",
+                      "description": "List DNS records inside one zone with optional filters.",
+                      "inputSchema": "{ \"zone\": unknown, \"filter\": unknown } /* truncated */",
+                      "inputSchemaTruncated": true,
+                      "outputSchema": "{ result: {}[] }",
+                      "outputKeys": [
+                        "result"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      },
+                      "guideRequired": true,
+                      "guideRequiredReasons": [
+                        "schema_truncated"
+                      ],
+                      "guide": "connector:edge-dns",
+                      "guideSummary": "Use nested SDK argument objects, not flat ids. Resolve the account's zone with"
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                }
+              }
+            }
+          },
+          "durationMs": 11.524874999999156
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 9,
+          "kind": "execution",
+          "address": "edge-dns.list_zones",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 10,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_zones",
+            "args": {
+              "account": {
+                "id": "acct_eval_7"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "zone_eval_42",
+                "name": "example.test",
+                "status": "active"
+              }
+            ],
+            "resultInfo": {
+              "page": 1,
+              "totalPages": 1
+            }
+          },
+          "durationMs": 1.0417500000003201
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 11,
+          "kind": "execution",
+          "address": "edge-dns.list_dns_records",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 0,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 12,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "edge-dns.list_dns_records",
+            "args": {
+              "zone": {
+                "id": "zone_eval_42"
+              },
+              "filter": {
+                "recordType": "TXT"
+              }
+            }
+          },
+          "result": {
+            "result": [
+              {
+                "id": "dns_eval_9",
+                "type": "TXT",
+                "name": "example.test",
+                "content": "connecta-eval-verification"
+              }
+            ]
+          },
+          "durationMs": 0.4437080000025162
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 13,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", {account:{id:\"acct_eval_7\"}});\n  if (!zones || !Array.isArray(zones.result) || zones.result.length === 0) {\n    return [zones, {result:[]}];\n  }\n  const zoneId = zones.result[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", {zone:{id:zoneId}, filter:{recordType:\"TXT\"}});\n  return [zones, records];\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]}"
+              }
+            ],
+            "structuredContent": {
+              "result": [
+                {
+                  "result": [
+                    {
+                      "id": "zone_eval_42",
+                      "name": "example.test",
+                      "status": "active"
+                    }
+                  ],
+                  "resultInfo": {
+                    "page": 1,
+                    "totalPages": 1
+                  }
+                },
+                {
+                  "result": [
+                    {
+                      "id": "dns_eval_9",
+                      "type": "TXT",
+                      "name": "example.test",
+                      "content": "connecta-eval-verification"
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "durationMs": 4.754207999998471
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "codex",
+          "tool": "list_mcp_resources",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 10,
+          "resultBytes": 83,
+          "resultTokens": 21
+        },
+        {
+          "server": "codex",
+          "tool": "list_mcp_resource_templates",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 14.7,
+          "resultBytes": 91,
+          "resultTokens": 22
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return s;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 101.4,
+          "resultBytes": 1359,
+          "resultTokens": 328
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:edge-dns"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 9.3,
+          "resultBytes": 298,
+          "resultTokens": 80
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({connector:\"edge-dns\", query:\"list zones DNS records\", safety:\"readOnly\", includeSchemas:\"compact\", limit:10});\n  const zoneTool = s.tools.find(t => t.address.endsWith(\".list_zones\"));\n  const recordTool = s.tools.find(t => t.address.endsWith(\".list_dns_records\"));\n  if (!zoneTool || !recordTool) return {error:\"Required tools not found\", discovery:s};\n  const d = await connecta.describe({addresses:[zoneTool.address, recordTool.address]});\n  return d;\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 12.8,
+          "resultBytes": 1465,
+          "resultTokens": 349
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zs = await connecta.search({connector:\"edge-dns\", query:\"list zones\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  const rs = await connecta.search({connector:\"edge-dns\", query:\"list DNS records\", safety:\"readOnly\", includeSchemas:\"compact\"});\n  return {zs,rs};\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 14.1,
+          "resultBytes": 3765,
+          "resultTokens": 913
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const zones = await connecta.call(\"edge-dns.list_zones\", {account:{id:\"acct_eval_7\"}});\n  if (!zones || !Array.isArray(zones.result) || zones.result.length === 0) {\n    return [zones, {result:[]}];\n  }\n  const zoneId = zones.result[0].id;\n  const records = await connecta.call(\"edge-dns.list_dns_records\", {zone:{id:zoneId}, filter:{recordType:\"TXT\"}});\n  return [zones, records];\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5.7,
+          "resultBytes": 567,
+          "resultTokens": 155
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "[{\"result\":[{\"id\":\"zone_eval_42\",\"name\":\"example.test\",\"status\":\"active\"}],\"resultInfo\":{\"page\":1,\"totalPages\":1}},{\"result\":[{\"id\":\"dns_eval_9\",\"type\":\"TXT\",\"name\":\"example.test\",\"content\":\"connecta-eval-verification\"}]}]",
+      "usage": {
+        "input_tokens": 169018,
+        "cached_input_tokens": 136960,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 1056,
+        "reasoning_output_tokens": 231
+      },
+      "mcpResultTokens": 1825,
+      "foreignMcpResultTokens": 43
+    }
+  ]
+}

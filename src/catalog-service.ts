@@ -25,6 +25,8 @@ import type {
 } from "./registry.js";
 import {
   connectorGuide,
+  connectorGuideRequired,
+  connectorGuideSummary,
   connectorSkillName,
 } from "./skills.js";
 import {
@@ -196,6 +198,7 @@ export interface CatalogDescribeArgs {
 interface CatalogSearchEntry {
   connector: Connector;
   guide?: string;
+  guideSummary?: string;
   tool: {
     name: string;
     address: string;
@@ -208,7 +211,32 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
+    guideRequired?: true;
+    guideRequiredReasons?: GuideRequiredReason[];
   };
+}
+
+type GuideRequiredReason =
+  | "connector_required"
+  | "approval_required"
+  | "schema_truncated";
+
+/**
+ * Reasons discovery can determine without reading arguments or guessing at a
+ * task. Summary-only conventions remain an agent decision; hard requirements
+ * are explicit and machine-readable.
+ */
+function guideRequiredReasons(
+  connector: Connector,
+  tool: ToolDef,
+  schemaTruncated: boolean,
+): GuideRequiredReason[] | undefined {
+  if (!connectorGuide(connector)) return undefined;
+  const reasons: GuideRequiredReason[] = [];
+  if (connectorGuideRequired(connector)) reasons.push("connector_required");
+  if (!isExplicitlyReadOnly(tool)) reasons.push("approval_required");
+  if (schemaTruncated) reasons.push("schema_truncated");
+  return reasons.length > 0 ? reasons : undefined;
 }
 
 /**
@@ -268,6 +296,10 @@ export interface CatalogSearchPage {
     unavailableConnectorCount?: number;
     /** Bounded typed failure for an explicitly scoped unavailable catalog. */
     catalogError?: CatalogFailureDetail;
+    guide?: string;
+    guideSummary?: string;
+    guideRequired?: true;
+    guideRequiredReasons?: GuideRequiredReason[];
     guidance?: string;
   };
 }
@@ -277,6 +309,9 @@ export interface CatalogDescription {
   name?: string;
   description?: string;
   guide?: string;
+  guideSummary?: string;
+  guideRequired?: true;
+  guideRequiredReasons?: GuideRequiredReason[];
   inputSchema?: unknown;
   outputSchema?: unknown;
   annotations?: ToolDef["annotations"];
@@ -671,10 +706,19 @@ export class CatalogService {
         match.tool.description,
         args.fullDescriptions === true,
       );
+      const requiredReasons = guideRequiredReasons(
+        match.connector,
+        match.tool,
+        renderedInput?.truncated === true || renderedOutput?.truncated === true,
+      );
+      const guideSummary = connectorGuideSummary(match.connector);
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
-          ? { guide: connectorSkillName(match.connector.id) }
+          ? {
+              guide: connectorSkillName(match.connector.id),
+              ...(guideSummary ? { guideSummary } : {}),
+            }
           : {}),
         tool: {
           name: match.tool.name,
@@ -711,6 +755,12 @@ export class CatalogService {
             : {}),
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
+            : {}),
+          ...(requiredReasons
+            ? {
+                guideRequired: true as const,
+                guideRequiredReasons: requiredReasons,
+              }
             : {}),
         },
       };
@@ -776,6 +826,14 @@ export class CatalogService {
           : "";
     const filterRecovery =
       safety === "all" ? "" : " Change safety to inspect the other tools.";
+    const scopedGuide =
+      matches.length === 0 && scopedConnector && connectorGuide(scopedConnector)
+        ? {
+            guide: connectorSkillName(scopedConnector.id),
+            guideSummary: connectorGuideSummary(scopedConnector),
+            required: connectorGuideRequired(scopedConnector),
+          }
+        : undefined;
     const guidance =
       queryTerms.length === 0
         ? undefined
@@ -785,7 +843,9 @@ export class CatalogService {
             : scopedConnector
               ? unavailableCatalogs > 0
                 ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-                : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
+                : scopedGuide?.required
+                  ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
+                  : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
               : unavailableCatalogs === 0
                 ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
                 : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
@@ -826,6 +886,22 @@ export class CatalogService {
                 ? { unavailableConnectorCount: unavailableCatalogs }
                 : {}),
               ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
+              ...(scopedGuide
+                ? {
+                    guide: scopedGuide.guide,
+                    ...(scopedGuide.guideSummary
+                      ? { guideSummary: scopedGuide.guideSummary }
+                      : {}),
+                    ...(scopedGuide.required
+                      ? {
+                          guideRequired: true as const,
+                          guideRequiredReasons: [
+                            "connector_required" as const,
+                          ],
+                        }
+                      : {}),
+                  }
+                : {}),
               ...(guidance ? { guidance } : {}),
             },
           }
@@ -890,12 +966,27 @@ export class CatalogService {
         tool.description,
         args.fullDescriptions === true,
       );
+      const requiredReasons = guideRequiredReasons(
+        addressResolution.connector,
+        tool,
+        false,
+      );
+      const guideSummary = connectorGuideSummary(addressResolution.connector);
       return {
         address,
         name: tool.name,
         ...(description !== undefined ? { description } : {}),
         ...(connectorGuide(addressResolution.connector)
-          ? { guide: connectorSkillName(addressResolution.connector.id) }
+          ? {
+              guide: connectorSkillName(addressResolution.connector.id),
+              ...(guideSummary ? { guideSummary } : {}),
+            }
+          : {}),
+        ...(requiredReasons
+          ? {
+              guideRequired: true as const,
+              guideRequiredReasons: requiredReasons,
+            }
           : {}),
         inputSchema: renderSchema(input, format),
         ...(tool.outputSchema
@@ -914,6 +1005,7 @@ export function groupedSearchResult(page: CatalogSearchPage) {
     id: string;
     title?: string;
     guide?: string;
+    guideSummary?: string;
     tools: CatalogSearchEntry["tool"][];
   }> = [];
   const byConnector = new Map<string, (typeof groups)[number]>();
@@ -926,6 +1018,9 @@ export function groupedSearchResult(page: CatalogSearchPage) {
         id: entry.connector.id,
         ...(entry.connector.title ? { title: entry.connector.title } : {}),
         ...(entry.guide ? { guide: entry.guide } : {}),
+        ...(entry.guideSummary
+          ? { guideSummary: entry.guideSummary }
+          : {}),
         tools: [],
       };
       byConnector.set(entry.connector.id, group);
@@ -950,6 +1045,9 @@ export function flatSearchResult(page: CatalogSearchPage) {
     tools: page.entries.map((entry) => ({
       ...entry.tool,
       ...(entry.guide ? { guide: entry.guide } : {}),
+      ...(entry.guideSummary
+        ? { guideSummary: entry.guideSummary }
+        : {}),
     })),
     total: page.total,
     offset: page.offset,

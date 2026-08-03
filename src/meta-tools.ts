@@ -1396,9 +1396,11 @@ const SEARCH_WITH_DESCRIBE_DESC = `${SEARCH_DESC} Expand an ambiguous compact sh
  */
 const GUIDE_NOTES = {
   skills:
-    ' skills({}) also lists this deployment\'s per-connector usage guides as "connector:<connectorId>"; fetch the guide for a connector before working with it for the first time.',
+    " skills({}) also lists this deployment's scoped connector guides; fetch only an exact name listed there or carried by discovery, never one inferred from a connector id.",
   search:
-    " A connector group carrying `guide` has a usage guide; fetch it with skills({ name: <guide> }).",
+    " A result carrying `guide` also carries a bounded `guideSummary`. `guideRequired: true` is a hard stop: fetch that exact guide before calling. `guideRequiredReasons` explains why — `connector_required` and `approval_required` stand however you expand the schema; `schema_truncated` clears once describe returns the exact one. Otherwise fetch only when the summary names a connector convention relevant to the task. A complete, unambiguous read-only schema needs no otherwise-irrelevant guide fetch.",
+  destructive:
+    " Before a consequential call, inspect the address through discovery or describe and fetch any connector guide it names.",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */
@@ -1533,7 +1535,11 @@ export function registerMetaTools(
   server.registerTool(
     "call_destructive_tool",
     {
-      description: CALL_DESTRUCTIVE_DESC,
+      description: describedFor(
+        registry,
+        CALL_DESTRUCTIVE_DESC,
+        "destructive",
+      ),
       inputSchema: z.object({
         ...CALL_INPUT_SCHEMA,
         // Bounded above, but with no lower bound: a model that sends `""` or

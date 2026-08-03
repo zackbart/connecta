@@ -63,6 +63,51 @@ types; other shapes become `unknown /* truncated */`. The match also carries
 `includeSchemas: "json"` or use the existing describe path when exact
 constraints matter.
 
+## Connector guide selection
+
+A connector may attach a deployment-owned guide as markdown, preserving the
+original `usageGuide: string` configuration, or as
+`{ content, summary?, required? }`. The structured form does not register a
+connector or create a shared runtime template. `content` remains the markdown
+returned verbatim by `skills`; `summary` is normalized and capped at 120
+characters for discovery. When it is absent, Connecta derives the same bounded
+fallback used by the skills listing: the first meaningful body line, with a
+heading used only when the guide has no body. `required: true` is reserved for generic
+API wrappers and cross-operation conventions a complete downstream schema
+cannot express.
+
+Search and describe results keep the existing `guide: "connector:<id>"`
+pointer and add `guideSummary`. A matching tool also carries
+`guideRequired: true` and `guideRequiredReasons` when Connecta can prove review
+is necessary:
+`connector_required` for the explicit configuration above,
+`approval_required` for an unannotated or write-capable tool, and
+`schema_truncated` when a requested compact input or output shape was capped.
+The boolean is an instruction, not a server-side gate — nothing refuses the
+call, so the agent is told to fetch the guide before making it, for any reason
+listed. `connector_required` and `approval_required` survive exact schema
+expansion; `schema_truncated` is cleared by the describe that returns the exact
+shape, and describe reports whatever reasons remain in the same two fields.
+Otherwise it reads the
+bounded summary: connector-specific sequencing, units, pagination, aliases,
+and generic API conventions still require the guide when they affect the task,
+while a complete and unambiguous one-read schema proceeds directly.
+Guide lookup always uses an exact name returned by `skills({})`, search, or
+describe; callers do not manufacture `connector:<id>` from an unmarked
+connector.
+
+A connector-scoped lexical miss retains that connector's guide metadata under
+`queryAnalysis`. This matters for generic wrappers whose broad tool name does
+not contain endpoint vocabulary: a required guide remains discoverable before
+the caller falls back to an empty-query browse, rather than disappearing with
+the zero-tool page.
+
+The built-in `usage` skill is byte-identical across deployments and says to
+read it at most once per task. Connector guides remain scoped to the deployment
+that listed them, even when two deployments happen to use identical content.
+Deployments without connector guides receive none of the conditional guide
+sentences in their always-loaded tool descriptions.
+
 ## Result representation
 
 For object results, `structuredContent` is the canonical full-fidelity value.
