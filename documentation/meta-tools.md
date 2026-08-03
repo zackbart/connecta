@@ -125,7 +125,13 @@ results explain that no single tool covered every term and recommend splitting
 distinct intents. A true negative says that no matching capability is
 configured and recommends refining, connector-scoping, or browsing; when a
 connector catalog was unavailable, the response includes
-`unavailableConnectorCount` instead of making that stronger claim. Analysis
+`unavailableConnectorCount` instead of making that stronger claim. A search
+explicitly scoped to that unavailable connector also receives `catalogError` —
+the bounded classified failure (`code`, `message`, `retryable`, and any
+`retryAfterMs`) so the caller can tell a transient outage from one a deployment
+operator must clear. It carries nothing else the call-path classifier knows: a
+discovery read is not a call. Unscoped searches keep the count only — one
+connector's failure is not another search's context. Analysis
 from a connector-filtered search includes `connectorScope` and speaks only
 about that connector; `unknownConnector` distinguishes an unconfigured ID from
 a known connector with no match. Analysis covers at most eight distinct terms

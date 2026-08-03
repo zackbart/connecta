@@ -4754,6 +4754,15 @@ describe("probe timeout", () => {
     );
     expect(catalogError.message).toMatch(/…$/);
     expect(Buffer.byteLength(catalogError.message)).toBeLessThanOrEqual(515);
+    // Pinned, not spread: the call-path classifier may grow connector,
+    // operation, recovery, or nextAction fields, and none of them belong on a
+    // discovery read.
+    expect(Object.keys(catalogError).sort()).toEqual([
+      "code",
+      "message",
+      "retryAfterMs",
+      "retryable",
+    ]);
 
     const unscoped = textOf(
       await mt.searchTools({ query: "add impossible" }),
