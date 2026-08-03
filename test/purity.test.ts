@@ -1,5 +1,5 @@
 import { required } from "./helpers.js";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -100,12 +100,25 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
     const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
-    const mixpanelProvider = join(SRC, "providers", "mixpanel.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
     expect(graph.has(fileStorage)).toBe(false);
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
-    expect(graph.has(mixpanelProvider)).toBe(false);
+  });
+
+  it("never reaches a prebuilt provider connection", () => {
+    // Derived from the directory: a provider added without its own subpath
+    // fails here rather than silently riding the root entry.
+    const providers = readdirSync(join(SRC, "providers")).filter((file) =>
+      file.endsWith(".ts"),
+    );
+    expect(providers.length).toBeGreaterThan(0);
+    for (const file of providers) {
+      const provider = join(SRC, "providers", file);
+      expect(graph.has(provider), `${file} is reachable from index.ts`).toBe(
+        false,
+      );
+    }
   });
 });

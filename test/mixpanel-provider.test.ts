@@ -58,7 +58,6 @@ describe("mixpanel()", () => {
           "Mixpanel product analytics — Growth team product decisions",
         auth: { type: "oauth" },
         requireHttps: true,
-        redirects: "none",
         callAdmission: {
           rules: [
             {
@@ -67,7 +66,6 @@ describe("mixpanel()", () => {
                 maxCalls: 600,
                 windowMs: 3_600_000,
               },
-              retryAfterMs: 60_000,
             },
           ],
         },
@@ -76,6 +74,9 @@ describe("mixpanel()", () => {
     expect(connector.usageGuide).toContain("Get-Business-Context");
     expect(connector.usageGuide).toContain("Get-Query-Schema");
     expect(connector.usageGuide).toContain("600 requests per user per hour");
+    // Real markdown, not a diff hunk: agents read this string verbatim.
+    expect(connector.usageGuide).toContain("## Account instructions");
+    expect(connector.usageGuide).not.toContain("+## Account instructions");
     expect(connector.usageGuide).toContain(
       "Use project 42 unless the request names another project.",
     );
@@ -104,20 +105,19 @@ describe("mixpanel()", () => {
     );
   });
 
-  it("classifies vetted reads and writes and fails closed on catalog drift", async () => {
+  it("fills in silent annotations and fails closed on catalog drift", async () => {
     mocks.listTools.mockResolvedValue([
-      {
-        name: "Run-Query",
-        annotations: { destructiveHint: true, openWorldHint: true },
-      },
-      {
-        name: "Delete-Dashboard",
-        annotations: { readOnlyHint: true },
-      },
-      {
-        name: "Brand-New-Tool",
-        annotations: { readOnlyHint: true },
-      },
+      // Allowlisted read, downstream silent on both hints: fill it in.
+      { name: "Run-Query", annotations: { openWorldHint: true } },
+      // Allowlisted read with no annotations object at all.
+      { name: "List-Dashboards" },
+      // Maintained destructive write: tighten, whatever the downstream claims.
+      { name: "Delete-Dashboard", annotations: { readOnlyHint: true } },
+      // Maintained additive create: leaves the read path without inflating the
+      // host's approval copy with a destruction it does not perform.
+      { name: "Create-Dashboard" },
+      // Unfamiliar tool: fails closed regardless of its own claim.
+      { name: "Brand-New-Tool", annotations: { readOnlyHint: true } },
     ]);
     const connector = mixpanel("analytics", { purpose: "Product decisions" });
     const tools = await connector.listTools(context);
@@ -128,10 +128,37 @@ describe("mixpanel()", () => {
       openWorldHint: true,
     });
     expect(tools[1]?.annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(tools[2]?.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: true,
     });
-    expect(tools[2]?.annotations).toMatchObject({ readOnlyHint: false });
+    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
+    expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: false });
+  });
+
+  it("never overrules an explicit downstream annotation on a vetted read", async () => {
+    mocks.listTools.mockResolvedValue([
+      // The downstream says this allowlisted name now destroys something. That
+      // is the downstream telling us the allowlist is stale; it wins.
+      {
+        name: "Run-Query",
+        annotations: { destructiveHint: true, openWorldHint: true },
+      },
+      // Same story stated the other way round.
+      { name: "Get-Report", annotations: { readOnlyHint: false } },
+    ]);
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({
+      destructiveHint: true,
+      openWorldHint: true,
+    });
+    expect(tools[0]?.annotations?.readOnlyHint).toBeUndefined();
+    expect(tools[1]?.annotations).toEqual({ readOnlyHint: false });
   });
 
   it("rejects an empty account purpose at construction", () => {

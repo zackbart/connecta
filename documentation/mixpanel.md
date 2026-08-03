@@ -44,10 +44,29 @@ password, not ordinary configuration. Mixpanel currently labels service-account
 MCP authentication beta. Prefer OAuth unless the deployment is intentionally
 headless.
 
-The wrapper explicitly classifies the documented observational tools as reads
-and the documented create, update, edit, merge, dismiss, duplicate, and delete
-tools as writes. An unfamiliar tool added by the downstream fails closed onto
-`call_destructive_tool` until a Connecta release reviews it. The wrapper also
-enforces Mixpanel's documented limit of 600 MCP requests per user per hour per
-connector instance; discovery traffic is outside connector call admission and
+The wrapper classifies the documented observational tools as reads and the
+documented create, update, edit, merge, dismiss, duplicate, and delete tools as
+writes. An unfamiliar tool added by the downstream fails closed onto
+`call_destructive_tool` until a Connecta release reviews it.
+
+That classification is **fill-in only**. It supplies the annotations Mixpanel
+leaves unset and may always tighten one — but it never contradicts an explicit
+downstream annotation. A tool on the read allowlist that arrives carrying
+`destructiveHint: true` or `readOnlyHint: false` keeps exactly what the
+downstream said and stays behind `call_destructive_tool`: the downstream is
+telling you this release's allowlist is stale, and the fail-closed invariant
+does not bend for a maintained connection. Maintained writes that only create
+something new (`Create-Dashboard`, `Create-Cohort`, `Create-Metric`, and the
+rest) leave `destructiveHint` unset; `readOnlyHint: false` already routes them
+through the destructive path, and asserting destruction only inflates the
+approval copy the host shows a human.
+
+Experiments and Feature Flags — 15 of the 63 classified tools — are Mixpanel
+beta surfaces. Expect their names and schemas to move faster than the rest.
+
+The connection also declares a per-runtime call-admission budget matching
+Mixpanel's documented 600 requests per hour — a best-effort approximation of
+the per-user limit, not an enforcement of it. Each runtime keeps its own
+counter, so N Worker isolates or Node processes serving one deployment can each
+admit up to 600. Discovery traffic is outside connector call admission and
 still needs restrained use.

@@ -33,6 +33,9 @@ export interface MixpanelOptions {
   maxResultBytes?: number;
 }
 
+// Budget-only: a rejection computes its own retry-after from the window, and
+// declaring `retryAfterMs` here would be a queue setting without a queue —
+// which the admission controller refuses at construction.
 const MIXPANEL_ADMISSION: ConnectorCallAdmissionPolicy = {
   rules: [
     {
@@ -41,7 +44,6 @@ const MIXPANEL_ADMISSION: ConnectorCallAdmissionPolicy = {
         maxCalls: 600,
         windowMs: 3_600_000,
       },
-      retryAfterMs: 60_000,
     },
   ],
 };
@@ -85,64 +87,87 @@ const READ_ONLY_TOOLS = new Set([
   "Get-Feature-Flag-Lifecycle-Guidance",
 ]);
 
-const WRITE_TOOLS = new Set([
-  "Create-Dashboard",
-  "Update-Dashboard",
-  "Duplicate-Dashboard",
-  "Delete-Dashboard",
-  "Edit-Event",
-  "Edit-Property",
-  "Bulk-Edit-Events",
-  "Bulk-Edit-Properties",
-  "Create-Tag",
-  "Rename-Tag",
-  "Delete-Tag",
-  "Dismiss-Issues",
-  "Update-Business-Context",
-  "Dismiss-Duplicate-Group",
-  "Merge-Group",
-  "Create-Custom-Property",
-  "Update-Custom-Property",
-  "Create-Cohort",
-  "Update-Cohort",
-  "Delete-Cohort",
-  "Create-Lookup-Table",
-  "Update-Lookup-Table",
-  "Create-Metric",
-  "Update-Metric",
-  "Create-Experiment",
-  "Update-Experiment",
-  "Create-Feature-Flag",
-  "Update-Feature-Flag",
+/**
+ * The maintained write catalog. `"destructive"` tools modify or remove state
+ * that already exists; `"additive"` ones only bring something new into being.
+ * Both leave the read-only path — the distinction only decides whether the
+ * connection asserts `destructiveHint`, which shapes the host's approval copy.
+ */
+const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
+  ["Create-Dashboard", "additive"],
+  ["Update-Dashboard", "destructive"],
+  ["Duplicate-Dashboard", "additive"],
+  ["Delete-Dashboard", "destructive"],
+  ["Edit-Event", "destructive"],
+  ["Edit-Property", "destructive"],
+  ["Bulk-Edit-Events", "destructive"],
+  ["Bulk-Edit-Properties", "destructive"],
+  ["Create-Tag", "additive"],
+  ["Rename-Tag", "destructive"],
+  ["Delete-Tag", "destructive"],
+  ["Dismiss-Issues", "destructive"],
+  ["Update-Business-Context", "destructive"],
+  ["Dismiss-Duplicate-Group", "destructive"],
+  ["Merge-Group", "destructive"],
+  ["Create-Custom-Property", "additive"],
+  ["Update-Custom-Property", "destructive"],
+  ["Create-Cohort", "additive"],
+  ["Update-Cohort", "destructive"],
+  ["Delete-Cohort", "destructive"],
+  ["Create-Lookup-Table", "additive"],
+  ["Update-Lookup-Table", "destructive"],
+  ["Create-Metric", "additive"],
+  ["Update-Metric", "destructive"],
+  ["Create-Experiment", "additive"],
+  ["Update-Experiment", "destructive"],
+  ["Create-Feature-Flag", "additive"],
+  ["Update-Feature-Flag", "destructive"],
 ]);
 
+/**
+ * Fill in what the downstream leaves unsaid; never argue with what it says.
+ *
+ * A vetted classification may always tighten — that direction only ever routes
+ * more calls through `call_destructive_tool`. Loosening is the direction that
+ * needs the downstream's silence: an explicit `destructiveHint: true` or
+ * `readOnlyHint: false` on an allowlisted read name is the downstream telling
+ * us this release's allowlist is wrong, and it wins.
+ */
 function vettedSafety(definition: ToolDef): ToolDef {
+  const downstream = definition.annotations ?? {};
   if (READ_ONLY_TOOLS.has(definition.name)) {
+    if (
+      downstream.destructiveHint === true ||
+      downstream.readOnlyHint === false
+    ) {
+      return definition;
+    }
     return {
       ...definition,
       annotations: {
-        ...definition.annotations,
+        ...downstream,
         readOnlyHint: true,
-        destructiveHint: false,
+        destructiveHint: downstream.destructiveHint ?? false,
       },
     };
   }
-  if (WRITE_TOOLS.has(definition.name)) {
+  if (WRITE_TOOLS.get(definition.name) === "destructive") {
     return {
       ...definition,
       annotations: {
-        ...definition.annotations,
+        ...downstream,
         readOnlyHint: false,
         destructiveHint: true,
       },
     };
   }
-  // A newly introduced downstream tool earns a classification in a Connecta
-  // release. Until then the ordinary fail-closed path keeps it approval-visible.
+  // Maintained additive creates and tools this release has never seen land
+  // here alike: not read-only, so the ordinary fail-closed path keeps them
+  // approval-visible, without claiming a create destroys anything.
   return {
     ...definition,
     annotations: {
-      ...definition.annotations,
+      ...downstream,
       readOnlyHint: false,
     },
   };
@@ -162,7 +187,7 @@ Account purpose: ${purpose}
 - Treat every create, update, edit, merge, dismiss, duplicate, or delete operation as a write. Connecta routes the maintained write catalog through \`call_destructive_tool\`; newly added tools also fail closed until classified.
 ${
     accountInstructions
-      ? `\n+## Account instructions\n+\n+${accountInstructions}\n`
+      ? `\n## Account instructions\n\n${accountInstructions}\n`
       : ""
   }`;
 }
@@ -180,7 +205,6 @@ export function mixpanel(id: string, options: MixpanelOptions): Connector {
     description: `Mixpanel product analytics — ${purpose}`,
     auth: options.auth ?? { type: "oauth" },
     requireHttps: true,
-    redirects: "none",
     callAdmission: MIXPANEL_ADMISSION,
     usageGuide: usageGuide(purpose, options.instructions),
     ...(options.maxResultBytes !== undefined

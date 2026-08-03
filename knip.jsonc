@@ -7,6 +7,7 @@
     "src/executors/quickjs.ts",
     "src/executors/quickjs-child.ts",
     "src/auth/clerk.ts",
+    "src/providers/mixpanel.ts",
     "src/operator-ui/browser.ts",
     "examples/*/server.ts",
     "examples/*/src/index.ts",
