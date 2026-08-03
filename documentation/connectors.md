@@ -110,6 +110,7 @@ them. Nothing in the list is privileged by how it was authored.
 Maintained provider guides:
 
 - [Mixpanel](./mixpanel.md)
+- [Stripe](./stripe.md)
 
 ## MCP version skew
 

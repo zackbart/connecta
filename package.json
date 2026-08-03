@@ -68,6 +68,10 @@
     "./providers/mixpanel": {
       "types": "./dist/providers/mixpanel.d.ts",
       "import": "./dist/providers/mixpanel.js"
+    },
+    "./providers/stripe": {
+      "types": "./dist/providers/stripe.d.ts",
+      "import": "./dist/providers/stripe.js"
     }
   },
   "scripts": {
