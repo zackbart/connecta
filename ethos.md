@@ -15,9 +15,12 @@ order, and amending it is a design decision, not a drive-by edit.
 - **A deployment is a small config-as-code file.** Changing what agents can
   reach is an edit and a redeploy. One deployment, one tenant, one audience —
   more audiences means more deployments.
-- **Two equal ways in.** `remoteMcp()` proxies a downstream MCP server;
-  `api()` hand-writes a deliberate tool surface over a plain HTTP API. Both
-  come out identical: same addresses, same catalog, same safety rules.
+- **Curated when available, open when not.** Prefer an explicitly imported
+  prebuilt connection when Connecta maintains one: it carries the provider's
+  known-good endpoint, authentication defaults, tool ergonomics, and concise
+  usage guidance. `remoteMcp()` and `api()` remain equal, first-class
+  primitives for custom and unsupported integrations. Every path produces the
+  same `Connector`: same addresses, same catalog, same safety rules.
 - **Seven tools, an executor required.** The primary surface is a program, so
   every deployment runs an executor — a Dynamic Worker on Cloudflare, QuickJS
   behind its optional-peer subpath on Node — and one without refuses to boot
@@ -66,6 +69,7 @@ proposing one without a new argument is not.
 | Multi-tenancy / account model | refused | one deployment per tenant; deploy again instead |
 | Policy engine, approvals, pauses | refused | the host asks the human; connecta only annotates |
 | Runtime connector registration | refused | config-as-code is the security model |
+| Prebuilt connections as the preferred authoring path | accepted | an a-la-carte provider constructor can encode maintained defaults without hiding `remoteMcp()`, `api()`, or the ordinary `Connector` contract ([#297](https://github.com/zackbart/connecta/issues/297)) |
 | Protocol sessions & server push | refused | stateless per request |
 | Resources & prompts aggregation | refused | tools only; connecta's own Apps shell is the one `resources/read` carve-out ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Elicitation passthrough | refused | no route through a stateless aggregator |

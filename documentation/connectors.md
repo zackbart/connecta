@@ -1,14 +1,57 @@
 # Connectors
 
 Connectors are the boundary between Connecta's fixed meta-tool surface and
-downstream capabilities. `api()` defines a deliberate HTTP API surface;
-`remoteMcp()` aggregates another MCP endpoint. Both publish the same tool
-definitions and pass through the same catalog, read-only admission, invocation,
-result-size, and activity paths.
+downstream capabilities. Prefer a prebuilt connection when Connecta maintains
+one for the provider. Use `api()` to define a deliberate HTTP API surface and
+`remoteMcp()` to aggregate any other MCP endpoint. All three authoring paths
+produce ordinary `Connector` instances and pass through the same catalog,
+read-only admission, credentials, storage, invocation, result-size, and
+activity paths.
 
 Connector instances are deployment configuration. They are not registered or
 reconfigured at runtime. Request-local clients, transports, abort signals, and
 catalogs must be released with the request that created them.
+
+## Prebuilt connections
+
+A prebuilt connection is an independently imported provider constructor, not a
+registry or a second connector interface. It packages behavior Connecta can
+maintain universally: provider endpoints and authentication defaults, tool
+definitions or downstream catalog behavior, schemas and annotations, lean
+result shapes, typed errors, pagination and retry conventions, and a short
+usage guide where schemas cannot carry the advice.
+
+The deployment still supplies the account-specific identity and policy:
+
+- a unique connector `id`, which owns its address, storage, credential,
+  catalog, admission, and activity namespaces;
+- a human-readable `title` and a concrete `purpose` or audience;
+- supported authentication overrides; and
+- account-specific instructions appended to, rather than replacing, the safe
+  provider guidance.
+
+Imports and registration stay explicit and a la carte:
+
+```ts
+import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
+
+const analytics = mixpanel("product_analytics", {
+  title: "Product analytics",
+  purpose: "Production product decisions for the growth team",
+});
+```
+
+The constructor may use `remoteMcp()` or `api()` internally. Callers should not
+need to care which transport gives the better agent-facing surface, and the
+choice does not grant the connection different runtime privileges. Two
+instances of the same provider are isolated in exactly the same way as two
+hand-written connectors with different ids.
+
+Prebuilt means preferred when available, not mandatory. A deployment may mix
+prebuilt connections, custom `remoteMcp()` connections, and custom `api()`
+connections. Connecta makes no completeness promise: providers without a
+maintained prebuilt connection continue to use the public primitives without
+loss of support.
 
 ## MCP version skew
 
