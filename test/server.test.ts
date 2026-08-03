@@ -351,6 +351,9 @@ describe("server /mcp end-to-end", () => {
       "omit limit initially (default 8)",
     );
     expect(byName.search_tools.description).toContain(
+      "set connector to the obvious integration id to load one catalog instead of all",
+    );
+    expect(byName.search_tools.description).toContain(
       "the input and any declared output shape",
     );
     expect(byName.search_tools.description).toContain(
@@ -363,6 +366,9 @@ describe("server /mcp end-to-end", () => {
       "filters results, not authority",
     );
     expect(byName.search_tools.description).toContain("connecta.describe");
+    expect(byName.execute_code.description).toContain(
+      "set connector to the obvious id to load one, otherwise it loads all",
+    );
     expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
       MAX_SEARCH_LIMIT,
     );

@@ -795,6 +795,32 @@ describe("search_tools", () => {
     expect(parsed.total).toBe(1);
   });
 
+  it("does not load unrelated catalogs for a connector-scoped search", async () => {
+    const loads = { wanted: 0, unrelated: 0 };
+    const dynamic = (id: keyof typeof loads): Connector => ({
+      id,
+      kind: "mcp",
+      async listTools() {
+        loads[id]++;
+        return [{ name: "read", description: `Read ${id} data` }];
+      },
+      async callTool() {
+        return null;
+      },
+    });
+    const mt = createMetaTools(
+      makeRegistry([dynamic("wanted"), dynamic("unrelated")]),
+      BASE,
+    );
+
+    const parsed = textOf(
+      await mt.searchTools({ query: "read", connector: "wanted" }),
+    ) as SearchResult;
+
+    expect(parsed.connectors.map((group) => group.id)).toEqual(["wanted"]);
+    expect(loads).toEqual({ wanted: 1, unrelated: 0 });
+  });
+
   it("paginates results while reporting the full match count", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(await mt.searchTools({ limit: 1 })) as SearchResult;
