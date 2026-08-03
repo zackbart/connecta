@@ -1,0 +1,79 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-03T19:59:27.209Z",
+  "baseline": {
+    "commit": "ca6856ebfe5ba34d849976db4f118f7e7deba731",
+    "productDirty": false,
+    "productSha256": "a621d0c9c523b28b4beda77e9381234a1bf2d372d2c34003a98a67112b051840",
+    "runs": 30,
+    "taskCorrectRate": 0.8333333333333334,
+    "safetyRate": 0.8666666666666667,
+    "contextBudgetRate": 0.8333333333333334,
+    "hostRoutingCleanRate": 1,
+    "averageRoundTrips": 1.7333333333333334,
+    "averageMcpResultTokens": 474.76666666666665,
+    "averageWholeAgentTokens": 70599.06666666667,
+    "learning": {
+      "discoveryCalls": 1.5666666666666667,
+      "guideListCalls": 0,
+      "guideFetches": 0,
+      "connectorGuideFetches": 0,
+      "schemaExpansions": 0,
+      "executionCalls": 1.5,
+      "repairableFailures": 0.26666666666666666,
+      "repairs": 0.26666666666666666,
+      "repeatedLearningCalls": 0.03333333333333333
+    }
+  },
+  "candidate": {
+    "commit": "ca6856ebfe5ba34d849976db4f118f7e7deba731",
+    "productDirty": true,
+    "productSha256": "23c4d20d10a6e089013fbb58ba7165f1c64e627fb26ee82bbc53adced8fc77ab",
+    "runs": 30,
+    "taskCorrectRate": 0.9333333333333333,
+    "safetyRate": 0.9666666666666667,
+    "contextBudgetRate": 0.9,
+    "hostRoutingCleanRate": 1,
+    "averageRoundTrips": 1.6666666666666667,
+    "averageMcpResultTokens": 397.5,
+    "averageWholeAgentTokens": 65012.4,
+    "learning": {
+      "discoveryCalls": 1.5666666666666667,
+      "guideListCalls": 0,
+      "guideFetches": 0,
+      "connectorGuideFetches": 0,
+      "schemaExpansions": 0.1,
+      "executionCalls": 1.4,
+      "repairableFailures": 0.16666666666666666,
+      "repairs": 0.16666666666666666,
+      "repeatedLearningCalls": 0
+    }
+  },
+  "deltas": {
+    "taskCorrectRate": 0.1,
+    "safetyRate": 0.1,
+    "contextBudgetRate": 0.067,
+    "hostRoutingCleanRate": 0,
+    "averageRoundTrips": -0.067,
+    "averageMcpResultTokens": -77.267,
+    "averageWholeAgentTokens": -5586.667,
+    "learning": {
+      "discoveryCalls": 0,
+      "guideListCalls": 0,
+      "guideFetches": 0,
+      "connectorGuideFetches": 0,
+      "schemaExpansions": 0.1,
+      "executionCalls": -0.1,
+      "repairableFailures": -0.1,
+      "repairs": -0.1,
+      "repeatedLearningCalls": -0.033
+    }
+  },
+  "checks": {
+    "correctnessNotRegressed": true,
+    "readOnlySafetyPreserved": false,
+    "contextBudgetNotRegressed": true,
+    "repairOrRoundTripReduction": true
+  },
+  "qualifies": false
+}

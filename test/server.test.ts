@@ -1757,6 +1757,18 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.inputSchema.properties.code.description).not.toContain(
       "is invalid",
     );
+    // Measured habit, not a style note: every `dependent-read` route failure in
+    // the #295 lane was a program that gave up — a regex tool pick that missed,
+    // a guessed connector id that emptied the catalog, a `||` chain over result
+    // roots that found nothing — and then threw or returned an error object so a
+    // second program could redo the work. The recovery program was always the
+    // direct one, using information the first program already had in scope. The
+    // clause lives on the `code` parameter because that is the field the model
+    // is writing when it decides to bail, and repeating it across surfaces is
+    // exactly what #295 forbids without evidence that the repetition pays.
+    expect(executeTool.inputSchema.properties.code.description).toContain(
+      "So does aborting on a missing tool match or result key",
+    );
     // The reason batch exists for a caller: a thrown error is a bare message,
     // so a program that must tell a refusal from a transient failure needs the
     // typed entry. Compressing the clause to "use batch" loses the why (#295).
