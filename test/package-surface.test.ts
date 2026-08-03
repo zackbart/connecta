@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -72,6 +72,32 @@ describe("public package boundary", () => {
       "quickjs-runtime.ts",
       "quickjs.ts",
     ]);
+  });
+
+  it("publishes every provider independently from the root entry", async () => {
+    const providers = readdirSync(join(ROOT, "src", "providers"))
+      .filter((file) => file.endsWith(".ts"))
+      .sort();
+    expect(providers.length).toBeGreaterThan(0);
+    const core = await import("../src/index.js");
+    for (const file of providers) {
+      const name = file.slice(0, -3);
+      expect(
+        packageJson.exports,
+        `src/providers/${file} needs a ./providers/${name} export`,
+      ).toHaveProperty(`./providers/${name}`);
+      // A runtime specifier: the provider is loaded, not statically linked, so
+      // adding one never widens what the root entry pulls in.
+      const provider = (await import(
+        pathToFileURL(join(ROOT, "src", "providers", file)).href
+      )) as Record<string, unknown>;
+      for (const symbol of Object.keys(provider)) {
+        expect(
+          core,
+          `core entry re-exports ${symbol} from providers/${name}`,
+        ).not.toHaveProperty(symbol);
+      }
+    }
   });
 
   it("exports validateToolInput from the core entry", async () => {

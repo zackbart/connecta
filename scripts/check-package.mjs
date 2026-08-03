@@ -144,7 +144,10 @@ try {
     "dist/executors/quickjs-child.js",
     "dist/executors/quickjs-protocol.js",
     "dist/executors/quickjs-runtime.js",
+    "dist/providers/mixpanel.js",
+    "dist/providers/mixpanel.d.ts",
     "src/index.ts",
+    "src/providers/mixpanel.ts",
   ]) {
     if (!paths.has(required)) {
       throw new Error(`Packed artifact is missing ${required}`);
@@ -180,12 +183,24 @@ const jsonSchema = await import("@zackbart/connecta/json-schema");
 if (typeof jsonSchema.Validator !== "function") {
   throw new Error("missing Validator re-export");
 }
+const mixpanelProvider = await import("@zackbart/connecta/providers/mixpanel");
+if (typeof mixpanelProvider.mixpanel !== "function") {
+  throw new Error("missing Mixpanel provider constructor");
+}
+const mixpanelConnection = mixpanelProvider.mixpanel("analytics", {
+  purpose: "package smoke",
+});
+if (mixpanelConnection.id !== "analytics") {
+  throw new Error("Mixpanel provider did not return a connector");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
   "cloudflareKvStorage",
   "d1ActivityStore",
   "quickJsExecutor",
+  "mixpanel",
+  "MIXPANEL_MCP_ENDPOINTS",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
