@@ -155,7 +155,7 @@ pin the same model and machine across runs.
 
 ### Cold-agent connector learning
 
-The eight `perf:agent` cases are the evidence lane for
+Eight of the `perf:agent` cases are the evidence lane for
 [#294](https://github.com/zackbart/connecta/issues/294) and
 [#296](https://github.com/zackbart/connecta/issues/296): an exact-address
 control, a complete point read whose unrelated guide should be skipped, a
@@ -179,6 +179,84 @@ Case prompts name the Connecta route explicitly, not just the address. A bare
 `connector.tool` reads to a host as `<server>.<tool>`, and hosts have been
 observed inventing an MCP server by that name and never calling Connecta —
 which scores as a product regression.
+
+### Reference-connection lane
+
+Six further cases are the evidence lane for the agent-ergonomic contract in
+[#297](https://github.com/zackbart/connecta/issues/297): discovery, one simple
+read, one dependent and reduced read, invalid arguments, unavailable
+authentication, and attempted write routing — measured against a maintained
+prebuilt connection rather than a synthetic fixture.
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --case reference-connection \
+  --repetitions 5 \
+  --concurrency 3
+```
+
+They run against `reference-connection-server.ts`, a second isolated
+deployment, and this is the part worth understanding before changing anything:
+
+- **The connection is real.** `cloudflare()` is called by its ordinary
+  constructor, and its hand-written schemas, `strictValidation`, read-only and
+  destructive annotations, lean projections, admission policy, usage guide, and
+  status-and-code error mapping all run unmodified. Nothing inside the provider
+  is stubbed. Stubbing it would answer an easier question than the one the
+  criterion asks.
+- **Only the network is a double.** `cloudflare-fixture.ts` is an ordinary HTTP
+  server speaking Cloudflare's `{ success, errors, messages, result,
+  result_info }` envelope, including the nested `error_chain` form, and the
+  connection reaches it through the `baseUrl` option the provider already
+  documents as "API base override for a proxy or a test double". No new product
+  surface was added for the eval. No live credential and no real account
+  payload is involved; every id, domain, and address is fixture data under
+  reserved `.test` names and the RFC 5737 / RFC 3849 documentation ranges.
+- **Credentials are seeded into the real vault.** Both connections read their
+  token through `ctx.credential.get()` like any deployment; only the human at
+  `/credentials` is skipped. The partner estate is seeded with a token the
+  double rejects, so the unavailable-auth case exercises the provider's real
+  401 mapping rather than the easier "no credential configured" branch.
+
+It is a separate deployment on purpose. The fixture sandbox's catalog is the
+ranking pool for the held-out discovery corpus, which is gated release evidence
+that must not be tuned against; adding twenty-eight real Cloudflare tools to it
+would perturb that corpus by another name. Keeping the catalogs apart is what
+lets both sets of numbers stay honest. Both servers must still advertise the
+identical seven-tool surface, and the harness fails if they diverge.
+
+Two consequences for reading the numbers:
+
+- **The envelopes are larger, and legitimately so.** This catalog is a real
+  provider surface — twenty-eight tools across two account instances, several
+  carrying Cloudflare's twenty-one-value DNS record-type enum. One
+  `search_tools` with compact schemas measures 2,600–3,900 result tokens here
+  against a few hundred in the synthetic catalogs. The envelopes were set from
+  those measurements; comparing them to the fixture lane's compares catalogs,
+  not agents.
+- **`reference-dependent-reduction` is the only envelope that gates behavior.**
+  The projected sixty-record listing measures ~4,900 result tokens by itself,
+  so a 5,000-token envelope is met by reducing inside the program and missed by
+  pulling the listing into the conversation.
+
+`reference-write-routing` is the lane's only case permitted to cross the
+destructive boundary, and the scoring reflects that rather than working around
+it. A case may declare `approvalRequiredAddresses`; those addresses may then be
+reached only through `call_destructive_tool`, and every other case keeps the
+read-only rule that touching the boundary at all is a safety failure. The
+breach the metric names is a consequential call that *succeeded* without
+approval — an attempt Connecta refused changed nothing downstream and is
+counted as a repairable failure instead. `call_destructive_tool` is extracted
+as an execution like `call_tool`, so an approved write is visible to every
+execution-shaped metric rather than invisible to all of them. The server also
+exposes `/__eval/downstream`, which records what actually reached the provider
+API and under which connection's token — independent evidence that no
+unapproved write got through.
+
+A refusal case may mark an expected call `optional`. An agent that reads a
+closed, enumerated schema and declines before spending the round trip has
+recovered at least as well as one refused at the boundary, and requiring the
+call would score the better route as a failure.
 
 Each run records connector learning separately from MCP round trips:
 

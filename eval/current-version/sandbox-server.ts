@@ -8,17 +8,15 @@ import {
   bearerToken,
   createConnecta,
   memoryStorage,
-  type AdmittingExecutor,
   type ApiTool,
-  type Connecta,
   type Connector,
-  type ExecutorProvider,
   type InboundAuth,
   type ToolCallActivityEvent,
   type ToolDef,
 } from "../../src/index.js";
 import { quickJsExecutor } from "../../src/executors/quickjs.js";
 import { listen } from "../../src/node.js";
+import { createEvalTracing } from "./eval-tracing.js";
 
 interface HoldoutCorpus {
   connectors: {
@@ -27,36 +25,6 @@ interface HoldoutCorpus {
     tools: { name: string; description: string }[];
   }[];
 }
-
-type EvalTraceSource = "outer" | "execute_code";
-
-interface EvalMetaToolTrace {
-  schemaVersion: 1;
-  sequence: number;
-  kind: "meta_tool";
-  source: EvalTraceSource;
-  operation: string;
-  arguments: unknown;
-  result?: unknown;
-  error?: string;
-  durationMs: number;
-}
-
-interface EvalExecutionTrace {
-  schemaVersion: 1;
-  sequence: number;
-  kind: "execution";
-  address: string;
-  source: ToolCallActivityEvent["source"];
-  outcome: ToolCallActivityEvent["outcome"];
-  durationMs: number;
-  attempts: number;
-  errorCode?: string;
-}
-
-type EvalTraceInput =
-  | Omit<EvalMetaToolTrace, "schemaVersion" | "sequence">
-  | Omit<EvalExecutionTrace, "schemaVersion" | "sequence">;
 
 const holdout = JSON.parse(
   await readFile(
@@ -75,197 +43,8 @@ const host = "127.0.0.1";
 const credentialEncryptionKey = Buffer.alloc(32, 7).toString("base64");
 const storage = memoryStorage();
 const activityEvents: ToolCallActivityEvent[] = [];
-const evalTraces: Array<EvalMetaToolTrace | EvalExecutionTrace> = [];
-let traceSequence = 0;
-
-function emitTrace(trace: EvalTraceInput): void {
-  if (!traceEnabled) return;
-  const event = {
-    schemaVersion: 1,
-    sequence: ++traceSequence,
-    ...trace,
-  } as EvalMetaToolTrace | EvalExecutionTrace;
-  evalTraces.push(event);
-  console.log(JSON.stringify({ event: "eval_trace", trace: event }));
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
-function providerOperation(
-  name: string,
-  args: unknown[],
-): { operation: string; arguments: unknown } {
-  if (name === "search") {
-    return { operation: "search_tools", arguments: args[0] ?? {} };
-  }
-  if (name === "describe") {
-    return { operation: "describe_tools", arguments: args[0] ?? {} };
-  }
-  if (name === "call") {
-    return {
-      operation: "call_tool",
-      arguments: { address: String(args[0]), args: args[1] ?? {} },
-    };
-  }
-  if (name === "batch") {
-    return { operation: "batch_call", arguments: { calls: args[0] ?? [] } };
-  }
-  if (name === "__callNamespace") {
-    return {
-      operation: "call_tool",
-      arguments: {
-        address: `${String(args[0])}.${String(args[1])}`,
-        args: args[2] ?? {},
-        via: "namespace",
-      },
-    };
-  }
-  return { operation: name, arguments: args };
-}
-
-function tracedProviders(
-  providers: ExecutorProvider[],
-): ExecutorProvider[] {
-  return providers.map((provider) => ({
-    ...provider,
-    fns: Object.fromEntries(
-      Object.entries(provider.fns).map(([name, fn]) => [
-        name,
-        async (...args: unknown[]) => {
-          const operation = providerOperation(name, args);
-          const started = performance.now();
-          try {
-            const result = await fn(...args);
-            emitTrace({
-              kind: "meta_tool",
-              source: "execute_code",
-              ...operation,
-              result,
-              durationMs: performance.now() - started,
-            });
-            return result;
-          } catch (error) {
-            emitTrace({
-              kind: "meta_tool",
-              source: "execute_code",
-              ...operation,
-              error: errorMessage(error),
-              durationMs: performance.now() - started,
-            });
-            throw error;
-          }
-        },
-      ]),
-    ),
-  }));
-}
-
-function tracedExecutor(base: AdmittingExecutor): AdmittingExecutor {
-  return {
-    async acquire(options = {}) {
-      const lease = await base.acquire(options);
-      return {
-        ...(lease.waitMs !== undefined ? { waitMs: lease.waitMs } : {}),
-        execute: (code, providers) =>
-          lease.execute(code, tracedProviders(providers)),
-        release: () => lease.release(),
-      };
-    },
-    execute: (code, providers) =>
-      base.execute(code, tracedProviders(providers)),
-    ...(base.admissionSnapshot
-      ? { admissionSnapshot: () => base.admissionSnapshot!() }
-      : {}),
-    close: () => base.close?.(),
-  };
-}
-
-async function outerMetaToolCall(
-  request: Request,
-): Promise<{ operation: string; arguments: unknown } | undefined> {
-  if (request.method !== "POST") return undefined;
-  try {
-    const body = (await request.clone().json()) as {
-      method?: unknown;
-      params?: { name?: unknown; arguments?: unknown };
-    };
-    if (
-      body.method !== "tools/call" ||
-      typeof body.params?.name !== "string"
-    ) {
-      return undefined;
-    }
-    return {
-      operation: body.params.name,
-      arguments: body.params.arguments ?? {},
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function withOuterTracing(connecta: Connecta): Connecta {
-  return {
-    ...connecta,
-    async fetch(request, env, ctx) {
-      const url = new URL(request.url);
-      if (
-        request.method === "GET" &&
-        url.pathname === "/__eval/trace"
-      ) {
-        if (
-          request.headers.get("authorization") !== `Bearer ${token}`
-        ) {
-          return Response.json({ error: "unauthorized" }, { status: 401 });
-        }
-        return Response.json({ traces: evalTraces });
-      }
-      const operation = await outerMetaToolCall(request);
-      const started = performance.now();
-      try {
-        const response = await connecta.fetch(request, env, ctx);
-        if (!operation) return response;
-        let payload: {
-          result?: unknown;
-          error?: { message?: unknown };
-        } = {};
-        try {
-          payload = await response.clone().json() as typeof payload;
-        } catch {
-          // A malformed transport result is still traced below as an error.
-        }
-        emitTrace({
-          kind: "meta_tool",
-          source: "outer",
-          ...operation,
-          ...(payload.result !== undefined
-            ? { result: payload.result }
-            : {
-                error:
-                  typeof payload.error?.message === "string"
-                    ? payload.error.message
-                    : `HTTP ${response.status}`,
-              }),
-          durationMs: performance.now() - started,
-        });
-        return response;
-      } catch (error) {
-        if (operation) {
-          emitTrace({
-            kind: "meta_tool",
-            source: "outer",
-            ...operation,
-            error: errorMessage(error),
-            durationMs: performance.now() - started,
-          });
-        }
-        throw error;
-      }
-    },
-  };
-}
+const tracing = createEvalTracing({ enabled: traceEnabled, token });
+const { emitTrace } = tracing;
 
 const operatorAuth: InboundAuth = {
   kind: "clerk",
@@ -1347,7 +1126,9 @@ const baseExecutor = quickJsExecutor({
   timeoutMs: 10_000,
   cpuTimeMs: 2_000,
 });
-const executor = traceEnabled ? tracedExecutor(baseExecutor) : baseExecutor;
+const executor = traceEnabled
+  ? tracing.tracedExecutor(baseExecutor)
+  : baseExecutor;
 
 const connecta = createConnecta({
   auth: [
@@ -1408,7 +1189,7 @@ const connecta = createConnecta({
   },
 });
 
-const server = listen(traceEnabled ? withOuterTracing(connecta) : connecta, {
+const server = listen(traceEnabled ? tracing.withOuterTracing(connecta) : connecta, {
   port,
   host,
   gracefulShutdown: false,
