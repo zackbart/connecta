@@ -2,6 +2,193 @@
 
 All notable changes to this package are documented here.
 
+## 0.14.0 — 2026-08-03
+
+Connecta went from one maintained prebuilt connection to five. Stripe, Linear,
+Notion, and Cloudflare join Mixpanel behind `./providers/<name>`, and together
+they answer the question the Mixpanel connection left open: whether a
+maintained connection means anything more specific than a wrapper. Stripe and
+Linear proxy hosted MCP servers and spend their effort on what a transport
+cannot say — Stripe makes production-versus-sandbox a required declaration with
+no default and refuses a deployment whose API key contradicts it; Linear
+selects a read-only *endpoint* whose token cannot reach a write API, which is a
+stronger guarantee than any annotation. Notion and Cloudflare are hand-written
+`api()` surfaces, and they exist because shape is the problem rather than
+transport: a Notion page is tens of kilobytes of discriminated wrappers and
+rich-text runs around a few hundred bytes of meaning, and a generated
+Cloudflare wrapper exposed `arguments?: {}[]` in its compact schema and pushed
+the real parameter list into a documentation page an agent had to read before
+it could call anything. Fifteen and fourteen deliberate tools respectively,
+projected down to ids and plain values, with `raw: true` wherever the dropped
+detail can matter. None of the four adds a dependency — not to core, not as an
+optional peer, not in `devDependencies`. The whole set installs with nothing
+extra and none of it is reachable from the root entry.
+
+Nothing breaks. Every export is additive and lives behind its own subpath, no
+existing signature moved, and a deployment that configures none of the new
+providers can upgrade with a version bump and read no further. Two changes are
+worth knowing about anyway. Vetted annotations on a prebuilt connection no
+longer argue with an explicit downstream annotation in *either* direction: a
+name the downstream explicitly marks `readOnlyHint: true` that no release has
+classified now stays callable from `execute_code` instead of failing closed
+onto the approval path. Silence on an unclassified name still means not
+read-only, so catalog drift is unaffected — this only moves names the
+downstream actually spoke about. The one branch that still outranks the
+downstream is a name a release reviewed and filed destructive: a
+`Delete-Dashboard` arriving with `readOnlyHint: true` is a downstream bug
+rather than news, and stays behind `call_destructive_tool`. That asymmetry is
+deliberate for now and tracked as an open question (#315). The other change is
+text: the `execute_code` code-parameter description gained a sentence about not
+aborting on a missing tool match or result key. Everything in `eval/` is
+internal and ships in no package (#295, #297, #303, #306, #310, PRs #305–#317).
+
+### Added
+
+- **A maintained Stripe connection at `./providers/stripe`.** `stripe(id, {
+  mode, purpose, title?, auth?, connectedAccount?, instructions?,
+  maxResultBytes? })` proxies Stripe's hosted MCP server at
+  `https://mcp.stripe.com/` over HTTPS, OAuth by default and static headers for
+  restricted API keys. `mode` is `"production" | "sandbox"` with **no default**,
+  because there is no safe guess between an account that moves real money and
+  one that does not. Stripe publishes one endpoint and selects the environment
+  by credential, so the mode cannot be routed — instead it is made impossible to
+  miss, appearing in the default title, in the description `search_tools` ranks,
+  in the first two lines of the guide, and in the admission policy (production
+  100 calls/second at concurrency 8; sandbox 25 at 4). A `headers` credential
+  carrying a recognizable key prefix (`sk_`, `rk_`, or `pk_` with `_live_` or
+  `_test_`) that contradicts the declared mode throws at construction; an OAuth
+  connector or an unrecognized credential shape is left alone rather than
+  guessed at, and the error names only the two modes, never the key.
+  `connectedAccount` requires an `acct_` id and headers auth. Seven reads and
+  four writes are vetted fill-in-only.
+- **A maintained Linear connection at `./providers/linear`.** `linear(id, {
+  purpose, access?, title?, auth?, instructions?, maxResultBytes?,
+  callAdmission? })` proxies Linear's hosted MCP server, with `access` selecting
+  the endpoint: `"read-write"` (default) at `https://mcp.linear.app/mcp` with
+  the `read` and `write` scopes, `"read-only"` at
+  `https://mcp.linear.app/mcp/readonly` with `read` alone. Read-only is not a
+  client-side filter — the token minted for that endpoint cannot reach Linear's
+  write APIs at all. The mode is legible at browse time rather than only after
+  the guide is fetched: a read-only connection titles itself `Linear
+  (read-only)` and its guide opens with the access note, which is what discovery
+  summarizes. The deprecated `/sse` transport is deliberately unreachable. No
+  admission policy is imposed by default, because Linear's published limit is
+  per user per hour and varies by credential type while Connecta's counter is
+  per runtime; a deployment that knows its own ceiling can pass `callAdmission`.
+  The read allowlist is a deliberate superset of any one workspace, since
+  several tools are plan-gated. Every `save_*` is filed destructive — they are
+  upserts.
+- **A maintained Notion connection at `./providers/notion`.** `notion(id, {
+  purpose, title?, instructions?, credentialLabel?, defaultPageSize?,
+  maxResultBytes? })` is the first prebuilt connection built on `api()` rather
+  than `remoteMcp()`: fifteen hand-written tools over `api.notion.com` pinned to
+  `Notion-Version: 2026-03-11` with no override, because that is the version in
+  which databases split into data sources, `archived` became `in_trash`, and
+  block append took a `position` object — an older pin would return quietly
+  wrong results rather than fail loudly. Ten reads carry `readOnlyHint: true`;
+  five writes route through `call_destructive_tool`, with `destructiveHint`
+  reserved for the two that replace or remove existing state.
+  `update_page_properties` has no `in_trash` argument, so an update can never
+  trash a page; `trash_page` is its own named and reversible tool. Lean
+  projections are the headline — properties flattened, rich text reduced to
+  plain strings, `search` dropping properties entirely, `get_page` reporting
+  what Notion truncated at 25 references — and seven reads take `raw: true` to
+  return the untouched payload where the dropped detail matters. Errors map to
+  what the caller should do next: 403 is deliberately not `auth_required`,
+  because re-authorizing cannot grant a capability or share a page, and 404 says
+  out loud that Notion returns it both for a missing object and an unshared one.
+  Admission pairs a 180-per-minute rolling budget with `maxConcurrency: 3`,
+  because a budget alone is an average and an average cannot stop a program
+  firing forty calls in one tick. Its guide is the only one of the four marked
+  `required`.
+- **A maintained Cloudflare connection at `./providers/cloudflare`.**
+  `cloudflare(id, { purpose, title?, accountId?, zoneId?, baseUrl?,
+  credential?, instructions?, maxResultBytes?, maxConcurrency? })` is fourteen
+  hand-written tools over the v4 REST API, fetch-native and dependency-free:
+  Cloudflare publishes an official SDK and this connection does not use it,
+  because the SDK's typed wrappers and pagination helpers are exactly what a
+  projected result and a `page.hasMore` boolean replace. `test/package-surface.test.ts`
+  pins the claim — the `cloudflare` package must appear in no dependency list at
+  all, and every import in the provider must be relative. Every tool carries a
+  complete closed schema: `additionalProperties: false`, an accurate `required`
+  list, an `enum` on every constrained field, a description on every property
+  (asserted, not claimed), and per-endpoint `perPage` bounds. Because
+  `strictValidation` refuses an out-of-range page size locally, the schemas
+  record *whose* bound is being enforced and the descriptions say so out loud:
+  Cloudflare's own where documented, this connection's cap where Cloudflare's
+  nominal ceiling is unusable (`list_dns_records` caps at 1,000 against a
+  documented 5,000,000), and this connection's entirely where Cloudflare
+  documents none (`list_pages_projects`). Twenty-one DNS record types are
+  exported as `CLOUDFLARE_DNS_RECORD_TYPES`. Admission mirrors the documented
+  1,200-per-five-minutes with a default concurrency of 6.
+
+### Changed
+
+- **Explicit downstream annotations win in both directions.** A prebuilt
+  connection's vetted classification was already fill-in only against a
+  downstream saying a name is *less* safe than the allowlist claims. It now also
+  yields to a downstream saying a name is safe when no release has classified
+  that name at all: an explicit `readOnlyHint: true` on an unreviewed tool is
+  kept, and the tool stays callable from `execute_code`. On a name no release
+  has reviewed, the downstream's word is the only evidence there is. Silence
+  still means not read-only, so catalog drift fails closed exactly as before,
+  and a name a release reviewed and filed destructive still outranks a
+  downstream `readOnlyHint: true` — an open question rather than a settled
+  invariant (#315). Mixpanel deployments are the ones that can observe this
+  today: a tool Mixpanel explicitly annotates read-only that this release's
+  allowlist has never seen moves off the approval path.
+- **`execute_code` tells a program not to abort on a missing key.** The code
+  parameter's description gained: "So does aborting on a missing tool match or
+  result key — re-search, describe, or read the result's actual keys here
+  instead." The eval lane that motivated it measures whether a program shapes
+  its result in the run that produced it rather than returning catalog data for
+  a later call.
+- **`documentation/` gained a guide per maintained connection** — `stripe.md`,
+  `linear.md`, `notion.md`, `cloudflare.md` — and `connectors.md` now lists all
+  five. Its custom-`remoteMcp()` example moved off Linear to an in-house deploy
+  server, as did the Docker example's OAuth demo, since Linear is now a prebuilt
+  connection rather than an illustration of hand-writing one.
+
+### Fixed
+
+- **`api()` connectors await their handlers.** `callTool` returned the handler's
+  promise without awaiting it, so a handler that threw before its first `await`
+  sat handler-less through the thenable-adoption microtask and was reported as
+  an unhandled rejection by workerd and vitest even though the caller caught the
+  typed failure. It is now a caught typed failure and nothing else. Affects
+  every `api()` connector, hand-written or prebuilt.
+- **An empty-query browse of an unavailable catalog says so.** A browse has no
+  terms to analyze and so reported nothing at all, which was indistinguishable
+  from a connector that simply exposes no tools — while the guidance on a scoped
+  miss recommends exactly that browse. A browse scoped to an unavailable
+  connector now carries `unavailableConnectorCount`, the typed `catalogError`,
+  and guidance naming it; an unscoped browse carries the count and a
+  scope-by-connector pointer but no `catalogError`, because one connector's
+  failure is not another browse's context. A configured connector that
+  correctly exposes no tools still reports no analysis, so empty, unavailable,
+  and unknown do not serialize alike.
+- **An empty-query browse of an unknown connector reports the unknown
+  connector.** A browse scoped to an id that is not configured now returns
+  `connectorScope`, `unknownConnector`, and the same omit-the-connector guidance
+  the term-bearing path already gave. Nothing was attempted, so there is no
+  count and no `catalogError`, and the response names no connector but the one
+  the caller supplied — listing what else is configured would answer a question
+  they did not ask, past a filter they may not pass.
+
+### Internal
+
+- **A reference-connection lane in `eval/`.** Six cases — discovery, a simple
+  read, a dependent reduction, invalid arguments, an unavailable credential, and
+  write routing — run a cold agent against a second isolated deployment whose
+  `cloudflare()` connector is the real constructor with only the network
+  doubled, reached through the already-documented `baseUrl`. Schemas,
+  `strictValidation`, annotations, projections, admission, guide, and error
+  mapping are the shipped ones, and credentials go through the real vault; no
+  product surface was added for the benchmark. Write routing is the only case
+  permitted across the destructive boundary, and the fixture exposes a
+  downstream-effects endpoint as independent evidence. `eval/` is not in the
+  published `files` allowlist; deployments never see it.
+
 ## 0.13.0 — 2026-08-03
 
 Everything an agent reads before it calls anything got more selective. Connecta
