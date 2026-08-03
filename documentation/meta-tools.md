@@ -35,11 +35,14 @@ probing is an operator concern: the operator pages and `/health` own it.
 
 Start an unknown-address lookup with two to four distinctive action/object
 terms, not the full request, and omit `limit` so the default eight-result page
-stays small. Set `safety: "readOnly"` when the result is headed to `call_tool`
-or generated code; `safety: "approvalRequired"` finds the complementary set
-that must cross `call_destructive_tool`. Omitting `safety`, or setting it to
-`"all"`, preserves the complete configured catalog. This is only a discovery
-filter: it neither grants authority nor changes invocation admission.
+stays small. When the integration is obvious, set `connector` to its id: a
+scoped search loads that catalog alone, while an unscoped search must fan out
+across every configured connector. Leave the search unscoped when the right
+integration is genuinely ambiguous. Set `safety: "readOnly"` when the result is
+headed to `call_tool` or generated code; `safety: "approvalRequired"` finds the
+complementary set that must cross `call_destructive_tool`. Omitting `safety`,
+or setting it to `"all"`, preserves the complete configured catalog. This is
+only a discovery filter: it neither grants authority nor changes invocation admission.
 `includeSchemas: "compact"` adds each match's input and any declared output
 shape. Bounded plain-object schemas also expose `inputKeys`,
 `requiredInputKeys`, and `outputKeys`; a truncated shape omits its corresponding

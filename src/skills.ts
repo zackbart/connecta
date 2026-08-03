@@ -23,7 +23,7 @@ Use exact addresses from discovery; never invent one. Search 2–4 distinctive a
 
 One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the \`connecta\` functions, and \`console.log\`.
 
-- \`connecta.search({})\` browses every catalog; \`safety: "readOnly"\` narrows to calls a program can execute, \`connector: "<id>"\` to one. This filters results, not authority; matches carry \`address\` and annotations.
+- \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
 - Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\` — how a program tells a policy refusal from a transient failure.
 - Search inside the run, not before it; return only the reduction the answer needs, never raw payloads.

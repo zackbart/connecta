@@ -144,6 +144,9 @@ describe("the advertised surface", () => {
     });
     const servedSkill = skill.result.content[0].text as string;
     expect(servedSkill).toBe(USAGE_SKILL);
+    expect(servedSkill).toContain(
+      'pass `connector: "<id>"` when obvious to load one',
+    );
 
     const advertised = [
       initialized.result.instructions,
