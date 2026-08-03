@@ -1,0 +1,1807 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-03T18:51:28.414Z",
+  "source": {
+    "commit": "147f744e6a612dedad87246c60afdd33e9cb98c9",
+    "nodeVersion": "22.23.2",
+    "platform": "darwin-arm64",
+    "codexVersion": "codex-cli 0.146.0",
+    "model": "codex-default",
+    "tokenizer": "o200k_base",
+    "productDirty": false,
+    "harnessSha256": "e40005c7bedc026eb8b2ef84d9373dfc80d4cdab5f30332bf8a5108a96af0938",
+    "scoringSha256": "868978e23b903d5d3ffcd5a09006faea3dc28d086c7fb1a3a53eb51d28d0b2ba",
+    "sandboxSha256": "f6881a3c9f5c64d0d72d65ba29e1891646f01cecf1a4767d1153af3826a84ddd"
+  },
+  "benchmark": {
+    "surface": "seven-tool",
+    "comparisonClass": "seven-tool-with-executor",
+    "advertisedTools": [
+      "skills",
+      "search_tools",
+      "call_tool",
+      "call_destructive_tool",
+      "authorize_connector",
+      "get_result",
+      "execute_code"
+    ],
+    "repetitions": 3,
+    "concurrency": 2,
+    "scoring": "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+    "removedToolPolicy": "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes."
+  },
+  "summary": {
+    "cases": 1,
+    "runs": 3,
+    "correct": 3,
+    "routeEfficient": 0,
+    "contextEfficient": 3,
+    "safetyPassed": 3,
+    "surfaceValid": 3,
+    "foreignClean": 0,
+    "costEfficient": 3,
+    "passed": 0,
+    "totalLatencyMs": 54029,
+    "totalInputTokens": 305346,
+    "totalOutputTokens": 1090,
+    "totalMcpResultTokens": 1245,
+    "totalForeignMcpResultTokens": 107,
+    "learning": {
+      "discoveryCalls": 3,
+      "guideListCalls": 0,
+      "guideFetches": 0,
+      "connectorGuideFetches": 0,
+      "schemaExpansions": 0,
+      "executionCalls": 3,
+      "repairableFailures": 0,
+      "repairs": 0,
+      "repeatedLearningCalls": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "optional-guide-simple-read",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-irrelevant-control",
+      "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+      "repetitions": 3,
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 2,
+        "maxMcpResultTokens": 700
+      },
+      "rates": {
+        "taskCorrect": 1,
+        "safetyPassed": 1,
+        "surfaceValid": 1,
+        "foreignClean": 0,
+        "costEfficient": 1,
+        "passed": 0
+      },
+      "latencyMs": {
+        "min": 17246.5,
+        "p50": 18055.8,
+        "p95": 18726.7,
+        "max": 18726.7,
+        "mean": 18009.7,
+        "stddev": 605.2
+      },
+      "mcpResultTokens": {
+        "min": 415,
+        "p50": 415,
+        "p95": 415,
+        "max": 415,
+        "mean": 415,
+        "stddev": 0
+      },
+      "connectaRoundTrips": {
+        "min": 2,
+        "p50": 2,
+        "p95": 2,
+        "max": 2,
+        "mean": 2,
+        "stddev": 0
+      },
+      "learning": {
+        "discoveryCalls": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "guideListCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "guideFetches": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "connectorGuideFetches": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "schemaExpansions": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "executionCalls": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "repairableFailures": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "repairs": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "repeatedLearningCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        }
+      },
+      "wholeAgentInputTokens": {
+        "min": 101627,
+        "p50": 101816,
+        "p95": 101903,
+        "max": 101903,
+        "mean": 101782,
+        "stddev": 115.2
+      },
+      "wholeAgentOutputTokens": {
+        "min": 329,
+        "p50": 369,
+        "p95": 392,
+        "max": 392,
+        "mean": 363.3,
+        "stddev": 26
+      },
+      "diagnostics": {
+        "failedMetaToolCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 5,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "observedRoutes": [
+        {
+          "route": "search_tools → call_tool",
+          "count": 3
+        }
+      ],
+      "runs": [
+        {
+          "id": "optional-guide-simple-read",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-irrelevant-control",
+          "repetition": 1,
+          "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+          "latencyMs": 18726.7,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": false,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "connectaRoundTrips": 2,
+          "observedExecutions": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              },
+              "source": "outer",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 0,
+            "connectorGuideFetches": 0,
+            "schemaExpansions": 0,
+            "executionCalls": 1,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 2,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": false,
+          "expectedCalls": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 2,
+            "maxMcpResultTokens": 700
+          },
+          "mcpResultTokenBudget": 700,
+          "calledTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "guidanceFetched": false,
+          "connectorGuidanceFetched": false,
+          "foreignToolCalls": [
+            "codex.list_mcp_resources",
+            "codex.list_mcp_resource_templates"
+          ],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "search_tools",
+              "arguments": {
+                "connector": "bookshelf",
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+                  }
+                ],
+                "structuredContent": {
+                  "connectors": [
+                    {
+                      "id": "bookshelf",
+                      "title": "Bookshelf",
+                      "guide": "connector:bookshelf",
+                      "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                      "tools": [
+                        {
+                          "name": "get_book",
+                          "address": "bookshelf.get_book",
+                          "description": "Get one book by its stable id.",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{ id: string, title: string, available: boolean }",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [
+                            "id",
+                            "title",
+                            "available"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                }
+              },
+              "durationMs": 11.13983399999961
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "execution",
+              "address": "bookshelf.get_book",
+              "source": "call_tool",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": true,
+                  "data": {
+                    "id": "bk_eval_7",
+                    "title": "The Selective Guide",
+                    "available": true
+                  },
+                  "durationMs": 1,
+                  "attempts": 1
+                }
+              },
+              "durationMs": 3.8501670000005106
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "codex",
+              "tool": "list_mcp_resources",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 2.5,
+              "resultBytes": 83,
+              "resultTokens": 21
+            },
+            {
+              "server": "codex",
+              "tool": "list_mcp_resource_templates",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 4.7,
+              "resultBytes": 91,
+              "resultTokens": 22
+            },
+            {
+              "server": "connecta",
+              "tool": "search_tools",
+              "arguments": {
+                "connector": "bookshelf",
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 15.1,
+              "resultBytes": 1277,
+              "resultTokens": 330
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 5.1,
+              "resultBytes": 303,
+              "resultTokens": 85
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+          "usage": {
+            "input_tokens": 101903,
+            "cached_input_tokens": 80384,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 392,
+            "reasoning_output_tokens": 121
+          },
+          "mcpResultTokens": 415,
+          "foreignMcpResultTokens": 43
+        },
+        {
+          "id": "optional-guide-simple-read",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-irrelevant-control",
+          "repetition": 2,
+          "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+          "latencyMs": 18055.8,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": false,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "connectaRoundTrips": 2,
+          "observedExecutions": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              },
+              "source": "outer",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 0,
+            "connectorGuideFetches": 0,
+            "schemaExpansions": 0,
+            "executionCalls": 1,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 2,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": false,
+          "expectedCalls": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 2,
+            "maxMcpResultTokens": 700
+          },
+          "mcpResultTokenBudget": 700,
+          "calledTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "guidanceFetched": false,
+          "connectorGuidanceFetched": false,
+          "foreignToolCalls": [
+            "codex.list_mcp_resources",
+            "codex.list_mcp_resource_templates"
+          ],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+                  }
+                ],
+                "structuredContent": {
+                  "connectors": [
+                    {
+                      "id": "bookshelf",
+                      "title": "Bookshelf",
+                      "guide": "connector:bookshelf",
+                      "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                      "tools": [
+                        {
+                          "name": "get_book",
+                          "address": "bookshelf.get_book",
+                          "description": "Get one book by its stable id.",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{ id: string, title: string, available: boolean }",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [
+                            "id",
+                            "title",
+                            "available"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                }
+              },
+              "durationMs": 17.425624999999854
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "execution",
+              "address": "bookshelf.get_book",
+              "source": "call_tool",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": true,
+                  "data": {
+                    "id": "bk_eval_7",
+                    "title": "The Selective Guide",
+                    "available": true
+                  },
+                  "durationMs": 1,
+                  "attempts": 1
+                }
+              },
+              "durationMs": 3.930207999999766
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "codex",
+              "tool": "list_mcp_resources",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 2.2,
+              "resultBytes": 83,
+              "resultTokens": 21
+            },
+            {
+              "server": "codex",
+              "tool": "list_mcp_resource_templates",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 2.3,
+              "resultBytes": 91,
+              "resultTokens": 22
+            },
+            {
+              "server": "connecta",
+              "tool": "search_tools",
+              "arguments": {
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 22.1,
+              "resultBytes": 1277,
+              "resultTokens": 330
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 5.1,
+              "resultBytes": 303,
+              "resultTokens": 85
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+          "usage": {
+            "input_tokens": 101816,
+            "cached_input_tokens": 88576,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 369,
+            "reasoning_output_tokens": 90
+          },
+          "mcpResultTokens": 415,
+          "foreignMcpResultTokens": 43
+        },
+        {
+          "id": "optional-guide-simple-read",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-irrelevant-control",
+          "repetition": 3,
+          "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+          "latencyMs": 17246.5,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": false,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "connectaRoundTrips": 2,
+          "observedExecutions": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              },
+              "source": "outer",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 0,
+            "connectorGuideFetches": 0,
+            "schemaExpansions": 0,
+            "executionCalls": 1,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 1,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": false,
+          "expectedCalls": [
+            {
+              "address": "bookshelf.get_book",
+              "args": {
+                "id": "bk_eval_7"
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 2,
+            "maxMcpResultTokens": 700
+          },
+          "mcpResultTokenBudget": 700,
+          "calledTools": [
+            "search_tools",
+            "call_tool"
+          ],
+          "guidanceFetched": false,
+          "connectorGuidanceFetched": false,
+          "foreignToolCalls": [
+            "codex.list_mcp_resources"
+          ],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+                  }
+                ],
+                "structuredContent": {
+                  "connectors": [
+                    {
+                      "id": "bookshelf",
+                      "title": "Bookshelf",
+                      "guide": "connector:bookshelf",
+                      "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                      "tools": [
+                        {
+                          "name": "get_book",
+                          "address": "bookshelf.get_book",
+                          "description": "Get one book by its stable id.",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{ id: string, title: string, available: boolean }",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [
+                            "id",
+                            "title",
+                            "available"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "total": 1,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false
+                }
+              },
+              "durationMs": 5.713749999998981
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "execution",
+              "address": "bookshelf.get_book",
+              "source": "call_tool",
+              "outcome": "success",
+              "durationMs": 1,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": true,
+                  "data": {
+                    "id": "bk_eval_7",
+                    "title": "The Selective Guide",
+                    "available": true
+                  },
+                  "durationMs": 1,
+                  "attempts": 1
+                }
+              },
+              "durationMs": 3.8391670000000886
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "codex",
+              "tool": "list_mcp_resources",
+              "arguments": {},
+              "status": "completed",
+              "error": null,
+              "durationMs": 2.5,
+              "resultBytes": 83,
+              "resultTokens": 21
+            },
+            {
+              "server": "connecta",
+              "tool": "search_tools",
+              "arguments": {
+                "query": "get book stable id",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 7.6,
+              "resultBytes": 1277,
+              "resultTokens": 330
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "bookshelf.get_book",
+                "args": {
+                  "id": "bk_eval_7"
+                },
+                "resultMode": "value"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 4.9,
+              "resultBytes": 303,
+              "resultTokens": 85
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+          "usage": {
+            "input_tokens": 101627,
+            "cached_input_tokens": 76544,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 329,
+            "reasoning_output_tokens": 76
+          },
+          "mcpResultTokens": 415,
+          "foreignMcpResultTokens": 21
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": "optional-guide-simple-read",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-irrelevant-control",
+      "repetition": 1,
+      "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+      "latencyMs": 18726.7,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": false,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "connectaRoundTrips": 2,
+      "observedExecutions": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          },
+          "source": "outer",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 0,
+        "connectorGuideFetches": 0,
+        "schemaExpansions": 0,
+        "executionCalls": 1,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 2,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": false,
+      "expectedCalls": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 2,
+        "maxMcpResultTokens": 700
+      },
+      "mcpResultTokenBudget": 700,
+      "calledTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "guidanceFetched": false,
+      "connectorGuidanceFetched": false,
+      "foreignToolCalls": [
+        "codex.list_mcp_resources",
+        "codex.list_mcp_resource_templates"
+      ],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "connector": "bookshelf",
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "bookshelf",
+                  "title": "Bookshelf",
+                  "guide": "connector:bookshelf",
+                  "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                  "tools": [
+                    {
+                      "name": "get_book",
+                      "address": "bookshelf.get_book",
+                      "description": "Get one book by its stable id.",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{ id: string, title: string, available: boolean }",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [
+                        "id",
+                        "title",
+                        "available"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 1,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": false
+            }
+          },
+          "durationMs": 11.13983399999961
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "bookshelf.get_book",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "id": "bk_eval_7",
+                "title": "The Selective Guide",
+                "available": true
+              },
+              "durationMs": 1,
+              "attempts": 1
+            }
+          },
+          "durationMs": 3.8501670000005106
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "codex",
+          "tool": "list_mcp_resources",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 2.5,
+          "resultBytes": 83,
+          "resultTokens": 21
+        },
+        {
+          "server": "codex",
+          "tool": "list_mcp_resource_templates",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 4.7,
+          "resultBytes": 91,
+          "resultTokens": 22
+        },
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "connector": "bookshelf",
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.1,
+          "resultBytes": 1277,
+          "resultTokens": 330
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5.1,
+          "resultBytes": 303,
+          "resultTokens": 85
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+      "usage": {
+        "input_tokens": 101903,
+        "cached_input_tokens": 80384,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 392,
+        "reasoning_output_tokens": 121
+      },
+      "mcpResultTokens": 415,
+      "foreignMcpResultTokens": 43
+    },
+    {
+      "id": "optional-guide-simple-read",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-irrelevant-control",
+      "repetition": 2,
+      "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+      "latencyMs": 18055.8,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": false,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "connectaRoundTrips": 2,
+      "observedExecutions": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          },
+          "source": "outer",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 0,
+        "connectorGuideFetches": 0,
+        "schemaExpansions": 0,
+        "executionCalls": 1,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 2,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": false,
+      "expectedCalls": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 2,
+        "maxMcpResultTokens": 700
+      },
+      "mcpResultTokenBudget": 700,
+      "calledTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "guidanceFetched": false,
+      "connectorGuidanceFetched": false,
+      "foreignToolCalls": [
+        "codex.list_mcp_resources",
+        "codex.list_mcp_resource_templates"
+      ],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "bookshelf",
+                  "title": "Bookshelf",
+                  "guide": "connector:bookshelf",
+                  "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                  "tools": [
+                    {
+                      "name": "get_book",
+                      "address": "bookshelf.get_book",
+                      "description": "Get one book by its stable id.",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{ id: string, title: string, available: boolean }",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [
+                        "id",
+                        "title",
+                        "available"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 1,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": false
+            }
+          },
+          "durationMs": 17.425624999999854
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "bookshelf.get_book",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "id": "bk_eval_7",
+                "title": "The Selective Guide",
+                "available": true
+              },
+              "durationMs": 1,
+              "attempts": 1
+            }
+          },
+          "durationMs": 3.930207999999766
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "codex",
+          "tool": "list_mcp_resources",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 2.2,
+          "resultBytes": 83,
+          "resultTokens": 21
+        },
+        {
+          "server": "codex",
+          "tool": "list_mcp_resource_templates",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 2.3,
+          "resultBytes": 91,
+          "resultTokens": 22
+        },
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 22.1,
+          "resultBytes": 1277,
+          "resultTokens": 330
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 5.1,
+          "resultBytes": 303,
+          "resultTokens": 85
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+      "usage": {
+        "input_tokens": 101816,
+        "cached_input_tokens": 88576,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 369,
+        "reasoning_output_tokens": 90
+      },
+      "mcpResultTokens": 415,
+      "foreignMcpResultTokens": 43
+    },
+    {
+      "id": "optional-guide-simple-read",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-irrelevant-control",
+      "repetition": 3,
+      "prompt": "Use the Bookshelf integration to get the one book with stable id bk_eval_7. Return only the book JSON.",
+      "latencyMs": 17246.5,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": false,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "connectaRoundTrips": 2,
+      "observedExecutions": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          },
+          "source": "outer",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 0,
+        "connectorGuideFetches": 0,
+        "schemaExpansions": 0,
+        "executionCalls": 1,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 1,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": false,
+      "expectedCalls": [
+        {
+          "address": "bookshelf.get_book",
+          "args": {
+            "id": "bk_eval_7"
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 2,
+        "maxMcpResultTokens": 700
+      },
+      "mcpResultTokenBudget": 700,
+      "calledTools": [
+        "search_tools",
+        "call_tool"
+      ],
+      "guidanceFetched": false,
+      "connectorGuidanceFetched": false,
+      "foreignToolCalls": [
+        "codex.list_mcp_resources"
+      ],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"bookshelf\",\"title\":\"Bookshelf\",\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\",\"tools\":[{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":1,\"offset\":0,\"limit\":8,\"hasMore\":false}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "bookshelf",
+                  "title": "Bookshelf",
+                  "guide": "connector:bookshelf",
+                  "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes",
+                  "tools": [
+                    {
+                      "name": "get_book",
+                      "address": "bookshelf.get_book",
+                      "description": "Get one book by its stable id.",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{ id: string, title: string, available: boolean }",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [
+                        "id",
+                        "title",
+                        "available"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 1,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": false
+            }
+          },
+          "durationMs": 5.713749999998981
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "bookshelf.get_book",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true},\"durationMs\":1,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "id": "bk_eval_7",
+                "title": "The Selective Guide",
+                "available": true
+              },
+              "durationMs": 1,
+              "attempts": 1
+            }
+          },
+          "durationMs": 3.8391670000000886
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "codex",
+          "tool": "list_mcp_resources",
+          "arguments": {},
+          "status": "completed",
+          "error": null,
+          "durationMs": 2.5,
+          "resultBytes": 83,
+          "resultTokens": 21
+        },
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "get book stable id",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 7.6,
+          "resultBytes": 1277,
+          "resultTokens": 330
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "bookshelf.get_book",
+            "args": {
+              "id": "bk_eval_7"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 4.9,
+          "resultBytes": 303,
+          "resultTokens": 85
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"id\":\"bk_eval_7\",\"title\":\"The Selective Guide\",\"available\":true}",
+      "usage": {
+        "input_tokens": 101627,
+        "cached_input_tokens": 76544,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 329,
+        "reasoning_output_tokens": 76
+      },
+      "mcpResultTokens": 415,
+      "foreignMcpResultTokens": 21
+    }
+  ]
+}

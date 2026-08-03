@@ -1,0 +1,3897 @@
+{
+  "schemaVersion": 3,
+  "generatedAt": "2026-08-03T18:51:36.588Z",
+  "source": {
+    "commit": "147f744e6a612dedad87246c60afdd33e9cb98c9",
+    "nodeVersion": "22.23.2",
+    "platform": "darwin-arm64",
+    "codexVersion": "codex-cli 0.146.0",
+    "model": "codex-default",
+    "tokenizer": "o200k_base",
+    "productDirty": false,
+    "harnessSha256": "e40005c7bedc026eb8b2ef84d9373dfc80d4cdab5f30332bf8a5108a96af0938",
+    "scoringSha256": "868978e23b903d5d3ffcd5a09006faea3dc28d086c7fb1a3a53eb51d28d0b2ba",
+    "sandboxSha256": "f6881a3c9f5c64d0d72d65ba29e1891646f01cecf1a4767d1153af3826a84ddd"
+  },
+  "benchmark": {
+    "surface": "seven-tool",
+    "comparisonClass": "seven-tool-with-executor",
+    "advertisedTools": [
+      "skills",
+      "search_tools",
+      "call_tool",
+      "call_destructive_tool",
+      "authorize_connector",
+      "get_result",
+      "execute_code"
+    ],
+    "repetitions": 3,
+    "concurrency": 2,
+    "scoring": "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+    "removedToolPolicy": "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes."
+  },
+  "summary": {
+    "cases": 1,
+    "runs": 3,
+    "correct": 3,
+    "routeEfficient": 3,
+    "contextEfficient": 2,
+    "safetyPassed": 3,
+    "surfaceValid": 3,
+    "foreignClean": 3,
+    "costEfficient": 2,
+    "passed": 2,
+    "totalLatencyMs": 75187.2,
+    "totalInputTokens": 424500,
+    "totalOutputTokens": 1670,
+    "totalMcpResultTokens": 7216,
+    "totalForeignMcpResultTokens": 0,
+    "learning": {
+      "discoveryCalls": 3,
+      "guideListCalls": 0,
+      "guideFetches": 3,
+      "connectorGuideFetches": 3,
+      "schemaExpansions": 0,
+      "executionCalls": 5,
+      "repairableFailures": 2,
+      "repairs": 2,
+      "repeatedLearningCalls": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "guide-heavy-query",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-heavy",
+      "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+      "repetitions": 3,
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "skills",
+          "call_tool"
+        ],
+        [
+          "skills",
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 4,
+        "maxMcpResultTokens": 2300
+      },
+      "rates": {
+        "taskCorrect": 1,
+        "safetyPassed": 1,
+        "surfaceValid": 1,
+        "foreignClean": 1,
+        "costEfficient": 0.667,
+        "passed": 0.667
+      },
+      "latencyMs": {
+        "min": 20789.4,
+        "p50": 22670.8,
+        "p95": 31727,
+        "max": 31727,
+        "mean": 25062.4,
+        "stddev": 4774.8
+      },
+      "mcpResultTokens": {
+        "min": 1966,
+        "p50": 2185,
+        "p95": 3065,
+        "max": 3065,
+        "mean": 2405.3,
+        "stddev": 474.9
+      },
+      "connectaRoundTrips": {
+        "min": 3,
+        "p50": 4,
+        "p95": 4,
+        "max": 4,
+        "mean": 3.7,
+        "stddev": 0.5
+      },
+      "learning": {
+        "discoveryCalls": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "guideListCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "guideFetches": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "connectorGuideFetches": {
+          "min": 1,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 1,
+          "stddev": 0
+        },
+        "schemaExpansions": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        },
+        "executionCalls": {
+          "min": 1,
+          "p50": 2,
+          "p95": 2,
+          "max": 2,
+          "mean": 1.7,
+          "stddev": 0.5
+        },
+        "repairableFailures": {
+          "min": 0,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 0.7,
+          "stddev": 0.5
+        },
+        "repairs": {
+          "min": 0,
+          "p50": 1,
+          "p95": 1,
+          "max": 1,
+          "mean": 0.7,
+          "stddev": 0.5
+        },
+        "repeatedLearningCalls": {
+          "min": 0,
+          "p50": 0,
+          "p95": 0,
+          "max": 0,
+          "mean": 0,
+          "stddev": 0
+        }
+      },
+      "wholeAgentInputTokens": {
+        "min": 112118,
+        "p50": 144664,
+        "p95": 167718,
+        "max": 167718,
+        "mean": 141500,
+        "stddev": 22808.6
+      },
+      "wholeAgentOutputTokens": {
+        "min": 467,
+        "p50": 517,
+        "p95": 686,
+        "max": 686,
+        "mean": 556.7,
+        "stddev": 93.7
+      },
+      "diagnostics": {
+        "failedMetaToolCalls": 3
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 3,
+        "foreignToolCalls": 0,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "observedRoutes": [
+        {
+          "route": "search_tools → skills → call_tool → call_tool",
+          "count": 1
+        },
+        {
+          "route": "execute_code → skills → execute_code → execute_code",
+          "count": 1
+        },
+        {
+          "route": "search_tools → skills → call_tool",
+          "count": 1
+        }
+      ],
+      "runs": [
+        {
+          "id": "guide-heavy-query",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-heavy",
+          "repetition": 1,
+          "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+          "latencyMs": 22670.8,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": true,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": true,
+          "outerTools": [
+            "search_tools",
+            "skills",
+            "call_tool",
+            "call_tool"
+          ],
+          "connectaRoundTrips": 4,
+          "observedExecutions": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\"",
+                "first": 100
+              },
+              "source": "outer",
+              "failed": true
+            },
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\"",
+                "first": 50
+              },
+              "source": "outer",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 1,
+          "unexpectedFailedMetaToolCalls": 1,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 0,
+            "executionCalls": 2,
+            "repairableFailures": 1,
+            "repairs": 1,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 1,
+            "foreignToolCalls": 0,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": true,
+          "expectedCalls": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\""
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "skills",
+              "call_tool"
+            ],
+            [
+              "skills",
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 4,
+            "maxMcpResultTokens": 2300
+          },
+          "mcpResultTokenBudget": 2300,
+          "calledTools": [
+            "search_tools",
+            "skills",
+            "call_tool",
+            "call_tool"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "issues team status",
+                "includeSchemas": "compact",
+                "safety": "readOnly"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"connectors\":[{\"id\":\"projects\",\"tools\":[{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_pull_request\",\"address\":\"projects.get_pull_request\",\"description\":\"Get pull request details and merge status\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"work-items\",\"title\":\"Work Items\",\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"builds\",\"tools\":[{\"name\":\"get_workflow_run\",\"address\":\"builds.get_workflow_run\",\"description\":\"Get the status and conclusion of a workflow run\",\"inputSchema\":\"{ runId: integer }\",\"outputSchema\":\"{ runId: integer, status: string, conclusion: string, failedJobId: integer }\",\"inputKeys\":[\"runId\"],\"requiredInputKeys\":[\"runId\"],\"outputKeys\":[\"runId\",\"status\",\"conclusion\",\"failedJobId\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":7,\"offset\":0,\"limit\":8,\"hasMore\":false,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"issues\",\"status\"],\"otherResultTerms\":[],\"unmatchedTerms\":[\"team\"],\"unavailableConnectorCount\":1,\"guidance\":\"No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.\"}}"
+                  }
+                ],
+                "structuredContent": {
+                  "connectors": [
+                    {
+                      "id": "projects",
+                      "tools": [
+                        {
+                          "name": "list_issues",
+                          "address": "projects.list_issues",
+                          "description": "List project issues with optional state and label filters",
+                          "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                          "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                          "inputKeys": [
+                            "state",
+                            "label"
+                          ],
+                          "requiredInputKeys": [
+                            "state"
+                          ],
+                          "outputKeys": [
+                            "state",
+                            "issues"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "get_issue",
+                          "address": "projects.get_issue",
+                          "description": "Get one issue by its numeric identifier",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "create_issue",
+                          "address": "projects.create_issue",
+                          "description": "Create a new project issue",
+                          "inputSchema": "{ title: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "title"
+                          ],
+                          "requiredInputKeys": [
+                            "title"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "add_issue_comment",
+                          "address": "projects.add_issue_comment",
+                          "description": "Add a comment to an issue",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "get_pull_request",
+                          "address": "projects.get_pull_request",
+                          "description": "Get pull request details and merge status",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "work-items",
+                      "title": "Work Items",
+                      "guide": "connector:work-items",
+                      "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's",
+                      "tools": [
+                        {
+                          "name": "search_issues",
+                          "address": "work-items.search_issues",
+                          "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                          "inputSchema": "{ query: string, first?: integer }",
+                          "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                          "inputKeys": [
+                            "query",
+                            "first"
+                          ],
+                          "requiredInputKeys": [
+                            "query"
+                          ],
+                          "outputKeys": [
+                            "nodes",
+                            "pageInfo"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "builds",
+                      "tools": [
+                        {
+                          "name": "get_workflow_run",
+                          "address": "builds.get_workflow_run",
+                          "description": "Get the status and conclusion of a workflow run",
+                          "inputSchema": "{ runId: integer }",
+                          "outputSchema": "{ runId: integer, status: string, conclusion: string, failedJobId: integer }",
+                          "inputKeys": [
+                            "runId"
+                          ],
+                          "requiredInputKeys": [
+                            "runId"
+                          ],
+                          "outputKeys": [
+                            "runId",
+                            "status",
+                            "conclusion",
+                            "failedJobId"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "total": 7,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": false,
+                  "matchMode": "partial",
+                  "queryAnalysis": {
+                    "representedTerms": [
+                      "issues",
+                      "status"
+                    ],
+                    "otherResultTerms": [],
+                    "unmatchedTerms": [
+                      "team"
+                    ],
+                    "unavailableConnectorCount": 1,
+                    "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+                  }
+                }
+              },
+              "durationMs": 12.565500000000611
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+                  }
+                ]
+              },
+              "durationMs": 8.513041000000158
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "execution",
+              "address": "work-items.search_issues",
+              "source": "call_tool",
+              "outcome": "error",
+              "durationMs": 1,
+              "attempts": 1,
+              "errorCode": "invalid_args"
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 100
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":false,\"error\":{\"code\":\"invalid_args\",\"message\":\"Invalid arguments for \\\"work-items.search_issues\\\": #/first: 100 is greater than 50.; #/first: False boolean schema.\",\"retryable\":false,\"validation\":{\"issues\":[{\"path\":\"/first\",\"code\":\"maximum\",\"expected\":\"the declared maximum\"},{\"path\":\"/first\",\"code\":\"additionalProperties\",\"expected\":\"no additional properties\"}]},\"connector\":\"work-items\",\"operation\":\"work-items.search_issues\",\"nextAction\":{\"tool\":\"search_tools\",\"arguments\":{\"query\":\"search_issues\",\"connector\":\"work-items\",\"includeSchemas\":\"compact\"},\"purpose\":\"Inspect the current input shape if the validation findings are not sufficient.\"},\"retry\":\"Correct the listed arguments and retry work-items.search_issues.\"},\"durationMs\":1,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": false,
+                  "error": {
+                    "code": "invalid_args",
+                    "message": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+                    "retryable": false,
+                    "validation": {
+                      "issues": [
+                        {
+                          "path": "/first",
+                          "code": "maximum",
+                          "expected": "the declared maximum"
+                        },
+                        {
+                          "path": "/first",
+                          "code": "additionalProperties",
+                          "expected": "no additional properties"
+                        }
+                      ]
+                    },
+                    "connector": "work-items",
+                    "operation": "work-items.search_issues",
+                    "nextAction": {
+                      "tool": "search_tools",
+                      "arguments": {
+                        "query": "search_issues",
+                        "connector": "work-items",
+                        "includeSchemas": "compact"
+                      },
+                      "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+                    },
+                    "retry": "Correct the listed arguments and retry work-items.search_issues."
+                  },
+                  "durationMs": 1,
+                  "attempts": 1
+                },
+                "isError": true
+              },
+              "durationMs": 3.3358750000006694
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 5,
+              "kind": "execution",
+              "address": "work-items.search_issues",
+              "source": "call_tool",
+              "outcome": "success",
+              "durationMs": 0,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 6,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 50
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":true,\"data\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}},\"durationMs\":0,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": true,
+                  "data": {
+                    "nodes": [
+                      {
+                        "identifier": "ENG-294",
+                        "title": "Reduce cold-agent connector learning turns",
+                        "status": "In Progress",
+                        "team": "ENG"
+                      }
+                    ],
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": null
+                    }
+                  },
+                  "durationMs": 0,
+                  "attempts": 1
+                }
+              },
+              "durationMs": 2.3583749999997963
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "connecta",
+              "tool": "search_tools",
+              "arguments": {
+                "query": "issues team status",
+                "includeSchemas": "compact",
+                "safety": "readOnly"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 15.4,
+              "resultBytes": 6501,
+              "resultTokens": 1588
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 13.6,
+              "resultBytes": 405,
+              "resultTokens": 100
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 100
+                },
+                "resultMode": "value"
+              },
+              "status": "failed",
+              "error": null,
+              "durationMs": 4.1,
+              "resultBytes": 1661,
+              "resultTokens": 361
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 50
+                },
+                "resultMode": "value"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 3.4,
+              "resultBytes": 537,
+              "resultTokens": 136
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+          "usage": {
+            "input_tokens": 144664,
+            "cached_input_tokens": 120832,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 517,
+            "reasoning_output_tokens": 130
+          },
+          "mcpResultTokens": 2185,
+          "foreignMcpResultTokens": 0
+        },
+        {
+          "id": "guide-heavy-query",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-heavy",
+          "repetition": 2,
+          "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+          "latencyMs": 31727,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": true,
+          "costEfficient": false,
+          "contextEfficient": false,
+          "roundTripEfficient": true,
+          "passed": false,
+          "outerTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "connectaRoundTrips": 4,
+          "observedExecutions": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\"",
+                "first": 100
+              },
+              "source": "execute_code",
+              "error": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+              "failed": true
+            },
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\"",
+                "first": 50
+              },
+              "source": "execute_code",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 2,
+          "unexpectedFailedMetaToolCalls": 2,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 0,
+            "executionCalls": 2,
+            "repairableFailures": 1,
+            "repairs": 1,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 2,
+            "foreignToolCalls": 0,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": true,
+          "expectedCalls": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\""
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "skills",
+              "call_tool"
+            ],
+            [
+              "skills",
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 4,
+            "maxMcpResultTokens": 2300
+          },
+          "mcpResultTokenBudget": 2300,
+          "calledTools": [
+            "execute_code",
+            "skills",
+            "execute_code",
+            "execute_code"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "work items issues team status in progress stable key",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "tools": [
+                  {
+                    "name": "search_issues",
+                    "address": "work-items.search_issues",
+                    "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                    "inputSchema": "{ query: string, first?: integer }",
+                    "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                    "inputKeys": [
+                      "query",
+                      "first"
+                    ],
+                    "requiredInputKeys": [
+                      "query"
+                    ],
+                    "outputKeys": [
+                      "nodes",
+                      "pageInfo"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:work-items",
+                    "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+                  },
+                  {
+                    "name": "list_issues",
+                    "address": "projects.list_issues",
+                    "description": "List project issues with optional state and label filters",
+                    "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                    "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                    "inputKeys": [
+                      "state",
+                      "label"
+                    ],
+                    "requiredInputKeys": [
+                      "state"
+                    ],
+                    "outputKeys": [
+                      "state",
+                      "issues"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "get_issue",
+                    "address": "projects.get_issue",
+                    "description": "Get one issue by its numeric identifier",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "create_issue",
+                    "address": "projects.create_issue",
+                    "description": "Create a new project issue",
+                    "inputSchema": "{ title: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "title"
+                    ],
+                    "requiredInputKeys": [
+                      "title"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "add_issue_comment",
+                    "address": "projects.add_issue_comment",
+                    "description": "Add a comment to an issue",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "get_book",
+                    "address": "bookshelf.get_book",
+                    "description": "Get one book by its stable id.",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{ id: string, title: string, available: boolean }",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [
+                      "id",
+                      "title",
+                      "available"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:bookshelf",
+                    "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes"
+                  },
+                  {
+                    "name": "get_pull_request",
+                    "address": "projects.get_pull_request",
+                    "description": "Get pull request details and merge status",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "list_folder",
+                    "address": "files.list_folder",
+                    "description": "List the items inside a folder",
+                    "inputSchema": "{ limit?: integer }",
+                    "outputSchema": "{ items: {}[], nextCursor?: string }",
+                    "inputKeys": [
+                      "limit"
+                    ],
+                    "requiredInputKeys": [],
+                    "outputKeys": [
+                      "items",
+                      "nextCursor"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  }
+                ],
+                "total": 10,
+                "offset": 0,
+                "limit": 8,
+                "hasMore": true,
+                "nextOffset": 8,
+                "matchMode": "partial",
+                "queryAnalysis": {
+                  "representedTerms": [
+                    "work",
+                    "items",
+                    "issues",
+                    "status",
+                    "stable"
+                  ],
+                  "otherResultTerms": [
+                    "key"
+                  ],
+                  "unmatchedTerms": [
+                    "team",
+                    "progress"
+                  ],
+                  "unavailableConnectorCount": 1,
+                  "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+                }
+              },
+              "durationMs": 5.165124999999534
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({ query: \"work items issues team status in progress stable key\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const candidates = s.tools.filter(t => /issue|work.item/i.test(t.address + \" \" + (t.description || \"\")));\n  return {all:s.tools, candidates};\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"all\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\"},{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\"},{\"name\":\"get_pull_request\",\"address\":\"projects.get_pull_request\",\"description\":\"Get pull request details and merge status\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_folder\",\"address\":\"files.list_folder\",\"description\":\"List the items inside a folder\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}],\"candidates\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\"},{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "all": [
+                      {
+                        "name": "search_issues",
+                        "address": "work-items.search_issues",
+                        "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                        "inputSchema": "{ query: string, first?: integer }",
+                        "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                        "inputKeys": [
+                          "query",
+                          "first"
+                        ],
+                        "requiredInputKeys": [
+                          "query"
+                        ],
+                        "outputKeys": [
+                          "nodes",
+                          "pageInfo"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guide": "connector:work-items",
+                        "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+                      },
+                      {
+                        "name": "list_issues",
+                        "address": "projects.list_issues",
+                        "description": "List project issues with optional state and label filters",
+                        "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                        "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                        "inputKeys": [
+                          "state",
+                          "label"
+                        ],
+                        "requiredInputKeys": [
+                          "state"
+                        ],
+                        "outputKeys": [
+                          "state",
+                          "issues"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "get_issue",
+                        "address": "projects.get_issue",
+                        "description": "Get one issue by its numeric identifier",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "create_issue",
+                        "address": "projects.create_issue",
+                        "description": "Create a new project issue",
+                        "inputSchema": "{ title: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "title"
+                        ],
+                        "requiredInputKeys": [
+                          "title"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "add_issue_comment",
+                        "address": "projects.add_issue_comment",
+                        "description": "Add a comment to an issue",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "get_book",
+                        "address": "bookshelf.get_book",
+                        "description": "Get one book by its stable id.",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{ id: string, title: string, available: boolean }",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [
+                          "id",
+                          "title",
+                          "available"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guide": "connector:bookshelf",
+                        "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes"
+                      },
+                      {
+                        "name": "get_pull_request",
+                        "address": "projects.get_pull_request",
+                        "description": "Get pull request details and merge status",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "list_folder",
+                        "address": "files.list_folder",
+                        "description": "List the items inside a folder",
+                        "inputSchema": "{ limit?: integer }",
+                        "outputSchema": "{ items: {}[], nextCursor?: string }",
+                        "inputKeys": [
+                          "limit"
+                        ],
+                        "requiredInputKeys": [],
+                        "outputKeys": [
+                          "items",
+                          "nextCursor"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      }
+                    ],
+                    "candidates": [
+                      {
+                        "name": "search_issues",
+                        "address": "work-items.search_issues",
+                        "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                        "inputSchema": "{ query: string, first?: integer }",
+                        "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                        "inputKeys": [
+                          "query",
+                          "first"
+                        ],
+                        "requiredInputKeys": [
+                          "query"
+                        ],
+                        "outputKeys": [
+                          "nodes",
+                          "pageInfo"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        },
+                        "guide": "connector:work-items",
+                        "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+                      },
+                      {
+                        "name": "list_issues",
+                        "address": "projects.list_issues",
+                        "description": "List project issues with optional state and label filters",
+                        "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                        "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                        "inputKeys": [
+                          "state",
+                          "label"
+                        ],
+                        "requiredInputKeys": [
+                          "state"
+                        ],
+                        "outputKeys": [
+                          "state",
+                          "issues"
+                        ],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "get_issue",
+                        "address": "projects.get_issue",
+                        "description": "Get one issue by its numeric identifier",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "create_issue",
+                        "address": "projects.create_issue",
+                        "description": "Create a new project issue",
+                        "inputSchema": "{ title: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "title"
+                        ],
+                        "requiredInputKeys": [
+                          "title"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      },
+                      {
+                        "name": "add_issue_comment",
+                        "address": "projects.add_issue_comment",
+                        "description": "Add a comment to an issue",
+                        "inputSchema": "{ id: string }",
+                        "outputSchema": "{}",
+                        "inputKeys": [
+                          "id"
+                        ],
+                        "requiredInputKeys": [
+                          "id"
+                        ],
+                        "outputKeys": [],
+                        "annotations": {
+                          "readOnlyHint": true,
+                          "idempotentHint": true
+                        }
+                      }
+                    ]
+                  }
+                }
+              },
+              "durationMs": 94.50095900000088
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+                  }
+                ]
+              },
+              "durationMs": 2.261916999999812
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "execution",
+              "address": "work-items.search_issues",
+              "source": "execute_code",
+              "outcome": "error",
+              "durationMs": 1,
+              "attempts": 1,
+              "errorCode": "invalid_args"
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 5,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 100
+                }
+              },
+              "error": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+              "durationMs": 1.3902500000003783
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 6,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 100\n  });\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"error\":{\"code\":\"invalid_args\",\"message\":\"Invalid arguments for \\\"work-items.search_issues\\\": #/first: 100 is greater than 50.; #/first: False boolean schema.\",\"retryable\":false,\"validation\":{\"issues\":[{\"path\":\"/first\",\"code\":\"maximum\",\"expected\":\"the declared maximum\"},{\"path\":\"/first\",\"code\":\"additionalProperties\",\"expected\":\"no additional properties\"}]},\"connector\":\"work-items\",\"operation\":\"work-items.search_issues\",\"nextAction\":{\"function\":\"connecta.search\",\"arguments\":{\"query\":\"search_issues\",\"connector\":\"work-items\",\"includeSchemas\":\"compact\"},\"purpose\":\"Inspect the current input shape if the validation findings are not sufficient.\"},\"retry\":\"Correct the listed arguments and retry work-items.search_issues.\"}}"
+                  }
+                ],
+                "structuredContent": {
+                  "error": {
+                    "code": "invalid_args",
+                    "message": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+                    "retryable": false,
+                    "validation": {
+                      "issues": [
+                        {
+                          "path": "/first",
+                          "code": "maximum",
+                          "expected": "the declared maximum"
+                        },
+                        {
+                          "path": "/first",
+                          "code": "additionalProperties",
+                          "expected": "no additional properties"
+                        }
+                      ]
+                    },
+                    "connector": "work-items",
+                    "operation": "work-items.search_issues",
+                    "nextAction": {
+                      "function": "connecta.search",
+                      "arguments": {
+                        "query": "search_issues",
+                        "connector": "work-items",
+                        "includeSchemas": "compact"
+                      },
+                      "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+                    },
+                    "retry": "Correct the listed arguments and retry work-items.search_issues."
+                  }
+                },
+                "isError": true
+              },
+              "durationMs": 5.182875000002241
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 7,
+              "kind": "execution",
+              "address": "work-items.search_issues",
+              "source": "execute_code",
+              "outcome": "success",
+              "durationMs": 0,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 8,
+              "kind": "meta_tool",
+              "source": "execute_code",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\"",
+                  "first": 50
+                }
+              },
+              "result": {
+                "nodes": [
+                  {
+                    "identifier": "ENG-294",
+                    "title": "Reduce cold-agent connector learning turns",
+                    "status": "In Progress",
+                    "team": "ENG"
+                  }
+                ],
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                }
+              },
+              "durationMs": 0.307874999998603
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 9,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 50\n  });\n}"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"result\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}}"
+                  }
+                ],
+                "structuredContent": {
+                  "result": {
+                    "nodes": [
+                      {
+                        "identifier": "ENG-294",
+                        "title": "Reduce cold-agent connector learning turns",
+                        "status": "In Progress",
+                        "team": "ENG"
+                      }
+                    ],
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": null
+                    }
+                  }
+                }
+              },
+              "durationMs": 3.7607910000006086
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  const s = await connecta.search({ query: \"work items issues team status in progress stable key\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const candidates = s.tools.filter(t => /issue|work.item/i.test(t.address + \" \" + (t.description || \"\")));\n  return {all:s.tools, candidates};\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 96.8,
+              "resultBytes": 10355,
+              "resultTokens": 2522
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 3.5,
+              "resultBytes": 405,
+              "resultTokens": 100
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 100\n  });\n}"
+              },
+              "status": "failed",
+              "error": null,
+              "durationMs": 6.2,
+              "resultBytes": 1591,
+              "resultTokens": 335
+            },
+            {
+              "server": "connecta",
+              "tool": "execute_code",
+              "arguments": {
+                "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 50\n  });\n}"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 4.7,
+              "resultBytes": 459,
+              "resultTokens": 108
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+          "usage": {
+            "input_tokens": 167718,
+            "cached_input_tokens": 146176,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 686,
+            "reasoning_output_tokens": 150
+          },
+          "mcpResultTokens": 3065,
+          "foreignMcpResultTokens": 0
+        },
+        {
+          "id": "guide-heavy-query",
+          "workflow": "simple-read",
+          "fixtureClass": "guide-heavy",
+          "repetition": 3,
+          "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+          "latencyMs": 20789.4,
+          "taskCorrect": true,
+          "finalCorrect": true,
+          "executionCorrect": true,
+          "safetyPassed": true,
+          "surfaceValid": true,
+          "foreignClean": true,
+          "costEfficient": true,
+          "contextEfficient": true,
+          "roundTripEfficient": true,
+          "passed": true,
+          "outerTools": [
+            "search_tools",
+            "skills",
+            "call_tool"
+          ],
+          "connectaRoundTrips": 3,
+          "observedExecutions": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\""
+              },
+              "source": "outer",
+              "failed": false
+            }
+          ],
+          "unexpectedExecutions": [],
+          "unsafeUnexpectedExecutions": [],
+          "unavailableSurfaceCalls": [],
+          "removedToolCalls": [],
+          "destructiveBoundaryCalls": [],
+          "duplicateMetaToolCalls": 0,
+          "failedMetaToolCalls": 0,
+          "unexpectedFailedMetaToolCalls": 0,
+          "learning": {
+            "discoveryCalls": 1,
+            "guideListCalls": 0,
+            "guideFetches": 1,
+            "connectorGuideFetches": 1,
+            "schemaExpansions": 0,
+            "executionCalls": 1,
+            "repairableFailures": 0,
+            "repairs": 0,
+            "repeatedLearningCalls": 0
+          },
+          "waste": {
+            "duplicateMetaToolCalls": 0,
+            "unexpectedFailedMetaToolCalls": 0,
+            "foreignToolCalls": 0,
+            "nonMcpHostActions": 0,
+            "unavailableSurfaceCalls": 0,
+            "unexpectedExecutions": 0
+          },
+          "correct": true,
+          "routeEfficient": true,
+          "expectedCalls": [
+            {
+              "address": "work-items.search_issues",
+              "args": {
+                "query": "team = ENG AND status = \"In Progress\""
+              }
+            }
+          ],
+          "validOuterRoutes": [
+            [
+              "search_tools",
+              "skills",
+              "call_tool"
+            ],
+            [
+              "skills",
+              "search_tools",
+              "call_tool"
+            ]
+          ],
+          "costEnvelope": {
+            "maxRoundTrips": 4,
+            "maxMcpResultTokens": 2300
+          },
+          "mcpResultTokenBudget": 2300,
+          "calledTools": [
+            "search_tools",
+            "skills",
+            "call_tool"
+          ],
+          "guidanceFetched": true,
+          "connectorGuidanceFetched": true,
+          "foreignToolCalls": [],
+          "advertisedTools": [
+            "skills",
+            "search_tools",
+            "call_tool",
+            "call_destructive_tool",
+            "authorize_connector",
+            "get_result",
+            "execute_code"
+          ],
+          "serverTraces": [
+            {
+              "schemaVersion": 1,
+              "sequence": 1,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "search_tools",
+              "arguments": {
+                "query": "list issues team status",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"connectors\":[{\"id\":\"projects\",\"tools\":[{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_pull_requests\",\"address\":\"projects.list_pull_requests\",\"description\":\"List pull requests and their review state\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"work-items\",\"title\":\"Work Items\",\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"messages\",\"tools\":[{\"name\":\"list_channels\",\"address\":\"messages.list_channels\",\"description\":\"List channels visible to the current account\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_members\",\"address\":\"messages.list_members\",\"description\":\"List members of a channel\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":22,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"list\",\"issues\"],\"otherResultTerms\":[\"status\"],\"unmatchedTerms\":[\"team\"],\"unavailableConnectorCount\":1,\"guidance\":\"No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.\"}}"
+                  }
+                ],
+                "structuredContent": {
+                  "connectors": [
+                    {
+                      "id": "projects",
+                      "tools": [
+                        {
+                          "name": "list_issues",
+                          "address": "projects.list_issues",
+                          "description": "List project issues with optional state and label filters",
+                          "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                          "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                          "inputKeys": [
+                            "state",
+                            "label"
+                          ],
+                          "requiredInputKeys": [
+                            "state"
+                          ],
+                          "outputKeys": [
+                            "state",
+                            "issues"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "get_issue",
+                          "address": "projects.get_issue",
+                          "description": "Get one issue by its numeric identifier",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "create_issue",
+                          "address": "projects.create_issue",
+                          "description": "Create a new project issue",
+                          "inputSchema": "{ title: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "title"
+                          ],
+                          "requiredInputKeys": [
+                            "title"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "add_issue_comment",
+                          "address": "projects.add_issue_comment",
+                          "description": "Add a comment to an issue",
+                          "inputSchema": "{ id: string }",
+                          "outputSchema": "{}",
+                          "inputKeys": [
+                            "id"
+                          ],
+                          "requiredInputKeys": [
+                            "id"
+                          ],
+                          "outputKeys": [],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "list_pull_requests",
+                          "address": "projects.list_pull_requests",
+                          "description": "List pull requests and their review state",
+                          "inputSchema": "{ limit?: integer }",
+                          "outputSchema": "{ items: {}[], nextCursor?: string }",
+                          "inputKeys": [
+                            "limit"
+                          ],
+                          "requiredInputKeys": [],
+                          "outputKeys": [
+                            "items",
+                            "nextCursor"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "work-items",
+                      "title": "Work Items",
+                      "guide": "connector:work-items",
+                      "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's",
+                      "tools": [
+                        {
+                          "name": "search_issues",
+                          "address": "work-items.search_issues",
+                          "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                          "inputSchema": "{ query: string, first?: integer }",
+                          "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                          "inputKeys": [
+                            "query",
+                            "first"
+                          ],
+                          "requiredInputKeys": [
+                            "query"
+                          ],
+                          "outputKeys": [
+                            "nodes",
+                            "pageInfo"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "id": "messages",
+                      "tools": [
+                        {
+                          "name": "list_channels",
+                          "address": "messages.list_channels",
+                          "description": "List channels visible to the current account",
+                          "inputSchema": "{ limit?: integer }",
+                          "outputSchema": "{ items: {}[], nextCursor?: string }",
+                          "inputKeys": [
+                            "limit"
+                          ],
+                          "requiredInputKeys": [],
+                          "outputKeys": [
+                            "items",
+                            "nextCursor"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        },
+                        {
+                          "name": "list_members",
+                          "address": "messages.list_members",
+                          "description": "List members of a channel",
+                          "inputSchema": "{ limit?: integer }",
+                          "outputSchema": "{ items: {}[], nextCursor?: string }",
+                          "inputKeys": [
+                            "limit"
+                          ],
+                          "requiredInputKeys": [],
+                          "outputKeys": [
+                            "items",
+                            "nextCursor"
+                          ],
+                          "annotations": {
+                            "readOnlyHint": true,
+                            "idempotentHint": true
+                          }
+                        }
+                      ]
+                    }
+                  ],
+                  "total": 22,
+                  "offset": 0,
+                  "limit": 8,
+                  "hasMore": true,
+                  "nextOffset": 8,
+                  "matchMode": "partial",
+                  "queryAnalysis": {
+                    "representedTerms": [
+                      "list",
+                      "issues"
+                    ],
+                    "otherResultTerms": [
+                      "status"
+                    ],
+                    "unmatchedTerms": [
+                      "team"
+                    ],
+                    "unavailableConnectorCount": 1,
+                    "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+                  }
+                }
+              },
+              "durationMs": 15.868540999999823
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 2,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+                  }
+                ]
+              },
+              "durationMs": 5.761042000000089
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 3,
+              "kind": "execution",
+              "address": "work-items.search_issues",
+              "source": "call_tool",
+              "outcome": "success",
+              "durationMs": 2,
+              "attempts": 1
+            },
+            {
+              "schemaVersion": 1,
+              "sequence": 4,
+              "kind": "meta_tool",
+              "source": "outer",
+              "operation": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\""
+                },
+                "resultMode": "value"
+              },
+              "result": {
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "{\"ok\":true,\"data\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}},\"durationMs\":3,\"attempts\":1}"
+                  }
+                ],
+                "structuredContent": {
+                  "ok": true,
+                  "data": {
+                    "nodes": [
+                      {
+                        "identifier": "ENG-294",
+                        "title": "Reduce cold-agent connector learning turns",
+                        "status": "In Progress",
+                        "team": "ENG"
+                      }
+                    ],
+                    "pageInfo": {
+                      "hasNextPage": false,
+                      "endCursor": null
+                    }
+                  },
+                  "durationMs": 3,
+                  "attempts": 1
+                }
+              },
+              "durationMs": 9.880582999998296
+            }
+          ],
+          "toolCalls": [
+            {
+              "server": "connecta",
+              "tool": "search_tools",
+              "arguments": {
+                "query": "list issues team status",
+                "safety": "readOnly",
+                "includeSchemas": "compact"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 21,
+              "resultBytes": 7215,
+              "resultTokens": 1730
+            },
+            {
+              "server": "connecta",
+              "tool": "skills",
+              "arguments": {
+                "name": "connector:work-items"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 8.9,
+              "resultBytes": 405,
+              "resultTokens": 100
+            },
+            {
+              "server": "connecta",
+              "tool": "call_tool",
+              "arguments": {
+                "address": "work-items.search_issues",
+                "args": {
+                  "query": "team = ENG AND status = \"In Progress\""
+                },
+                "resultMode": "value"
+              },
+              "status": "completed",
+              "error": null,
+              "durationMs": 11.6,
+              "resultBytes": 537,
+              "resultTokens": 136
+            }
+          ],
+          "nonMcpActions": [],
+          "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+          "usage": {
+            "input_tokens": 112118,
+            "cached_input_tokens": 90624,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 467,
+            "reasoning_output_tokens": 138
+          },
+          "mcpResultTokens": 1966,
+          "foreignMcpResultTokens": 0
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "id": "guide-heavy-query",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-heavy",
+      "repetition": 1,
+      "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+      "latencyMs": 22670.8,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": true,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": true,
+      "outerTools": [
+        "search_tools",
+        "skills",
+        "call_tool",
+        "call_tool"
+      ],
+      "connectaRoundTrips": 4,
+      "observedExecutions": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\"",
+            "first": 100
+          },
+          "source": "outer",
+          "failed": true
+        },
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\"",
+            "first": 50
+          },
+          "source": "outer",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 1,
+      "unexpectedFailedMetaToolCalls": 1,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 0,
+        "executionCalls": 2,
+        "repairableFailures": 1,
+        "repairs": 1,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 1,
+        "foreignToolCalls": 0,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": true,
+      "expectedCalls": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\""
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "skills",
+          "call_tool"
+        ],
+        [
+          "skills",
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 4,
+        "maxMcpResultTokens": 2300
+      },
+      "mcpResultTokenBudget": 2300,
+      "calledTools": [
+        "search_tools",
+        "skills",
+        "call_tool",
+        "call_tool"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "issues team status",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"projects\",\"tools\":[{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_pull_request\",\"address\":\"projects.get_pull_request\",\"description\":\"Get pull request details and merge status\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"work-items\",\"title\":\"Work Items\",\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"builds\",\"tools\":[{\"name\":\"get_workflow_run\",\"address\":\"builds.get_workflow_run\",\"description\":\"Get the status and conclusion of a workflow run\",\"inputSchema\":\"{ runId: integer }\",\"outputSchema\":\"{ runId: integer, status: string, conclusion: string, failedJobId: integer }\",\"inputKeys\":[\"runId\"],\"requiredInputKeys\":[\"runId\"],\"outputKeys\":[\"runId\",\"status\",\"conclusion\",\"failedJobId\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":7,\"offset\":0,\"limit\":8,\"hasMore\":false,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"issues\",\"status\"],\"otherResultTerms\":[],\"unmatchedTerms\":[\"team\"],\"unavailableConnectorCount\":1,\"guidance\":\"No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.\"}}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "projects",
+                  "tools": [
+                    {
+                      "name": "list_issues",
+                      "address": "projects.list_issues",
+                      "description": "List project issues with optional state and label filters",
+                      "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                      "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                      "inputKeys": [
+                        "state",
+                        "label"
+                      ],
+                      "requiredInputKeys": [
+                        "state"
+                      ],
+                      "outputKeys": [
+                        "state",
+                        "issues"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "get_issue",
+                      "address": "projects.get_issue",
+                      "description": "Get one issue by its numeric identifier",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "create_issue",
+                      "address": "projects.create_issue",
+                      "description": "Create a new project issue",
+                      "inputSchema": "{ title: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "title"
+                      ],
+                      "requiredInputKeys": [
+                        "title"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "add_issue_comment",
+                      "address": "projects.add_issue_comment",
+                      "description": "Add a comment to an issue",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "get_pull_request",
+                      "address": "projects.get_pull_request",
+                      "description": "Get pull request details and merge status",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "work-items",
+                  "title": "Work Items",
+                  "guide": "connector:work-items",
+                  "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's",
+                  "tools": [
+                    {
+                      "name": "search_issues",
+                      "address": "work-items.search_issues",
+                      "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                      "inputSchema": "{ query: string, first?: integer }",
+                      "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                      "inputKeys": [
+                        "query",
+                        "first"
+                      ],
+                      "requiredInputKeys": [
+                        "query"
+                      ],
+                      "outputKeys": [
+                        "nodes",
+                        "pageInfo"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "builds",
+                  "tools": [
+                    {
+                      "name": "get_workflow_run",
+                      "address": "builds.get_workflow_run",
+                      "description": "Get the status and conclusion of a workflow run",
+                      "inputSchema": "{ runId: integer }",
+                      "outputSchema": "{ runId: integer, status: string, conclusion: string, failedJobId: integer }",
+                      "inputKeys": [
+                        "runId"
+                      ],
+                      "requiredInputKeys": [
+                        "runId"
+                      ],
+                      "outputKeys": [
+                        "runId",
+                        "status",
+                        "conclusion",
+                        "failedJobId"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 7,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": false,
+              "matchMode": "partial",
+              "queryAnalysis": {
+                "representedTerms": [
+                  "issues",
+                  "status"
+                ],
+                "otherResultTerms": [],
+                "unmatchedTerms": [
+                  "team"
+                ],
+                "unavailableConnectorCount": 1,
+                "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+              }
+            }
+          },
+          "durationMs": 12.565500000000611
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+              }
+            ]
+          },
+          "durationMs": 8.513041000000158
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "execution",
+          "address": "work-items.search_issues",
+          "source": "call_tool",
+          "outcome": "error",
+          "durationMs": 1,
+          "attempts": 1,
+          "errorCode": "invalid_args"
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 100
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":false,\"error\":{\"code\":\"invalid_args\",\"message\":\"Invalid arguments for \\\"work-items.search_issues\\\": #/first: 100 is greater than 50.; #/first: False boolean schema.\",\"retryable\":false,\"validation\":{\"issues\":[{\"path\":\"/first\",\"code\":\"maximum\",\"expected\":\"the declared maximum\"},{\"path\":\"/first\",\"code\":\"additionalProperties\",\"expected\":\"no additional properties\"}]},\"connector\":\"work-items\",\"operation\":\"work-items.search_issues\",\"nextAction\":{\"tool\":\"search_tools\",\"arguments\":{\"query\":\"search_issues\",\"connector\":\"work-items\",\"includeSchemas\":\"compact\"},\"purpose\":\"Inspect the current input shape if the validation findings are not sufficient.\"},\"retry\":\"Correct the listed arguments and retry work-items.search_issues.\"},\"durationMs\":1,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": false,
+              "error": {
+                "code": "invalid_args",
+                "message": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+                "retryable": false,
+                "validation": {
+                  "issues": [
+                    {
+                      "path": "/first",
+                      "code": "maximum",
+                      "expected": "the declared maximum"
+                    },
+                    {
+                      "path": "/first",
+                      "code": "additionalProperties",
+                      "expected": "no additional properties"
+                    }
+                  ]
+                },
+                "connector": "work-items",
+                "operation": "work-items.search_issues",
+                "nextAction": {
+                  "tool": "search_tools",
+                  "arguments": {
+                    "query": "search_issues",
+                    "connector": "work-items",
+                    "includeSchemas": "compact"
+                  },
+                  "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+                },
+                "retry": "Correct the listed arguments and retry work-items.search_issues."
+              },
+              "durationMs": 1,
+              "attempts": 1
+            },
+            "isError": true
+          },
+          "durationMs": 3.3358750000006694
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 5,
+          "kind": "execution",
+          "address": "work-items.search_issues",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 0,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 6,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 50
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}},\"durationMs\":0,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "nodes": [
+                  {
+                    "identifier": "ENG-294",
+                    "title": "Reduce cold-agent connector learning turns",
+                    "status": "In Progress",
+                    "team": "ENG"
+                  }
+                ],
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                }
+              },
+              "durationMs": 0,
+              "attempts": 1
+            }
+          },
+          "durationMs": 2.3583749999997963
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "issues team status",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 15.4,
+          "resultBytes": 6501,
+          "resultTokens": 1588
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 13.6,
+          "resultBytes": 405,
+          "resultTokens": 100
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 100
+            },
+            "resultMode": "value"
+          },
+          "status": "failed",
+          "error": null,
+          "durationMs": 4.1,
+          "resultBytes": 1661,
+          "resultTokens": 361
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 50
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 3.4,
+          "resultBytes": 537,
+          "resultTokens": 136
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+      "usage": {
+        "input_tokens": 144664,
+        "cached_input_tokens": 120832,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 517,
+        "reasoning_output_tokens": 130
+      },
+      "mcpResultTokens": 2185,
+      "foreignMcpResultTokens": 0
+    },
+    {
+      "id": "guide-heavy-query",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-heavy",
+      "repetition": 2,
+      "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+      "latencyMs": 31727,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": true,
+      "costEfficient": false,
+      "contextEfficient": false,
+      "roundTripEfficient": true,
+      "passed": false,
+      "outerTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "connectaRoundTrips": 4,
+      "observedExecutions": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\"",
+            "first": 100
+          },
+          "source": "execute_code",
+          "error": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+          "failed": true
+        },
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\"",
+            "first": 50
+          },
+          "source": "execute_code",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 2,
+      "unexpectedFailedMetaToolCalls": 2,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 0,
+        "executionCalls": 2,
+        "repairableFailures": 1,
+        "repairs": 1,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 2,
+        "foreignToolCalls": 0,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": true,
+      "expectedCalls": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\""
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "skills",
+          "call_tool"
+        ],
+        [
+          "skills",
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 4,
+        "maxMcpResultTokens": 2300
+      },
+      "mcpResultTokenBudget": 2300,
+      "calledTools": [
+        "execute_code",
+        "skills",
+        "execute_code",
+        "execute_code"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "work items issues team status in progress stable key",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "search_issues",
+                "address": "work-items.search_issues",
+                "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                "inputSchema": "{ query: string, first?: integer }",
+                "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                "inputKeys": [
+                  "query",
+                  "first"
+                ],
+                "requiredInputKeys": [
+                  "query"
+                ],
+                "outputKeys": [
+                  "nodes",
+                  "pageInfo"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guide": "connector:work-items",
+                "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+              },
+              {
+                "name": "list_issues",
+                "address": "projects.list_issues",
+                "description": "List project issues with optional state and label filters",
+                "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                "inputKeys": [
+                  "state",
+                  "label"
+                ],
+                "requiredInputKeys": [
+                  "state"
+                ],
+                "outputKeys": [
+                  "state",
+                  "issues"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "get_issue",
+                "address": "projects.get_issue",
+                "description": "Get one issue by its numeric identifier",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "outputKeys": [],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "create_issue",
+                "address": "projects.create_issue",
+                "description": "Create a new project issue",
+                "inputSchema": "{ title: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "title"
+                ],
+                "requiredInputKeys": [
+                  "title"
+                ],
+                "outputKeys": [],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "add_issue_comment",
+                "address": "projects.add_issue_comment",
+                "description": "Add a comment to an issue",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "outputKeys": [],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "get_book",
+                "address": "bookshelf.get_book",
+                "description": "Get one book by its stable id.",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{ id: string, title: string, available: boolean }",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "outputKeys": [
+                  "id",
+                  "title",
+                  "available"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                },
+                "guide": "connector:bookshelf",
+                "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes"
+              },
+              {
+                "name": "get_pull_request",
+                "address": "projects.get_pull_request",
+                "description": "Get pull request details and merge status",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "outputKeys": [],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "list_folder",
+                "address": "files.list_folder",
+                "description": "List the items inside a folder",
+                "inputSchema": "{ limit?: integer }",
+                "outputSchema": "{ items: {}[], nextCursor?: string }",
+                "inputKeys": [
+                  "limit"
+                ],
+                "requiredInputKeys": [],
+                "outputKeys": [
+                  "items",
+                  "nextCursor"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              }
+            ],
+            "total": 10,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": true,
+            "nextOffset": 8,
+            "matchMode": "partial",
+            "queryAnalysis": {
+              "representedTerms": [
+                "work",
+                "items",
+                "issues",
+                "status",
+                "stable"
+              ],
+              "otherResultTerms": [
+                "key"
+              ],
+              "unmatchedTerms": [
+                "team",
+                "progress"
+              ],
+              "unavailableConnectorCount": 1,
+              "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+            }
+          },
+          "durationMs": 5.165124999999534
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({ query: \"work items issues team status in progress stable key\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const candidates = s.tools.filter(t => /issue|work.item/i.test(t.address + \" \" + (t.description || \"\")));\n  return {all:s.tools, candidates};\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"all\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\"},{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_book\",\"address\":\"bookshelf.get_book\",\"description\":\"Get one book by its stable id.\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{ id: string, title: string, available: boolean }\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[\"id\",\"title\",\"available\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:bookshelf\",\"guideSummary\":\"Only `list_books` uses cursor pagination. A `get_book` point lookup takes\"},{\"name\":\"get_pull_request\",\"address\":\"projects.get_pull_request\",\"description\":\"Get pull request details and merge status\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_folder\",\"address\":\"files.list_folder\",\"description\":\"List the items inside a folder\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}],\"candidates\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true},\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\"},{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "all": [
+                  {
+                    "name": "search_issues",
+                    "address": "work-items.search_issues",
+                    "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                    "inputSchema": "{ query: string, first?: integer }",
+                    "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                    "inputKeys": [
+                      "query",
+                      "first"
+                    ],
+                    "requiredInputKeys": [
+                      "query"
+                    ],
+                    "outputKeys": [
+                      "nodes",
+                      "pageInfo"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:work-items",
+                    "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+                  },
+                  {
+                    "name": "list_issues",
+                    "address": "projects.list_issues",
+                    "description": "List project issues with optional state and label filters",
+                    "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                    "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                    "inputKeys": [
+                      "state",
+                      "label"
+                    ],
+                    "requiredInputKeys": [
+                      "state"
+                    ],
+                    "outputKeys": [
+                      "state",
+                      "issues"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "get_issue",
+                    "address": "projects.get_issue",
+                    "description": "Get one issue by its numeric identifier",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "create_issue",
+                    "address": "projects.create_issue",
+                    "description": "Create a new project issue",
+                    "inputSchema": "{ title: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "title"
+                    ],
+                    "requiredInputKeys": [
+                      "title"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "add_issue_comment",
+                    "address": "projects.add_issue_comment",
+                    "description": "Add a comment to an issue",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "get_book",
+                    "address": "bookshelf.get_book",
+                    "description": "Get one book by its stable id.",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{ id: string, title: string, available: boolean }",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [
+                      "id",
+                      "title",
+                      "available"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:bookshelf",
+                    "guideSummary": "Only `list_books` uses cursor pagination. A `get_book` point lookup takes"
+                  },
+                  {
+                    "name": "get_pull_request",
+                    "address": "projects.get_pull_request",
+                    "description": "Get pull request details and merge status",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "list_folder",
+                    "address": "files.list_folder",
+                    "description": "List the items inside a folder",
+                    "inputSchema": "{ limit?: integer }",
+                    "outputSchema": "{ items: {}[], nextCursor?: string }",
+                    "inputKeys": [
+                      "limit"
+                    ],
+                    "requiredInputKeys": [],
+                    "outputKeys": [
+                      "items",
+                      "nextCursor"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  }
+                ],
+                "candidates": [
+                  {
+                    "name": "search_issues",
+                    "address": "work-items.search_issues",
+                    "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                    "inputSchema": "{ query: string, first?: integer }",
+                    "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                    "inputKeys": [
+                      "query",
+                      "first"
+                    ],
+                    "requiredInputKeys": [
+                      "query"
+                    ],
+                    "outputKeys": [
+                      "nodes",
+                      "pageInfo"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    },
+                    "guide": "connector:work-items",
+                    "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's"
+                  },
+                  {
+                    "name": "list_issues",
+                    "address": "projects.list_issues",
+                    "description": "List project issues with optional state and label filters",
+                    "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                    "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                    "inputKeys": [
+                      "state",
+                      "label"
+                    ],
+                    "requiredInputKeys": [
+                      "state"
+                    ],
+                    "outputKeys": [
+                      "state",
+                      "issues"
+                    ],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "get_issue",
+                    "address": "projects.get_issue",
+                    "description": "Get one issue by its numeric identifier",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "create_issue",
+                    "address": "projects.create_issue",
+                    "description": "Create a new project issue",
+                    "inputSchema": "{ title: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "title"
+                    ],
+                    "requiredInputKeys": [
+                      "title"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  },
+                  {
+                    "name": "add_issue_comment",
+                    "address": "projects.add_issue_comment",
+                    "description": "Add a comment to an issue",
+                    "inputSchema": "{ id: string }",
+                    "outputSchema": "{}",
+                    "inputKeys": [
+                      "id"
+                    ],
+                    "requiredInputKeys": [
+                      "id"
+                    ],
+                    "outputKeys": [],
+                    "annotations": {
+                      "readOnlyHint": true,
+                      "idempotentHint": true
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "durationMs": 94.50095900000088
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+              }
+            ]
+          },
+          "durationMs": 2.261916999999812
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "execution",
+          "address": "work-items.search_issues",
+          "source": "execute_code",
+          "outcome": "error",
+          "durationMs": 1,
+          "attempts": 1,
+          "errorCode": "invalid_args"
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 5,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 100
+            }
+          },
+          "error": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+          "durationMs": 1.3902500000003783
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 6,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 100\n  });\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"error\":{\"code\":\"invalid_args\",\"message\":\"Invalid arguments for \\\"work-items.search_issues\\\": #/first: 100 is greater than 50.; #/first: False boolean schema.\",\"retryable\":false,\"validation\":{\"issues\":[{\"path\":\"/first\",\"code\":\"maximum\",\"expected\":\"the declared maximum\"},{\"path\":\"/first\",\"code\":\"additionalProperties\",\"expected\":\"no additional properties\"}]},\"connector\":\"work-items\",\"operation\":\"work-items.search_issues\",\"nextAction\":{\"function\":\"connecta.search\",\"arguments\":{\"query\":\"search_issues\",\"connector\":\"work-items\",\"includeSchemas\":\"compact\"},\"purpose\":\"Inspect the current input shape if the validation findings are not sufficient.\"},\"retry\":\"Correct the listed arguments and retry work-items.search_issues.\"}}"
+              }
+            ],
+            "structuredContent": {
+              "error": {
+                "code": "invalid_args",
+                "message": "Invalid arguments for \"work-items.search_issues\": #/first: 100 is greater than 50.; #/first: False boolean schema.",
+                "retryable": false,
+                "validation": {
+                  "issues": [
+                    {
+                      "path": "/first",
+                      "code": "maximum",
+                      "expected": "the declared maximum"
+                    },
+                    {
+                      "path": "/first",
+                      "code": "additionalProperties",
+                      "expected": "no additional properties"
+                    }
+                  ]
+                },
+                "connector": "work-items",
+                "operation": "work-items.search_issues",
+                "nextAction": {
+                  "function": "connecta.search",
+                  "arguments": {
+                    "query": "search_issues",
+                    "connector": "work-items",
+                    "includeSchemas": "compact"
+                  },
+                  "purpose": "Inspect the current input shape if the validation findings are not sufficient."
+                },
+                "retry": "Correct the listed arguments and retry work-items.search_issues."
+              }
+            },
+            "isError": true
+          },
+          "durationMs": 5.182875000002241
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 7,
+          "kind": "execution",
+          "address": "work-items.search_issues",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 0,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 8,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\"",
+              "first": 50
+            }
+          },
+          "result": {
+            "nodes": [
+              {
+                "identifier": "ENG-294",
+                "title": "Reduce cold-agent connector learning turns",
+                "status": "In Progress",
+                "team": "ENG"
+              }
+            ],
+            "pageInfo": {
+              "hasNextPage": false,
+              "endCursor": null
+            }
+          },
+          "durationMs": 0.307874999998603
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 9,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 50\n  });\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "nodes": [
+                  {
+                    "identifier": "ENG-294",
+                    "title": "Reduce cold-agent connector learning turns",
+                    "status": "In Progress",
+                    "team": "ENG"
+                  }
+                ],
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                }
+              }
+            }
+          },
+          "durationMs": 3.7607910000006086
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const s = await connecta.search({ query: \"work items issues team status in progress stable key\", safety: \"readOnly\", includeSchemas: \"compact\" });\n  const candidates = s.tools.filter(t => /issue|work.item/i.test(t.address + \" \" + (t.description || \"\")));\n  return {all:s.tools, candidates};\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 96.8,
+          "resultBytes": 10355,
+          "resultTokens": 2522
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 3.5,
+          "resultBytes": 405,
+          "resultTokens": 100
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 100\n  });\n}"
+          },
+          "status": "failed",
+          "error": null,
+          "durationMs": 6.2,
+          "resultBytes": 1591,
+          "resultTokens": 335
+        },
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  return await connecta.call(\"work-items.search_issues\", {\n    query: \"team = ENG AND status = \\\"In Progress\\\"\",\n    first: 50\n  });\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 4.7,
+          "resultBytes": 459,
+          "resultTokens": 108
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+      "usage": {
+        "input_tokens": 167718,
+        "cached_input_tokens": 146176,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 686,
+        "reasoning_output_tokens": 150
+      },
+      "mcpResultTokens": 3065,
+      "foreignMcpResultTokens": 0
+    },
+    {
+      "id": "guide-heavy-query",
+      "workflow": "simple-read",
+      "fixtureClass": "guide-heavy",
+      "repetition": 3,
+      "prompt": "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
+      "latencyMs": 20789.4,
+      "taskCorrect": true,
+      "finalCorrect": true,
+      "executionCorrect": true,
+      "safetyPassed": true,
+      "surfaceValid": true,
+      "foreignClean": true,
+      "costEfficient": true,
+      "contextEfficient": true,
+      "roundTripEfficient": true,
+      "passed": true,
+      "outerTools": [
+        "search_tools",
+        "skills",
+        "call_tool"
+      ],
+      "connectaRoundTrips": 3,
+      "observedExecutions": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\""
+          },
+          "source": "outer",
+          "failed": false
+        }
+      ],
+      "unexpectedExecutions": [],
+      "unsafeUnexpectedExecutions": [],
+      "unavailableSurfaceCalls": [],
+      "removedToolCalls": [],
+      "destructiveBoundaryCalls": [],
+      "duplicateMetaToolCalls": 0,
+      "failedMetaToolCalls": 0,
+      "unexpectedFailedMetaToolCalls": 0,
+      "learning": {
+        "discoveryCalls": 1,
+        "guideListCalls": 0,
+        "guideFetches": 1,
+        "connectorGuideFetches": 1,
+        "schemaExpansions": 0,
+        "executionCalls": 1,
+        "repairableFailures": 0,
+        "repairs": 0,
+        "repeatedLearningCalls": 0
+      },
+      "waste": {
+        "duplicateMetaToolCalls": 0,
+        "unexpectedFailedMetaToolCalls": 0,
+        "foreignToolCalls": 0,
+        "nonMcpHostActions": 0,
+        "unavailableSurfaceCalls": 0,
+        "unexpectedExecutions": 0
+      },
+      "correct": true,
+      "routeEfficient": true,
+      "expectedCalls": [
+        {
+          "address": "work-items.search_issues",
+          "args": {
+            "query": "team = ENG AND status = \"In Progress\""
+          }
+        }
+      ],
+      "validOuterRoutes": [
+        [
+          "search_tools",
+          "skills",
+          "call_tool"
+        ],
+        [
+          "skills",
+          "search_tools",
+          "call_tool"
+        ]
+      ],
+      "costEnvelope": {
+        "maxRoundTrips": 4,
+        "maxMcpResultTokens": 2300
+      },
+      "mcpResultTokenBudget": 2300,
+      "calledTools": [
+        "search_tools",
+        "skills",
+        "call_tool"
+      ],
+      "guidanceFetched": true,
+      "connectorGuidanceFetched": true,
+      "foreignToolCalls": [],
+      "advertisedTools": [
+        "skills",
+        "search_tools",
+        "call_tool",
+        "call_destructive_tool",
+        "authorize_connector",
+        "get_result",
+        "execute_code"
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list issues team status",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"projects\",\"tools\":[{\"name\":\"list_issues\",\"address\":\"projects.list_issues\",\"description\":\"List project issues with optional state and label filters\",\"inputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", label?: string }\",\"outputSchema\":\"{ state: \\\"open\\\" | \\\"closed\\\", issues: { number: integer, title: string, state: \\\"open\\\" | \\\"closed\\\" }[] }\",\"inputKeys\":[\"state\",\"label\"],\"requiredInputKeys\":[\"state\"],\"outputKeys\":[\"state\",\"issues\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"get_issue\",\"address\":\"projects.get_issue\",\"description\":\"Get one issue by its numeric identifier\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"create_issue\",\"address\":\"projects.create_issue\",\"description\":\"Create a new project issue\",\"inputSchema\":\"{ title: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"title\"],\"requiredInputKeys\":[\"title\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"add_issue_comment\",\"address\":\"projects.add_issue_comment\",\"description\":\"Add a comment to an issue\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"outputKeys\":[],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_pull_requests\",\"address\":\"projects.list_pull_requests\",\"description\":\"List pull requests and their review state\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"work-items\",\"title\":\"Work Items\",\"guide\":\"connector:work-items\",\"guideSummary\":\"Use `search_issues` for filtered issue lists. Its `query` uses the provider's\",\"tools\":[{\"name\":\"search_issues\",\"address\":\"work-items.search_issues\",\"description\":\"Search work items with the provider query language. Read the connector guide before composing a query.\",\"inputSchema\":\"{ query: string, first?: integer }\",\"outputSchema\":\"{ nodes: {}[], pageInfo: {} }\",\"inputKeys\":[\"query\",\"first\"],\"requiredInputKeys\":[\"query\"],\"outputKeys\":[\"nodes\",\"pageInfo\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]},{\"id\":\"messages\",\"tools\":[{\"name\":\"list_channels\",\"address\":\"messages.list_channels\",\"description\":\"List channels visible to the current account\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"list_members\",\"address\":\"messages.list_members\",\"description\":\"List members of a channel\",\"inputSchema\":\"{ limit?: integer }\",\"outputSchema\":\"{ items: {}[], nextCursor?: string }\",\"inputKeys\":[\"limit\"],\"requiredInputKeys\":[],\"outputKeys\":[\"items\",\"nextCursor\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":22,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8,\"matchMode\":\"partial\",\"queryAnalysis\":{\"representedTerms\":[\"list\",\"issues\"],\"otherResultTerms\":[\"status\"],\"unmatchedTerms\":[\"team\"],\"unavailableConnectorCount\":1,\"guidance\":\"No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.\"}}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "projects",
+                  "tools": [
+                    {
+                      "name": "list_issues",
+                      "address": "projects.list_issues",
+                      "description": "List project issues with optional state and label filters",
+                      "inputSchema": "{ state: \"open\" | \"closed\", label?: string }",
+                      "outputSchema": "{ state: \"open\" | \"closed\", issues: { number: integer, title: string, state: \"open\" | \"closed\" }[] }",
+                      "inputKeys": [
+                        "state",
+                        "label"
+                      ],
+                      "requiredInputKeys": [
+                        "state"
+                      ],
+                      "outputKeys": [
+                        "state",
+                        "issues"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "get_issue",
+                      "address": "projects.get_issue",
+                      "description": "Get one issue by its numeric identifier",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "create_issue",
+                      "address": "projects.create_issue",
+                      "description": "Create a new project issue",
+                      "inputSchema": "{ title: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "title"
+                      ],
+                      "requiredInputKeys": [
+                        "title"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "add_issue_comment",
+                      "address": "projects.add_issue_comment",
+                      "description": "Add a comment to an issue",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "outputKeys": [],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "list_pull_requests",
+                      "address": "projects.list_pull_requests",
+                      "description": "List pull requests and their review state",
+                      "inputSchema": "{ limit?: integer }",
+                      "outputSchema": "{ items: {}[], nextCursor?: string }",
+                      "inputKeys": [
+                        "limit"
+                      ],
+                      "requiredInputKeys": [],
+                      "outputKeys": [
+                        "items",
+                        "nextCursor"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "work-items",
+                  "title": "Work Items",
+                  "guide": "connector:work-items",
+                  "guideSummary": "Use `search_issues` for filtered issue lists. Its `query` uses the provider's",
+                  "tools": [
+                    {
+                      "name": "search_issues",
+                      "address": "work-items.search_issues",
+                      "description": "Search work items with the provider query language. Read the connector guide before composing a query.",
+                      "inputSchema": "{ query: string, first?: integer }",
+                      "outputSchema": "{ nodes: {}[], pageInfo: {} }",
+                      "inputKeys": [
+                        "query",
+                        "first"
+                      ],
+                      "requiredInputKeys": [
+                        "query"
+                      ],
+                      "outputKeys": [
+                        "nodes",
+                        "pageInfo"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "messages",
+                  "tools": [
+                    {
+                      "name": "list_channels",
+                      "address": "messages.list_channels",
+                      "description": "List channels visible to the current account",
+                      "inputSchema": "{ limit?: integer }",
+                      "outputSchema": "{ items: {}[], nextCursor?: string }",
+                      "inputKeys": [
+                        "limit"
+                      ],
+                      "requiredInputKeys": [],
+                      "outputKeys": [
+                        "items",
+                        "nextCursor"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "list_members",
+                      "address": "messages.list_members",
+                      "description": "List members of a channel",
+                      "inputSchema": "{ limit?: integer }",
+                      "outputSchema": "{ items: {}[], nextCursor?: string }",
+                      "inputKeys": [
+                        "limit"
+                      ],
+                      "requiredInputKeys": [],
+                      "outputKeys": [
+                        "items",
+                        "nextCursor"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 22,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": true,
+              "nextOffset": 8,
+              "matchMode": "partial",
+              "queryAnalysis": {
+                "representedTerms": [
+                  "list",
+                  "issues"
+                ],
+                "otherResultTerms": [
+                  "status"
+                ],
+                "unmatchedTerms": [
+                  "team"
+                ],
+                "unavailableConnectorCount": 1,
+                "guidance": "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
+              }
+            }
+          },
+          "durationMs": 15.868540999999823
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "# Work item search\n\nUse `search_issues` for filtered issue lists. Its `query` uses the provider's\nquery language, not natural language. Put field names on the left, quote status\nvalues, join clauses with uppercase `AND`, and use the stable team key rather\nthan the display name.\n\nExample: `team = ENG AND status = \"In Progress\"`.\n"
+              }
+            ]
+          },
+          "durationMs": 5.761042000000089
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "execution",
+          "address": "work-items.search_issues",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 2,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\""
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}},\"durationMs\":3,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "nodes": [
+                  {
+                    "identifier": "ENG-294",
+                    "title": "Reduce cold-agent connector learning turns",
+                    "status": "In Progress",
+                    "team": "ENG"
+                  }
+                ],
+                "pageInfo": {
+                  "hasNextPage": false,
+                  "endCursor": null
+                }
+              },
+              "durationMs": 3,
+              "attempts": 1
+            }
+          },
+          "durationMs": 9.880582999998296
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list issues team status",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 21,
+          "resultBytes": 7215,
+          "resultTokens": 1730
+        },
+        {
+          "server": "connecta",
+          "tool": "skills",
+          "arguments": {
+            "name": "connector:work-items"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 8.9,
+          "resultBytes": 405,
+          "resultTokens": 100
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "work-items.search_issues",
+            "args": {
+              "query": "team = ENG AND status = \"In Progress\""
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.6,
+          "resultBytes": 537,
+          "resultTokens": 136
+        }
+      ],
+      "nonMcpActions": [],
+      "finalText": "{\"nodes\":[{\"identifier\":\"ENG-294\",\"title\":\"Reduce cold-agent connector learning turns\",\"status\":\"In Progress\",\"team\":\"ENG\"}],\"pageInfo\":{\"hasNextPage\":false,\"endCursor\":null}}",
+      "usage": {
+        "input_tokens": 112118,
+        "cached_input_tokens": 90624,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 467,
+        "reasoning_output_tokens": 138
+      },
+      "mcpResultTokens": 1966,
+      "foreignMcpResultTokens": 0
+    }
+  ]
+}
