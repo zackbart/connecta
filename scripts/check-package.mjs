@@ -148,11 +148,14 @@ try {
     "dist/providers/mixpanel.d.ts",
     "dist/providers/linear.js",
     "dist/providers/linear.d.ts",
+    "dist/providers/notion.js",
+    "dist/providers/notion.d.ts",
     "dist/providers/stripe.js",
     "dist/providers/stripe.d.ts",
     "src/index.ts",
     "src/providers/linear.ts",
     "src/providers/mixpanel.ts",
+    "src/providers/notion.ts",
     "src/providers/stripe.ts",
   ]) {
     if (!paths.has(required)) {
@@ -226,6 +229,22 @@ if (
 ) {
   throw new Error("Linear read-only endpoint drifted");
 }
+const notionProvider = await import("@zackbart/connecta/providers/notion");
+if (typeof notionProvider.notion !== "function") {
+  throw new Error("missing Notion provider constructor");
+}
+const notionConnection = notionProvider.notion("workspace", {
+  purpose: "package smoke",
+});
+if (notionConnection.id !== "workspace") {
+  throw new Error("Notion provider did not return a connector");
+}
+if (notionConnection.kind !== "api") {
+  throw new Error("Notion provider is not an api() connector");
+}
+if (!notionConnection.staticTools?.length) {
+  throw new Error("Notion provider published no tools");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
@@ -238,6 +257,9 @@ for (const name of [
   "STRIPE_MCP_ENDPOINT",
   "linear",
   "LINEAR_MCP_ENDPOINTS",
+  "notion",
+  "NOTION_API_VERSION",
+  "NOTION_API_BASE_URL",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
