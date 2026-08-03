@@ -81,8 +81,9 @@ does not:
   each task. The task prompts do not explain Connecta's routing workflow. The
   runner scores answer and execution correctness, safety, advertised-surface
   validity, foreign and redundant calls, Connecta round trips and result
-  tokens, whole-agent tokens, and wall time. It accepts multiple valid routes
-  rather than prescribing an exact tool sequence.
+  tokens, whole-agent tokens, and wall time. Ordinary cases accept multiple
+  valid routes; cases with an explicit routing policy additionally score the
+  intended outer-tool sequence.
 
 Run the complete environment:
 
@@ -115,6 +116,28 @@ npm --prefix eval/current-version run perf:agent -- \
   --repetitions 5 \
   --concurrency 2
 ```
+
+The issue #295 routing lane selects six fresh-agent cases covering one unknown
+read, dependent reads, in-program reduction, multi-operation discovery,
+ambiguous candidates, and a nonstandard collection root. It reports
+`routePassRate` and requires at least 95% route compliance:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --case routing \
+  --repetitions 5 \
+  --concurrency 5
+```
+
+Compare arms with identical repetitions and concurrency. A before/after table
+built from one repetition against five is comparing sample sizes as much as
+guidance, and the route scorer excludes only the `skills` guidance fetch from a
+case's intended outer sequence — fetching the usage skill is what the
+instructions tell an unfamiliar agent to do, so scoring it as a deviation would
+penalize compliance. Host MCP-protocol probes (`list_mcp_resources`,
+`list_mcp_resource_templates`, which Codex issues on its own initiative) are
+recorded as `hostProtocolProbes` and do not count against `foreignClean`, which
+asks whether the agent reached outside Connecta.
 
 Each case documents at least one route achievable on the server's actual
 advertised tool inventory. The harness validates that invariant before an agent

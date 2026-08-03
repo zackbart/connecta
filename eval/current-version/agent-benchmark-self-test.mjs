@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 
 import {
+  agentForeignCalls,
   distribution,
   learningMetrics,
   scoreAgentRun,
@@ -94,6 +95,204 @@ const codeFirst = scoreAgentRun({
 });
 assert.equal(codeFirst.passed, true, "the code-first route is valid");
 assert.deepEqual(codeFirst.removedToolCalls, []);
+
+const separatelyDiscovered = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 2,
+      distinctInnerSearches: true,
+    },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record one" },
+    },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record two" },
+    },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(separatelyDiscovered.routePassed, true);
+
+const broadDiscovery = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 2,
+      distinctInnerSearches: true,
+    },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "search_tools", arguments: { query: "records" } },
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record one two" },
+    },
+    ...separatelyDiscovered.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(broadDiscovery.taskCorrect, true);
+assert.equal(broadDiscovery.routePassed, false);
+assert.equal(broadDiscovery.passed, false);
+
+// Connecta's instructions tell an unfamiliar agent to fetch the usage skill.
+// An agent that takes that advice and then routes correctly has complied with
+// the guidance under test, so the fetch cannot count as a route deviation.
+const guidanceFetchThenRoute = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: { outerTools: ["execute_code"], minInnerSearches: 1 },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "skills", arguments: { name: "usage" } },
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "records" },
+    },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(guidanceFetchThenRoute.routePassed, true);
+assert.equal(guidanceFetchThenRoute.passed, true);
+assert.deepEqual(guidanceFetchThenRoute.outerTools, [
+  "skills",
+  "execute_code",
+]);
+
+// Excluding the guidance fetch must not excuse an actual extra outer step: the
+// redundant top-level search still breaks the route.
+const guidanceFetchThenBroadDiscovery = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: { outerTools: ["execute_code"], minInnerSearches: 1 },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "skills", arguments: { name: "usage" } },
+    {
+      source: "outer",
+      operation: "search_tools",
+      arguments: { query: "records" },
+    },
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "records" },
+    },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(guidanceFetchThenBroadDiscovery.routePassed, false);
+assert.equal(guidanceFetchThenBroadDiscovery.passed, false);
+
+// The Codex host enumerates MCP resources on its own initiative. That is the
+// host speaking the protocol, not the agent leaving Connecta, so it neither
+// fails foreignClean nor counts as waste — but it stays visible as a probe.
+const hostProbedResources = scoreAgentRun({
+  fixture,
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "execute_code", arguments: {} },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [
+    { server: "codex", tool: "list_mcp_resources" },
+    { server: "codex", tool: "list_mcp_resource_templates" },
+  ],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(hostProbedResources.foreignClean, true);
+assert.equal(hostProbedResources.passed, true);
+assert.equal(hostProbedResources.waste.foreignToolCalls, 0);
+assert.equal(hostProbedResources.waste.hostProtocolProbes, 2);
+
+// A tool the agent actually reached for outside Connecta still fails.
+const reachedOutside = scoreAgentRun({
+  fixture,
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "execute_code", arguments: {} },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [
+    { server: "codex", tool: "list_mcp_resources" },
+    { server: "other-server", tool: "read_records" },
+  ],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(reachedOutside.foreignClean, false);
+assert.equal(reachedOutside.passed, false);
+assert.equal(reachedOutside.waste.foreignToolCalls, 1);
+assert.equal(reachedOutside.waste.hostProtocolProbes, 1);
+
+assert.deepEqual(
+  agentForeignCalls([
+    { server: "codex", tool: "list_mcp_resources" },
+    { server: "other-server", tool: "read_records" },
+  ]),
+  [{ server: "other-server", tool: "read_records" }],
+);
 
 const partialBatchFailure = scoreAgentRun({
   fixture,

@@ -1,6 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,6 +9,7 @@ import { getEncoding } from "js-tiktoken";
 
 import { createAuditClient, round } from "./audit-lib.mjs";
 import {
+  agentForeignCalls,
   distribution,
   scoreAgentRun,
   validateFixtures,
@@ -58,6 +60,10 @@ const disabledHostFeatures = [
   "goals",
   "tool_suggest",
   "skill_search",
+  "shell_snapshot",
+  "shell_tool",
+  "unified_exec",
+  "workspace_dependencies",
 ];
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
@@ -402,7 +408,169 @@ const cases = [
       );
     },
   },
+  {
+    id: "single-read",
+    prompt:
+      "Return the one deterministic record with id 7. Respond with only the record JSON.",
+    expectedCalls: [
+      { address: "controlled.read_record", args: { id: 7 } },
+    ],
+    validOuterRoutes: [["search_tools", "call_tool"]],
+    routePolicy: { outerTools: ["search_tools", "call_tool"] },
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 500 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return (
+        value?.id === 7 &&
+        value?.group === "beta" &&
+        value?.score === 18
+      );
+    },
+  },
+  {
+    id: "dependent-read",
+    prompt:
+      "For workflow run 9, return the failed job's log lines. Respond with only the JSON array of strings.",
+    expectedCalls: [
+      { address: "builds.get_workflow_run", args: { runId: 9 } },
+      { address: "builds.get_job_logs", args: { jobId: 907 } },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 1,
+    },
+    costEnvelope: { maxRoundTrips: 1, maxMcpResultTokens: 700 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return (
+        Array.isArray(value) &&
+        value.length === 2 &&
+        value[0] === "test: expected 2 received 3" &&
+        value[1] === "process exited with status 1"
+      );
+    },
+  },
+  {
+    id: "dependent-reduction",
+    prompt:
+      "For the deterministic collection of 120 records, return each group's record count and score sum. Respond with only a JSON object whose top-level keys are the group names; do not wrap the groups in another object.",
+    expectedCalls: [
+      {
+        address: "controlled.records",
+        argsAnyOf: [{ count: 120 }, {}],
+      },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 1,
+    },
+    costEnvelope: { maxRoundTrips: 1, maxMcpResultTokens: 700 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      const expected = {};
+      for (let index = 0; index < 120; index += 1) {
+        const group = ["alpha", "beta", "gamma"][index % 3];
+        const row = (expected[group] ??= { count: 0, sum: 0 });
+        row.count += 1;
+        row.sum += (index * 17) % 101;
+      }
+      return ["alpha", "beta", "gamma"].every(
+        (group) =>
+          (value?.[group]?.count === expected[group].count ||
+            value?.[group]?.record_count === expected[group].count ||
+            value?.[group]?.recordCount === expected[group].count) &&
+          (value?.[group]?.sum ??
+            value?.[group]?.scoreSum ??
+            value?.[group]?.score_sum) ===
+            expected[group].sum,
+      );
+    },
+  },
+  {
+    id: "multi-operation-discovery",
+    prompt:
+      "Fetch two connector values: the full workflow-run response for run 9, and the document search result array for 'staged customer rollout'. Return only {\"workflowRun\": <full run response>, \"launchPlanMatches\": <result array>}; do not substitute the run id or request text for either response.",
+    expectedCalls: [
+      { address: "builds.get_workflow_run", args: { runId: 9 } },
+      {
+        address: "documents.search_content",
+        args: { query: "staged customer rollout" },
+      },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 2,
+      distinctInnerSearches: true,
+    },
+    costEnvelope: { maxRoundTrips: 1, maxMcpResultTokens: 900 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return (
+        value?.workflowRun?.runId === 9 &&
+        value?.workflowRun?.failedJobId === 907 &&
+        Array.isArray(value?.launchPlanMatches) &&
+        value.launchPlanMatches[0]?.id === "page-launch-plan"
+      );
+    },
+  },
+  {
+    id: "ambiguous-candidate",
+    prompt:
+      "Find release metadata for package connecta. The only input available is the package name; no registry or tenant identifier is available. Respond with only the release JSON.",
+    expectedCalls: [
+      {
+        address: "routing.search_public_releases",
+        args: { package: "connecta" },
+      },
+    ],
+    validOuterRoutes: [["search_tools", "call_tool"]],
+    routePolicy: { outerTools: ["search_tools", "call_tool"] },
+    // The competing-candidate catalog this case searches costs ~680 result
+    // tokens on the intended route, so a 650 envelope failed every run that
+    // routed correctly — a budget no agent could meet is a broken gate, not a
+    // finding. 750 leaves honest headroom above the observed cost (#295).
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 750 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return value?.package === "connecta" && value?.version === "0.12.2";
+    },
+  },
+  {
+    id: "nonstandard-collection-root",
+    prompt:
+      "Return the count and titles of all active routing incidents. Respond with only {\"count\": number, \"titles\": string[]}.",
+    expectedCalls: [
+      { address: "routing.list_active_incidents", args: {} },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 1,
+    },
+    costEnvelope: { maxRoundTrips: 1, maxMcpResultTokens: 650 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return (
+        value?.count === 2 &&
+        Array.isArray(value?.titles) &&
+        value.titles.join("|") ===
+          "Catalog refresh delayed|Executor queue elevated"
+      );
+    },
+  },
 ];
+
+const routingCaseIds = new Set([
+  "single-read",
+  "dependent-read",
+  "dependent-reduction",
+  "multi-operation-discovery",
+  "ambiguous-candidate",
+  "nonstandard-collection-root",
+]);
 
 function startServer() {
   const child = spawn(
@@ -506,6 +674,9 @@ async function advertisedToolNames(url) {
 }
 
 async function runAgent(fixture, url, repetition, advertisedTools) {
+  const agentWorkspace = await mkdtemp(
+    resolve(tmpdir(), "connecta-agent-eval-"),
+  );
   const commandArgs = [
     "exec",
     "--json",
@@ -515,7 +686,7 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
     "--sandbox",
     "read-only",
     "--cd",
-    "/tmp",
+    agentWorkspace,
     "--config",
     `mcp_servers.connecta.url="${url}"`,
     "--config",
@@ -531,7 +702,7 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
   ];
   const started = performance.now();
   const child = spawn("codex", commandArgs, {
-    cwd: root,
+    cwd: agentWorkspace,
     env: {
       ...process.env,
       CONNECTA_EVAL_TOKEN: bearer,
@@ -613,6 +784,7 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
       resolveExit(code);
     });
   });
+  await rm(agentWorkspace, { recursive: true, force: true });
   if (exitCode !== 0) {
     throw new Error(
       `Codex exited with ${exitCode} for "${fixture.id}".\n${stderr}`,
@@ -629,6 +801,13 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
   );
   const foreignToolCalls = toolCalls.filter(
     (call) => call.server !== "connecta",
+  );
+  // Reported separately so the two questions stay separate: what the agent
+  // chose to call outside Connecta, and what the host asked the protocol on
+  // its own initiative.
+  const chosenForeignCalls = agentForeignCalls(foreignToolCalls);
+  const hostProtocolProbes = foreignToolCalls.filter(
+    (call) => !chosenForeignCalls.includes(call),
   );
   const mcpResultTokens = connectaToolCalls.reduce(
     (sum, call) => sum + call.resultTokens,
@@ -673,7 +852,10 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
         trace.operation === "skills" &&
         trace.arguments?.name?.startsWith?.("connector:"),
     ),
-    foreignToolCalls: foreignToolCalls.map(
+    foreignToolCalls: chosenForeignCalls.map(
+      (call) => `${call.server ?? "unknown"}.${call.tool}`,
+    ),
+    hostProtocolProbes: hostProtocolProbes.map(
       (call) => `${call.server ?? "unknown"}.${call.tool}`,
     ),
     advertisedTools,
@@ -690,12 +872,14 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
 const selected =
   selectedCase === "all"
     ? cases
+    : selectedCase === "routing"
+      ? cases.filter((fixture) => routingCaseIds.has(fixture.id))
     : cases.filter((fixture) => fixture.id === selectedCase);
 if (selected.length === 0) {
   throw new Error(
     `Unknown --case "${selectedCase}". Choose ${cases
       .map((fixture) => fixture.id)
-      .join(", ")}, or all.`,
+      .join(", ")}, routing, or all.`,
   );
 }
 
@@ -769,6 +953,7 @@ const caseResults = selected.map((fixture) => {
       surfaceValid: rate(caseRuns, (run) => run.surfaceValid),
       foreignClean: rate(caseRuns, (run) => run.foreignClean),
       costEfficient: rate(caseRuns, (run) => run.costEfficient),
+      routePassed: rate(caseRuns, (run) => run.routePassed),
       passed: rate(caseRuns, (run) => run.passed),
     },
     latencyMs: distribution(
@@ -829,6 +1014,10 @@ const caseResults = selected.map((fixture) => {
         (sum, run) => sum + run.waste.foreignToolCalls,
         0,
       ),
+      hostProtocolProbes: caseRuns.reduce(
+        (sum, run) => sum + run.waste.hostProtocolProbes,
+        0,
+      ),
       nonMcpHostActions: caseRuns.reduce(
         (sum, run) => sum + run.waste.nonMcpHostActions,
         0,
@@ -877,7 +1066,7 @@ const result = {
     repetitions,
     concurrency,
     scoring:
-      "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+      "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Cases with a route policy also score the intended outer-tool sequence, excluding the skills guidance fetch; cases without one accept any documented route. Host MCP-protocol probes are reported separately from foreign-tool use.",
     removedToolPolicy:
       "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes.",
   },
@@ -890,8 +1079,15 @@ const result = {
     safetyPassed: runs.filter((run) => run.safetyPassed).length,
     surfaceValid: runs.filter((run) => run.surfaceValid).length,
     foreignClean: runs.filter((run) => run.foreignClean).length,
+    hostProtocolProbes: runs.reduce(
+      (sum, run) => sum + run.waste.hostProtocolProbes,
+      0,
+    ),
     costEfficient: runs.filter((run) => run.costEfficient).length,
     passed: runs.filter((run) => run.passed).length,
+    routePassed: runs.filter((run) => run.routePassed).length,
+    routePassRate: rate(runs, (run) => run.routePassed),
+    routeTargetMet: rate(runs, (run) => run.routePassed) >= 0.95,
     totalLatencyMs: round(
       runs.reduce((sum, run) => sum + run.latencyMs, 0),
       1,
