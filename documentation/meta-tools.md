@@ -83,8 +83,12 @@ is necessary:
 `connector_required` for the explicit configuration above,
 `approval_required` for an unannotated or write-capable tool, and
 `schema_truncated` when a requested compact input or output shape was capped.
-The boolean is a hard stop: exact schema expansion does not waive it. The agent
-fetches the guide for any of those reasons. Otherwise it reads the
+The boolean is an instruction, not a server-side gate — nothing refuses the
+call, so the agent is told to fetch the guide before making it, for any reason
+listed. `connector_required` and `approval_required` survive exact schema
+expansion; `schema_truncated` is cleared by the describe that returns the exact
+shape, and describe reports whatever reasons remain in the same two fields.
+Otherwise it reads the
 bounded summary: connector-specific sequencing, units, pagination, aliases,
 and generic API conventions still require the guide when they affect the task,
 while a complete and unambiguous one-read schema proceeds directly.

@@ -39,7 +39,7 @@ One async arrow function. The only capabilities are one global per connector (\`
 const CONNECTOR_GUIDES_SECTION = `
 ## Per-connector guides
 
-Some connectors ship a deployment-scoped usage guide. \`skills({})\` and discovery return the exact \`guide\` name plus a bounded \`guideSummary\` saying what it covers. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop: fetch before calling, even if describe can expand the schema; \`guideRequiredReasons\` says why. Otherwise fetch when the summary names a connector-specific sequence, unit, pagination rule, alias, or generic API convention relevant to the task. A read-only call whose compact schema is complete and unambiguous may proceed without fetching an otherwise irrelevant guide. Connector guides do not replace the shared Connecta usage guide and never apply to another deployment implicitly.
+When a connector here ships a deployment-scoped usage guide, \`skills({})\` and discovery return the exact \`guide\` name plus a bounded \`guideSummary\` saying what it covers. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop: fetch before calling. \`guideRequiredReasons\` says why — \`connector_required\` and \`approval_required\` stand however you expand the schema; \`schema_truncated\` clears once describe returns the exact one. Otherwise fetch when the summary names a connector-specific sequence, unit, pagination rule, alias, or generic API convention relevant to the task. A read-only call whose compact schema is complete and unambiguous may proceed without fetching an otherwise irrelevant guide. Connector guides do not replace the shared Connecta usage guide and never apply to another deployment implicitly.
 `;
 
 /** Shared Connecta routing guidance, byte-identical across deployments. */
@@ -204,11 +204,13 @@ export function listSkills(connectors: readonly Connector[]): SkillListing[] {
     description: skill.description,
   }));
   for (const connector of connectors) {
-    const guide = connectorGuide(connector);
-    if (!guide) continue;
+    // Undefined here means "no guide" and nothing else: a connector that has
+    // one always summarizes to a non-empty line, configured or derived.
+    const summary = connectorGuideSummary(connector);
+    if (!summary) continue;
     listing.push({
       name: connectorSkillName(connector.id),
-      description: connectorGuideSummary(connector) ?? summarizeGuide(connector, guide),
+      description: summary,
     });
   }
   return listing;

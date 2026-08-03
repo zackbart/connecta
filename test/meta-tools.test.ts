@@ -136,6 +136,36 @@ Prefer \`notion.search\` over listing databases.
     });
   }
 
+  /**
+   * A guided read-only tool whose compact discovery schema is too wide to
+   * render whole — `schema_truncated` is the one required-review reason an
+   * exact schema resolves, so it needs a connector both halves can share.
+   */
+  function wideGuided(): Connector {
+    return api("wide", {
+      usageGuide: {
+        content: "# Wide API\n\nArguments are documented here.\n",
+        summary: "Argument meanings for wide operations.",
+      },
+      tools: [
+        {
+          name: "read",
+          inputSchema: {
+            type: "object",
+            properties: Object.fromEntries(
+              Array.from({ length: 100 }, (_, index) => [
+                `argument_${index}_${"x".repeat(20)}`,
+                { type: "string" },
+              ]),
+            ),
+          },
+          annotations: { readOnlyHint: true },
+          handler: () => ({}),
+        },
+      ],
+    });
+  }
+
   function textFrom(result: { content: { text: string }[] }): string {
     return required(result.content[0]).text;
   }
@@ -505,27 +535,7 @@ Prefer \`notion.search\` over listing databases.
   });
 
   it("requires guide review when a compact schema is truncated", async () => {
-    const properties = Object.fromEntries(
-      Array.from({ length: 100 }, (_, index) => [
-        `argument_${index}_${"x".repeat(20)}`,
-        { type: "string" },
-      ]),
-    );
-    const connector = api("wide", {
-      usageGuide: {
-        content: "# Wide API\n\nArguments are documented here.\n",
-        summary: "Argument meanings for wide operations.",
-      },
-      tools: [
-        {
-          name: "read",
-          inputSchema: { type: "object", properties },
-          annotations: { readOnlyHint: true },
-          handler: () => ({}),
-        },
-      ],
-    });
-    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const mt = createMetaTools(makeRegistry([wideGuided()]), BASE);
     const searched = textOf(
       await mt.searchTools({ query: "read", includeSchemas: "compact" }),
     ) as {
@@ -541,6 +551,70 @@ Prefer \`notion.search\` over listing databases.
     expect(tool.inputSchemaTruncated).toBe(true);
     expect(tool.guideRequired).toBe(true);
     expect(tool.guideRequiredReasons).toEqual(["schema_truncated"]);
+  });
+
+  it("clears schema_truncated once describe returns the exact schema", async () => {
+    // The reason exists because the agent could not read the whole shape.
+    // describe renders it whole, so the reason is spent — and the tool
+    // descriptions promise exactly this one waiver and no other.
+    const described = await new CatalogService(
+      makeRegistry([wideGuided()]),
+      BASE,
+    ).describe({ addresses: ["wide.read"] });
+    const entry = required(described[0]);
+    expect(entry.guide).toBe("connector:wide");
+    expect(entry.guideSummary).toBe("Argument meanings for wide operations.");
+    expect(entry).not.toHaveProperty("guideRequired");
+    expect(entry).not.toHaveProperty("guideRequiredReasons");
+  });
+
+  it("carries connector_required and approval_required into describe", async () => {
+    // The other direction: reasons about the connector's conventions and the
+    // call's consequences are not facts about a rendered schema, so expanding
+    // one settles nothing.
+    const connector = api("generic", {
+      usageGuide: {
+        content: "# Generic API\n\nRead the operation documentation first.\n",
+        summary: "Generic operation aliases and argument shapes.",
+        required: true,
+      },
+      tools: [
+        {
+          name: "invoke",
+          inputSchema: { type: "object" },
+          handler: () => ({}),
+        },
+      ],
+    });
+    const described = await new CatalogService(
+      makeRegistry([connector]),
+      BASE,
+    ).describe({ addresses: ["generic.invoke"] });
+    const entry = required(described[0]);
+    expect(entry.guide).toBe("connector:generic");
+    expect(entry.guideRequired).toBe(true);
+    expect(entry.guideRequiredReasons).toEqual([
+      "connector_required",
+      "approval_required",
+    ]);
+  });
+
+  it("omits guideRequired from a search that asked for no schemas", async () => {
+    // schema_truncated is a fact about a rendered schema; with none rendered
+    // there is nothing to cap and nothing to report.
+    const mt = createMetaTools(makeRegistry([wideGuided()]), BASE);
+    const searched = textOf(await mt.searchTools({ query: "read" })) as {
+      connectors: Array<{
+        guide?: string;
+        tools: Array<Record<string, unknown>>;
+      }>;
+    };
+    const connector = required(searched.connectors[0]);
+    expect(connector.guide).toBe("connector:wide");
+    const tool = required(connector.tools[0]);
+    expect(tool).not.toHaveProperty("inputSchemaTruncated");
+    expect(tool).not.toHaveProperty("guideRequired");
+    expect(tool).not.toHaveProperty("guideRequiredReasons");
   });
 });
 

@@ -1398,7 +1398,7 @@ const GUIDE_NOTES = {
   skills:
     " skills({}) also lists this deployment's scoped connector guides; fetch only an exact name listed there or carried by discovery, never one inferred from a connector id.",
   search:
-    " A result carrying `guide` also carries a bounded `guideSummary`. `guideRequired: true` is a hard stop: fetch that exact guide before calling; `guideRequiredReasons` explains why, and exact schema expansion does not waive it. Otherwise fetch only when the summary names a connector convention relevant to the task. A complete, unambiguous read-only schema needs no otherwise-irrelevant guide fetch.",
+    " A result carrying `guide` also carries a bounded `guideSummary`. `guideRequired: true` is a hard stop: fetch that exact guide before calling. `guideRequiredReasons` explains why — `connector_required` and `approval_required` stand however you expand the schema; `schema_truncated` clears once describe returns the exact one. Otherwise fetch only when the summary names a connector convention relevant to the task. A complete, unambiguous read-only schema needs no otherwise-irrelevant guide fetch.",
   destructive:
     " Before a consequential call, inspect the address through discovery or describe and fetch any connector guide it names.",
 } as const;
