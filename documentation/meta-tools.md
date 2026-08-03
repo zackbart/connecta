@@ -194,7 +194,13 @@ the bounded classified failure (`code`, `message`, `retryable`, and any
 `retryAfterMs`) so the caller can tell a transient outage from one a deployment
 operator must clear. It carries nothing else the call-path classifier knows: a
 discovery read is not a call. Unscoped searches keep the count only — one
-connector's failure is not another search's context. Analysis
+connector's failure is not another search's context. An empty query browses
+rather than searches, so it reports no term analysis — except when a catalog
+was unavailable, where the same failure fields apply: a browse scoped to the
+unavailable connector carries `unavailableConnectorCount`, `catalogError`, and
+guidance, and an unscoped browse again carries the count alone. The advice to
+browse a connector with an empty query must not land in silence that reads like
+a connector with no tools. Analysis
 from a connector-filtered search includes `connectorScope` and speaks only
 about that connector; `unknownConnector` distinguishes an unconfigured ID from
 a known connector with no match. Analysis covers at most eight distinct terms
