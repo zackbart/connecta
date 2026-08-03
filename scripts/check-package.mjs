@@ -152,7 +152,10 @@ try {
     "dist/providers/notion.d.ts",
     "dist/providers/stripe.js",
     "dist/providers/stripe.d.ts",
+    "dist/providers/cloudflare.js",
+    "dist/providers/cloudflare.d.ts",
     "src/index.ts",
+    "src/providers/cloudflare.ts",
     "src/providers/linear.ts",
     "src/providers/mixpanel.ts",
     "src/providers/notion.ts",
@@ -245,6 +248,18 @@ if (notionConnection.kind !== "api") {
 if (!notionConnection.staticTools?.length) {
   throw new Error("Notion provider published no tools");
 }
+const cloudflareProvider = await import(
+  "@zackbart/connecta/providers/cloudflare"
+);
+if (typeof cloudflareProvider.cloudflare !== "function") {
+  throw new Error("missing Cloudflare provider constructor");
+}
+const cloudflareConnection = cloudflareProvider.cloudflare("edge", {
+  purpose: "package smoke",
+});
+if (cloudflareConnection.id !== "edge") {
+  throw new Error("Cloudflare provider did not return a connector");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
@@ -260,6 +275,9 @@ for (const name of [
   "notion",
   "NOTION_API_VERSION",
   "NOTION_API_BASE_URL",
+  "cloudflare",
+  "CLOUDFLARE_API_BASE",
+  "CLOUDFLARE_DNS_RECORD_TYPES",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
@@ -551,6 +569,12 @@ try {
     if (existsSync(join(work, "node_modules", dependency))) {
       throw new Error(`Optional peer ${dependency} was installed with core`);
     }
+  }
+  // The Cloudflare connection is hand-written fetch, not an SDK wrapper: the
+  // provider SDK must be absent even as a transitive install, and smoke.mjs
+  // still constructs the connector below.
+  if (existsSync(join(work, "node_modules", "cloudflare"))) {
+    throw new Error("Cloudflare SDK was installed with the package");
   }
   run(process.execPath, ["smoke.mjs"], work);
 
