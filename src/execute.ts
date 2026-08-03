@@ -1351,7 +1351,7 @@ export function registerExecuteTool(
         code: z
           .string()
           .describe(
-            "One complete JavaScript async arrow function. Consume search/describe results and finish the task inside it; returning catalog data for a later call spends a round trip and buys nothing.",
+            "One complete JavaScript async arrow function. Consume search/describe results and finish the task inside it; returning catalog data for a later call spends a round trip and buys nothing. So does aborting on a missing tool match or result key — re-search, describe, or read the result's actual keys here instead.",
           ),
         diagnostics: z
           .boolean()
