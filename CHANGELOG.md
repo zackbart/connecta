@@ -2,6 +2,143 @@
 
 All notable changes to this package are documented here.
 
+## 0.13.0 — 2026-08-03
+
+Everything an agent reads before it calls anything got more selective. Connecta
+ships its first maintained prebuilt connection — `mixpanel()` behind
+`./providers/mixpanel`, one import returning one ordinary `Connector` with the
+provider's endpoint, region, auth, and rate-limit defaults already right — and
+the ethos now names a maintained prebuilt connection the preferred authoring
+path, with `remoteMcp()` and `api()` staying equal first-class primitives for
+everything nobody maintains. Connector guides became structured: a guide can
+declare a bounded `summary` and mark itself `required`, and discovery carries
+`guideSummary` with `guideRequired`/`guideRequiredReasons`, so an agent fetches
+a guide when it changes the call and skips it when a complete read-only schema
+already says everything. A connector-scoped search whose catalog is down now
+returns a typed `catalogError` instead of advice to retry later. And the tool
+descriptions stopped inviting the two failures the new cold-agent benchmark
+kept catching: a top-level search that duplicates the one the program was about
+to run, and a program guessing at a result shape it never read.
+
+No API breaks. `usageGuide` still accepts a plain markdown string and means
+exactly what it did; every new discovery field is additive and absent unless
+earned. What changed under existing deployments is text, and it is worth
+knowing about: the served tool descriptions and the MCP `instructions` string
+are rewritten, and `skills({})` now summarizes a connector guide from its first
+body line rather than its heading — a guide opening `# Acme` that used to list
+as "Acme" now lists as the sentence beneath it. The built-in usage skill also
+grew, because the per-connector guides section is now appended unconditionally
+rather than only where a guide exists; that keeps the shared guide
+byte-identical across every deployment, so an agent that read it once in a task
+never needs a second local copy, at the cost of one paragraph in deployments
+with no guides. Upgrading is a version bump and nothing else — there is no new
+configuration, no new dependency, and no behavior a deployment must opt into
+(#294, #295, #296, #297, PRs #298–#302).
+
+### Added
+
+- **A maintained Mixpanel connection at `./providers/mixpanel`.**
+  `mixpanel(id, { purpose, region?, auth?, instructions?, title?,
+  maxResultBytes? })` proxies Mixpanel's hosted MCP server with the endpoint
+  chosen by data residency (`us`, `eu`, `in`, default `us`), OAuth by default
+  and static headers for service accounts, HTTPS required, and a rolling
+  600-calls-per-hour admission budget matching the provider's published limit.
+  It carries a maintained usage guide — start at `Get-Projects`, then
+  `Get-Business-Context`; discover names instead of guessing spellings; fetch
+  `Get-Query-Schema` before `Run-Query` — to which a deployment may append its
+  own account instructions. The subpath is an optional import, not a
+  dependency: nothing new installs with core.
+- **Fill-in-only vetted safety annotations.** The connection classifies 63
+  Mixpanel tools — 35 read-only, 28 writes split into additive creates and
+  destructive edits — but only where the downstream is silent. An explicit
+  `destructiveHint: true` or `readOnlyHint: false` from Mixpanel on an
+  allowlisted read name wins, because that is the downstream saying this
+  release's allowlist is wrong. Tools this release has never seen fail closed
+  to approval-visible rather than being assumed safe.
+- **`ConnectorUsageGuide`.** A connector may now declare
+  `usageGuide: { content, summary?, required? }` instead of a bare string.
+  `summary` is the bounded line discovery shows; `required: true` says correct
+  use always depends on conventions no tool schema can carry. Mutations and
+  truncated schemas already require review and do not need the flag.
+- **`guideSummary`, `guideRequired`, and `guideRequiredReasons` on discovery.**
+  `search_tools`, `connecta.search`, and `connecta.describe` now say what a
+  guide covers and whether it must be read first, with the reason named:
+  `connector_required` and `approval_required` stand however far a schema is
+  expanded, while `schema_truncated` clears once describe returns the exact
+  shape. A connector-scoped search that matches nothing still surfaces the
+  connector's guide, so an agent that searched the wrong terms learns the
+  vocabulary instead of concluding the connector is empty.
+- **A scoped `catalogError`.** A search explicitly scoped to one connector
+  whose catalog is unavailable now returns the classified failure — `code`,
+  bounded `message`, `retryable`, and `retryAfterMs` when known — so an agent
+  can tell a transient outage from one an operator has to clear. Exactly four
+  fields, pinned by a test: an unscoped search still gets only
+  `unavailableConnectorCount`, because one connector's failure is not another
+  search's context.
+
+### Changed
+
+- **Routing guidance no longer invites redundant discovery.** Top-level
+  `search_tools` is now reserved for a single unreduced read or for
+  write-capable work; anything involving reduction, dependent steps, loops, or
+  joins is one `execute_code` program that searches and calls inside the run.
+  Search guidance also tells an agent to scope to an obvious connector id and
+  to require purpose, input, truncation, safety, and output fit rather than
+  taking the first lexical match. Measured against the shipped text over five
+  repetitions, route compliance went from 9/30 to 25/30.
+- **`call_destructive_tool` carries the guide note.** Destructive multi-step
+  work keeps its route through top-level discovery — `execute_code` admits only
+  read-only tools — and its description now says to inspect the address and
+  fetch any guide it names before a consequential call.
+- **The ethos prefers prebuilt connections, and refuses a registry.** The
+  decisions table accepts prebuilt connections as the preferred authoring path
+  *when connecta maintains one*, fenced: exactly one ordinary `Connector` with
+  no extra privileges, never a bundle or preset, tools hand-written or proxied
+  rather than generated from a schema document, and vetted annotations that
+  only fill in downstream silence. A provider registry or integration
+  marketplace is refused outright — prebuilt connections are imports, not
+  listings, and discovery happens in documentation, never at runtime.
+- **The usage skill is byte-identical everywhere.** The per-connector guides
+  section is appended unconditionally and rewritten to route on
+  `guideRequired`/`guideSummary` rather than telling agents to read every
+  guide before first use. Guide-free deployments still pay no fixed
+  tool-description cost — the conditional notes in the meta-tool descriptions
+  remain absent.
+- **Guide summaries prefer substance over headings.** `skills({})` reads a
+  guide's first meaningful body line, falling back to the heading and then to
+  the connector description, so a listing describes what a guide says rather
+  than what it is titled.
+
+### Fixed
+
+- **The Mixpanel connection could not have booted.** Its call-admission rule
+  paired a budget with `retryAfterMs` — a queue setting without a queue, which
+  the admission controller refuses at construction. No suite caught it because
+  every suite stubbed remote-MCP before the registry saw the connector; a new
+  suite now boots two accounts through the real `createConnecta` with `fetch`
+  rigged to throw, proving the boot and the per-account address, catalog,
+  storage, credential, and budget namespaces.
+- **Tool descriptions claimed a waiver describe already performs.** Three
+  descriptions said schema expansion never clears a guide requirement while
+  `describe` cleared `schema_truncated` on every call. The text moved to the
+  behavior rather than the reverse.
+- **Package-surface guards derive from `src/providers/`** instead of naming
+  `mixpanel.ts`, so the next provider fails them only for a real reason.
+
+### Internal
+
+- **A cold-agent benchmark lane in `eval/`.** Fourteen cases across two lanes —
+  eight measuring whether an agent meeting a connector cold discovers, routes,
+  and recovers, six measuring route compliance for the description rewrite —
+  with a comparator that refuses to compare runs whose harness, scoring, or
+  sandbox fingerprints differ, and reports a `productSha256` over `src/**`. A
+  baseline and a candidate cut from one working tree record the same commit and
+  the same dirty flag, and only the fingerprint says whether the candidate
+  measured changed code. It also reports host-routing probes separately from
+  foreign calls, so a contaminated run announces itself instead of reading as a
+  product regression. `eval/` is not in the published `files` list; deployments
+  never see it.
+
 ## 0.12.2 — 2026-08-02
 
 Rendered programs can now bind a small, explicit set of read-only connector
