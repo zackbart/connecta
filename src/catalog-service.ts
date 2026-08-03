@@ -834,32 +834,42 @@ export class CatalogService {
             required: connectorGuideRequired(scopedConnector),
           }
         : undefined;
+    // A scope that resolved to nothing is the same silence one step earlier in
+    // the lookup: no connector resolved, so no catalog was even attempted, so
+    // no catalog failed and the unavailable path below never fires. Echo only
+    // the ID the caller already supplied — naming what else is configured
+    // would answer a question they did not ask, past a filter they may not
+    // pass.
+    const unknownConnectorGuidance =
+      args.connector && !scopedConnector
+        ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
+        : undefined;
     // Term-bearing searches report analysis only when the scorer had to
     // degrade; a browse has no terms to analyse and normally reports none at
-    // all. But "this catalog is unavailable" is not a statement about terms,
-    // and answering a browse of a failed catalog with an empty entry list
-    // alone is indistinguishable from a connector that simply exposes no
-    // tools. The term partitions stay empty on that path because there were no
-    // terms — the failure fields carry the whole message.
+    // all. But neither "this catalog is unavailable" nor "there is no such
+    // connector" is a statement about terms, and answering either browse with
+    // an empty entry list alone is indistinguishable from a connector that
+    // simply exposes no tools. The term partitions stay empty on those paths
+    // because there were no terms — the scope fields carry the whole message.
     const reportsQueryAnalysis =
       queryTerms.length > 0
         ? matchMode === "partial"
-        : unavailableCatalogs > 0;
+        : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0;
     const guidance =
       queryTerms.length === 0
-        ? // A browse has no terms to advise about, so it stays silent unless a
-          // catalog failed: the guidance on a scoped miss recommends browsing
-          // with an empty query, and that advice must not lead into a dead end
-          // that looks like a connector with no tools.
-          unavailableCatalogs === 0
-          ? undefined
-          : scopedConnector
-            ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-            : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`
-        : matches.length === 0
-          ? args.connector && !scopedConnector
-            ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
+        ? // A browse has no terms to advise about, so it stays silent unless
+          // the scope itself failed: the guidance on a scoped miss recommends
+          // browsing with an empty query, and that advice must not lead into a
+          // dead end that looks like a connector with no tools.
+          (unknownConnectorGuidance ??
+          (unavailableCatalogs === 0
+            ? undefined
             : scopedConnector
+              ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
+              : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`))
+        : matches.length === 0
+          ? (unknownConnectorGuidance ??
+            (scopedConnector
               ? unavailableCatalogs > 0
                 ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
                 : scopedGuide?.required
@@ -867,7 +877,7 @@ export class CatalogService {
                   : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
               : unavailableCatalogs === 0
                 ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
-                : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
+                : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`))
           : matchMode === "partial"
             ? scopedConnector
               ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`
