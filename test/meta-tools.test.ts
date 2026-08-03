@@ -871,6 +871,10 @@ interface SearchResult {
       retryable: boolean;
       retryAfterMs?: number;
     };
+    guide?: string;
+    guideSummary?: string;
+    guideRequired?: true;
+    guideRequiredReasons?: string[];
     guidance?: string;
   };
 }
@@ -5019,5 +5023,129 @@ describe("probe timeout", () => {
     ) as SearchResult;
     expect(required(unscoped.queryAnalysis).unavailableConnectorCount).toBe(1);
     expect(required(unscoped.queryAnalysis).catalogError).toBeUndefined();
+  });
+});
+
+describe("empty-query browse of an unavailable catalog", () => {
+  /** A connector with a guide whose catalog never resolves. */
+  const unavailable = (): Connector => ({
+    id: "billing",
+    kind: "api",
+    usageGuide: {
+      content: "# Billing\n\nInvoice ids are prefixed.\n",
+      summary: "Invoice ids are prefixed.",
+      required: true,
+    },
+    async listTools() {
+      throw new ConnectorCallError(
+        "unavailable",
+        "Upstream returned 503. Operator must restore access.",
+        { retryAfterMs: 30_000 },
+      );
+    },
+    async callTool() {
+      return null;
+    },
+  });
+
+  /** A connector that answers, correctly, with nothing. */
+  const barren: Connector = {
+    id: "barren",
+    kind: "api",
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return null;
+    },
+  };
+
+  it("reports the failure and its recovery detail for a scoped browse", async () => {
+    const mt = createMetaTools(
+      makeRegistry([unavailable(), calcConnector]),
+      BASE,
+    );
+    const browsed = textOf(
+      await mt.searchTools({ connector: "billing", query: "" }),
+    ) as SearchResult;
+    expect(browsed.connectors).toEqual([]);
+    const analysis = required(browsed.queryAnalysis);
+    // No terms were supplied, so the term partitions say nothing — the failure
+    // fields carry the whole message.
+    expect(analysis.representedTerms).toEqual([]);
+    expect(analysis.otherResultTerms).toEqual([]);
+    expect(analysis.unmatchedTerms).toEqual([]);
+    expect(analysis).toMatchObject({
+      connectorScope: "billing",
+      unavailableConnectorCount: 1,
+      catalogError: {
+        code: "unavailable",
+        retryable: true,
+        retryAfterMs: 30_000,
+      },
+      guidance: expect.stringContaining(
+        'Connector "billing" could not be browsed',
+      ),
+    });
+    expect(required(analysis.catalogError).message).toContain(
+      "Upstream returned 503. Operator must restore access.",
+    );
+    // Same bounded shape the term-bearing scoped path returns.
+    expect(Object.keys(required(analysis.catalogError)).sort()).toEqual([
+      "code",
+      "message",
+      "retryAfterMs",
+      "retryable",
+    ]);
+    // The recovery owner stays reachable: a browse that failed still names the
+    // connector's guide, as a scoped miss with terms does.
+    expect(analysis).toMatchObject({
+      guide: "connector:billing",
+      guideSummary: "Invoice ids are prefixed.",
+      guideRequired: true,
+      guideRequiredReasons: ["connector_required"],
+    });
+  });
+
+  it("keeps an unscoped browse to the count alone", async () => {
+    const mt = createMetaTools(
+      makeRegistry([unavailable(), calcConnector]),
+      BASE,
+    );
+    const browsed = textOf(await mt.searchTools({ query: "" })) as SearchResult;
+    // The healthy connector still browses.
+    expect(browsed.connectors.map((group) => group.id)).toEqual(["calc"]);
+    const analysis = required(browsed.queryAnalysis);
+    expect(analysis.unavailableConnectorCount).toBe(1);
+    expect(analysis.catalogError).toBeUndefined();
+    expect(analysis.guide).toBeUndefined();
+    expect(required(analysis.guidance)).toContain("browse is incomplete");
+    expect(JSON.stringify(browsed)).not.toContain("503");
+  });
+
+  it("distinguishes an unavailable catalog from a genuinely empty one", async () => {
+    const mt = createMetaTools(makeRegistry([unavailable(), barren]), BASE);
+    const empty = textOf(
+      await mt.searchTools({ connector: "barren", query: "" }),
+    ) as SearchResult;
+    const broken = textOf(
+      await mt.searchTools({ connector: "billing", query: "" }),
+    ) as SearchResult;
+    // Both return no entries, and that is where the resemblance ends.
+    expect(empty.connectors).toEqual([]);
+    expect(broken.connectors).toEqual([]);
+    expect(empty.queryAnalysis).toBeUndefined();
+    expect(required(broken.queryAnalysis).catalogError).toBeDefined();
+    expect(JSON.stringify(empty)).not.toEqual(JSON.stringify(broken));
+  });
+
+  it("leaves an available scoped browse unchanged", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
+    const browsed = textOf(
+      await mt.searchTools({ connector: "calc", query: "" }),
+    ) as SearchResult;
+    expect(browsed.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(browsed.total).toBeGreaterThan(0);
+    expect(browsed.queryAnalysis).toBeUndefined();
   });
 });

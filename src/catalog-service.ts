@@ -834,9 +834,28 @@ export class CatalogService {
             required: connectorGuideRequired(scopedConnector),
           }
         : undefined;
+    // Term-bearing searches report analysis only when the scorer had to
+    // degrade; a browse has no terms to analyse and normally reports none at
+    // all. But "this catalog is unavailable" is not a statement about terms,
+    // and answering a browse of a failed catalog with an empty entry list
+    // alone is indistinguishable from a connector that simply exposes no
+    // tools. The term partitions stay empty on that path because there were no
+    // terms — the failure fields carry the whole message.
+    const reportsQueryAnalysis =
+      queryTerms.length > 0
+        ? matchMode === "partial"
+        : unavailableCatalogs > 0;
     const guidance =
       queryTerms.length === 0
-        ? undefined
+        ? // A browse has no terms to advise about, so it stays silent unless a
+          // catalog failed: the guidance on a scoped miss recommends browsing
+          // with an empty query, and that advice must not lead into a dead end
+          // that looks like a connector with no tools.
+          unavailableCatalogs === 0
+          ? undefined
+          : scopedConnector
+            ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
+            : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`
         : matches.length === 0
           ? args.connector && !scopedConnector
             ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
@@ -866,7 +885,7 @@ export class CatalogService {
       ...(matchMode === "partial" && matches.length > 0
         ? { matchMode }
         : {}),
-      ...(queryTerms.length > 0 && matchMode === "partial"
+      ...(reportsQueryAnalysis
         ? {
             queryAnalysis: {
               representedTerms,
