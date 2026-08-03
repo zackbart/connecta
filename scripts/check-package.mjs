@@ -146,9 +146,12 @@ try {
     "dist/executors/quickjs-runtime.js",
     "dist/providers/mixpanel.js",
     "dist/providers/mixpanel.d.ts",
+    "dist/providers/linear.js",
+    "dist/providers/linear.d.ts",
     "dist/providers/stripe.js",
     "dist/providers/stripe.d.ts",
     "src/index.ts",
+    "src/providers/linear.ts",
     "src/providers/mixpanel.ts",
     "src/providers/stripe.ts",
   ]) {
@@ -207,6 +210,22 @@ const stripeConnection = stripeProvider.stripe("payments", {
 if (stripeConnection.id !== "payments") {
   throw new Error("Stripe provider did not return a connector");
 }
+const linearProvider = await import("@zackbart/connecta/providers/linear");
+if (typeof linearProvider.linear !== "function") {
+  throw new Error("missing Linear provider constructor");
+}
+const linearConnection = linearProvider.linear("tracker", {
+  purpose: "package smoke",
+});
+if (linearConnection.id !== "tracker") {
+  throw new Error("Linear provider did not return a connector");
+}
+if (
+  linearProvider.LINEAR_MCP_ENDPOINTS["read-only"] !==
+  "https://mcp.linear.app/mcp/readonly"
+) {
+  throw new Error("Linear read-only endpoint drifted");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
@@ -217,6 +236,8 @@ for (const name of [
   "MIXPANEL_MCP_ENDPOINTS",
   "stripe",
   "STRIPE_MCP_ENDPOINT",
+  "linear",
+  "LINEAR_MCP_ENDPOINTS",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

@@ -25,6 +25,8 @@ export const WORKERS_SUITES = [
   "test/execute-emit.test.ts",
   "test/execute-ui.test.ts",
   "test/guest-api-contract.test.ts",
+  "test/linear-provider.test.ts",
+  "test/linear-registry.test.ts",
   "test/meta-tools.test.ts",
   "test/mixpanel-provider.test.ts",
   "test/mixpanel-registry.test.ts",

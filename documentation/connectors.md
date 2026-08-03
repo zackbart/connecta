@@ -72,9 +72,9 @@ export const connecta = createConnecta({
       purpose: "Production product decisions for the growth team",
     }),
     // Custom downstream MCP server, no prebuilt connection needed.
-    remoteMcp("linear", {
-      url: "https://mcp.linear.app/mcp",
-      description: "Issue tracking for the platform team",
+    remoteMcp("deploy_tools", {
+      url: "https://mcp.internal.example/deploys",
+      description: "In-house deployment and rollback tooling",
     }),
     // Deliberate in-house HTTP surface, hand-written tool by hand-written tool.
     api("billing", {
@@ -109,6 +109,7 @@ them. Nothing in the list is privileged by how it was authored.
 
 Maintained provider guides:
 
+- [Linear](./linear.md)
 - [Mixpanel](./mixpanel.md)
 - [Stripe](./stripe.md)
 
