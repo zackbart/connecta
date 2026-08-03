@@ -56,6 +56,30 @@ function assertComparable(baseline, candidate) {
   if (errors.length > 0) {
     throw new Error(`Incomparable cold-agent artifacts:\n- ${errors.join("\n- ")}`);
   }
+  reportProductFingerprints(baseline, candidate);
+}
+
+/**
+ * Reported, never required. A candidate is supposed to measure different
+ * product code, so differing fingerprints are the expected case — but two
+ * artifacts taken from the same working tree carry the same `commit` and the
+ * same `productDirty` flag, and only this hash tells you whether the candidate
+ * actually measured a changed `src/`.
+ */
+function reportProductFingerprints(baseline, candidate) {
+  const before = baseline.source?.productSha256;
+  const after = candidate.source?.productSha256;
+  if (before === undefined || after === undefined) {
+    process.stderr.write(
+      "Product fingerprint unrecorded on at least one artifact; provenance is commit-level only.\n",
+    );
+    return;
+  }
+  process.stderr.write(
+    before === after
+      ? `Product fingerprint identical on both sides (${before}); the candidate measured no src/ change.\n`
+      : `Product fingerprint differs (baseline ${before} vs candidate ${after}); expected for a candidate.\n`,
+  );
 }
 
 function totals(result) {
@@ -65,6 +89,10 @@ function totals(result) {
     taskCorrectRate: rate(result.summary.correct, runs),
     safetyRate: rate(result.summary.safetyPassed, runs),
     contextBudgetRate: rate(result.summary.contextEfficient, runs),
+    // A run the host answered from some other server — invented or real — is
+    // not evidence about Connecta. Surfaced so a contaminated lane announces
+    // itself instead of reading as a product regression.
+    hostRoutingCleanRate: rate(result.summary.foreignClean ?? 0, runs),
     averageRoundTrips: average(
       result.runs.reduce((sum, run) => sum + run.connectaRoundTrips, 0),
       runs,
@@ -112,11 +140,13 @@ export function compareAgentBenchmarks(baseline, candidate) {
     baseline: {
       commit: baseline.source.commit,
       productDirty: baseline.source.productDirty,
+      productSha256: baseline.source.productSha256,
       ...baselineTotals,
     },
     candidate: {
       commit: candidate.source.commit,
       productDirty: candidate.source.productDirty,
+      productSha256: candidate.source.productSha256,
       ...candidateTotals,
     },
     deltas: {
@@ -131,6 +161,10 @@ export function compareAgentBenchmarks(baseline, candidate) {
       contextBudgetRate: delta(
         baselineTotals.contextBudgetRate,
         candidateTotals.contextBudgetRate,
+      ),
+      hostRoutingCleanRate: delta(
+        baselineTotals.hostRoutingCleanRate,
+        candidateTotals.hostRoutingCleanRate,
       ),
       averageRoundTrips: delta(
         baselineTotals.averageRoundTrips,
@@ -173,6 +207,7 @@ export function renderAgentComparison(comparison) {
     ["Correctness", percent(baseline.taskCorrectRate), percent(candidate.taskCorrectRate), signed(deltas.taskCorrectRate * 100, 1) + " pp"],
     ["Read-only safety", percent(baseline.safetyRate), percent(candidate.safetyRate), signed(deltas.safetyRate * 100, 1) + " pp"],
     ["Context-budget pass", percent(baseline.contextBudgetRate), percent(candidate.contextBudgetRate), signed(deltas.contextBudgetRate * 100, 1) + " pp"],
+    ["Host routing clean (no foreign calls)", percent(baseline.hostRoutingCleanRate), percent(candidate.hostRoutingCleanRate), signed(deltas.hostRoutingCleanRate * 100, 1) + " pp"],
     ["Connecta round trips / run", baseline.averageRoundTrips.toFixed(2), candidate.averageRoundTrips.toFixed(2), signed(deltas.averageRoundTrips)],
     ["MCP result tokens / run", baseline.averageMcpResultTokens.toFixed(1), candidate.averageMcpResultTokens.toFixed(1), signed(deltas.averageMcpResultTokens, 1)],
     ["Whole-agent tokens / run", baseline.averageWholeAgentTokens.toFixed(1), candidate.averageWholeAgentTokens.toFixed(1), signed(deltas.averageWholeAgentTokens, 1)],
@@ -180,11 +215,15 @@ export function renderAgentComparison(comparison) {
   ];
   const productState = (artifact) =>
     artifact.productDirty ? "product changes present" : "clean product tree";
+  const productFingerprint = (artifact) =>
+    artifact.productSha256
+      ? `src ${artifact.productSha256.slice(0, 12)}`
+      : "src unrecorded";
   return `# Cold-agent comparison
 
-Baseline: \`${baseline.commit}\` (${baseline.runs} runs; ${productState(baseline)})
+Baseline: \`${baseline.commit}\` (${baseline.runs} runs; ${productState(baseline)}; ${productFingerprint(baseline)})
 
-Candidate: \`${candidate.commit}\` (${candidate.runs} runs; ${productState(candidate)})
+Candidate: \`${candidate.commit}\` (${candidate.runs} runs; ${productState(candidate)}; ${productFingerprint(candidate)})
 
 ## Result
 
@@ -199,6 +238,8 @@ ${rows.map((row) => `| ${row.join(" | ")} |`).join("\n")}
 ${Object.entries(checks).map(([name, passed]) => `- ${passed ? "PASS" : "FAIL"}: ${name}`).join("\n")}
 
 Negative cost deltas are improvements. Qualification requires repeated comparable sessions, no correctness or context-budget regression, complete read-only safety, and fewer repairs or Connecta round trips.
+
+Host routing below 100% means some run was answered from a server other than Connecta. Those runs measure the host, not the product: read the correctness and context-budget rows as contaminated before reading them as a regression.
 `;
 }
 

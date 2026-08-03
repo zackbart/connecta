@@ -132,13 +132,28 @@ pin the same model and machine across runs.
 
 ### Cold-agent connector learning
 
-The six `perf:agent` cases are the evidence lane for
+The seven `perf:agent` cases are the evidence lane for
 [#294](https://github.com/zackbart/connecta/issues/294): an exact-address
 control, a generic API-shaped read, a connector-guide-heavy query, a
-schema-heavy dependent read, an unavailable catalog, and large-result
-reduction. Fixtures use nested schemas, typed catalog failures, provider query
-syntax, and deterministic domain-shaped results rather than empty synthetic
-tools. No live account payload enters the lane.
+schema-heavy dependent read, an unavailable catalog, an authorization handoff,
+and large-result reduction. Fixtures use nested schemas, typed catalog
+failures, provider query syntax, and deterministic domain-shaped results rather
+than empty synthetic tools. No live account payload enters the lane.
+
+`auth-handoff` is the lane's only coverage of the accepted
+`authorize_connector` recovery route
+([#192](https://github.com/zackbart/connecta/issues/192)); keep it. The #294
+rewrite also retired the earlier `independent-batch` case: two point lookups by
+id measured batching, which `schema-heavy-dependent-read` and
+`large-result-reduction` both exercise under harder conditions, and it produced
+no learning signal the other cases did not. Its `controlled.read_record`
+fixture is still wired, so restoring it is a fixture-free edit if a batching
+question ever needs its own case.
+
+Case prompts name the Connecta route explicitly, not just the address. A bare
+`connector.tool` reads to a host as `<server>.<tool>`, and hosts have been
+observed inventing an MCP server by that name and never calling Connecta —
+which scores as a product regression.
 
 Each run records connector learning separately from MCP round trips:
 
@@ -171,10 +186,25 @@ Qualification requires no correctness or context-budget regression, complete
 read-only safety, and a measured reduction in repairs or Connecta round trips.
 Raw token and learning deltas remain in the report even when that verdict
 passes; a passing verdict is evidence for review, not a release gate.
-Run the complete six-case baseline first. A narrowly scoped candidate may then
+
+Two rows are reported rather than gated. Host routing cleanliness counts runs
+with no foreign tool call; below 100% the lane measured the host as much as the
+product, and the correctness and context-budget rows should be read as
+contaminated before they are read as a regression. The `productSha256`
+fingerprint hashes `src/**`, because a baseline and a candidate cut from one
+working tree record the same commit and the same dirty flag — identical
+fingerprints mean the candidate measured no product change at all.
+
+Run the complete seven-case baseline first. A narrowly scoped candidate may then
 use matching repeated `--case` artifacts when its behavior can affect only one
 workflow; retain the complete candidate smoke separately so unrelated routing
 variance stays visible rather than being averaged into the focused verdict.
+
+Commit the comparison JSON/Markdown pairs and any focused artifact small enough
+to read. Full-lane run artifacts retain every trace and run to five figures of
+JSON; they are regeneration output, not evidence worth versioning — cite the
+command that produces them instead. Per-run detail is serialized once, at the
+artifact's top-level `runs`; `cases[]` carries aggregates only.
 
 ### Tool-lookup and context-noise canary
 

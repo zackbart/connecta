@@ -453,11 +453,14 @@ function comparisonArtifact({
   commit,
   roundTrips,
   repairs,
-  correct = 12,
-  safety = 12,
-  contextEfficient = 12,
+  correct = 14,
+  safety = 14,
+  contextEfficient = 14,
+  foreignClean = 14,
   repetitions = 2,
   model = "pinned-eval-model",
+  harnessSha256 = "harness-sha",
+  productSha256 = "product-sha",
 }) {
   const caseIds = [
     "exact-address-control",
@@ -465,6 +468,7 @@ function comparisonArtifact({
     "guide-heavy-query",
     "schema-heavy-dependent-read",
     "unavailable-catalog",
+    "auth-handoff",
     "large-result-reduction",
   ];
   const runs = caseIds.flatMap((id) =>
@@ -475,7 +479,14 @@ function comparisonArtifact({
   );
   return {
     schemaVersion: 3,
-    source: { commit, model, tokenizer: "o200k_base" },
+    source: {
+      commit,
+      model,
+      tokenizer: "o200k_base",
+      harnessSha256,
+      productSha256,
+    },
+    // Per-run detail lives only at the top level; `cases[]` carries aggregates.
     cases: caseIds.map((id) => ({ id, repetitions })),
     runs,
     summary: {
@@ -483,6 +494,7 @@ function comparisonArtifact({
       correct,
       safetyPassed: safety,
       contextEfficient,
+      foreignClean,
       totalMcpResultTokens: runs.length * 100,
       totalInputTokens: runs.length * 1_000,
       totalOutputTokens: runs.length * 100,
@@ -508,6 +520,26 @@ const comparison = compareAgentBenchmarks(
 assert.equal(comparison.qualifies, true);
 assert.equal(comparison.deltas.averageRoundTrips, -1);
 assert.match(renderAgentComparison(comparison), /\*\*QUALIFIES\*\*/);
+assert.match(renderAgentComparison(comparison), /src product-sha/);
+
+// A run the host answered elsewhere drags correctness down; the report has to
+// say so on its own row rather than letting it read as a product regression.
+const contaminated = compareAgentBenchmarks(
+  comparisonArtifact({ commit: "baseline", roundTrips: 3, repairs: 2 }),
+  comparisonArtifact({
+    commit: "candidate",
+    roundTrips: 2,
+    repairs: 1,
+    correct: 10,
+    foreignClean: 10,
+  }),
+);
+assert.equal(contaminated.qualifies, false);
+assert.equal(contaminated.deltas.hostRoutingCleanRate < 0, true);
+assert.match(
+  renderAgentComparison(contaminated),
+  /Host routing clean \(no foreign calls\)/,
+);
 
 assert.throws(
   () =>
@@ -523,6 +555,37 @@ assert.throws(
   /model differs/,
 );
 
+// Scoring and sandbox fingerprints were already compared; the harness one was
+// not covered, and an artifact that simply omits it would have compared
+// undefined against undefined and passed.
+assert.throws(
+  () =>
+    compareAgentBenchmarks(
+      comparisonArtifact({ commit: "baseline", roundTrips: 3, repairs: 2 }),
+      comparisonArtifact({
+        commit: "candidate",
+        roundTrips: 2,
+        repairs: 1,
+        harnessSha256: "changed-harness-sha",
+      }),
+    ),
+  /harnessSha256 differs/,
+);
+
+// Product fingerprints are reported, never required: a candidate is supposed
+// to measure changed src/.
+const differentProduct = compareAgentBenchmarks(
+  comparisonArtifact({ commit: "baseline", roundTrips: 3, repairs: 2 }),
+  comparisonArtifact({
+    commit: "candidate",
+    roundTrips: 2,
+    repairs: 1,
+    productSha256: "changed-product-sha",
+  }),
+);
+assert.equal(differentProduct.qualifies, true);
+assert.equal(differentProduct.candidate.productSha256, "changed-product-sha");
+
 assert.throws(
   () =>
     compareAgentBenchmarks(
@@ -531,18 +594,20 @@ assert.throws(
         roundTrips: 3,
         repairs: 2,
         repetitions: 1,
-        correct: 6,
-        safety: 6,
-        contextEfficient: 6,
+        correct: 7,
+        safety: 7,
+        contextEfficient: 7,
+        foreignClean: 7,
       }),
       comparisonArtifact({
         commit: "candidate",
         roundTrips: 2,
         repairs: 1,
         repetitions: 1,
-        correct: 6,
-        safety: 6,
-        contextEfficient: 6,
+        correct: 7,
+        safety: 7,
+        contextEfficient: 7,
+        foreignClean: 7,
       }),
     ),
   /at least two fresh sessions/,

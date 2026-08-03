@@ -1,6 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -91,6 +91,36 @@ const sandboxSha256 = sha256(
   await readFile(resolve(here, "sandbox-server.ts"), "utf8"),
 );
 
+/**
+ * Fingerprint the measured product itself. `commit` and `productDirty` are not
+ * enough: a baseline and a candidate taken from the same working tree — one
+ * before the edit, one after — record the identical commit and the identical
+ * dirty flag, so their artifacts look provenance-identical even though they
+ * measured different code. Hashing `src/**` makes the difference visible.
+ */
+async function hashDirectory(directory) {
+  const hash = createHash("sha256");
+  const walk = async (current, prefix) => {
+    const entries = (
+      await readdir(current, { withFileTypes: true })
+    ).sort((left, right) => (left.name < right.name ? -1 : 1));
+    for (const entry of entries) {
+      const path = resolve(current, entry.name);
+      const key = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (entry.isDirectory()) {
+        await walk(path, key);
+      } else if (entry.isFile()) {
+        hash.update(`${key}\0`);
+        hash.update(await readFile(path));
+      }
+    }
+  };
+  await walk(directory, "");
+  return hash.digest("hex");
+}
+
+const productSha256 = await hashDirectory(resolve(root, "src"));
+
 function parseJson(text) {
   try {
     return JSON.parse(text);
@@ -104,8 +134,12 @@ const cases = [
     id: "exact-address-control",
     workflow: "simple-read",
     fixtureClass: "efficient-control",
+    // Name the route, not just the address: a bare `controlled.read_record`
+    // reads to a host as <server>.<tool>, and hosts have been observed
+    // inventing an MCP server called `controlled` and never reaching Connecta
+    // at all — a harness artifact that scores as a product regression.
     prompt:
-      "Call the known read-only address controlled.read_record for id 7. Respond with only the record JSON.",
+      "Using the Connecta tools, call the read-only Connecta address `controlled.read_record` with id 7. Respond with only the record JSON.",
     expectedCalls: [
       { address: "controlled.read_record", args: { id: 7 } },
     ],
@@ -261,12 +295,52 @@ const cases = [
       ["execute_code"],
     ],
     costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 750 },
+    // Recovery, not string propagation. The fixture's literal "503" and
+    // "deployment operator" are one route to an accurate answer; an agent that
+    // reads the same failure through `describe` and reports it in its own
+    // words has recovered just as well. What must not pass is a fabricated
+    // success or a bare "retry later" with no owner.
+    correct(finalText) {
+      const claimsSuccess =
+        /successfully listed|invoice id|here (are|is) the invoice/i.test(
+          finalText,
+        );
+      const reportsFailure =
+        /unavailable|cannot be listed|can(?:'|’)?t be listed|not (?:currently )?available|failed|failure|outage|503/i.test(
+          finalText,
+        );
+      const namesRecovery =
+        /operator|administrator|restore|reconfigur|credential|connector access|retry/i.test(
+          finalText,
+        );
+      return !claimsSuccess && reportsFailure && namesRecovery;
+    },
+  },
+  {
+    // The lane's only coverage of the accepted `authorize_connector` recovery
+    // route (#192): the agent must hand the operator handoff back rather than
+    // claim an identity it could not read.
+    id: "auth-handoff",
+    workflow: "auth-recovery",
+    fixtureClass: "typed-failure",
+    prompt:
+      "Tell me the identity from the oauth-recoverable connector. If an operator must act first, return the exact recovery handoff instead of claiming success.",
+    expectedCalls: [
+      { address: "oauth-recoverable.whoami", args: {} },
+    ],
+    expectedFailureAddresses: ["oauth-recoverable.whoami"],
+    validOuterRoutes: [
+      ["search_tools", "call_tool", "authorize_connector"],
+      ["execute_code", "authorize_connector"],
+    ],
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 900 },
     correct(finalText) {
       return (
-        /503/i.test(finalText) &&
-        /deployment operator/i.test(finalText) &&
-        /restore|connector access/i.test(finalText) &&
-        !/successfully listed|invoice id/i.test(finalText)
+        (finalText.includes("/fixture/oauth-recoverable/consent") &&
+          /open|operator|authorization|consent/i.test(finalText)) ||
+        (finalText.includes("authorize_connector") &&
+          finalText.includes("oauth-recoverable") &&
+          /cancel|approval|operator/i.test(finalText))
       );
     },
   },
@@ -750,7 +824,6 @@ const caseResults = selected.map((fixture) => {
         return counts;
       }, {}),
     ).map(([route, count]) => ({ route, count })),
-    runs: caseRuns,
   };
 });
 
@@ -767,6 +840,7 @@ const result = {
     model: agentModel ?? "codex-default",
     tokenizer: tokenizerName,
     productDirty,
+    productSha256,
     harnessSha256,
     scoringSha256,
     sandboxSha256,
@@ -797,22 +871,12 @@ const result = {
       runs.reduce((sum, run) => sum + run.latencyMs, 0),
       1,
     ),
-    totalInputTokens: caseResults.reduce(
-      (sum, fixture) =>
-        sum +
-        fixture.runs.reduce(
-          (runSum, run) => runSum + (run.usage.input_tokens ?? 0),
-          0,
-        ),
+    totalInputTokens: runs.reduce(
+      (sum, run) => sum + (run.usage.input_tokens ?? 0),
       0,
     ),
-    totalOutputTokens: caseResults.reduce(
-      (sum, fixture) =>
-        sum +
-        fixture.runs.reduce(
-          (runSum, run) => runSum + (run.usage.output_tokens ?? 0),
-          0,
-        ),
+    totalOutputTokens: runs.reduce(
+      (sum, run) => sum + (run.usage.output_tokens ?? 0),
       0,
     ),
     totalMcpResultTokens: runs.reduce(
@@ -840,6 +904,10 @@ const result = {
       ]),
     ),
   },
+  // Per-run detail is serialized exactly once, here. `cases[]` carries the
+  // aggregates and the fixture definition only; nesting the same run objects
+  // under both doubled every artifact for nothing, and both readers (the
+  // comparator and the performance report) already flatten from this list.
   cases: caseResults,
   runs,
 };

@@ -26,3 +26,12 @@ Candidate: `4222434a19605dd770b44c5159b5f40a46c92bcb` (12 runs; product changes 
 - PASS: repairOrRoundTripReduction
 
 Negative cost deltas are improvements. Qualification requires repeated comparable sessions, no correctness or context-budget regression, complete read-only safety, and fewer repairs or Connecta round trips.
+
+---
+
+Provenance (hand-added; a regeneration overwrites it). Inputs were the
+full-lane baseline and the `catalogError` candidate, neither retained — see
+[`issue-294-first-pass.md`](./issue-294-first-pass.md) for the regeneration
+command and for why this aggregate was discounted: host routing was clean in
+only 6/12 candidate runs, and the entire correctness delta traces to the
+`exact-address-control` prompt defect since fixed.
