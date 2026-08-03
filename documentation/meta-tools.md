@@ -195,12 +195,17 @@ the bounded classified failure (`code`, `message`, `retryable`, and any
 operator must clear. It carries nothing else the call-path classifier knows: a
 discovery read is not a call. Unscoped searches keep the count only — one
 connector's failure is not another search's context. An empty query browses
-rather than searches, so it reports no term analysis — except when a catalog
-was unavailable, where the same failure fields apply: a browse scoped to the
-unavailable connector carries `unavailableConnectorCount`, `catalogError`, and
-guidance, and an unscoped browse again carries the count alone. The advice to
-browse a connector with an empty query must not land in silence that reads like
-a connector with no tools. Analysis
+rather than searches, so it reports no term analysis — except when the scope
+itself failed, where the same fields apply. A browse scoped to an unavailable
+connector carries `unavailableConnectorCount`, `catalogError`, and guidance,
+and an unscoped browse again carries the count alone. A browse scoped to an ID
+that is not configured at all carries `connectorScope`, `unknownConnector`, and
+the same omit-the-connector guidance the term-bearing path gives — nothing was
+attempted, so there is no count and no `catalogError` — and it names no
+connector but the one the caller supplied. A connector that correctly exposes
+no tools still reports no analysis, so the two do not serialize alike. The
+advice to browse a connector with an empty query must not land in silence that
+reads like a connector with no tools. Analysis
 from a connector-filtered search includes `connectorScope` and speaks only
 about that connector; `unknownConnector` distinguishes an unconfigured ID from
 a known connector with no match. Analysis covers at most eight distinct terms

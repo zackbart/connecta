@@ -5149,3 +5149,119 @@ describe("empty-query browse of an unavailable catalog", () => {
     expect(browsed.queryAnalysis).toBeUndefined();
   });
 });
+
+describe("empty-query browse of an unconfigured connector", () => {
+  /** A configured connector that answers, correctly, with nothing. */
+  const barren: Connector = {
+    id: "barren",
+    kind: "api",
+    async listTools() {
+      return [];
+    },
+    async callTool() {
+      return null;
+    },
+  };
+
+  it("names the unknown id and the way out on a scoped browse", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
+    const browsed = textOf(
+      await mt.searchTools({ connector: "ghost", query: "" }),
+    ) as SearchResult;
+    expect(browsed.connectors).toEqual([]);
+    expect(browsed.total).toBe(0);
+    const analysis = required(browsed.queryAnalysis);
+    // No terms were supplied, so the term partitions say nothing — the scope
+    // fields carry the whole message, exactly as on the unavailable path.
+    expect(analysis.representedTerms).toEqual([]);
+    expect(analysis.otherResultTerms).toEqual([]);
+    expect(analysis.unmatchedTerms).toEqual([]);
+    expect(analysis).toMatchObject({
+      connectorScope: "ghost",
+      unknownConnector: true,
+      guidance:
+        'Connector "ghost" is not configured in this deployment. Omit connector to search all configured tools.',
+    });
+    // Nothing failed, because nothing was attempted.
+    expect(analysis.unavailableConnectorCount).toBeUndefined();
+    expect(analysis.catalogError).toBeUndefined();
+    expect(analysis.guide).toBeUndefined();
+  });
+
+  it("gives the browse the same recovery advice the term-bearing path gives", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
+    const browsed = textOf(
+      await mt.searchTools({ connector: "ghost", query: "" }),
+    ) as SearchResult;
+    const searched = textOf(
+      await mt.searchTools({ connector: "ghost", query: "add numbers" }),
+    ) as SearchResult;
+    expect(required(browsed.queryAnalysis).guidance).toEqual(
+      required(searched.queryAnalysis).guidance,
+    );
+    expect(required(searched.queryAnalysis)).toMatchObject({
+      connectorScope: "ghost",
+      unknownConnector: true,
+    });
+    // The term-bearing path still analyses its terms; the browse still does not.
+    expect(required(searched.queryAnalysis).unmatchedTerms).toEqual([
+      "add",
+      "numbers",
+    ]);
+    expect(required(browsed.queryAnalysis).unmatchedTerms).toEqual([]);
+  });
+
+  it("does not name the connectors the caller did not ask about", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector, barren]), BASE);
+    const browsed = textOf(
+      await mt.searchTools({ connector: "ghost", query: "" }),
+    ) as SearchResult;
+    const serialized = JSON.stringify(browsed);
+    expect(serialized).not.toContain("calc");
+    expect(serialized).not.toContain("barren");
+  });
+
+  it("distinguishes an unknown id from a configured connector with no tools", async () => {
+    const mt = createMetaTools(makeRegistry([barren]), BASE);
+    const empty = textOf(
+      await mt.searchTools({ connector: "barren", query: "" }),
+    ) as SearchResult;
+    const unknown = textOf(
+      await mt.searchTools({ connector: "ghost", query: "" }),
+    ) as SearchResult;
+    // Both return no entries, and that is where the resemblance ends.
+    expect(empty.connectors).toEqual([]);
+    expect(unknown.connectors).toEqual([]);
+    // A connector that correctly exposes nothing invents no analysis.
+    expect(empty.queryAnalysis).toBeUndefined();
+    expect(required(unknown.queryAnalysis).unknownConnector).toBe(true);
+    expect(JSON.stringify(empty)).not.toEqual(JSON.stringify(unknown));
+  });
+
+  it("treats a case variant of a configured id as unknown, as the resolver does", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
+    const browsed = textOf(
+      await mt.searchTools({ connector: "CALC", query: "" }),
+    ) as SearchResult;
+    expect(required(browsed.queryAnalysis)).toMatchObject({
+      connectorScope: "CALC",
+      unknownConnector: true,
+      guidance: expect.stringContaining(
+        'Connector "CALC" is not configured in this deployment',
+      ),
+    });
+  });
+
+  it("leaves a configured scoped browse and every unscoped browse unchanged", async () => {
+    const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
+    const scoped = textOf(
+      await mt.searchTools({ connector: "calc", query: "" }),
+    ) as SearchResult;
+    expect(scoped.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(scoped.total).toBeGreaterThan(0);
+    expect(scoped.queryAnalysis).toBeUndefined();
+    const unscoped = textOf(await mt.searchTools({ query: "" })) as SearchResult;
+    expect(unscoped.connectors.map((group) => group.id)).toEqual(["calc"]);
+    expect(unscoped.queryAnalysis).toBeUndefined();
+  });
+});
