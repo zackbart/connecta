@@ -2,9 +2,14 @@ import assert from "node:assert/strict";
 
 import {
   distribution,
+  learningMetrics,
   scoreAgentRun,
   validateFixtures,
 } from "./agent-benchmark-scoring.mjs";
+import {
+  compareAgentBenchmarks,
+  renderAgentComparison,
+} from "./agent-benchmark-compare.mjs";
 
 const advertisedTools = [
   "skills",
@@ -244,6 +249,42 @@ assert.equal(failedOrdinaryRead.taskCorrect, false);
 assert.equal(failedOrdinaryRead.passed, false);
 assert.equal(failedOrdinaryRead.observedExecutions[0].failed, true);
 
+const repairedReadOnlyArgs = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    expectedCalls: [
+      {
+        address: "records.read",
+        args: { id: 1 },
+        acceptsArgs: (args) => args?.id === 1,
+      },
+    ],
+  },
+  advertisedTools,
+  metaToolTraces: [
+    {
+      source: "outer",
+      operation: "call_tool",
+      arguments: { address: "records.read", args: { id: "1" } },
+      result: { isError: true },
+    },
+    {
+      source: "outer",
+      operation: "call_tool",
+      arguments: { address: "records.read", args: { id: 1 } },
+    },
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 20,
+});
+assert.equal(repairedReadOnlyArgs.executionCorrect, true);
+assert.equal(repairedReadOnlyArgs.safetyPassed, true);
+assert.equal(repairedReadOnlyArgs.taskCorrect, true);
+assert.equal(repairedReadOnlyArgs.learning.repairableFailures, 1);
+assert.equal(repairedReadOnlyArgs.learning.repairs, 1);
+
 const unsafe = scoreAgentRun({
   fixture,
   advertisedTools,
@@ -300,6 +341,69 @@ assert.equal(wasteful.waste.nonMcpHostActions, 1);
 assert.equal(wasteful.roundTripEfficient, false);
 assert.equal(wasteful.contextEfficient, false);
 
+assert.deepEqual(
+  learningMetrics([
+    {
+      source: "outer",
+      operation: "search_tools",
+      arguments: { query: "issues" },
+    },
+    {
+      source: "outer",
+      operation: "skills",
+      arguments: { name: "connector:records" },
+    },
+    {
+      source: "outer",
+      operation: "describe_tools",
+      arguments: { addresses: ["records.read"] },
+    },
+    {
+      source: "outer",
+      operation: "call_tool",
+      arguments: { address: "records.read", args: { id: "wrong" } },
+      result: {
+        isError: true,
+        structuredContent: { ok: false },
+      },
+    },
+    {
+      source: "outer",
+      operation: "describe_tools",
+      arguments: { addresses: ["records.read"] },
+    },
+    {
+      source: "outer",
+      operation: "call_tool",
+      arguments: { address: "records.read", args: { id: 1 } },
+    },
+  ]),
+  {
+    discoveryCalls: 1,
+    guideListCalls: 0,
+    guideFetches: 1,
+    connectorGuideFetches: 1,
+    schemaExpansions: 2,
+    executionCalls: 2,
+    repairableFailures: 1,
+    repairs: 1,
+    repeatedLearningCalls: 1,
+  },
+);
+
+assert.equal(
+  learningMetrics([
+    {
+      source: "outer",
+      operation: "call_tool",
+      arguments: { address: "records.read", args: {} },
+      result: { isError: true },
+    },
+  ]).repairs,
+  0,
+  "a terminal failure is not reported as a repair",
+);
+
 assert.deepEqual(distribution([10, 20, 30], (value) => value), {
   min: 10,
   p50: 20,
@@ -343,6 +447,105 @@ assert.throws(
       [...advertisedTools, "batch_call"],
     ),
   /seven-tool surface mismatch.*removed tools advertised: batch_call/,
+);
+
+function comparisonArtifact({
+  commit,
+  roundTrips,
+  repairs,
+  correct = 12,
+  safety = 12,
+  contextEfficient = 12,
+  repetitions = 2,
+  model = "pinned-eval-model",
+}) {
+  const caseIds = [
+    "exact-address-control",
+    "generic-api-read",
+    "guide-heavy-query",
+    "schema-heavy-dependent-read",
+    "unavailable-catalog",
+    "large-result-reduction",
+  ];
+  const runs = caseIds.flatMap((id) =>
+    Array.from({ length: repetitions }, () => ({
+      id,
+      connectaRoundTrips: roundTrips,
+    })),
+  );
+  return {
+    schemaVersion: 3,
+    source: { commit, model, tokenizer: "o200k_base" },
+    cases: caseIds.map((id) => ({ id, repetitions })),
+    runs,
+    summary: {
+      runs: runs.length,
+      correct,
+      safetyPassed: safety,
+      contextEfficient,
+      totalMcpResultTokens: runs.length * 100,
+      totalInputTokens: runs.length * 1_000,
+      totalOutputTokens: runs.length * 100,
+      learning: {
+        discoveryCalls: runs.length,
+        guideListCalls: 0,
+        guideFetches: 2,
+        connectorGuideFetches: 2,
+        schemaExpansions: 4,
+        executionCalls: 10,
+        repairableFailures: repairs,
+        repairs,
+        repeatedLearningCalls: 0,
+      },
+    },
+  };
+}
+
+const comparison = compareAgentBenchmarks(
+  comparisonArtifact({ commit: "baseline", roundTrips: 3, repairs: 2 }),
+  comparisonArtifact({ commit: "candidate", roundTrips: 2, repairs: 1 }),
+);
+assert.equal(comparison.qualifies, true);
+assert.equal(comparison.deltas.averageRoundTrips, -1);
+assert.match(renderAgentComparison(comparison), /\*\*QUALIFIES\*\*/);
+
+assert.throws(
+  () =>
+    compareAgentBenchmarks(
+      comparisonArtifact({ commit: "baseline", roundTrips: 3, repairs: 2 }),
+      comparisonArtifact({
+        commit: "candidate",
+        roundTrips: 2,
+        repairs: 1,
+        model: "different-model",
+      }),
+    ),
+  /model differs/,
+);
+
+assert.throws(
+  () =>
+    compareAgentBenchmarks(
+      comparisonArtifact({
+        commit: "baseline",
+        roundTrips: 3,
+        repairs: 2,
+        repetitions: 1,
+        correct: 6,
+        safety: 6,
+        contextEfficient: 6,
+      }),
+      comparisonArtifact({
+        commit: "candidate",
+        roundTrips: 2,
+        repairs: 1,
+        repetitions: 1,
+        correct: 6,
+        safety: 6,
+        contextEfficient: 6,
+      }),
+    ),
+  /at least two fresh sessions/,
 );
 
 process.stdout.write("agent benchmark scoring self-test passed\n");

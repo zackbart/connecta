@@ -104,7 +104,7 @@ endpoint, uses a read-only filesystem sandbox, and does not persist sessions.
 Select one case while developing:
 
 ```sh
-npm --prefix eval/current-version run perf:agent -- --case single-read
+npm --prefix eval/current-version run perf:agent -- --case exact-address-control
 ```
 
 The agent lane defaults to three repetitions per case and two concurrent
@@ -129,6 +129,52 @@ diagnostics; they are never treated as expected routes.
 Set `CONNECTA_EVAL_AGENT_MODEL` to pin a model. If omitted, the current Codex
 default is used and recorded as `codex-default`; for comparable trend data,
 pin the same model and machine across runs.
+
+### Cold-agent connector learning
+
+The six `perf:agent` cases are the evidence lane for
+[#294](https://github.com/zackbart/connecta/issues/294): an exact-address
+control, a generic API-shaped read, a connector-guide-heavy query, a
+schema-heavy dependent read, an unavailable catalog, and large-result
+reduction. Fixtures use nested schemas, typed catalog failures, provider query
+syntax, and deterministic domain-shaped results rather than empty synthetic
+tools. No live account payload enters the lane.
+
+Each run records connector learning separately from MCP round trips:
+
+- `discoveryCalls` counts `search_tools` operations, including searches inside
+  `execute_code`;
+- `guideFetches` and `connectorGuideFetches` count named `skills` reads;
+- `schemaExpansions` counts exact `describe_tools` operations;
+- `executionCalls` counts downstream calls, including program calls and batch
+  children;
+- `repairableFailures` counts unexpected failed meta-tool operations, while
+  `repairs` counts those followed by another meta-tool attempt; and
+- `repeatedLearningCalls` counts exact duplicate searches, guide reads, or
+  schema descriptions as an information-stall signal.
+
+The JSON also retains Connecta result tokens, whole-agent input/output tokens,
+final and execution correctness, safety, and every trace. Pin the model and
+use at least two repetitions before comparing a candidate. The comparator
+refuses different models, tokenizers, fixtures, scoring code, sandbox fixtures,
+case inventories, advertised surfaces, or single-session artifacts:
+
+```sh
+npm --prefix eval/current-version run perf:agent:compare -- \
+  --baseline results/cold-agent-baseline.json \
+  --candidate results/cold-agent-candidate.json \
+  --output results/cold-agent-comparison.json \
+  --report results/cold-agent-comparison.md
+```
+
+Qualification requires no correctness or context-budget regression, complete
+read-only safety, and a measured reduction in repairs or Connecta round trips.
+Raw token and learning deltas remain in the report even when that verdict
+passes; a passing verdict is evidence for review, not a release gate.
+Run the complete six-case baseline first. A narrowly scoped candidate may then
+use matching repeated `--case` artifacts when its behavior can affect only one
+workflow; retain the complete candidate smoke separately so unrelated routing
+variance stays visible rather than being averaged into the focused verdict.
 
 ### Tool-lookup and context-noise canary
 

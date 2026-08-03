@@ -1,5 +1,6 @@
 import { spawn, execFileSync } from "node:child_process";
-import { mkdir, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -62,6 +63,33 @@ const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
   encoding: "utf8",
 }).trim();
+const productDirty =
+  execFileSync(
+    "git",
+    [
+      "status",
+      "--porcelain",
+      "--",
+      "src",
+      "package.json",
+      "package-lock.json",
+    ],
+    { cwd: root, encoding: "utf8" },
+  ).trim() !== "";
+
+function sha256(text) {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+const harnessSha256 = sha256(
+  await readFile(fileURLToPath(import.meta.url), "utf8"),
+);
+const scoringSha256 = sha256(
+  await readFile(resolve(here, "agent-benchmark-scoring.mjs"), "utf8"),
+);
+const sandboxSha256 = sha256(
+  await readFile(resolve(here, "sandbox-server.ts"), "utf8"),
+);
 
 function parseJson(text) {
   try {
@@ -73,17 +101,19 @@ function parseJson(text) {
 
 const cases = [
   {
-    id: "single-read",
+    id: "exact-address-control",
+    workflow: "simple-read",
+    fixtureClass: "efficient-control",
     prompt:
-      "Return the one deterministic record with id 7. Respond with only the record JSON.",
+      "Call the known read-only address controlled.read_record for id 7. Respond with only the record JSON.",
     expectedCalls: [
       { address: "controlled.read_record", args: { id: 7 } },
     ],
     validOuterRoutes: [
-      ["search_tools", "call_tool"],
+      ["call_tool"],
       ["execute_code"],
     ],
-    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 500 },
+    costEnvelope: { maxRoundTrips: 1, maxMcpResultTokens: 350 },
     correct(finalText) {
       const value = parseJson(finalText);
       return (
@@ -94,48 +124,170 @@ const cases = [
     },
   },
   {
-    id: "independent-batch",
+    id: "generic-api-read",
+    workflow: "simple-read",
+    fixtureClass: "generic-api-style",
     prompt:
-      "Return the point-lookup results for deterministic record ids 11 and 12. Respond with only a JSON array ordered by id.",
+      "Use Connecta's generic-ledger connector to list open invoices. Return only the connector result JSON.",
     expectedCalls: [
-      { address: "controlled.read_record", args: { id: 11 } },
-      { address: "controlled.read_record", args: { id: 12 } },
+      {
+        address: "generic-ledger.request",
+        args: {
+          method: "GET",
+          path: "/v1/invoices",
+          query: { status: "open" },
+        },
+        acceptsArgs(args) {
+          return (
+            args?.method === "GET" &&
+            args?.path === "/v1/invoices" &&
+            args?.query?.status === "open" &&
+            (args.query.limit === undefined ||
+              (Number.isInteger(args.query.limit) && args.query.limit > 0))
+          );
+        },
+      },
     ],
     validOuterRoutes: [
+      ["search_tools", "call_tool"],
       ["execute_code"],
-      ["search_tools", "call_tool", "call_tool"],
     ],
-    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 700 },
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 900 },
     correct(finalText) {
       const value = parseJson(finalText);
+      const data = value?.ok === true ? value.data : value;
       return (
-        Array.isArray(value) &&
-        value.length === 2 &&
-        value[0]?.id === 11 &&
-        value[0]?.group === "gamma" &&
-        value[0]?.score === 86 &&
-        value[1]?.id === 12 &&
-        value[1]?.group === "alpha" &&
-        value[1]?.score === 2
+        data?.data?.length === 1 &&
+        data.data[0]?.id === "in_eval_17" &&
+        data.data[0]?.status === "open" &&
+        data.data[0]?.amountDue === 4200
       );
     },
   },
   {
-    id: "dependent-reduction",
+    id: "guide-heavy-query",
+    workflow: "simple-read",
+    fixtureClass: "guide-heavy",
     prompt:
-      "For the deterministic collection of 120 records, return each group's record count and score sum. Respond with only a JSON object keyed by group.",
+      "Use the work item integration to find issues in progress for the Engineering team (stable key ENG). Return only the integration result JSON.",
     expectedCalls: [
-      { address: "controlled.records", args: { count: 120 } },
+      {
+        address: "work-items.search_issues",
+        args: { query: 'team = ENG AND status = "In Progress"' },
+        acceptsArgs(args) {
+          return (
+            args?.query === 'team = ENG AND status = "In Progress"' &&
+            (args.first === undefined ||
+              (Number.isInteger(args.first) && args.first > 0))
+          );
+        },
+      },
+    ],
+    validOuterRoutes: [
+      ["search_tools", "skills", "call_tool"],
+      ["skills", "search_tools", "call_tool"],
+    ],
+    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 1_200 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      const data = value?.ok === true ? value.data : value;
+      return (
+        data?.nodes?.length === 1 &&
+        data.nodes[0]?.identifier === "ENG-294" &&
+        data.nodes[0]?.status === "In Progress" &&
+        data.nodes[0]?.team === "ENG"
+      );
+    },
+  },
+  {
+    id: "schema-heavy-dependent-read",
+    workflow: "dependent-read",
+    fixtureClass: "schema-heavy",
+    prompt:
+      "Use the Edge DNS integration to find account acct_eval_7's zone, then list that zone's TXT records. Return only a JSON array containing the zone-list result followed by the DNS-record result.",
+    expectedCalls: [
+      {
+        address: "edge-dns.list_zones",
+        args: { account: { id: "acct_eval_7" } },
+        acceptsArgs(args) {
+          return (
+            args?.account?.id === "acct_eval_7" &&
+            (args.pagination === undefined ||
+              (Number.isInteger(args.pagination?.perPage) &&
+                args.pagination.perPage >= 1 &&
+                args.pagination.perPage <= 50))
+          );
+        },
+      },
+      {
+        address: "edge-dns.list_dns_records",
+        args: {
+          zone: { id: "zone_eval_42" },
+          filter: { recordType: "TXT" },
+        },
+        acceptsArgs(args) {
+          return (
+            args?.zone?.id === "zone_eval_42" &&
+            args?.filter?.recordType === "TXT"
+          );
+        },
+      },
     ],
     validOuterRoutes: [
       ["execute_code"],
       ["search_tools", "execute_code"],
     ],
-    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 700 },
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 1_300 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return (
+        Array.isArray(value) &&
+        value.length === 2 &&
+        value[0]?.result?.[0]?.id === "zone_eval_42" &&
+        value[1]?.result?.[0]?.id === "dns_eval_9" &&
+        value[1]?.result?.[0]?.type === "TXT"
+      );
+    },
+  },
+  {
+    id: "unavailable-catalog",
+    workflow: "unavailable-catalog",
+    fixtureClass: "typed-failure",
+    prompt:
+      "Use Connecta's billing-unavailable connector to determine whether invoices can be listed right now. Do not invent a tool or claim success. State the catalog failure reason and recovery owner concisely.",
+    expectedCalls: [],
+    validOuterRoutes: [
+      ["search_tools"],
+      ["execute_code"],
+    ],
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 750 },
+    correct(finalText) {
+      return (
+        /503/i.test(finalText) &&
+        /deployment operator/i.test(finalText) &&
+        /restore|connector access/i.test(finalText) &&
+        !/successfully listed|invoice id/i.test(finalText)
+      );
+    },
+  },
+  {
+    id: "large-result-reduction",
+    workflow: "large-result-reduction",
+    fixtureClass: "large-result",
+    prompt:
+      "For the deterministic collection of 180 records, return each group's record count and score sum. Respond with only a JSON object keyed by group.",
+    expectedCalls: [
+      { address: "controlled.records", args: { count: 180 } },
+    ],
+    validOuterRoutes: [
+      ["execute_code"],
+      ["search_tools", "execute_code"],
+    ],
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 2_000 },
     correct(finalText) {
       const value = parseJson(finalText);
       const expected = {};
-      for (let index = 0; index < 120; index += 1) {
+      for (let index = 0; index < 180; index += 1) {
         const group = ["alpha", "beta", "gamma"][index % 3];
         const row = (expected[group] ??= { count: 0, sum: 0 });
         row.count += 1;
@@ -147,31 +299,7 @@ const cases = [
             expected[group].count &&
           (value?.[group]?.sum ??
             value?.[group]?.scoreSum ??
-            value?.[group]?.score_sum) ===
-            expected[group].sum,
-      );
-    },
-  },
-  {
-    id: "auth-handoff",
-    prompt:
-      "Tell me the identity from the oauth-recoverable connector. If an operator must act first, return the exact recovery handoff instead of claiming success.",
-    expectedCalls: [
-      { address: "oauth-recoverable.whoami", args: {} },
-    ],
-    expectedFailureAddresses: ["oauth-recoverable.whoami"],
-    validOuterRoutes: [
-      ["search_tools", "call_tool", "authorize_connector"],
-      ["execute_code", "authorize_connector"],
-    ],
-    costEnvelope: { maxRoundTrips: 4, maxMcpResultTokens: 900 },
-    correct(finalText) {
-      return (
-        (finalText.includes("/fixture/oauth-recoverable/consent") &&
-          /open|operator|authorization|consent/i.test(finalText)) ||
-        (finalText.includes("authorize_connector") &&
-          finalText.includes("oauth-recoverable") &&
-          /cancel|approval|operator/i.test(finalText))
+            value?.[group]?.score_sum) === expected[group].sum,
       );
     },
   },
@@ -422,6 +550,8 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
   });
   return {
     id: fixture.id,
+    workflow: fixture.workflow,
+    fixtureClass: fixture.fixtureClass,
     repetition,
     prompt: fixture.prompt,
     latencyMs: round(performance.now() - started, 1),
@@ -438,6 +568,11 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
     calledTools: connectaToolCalls.map((call) => call.tool),
     guidanceFetched: metaToolTraces.some(
       (trace) => trace.operation === "skills",
+    ),
+    connectorGuidanceFetched: metaToolTraces.some(
+      (trace) =>
+        trace.operation === "skills" &&
+        trace.arguments?.name?.startsWith?.("connector:"),
     ),
     foreignToolCalls: foreignToolCalls.map(
       (call) => `${call.server ?? "unknown"}.${call.tool}`,
@@ -523,6 +658,8 @@ const caseResults = selected.map((fixture) => {
   const caseRuns = runs.filter((run) => run.id === fixture.id);
   return {
     id: fixture.id,
+    workflow: fixture.workflow,
+    fixtureClass: fixture.fixtureClass,
     prompt: fixture.prompt,
     repetitions: caseRuns.length,
     validOuterRoutes: fixture.validOuterRoutes,
@@ -546,6 +683,25 @@ const caseResults = selected.map((fixture) => {
     connectaRoundTrips: distribution(
       caseRuns.map((run) => run.connectaRoundTrips),
       round,
+    ),
+    learning: Object.fromEntries(
+      [
+        "discoveryCalls",
+        "guideListCalls",
+        "guideFetches",
+        "connectorGuideFetches",
+        "schemaExpansions",
+        "executionCalls",
+        "repairableFailures",
+        "repairs",
+        "repeatedLearningCalls",
+      ].map((metric) => [
+        metric,
+        distribution(
+          caseRuns.map((run) => run.learning[metric]),
+          round,
+        ),
+      ]),
     ),
     wholeAgentInputTokens: distribution(
       caseRuns.map((run) => run.usage.input_tokens ?? 0),
@@ -599,7 +755,7 @@ const caseResults = selected.map((fixture) => {
 });
 
 const result = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   generatedAt: new Date().toISOString(),
   source: {
     commit: sourceCommit,
@@ -610,6 +766,10 @@ const result = {
     }).trim(),
     model: agentModel ?? "codex-default",
     tokenizer: tokenizerName,
+    productDirty,
+    harnessSha256,
+    scoringSha256,
+    sandboxSha256,
   },
   benchmark: {
     surface: "seven-tool",
@@ -618,7 +778,7 @@ const result = {
     repetitions,
     concurrency,
     scoring:
-      "Outcome, safety, advertised-surface validity, foreign-tool use, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+      "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
     removedToolPolicy:
       "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes.",
   },
@@ -663,6 +823,22 @@ const result = {
       (sum, run) => sum + run.foreignMcpResultTokens,
       0,
     ),
+    learning: Object.fromEntries(
+      [
+        "discoveryCalls",
+        "guideListCalls",
+        "guideFetches",
+        "connectorGuideFetches",
+        "schemaExpansions",
+        "executionCalls",
+        "repairableFailures",
+        "repairs",
+        "repeatedLearningCalls",
+      ].map((metric) => [
+        metric,
+        runs.reduce((sum, run) => sum + run.learning[metric], 0),
+      ]),
+    ),
   },
   cases: caseResults,
   runs,
@@ -684,6 +860,7 @@ process.stdout.write(
       latencyMs: fixture.latencyMs,
       mcpResultTokens: fixture.mcpResultTokens,
       connectaRoundTrips: fixture.connectaRoundTrips,
+      learning: fixture.learning,
       diagnostics: fixture.diagnostics,
       waste: fixture.waste,
     })),

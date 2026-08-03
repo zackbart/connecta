@@ -615,6 +615,12 @@ interface SearchResult {
     connectorScope?: string;
     unknownConnector?: true;
     unavailableConnectorCount?: number;
+    catalogError?: {
+      code: string;
+      message: string;
+      retryable: boolean;
+      retryAfterMs?: number;
+    };
     guidance?: string;
   };
 }
@@ -4699,6 +4705,10 @@ describe("probe timeout", () => {
     expect(scoped.queryAnalysis).toMatchObject({
       connectorScope: "hang",
       unavailableConnectorCount: 1,
+      catalogError: {
+        code: "timeout",
+        retryable: true,
+      },
       guidance: expect.stringContaining(
         'Connector "hang" could not be searched',
       ),
@@ -4706,5 +4716,49 @@ describe("probe timeout", () => {
     expect(required(scoped.queryAnalysis).guidance).not.toContain(
       "No matching capability",
     );
+  });
+
+  it("returns a bounded typed catalog failure only for an explicit connector scope", async () => {
+    const typed: Connector = {
+      id: "billing",
+      kind: "api",
+      async listTools() {
+        throw new ConnectorCallError(
+          "unavailable",
+          `Upstream returned 503. Operator must restore access. ${"x".repeat(1_000)}`,
+          { retryAfterMs: 30_000 },
+        );
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([typed, calcConnector]), BASE);
+    const scoped = textOf(
+      await mt.searchTools({
+        connector: "billing",
+        query: "list invoices",
+      }),
+    ) as SearchResult;
+    expect(scoped.queryAnalysis).toMatchObject({
+      unavailableConnectorCount: 1,
+      catalogError: {
+        code: "unavailable",
+        retryable: true,
+        retryAfterMs: 30_000,
+      },
+    });
+    const catalogError = required(required(scoped.queryAnalysis).catalogError);
+    expect(catalogError.message).toContain(
+      "Upstream returned 503. Operator must restore access.",
+    );
+    expect(catalogError.message).toMatch(/…$/);
+    expect(Buffer.byteLength(catalogError.message)).toBeLessThanOrEqual(515);
+
+    const unscoped = textOf(
+      await mt.searchTools({ query: "add impossible" }),
+    ) as SearchResult;
+    expect(required(unscoped.queryAnalysis).unavailableConnectorCount).toBe(1);
+    expect(required(unscoped.queryAnalysis).catalogError).toBeUndefined();
   });
 });

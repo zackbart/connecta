@@ -253,6 +253,8 @@ export interface CatalogSearchPage {
     connectorScope?: string;
     unknownConnector?: true;
     unavailableConnectorCount?: number;
+    /** Bounded typed failure for an explicitly scoped unavailable catalog. */
+    catalogError?: CallErrorDetails;
     guidance?: string;
   };
 }
@@ -732,6 +734,19 @@ export class CatalogService {
     const unavailableCatalogs = catalogs.filter(
       (catalog) => catalog.status === "rejected",
     ).length;
+    const scopedCatalogError =
+      scopedConnector && catalogs[0]?.status === "rejected"
+        ? (() => {
+            const error = classifyCallError(
+              catalogs[0].reason,
+              "catalog_lookup_failed",
+            );
+            return {
+              ...error,
+              message: boundedEchoText(error.message),
+            };
+          })()
+        : undefined;
     const safetyLabel =
       safety === "readOnly"
         ? "read-only "
@@ -748,7 +763,7 @@ export class CatalogService {
             ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
             : scopedConnector
               ? unavailableCatalogs > 0
-                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Retry later.`
+                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
                 : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
               : unavailableCatalogs === 0
                 ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
@@ -789,6 +804,7 @@ export class CatalogService {
               ...(unavailableCatalogs > 0
                 ? { unavailableConnectorCount: unavailableCatalogs }
                 : {}),
+              ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
               ...(guidance ? { guidance } : {}),
             },
           }
