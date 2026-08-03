@@ -216,10 +216,14 @@ describe("cloudflare() tool surface", () => {
         expect(properties, `${tool.name}.${key} is required but undeclared`)
           .toHaveProperty(key);
       }
+      // The guide claims "a description on every property"; assert it so the
+      // claim cannot rot into a half-truth the next time a field is added.
       for (const [key, value] of Object.entries(properties)) {
+        const property = value as Record<string, unknown>;
+        expect(property["type"], `${tool.name}.${key} needs a type`).toBeTruthy();
         expect(
-          (value as Record<string, unknown>)["type"],
-          `${tool.name}.${key} needs a type`,
+          property["description"],
+          `${tool.name}.${key} needs a description`,
         ).toBeTruthy();
       }
     }
@@ -339,6 +343,27 @@ describe("cloudflare() request building", () => {
     expect(urlOf(1).pathname).toBe(
       "/client/v4/accounts/acct-9/storage/kv/namespaces",
     );
+  });
+
+  it("never narrows zone discovery to the configured account", async () => {
+    stubFetch(
+      { body: { success: true, result: [] } },
+      { body: { success: true, result: [] } },
+    );
+    const connector = connection({ accountId: "acct-9" });
+    // list_zones is how an agent finds a zone at all. A configured account is
+    // a default for the tools that need one, not a filter on discovery — the
+    // property says "defaults to every account the token can see" and there
+    // would be no argument that escapes a silent narrowing.
+    await connector.callTool("list_zones", {}, contextWithToken());
+    expect(urlOf(0).searchParams.has("account.id")).toBe(false);
+    // An explicit argument still filters.
+    await connector.callTool(
+      "list_zones",
+      { accountId: "acct-other" },
+      contextWithToken(),
+    );
+    expect(urlOf(1).searchParams.get("account.id")).toBe("acct-other");
   });
 
   it("lets a call override the configured default", async () => {
@@ -617,6 +642,40 @@ describe("cloudflare() projections", () => {
         creationDate: "2024-03-01T00:00:00Z",
       },
     ]);
+  });
+
+  it("carries R2's cursor forward instead of a page object", async () => {
+    stubFetch({
+      body: {
+        success: true,
+        result: { buckets: [{ name: "assets" }] },
+        // R2's result_info carries a cursor and no page counters at all, so
+        // the tool returns nextCursor and omits `page` entirely.
+        result_info: { cursor: "CUR" },
+      },
+    });
+    const result = (await connection().callTool(
+      "list_r2_buckets",
+      { accountId: "acct-1" },
+      contextWithToken(),
+    )) as Record<string, unknown>;
+    expect(result["nextCursor"]).toBe("CUR");
+    expect(result).not.toHaveProperty("page");
+
+    // An exhausted listing drops the cursor, which is the stop condition.
+    stubFetch({
+      body: {
+        success: true,
+        result: { buckets: [] },
+        result_info: { cursor: "" },
+      },
+    });
+    const last = (await connection().callTool(
+      "list_r2_buckets",
+      { accountId: "acct-1", cursor: "CUR" },
+      contextWithToken(),
+    )) as Record<string, unknown>;
+    expect(last).not.toHaveProperty("nextCursor");
   });
 
   it("flattens a Pages project's latest deployment", async () => {

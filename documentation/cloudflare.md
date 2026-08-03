@@ -95,6 +95,13 @@ everything by an opaque 32-character id, and an agent that only knows a domain
 name must call `list_zones` with `name: "example.com"` first. Configuring
 `zoneId` removes that hop entirely for a single-zone deployment.
 
+`list_zones` is the one tool a configured `accountId` deliberately does *not*
+reach. It is the discovery step, and a default that quietly filtered it would
+be a restriction in all but name — one with no argument that escapes it, since
+an empty `accountId` would fall back to the default again. A deployment that
+wants zones from one account passes `accountId` explicitly, and the property
+says so.
+
 ## Tools
 
 Ten reads, all annotated `readOnlyHint: true` and therefore admissible from
@@ -115,10 +122,33 @@ Four writes, all routed through `call_destructive_tool`:
 Every tool carries a complete hand-written input schema: closed
 (`additionalProperties: false`), with an accurate `required` list, an `enum` on
 every constrained field, per-endpoint `perPage` bounds, and a description on
-every property. This is the point of the connection. A generated wrapper around
-the same API exposed `arguments?: {}[]` in its compact schema and pushed the
-real parameter list into operation documentation, so an agent had to read a doc
-page before it could make a call. Here the compact schema is enough.
+every property — the last of which `test/cloudflare-provider.test.ts` asserts
+rather than leaves as a claim. This is the point of the connection. A generated
+wrapper around the same API exposed `arguments?: {}[]` in its compact schema and
+pushed the real parameter list into operation documentation, so an agent had to
+read a doc page before it could make a call. Here the compact schema is enough.
+
+### Where the `perPage` bounds come from
+
+`strictValidation` is on, so an out-of-range `perPage` is refused locally
+before it reaches Cloudflare. That is only a favor when the bound is really
+Cloudflare's, so the schemas record which ones are and the descriptions say so
+out loud:
+
+| Tool | `perPage` | Default | Whose bound |
+| --- | --- | --- | --- |
+| `list_accounts`, `list_zones` | 5–50 | 20 | Cloudflare's, as documented |
+| `list_kv_namespaces` | 1–1000 | 20 | Cloudflare's, as documented |
+| `list_dns_records` | 1–1000 | 100 | Cloudflare's minimum; the ceiling is ours |
+| `list_pages_projects` | 1–100 | — | Ours entirely |
+
+Two need the note. Cloudflare's schema documents `per_page` on
+`/zones/{id}/dns_records` as 1 to **5,000,000** — a nominal ceiling no listing
+will honor — so this connection caps it at 1,000, the same conservative-reading
+move as the [one-variant purge rule](#cache-purging): a local cap an agent is
+told about beats a page size that fails somewhere inside Cloudflare. And
+`/accounts/{id}/pages/projects` documents no bounds and no default at all, so
+1 to 100 is a choice made here and labeled as one.
 
 ### DNS record types
 
@@ -190,6 +220,14 @@ the failure message so the provider's own code number survives to the agent.
 | 400, 409, 422 | `invalid_args`, not retryable | Repairs the arguments |
 | 404 | `connector_call_failed`, not retryable | Re-runs discovery for the id |
 | 5xx or a transport error | `unavailable`, retryable | Retries |
+
+The six credential-shaped codes deserve a caveat: Cloudflare publishes no
+official table mapping error codes to causes, so that set is assembled from
+community reports and probing, not from documentation. The same goes for the
+claim below that `10000` is overloaded — that is an observation about responses
+seen in practice. Treat both as well-supported readings that Cloudflare could
+invalidate without notice, and prefer `verify_api_token` over the code list
+when a diagnosis actually matters.
 
 Two ordering decisions are deliberate. The 429 branch is checked before the
 authentication codes, because Cloudflare reuses the generic `10000` code on

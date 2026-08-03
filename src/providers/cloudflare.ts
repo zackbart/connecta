@@ -210,11 +210,17 @@ function errorCodes(errors: CloudflareEnvelopeError[]): Set<number> {
  * key/email headers. These arrive on HTTP 400, so status alone would misfile
  * them as an argument problem the agent could repair.
  *
+ * Provenance matters here: Cloudflare publishes no official code table, so this
+ * set comes from community reports and observed responses rather than
+ * documentation. It is a narrow, well-attested list, not an authoritative one —
+ * which is why status is the primary signal and these six only rescue the 400s
+ * status gets wrong.
+ *
  * Deliberately excludes 10000. Cloudflare returns 10000 for "Authentication
- * error" but also reuses it as a generic validation code ("domain_name is
- * required", "Invalid pagination cursor"), so routing on it would tell an
- * agent its token was broken when its arguments were. Genuine 10000 auth
- * failures arrive with 401 or 403 and are caught by status.
+ * error" but has also been observed reusing it as a generic validation code
+ * ("domain_name is required", "Invalid pagination cursor"), so routing on it
+ * would risk telling an agent its token was broken when its arguments were.
+ * Genuine 10000 auth failures arrive with 401 or 403 and are caught by status.
  *
  * All of these route to `auth_required`, whose recovery mode resolves to
  * `operator_config` because this connection declares an operator-managed
@@ -569,14 +575,37 @@ const RAW_INPUT_PROPERTY: JsonSchema = {
 };
 
 /**
- * Cloudflare's per-page bounds differ per endpoint and it rejects an
- * out-of-range value with a 400, so each caller passes its own. Encoding them
- * in the schema turns a wasted round trip into a local repair.
+ * Cloudflare's per-page bounds and default differ per endpoint and it rejects
+ * an out-of-range value with a 400, so each caller passes its own. Encoding
+ * them in the schema turns a wasted round trip into a local repair — but only
+ * where the bound is really Cloudflare's. `bounds` records who chose the
+ * range, because `strictValidation` refuses an out-of-range `perPage` locally
+ * and an agent deserves to know whether the wall it hit is the API's or ours:
+ *
+ * - `"cloudflare"` — the schema's own documented minimum and maximum.
+ * - `"clamped"` — Cloudflare accepts more; this connection caps it lower.
+ * - `"undocumented"` — Cloudflare documents no bounds at all for the endpoint,
+ *   so the range is entirely this connection's choice.
  */
 function pagingInputProperties(
   minPerPage: number,
   maxPerPage: number,
+  options: {
+    defaultPerPage?: number;
+    bounds?: "cloudflare" | "clamped" | "undocumented";
+  } = {},
 ): Record<string, JsonSchema> {
+  const { defaultPerPage, bounds = "cloudflare" } = options;
+  const defaultNote =
+    defaultPerPage === undefined
+      ? " Cloudflare chooses the default."
+      : ` Defaults to ${defaultPerPage}.`;
+  const boundsNote =
+    bounds === "clamped"
+      ? ` The ${maxPerPage} ceiling is this connection's cap, not Cloudflare's limit.`
+      : bounds === "undocumented"
+        ? " Cloudflare documents no bounds for this endpoint; the range is this connection's own."
+        : "";
   return {
     page: {
       type: "integer",
@@ -587,7 +616,7 @@ function pagingInputProperties(
       type: "integer",
       minimum: minPerPage,
       maximum: maxPerPage,
-      description: `Items per page, ${minPerPage} to ${maxPerPage}. Defaults to 20.`,
+      description: `Items per page, ${minPerPage} to ${maxPerPage}.${defaultNote}${boundsNote}`,
     },
   };
 }
@@ -790,7 +819,7 @@ function buildTools(scope: Scoping): ApiTool[] {
             type: "string",
             description: "Filter by exact account name.",
           },
-          ...pagingInputProperties(5, 50),
+          ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
           raw: RAW_INPUT_PROPERTY,
         },
         required: [],
@@ -840,7 +869,7 @@ function buildTools(scope: Scoping): ApiTool[] {
             enum: ["initializing", "pending", "active", "moved"],
             description: "Filter by zone status.",
           },
-          ...pagingInputProperties(5, 50),
+          ...pagingInputProperties(5, 50, { defaultPerPage: 20 }),
           raw: RAW_INPUT_PROPERTY,
         },
         required: [],
@@ -855,8 +884,11 @@ function buildTools(scope: Scoping): ApiTool[] {
             path: "/zones",
             query: {
               name: optionalString(args, "name"),
-              "account.id":
-                optionalString(args, "accountId") ?? scope.accountId,
+              // Deliberately not defaulted to `scope.accountId`. This is the
+              // discovery tool: a deployment default that silently narrowed
+              // what an agent can see would contradict the property's own
+              // description, and there would be no argument that escapes it.
+              "account.id": optionalString(args, "accountId"),
               status: optionalString(args, "status"),
               page: optionalNumber(args, "page"),
               per_page: optionalNumber(args, "perPage"),
@@ -923,8 +955,18 @@ function buildTools(scope: Scoping): ApiTool[] {
             enum: ["type", "name", "content", "ttl", "proxied"],
             description: "Sort field.",
           },
-          direction: { type: "string", enum: ["asc", "desc"] },
-          ...pagingInputProperties(5, 100),
+          direction: {
+            type: "string",
+            enum: ["asc", "desc"],
+            description: "Sort direction for `order`. Defaults to asc.",
+          },
+          // Cloudflare documents 1 to 5,000,000 here with a default of 100; the
+          // ceiling is nominal, so this connection caps it at a page size that
+          // actually returns.
+          ...pagingInputProperties(1, 1000, {
+            defaultPerPage: 100,
+            bounds: "clamped",
+          }),
           raw: RAW_INPUT_PROPERTY,
         },
         required: scopeRequired("zoneId", scope.zoneId),
@@ -1039,7 +1081,7 @@ function buildTools(scope: Scoping): ApiTool[] {
         type: "object",
         properties: {
           accountId: scopeProperty("accountId", scope.accountId),
-          ...pagingInputProperties(1, 1000),
+          ...pagingInputProperties(1, 1000, { defaultPerPage: 20 }),
           raw: RAW_INPUT_PROPERTY,
         },
         required: scopeRequired("accountId", scope.accountId),
@@ -1165,7 +1207,7 @@ function buildTools(scope: Scoping): ApiTool[] {
         type: "object",
         properties: {
           accountId: scopeProperty("accountId", scope.accountId),
-          ...pagingInputProperties(1, 100),
+          ...pagingInputProperties(1, 100, { bounds: "undocumented" }),
           raw: RAW_INPUT_PROPERTY,
         },
         required: scopeRequired("accountId", scope.accountId),
@@ -1333,15 +1375,28 @@ function buildTools(scope: Scoping): ApiTool[] {
             description:
               "Seconds; 1 means automatic, otherwise at least 60 (30 on Enterprise zones).",
           },
-          proxied: { type: "boolean" },
+          proxied: {
+            type: "boolean",
+            description:
+              "Route through Cloudflare's proxy. Only A, AAAA, and CNAME records are proxiable, and a proxied record must use ttl 1.",
+          },
           priority: {
             type: "integer",
             minimum: 0,
             maximum: 65535,
             description: "Mail-server preference. MX records only.",
           },
-          comment: { type: "string" },
-          tags: { type: "array", items: { type: "string" } },
+          comment: {
+            type: "string",
+            description:
+              "Operator-facing note stored with the record. Replaces the existing note.",
+          },
+          tags: {
+            type: "array",
+            items: { type: "string" },
+            description:
+              "Custom tags, available on paid plans. Replaces the existing tag set rather than adding to it.",
+          },
         },
         required: [...scopeRequired("zoneId", scope.zoneId), "recordId"],
         additionalProperties: false,
@@ -1576,7 +1631,7 @@ Account purpose: ${purpose}
 - ${zoneLine}
 - ${accountLine}
 - Every tool's schema is complete. The arguments a call needs are in \`required\`, and the values a field accepts are in its \`enum\` — you do not need to read Cloudflare's API documentation to make a call here.
-- Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_r2_buckets\` is unpaginated and filters with \`nameContains\`.
+- Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. Two exceptions: \`list_r2_buckets\` paginates by cursor — pass the returned \`nextCursor\` back as \`cursor\` until it is absent — and \`list_worker_scripts\` is unpaginated.
 - Results are projected to the fields that identify and describe a resource. Pass \`raw: true\` on a read when you genuinely need a field the projection drops.
 - The API token is operator-managed and scoped by permission, not by role. An \`auth_required\` failure means the token is missing, invalid, or lacks that call's permission — it is never fixed by retrying. Call \`verify_api_token\` to tell a dead token from a missing permission, then report which permission is needed rather than trying other tools.
 - A \`rate_limited\` failure carries the wait window. Cloudflare's limit is 1,200 requests per five minutes per user, counted across the dashboard and every token, so do not fan out speculatively; filter server-side with \`name\`, \`type\`, and \`content\` instead of listing everything and filtering locally.
