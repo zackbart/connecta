@@ -72,7 +72,10 @@ For an agent setting this up, the contract is:
 2. Keep the required `executor: quickJsExecutor()` configuration; without an
    executor the deployment refuses to boot.
 3. Keep secrets in environment variables or a secret store, never source.
-4. Add code only for deliberate `api()` connectors.
+4. Add connectors explicitly: import a maintained prebuilt provider
+   constructor when one exists, otherwise write a deliberate `remoteMcp()` or
+   `api()` connector. There is no registry to browse and nothing registers
+   itself.
 5. Run `npm run typecheck`, start the server, and run
    `CONNECTA_TOKEN=... npm run doctor`. Doctor checks health, the executor, and
    the exact seven-tool model-facing surface, then executes a harmless sandbox

@@ -1,14 +1,111 @@
 # Connectors
 
 Connectors are the boundary between Connecta's fixed meta-tool surface and
-downstream capabilities. `api()` defines a deliberate HTTP API surface;
-`remoteMcp()` aggregates another MCP endpoint. Both publish the same tool
-definitions and pass through the same catalog, read-only admission, invocation,
-result-size, and activity paths.
+downstream capabilities. Prefer a prebuilt connection when Connecta maintains
+one for the provider. Use `api()` to define a deliberate HTTP API surface and
+`remoteMcp()` to aggregate any other MCP endpoint. All three authoring paths
+produce ordinary `Connector` instances and pass through the same catalog,
+read-only admission, credentials, storage, invocation, result-size, and
+activity paths.
 
 Connector instances are deployment configuration. They are not registered or
 reconfigured at runtime. Request-local clients, transports, abort signals, and
 catalogs must be released with the request that created them.
+
+## Prebuilt connections
+
+A prebuilt connection is an independently imported provider constructor, not a
+registry or a second connector interface. It packages behavior Connecta can
+maintain universally: provider endpoints and authentication defaults, tool
+definitions or downstream catalog behavior, schemas and annotations, lean
+result shapes, typed errors, pagination and retry conventions, and a short
+usage guide where schemas cannot carry the advice.
+
+The deployment still supplies the account-specific identity and policy:
+
+- a unique connector `id`, which owns its address, storage, credential,
+  catalog, admission, and activity namespaces;
+- a human-readable `title` and a concrete `purpose` or audience;
+- supported authentication overrides; and
+- account-specific instructions appended to, rather than replacing, the safe
+  provider guidance.
+
+Imports and registration stay explicit and a la carte:
+
+```ts
+import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
+
+const analytics = mixpanel("product_analytics", {
+  title: "Product analytics",
+  purpose: "Production product decisions for the growth team",
+});
+```
+
+The constructor may use `remoteMcp()` or `api()` internally. Callers should not
+need to care which transport gives the better agent-facing surface, and the
+choice does not grant the connection different runtime privileges. Two
+instances of the same provider are isolated in exactly the same way as two
+hand-written connectors with different ids.
+
+A prebuilt connection's vetted annotations are fill-in only. They classify what
+the downstream leaves unannotated and may always tighten a classification; they
+never overrule an explicit downstream `destructiveHint: true` or
+`readOnlyHint: false`. The fail-closed read-only invariant is unchanged by the
+authoring path.
+
+Prebuilt means preferred when available, not mandatory. A deployment may mix
+prebuilt connections, custom `remoteMcp()` connections, and custom `api()`
+connections. Connecta makes no completeness promise: providers without a
+maintained prebuilt connection continue to use the public primitives without
+loss of support.
+
+```ts
+import { createConnecta, remoteMcp, api } from "@zackbart/connecta";
+import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
+import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+
+export const connecta = createConnecta({
+  executor: quickJsExecutor(),
+  connectors: [
+    // Maintained prebuilt connection.
+    mixpanel("product_analytics", {
+      purpose: "Production product decisions for the growth team",
+    }),
+    // Custom downstream MCP server, no prebuilt connection needed.
+    remoteMcp("linear", {
+      url: "https://mcp.linear.app/mcp",
+      description: "Issue tracking for the platform team",
+    }),
+    // Deliberate in-house HTTP surface, hand-written tool by hand-written tool.
+    api("billing", {
+      description: "Internal billing reads",
+      credential: { label: "Billing API token" },
+      tools: [
+        {
+          name: "get_invoice",
+          description: "Fetch one invoice by id.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+          },
+          handler: async ({ id }, ctx) => {
+            const response = await fetch(
+              `https://billing.internal.example/invoices/${id}`,
+              { headers: { Authorization: `Bearer ${await ctx.credential?.get()}` } },
+            );
+            return response.json();
+          },
+        },
+      ],
+    }),
+  ],
+});
+```
+
+All three are ordinary `Connector` instances by the time the registry sees
+them. Nothing in the list is privileged by how it was authored.
 
 ## MCP version skew
 
