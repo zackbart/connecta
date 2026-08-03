@@ -48,10 +48,12 @@ instances of the same provider are isolated in exactly the same way as two
 hand-written connectors with different ids.
 
 A prebuilt connection's vetted annotations are fill-in only. They classify what
-the downstream leaves unannotated and may always tighten a classification; they
-never overrule an explicit downstream `destructiveHint: true` or
-`readOnlyHint: false`. The fail-closed read-only invariant is unchanged by the
-authoring path.
+the downstream leaves unannotated and do not argue with what it states — not an
+explicit `destructiveHint: true` or `readOnlyHint: false` on a name the
+connection files as a read, nor an explicit `readOnlyHint: true` on a name no
+release has classified at all. Silence on an unclassified name still means not
+read-only, so catalog drift fails closed. The fail-closed read-only invariant
+is unchanged by the authoring path.
 
 Prebuilt means preferred when available, not mandatory. A deployment may mix
 prebuilt connections, custom `remoteMcp()` connections, and custom `api()`

@@ -256,8 +256,9 @@ describe("stripe()", () => {
       // host's approval copy with a destruction it does not perform.
       { name: "stripe_report" },
       // `create_customer` still appears in one stale Stripe doc example but is
-      // absent from the documented tool table. Unclassified means fail closed.
-      { name: "create_customer", annotations: { readOnlyHint: true } },
+      // absent from the documented tool table. Unclassified and unannotated
+      // means fail closed.
+      { name: "create_customer" },
     ]);
     const connector = stripe("billing", {
       mode: "sandbox",
@@ -279,7 +280,31 @@ describe("stripe()", () => {
       destructiveHint: true,
     });
     expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: false });
+    expect(tools[4]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("believes an explicit annotation on a tool no release has classified", async () => {
+    mocks.listTools.mockResolvedValue([
+      // Not on either maintained list, and the downstream calls it read-only.
+      // Rewriting that to `false` would be an overrule, not a fill-in: on a
+      // name no release has reviewed, the downstream's word is the only
+      // evidence there is. Stripe alludes to undocumented Treasury tools that
+      // will arrive exactly this way.
+      { name: "get_new_treasury_thing", annotations: { readOnlyHint: true } },
+      // The same rule in the other direction.
+      { name: "wreck_new_thing", annotations: { destructiveHint: true } },
+    ]);
+    const connector = stripe("billing", {
+      mode: "sandbox",
+      purpose: "Rehearsal",
+    });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
+    expect(tools[1]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 
   it("never overrules an explicit downstream annotation on a vetted read", async () => {

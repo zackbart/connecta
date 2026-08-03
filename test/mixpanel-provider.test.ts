@@ -116,8 +116,9 @@ describe("mixpanel()", () => {
       // Maintained additive create: leaves the read path without inflating the
       // host's approval copy with a destruction it does not perform.
       { name: "Create-Dashboard" },
-      // Unfamiliar tool: fails closed regardless of its own claim.
-      { name: "Brand-New-Tool", annotations: { readOnlyHint: true } },
+      // Unfamiliar tool the downstream says nothing about: silence fails
+      // closed.
+      { name: "Brand-New-Tool" },
     ]);
     const connector = mixpanel("analytics", { purpose: "Product decisions" });
     const tools = await connector.listTools(context);
@@ -136,7 +137,27 @@ describe("mixpanel()", () => {
       destructiveHint: true,
     });
     expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: false });
+    expect(tools[4]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("believes an explicit annotation on a tool no release has classified", async () => {
+    mocks.listTools.mockResolvedValue([
+      // Not on either maintained list, and the downstream calls it read-only.
+      // Rewriting that to `false` would be an overrule, not a fill-in: on a
+      // name no release has reviewed, the downstream's word is the only
+      // evidence there is.
+      { name: "Get-Brand-New-Thing", annotations: { readOnlyHint: true } },
+      // The same rule in the other direction.
+      { name: "Wreck-Brand-New-Thing", annotations: { destructiveHint: true } },
+    ]);
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
+    expect(tools[1]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
   });
 
   it("never overrules an explicit downstream annotation on a vetted read", async () => {

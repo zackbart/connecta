@@ -137,20 +137,26 @@ exists rather than a fresh object appearing beside it. Additive writes
 `readOnlyHint: false` already routes them through `call_destructive_tool`, and
 asserting destruction only inflates the approval copy the host shows a human.
 
-That classification is **fill-in only**. It supplies the annotations Stripe
-leaves unset — Stripe documents no MCP annotations at all — and may always
-tighten one, but it never contradicts an explicit downstream annotation. A tool
-on the read allowlist that arrives carrying `destructiveHint: true` or
+That classification is **fill-in only**, and unconditionally so: it supplies
+the annotations Stripe leaves unset — Stripe documents no MCP annotations at
+all — and contradicts an explicit downstream annotation in neither direction. A
+tool on the read allowlist arriving with `destructiveHint: true` or
 `readOnlyHint: false` keeps exactly what the downstream said and stays behind
-`call_destructive_tool`: the downstream is telling you this release's allowlist
-is stale, and the fail-closed invariant does not bend for a maintained
-connection.
+`call_destructive_tool`. A tool on neither maintained list arriving with
+`readOnlyHint: true` keeps that too, and stays callable from `execute_code`.
+Both are the downstream telling you this release's allowlist is stale, and on a
+name no release has reviewed its word is the only evidence there is. The one
+classification that still outranks the downstream is a name this release
+reviewed and filed destructive: a `create_refund` claiming `readOnlyHint: true`
+is a downstream bug rather than news, and stays on the approval path.
 
-An unfamiliar tool fails closed onto `call_destructive_tool` until a Connecta
-release reviews it. That is not hypothetical here: Stripe's own MCP page still
-carries a `create_customer` example that its tool table no longer lists.
-Whatever the server actually serves, an unclassified `create_customer` loses any
-`readOnlyHint` it claims and lands on the approval path.
+An unfamiliar tool that annotates nothing fails closed onto
+`call_destructive_tool` until a Connecta release reviews it. That is not
+hypothetical here: Stripe's own MCP page still carries a `create_customer`
+example that its tool table no longer lists. Whatever the server actually
+serves, an unclassified and unannotated `create_customer` lands on the approval
+path. Expect the undocumented Treasury tools Stripe alludes to to arrive
+unclassified as well — annotated ones will be taken at their word.
 
 Stripe publishes no stability or deprecation policy for this tool set and
 invites tool requests by email, so treat the list as unversioned. `get_balance_summary`
