@@ -74,6 +74,16 @@ describe("public package boundary", () => {
     ]);
   });
 
+  it("publishes Mixpanel independently from the root entry", async () => {
+    expect(packageJson.exports).toHaveProperty("./providers/mixpanel");
+    const core = await import("../src/index.js");
+    expect(core).not.toHaveProperty("mixpanel");
+    expect(core).not.toHaveProperty("MIXPANEL_MCP_ENDPOINTS");
+    expect(readdirSync(join(ROOT, "src", "providers")).sort()).toEqual([
+      "mixpanel.ts",
+    ]);
+  });
+
   it("exports validateToolInput from the core entry", async () => {
     const core = await import("../src/index.js");
     expect(typeof core.validateToolInput).toBe("function");

@@ -100,10 +100,12 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     const quickJsExecutor = join(SRC, "executors", "quickjs.ts");
     const quickJsChild = join(SRC, "executors", "quickjs-child.ts");
     const clerkAdapter = join(SRC, "auth", "clerk.ts");
+    const mixpanelProvider = join(SRC, "providers", "mixpanel.ts");
     expect(graph.has(nodeAdapter)).toBe(false);
     expect(graph.has(fileStorage)).toBe(false);
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
+    expect(graph.has(mixpanelProvider)).toBe(false);
   });
 });

@@ -107,6 +107,10 @@ export const connecta = createConnecta({
 All three are ordinary `Connector` instances by the time the registry sees
 them. Nothing in the list is privileged by how it was authored.
 
+Maintained provider guides:
+
+- [Mixpanel](./mixpanel.md)
+
 ## MCP version skew
 
 Connecta deliberately sits between protocol generations

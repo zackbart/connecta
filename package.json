@@ -64,6 +64,10 @@
     "./auth/clerk": {
       "types": "./dist/auth/clerk.d.ts",
       "import": "./dist/auth/clerk.js"
+    },
+    "./providers/mixpanel": {
+      "types": "./dist/providers/mixpanel.d.ts",
+      "import": "./dist/providers/mixpanel.js"
     }
   },
   "scripts": {
