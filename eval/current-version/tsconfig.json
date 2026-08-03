@@ -3,5 +3,11 @@
   "compilerOptions": {
     "noEmit": true
   },
-  "include": ["performance-server.ts", "sandbox-server.ts"]
+  "include": [
+    "cloudflare-fixture.ts",
+    "eval-tracing.ts",
+    "performance-server.ts",
+    "reference-connection-server.ts",
+    "sandbox-server.ts"
+  ]
 }

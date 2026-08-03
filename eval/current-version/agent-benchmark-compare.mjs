@@ -29,6 +29,12 @@ function assertComparable(baseline, candidate) {
     "harnessSha256",
     "scoringSha256",
     "sandboxSha256",
+    // The reference-connection lane has its own deployment, its own downstream
+    // double, and shared instrumentation. A change to any of them changes what
+    // was measured just as surely as a change to the fixture sandbox does.
+    "referenceSandboxSha256",
+    "referenceDownstreamSha256",
+    "evalTracingSha256",
   ]) {
     if (baseline.source?.[field] !== candidate.source?.[field]) {
       errors.push(
