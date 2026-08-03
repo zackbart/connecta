@@ -146,8 +146,11 @@ try {
     "dist/executors/quickjs-runtime.js",
     "dist/providers/mixpanel.js",
     "dist/providers/mixpanel.d.ts",
+    "dist/providers/stripe.js",
+    "dist/providers/stripe.d.ts",
     "src/index.ts",
     "src/providers/mixpanel.ts",
+    "src/providers/stripe.ts",
   ]) {
     if (!paths.has(required)) {
       throw new Error(`Packed artifact is missing ${required}`);
@@ -193,6 +196,17 @@ const mixpanelConnection = mixpanelProvider.mixpanel("analytics", {
 if (mixpanelConnection.id !== "analytics") {
   throw new Error("Mixpanel provider did not return a connector");
 }
+const stripeProvider = await import("@zackbart/connecta/providers/stripe");
+if (typeof stripeProvider.stripe !== "function") {
+  throw new Error("missing Stripe provider constructor");
+}
+const stripeConnection = stripeProvider.stripe("payments", {
+  mode: "sandbox",
+  purpose: "package smoke",
+});
+if (stripeConnection.id !== "payments") {
+  throw new Error("Stripe provider did not return a connector");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
@@ -201,6 +215,8 @@ for (const name of [
   "quickJsExecutor",
   "mixpanel",
   "MIXPANEL_MCP_ENDPOINTS",
+  "stripe",
+  "STRIPE_MCP_ENDPOINT",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }

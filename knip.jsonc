@@ -8,6 +8,7 @@
     "src/executors/quickjs-child.ts",
     "src/auth/clerk.ts",
     "src/providers/mixpanel.ts",
+    "src/providers/stripe.ts",
     "src/operator-ui/browser.ts",
     "examples/*/server.ts",
     "examples/*/src/index.ts",
