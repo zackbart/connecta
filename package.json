@@ -65,6 +65,10 @@
       "types": "./dist/auth/clerk.d.ts",
       "import": "./dist/auth/clerk.js"
     },
+    "./providers/linear": {
+      "types": "./dist/providers/linear.d.ts",
+      "import": "./dist/providers/linear.js"
+    },
     "./providers/mixpanel": {
       "types": "./dist/providers/mixpanel.d.ts",
       "import": "./dist/providers/mixpanel.js"

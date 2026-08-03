@@ -94,8 +94,8 @@ const connecta = createConnecta({
     // state volume). Requires PUBLIC_URL so the /oauth/callback/<id> route is
     // reachable; authorize_connector returns the authorization URL to open:
     //
-    // remoteMcp("linear", {
-    //   url: "https://mcp.linear.app/mcp",
+    // remoteMcp("tracker", {
+    //   url: "https://mcp.tracker.example/mcp",
     //   auth: { type: "oauth" },
     // }),
     //
