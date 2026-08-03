@@ -223,10 +223,10 @@ const page = await connecta.search({
 
 **S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`, connector shortcuts, and `connecta.batch`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
 
-**S2.** With schemas requested, a match whose input (or output) schema resolves
-to an object shape also carries `inputKeys`, `requiredInputKeys`, and
-`outputKeys`: the same names the rendered schema shows, ready to check before
-building arguments. A schema that is not an object shape — a union, an array, an
+**S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`, and `outputKeys`:
+the same names the rendered schema shows, ready to check before
+building arguments. Match inputs, truncation, safety, and outputs, not lexical
+rank; search distinct operations separately and use `outputKeys`, not guessed roots. A non-object schema — a union, an array, an
 unresolvable `$ref` — carries no lists rather than empty ones, because absent
 means "read the schema" where `[]` would claim the tool takes no fields. The
 lists come from the same walk that renders the compact schema, so a top-level

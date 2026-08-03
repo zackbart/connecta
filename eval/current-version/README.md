@@ -81,8 +81,9 @@ does not:
   each task. The task prompts do not explain Connecta's routing workflow. The
   runner scores answer and execution correctness, safety, advertised-surface
   validity, foreign and redundant calls, Connecta round trips and result
-  tokens, whole-agent tokens, and wall time. It accepts multiple valid routes
-  rather than prescribing an exact tool sequence.
+  tokens, whole-agent tokens, and wall time. Ordinary cases accept multiple
+  valid routes; cases with an explicit routing policy additionally score the
+  intended outer-tool sequence.
 
 Run the complete environment:
 
@@ -112,6 +113,18 @@ isolated sessions. Override those independently:
 
 ```sh
 npm --prefix eval/current-version run perf:agent -- \
+  --repetitions 5 \
+  --concurrency 2
+```
+
+The issue #295 routing lane selects six fresh-agent cases covering one unknown
+read, dependent reads, in-program reduction, multi-operation discovery,
+ambiguous candidates, and a nonstandard collection root. It reports
+`routePassRate` and requires at least 95% route compliance:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --case routing \
   --repetitions 5 \
   --concurrency 2
 ```

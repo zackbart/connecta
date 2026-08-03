@@ -19,6 +19,13 @@ The consolidation removed overlapping routing choices while preserving the
 cheaper direct path for one cold call. The [guest API contract](./code-mode.md)
 is what a program is promised.
 
+The route is chosen before discovery. A result that will be reduced, a call
+whose arguments depend on an earlier result, or work with multiple operations
+starts with one `execute_code` call and keeps discovery, calls, and reduction
+inside it. Distinct operations get distinct short `connecta.search` queries in
+that program. Only one unknown-address read takes the cheaper top-level
+`search_tools` → `call_tool` path; a known address needs only `call_tool`.
+
 `execute_code` accepts optional `diagnostics: true` when a caller is measuring
 a workflow. It adds only compact request-local timing and serialized-size
 aggregates; normal calls carry no diagnostics block or response-context cost.
@@ -47,8 +54,11 @@ only a discovery filter: it neither grants authority nor changes invocation admi
 shape. Bounded plain-object schemas also expose `inputKeys`,
 `requiredInputKeys`, and `outputKeys`; a truncated shape omits its corresponding
 list rather than repeating a large partial inventory. Matches carry declared
-behavior annotations. When
-that shape is sufficient, call the returned address directly. Reserve schema
+behavior annotations. Lexical rank is only one signal: select a candidate whose
+required inputs are available, whose schema is complete enough for the call,
+and whose safety and declared outputs fit the work. A reducer uses `outputKeys`
+before inspecting the value; it does not assume a collection is named `items`
+or `results`. When that shape is sufficient, call the returned address directly. Reserve schema
 expansion through `connecta.describe` for a search without schemas, an
 ambiguous compact shape, or exact
 constraints that require `format: "json"`.

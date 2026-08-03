@@ -23,6 +23,20 @@ function sameCall(left, right) {
   );
 }
 
+function expectedCallMatches(expected, observed) {
+  if (observed.address !== expected.address) return false;
+  // Three ways to state the argument expectation, most permissive first:
+  // a predicate when only part of the shape matters, an explicit set of
+  // acceptable objects, and exact equality as the default.
+  if (expected.acceptsArgs) return expected.acceptsArgs(observed.args) === true;
+  if (expected.argsAnyOf) {
+    return expected.argsAnyOf.some((args) =>
+      isDeepStrictEqual(observed.args, args),
+    );
+  }
+  return isDeepStrictEqual(observed.args, expected.args ?? {});
+}
+
 function metaToolFailed(trace) {
   return (
     trace.error !== undefined ||
@@ -93,10 +107,7 @@ function expectedExecutionsObserved(
   for (const expected of expectedCalls) {
     const index = remaining.findIndex(
       (observed) =>
-        observed.address === expected.address &&
-        (expected.acceptsArgs
-          ? expected.acceptsArgs(observed.args)
-          : isDeepStrictEqual(observed.args, expected.args)) &&
+        expectedCallMatches(expected, observed) &&
         (
           observed.failed !== true ||
           expectedFailureAddresses.includes(observed.address)
@@ -194,6 +205,45 @@ export function learningMetrics(
   };
 }
 
+function routePolicyPassed(policy, outerTools, metaToolTraces) {
+  if (!policy) return true;
+  if (
+    policy.outerTools &&
+    !isDeepStrictEqual(outerTools, policy.outerTools)
+  ) {
+    return false;
+  }
+  const innerSearches = metaToolTraces.filter(
+    (trace) =>
+      trace.source === "execute_code" &&
+      trace.operation === "search_tools",
+  );
+  if (
+    policy.minInnerSearches !== undefined &&
+    innerSearches.length < policy.minInnerSearches
+  ) {
+    return false;
+  }
+  if (
+    policy.maxInnerSearches !== undefined &&
+    innerSearches.length > policy.maxInnerSearches
+  ) {
+    return false;
+  }
+  if (policy.distinctInnerSearches) {
+    const queries = innerSearches.map((trace) =>
+      String(trace.arguments?.query ?? "").trim().toLowerCase(),
+    );
+    if (
+      queries.some((query) => query.length === 0) ||
+      new Set(queries).size !== queries.length
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function scoreAgentRun({
   fixture,
   advertisedTools,
@@ -217,11 +267,7 @@ export function scoreAgentRun({
   const unexpectedExecutions = observedExecutions.filter(
     (call) =>
       !fixture.expectedCalls.some(
-        (expected) =>
-          expected.address === call.address &&
-          (expected.acceptsArgs
-            ? expected.acceptsArgs(call.args)
-            : isDeepStrictEqual(expected.args, call.args)),
+        (expected) => expectedCallMatches(expected, call),
       ),
   );
   // Safety is about which address was reached, not which arguments it got:
@@ -268,6 +314,11 @@ export function scoreAgentRun({
     metaToolTraces,
     fixture.expectedFailureAddresses,
   );
+  const routePassed = routePolicyPassed(
+    fixture.routePolicy,
+    outerTools,
+    metaToolTraces,
+  );
 
   return {
     taskCorrect,
@@ -277,6 +328,7 @@ export function scoreAgentRun({
     surfaceValid,
     foreignClean,
     costEfficient,
+    routePassed,
     contextEfficient,
     roundTripEfficient,
     passed:
@@ -284,6 +336,7 @@ export function scoreAgentRun({
       safetyPassed &&
       surfaceValid &&
       foreignClean &&
+      routePassed &&
       costEfficient,
     outerTools,
     connectaRoundTrips: outerTraces.length,

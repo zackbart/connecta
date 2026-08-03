@@ -1011,14 +1011,27 @@ const controlled = api("controlled", {
             type: "integer",
             minimum: 1,
             maximum: 500,
-            default: 100,
+            default: 120,
           },
         },
         additionalProperties: false,
       },
+      outputSchema: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            id: { type: "integer" },
+            group: { type: "string" },
+            score: { type: "integer" },
+          },
+          required: ["id", "group", "score"],
+          additionalProperties: false,
+        },
+      },
       annotations: { readOnlyHint: true, idempotentHint: true },
       handler: (args: { count?: number }) =>
-        Array.from({ length: args.count ?? 100 }, (_, index) => ({
+        Array.from({ length: args.count ?? 120 }, (_, index) => ({
           id: index + 1,
           group: ["alpha", "beta", "gamma"][index % 3],
           score: (index * 17) % 101,
@@ -1080,6 +1093,118 @@ const controlled = api("controlled", {
           forbiddenPresent: forbidden.filter((key) => keys.includes(key)),
         };
       },
+    },
+  ],
+});
+
+const routing = api("routing", {
+  title: "Routing Guidance Eval Fixtures",
+  description:
+    "Deterministic fixtures for schema-aware selection and declared output roots",
+  strictValidation: true,
+  tools: [
+    {
+      name: "search_releases_by_registry",
+      description:
+        "Search releases by package in one private registry. Requires the registry tenant identifier.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          package: { type: "string", minLength: 1 },
+          registryTenantId: { type: "string", minLength: 1 },
+        },
+        required: ["package", "registryTenantId"],
+        additionalProperties: false,
+      },
+      outputSchema: objectOutput,
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: { package: string; registryTenantId: string }) => ({
+        package: args.package,
+        version: "private-fixture",
+        registryTenantId: args.registryTenantId,
+      }),
+    },
+    {
+      name: "search_public_releases",
+      description:
+        "Search releases by package in the public catalog. Needs only the package name.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          package: { type: "string", minLength: 1 },
+        },
+        required: ["package"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          package: { type: "string" },
+          version: { type: "string" },
+          channel: { type: "string" },
+        },
+        required: ["package", "version", "channel"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: { package: string }) => ({
+        package: args.package,
+        version: "0.12.2",
+        channel: "latest",
+      }),
+    },
+    {
+      name: "list_active_incidents",
+      description:
+        "List all active routing incidents for aggregation or status summaries.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          incidents: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                title: { type: "string" },
+                severity: { type: "string" },
+                status: { type: "string", enum: ["active"] },
+                service: { type: "string", enum: ["routing"] },
+              },
+              required: ["id", "title", "severity", "status", "service"],
+              additionalProperties: false,
+            },
+          },
+          observedAt: { type: "string" },
+        },
+        required: ["incidents", "observedAt"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: () => ({
+        incidents: [
+          {
+            id: "incident-catalog-delay",
+            title: "Catalog refresh delayed",
+            severity: "minor",
+            status: "active",
+            service: "routing",
+          },
+          {
+            id: "incident-executor-queue",
+            title: "Executor queue elevated",
+            severity: "major",
+            status: "active",
+            service: "routing",
+          },
+        ],
+        observedAt: "2026-08-03T12:00:00Z",
+      }),
     },
   ],
 });
@@ -1237,6 +1362,7 @@ const connecta = createConnecta({
     genericLedger,
     unavailableCatalog,
     controlled,
+    routing,
     oauthRecoverable,
     oauthUnavailable,
     staticRecoverable,
@@ -1299,7 +1425,7 @@ console.log(
     url: `http://${host}:${address.port}/mcp`,
     baseUrl: `http://${host}:${address.port}`,
     sourceCommit,
-    connectorCount: discoveryConnectors.length + 10,
+    connectorCount: discoveryConnectors.length + 11,
     traceEnabled,
   }),
 );

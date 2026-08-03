@@ -95,6 +95,74 @@ const codeFirst = scoreAgentRun({
 assert.equal(codeFirst.passed, true, "the code-first route is valid");
 assert.deepEqual(codeFirst.removedToolCalls, []);
 
+const separatelyDiscovered = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 2,
+      distinctInnerSearches: true,
+    },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record one" },
+    },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record two" },
+    },
+    ...codeFirst.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(separatelyDiscovered.routePassed, true);
+
+const broadDiscovery = scoreAgentRun({
+  fixture: {
+    ...fixture,
+    routePolicy: {
+      outerTools: ["execute_code"],
+      minInnerSearches: 2,
+      distinctInnerSearches: true,
+    },
+  },
+  advertisedTools,
+  metaToolTraces: [
+    { source: "outer", operation: "search_tools", arguments: { query: "records" } },
+    { source: "outer", operation: "execute_code", arguments: {} },
+    {
+      source: "execute_code",
+      operation: "search_tools",
+      arguments: { query: "record one two" },
+    },
+    ...separatelyDiscovered.observedExecutions.map((call) => ({
+      source: "execute_code",
+      operation: "call_tool",
+      arguments: { address: call.address, args: call.args },
+    })),
+  ],
+  foreignToolCalls: [],
+  nonMcpActions: [],
+  finalCorrect: true,
+  mcpResultTokens: 40,
+});
+assert.equal(broadDiscovery.taskCorrect, true);
+assert.equal(broadDiscovery.routePassed, false);
+assert.equal(broadDiscovery.passed, false);
+
 const partialBatchFailure = scoreAgentRun({
   fixture,
   advertisedTools,

@@ -225,6 +225,12 @@ describe("server /mcp end-to-end", () => {
       "If this routing is unfamiliar",
     );
     expect(body.result.instructions).toContain(
+      "do not call top-level search_tools",
+    );
+    expect(body.result.instructions).toContain(
+      "never return discovery for another call",
+    );
+    expect(body.result.instructions).toContain(
       "connecta.ui(html) is a guest function inside execute_code",
     );
     expect(body.result.instructions).toContain(
@@ -349,6 +355,15 @@ describe("server /mcp end-to-end", () => {
     );
     expect(byName.search_tools.description).toContain(
       "omit limit initially (default 8)",
+    );
+    expect(byName.search_tools.description).toContain(
+      "Use top-level search only for exactly one unreduced read",
+    );
+    expect(byName.search_tools.description).toContain(
+      "For reduction, dependent or multiple calls, never search here",
+    );
+    expect(byName.search_tools.description).toContain(
+      "never the first lexical match",
     );
     expect(byName.search_tools.description).toContain(
       "set connector to the obvious integration id to load one catalog instead of all",
@@ -1704,10 +1719,30 @@ describe("execute_code registration (code mode)", () => {
     const executeTool = listed2.find(
       (tool: { name: string }) => tool.name === "execute_code",
     );
-    expect(executeTool.description).toContain("The primary surface.");
-    expect(executeTool.description).toContain("use one execute_code call");
     expect(executeTool.description).toContain(
-      "do not return search results for a second execute_code call",
+      "Choose the route before discovery",
+    );
+    expect(executeTool.description).toContain(
+      "primary surface for everything wider",
+    );
+    expect(executeTool.description).toContain("make exactly one execute_code call");
+    expect(executeTool.description).toContain(
+      "Never make a discovery-only program or return catalog matches for a later call",
+    );
+    expect(executeTool.description).toContain(
+      "Exactly one unknown-address read uses top-level search_tools then call_tool",
+    );
+    expect(executeTool.description).toContain(
+      "For distinct operations, make separate short searches here",
+    );
+    expect(executeTool.description).toContain(
+      "must be followed by selection and calls in this program",
+    );
+    expect(executeTool.inputSchema.properties.code.description).toContain(
+      "Consume search/describe results and finish the task inside it",
+    );
+    expect(executeTool.inputSchema.properties.code.description).toContain(
+      "returning catalog data for a later call is invalid",
     );
     expect(executeTool.description).toContain('includeSchemas: "compact"');
     expect(executeTool.description).toContain('safety: "readOnly"');
@@ -1715,6 +1750,33 @@ describe("execute_code registration (code mode)", () => {
       "avoid advertising calls this sandbox cannot execute",
     );
     expect(executeTool.description).toContain("requiredInputKeys");
+    expect(executeTool.description).toContain(
+      "never take the first lexical or merely input-compatible match",
+    );
+    expect(executeTool.description).toContain(
+      "Reducers use declared outputKeys, never guessed items/results roots",
+    );
+    expect(executeTool.description).toContain(
+      "[] means no required keys, not permission to invent args",
+    );
+    expect(executeTool.description).toContain(
+      "Describe only a truncated/insufficient compact shape",
+    );
+    expect(executeTool.description).toContain(
+      "match an earlier outputKey to the later requiredInputKey",
+    );
+    expect(executeTool.description).toContain(
+      "Put every requiredInputKey in call args",
+    );
+    expect(executeTool.description).toContain(
+      "do not prefer zero required keys",
+    );
+    expect(executeTool.description).toContain(
+      "Missing outputKeys means inspect outputSchema",
+    );
+    expect(executeTool.description).toContain(
+      "do not require it to be the only match",
+    );
     // The call form itself, not just the address: a bullet that says an
     // address is "callable" without showing the parentheses teaches nothing,
     // and the sanitization rule two clauses later makes "as written" false.
