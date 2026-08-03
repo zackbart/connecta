@@ -55,10 +55,10 @@ function legacyCase(run) {
 }
 
 export function normalizeAgentBenchmark(agent) {
-  if (agent.schemaVersion === 2) {
+  if (agent.schemaVersion === 2 || agent.schemaVersion === 3) {
     return {
       ...agent,
-      reportSchema: "v2",
+      reportSchema: `v${agent.schemaVersion}`,
       summary: {
         ...agent.summary,
         runs: agent.summary.runs ?? agent.runs.length,

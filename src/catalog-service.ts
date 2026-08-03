@@ -237,6 +237,19 @@ function schemaKeyMetadata(
   };
 }
 
+/**
+ * The classified-failure subset a scoped search may echo: enough to tell a
+ * transient outage from one an operator must clear, and nothing more. Kept as
+ * its own type rather than `CallErrorDetails` so widening the call-path
+ * classifier cannot widen this discovery-surface field by accident.
+ */
+interface CatalogFailureDetail {
+  code: string;
+  message: string;
+  retryable: boolean;
+  retryAfterMs?: number;
+}
+
 export interface CatalogSearchPage {
   entries: CatalogSearchEntry[];
   total: number;
@@ -253,6 +266,8 @@ export interface CatalogSearchPage {
     connectorScope?: string;
     unknownConnector?: true;
     unavailableConnectorCount?: number;
+    /** Bounded typed failure for an explicitly scoped unavailable catalog. */
+    catalogError?: CatalogFailureDetail;
     guidance?: string;
   };
 }
@@ -732,6 +747,27 @@ export class CatalogService {
     const unavailableCatalogs = catalogs.filter(
       (catalog) => catalog.status === "rejected",
     ).length;
+    // Named field by field rather than spread: `CallErrorDetails` also carries
+    // connector, operation, recovery, and nextAction, and a discovery read is
+    // not a call — widening the classifier must not silently widen what a
+    // catalog search hands back.
+    const scopedCatalogError = ((): CatalogFailureDetail | undefined => {
+      if (!scopedConnector || catalogs[0]?.status !== "rejected") {
+        return undefined;
+      }
+      const error = classifyCallError(
+        catalogs[0].reason,
+        "catalog_lookup_failed",
+      );
+      return {
+        code: error.code,
+        message: boundedEchoText(error.message),
+        retryable: error.retryable,
+        ...(error.retryAfterMs === undefined
+          ? {}
+          : { retryAfterMs: error.retryAfterMs }),
+      };
+    })();
     const safetyLabel =
       safety === "readOnly"
         ? "read-only "
@@ -748,7 +784,7 @@ export class CatalogService {
             ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
             : scopedConnector
               ? unavailableCatalogs > 0
-                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Retry later.`
+                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
                 : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
               : unavailableCatalogs === 0
                 ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
@@ -789,6 +825,7 @@ export class CatalogService {
               ...(unavailableCatalogs > 0
                 ? { unavailableConnectorCount: unavailableCatalogs }
                 : {}),
+              ...(scopedCatalogError ? { catalogError: scopedCatalogError } : {}),
               ...(guidance ? { guidance } : {}),
             },
           }

@@ -608,6 +608,290 @@ const discoveryConnectors: Connector[] = holdout.connectors.map((fixture) =>
   }),
 );
 
+const guidedWorkItems = api("work-items", {
+  title: "Work Items",
+  description:
+    "Issue search with a provider query language and team-scoped collections",
+  usageGuide: `# Work item search
+
+Use \`search_issues\` for filtered issue lists. Its \`query\` uses the provider's
+query language, not natural language. Put field names on the left, quote status
+values, join clauses with uppercase \`AND\`, and use the stable team key rather
+than the display name.
+
+Example: \`team = ENG AND status = "In Progress"\`.
+`,
+  strictValidation: true,
+  tools: [
+    {
+      name: "search_issues",
+      description:
+        "Search work items with the provider query language. Read the connector guide before composing a query.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", minLength: 1 },
+          first: {
+            type: "integer",
+            minimum: 1,
+            maximum: 50,
+            default: 25,
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          nodes: { type: "array", items: objectOutput },
+          pageInfo: objectOutput,
+        },
+        required: ["nodes", "pageInfo"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: { query: string }) => ({
+        nodes:
+          args.query === 'team = ENG AND status = "In Progress"'
+            ? [
+                {
+                  identifier: "ENG-294",
+                  title: "Reduce cold-agent connector learning turns",
+                  status: "In Progress",
+                  team: "ENG",
+                },
+              ]
+            : [],
+        pageInfo: { hasNextPage: false, endCursor: null },
+      }),
+    },
+  ],
+});
+
+const dnsRecordFilterProperties = {
+  recordType: {
+    type: "string",
+    enum: ["A", "AAAA", "CNAME", "MX", "TXT"],
+  },
+  name: { type: "string" },
+  content: { type: "string" },
+  proxied: { type: "boolean" },
+  comment: { type: "string" },
+  commentPresent: { type: "boolean" },
+  tag: { type: "string" },
+  tagPresent: { type: "boolean" },
+  page: { type: "integer", minimum: 1 },
+  perPage: { type: "integer", minimum: 1, maximum: 100 },
+  order: { type: "string", enum: ["type", "name", "content", "ttl"] },
+  direction: { type: "string", enum: ["asc", "desc"] },
+  match: { type: "string", enum: ["all", "any"] },
+  search: { type: "string" },
+  since: { type: "string", format: "date-time" },
+  before: { type: "string", format: "date-time" },
+  zoneName: { type: "string" },
+  recordId: { type: "string" },
+  minimumTtl: { type: "integer", minimum: 1 },
+  maximumTtl: { type: "integer", minimum: 1 },
+  exportFormat: { type: "string", enum: ["json", "bind"] },
+  includeDisabled: { type: "boolean" },
+  includeMetadata: { type: "boolean" },
+  flattenSettings: { type: "boolean" },
+  exactNameMatch: { type: "boolean" },
+  includeRecordSettings: { type: "boolean" },
+  includeZoneSettings: { type: "boolean" },
+  includePermissionGroups: { type: "boolean" },
+  includeActivationStatus: { type: "boolean" },
+  includeVerificationState: { type: "boolean" },
+  includeDnssecState: { type: "boolean" },
+  includeNameserverState: { type: "boolean" },
+  includeRegistrarState: { type: "boolean" },
+  includeDevelopmentMode: { type: "boolean" },
+  includePlanMetadata: { type: "boolean" },
+  includeAccountMetadata: { type: "boolean" },
+  includeModifiedTimestamps: { type: "boolean" },
+  includeCreatedTimestamps: { type: "boolean" },
+  includeLockedRecordState: { type: "boolean" },
+  includeProviderSpecificMetadata: { type: "boolean" },
+} as const;
+
+const edgeDns = api("edge-dns", {
+  title: "Edge DNS",
+  description:
+    "Account-scoped zones and DNS records with nested SDK-style arguments",
+  strictValidation: true,
+  tools: [
+    {
+      name: "list_zones",
+      description: "List DNS zones owned by one account.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          account: {
+            type: "object",
+            properties: {
+              id: { type: "string", minLength: 1 },
+            },
+            required: ["id"],
+            additionalProperties: false,
+          },
+          pagination: {
+            type: "object",
+            properties: {
+              perPage: { type: "integer", minimum: 1, maximum: 50 },
+            },
+            additionalProperties: false,
+          },
+        },
+        required: ["account"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          result: { type: "array", items: objectOutput },
+          resultInfo: objectOutput,
+        },
+        required: ["result", "resultInfo"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: { account: { id: string } }) => ({
+        result:
+          args.account.id === "acct_eval_7"
+            ? [{ id: "zone_eval_42", name: "example.test", status: "active" }]
+            : [],
+        resultInfo: { page: 1, totalPages: 1 },
+      }),
+    },
+    {
+      name: "list_dns_records",
+      description: "List DNS records inside one zone with optional filters.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          zone: {
+            type: "object",
+            properties: {
+              id: { type: "string", minLength: 1 },
+            },
+            required: ["id"],
+            additionalProperties: false,
+          },
+          filter: {
+            type: "object",
+            properties: dnsRecordFilterProperties,
+            additionalProperties: false,
+          },
+        },
+        required: ["zone", "filter"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          result: { type: "array", items: objectOutput },
+        },
+        required: ["result"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: {
+        zone: { id: string };
+        filter: { recordType?: string };
+      }) => ({
+        result:
+          args.zone.id === "zone_eval_42" &&
+          args.filter.recordType === "TXT"
+            ? [
+                {
+                  id: "dns_eval_9",
+                  type: "TXT",
+                  name: "example.test",
+                  content: "connecta-eval-verification",
+                },
+              ]
+            : [],
+      }),
+    },
+  ],
+});
+
+const genericLedger = api("generic-ledger", {
+  title: "Generic Ledger API",
+  description:
+    "A hand-written API connector exposing a generic HTTP-shaped read tool",
+  strictValidation: true,
+  tools: [
+    {
+      name: "request",
+      description:
+        "Make an admitted read request to the ledger API by method, path, and query parameters.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          method: { type: "string", enum: ["GET"] },
+          path: { type: "string", enum: ["/v1/invoices"] },
+          query: {
+            type: "object",
+            properties: {
+              status: { type: "string", enum: ["draft", "open", "paid"] },
+              limit: { type: "integer", minimum: 1, maximum: 100 },
+            },
+            required: ["status"],
+            additionalProperties: false,
+          },
+        },
+        required: ["method", "path", "query"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          data: { type: "array", items: objectOutput },
+          hasMore: { type: "boolean" },
+        },
+        required: ["data", "hasMore"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, idempotentHint: true },
+      handler: (args: {
+        method: "GET";
+        path: "/v1/invoices";
+        query: { status: "draft" | "open" | "paid"; limit?: number };
+      }) => ({
+        data:
+          args.method === "GET" &&
+          args.path === "/v1/invoices" &&
+          args.query.status === "open"
+            ? [{ id: "in_eval_17", status: "open", amountDue: 4200 }]
+            : [],
+        hasMore: false,
+      }),
+    },
+  ],
+});
+
+const unavailableCatalog: Connector = {
+  id: "billing-unavailable",
+  title: "Unavailable Billing",
+  kind: "api",
+  description:
+    "Billing account whose remote catalog is unavailable in this fixture",
+  async listTools() {
+    throw new ConnectorCallError(
+      "unavailable",
+      "Billing catalog unavailable: upstream returned 503. Retry after the deployment operator restores connector access.",
+    );
+  },
+  async callTool() {
+    throw new ConnectorCallError(
+      "unavailable",
+      "Billing connector access has not been restored.",
+    );
+  },
+};
+
 let mutationCount = 0;
 const controlled = api("controlled", {
   title: "Controlled Eval Fixtures",
@@ -891,6 +1175,10 @@ const connecta = createConnecta({
   ],
   connectors: [
     ...discoveryConnectors,
+    guidedWorkItems,
+    edgeDns,
+    genericLedger,
+    unavailableCatalog,
     controlled,
     oauthRecoverable,
     oauthUnavailable,
@@ -954,7 +1242,7 @@ console.log(
     url: `http://${host}:${address.port}/mcp`,
     baseUrl: `http://${host}:${address.port}`,
     sourceCommit,
-    connectorCount: discoveryConnectors.length + 5,
+    connectorCount: discoveryConnectors.length + 9,
     traceEnabled,
   }),
 );
