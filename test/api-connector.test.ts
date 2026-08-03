@@ -43,6 +43,13 @@ function makeApi() {
           throw new Error("handler exploded");
         },
       },
+      {
+        name: "async_boom",
+        description: "An async handler that throws before its first await",
+        handler: async () => {
+          throw new Error("async handler exploded");
+        },
+      },
     ],
   });
 }
@@ -101,7 +108,11 @@ describe("api() connector", () => {
   it("listTools returns the declared tool defs (name/description/schema)", async () => {
     const c = makeApi();
     const tools = await c.listTools(ctx());
-    expect(tools.map((t) => t.name)).toEqual(["send_email", "boom"]);
+    expect(tools.map((t) => t.name)).toEqual([
+      "send_email",
+      "boom",
+      "async_boom",
+    ]);
     const send = tools.find((t) => t.name === "send_email")!;
     expect(send.description).toBe("Send an email");
     expect((send.inputSchema as any).properties.to.type).toBe("string");
@@ -139,6 +150,22 @@ describe("api() connector", () => {
     await expect(c.callTool("boom", {}, ctx())).rejects.toThrow(
       /handler exploded/,
     );
+  });
+
+  it("an async handler that throws immediately never goes briefly unhandled", async () => {
+    // callTool awaits the handler rather than returning its promise. Returning
+    // it leaves the rejection handler-less for the thenable-adoption
+    // microtask, which workerd and vitest both report as an unhandled
+    // rejection even though the caller catches it.
+    //
+    // .then(null, handler) attaches synchronously; expect(...).rejects
+    // attaches a microtask later, which is the very gap under test — the same
+    // guard test/credentials.test.ts uses for the same reason.
+    const c = makeApi();
+    const thrown = await c
+      .callTool("async_boom", {}, ctx())
+      .then(() => null, (e: unknown) => e as Error);
+    expect(thrown?.message).toContain("async handler exploded");
   });
 });
 

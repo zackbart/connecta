@@ -111,6 +111,7 @@ Maintained provider guides:
 
 - [Linear](./linear.md)
 - [Mixpanel](./mixpanel.md)
+- [Notion](./notion.md)
 - [Stripe](./stripe.md)
 
 ## MCP version skew

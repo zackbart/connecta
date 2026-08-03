@@ -149,7 +149,11 @@ export function api(id: string, opts: ApiOptions): Connector {
         });
         if (invalid) throw invalid;
       }
-      return tool.handler(input, ctx);
+      // `await` (not a bare promise return) so a handler that throws before
+      // its first await never sits handler-less for the thenable-adoption
+      // microtask — workerd and vitest both report that gap as an unhandled
+      // rejection even though the caller catches the failure.
+      return await tool.handler(input, ctx);
     },
   };
 }
