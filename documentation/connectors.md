@@ -47,11 +47,65 @@ choice does not grant the connection different runtime privileges. Two
 instances of the same provider are isolated in exactly the same way as two
 hand-written connectors with different ids.
 
+A prebuilt connection's vetted annotations are fill-in only. They classify what
+the downstream leaves unannotated and may always tighten a classification; they
+never overrule an explicit downstream `destructiveHint: true` or
+`readOnlyHint: false`. The fail-closed read-only invariant is unchanged by the
+authoring path.
+
 Prebuilt means preferred when available, not mandatory. A deployment may mix
 prebuilt connections, custom `remoteMcp()` connections, and custom `api()`
 connections. Connecta makes no completeness promise: providers without a
 maintained prebuilt connection continue to use the public primitives without
 loss of support.
+
+```ts
+import { createConnecta, remoteMcp, api } from "@zackbart/connecta";
+import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
+import { quickJsExecutor } from "@zackbart/connecta/quickjs";
+
+export const connecta = createConnecta({
+  executor: quickJsExecutor(),
+  connectors: [
+    // Maintained prebuilt connection.
+    mixpanel("product_analytics", {
+      purpose: "Production product decisions for the growth team",
+    }),
+    // Custom downstream MCP server, no prebuilt connection needed.
+    remoteMcp("linear", {
+      url: "https://mcp.linear.app/mcp",
+      description: "Issue tracking for the platform team",
+    }),
+    // Deliberate in-house HTTP surface, hand-written tool by hand-written tool.
+    api("billing", {
+      description: "Internal billing reads",
+      credential: { label: "Billing API token" },
+      tools: [
+        {
+          name: "get_invoice",
+          description: "Fetch one invoice by id.",
+          annotations: { readOnlyHint: true },
+          inputSchema: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+          },
+          handler: async ({ id }, ctx) => {
+            const response = await fetch(
+              `https://billing.internal.example/invoices/${id}`,
+              { headers: { Authorization: `Bearer ${await ctx.credential?.get()}` } },
+            );
+            return response.json();
+          },
+        },
+      ],
+    }),
+  ],
+});
+```
+
+All three are ordinary `Connector` instances by the time the registry sees
+them. Nothing in the list is privileged by how it was authored.
 
 ## MCP version skew
 
