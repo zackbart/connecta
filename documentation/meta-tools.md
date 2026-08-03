@@ -26,6 +26,14 @@ inside it. Distinct operations get distinct short `connecta.search` queries in
 that program. Only one unknown-address read takes the cheaper top-level
 `search_tools` → `call_tool` path; a known address needs only `call_tool`.
 
+That routing is about read-only work, because that is the only work a program
+can do. Anything unannotated, write-capable, or destructive is inadmissible
+inside the sandbox, so multi-step destructive work discovers at the top level
+and runs each step through `call_destructive_tool` — where the host can put the
+question to a human. Telling an agent never to search at the top level for
+multiple calls would close the only route that work has
+([#295](https://github.com/zackbart/connecta/issues/295)).
+
 `execute_code` accepts optional `diagnostics: true` when a caller is measuring
 a workflow. It adds only compact request-local timing and serialized-size
 aggregates; normal calls carry no diagnostics block or response-context cost.

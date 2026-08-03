@@ -9,6 +9,7 @@ import { getEncoding } from "js-tiktoken";
 
 import { createAuditClient, round } from "./audit-lib.mjs";
 import {
+  agentForeignCalls,
   distribution,
   scoreAgentRun,
   validateFixtures,
@@ -527,7 +528,11 @@ const cases = [
     ],
     validOuterRoutes: [["search_tools", "call_tool"]],
     routePolicy: { outerTools: ["search_tools", "call_tool"] },
-    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 650 },
+    // The competing-candidate catalog this case searches costs ~680 result
+    // tokens on the intended route, so a 650 envelope failed every run that
+    // routed correctly — a budget no agent could meet is a broken gate, not a
+    // finding. 750 leaves honest headroom above the observed cost (#295).
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 750 },
     correct(finalText) {
       const value = parseJson(finalText);
       return value?.package === "connecta" && value?.version === "0.12.2";
@@ -797,6 +802,13 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
   const foreignToolCalls = toolCalls.filter(
     (call) => call.server !== "connecta",
   );
+  // Reported separately so the two questions stay separate: what the agent
+  // chose to call outside Connecta, and what the host asked the protocol on
+  // its own initiative.
+  const chosenForeignCalls = agentForeignCalls(foreignToolCalls);
+  const hostProtocolProbes = foreignToolCalls.filter(
+    (call) => !chosenForeignCalls.includes(call),
+  );
   const mcpResultTokens = connectaToolCalls.reduce(
     (sum, call) => sum + call.resultTokens,
     0,
@@ -840,7 +852,10 @@ async function runAgent(fixture, url, repetition, advertisedTools) {
         trace.operation === "skills" &&
         trace.arguments?.name?.startsWith?.("connector:"),
     ),
-    foreignToolCalls: foreignToolCalls.map(
+    foreignToolCalls: chosenForeignCalls.map(
+      (call) => `${call.server ?? "unknown"}.${call.tool}`,
+    ),
+    hostProtocolProbes: hostProtocolProbes.map(
       (call) => `${call.server ?? "unknown"}.${call.tool}`,
     ),
     advertisedTools,
@@ -999,6 +1014,10 @@ const caseResults = selected.map((fixture) => {
         (sum, run) => sum + run.waste.foreignToolCalls,
         0,
       ),
+      hostProtocolProbes: caseRuns.reduce(
+        (sum, run) => sum + run.waste.hostProtocolProbes,
+        0,
+      ),
       nonMcpHostActions: caseRuns.reduce(
         (sum, run) => sum + run.waste.nonMcpHostActions,
         0,
@@ -1047,7 +1066,7 @@ const result = {
     repetitions,
     concurrency,
     scoring:
-      "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Routes are observed, not prescribed.",
+      "Outcome, safety, advertised-surface validity, foreign-tool use, discovery, guide fetches, schema expansions, executions, repairs, Connecta round trips, Connecta result tokens, whole-agent tokens, and latency. Cases with a route policy also score the intended outer-tool sequence, excluding the skills guidance fetch; cases without one accept any documented route. Host MCP-protocol probes are reported separately from foreign-tool use.",
     removedToolPolicy:
       "Removed top-level tools are reported as unavailable-surface calls and are not treated as equivalent routes.",
   },
@@ -1060,6 +1079,10 @@ const result = {
     safetyPassed: runs.filter((run) => run.safetyPassed).length,
     surfaceValid: runs.filter((run) => run.surfaceValid).length,
     foreignClean: runs.filter((run) => run.foreignClean).length,
+    hostProtocolProbes: runs.reduce(
+      (sum, run) => sum + run.waste.hostProtocolProbes,
+      0,
+    ),
     costEfficient: runs.filter((run) => run.costEfficient).length,
     passed: runs.filter((run) => run.passed).length,
     routePassed: runs.filter((run) => run.routePassed).length,

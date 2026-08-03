@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-08-03T18:50:08.740Z",
+  "generatedAt": "2026-08-03T19:17:06.418Z",
   "source": {
-    "commit": "4222434a19605dd770b44c5159b5f40a46c92bcb",
-    "nodeVersion": "22.23.2",
+    "commit": "a98bc18fa5123c2a1b56c8e470522413af2f7862",
+    "nodeVersion": "26.5.1",
     "platform": "darwin-arm64",
     "tokenizer": "o200k_base",
     "executorMode": "required",
@@ -11,9 +11,9 @@
     "corpusSha256": "25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a"
   },
   "connection": {
-    "latencyMs": 50.2,
-    "toolsListBytes": 11245,
-    "toolsListTokens": 2557,
+    "latencyMs": 47.5,
+    "toolsListBytes": 11396,
+    "toolsListTokens": 2589,
     "toolCount": 7,
     "tools": [
       {
@@ -23,8 +23,8 @@
       },
       {
         "name": "search_tools",
-        "definitionBytes": 1673,
-        "definitionTokens": 366
+        "definitionBytes": 1738,
+        "definitionTokens": 381
       },
       {
         "name": "call_tool",
@@ -48,20 +48,20 @@
       },
       {
         "name": "execute_code",
-        "definitionBytes": 5055,
-        "definitionTokens": 1143
+        "definitionBytes": 5141,
+        "definitionTokens": 1160
       }
     ]
   },
   "totals": {
-    "definitionTokens": 2557,
+    "definitionTokens": 2589,
     "requestTokens": 1159,
     "responseTokens": 17303,
-    "measuredSurfaceTokens": 21019,
+    "measuredSurfaceTokens": 21051,
     "requestBytes": 4982,
     "responseBytes": 75178,
     "roundTrips": 55,
-    "summedLatencyMs": 246.1
+    "summedLatencyMs": 162.5
   },
   "compatibility": {
     "client": "@modelcontextprotocol/client StreamableHTTPClientTransport",
@@ -157,13 +157,13 @@
       "failed": 0,
       "taskSuccessRate": 1,
       "roundTrips": 21,
-      "summedLatencyMs": 159.70000000000002
+      "summedLatencyMs": 115.89999999999999
     },
     "cases": [
       {
         "name": "list guidance",
         "tool": "skills",
-        "latencyMs": 5.6,
+        "latencyMs": 4,
         "requestBytes": 32,
         "requestTokens": 9,
         "responseBytes": 232,
@@ -179,7 +179,7 @@
       {
         "name": "fetch routing guidance",
         "tool": "skills",
-        "latencyMs": 4.6,
+        "latencyMs": 2,
         "requestBytes": 46,
         "requestTokens": 11,
         "responseBytes": 2569,
@@ -195,7 +195,7 @@
       {
         "name": "inventory configured connectors",
         "tool": "execute_code",
-        "latencyMs": 83.4,
+        "latencyMs": 72.5,
         "requestBytes": 84,
         "requestTokens": 20,
         "responseBytes": 3196,
@@ -214,7 +214,7 @@
       {
         "name": "focused discovery",
         "tool": "search_tools",
-        "latencyMs": 5.4,
+        "latencyMs": 3.3,
         "requestBytes": 121,
         "requestTokens": 24,
         "responseBytes": 1810,
@@ -231,7 +231,7 @@
       {
         "name": "inspect complete schema",
         "tool": "execute_code",
-        "latencyMs": 6.3,
+        "latencyMs": 4.5,
         "requestBytes": 141,
         "requestTokens": 33,
         "responseBytes": 1412,
@@ -249,7 +249,7 @@
       {
         "name": "single read-only call",
         "tool": "call_tool",
-        "latencyMs": 5.7,
+        "latencyMs": 3.8,
         "requestBytes": 125,
         "requestTokens": 30,
         "responseBytes": 464,
@@ -265,7 +265,7 @@
       {
         "name": "read-only route refuses destructive tool",
         "tool": "call_tool",
-        "latencyMs": 3.9,
+        "latencyMs": 2.1,
         "requestBytes": 116,
         "requestTokens": 25,
         "responseBytes": 1187,
@@ -282,7 +282,7 @@
       {
         "name": "approved destructive call",
         "tool": "call_destructive_tool",
-        "latencyMs": 3.5,
+        "latencyMs": 1.8,
         "requestBytes": 147,
         "requestTokens": 32,
         "responseBytes": 416,
@@ -298,7 +298,7 @@
       {
         "name": "create truncated result",
         "tool": "call_tool",
-        "latencyMs": 3.3,
+        "latencyMs": 1.6,
         "requestBytes": 137,
         "requestTokens": 31,
         "responseBytes": 962,
@@ -310,13 +310,13 @@
         "isError": false,
         "passed": true,
         "outcome": "result-truncated",
-        "resultId": "4473f88d-1c98-435d-854f-f65b8ed0dada",
+        "resultId": "046674aa-4b3b-4196-9099-99c5d7582c29",
         "totalBytes": 2026
       },
       {
         "name": "page truncated result",
         "tool": "get_result",
-        "latencyMs": 3.3,
+        "latencyMs": 1.7,
         "requestBytes": 105,
         "requestTokens": 43,
         "responseBytes": 834,
@@ -335,7 +335,7 @@
       {
         "name": "batch independent reads",
         "tool": "execute_code",
-        "latencyMs": 4.6,
+        "latencyMs": 3,
         "requestBytes": 198,
         "requestTokens": 53,
         "responseBytes": 480,
@@ -354,7 +354,7 @@
       {
         "name": "reduce records in code mode",
         "tool": "execute_code",
-        "latencyMs": 4.3,
+        "latencyMs": 2.9,
         "requestBytes": 266,
         "requestTokens": 73,
         "responseBytes": 294,
@@ -370,7 +370,7 @@
       {
         "name": "OAuth call requires recovery",
         "tool": "call_tool",
-        "latencyMs": 3.1,
+        "latencyMs": 1.7,
         "requestBytes": 102,
         "requestTokens": 27,
         "responseBytes": 1061,
@@ -387,7 +387,7 @@
       {
         "name": "OAuth recovery starts",
         "tool": "authorize_connector",
-        "latencyMs": 2.8,
+        "latencyMs": 2.2,
         "requestBytes": 76,
         "requestTokens": 15,
         "responseBytes": 1206,
@@ -404,7 +404,7 @@
       {
         "name": "OAuth retry succeeds",
         "tool": "call_tool",
-        "latencyMs": 2.6,
+        "latencyMs": 1.2,
         "requestBytes": 102,
         "requestTokens": 27,
         "responseBytes": 250,
@@ -421,7 +421,7 @@
       {
         "name": "OAuth unavailable recovery is explicit",
         "tool": "authorize_connector",
-        "latencyMs": 2.6,
+        "latencyMs": 1.1,
         "requestBytes": 76,
         "requestTokens": 14,
         "responseBytes": 164,
@@ -439,7 +439,7 @@
       {
         "name": "static credential call requires recovery",
         "tool": "call_tool",
-        "latencyMs": 3,
+        "latencyMs": 1.4,
         "requestBytes": 103,
         "requestTokens": 27,
         "responseBytes": 1127,
@@ -456,7 +456,7 @@
       {
         "name": "static recovery returns an operator handoff",
         "tool": "authorize_connector",
-        "latencyMs": 2.5,
+        "latencyMs": 1.1,
         "requestBytes": 77,
         "requestTokens": 15,
         "responseBytes": 980,
@@ -474,7 +474,7 @@
       {
         "name": "static credential retry succeeds after operator update",
         "tool": "call_tool",
-        "latencyMs": 3.8,
+        "latencyMs": 1.4,
         "requestBytes": 103,
         "requestTokens": 27,
         "responseBytes": 252,
@@ -491,7 +491,7 @@
       {
         "name": "static unavailable recovery is explicit",
         "tool": "authorize_connector",
-        "latencyMs": 2.7,
+        "latencyMs": 1.3,
         "requestBytes": 77,
         "requestTokens": 14,
         "responseBytes": 566,
@@ -509,7 +509,7 @@
       {
         "name": "activity remains payload-free",
         "tool": "call_tool",
-        "latencyMs": 2.7,
+        "latencyMs": 1.3,
         "requestBytes": 106,
         "requestTokens": 23,
         "responseBytes": 696,
@@ -568,7 +568,7 @@
       "meanResponseTokens": 367.2,
       "totalResponseTokens": 12485,
       "roundTrips": 34,
-      "summedLatencyMs": 86.4
+      "summedLatencyMs": 46.6
     },
     "categories": {
       "direct": {
@@ -579,7 +579,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 1,
         "meanResponseTokens": 152.8,
-        "meanLatencyMs": 2.7
+        "meanLatencyMs": 1.4
       },
       "conversational": {
         "queries": 8,
@@ -589,7 +589,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 2.875,
         "meanResponseTokens": 382.1,
-        "meanLatencyMs": 2.7
+        "meanLatencyMs": 1.5
       },
       "multi-intent": {
         "queries": 4,
@@ -599,7 +599,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 7.75,
         "meanResponseTokens": 823.8,
-        "meanLatencyMs": 2.5
+        "meanLatencyMs": 1.4
       },
       "short-function-word": {
         "queries": 4,
@@ -609,7 +609,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 4.25,
         "meanResponseTokens": 473.5,
-        "meanLatencyMs": 2.1
+        "meanLatencyMs": 1.3
       },
       "empty-after-cleanup": {
         "queries": 1,
@@ -619,7 +619,7 @@
         "falsePositiveRate": 1,
         "meanResultCount": 8,
         "meanResponseTokens": 998,
-        "meanLatencyMs": 2.9
+        "meanLatencyMs": 2.4
       },
       "negative": {
         "queries": 4,
@@ -629,7 +629,7 @@
         "falsePositiveRate": 0,
         "meanResultCount": 0,
         "meanResponseTokens": 170,
-        "meanLatencyMs": 2.6
+        "meanLatencyMs": 1.1
       },
       "connector-filtered": {
         "queries": 3,
@@ -639,7 +639,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 1.333,
         "meanResponseTokens": 168.7,
-        "meanLatencyMs": 2.5
+        "meanLatencyMs": 1
       },
       "paginated": {
         "queries": 2,
@@ -649,7 +649,7 @@
         "falsePositiveRate": null,
         "meanResultCount": 4,
         "meanResponseTokens": 416.5,
-        "meanLatencyMs": 2.2
+        "meanLatencyMs": 1.2
       }
     },
     "cases": [
@@ -674,7 +674,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 159,
-        "latencyMs": 2.8,
+        "latencyMs": 1.6,
         "passed": true
       },
       {
@@ -698,7 +698,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 151,
-        "latencyMs": 3,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -722,7 +722,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 149,
-        "latencyMs": 2.3,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -746,7 +746,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 153,
-        "latencyMs": 2.9,
+        "latencyMs": 1.6,
         "passed": true
       },
       {
@@ -770,7 +770,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 147,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -794,7 +794,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 149,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -818,7 +818,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 167,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -842,7 +842,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 147,
-        "latencyMs": 3,
+        "latencyMs": 1.5,
         "passed": true
       },
       {
@@ -869,7 +869,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 482,
-        "latencyMs": 2.8,
+        "latencyMs": 3.1,
         "passed": true
       },
       {
@@ -899,7 +899,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 758,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -923,7 +923,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 149,
-        "latencyMs": 2.5,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -947,7 +947,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 261,
-        "latencyMs": 2.7,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -971,7 +971,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 263,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -997,7 +997,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 441,
-        "latencyMs": 2.8,
+        "latencyMs": 1.3,
         "passed": true
       },
       {
@@ -1021,7 +1021,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 145,
-        "latencyMs": 2.5,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1049,7 +1049,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 558,
-        "latencyMs": 2.9,
+        "latencyMs": 1.1,
         "passed": true
       },
       {
@@ -1080,7 +1080,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 739,
-        "latencyMs": 1.8,
+        "latencyMs": 1.3,
         "passed": true
       },
       {
@@ -1112,7 +1112,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 830,
-        "latencyMs": 2.6,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -1144,7 +1144,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 837,
-        "latencyMs": 2.7,
+        "latencyMs": 1.3,
         "passed": true
       },
       {
@@ -1176,7 +1176,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 889,
-        "latencyMs": 2.9,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -1206,7 +1206,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 741,
-        "latencyMs": 1.3,
+        "latencyMs": 1.4,
         "passed": true
       },
       {
@@ -1230,7 +1230,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 151,
-        "latencyMs": 2.6,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1261,7 +1261,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 857,
-        "latencyMs": 2.4,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1285,7 +1285,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 145,
-        "latencyMs": 2,
+        "latencyMs": 1.3,
         "passed": true
       },
       {
@@ -1314,7 +1314,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 998,
-        "latencyMs": 2.9,
+        "latencyMs": 2.4,
         "passed": false
       },
       {
@@ -1334,7 +1334,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 169,
-        "latencyMs": 2.4,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1354,7 +1354,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 171,
-        "latencyMs": 2.6,
+        "latencyMs": 1.1,
         "passed": true
       },
       {
@@ -1374,7 +1374,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 169,
-        "latencyMs": 2.6,
+        "latencyMs": 1,
         "passed": true
       },
       {
@@ -1394,7 +1394,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 171,
-        "latencyMs": 2.6,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1421,7 +1421,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 214,
-        "latencyMs": 2.6,
+        "latencyMs": 0.9,
         "passed": true
       },
       {
@@ -1446,7 +1446,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 147,
-        "latencyMs": 2.4,
+        "latencyMs": 1,
         "passed": true
       },
       {
@@ -1471,7 +1471,7 @@
         "hasMore": false,
         "nextOffset": null,
         "responseTokens": 145,
-        "latencyMs": 2.5,
+        "latencyMs": 1.1,
         "passed": true
       },
       {
@@ -1501,7 +1501,7 @@
         "hasMore": true,
         "nextOffset": 4,
         "responseTokens": 411,
-        "latencyMs": 1.8,
+        "latencyMs": 1.2,
         "passed": true
       },
       {
@@ -1531,7 +1531,7 @@
         "hasMore": true,
         "nextOffset": 8,
         "responseTokens": 422,
-        "latencyMs": 2.5,
+        "latencyMs": 1.2,
         "passed": true
       }
     ]

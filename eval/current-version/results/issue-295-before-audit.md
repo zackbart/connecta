@@ -2,7 +2,7 @@
 
 Source commit: `4222434a19605dd770b44c5159b5f40a46c92bcb`
 
-Runtime: Node 22.23.2; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
+Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
 Machine-readable results: [`issue-295-before-audit.json`](./issue-295-before-audit.json)
 
@@ -14,8 +14,8 @@ Machine-readable results: [`issue-295-before-audit.json`](./issue-295-before-aud
 - Discovery positive recall: 100.0%
 - Recall at the default page: 100.0%
 - Negative-query false-positive rate: 20.0%
-- Round trips: 55; summed call latency: 235.5 ms
-- Connecta surface: 2,522 definition + 1,159 request + 17,159 response = **20,840 tokens**
+- Round trips: 55; summed call latency: 163.4 ms
+- Connecta surface: 2,522 definition + 1,160 request + 17,307 response = **20,989 tokens**
 - Result compatibility observed: `content` 55/55, `structuredContent` 52/55
 - `execute_code` advertised: yes
 - Payload-free activity invariant: pass

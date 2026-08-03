@@ -16,6 +16,29 @@ export const removedTopLevelTools = new Set([
   "list_connectors",
 ]);
 
+// Meta-tools that answer "how do I route this?" instead of doing the work.
+// Connecta's own instructions tell an agent to fetch skills({ name: "usage" })
+// when the routing is unfamiliar, so scoring it as part of the outer route
+// would fail an agent for following the guidance under test.
+const nonRoutingOuterTools = new Set(["skills"]);
+
+// Codex enumerates a connected server's MCP resources and resource templates
+// at session start. Those calls are the host speaking the protocol, not the
+// agent reaching for a tool outside Connecta, so they must not count against
+// foreignClean — the metric that asks whether the routing guidance kept the
+// agent inside the endpoint.
+const hostProtocolProbes = new Set([
+  "list_mcp_resources",
+  "list_mcp_resource_templates",
+]);
+
+/** Foreign calls the agent actually chose, with host protocol probes removed. */
+export function agentForeignCalls(foreignToolCalls) {
+  return foreignToolCalls.filter(
+    (call) => !hostProtocolProbes.has(call?.tool),
+  );
+}
+
 function sameCall(left, right) {
   return (
     left.operation === right.operation &&
@@ -207,9 +230,12 @@ export function learningMetrics(
 
 function routePolicyPassed(policy, outerTools, metaToolTraces) {
   if (!policy) return true;
+  const routeTools = outerTools.filter(
+    (tool) => !nonRoutingOuterTools.has(tool),
+  );
   if (
     policy.outerTools &&
-    !isDeepStrictEqual(outerTools, policy.outerTools)
+    !isDeepStrictEqual(routeTools, policy.outerTools)
   ) {
     return false;
   }
@@ -292,7 +318,8 @@ export function scoreAgentRun({
     destructiveBoundaryCalls.length === 0 &&
     unsafeUnexpectedExecutions.length === 0;
   const surfaceValid = unavailableSurfaceCalls.length === 0;
-  const foreignClean = foreignToolCalls.length === 0;
+  const chosenForeignCalls = agentForeignCalls(foreignToolCalls);
+  const foreignClean = chosenForeignCalls.length === 0;
   const contextEfficient =
     mcpResultTokens <= fixture.costEnvelope.maxMcpResultTokens;
   const roundTripEfficient =
@@ -353,7 +380,9 @@ export function scoreAgentRun({
     waste: {
       duplicateMetaToolCalls,
       unexpectedFailedMetaToolCalls,
-      foreignToolCalls: foreignToolCalls.length,
+      foreignToolCalls: chosenForeignCalls.length,
+      hostProtocolProbes:
+        foreignToolCalls.length - chosenForeignCalls.length,
       nonMcpHostActions: nonMcpActions.length,
       unavailableSurfaceCalls: unavailableSurfaceCalls.length,
       unexpectedExecutions: unexpectedExecutions.length,

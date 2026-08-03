@@ -1,8 +1,8 @@
 # Current-version Connecta audit
 
-Source commit: `4222434a19605dd770b44c5159b5f40a46c92bcb`
+Source commit: `a98bc18fa5123c2a1b56c8e470522413af2f7862`
 
-Runtime: Node 22.23.2; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
+Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
 Machine-readable results: [`issue-295-after-audit.json`](./issue-295-after-audit.json)
 
@@ -14,8 +14,8 @@ Machine-readable results: [`issue-295-after-audit.json`](./issue-295-after-audit
 - Discovery positive recall: 100.0%
 - Recall at the default page: 100.0%
 - Negative-query false-positive rate: 20.0%
-- Round trips: 55; summed call latency: 246.1 ms
-- Connecta surface: 2,557 definition + 1,159 request + 17,303 response = **21,019 tokens**
+- Round trips: 55; summed call latency: 162.5 ms
+- Connecta surface: 2,589 definition + 1,159 request + 17,303 response = **21,051 tokens**
 - Result compatibility observed: `content` 55/55, `structuredContent` 52/55
 - `execute_code` advertised: yes
 - Payload-free activity invariant: pass

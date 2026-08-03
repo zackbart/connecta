@@ -126,8 +126,18 @@ ambiguous candidates, and a nonstandard collection root. It reports
 npm --prefix eval/current-version run perf:agent -- \
   --case routing \
   --repetitions 5 \
-  --concurrency 2
+  --concurrency 5
 ```
+
+Compare arms with identical repetitions and concurrency. A before/after table
+built from one repetition against five is comparing sample sizes as much as
+guidance, and the route scorer excludes only the `skills` guidance fetch from a
+case's intended outer sequence — fetching the usage skill is what the
+instructions tell an unfamiliar agent to do, so scoring it as a deviation would
+penalize compliance. Host MCP-protocol probes (`list_mcp_resources`,
+`list_mcp_resource_templates`, which Codex issues on its own initiative) are
+recorded as `hostProtocolProbes` and do not count against `foreignClean`, which
+asks whether the agent reached outside Connecta.
 
 Each case documents at least one route achievable on the server's actual
 advertised tool inventory. The harness validates that invariant before an agent

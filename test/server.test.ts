@@ -360,7 +360,13 @@ describe("server /mcp end-to-end", () => {
       "Use top-level search only for exactly one unreduced read",
     );
     expect(byName.search_tools.description).toContain(
-      "For reduction, dependent or multiple calls, never search here",
+      "For read-only reduction, dependent or multiple calls, never search here",
+    );
+    // Programs admit read-only tools only, so multi-step destructive work has
+    // nowhere to discover but here. Scoping the prohibition to read-only work
+    // is what keeps that route open (#295).
+    expect(byName.search_tools.description).toContain(
+      "for write-capable work, then call_destructive_tool",
     );
     expect(byName.search_tools.description).toContain(
       "never the first lexical match",
@@ -1726,9 +1732,13 @@ describe("execute_code registration (code mode)", () => {
       "primary surface for everything wider",
     );
     expect(executeTool.description).toContain("make exactly one execute_code call");
+    // Advice, not a validity claim: nothing rejects a program that returns
+    // catalog matches, and a description that says otherwise teaches the model
+    // a rule the server does not enforce (#295).
     expect(executeTool.description).toContain(
-      "Never make a discovery-only program or return catalog matches for a later call",
+      "A discovery-only program wastes its round trip: finish here, don't return catalog matches for a later call",
     );
+    expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(
       "Exactly one unknown-address read uses top-level search_tools then call_tool",
     );
@@ -1742,8 +1752,21 @@ describe("execute_code registration (code mode)", () => {
       "Consume search/describe results and finish the task inside it",
     );
     expect(executeTool.inputSchema.properties.code.description).toContain(
-      "returning catalog data for a later call is invalid",
+      "returning catalog data for a later call spends a round trip",
     );
+    expect(executeTool.inputSchema.properties.code.description).not.toContain(
+      "is invalid",
+    );
+    // The reason batch exists for a caller: a thrown error is a bare message,
+    // so a program that must tell a refusal from a transient failure needs the
+    // typed entry. Compressing the clause to "use batch" loses the why (#295).
+    expect(executeTool.description).toContain(
+      "A thrown error is only a message; connecta.batch tells a policy refusal",
+    );
+    // The eval's builds fixture must not leak into shipped text: no fixture
+    // field names in the guidance prose (the dependent example is its own
+    // illustration and keeps its names).
+    expect(executeTool.description).not.toContain("failedJobId supplies jobId");
     expect(executeTool.description).toContain('includeSchemas: "compact"');
     expect(executeTool.description).toContain('safety: "readOnly"');
     expect(executeTool.description).toContain(
