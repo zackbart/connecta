@@ -2,10 +2,14 @@
 
 Import `cloudflare()` independently from
 `@zackbart/connecta/providers/cloudflare`. It is a deliberate, hand-written
-surface over Cloudflare's v4 REST API — fourteen tools with complete schemas,
-lean projections, typed failures, and a rate-limit budget matching the
-documented one. It adds no provider dependency, imports nothing outside
-Connecta, and is not reachable from Connecta's root entry.
+surface over Cloudflare's v4 REST API. Fifty-five tools combine ergonomic,
+fully described operations for common work with three guarded escape hatches
+for the rest of Cloudflare's fast-moving control plane. Reads, JSON mutations,
+and raw/multipart uploads remain separate so safety routing does not depend on
+an agent-supplied HTTP method. The connection keeps lean projections, typed
+failures, and a rate-limit budget matching the documented one. It adds no
+provider dependency, imports nothing outside Connecta, and is not reachable
+from Connecta's root entry.
 
 ```ts
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
@@ -36,13 +40,14 @@ dependency would cost is real — an optional peer with its own install step and
 version skew, an import that never belongs in the root graph, and a second
 opinion about what a Cloudflare call looks like.
 
-The API itself does not need one. It is Bearer-token JSON over `fetch` with a
-uniform `{ success, errors, messages, result, result_info }` envelope. Writing
-that by hand is about two hundred lines, keeps the provider Workers-clean, and
-means `@zackbart/connecta/providers/cloudflare` installs and runs with nothing
-extra. `test/package-surface.test.ts` pins the claim: the `cloudflare` package
-must not appear in `dependencies`, `peerDependencies`, or `devDependencies`,
-and every import in the provider must be relative.
+The API itself does not need one. It is Bearer-token `fetch` with a uniform
+`{ success, errors, messages, result, result_info }` response envelope. JSON,
+raw bytes, and multipart request bodies all use Web APIs, which keeps the
+provider Workers-clean and means `@zackbart/connecta/providers/cloudflare`
+installs and runs with nothing extra. `test/package-surface.test.ts` pins the
+claim: the `cloudflare` package must not appear in `dependencies`,
+`peerDependencies`, or `devDependencies`, and every import in the provider
+must be relative.
 
 ## Credentials
 
@@ -55,19 +60,28 @@ Grant only what the deployment needs:
 
 | Tools | Token permission | Scope |
 | --- | --- | --- |
-| `list_zones`, `get_zone` | Zone Read | Zone |
+| Zone discovery and settings reads | Zone Read | Zone |
+| `update_zone_setting` | Zone Settings Write | Zone |
+| Zone ruleset reads | Relevant Rules product Read permission, such as Transform Rules Read or Firewall Services Read | Zone |
 | `list_dns_records`, `get_dns_record` | DNS Read | Zone |
 | `create_dns_record`, `update_dns_record`, `delete_dns_record` | DNS Write | Zone |
 | `purge_cache` | Cache Purge | Zone |
-| `list_worker_scripts` | Workers Scripts Read | Account |
-| `list_kv_namespaces` | Workers KV Storage Read | Account |
-| `list_r2_buckets` | Workers R2 Storage Read | Account |
-| `list_pages_projects` | Cloudflare Pages Read | Account |
+| Worker script/deployment reads | Workers Scripts Read | Account |
+| Worker writes through named or raw tools | Workers Scripts Write | Account |
+| KV reads | Workers KV Storage Read | Account |
+| KV creates, renames, writes, and deletes | Workers KV Storage Write | Account |
+| R2 reads | Workers R2 Storage Read | Account |
+| R2 creates, changes, uploads, deletes, and configuration writes | Workers R2 Storage Write | Account |
+| Pages reads | Cloudflare Pages Read | Account |
+| Pages retries, rollbacks, domains, purges, uploads, and deletes | Cloudflare Pages Write | Account |
+| Images, Stream, Email Routing, D1, Queues, and other raw calls | Matching product Read or Write permission | Account or Zone |
 
-Those are the names as they appear in the token editor. "Cache Purge" is a
-single permission with no Read/Write split, and Cloudflare's own reference
-renders a few labels differently between its Dashboard and API tabs — if a name
-above does not match what you see, look for the same noun with the other verb.
+Most names above appear directly in the token editor. Ruleset access is split
+by product and phase, so grant the narrow Rules permission for the phases the
+agent must inspect rather than looking for one generic "Zone Rulesets Read"
+scope. "Cache Purge" is a single permission with no Read/Write split, and
+Cloudflare's own reference renders a few labels differently between its
+Dashboard and API tabs.
 
 `verify_api_token` needs no permission beyond the token existing, which is what
 makes it the right first call when something fails. The `/credentials` Test
@@ -104,29 +118,58 @@ says so.
 
 ## Tools
 
-Ten reads, all annotated `readOnlyHint: true` and therefore admissible from
-`call_tool` and `execute_code`:
+The named surface covers workflows that benefit most from concise schemas and
+projections:
 
-`verify_api_token`, `list_accounts`, `list_zones`, `get_zone`,
-`list_dns_records`, `get_dns_record`, `list_worker_scripts`,
-`list_kv_namespaces`, `list_r2_buckets`, `list_pages_projects`.
+| Area | Reads | Writes |
+| --- | --- | --- |
+| Zones | discovery, details, settings, rulesets | update a setting |
+| DNS/cache | list and get records | create, update, delete, targeted/full purge |
+| Workers | scripts, settings, deployments | delete a script |
+| KV | namespaces, keys, bulk values | create/rename/delete namespace, bulk write/delete |
+| R2 | buckets, object metadata, metrics, CORS | create/update/delete bucket, delete object, replace/delete CORS |
+| Pages | projects, deployments, domains | retry/rollback/delete deployments, add/delete domains, purge build cache, delete project |
 
-Four writes, all routed through `call_destructive_tool`:
-
-- `create_dns_record` is additive and leaves `destructiveHint` unset —
-  `readOnlyHint: false` already routes it for approval, and asserting
-  destruction only inflates the copy a human sees.
-- `update_dns_record`, `delete_dns_record`, and `purge_cache` change or discard
-  live state and are annotated `destructiveHint: true`.
-
-Every tool carries a complete hand-written input schema: closed
+Every named tool carries a complete hand-written input schema: closed
 (`additionalProperties: false`), with an accurate `required` list, an `enum` on
-every constrained field, per-endpoint `perPage` bounds, and a description on
-every property — the last of which `test/cloudflare-provider.test.ts` asserts
-rather than leaves as a claim. This is the point of the connection. A generated
-wrapper around the same API exposed `arguments?: {}[]` in its compact schema and
-pushed the real parameter list into operation documentation, so an agent had to
-read a doc page before it could make a call. Here the compact schema is enough.
+every constrained field, endpoint-specific pagination bounds, and a description
+on every property. `test/cloudflare-provider.test.ts` walks the surface and
+asserts those properties rather than leaving them as a claim.
+
+### The whole-v4 escape hatch
+
+Cloudflare adds products and endpoints faster than a curated connector should
+grow tool names. Three provider-relative tools cover the rest without turning
+method classification into user input:
+
+- `cloudflare_api_get` accepts only GET and is explicitly read-only. JSON is the
+  default; `responseType: "text" | "base64"` retrieves scripts, logs, R2
+  objects, and media bodies without pretending they have a JSON envelope.
+- `cloudflare_api_mutate` accepts JSON POST, PUT, PATCH, and DELETE. It is always
+  destructive, even when a particular POST is merely additive.
+- `cloudflare_api_upload` accepts POST or PUT plus exactly one of raw text,
+  base64 bytes, or multipart fields/files. It is always destructive and reads
+  no local files.
+
+All three accept explicit endpoint-specific headers, which supports R2
+jurisdictions, conditional requests, encryption controls, and object metadata.
+Authentication, host selection, content type, content length, and transfer
+framing remain connector-owned and cannot be overridden.
+
+Paths are relative to `/client/v4`. Absolute URLs, protocol-relative paths,
+`..` traversal, fragments, and embedded query strings are refused locally;
+query parameters are explicit name/value pairs. These tools reuse the same
+credential, admission budget, abort signal, envelope parsing, and typed failure
+mapping as named tools. They do not widen the token's Cloudflare permissions.
+
+This is intentionally not OpenAPI ingestion: it creates three stable tools,
+not one tool per Cloudflare operation. For example, an agent can list Images at
+`/accounts/{accountId}/images/v1`, manage Stream at
+`/accounts/{accountId}/stream`, manage Email Routing at
+`/zones/{zoneId}/email/routing/rules`, reach D1 at
+`/accounts/{accountId}/d1/database`, and reach Queues at
+`/accounts/{accountId}/queues`. The endpoint-specific query and body shape still
+comes from Cloudflare's API reference.
 
 ### Where the `perPage` bounds come from
 
@@ -162,9 +205,11 @@ per-type structured `data` object with its own field set.
 `CLOUDFLARE_CONTENT_DNS_RECORD_TYPES`. Supporting the rest would mean either a
 free-form `data` passthrough — the untyped `{}` this connection exists to
 avoid — or thirteen more hand-written schemas for record types that are rare in
-day-to-day zone administration. Structured-data records stay fully readable;
-only creating and updating them is out of scope, and the enum says so rather
-than letting the call reach Cloudflare and 400.
+day-to-day zone administration. Structured-data records stay fully readable.
+The named create/update tools omit them and the enum says so rather than letting
+the call reach Cloudflare and 400; an operator who needs one can use the
+approval-gated raw mutation tool with Cloudflare's documented per-type `data`
+body.
 
 ### Cache purging
 
@@ -196,15 +241,15 @@ Paginated lists add a `page` object derived from `result_info`:
 `{ page, perPage, count, totalCount, totalPages, hasMore }`. `hasMore` is the
 field to branch on.
 
-Two endpoints do not work that way, and the schemas say so rather than leaving
-an agent to discover it. `list_r2_buckets` paginates by cursor: its
-`result_info` carries only a cursor, so it returns `nextCursor` instead of
-`page`, and the next call passes it back as `cursor`. `list_worker_scripts`
-reports no counters at all and omits `page` entirely.
+Some endpoints do not work that way, and the schemas say so rather than leaving
+an agent to discover it. `list_r2_buckets`, `list_r2_objects`, and
+`list_kv_keys` paginate by cursor and return `nextCursor` instead of `page`.
+`list_worker_scripts` reports no counters at all and omits `page` entirely.
 
-Every read accepts `raw: true`, which returns the unprojected result for the
-case where a dropped field genuinely matters. It is an escape hatch, not a
-default: the raw shapes are large enough to hit a deployment's result cap.
+Projected resource reads expose `raw: true` where the provider's larger object
+is commonly useful. `cloudflare_api_get` is the universal unprojected escape
+hatch. Raw shapes can hit a deployment's result cap, so programs should still
+filter and project before returning them.
 
 ## Typed failures
 

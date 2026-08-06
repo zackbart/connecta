@@ -32,6 +32,8 @@ interface StubResponse {
   body?: unknown;
   headers?: Record<string, string>;
   nonJson?: boolean;
+  text?: string;
+  bytes?: Uint8Array;
 }
 
 let calls: Array<{ url: string; init: RequestInit }>;
@@ -42,7 +44,7 @@ function stubFetch(...responses: StubResponse[]): void {
     calls.push({ url: String(input), init });
     const next = queue.shift() ?? { status: 200, body: { success: true, result: {} } };
     const status = next.status ?? 200;
-    return {
+    const response = {
       ok: status >= 200 && status < 300,
       status,
       headers: new Headers(next.headers ?? {}),
@@ -50,7 +52,12 @@ function stubFetch(...responses: StubResponse[]): void {
         if (next.nonJson) throw new SyntaxError("Unexpected token <");
         return next.body;
       },
+      text: async () => next.text ?? "",
+      arrayBuffer: async () =>
+        (next.bytes ?? new Uint8Array()).buffer,
     } as unknown as Response;
+    Object.assign(response, { clone: () => response });
+    return response;
   }) as unknown as typeof fetch;
 }
 
@@ -151,33 +158,93 @@ describe("cloudflare() tool surface", () => {
     const tools = await connection().listTools(contextWithToken());
     const names = tools.map((tool) => tool.name).sort();
     expect(names).toEqual([
+      "add_pages_domain",
+      "bulk_delete_kv_values",
+      "bulk_get_kv_values",
+      "bulk_write_kv_values",
+      "cloudflare_api_get",
+      "cloudflare_api_mutate",
+      "cloudflare_api_upload",
       "create_dns_record",
+      "create_kv_namespace",
+      "create_r2_bucket",
       "delete_dns_record",
+      "delete_kv_namespace",
+      "delete_pages_deployment",
+      "delete_pages_domain",
+      "delete_pages_project",
+      "delete_r2_bucket",
+      "delete_r2_cors",
+      "delete_r2_object",
+      "delete_worker_script",
       "get_dns_record",
+      "get_kv_namespace",
+      "get_pages_deployment",
+      "get_pages_project",
+      "get_r2_bucket",
+      "get_r2_cors",
+      "get_r2_metrics",
+      "get_worker_deployment",
+      "get_worker_settings",
       "get_zone",
+      "get_zone_ruleset",
+      "get_zone_setting",
       "list_accounts",
       "list_dns_records",
+      "list_kv_keys",
       "list_kv_namespaces",
+      "list_pages_deployments",
+      "list_pages_domains",
       "list_pages_projects",
       "list_r2_buckets",
+      "list_r2_objects",
+      "list_worker_deployments",
       "list_worker_scripts",
+      "list_zone_rulesets",
+      "list_zone_settings",
       "list_zones",
       "purge_cache",
+      "purge_pages_build_cache",
+      "rename_kv_namespace",
+      "retry_pages_deployment",
+      "rollback_pages_deployment",
+      "set_r2_cors",
       "update_dns_record",
+      "update_r2_bucket",
+      "update_zone_setting",
       "verify_api_token",
     ]);
 
     const reads = [
       "verify_api_token",
+      "cloudflare_api_get",
       "list_accounts",
       "list_zones",
       "get_zone",
+      "list_zone_settings",
+      "get_zone_setting",
+      "list_zone_rulesets",
+      "get_zone_ruleset",
       "list_dns_records",
       "get_dns_record",
       "list_worker_scripts",
+      "get_worker_settings",
+      "list_worker_deployments",
+      "get_worker_deployment",
       "list_kv_namespaces",
+      "get_kv_namespace",
+      "list_kv_keys",
+      "bulk_get_kv_values",
       "list_r2_buckets",
+      "get_r2_bucket",
+      "list_r2_objects",
+      "get_r2_metrics",
+      "get_r2_cors",
       "list_pages_projects",
+      "get_pages_project",
+      "list_pages_deployments",
+      "get_pages_deployment",
+      "list_pages_domains",
     ];
     for (const name of reads) {
       expect(
@@ -188,10 +255,40 @@ describe("cloudflare() tool surface", () => {
 
     // Additive: a create destroys nothing, so destructiveHint stays unset and
     // readOnlyHint: false already routes it through call_destructive_tool.
-    expect(toolNamed(tools, "create_dns_record").annotations).toEqual({
-      readOnlyHint: false,
-    });
-    for (const name of ["update_dns_record", "delete_dns_record", "purge_cache"]) {
+    for (const name of [
+      "create_dns_record",
+      "create_kv_namespace",
+      "create_r2_bucket",
+      "retry_pages_deployment",
+      "add_pages_domain",
+    ]) {
+      expect(toolNamed(tools, name).annotations, name).toEqual({
+        readOnlyHint: false,
+      });
+    }
+    for (const name of [
+      "cloudflare_api_mutate",
+      "cloudflare_api_upload",
+      "update_zone_setting",
+      "delete_worker_script",
+      "rename_kv_namespace",
+      "delete_kv_namespace",
+      "bulk_write_kv_values",
+      "bulk_delete_kv_values",
+      "update_r2_bucket",
+      "delete_r2_bucket",
+      "delete_r2_object",
+      "set_r2_cors",
+      "delete_r2_cors",
+      "rollback_pages_deployment",
+      "delete_pages_deployment",
+      "delete_pages_domain",
+      "purge_pages_build_cache",
+      "delete_pages_project",
+      "update_dns_record",
+      "delete_dns_record",
+      "purge_cache",
+    ]) {
       expect(toolNamed(tools, name).annotations, name).toEqual({
         readOnlyHint: false,
         destructiveHint: true,
@@ -293,6 +390,289 @@ describe("cloudflare() tool surface", () => {
 });
 
 describe("cloudflare() request building", () => {
+  it("keeps arbitrary GET access read-only while forwarding query pairs", async () => {
+    stubFetch({
+      body: {
+        success: true,
+        result: [{ id: "image-1" }],
+        result_info: { page: 2 },
+      },
+    });
+    const result = await connection().callTool(
+      "cloudflare_api_get",
+      {
+        path: "/accounts/acct-1/images/v1",
+        query: [
+          { name: "page", value: 2 },
+          { name: "per_page", value: 50 },
+        ],
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("GET");
+    expect(urlOf().pathname).toBe("/client/v4/accounts/acct-1/images/v1");
+    expect(urlOf().searchParams.get("page")).toBe("2");
+    expect(result).toEqual({
+      result: [{ id: "image-1" }],
+      resultInfo: { page: 2 },
+    });
+  });
+
+  it("returns text and binary GET bodies without forcing a JSON envelope", async () => {
+    stubFetch(
+      {
+        text: "export default { fetch() {} }",
+        headers: { "content-type": "application/javascript", etag: "abc" },
+      },
+      {
+        bytes: new Uint8Array([0, 1, 2, 255]),
+        headers: { "content-type": "application/octet-stream" },
+      },
+    );
+    const connector = connection();
+    await expect(
+      connector.callTool(
+        "cloudflare_api_get",
+        {
+          path: "/accounts/acct-1/workers/scripts/site/content",
+          responseType: "text",
+        },
+        contextWithToken(),
+      ),
+    ).resolves.toEqual({
+      contentType: "application/javascript",
+      etag: "abc",
+      text: "export default { fetch() {} }",
+    });
+    await expect(
+      connector.callTool(
+        "cloudflare_api_get",
+        {
+          path: "/accounts/acct-1/r2/buckets/assets/objects/logo.bin",
+          responseType: "base64",
+        },
+        contextWithToken(),
+      ),
+    ).resolves.toEqual({
+      contentType: "application/octet-stream",
+      base64: "AAEC/w==",
+    });
+  });
+
+  it("sends JSON mutations through the approval-gated raw API tool", async () => {
+    stubFetch({ body: { success: true, result: { enabled: true } } });
+    await connection().callTool(
+      "cloudflare_api_mutate",
+      {
+        method: "PUT",
+        path: "/zones/zone-1/email/routing/rules/rule-1",
+        body: { enabled: true },
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(bodyOf()).toEqual({ enabled: true });
+  });
+
+  it("uploads raw content without JSON encoding it", async () => {
+    stubFetch({ body: { success: true, result: { key: "config.json" } } });
+    await connection().callTool(
+      "cloudflare_api_upload",
+      {
+        method: "PUT",
+        path: "/accounts/acct-1/r2/buckets/assets/objects/config.json",
+        contentType: "application/json",
+        textBody: "{\"enabled\":true}",
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(calls[0]!.init.body).toBe("{\"enabled\":true}");
+    expect(calls[0]!.init.headers).toMatchObject({
+      "Content-Type": "application/json",
+    });
+  });
+
+  it("builds multipart uploads without overriding fetch's boundary", async () => {
+    stubFetch({ body: { success: true, result: { id: "worker-version" } } });
+    await connection().callTool(
+      "cloudflare_api_upload",
+      {
+        method: "PUT",
+        path: "/accounts/acct-1/workers/scripts/site",
+        fields: [
+          {
+            name: "metadata",
+            value: '{"main_module":"worker.js"}',
+            contentType: "application/json",
+            fileName: "metadata.json",
+          },
+        ],
+        files: [
+          {
+            name: "worker.js",
+            fileName: "worker.js",
+            contentType: "application/javascript+module",
+            text: "export default { fetch() {} }",
+          },
+        ],
+      },
+      contextWithToken(),
+    );
+    const form = calls[0]!.init.body as FormData;
+    expect(form).toBeInstanceOf(FormData);
+    const metadata = form.get("metadata") as File;
+    expect(metadata.name).toBe("metadata.json");
+    expect(metadata.type).toBe("application/json");
+    expect(await metadata.text()).toBe('{"main_module":"worker.js"}');
+    const file = form.get("worker.js") as File;
+    expect(file.name).toBe("worker.js");
+    expect(file.type).toBe("application/javascript+module");
+    expect(await file.text()).toBe("export default { fetch() {} }");
+    expect(calls[0]!.init.headers).not.toHaveProperty("Content-Type");
+  });
+
+  it("refuses absolute, traversal, and query-bearing raw API paths locally", async () => {
+    const connector = connection();
+    for (const path of [
+      "https://example.com/steal",
+      "//example.com/steal",
+      "/accounts/../user/tokens",
+      "/%2e%2e/user",
+      "/accounts/acct-1/%252e%252e/user",
+      "/accounts/acct-1/%2fuser",
+      "/accounts\\..\\..\\user",
+      "/accounts/acct-1/images/v1?page=2",
+    ]) {
+      await expect(
+        connector.callTool("cloudflare_api_get", { path }, contextWithToken()),
+      ).rejects.toBeInstanceOf(ConnectorCallError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("sends endpoint-specific raw headers but keeps authentication connector-owned", async () => {
+    stubFetch({ body: { success: true, result: [] } });
+    const connector = connection();
+    await connector.callTool(
+      "cloudflare_api_get",
+      {
+        path: "/accounts/acct-1/r2/buckets",
+        headers: [{ name: "cf-r2-jurisdiction", value: "eu" }],
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.headers).toMatchObject({
+      Authorization: `Bearer ${TOKEN}`,
+      "cf-r2-jurisdiction": "eu",
+    });
+
+    await expect(
+      connector.callTool(
+        "cloudflare_api_get",
+        {
+          path: "/user/tokens/verify",
+          headers: [{ name: "Authorization", value: "Bearer attacker" }],
+        },
+        contextWithToken(),
+      ),
+    ).rejects.toBeInstanceOf(ConnectorCallError);
+    expect(calls).toHaveLength(1);
+  });
+
+  it("paginates zone rulesets with opaque cursors", async () => {
+    stubFetch({
+      body: {
+        success: true,
+        result: [{ id: "ruleset-1", name: "transform" }],
+        result_info: { cursors: { after: "NEXT" } },
+      },
+    });
+    const result = await connection().callTool(
+      "list_zone_rulesets",
+      { zoneId: "zone-1", perPage: 25, cursor: "CURRENT" },
+      contextWithToken(),
+    );
+    expect(urlOf().searchParams.get("per_page")).toBe("25");
+    expect(urlOf().searchParams.get("cursor")).toBe("CURRENT");
+    expect(result).toMatchObject({
+      rulesets: [{ id: "ruleset-1", name: "transform" }],
+      nextCursor: "NEXT",
+    });
+  });
+
+  it("builds R2 management requests including jurisdiction and path-like keys", async () => {
+    stubFetch(
+      { body: { success: true, result: { name: "assets" } } },
+      { body: { success: true, result: { key: "images/a b.png" } } },
+    );
+    await connection().callTool(
+      "create_r2_bucket",
+      {
+        accountId: "acct-1",
+        bucketName: "assets",
+        jurisdiction: "eu",
+        locationHint: "weur",
+        storageClass: "Standard",
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(calls[0]!.init.headers).toMatchObject({ "cf-r2-jurisdiction": "eu" });
+    expect(bodyOf(0)).toEqual({
+      name: "assets",
+      locationHint: "weur",
+      storageClass: "Standard",
+    });
+
+    await connection().callTool(
+      "delete_r2_object",
+      {
+        accountId: "acct-1",
+        bucketName: "assets",
+        objectKey: "images/a b.png",
+      },
+      contextWithToken(),
+    );
+    expect(urlOf(1).pathname).toBe(
+      "/client/v4/accounts/acct-1/r2/buckets/assets/objects/images/a%20b.png",
+    );
+  });
+
+  it("refuses R2 object keys whose dot segments would retarget deletion", async () => {
+    const connector = connection();
+    for (const objectKey of ["..", "../cors", "folder/./item"]) {
+      await expect(
+        connector.callTool(
+          "delete_r2_object",
+          { accountId: "acct-1", bucketName: "assets", objectKey },
+          contextWithToken(),
+        ),
+      ).rejects.toBeInstanceOf(ConnectorCallError);
+    }
+    expect(calls).toHaveLength(0);
+  });
+
+  it("uses the documented KV bulk JSON endpoints", async () => {
+    stubFetch({ body: { success: true, result: { successful_key_count: 1 } } });
+    await connection().callTool(
+      "bulk_write_kv_values",
+      {
+        accountId: "acct-1",
+        namespaceId: "ns-1",
+        entries: [{ key: "feature", value: "on", expiration_ttl: 600 }],
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(urlOf().pathname).toBe(
+      "/client/v4/accounts/acct-1/storage/kv/namespaces/ns-1/bulk",
+    );
+    expect(bodyOf()).toEqual([
+      { key: "feature", value: "on", expiration_ttl: 600 },
+    ]);
+  });
+
   it("authenticates with a bearer token against the documented v4 base", async () => {
     stubFetch({
       body: { success: true, result: { id: "tok", status: "active" } },

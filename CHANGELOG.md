@@ -2,6 +2,44 @@
 
 All notable changes to this package are documented here.
 
+## 0.14.1 — 2026-08-06
+
+The Cloudflare connection is now an operations surface rather than a narrow
+inventory sample. Common zone, Worker, KV, R2, and Pages workflows have named,
+closed schemas and lean results; three guarded v4 escape hatches cover Images,
+Stream, Email Routing, D1, Queues, and future Cloudflare products without
+turning the catalog into an OpenAPI dump. GET remains the only raw path admitted
+to programs. JSON mutations and raw or multipart uploads always cross the
+destructive boundary, while the configured Cloudflare token remains the final
+provider-side capability limit.
+
+Nothing breaks for existing deployments. The original fourteen tool names and
+their behavior are unchanged, and deployments can keep their current read-only
+token if they only use those reads. Operators who use the new writes must add
+the corresponding narrowly scoped Cloudflare permissions. The new raw tools
+return provider shapes by design, so programs should project their results just
+as they would any other large downstream response.
+
+### Added
+
+- **Named Cloudflare administration across five product areas.** Zone settings
+  and rulesets, Worker settings and deployments, KV namespaces/keys/bulk
+  values, R2 buckets/objects/metrics/CORS, and Pages projects/deployments/domains
+  now have maintained operations with explicit schemas, pagination, projections,
+  and safety annotations.
+- **Guarded access to the rest of Cloudflare v4.** `cloudflare_api_get` handles
+  JSON, text, and base64 reads; `cloudflare_api_mutate` handles JSON POST, PUT,
+  PATCH, and DELETE; `cloudflare_api_upload` handles explicit text, base64, and
+  multipart bodies. Raw paths cannot be absolute, traverse with `..`, hide a
+  query string, or choose their own host.
+
+### Changed
+
+- **Cloudflare credential guidance now covers operational permissions.** The
+  guide distinguishes product Read and Write scopes, explains the three raw
+  routes, names common media, email, database, and queue paths, and records the
+  cursor behavior of R2 object and KV key listings.
+
 ## 0.14.0 — 2026-08-03
 
 Connecta went from one maintained prebuilt connection to five. Stripe, Linear,
