@@ -128,7 +128,12 @@ Connecta deliberately sits between protocol generations
   remains stateless in both cases.
 - **Outbound:** `remoteMcp()` probes modern downstreams and falls back to the
   byte-compatible legacy flow. Legacy downstreams are normal supported
-  deployments, not a temporary exception.
+  deployments, not a temporary exception. Automatic negotiation remains the
+  default. A known-legacy server that crashes or returns a server error for the
+  pre-initialize probe can set `versionNegotiation: "legacy"` on that one
+  connector; Connecta then starts directly with `initialize` and never sends
+  `server/discover`. Keep the default unless the downstream requires this
+  compatibility concession, so modern protocol support is still discovered.
 - **Legacy sessions:** Connecta's own endpoint creates no protocol session, but
   a stateful legacy downstream can still issue `Mcp-Session-Id`. Closing a
   request scope explicitly sends the legacy DELETE before closing its transport.

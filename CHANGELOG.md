@@ -2,6 +2,27 @@
 
 All notable changes to this package are documented here.
 
+## 0.14.2 — 2026-08-08
+
+Remote MCP connectors can now make one explicit compatibility concession for a
+known-legacy server: skip modern version discovery and begin with the ordinary
+2025 initialization lifecycle. This is for otherwise functional downstreams
+that crash or return a server error when they receive `server/discover` before
+`initialize`; COROS build 2.11.15 is the motivating deployment.
+
+Nothing changes for existing deployments. Automatic negotiation remains the
+default, and connectors that do not set the new option continue to probe for a
+modern server and conservatively fall back to legacy MCP. OAuth, request-scoped
+client reuse, catalog pagination, tool calls, and legacy session teardown all
+share the same paths after connection.
+
+### Added
+
+- **Per-connector legacy MCP negotiation.** `remoteMcp(id, {
+  versionNegotiation: "legacy", ... })` starts directly with `initialize` and
+  never sends `server/discover`, allowing known-legacy downstreams to opt out
+  without changing negotiation for any other connector (#321).
+
 ## 0.14.1 — 2026-08-06
 
 The Cloudflare connection is now an operations surface rather than a narrow

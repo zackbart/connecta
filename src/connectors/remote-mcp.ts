@@ -55,6 +55,14 @@ export interface RemoteMcpOptions {
   usageGuide?: string | ConnectorUsageGuide;
   auth?: RemoteMcpAuth;
   /**
+   * Downstream MCP version-negotiation mode. Defaults to `"auto"`, which
+   * probes with `server/discover` and falls back to the legacy lifecycle when
+   * the response identifies a legacy server. Set `"legacy"` only for a known
+   * legacy downstream that cannot safely receive the discovery probe; that
+   * path starts directly with the ordinary 2025 `initialize` handshake.
+   */
+  versionNegotiation?: "auto" | "legacy";
+  /**
    * Downstream HTTP redirect policy. Defaults to `"none"`: every redirect is
    * rejected. `"same-origin"` follows at most five redirects while preserving
    * standard 301/302/303/307/308 method semantics. Cross-origin redirects and
@@ -665,7 +673,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         const c = new Client(
           { name: "connecta", version: CONNECTA_VERSION },
           {
-            versionNegotiation: { mode: "auto" },
+            versionNegotiation: {
+              mode: opts.versionNegotiation ?? "auto",
+            },
             // Connecta has no interactive relay. Surface the result manually
             // below as one structured, non-retryable connector failure.
             inputRequired: { autoFulfill: false },

@@ -163,6 +163,7 @@ async function makeTrackedConnector(opts: { oauth?: boolean } = {}) {
 
 interface DownstreamRequest {
   method: string;
+  rpcMethod: string | null;
   sessionId: string | null;
   /** Whether the transport had already aborted when the request went out. */
   abortedWhenIssued: boolean;
@@ -187,12 +188,14 @@ function makeHttpDownstream(
   const requests: DownstreamRequest[] = [];
   const fetchStub: FetchLike = async (_url, init = {}) => {
     const headers = new Headers(init.headers as HeadersInit | undefined);
-    requests.push({
+    const request: DownstreamRequest = {
       method: init.method ?? "GET",
+      rpcMethod: null,
       sessionId: headers.get("mcp-session-id"),
       abortedWhenIssued: init.signal?.aborted ?? false,
       signal: init.signal,
-    });
+    };
+    requests.push(request);
     if (init.method === "DELETE") {
       return (await opts.onDelete?.()) ?? new Response(null, { status: 200 });
     }
@@ -200,6 +203,7 @@ function makeHttpDownstream(
     // 405 is the spec's "no stream here", which it accepts silently.
     if (init.method !== "POST") return new Response(null, { status: 405 });
     const message = JSON.parse(String(init.body));
+    request.rpcMethod = message.method;
     // Auto negotiation treats any non-auth, non-5xx HTTP rejection without a
     // modern discovery result as legacy evidence, then performs initialize.
     if (message.method === "server/discover") {
@@ -315,6 +319,91 @@ describe("remoteMcp() connector", () => {
       callAdmission,
     });
     expect(limited.callAdmission).toBe(callAdmission);
+  });
+
+  it("keeps automatic version negotiation as the default", async () => {
+    const { connector, requests } = makeHttpDownstream();
+
+    await expect(connector.status!(ctx())).resolves.toMatchObject({
+      state: "ok",
+    });
+
+    expect(requests.map((request) => request.rpcMethod)).toContain(
+      "server/discover",
+    );
+    expect(requests.map((request) => request.rpcMethod)).toContain("initialize");
+  });
+
+  it("bypasses discovery for a known-legacy downstream", async () => {
+    const url = "https://legacy.test/mcp";
+    const methods: string[] = [];
+    const fetchStub: FetchLike = async (_url, init = {}) => {
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const message = JSON.parse(String(init.body));
+      methods.push(message.method);
+      if (message.method === "server/discover") {
+        return new Response("legacy server crashed", { status: 500 });
+      }
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      let result: unknown;
+      if (message.method === "initialize") {
+        result = {
+          protocolVersion: message.params.protocolVersion,
+          capabilities: { tools: {} },
+          serverInfo: { name: "legacy", version: "1.0.0" },
+        };
+      } else if (message.method === "tools/list") {
+        result = {
+          tools: [
+            {
+              name: "echo",
+              description: "Echo text",
+              inputSchema: { type: "object" },
+            },
+          ],
+        };
+      } else if (message.method === "tools/call") {
+        result = {
+          content: [
+            { type: "text", text: `echo:${message.params.arguments.text}` },
+          ],
+        };
+      }
+      return new Response(
+        JSON.stringify({
+          jsonrpc: "2.0",
+          id: message.id,
+          result,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+    const connector = remoteMcp("legacy", {
+      url,
+      versionNegotiation: "legacy",
+      _transportFactory: () =>
+        new StreamableHTTPClientTransport(new URL(url), {
+          fetch: fetchStub,
+        }) as unknown as Transport,
+    });
+    const context = { ...ctx(), requestScope: {} };
+
+    await expect(connector.listTools(context)).resolves.toMatchObject([
+      { name: "echo", description: "Echo text" },
+    ]);
+    await expect(
+      connector.callTool("echo", { text: "hi" }, context),
+    ).resolves.toMatchObject({
+      content: [{ type: "text", text: "echo:hi" }],
+    });
+    expect(methods).toEqual([
+      "initialize",
+      "notifications/initialized",
+      "tools/list",
+      "tools/call",
+    ]);
   });
 
   it("callTool proxies args and returns the content array as-is", async () => {
