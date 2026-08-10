@@ -26,11 +26,70 @@ function withoutQueryCoverage(value) {
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(
     Object.entries(value).flatMap(([key, entry]) =>
-      key === "queryCoverage"
+      key === "queryCoverage" ||
+      key === "queryTerms" ||
+      key === "queryTermsTruncated"
         ? []
         : [[key, withoutQueryCoverage(entry)]],
     ),
   );
+}
+
+function expandIndexes(terms, indexes) {
+  return Array.isArray(indexes)
+    ? indexes.flatMap((index) =>
+        typeof terms[index] === "string" ? [terms[index]] : [],
+      )
+    : [];
+}
+
+function coverageRows(value) {
+  const trailing = value?.queryCoverage;
+  if (trailing && Array.isArray(trailing.entries)) {
+    const terms = Array.isArray(trailing.terms) ? trailing.terms : [];
+    return trailing.entries.map((entry) => ({
+      address: entry.address,
+      nameTerms: expandIndexes(terms, entry.name),
+      descriptionTerms: expandIndexes(terms, entry.description),
+      unmatchedTerms: expandIndexes(terms, entry.unmatched),
+      ...(trailing.truncated ? { truncated: true } : {}),
+    }));
+  }
+  const indexedTerms = Array.isArray(value?.queryTerms)
+    ? value.queryTerms
+    : [];
+  return Array.isArray(value?.connectors)
+    ? value.connectors.flatMap((group) =>
+        Array.isArray(group.tools)
+          ? group.tools.flatMap((tool) => {
+              const entry = tool?.queryCoverage;
+              if (!entry) return [];
+              if (
+                Array.isArray(entry.nameTerms) ||
+                Array.isArray(entry.descriptionTerms) ||
+                Array.isArray(entry.unmatchedTerms)
+              ) {
+                return [{ address: tool.address, ...entry }];
+              }
+              return [
+                {
+                  address: tool.address,
+                  nameTerms: expandIndexes(indexedTerms, entry.name),
+                  descriptionTerms: expandIndexes(
+                    indexedTerms,
+                    entry.description,
+                  ),
+                  unmatchedTerms: expandIndexes(
+                    indexedTerms,
+                    entry.unmatched,
+                  ),
+                  ...(value.queryTermsTruncated ? { truncated: true } : {}),
+                },
+              ];
+            })
+          : [],
+      )
+    : [];
 }
 
 function resultWithoutQueryCoverage(result) {
@@ -89,17 +148,7 @@ export async function runDiscoveryBenchmark(context, corpusPath) {
     const expectedTopMatch =
       expectedTop === null ? null : pageAddresses[0] === expectedTop;
     const falsePositive = !positive && pageAddresses.length > 0;
-    const coverage = Array.isArray(value?.connectors)
-      ? value.connectors.flatMap((group) =>
-          Array.isArray(group.tools)
-            ? group.tools.flatMap((tool) =>
-                tool?.queryCoverage
-                  ? [{ address: tool.address, ...tool.queryCoverage }]
-                  : [],
-              )
-            : [],
-        )
-      : [];
+    const coverage = coverageRows(value);
     const expectedCoverage = fixture.expectedCoverage ?? null;
     const coverageExpectedCorrect =
       expectedCoverage === null

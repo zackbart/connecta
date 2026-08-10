@@ -35,6 +35,43 @@ connector. The release gate remains the complete holdout `audit` command.
 The current combined report is
 [`results/issue-322-evidence.md`](./results/issue-322-evidence.md).
 
+### Reproduce the issue #322 trailing audits
+
+The committed discovery adapter reads the verbose, indexed, and trailing-entry
+coverage shapes. Reproduce the trailing deterministic reports from a clean
+checkout by replacing `PREREG_COMMIT` with the commit that contains
+[`issue-322-qualification-plan.json`](./issue-322-qualification-plan.json):
+
+```sh
+git worktree add --detach /tmp/connecta-322-trailing \
+  bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+git -C /tmp/connecta-322-trailing restore --source PREREG_COMMIT \
+  --staged --worktree eval/current-version
+npm ci --prefix /tmp/connecta-322-trailing
+npm ci --prefix /tmp/connecta-322-trailing/eval/current-version
+npm --prefix /tmp/connecta-322-trailing/eval/current-version \
+  run audit:development -- --source-commit \
+  bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+npm --prefix /tmp/connecta-322-trailing/eval/current-version run audit -- \
+  --source-commit bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+```
+
+The coverage-off comparator uses the same preregistration commit plus the exact
+[`issue-322-coverage-off.patch`](./patches/issue-322-coverage-off.patch). Its
+SHA-256 is recorded in the preregistration plan. The qualification runner
+rejects mismatched commits, patches, harnesses, corpora, sandboxes, runtimes,
+models, or CLI versions before it starts a sample.
+
+```sh
+git worktree add --detach /tmp/connecta-322-off PREREG_COMMIT
+git -C /tmp/connecta-322-off apply \
+  eval/current-version/patches/issue-322-coverage-off.patch
+CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol node \
+  eval/current-version/issue-322-qualification-runner.mjs \
+  --off-worktree /tmp/connecta-322-off \
+  --trailing-worktree /tmp/connecta-322-trailing
+```
+
 The paired cold-agent decoy lane uses the same case, model, repetitions, and
 concurrency on both product commits:
 

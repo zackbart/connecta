@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "status": "preregistered-before-sampling",
+  "createdAt": "2026-08-10T05:00:00.000Z",
+  "issue": "https://github.com/zackbart/connecta/issues/322",
+  "arms": {
+    "off": {
+      "baseCommit": "PREREGISTRATION_COMMIT",
+      "productBaseCommit": "62e2b1f0f6ec681cd3049a3a12621ab3d6978ff6",
+      "patch": "patches/issue-322-coverage-off.patch",
+      "patchSha256": "9db0c8011ea3743a0d605aa86fa0842c769125f89006f05e768e6080a522226f"
+    },
+    "trailing": {
+      "productCommit": "bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c",
+      "evalOverlayCommit": "PREREGISTRATION_COMMIT",
+      "evalOverlayPath": "eval/current-version"
+    }
+  },
+  "environment": {
+    "model": "gpt-5.6-sol",
+    "codexVersion": "codex-cli 0.147.0",
+    "nodeVersion": "26.5.1",
+    "tokenizer": "o200k_base",
+    "case": "mixed-decoy-organizations",
+    "repetitionsPerArm": 30,
+    "batchRepetitions": 5,
+    "batchesPerArm": 6,
+    "concurrency": 5,
+    "harnessSha256": "dd11bb3b16a3b99d481e26983485787fb10dfa2c43db59ad6655c1944f7810c3",
+    "corpusSha256": "48006378093890eaac28c61540a94bd4ee8c9e2d48e59aada92178539b28fdd1",
+    "sandboxSha256": "7a8b811f4e241db3209b3490fa4642795a2b7b80e9a23660b01d34e54821a11b",
+    "requiredHostActions": 0,
+    "requiredForeignCalls": 0
+  },
+  "scheduling": {
+    "method": "Six five-run batches per arm. Each pair contains both arms; fixed seeded order was generated before sampling.",
+    "seed": "issue-322-bbfb522-20260810",
+    "batchOrder": [
+      "trailing",
+      "off",
+      "off",
+      "trailing",
+      "trailing",
+      "off",
+      "off",
+      "trailing",
+      "trailing",
+      "off",
+      "off",
+      "trailing"
+    ]
+  },
+  "primaryGates": [
+    {
+      "id": "combined-noninferiority",
+      "metric": "routingResultCorrect rate",
+      "criterion": "trailing - off >= -0.10"
+    },
+    {
+      "id": "clean-route-improvement",
+      "metric": "routeClean rate",
+      "criterion": "trailing - off >= 0.20 and two-sided Fisher exact p < 0.05"
+    },
+    {
+      "id": "mean-efficiency",
+      "metrics": [
+        "whole-agent input tokens",
+        "non-cached input tokens",
+        "Connecta round trips"
+      ],
+      "criterion": "each trailing mean / off mean <= 1.10"
+    },
+    {
+      "id": "median-efficiency",
+      "metrics": [
+        "whole-agent input tokens",
+        "non-cached input tokens",
+        "Connecta round trips"
+      ],
+      "criterion": "each trailing median / off median <= 1.10"
+    },
+    {
+      "id": "latency",
+      "metric": "mean wall latency",
+      "criterion": "trailing mean / off mean <= 1.10"
+    },
+    {
+      "id": "isolation",
+      "metric": "host actions and foreign MCP calls",
+      "criterion": "both totals equal zero in both arms"
+    }
+  ],
+  "secondaryMetrics": [
+    "median latency",
+    "search-result tokens",
+    "estimated search-noise tokens",
+    "Connecta MCP result tokens",
+    "retrieval top-1",
+    "retrieval recall",
+    "exact address",
+    "exact arguments",
+    "final answer"
+  ],
+  "analysis": {
+    "fisher": "Two-sided Fisher exact test sums all fixed-margin tables with probability less than or equal to the observed table probability.",
+    "passRule": "Every primary gate must pass. Search and MCP token movement cannot offset a failed primary gate.",
+    "failedRunRule": "A harness or infrastructure failure aborts the protocol. Do not replace individual completed runs or tune gates after results."
+  }
+}
