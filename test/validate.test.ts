@@ -197,6 +197,86 @@ describe("validateToolInput", () => {
     expect(err?.message).not.toContain("additional properties");
   });
 
+  it("preserves independent enum and false-schema failures across allOf", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { x: true },
+      allOf: [
+        { properties: { x: { enum: ["A"] } } },
+        { properties: { x: false } },
+      ],
+    };
+    const err = validateToolInput(schema, { x: "B" }, OPTS);
+    expect(err?.validation).toEqual({
+      issues: [
+        {
+          path: "/x",
+          code: "enum",
+          expected: "one of the declared values",
+        },
+        {
+          path: "/x",
+          code: "additionalProperties",
+          expected: "no additional properties",
+        },
+      ],
+    });
+    expect(err?.message).toContain('["A"]');
+    expect(err?.message).not.toContain("False boolean schema");
+  });
+
+  it("renders one message clause for a declared false-schema property", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { banned: false },
+      additionalProperties: false,
+    };
+    const err = validateToolInput(schema, { banned: "value" }, OPTS);
+    expect(err?.validation).toEqual({
+      issues: [
+        {
+          path: "/banned",
+          code: "additionalProperties",
+          expected: "no additional properties",
+        },
+      ],
+    });
+    expect(err?.message).toBe(
+      'Invalid arguments for "acme.create_note": #/banned: Value is not allowed by the declared schema.',
+    );
+  });
+
+  it("renders one message clause for a nested undeclared property", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        settings: {
+          type: "object",
+          properties: { known: { type: "string" } },
+          additionalProperties: false,
+        },
+      },
+      additionalProperties: false,
+    };
+    const err = validateToolInput(
+      schema,
+      { settings: { extra: "value" } },
+      OPTS,
+    );
+    expect(err?.validation).toEqual({
+      issues: [
+        {
+          path: "/settings/extra",
+          code: "additionalProperties",
+          expected: "no additional properties",
+        },
+      ],
+    });
+    expect(err?.message).toBe(
+      'Invalid arguments for "acme.create_note": #/settings/extra: Value is not allowed by the declared schema.',
+    );
+  });
+
   it("a schema the validator cannot compile warns once and passes through", () => {
     const { logger, warn } = loggerSpy();
     const schema: JsonSchema = {

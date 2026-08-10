@@ -49,8 +49,6 @@ export interface PrecompileValidatorOptions {
 const validators = new WeakMap<JsonSchema, Validator | null>();
 const REQUIRED_PROPERTY_RE =
   /^Instance does not have required property "([^"]+)"\.$/;
-const ADDITIONAL_PROPERTY_RE =
-  /^Property "([^"]+)" does not match additional properties schema\.$/;
 
 interface ValidationUnit {
   keyword: string;
@@ -104,66 +102,94 @@ function validationUnitKey(unit: ValidationUnit): string {
   ]);
 }
 
-function normalizedValidationUnits(units: ValidationUnit[]): ValidationUnit[] {
-  const leafUnits = units.filter(
-    (unit) => !CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword),
-  );
-  const nonFalseLocations = new Set(
-    leafUnits
-      .filter((unit) => unit.keyword !== "false")
-      .map((unit) => unit.instanceLocation),
-  );
-  const parentLocations = new Set<string>();
-  for (const unit of leafUnits) {
-    let location = unit.instanceLocation;
-    let separator = location.lastIndexOf("/");
-    while (separator > 0) {
-      location = location.slice(0, separator);
-      parentLocations.add(location);
-      separator = location.lastIndexOf("/");
+function childPropertyName(
+  parentLocation: string,
+  childLocation: string,
+): string | undefined {
+  const prefix = parentLocation === "#" ? "#/" : `${parentLocation}/`;
+  if (!childLocation.startsWith(prefix)) return undefined;
+  const encoded = childLocation.slice(prefix.length);
+  return encoded.length > 0 && !encoded.includes("/")
+    ? decodePointerPart(encoded)
+    : undefined;
+}
+
+function schemaDeclaresProperty(schema: unknown, property: string): boolean {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) {
+    return false;
+  }
+  const record = schema as Record<string, unknown>;
+  const properties = record.properties;
+  if (
+    properties !== null &&
+    typeof properties === "object" &&
+    !Array.isArray(properties) &&
+    Object.hasOwn(properties, property)
+  ) {
+    return true;
+  }
+  const patterns = record.patternProperties;
+  if (
+    patterns === null ||
+    typeof patterns !== "object" ||
+    Array.isArray(patterns)
+  ) {
+    return false;
+  }
+  for (const pattern of Object.keys(patterns)) {
+    try {
+      if (new RegExp(pattern).test(property)) return true;
+    } catch {
+      // The validator owns schema support. An unusable pattern cannot prove
+      // that this additional-properties branch is a duplicate.
     }
   }
+  return false;
+}
+
+function isDuplicateAdditionalPropertiesBranch(
+  schema: JsonSchema,
+  units: ValidationUnit[],
+  index: number,
+): boolean {
+  const unit = units[index];
+  const wrapper = units[index - 1];
+  if (
+    unit?.keyword !== "false" ||
+    wrapper?.keyword !== "additionalProperties" ||
+    !wrapper.keywordLocation.endsWith("/additionalProperties")
+  ) {
+    return false;
+  }
+  const property = childPropertyName(
+    wrapper.instanceLocation,
+    unit.instanceLocation,
+  );
+  if (property === undefined) return false;
+  const parentSchemaLocation = wrapper.keywordLocation.slice(
+    0,
+    -"/additionalProperties".length,
+  );
+  return schemaDeclaresProperty(
+    pointerValue(schema, parentSchemaLocation || "#"),
+    property,
+  );
+}
+
+function normalizedValidationUnits(
+  schema: JsonSchema,
+  units: ValidationUnit[],
+): ValidationUnit[] {
   const seen = new Set<string>();
-  return leafUnits.filter((unit) => {
-    if (
-      unit.keyword === "false" &&
-      (nonFalseLocations.has(unit.instanceLocation) ||
-        parentLocations.has(unit.instanceLocation))
-    ) {
+  return units.filter((unit, index) => {
+    if (CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword)) return false;
+    if (isDuplicateAdditionalPropertiesBranch(schema, units, index)) {
       return false;
     }
     const key = validationUnitKey(unit);
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
-  });
-}
-
-function validationMessageUnits(
-  units: ValidationUnit[],
-  leafUnits: ValidationUnit[],
-): ValidationUnit[] {
-  const leafKeys = new Set(leafUnits.map(validationUnitKey));
-  const falseUnitsByLocation = new Map<string, ValidationUnit[]>();
-  for (const unit of units) {
-    if (unit.keyword !== "false") continue;
-    const atLocation = falseUnitsByLocation.get(unit.instanceLocation) ?? [];
-    atLocation.push(unit);
-    falseUnitsByLocation.set(unit.instanceLocation, atLocation);
-  }
-  return units.filter((unit) => {
-    if (unit.keyword === "false") {
-      return leafKeys.has(validationUnitKey(unit));
-    }
-    if (unit.keyword !== "additionalProperties") return true;
-    const property = ADDITIONAL_PROPERTY_RE.exec(unit.error)?.[1];
-    if (!property) return true;
-    const childLocation = `${unit.instanceLocation}/${encodePointerPart(property)}`;
-    const falseUnits = falseUnitsByLocation.get(childLocation);
-    return (
-      falseUnits === undefined ||
-      falseUnits.some((falseUnit) => leafKeys.has(validationUnitKey(falseUnit)))
-    );
   });
 }
 
@@ -324,12 +350,9 @@ export function validateToolInput(
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   if (result && !result.valid) {
-    const units = normalizedValidationUnits(result.errors);
-    const messageUnits = validationMessageUnits(result.errors, units);
-    const nestedUnits = messageUnits.filter(
-      (unit) => unit.instanceLocation !== "#",
-    );
-    const detail = (nestedUnits.length > 0 ? nestedUnits : messageUnits)
+    const units = normalizedValidationUnits(schema, result.errors);
+    const nestedUnits = units.filter((unit) => unit.instanceLocation !== "#");
+    const detail = (nestedUnits.length > 0 ? nestedUnits : units)
       .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
       .map((unit) =>
         `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
