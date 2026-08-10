@@ -165,6 +165,29 @@ describe("validateToolInput", () => {
     expect(err?.message).not.toContain("additional properties");
   });
 
+  it("recognizes an empty declared property name in a closed schema", () => {
+    const schema: JsonSchema = {
+      type: "object",
+      properties: {
+        "": { type: "string", enum: ["ok"] },
+      },
+      additionalProperties: false,
+    };
+    const err = validateToolInput(schema, { "": "bad" }, OPTS);
+    expect(err?.validation).toEqual({
+      issues: [
+        {
+          path: "/",
+          code: "enum",
+          expected: "one of the declared values",
+        },
+      ],
+    });
+    expect(err?.message).toContain('["ok"]');
+    expect(err?.message).not.toContain("False boolean schema");
+    expect(err?.message).not.toContain("additional properties");
+  });
+
   it("does not misclassify an invalid nested declared property as additional", () => {
     const schema: JsonSchema = {
       type: "object",

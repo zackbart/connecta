@@ -109,9 +109,7 @@ function childPropertyName(
   const prefix = parentLocation === "#" ? "#/" : `${parentLocation}/`;
   if (!childLocation.startsWith(prefix)) return undefined;
   const encoded = childLocation.slice(prefix.length);
-  return encoded.length > 0 && !encoded.includes("/")
-    ? decodePointerPart(encoded)
-    : undefined;
+  return !encoded.includes("/") ? decodePointerPart(encoded) : undefined;
 }
 
 function schemaDeclaresProperty(schema: unknown, property: string): boolean {
