@@ -202,6 +202,13 @@ clipped inventory with `truncated: true`. It exposes no ranking score: use the
 signal to reject a broad description-only decoy, not to reconstruct the
 scorer. Empty-query browse results omit it.
 
+Only an empty or whitespace-only query browses. A non-empty query that
+normalizes to no ASCII lexical terms returns no tools instead of unrelated
+browse results. Its bounded `queryAnalysis.unmatchedTerms` contains the clipped
+raw query and guidance asks for ASCII action/object terms. A mixed query still
+searches with its ASCII terms; unsupported characters do not become false
+matches or per-tool coverage terms.
+
 Every partial or no-match lexical search also returns bounded page-level
 `queryAnalysis`; an all-term result needs no recovery advice.
 `representedTerms` occur in the current page, `otherResultTerms` occur only in

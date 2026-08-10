@@ -730,6 +730,36 @@ describe("buildSandboxProviders", () => {
       descriptionTerms: ["numbers"],
       unmatchedTerms: ["operands", "result", "metadata"],
     });
+    const unicodeOnly = (await required(connecta.fns.search)({
+      query: "界".repeat(80),
+    })) as {
+      tools: unknown[];
+      queryAnalysis?: {
+        unmatchedTerms: string[];
+        truncated?: true;
+        guidance?: string;
+      };
+    };
+    expect(unicodeOnly.tools).toEqual([]);
+    expect(unicodeOnly.queryAnalysis).toMatchObject({
+      unmatchedTerms: [`${"界".repeat(63)}…`],
+      truncated: true,
+      guidance: expect.stringContaining("no searchable lexical terms"),
+    });
+
+    const mixedUnicode = (await required(connecta.fns.search)({
+      query: `${"界".repeat(80)} add`,
+    })) as {
+      tools: Array<{
+        address: string;
+        queryCoverage: { nameTerms: string[] };
+      }>;
+    };
+    expect(mixedUnicode.tools).toHaveLength(1);
+    expect(mixedUnicode.tools[0]).toMatchObject({
+      address: "calc.add",
+      queryCoverage: { nameTerms: ["add"] },
+    });
     // Key metadata accompanies schemas; a search that asked for neither pays
     // for neither.
     expect(required(partial.tools[0])).not.toHaveProperty("inputKeys");

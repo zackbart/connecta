@@ -944,6 +944,9 @@ describe("search_tools", () => {
   it("empty query browses all healthy tools grouped per connector (broken skipped)", async () => {
     const mt = createMetaTools(registry(), BASE);
     const parsed = textOf(await mt.searchTools({})) as SearchResult;
+    const whitespace = textOf(
+      await mt.searchTools({ query: " \n\t " }),
+    ) as SearchResult;
     // Two healthy connectors with matches → two groups; broken is skipped.
     expect(parsed.connectors.map((c) => c.id).sort()).toEqual([
       "calc",
@@ -953,6 +956,55 @@ describe("search_tools", () => {
     expect(required(byId.calc).tools.map((t) => t.address)).toEqual(["calc.add"]);
     expect(required(byId.remote).tools.map((t) => t.address)).toEqual(["remote.echo"]);
     expect(parsed.total).toBe(2);
+    expect(whitespace).toEqual(parsed);
+  });
+
+  it("does not turn a non-empty Unicode-only query into a browse", async () => {
+    const query = "界".repeat(80);
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([calcConnector, remoteConnector]),
+        BASE,
+      ).searchTools({ query }),
+    ) as SearchResult;
+
+    expect(parsed).toMatchObject({
+      connectors: [],
+      total: 0,
+      hasMore: false,
+      queryAnalysis: {
+        representedTerms: [],
+        otherResultTerms: [],
+        unmatchedTerms: [`${"界".repeat(63)}…`],
+        truncated: true,
+        guidance: expect.stringContaining("no searchable lexical terms"),
+      },
+    });
+    expect(parsed.matchMode).toBeUndefined();
+    expect(
+      new TextEncoder().encode(JSON.stringify(parsed.queryAnalysis)).length,
+    ).toBeLessThan(1_600);
+  });
+
+  it("uses searchable ASCII terms from a mixed Unicode query", async () => {
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([calcConnector, remoteConnector]),
+        BASE,
+      ).searchTools({ query: `${"界".repeat(80)} add` }),
+    ) as SearchResult;
+    const tools = parsed.connectors.flatMap((group) => group.tools);
+
+    expect(tools).toHaveLength(1);
+    expect(required(tools[0])).toMatchObject({
+      address: "calc.add",
+      queryCoverage: {
+        nameTerms: ["add"],
+        descriptionTerms: [],
+        unmatchedTerms: [],
+      },
+    });
+    expect(parsed.queryAnalysis).toBeUndefined();
   });
 
   it("filters discovery with the same fail-closed safety classification as invocation", async () => {
