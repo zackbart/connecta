@@ -433,6 +433,7 @@ function renderEnum(
   byteLimit: number | undefined,
   onTruncated: (() => void) | undefined,
 ): string {
+  if (values.length === 0) return "never";
   const renderedValues = values.map((value) => JSON.stringify(value));
   const full = renderedValues.join(" | ");
   if (
@@ -661,9 +662,9 @@ export function compactDiscoverySchema(
     rendered = renderSchema(schema, defs, new Set(), 0, {
       propertyDescriptions: false,
       requiredFirst: true,
-      // One routing constraint cannot spend more than one quarter of the
-      // complete discovery-shape budget. Whole values are retained, so the
-      // bound is UTF-8 safe and the rest of the schema keeps room to render.
+      // Three near-cap enums spend about three quarters of the complete shape
+      // budget, leaving the final quarter for surrounding syntax before the
+      // unchanged global fallback applies. Whole values keep this UTF-8 safe.
       enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
       onEnumTruncated: () => {
         enumTruncated = true;

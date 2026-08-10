@@ -76,9 +76,11 @@ documentation. Tool purposes are capped at 160 characters, connector
 descriptions and property prose are omitted, required input fields render
 before optional ones, and each input or output shape is capped at 1,024 UTF-8
 bytes. Within that unchanged total, each enum node may spend at most 256 UTF-8
-bytes: one quarter leaves room for the surrounding properties that choose and
-populate a tool. A large enum keeps the longest whole-value prefix that fits,
-then adds `unknown` and a comment with the exact omitted-value count. A capped
+bytes. This lets about three near-cap enum nodes coexist while reserving the
+remaining quarter for surrounding syntax; the global fallback still applies
+when the complete shape exceeds 1,024 bytes. A large enum keeps the longest
+whole-value prefix that fits, then adds `unknown` and a comment with the exact
+omitted-value count. An empty enum renders as the valid `never` type. A capped
 object becomes a valid required-first shape with `unknown` types; other shapes
 become `unknown /* truncated */`. Either cap marks the match with
 `inputSchemaTruncated` or `outputSchemaTruncated`; repeat the search with

@@ -2094,6 +2094,30 @@ describe("compact schema rendering", () => {
     });
   });
 
+  it("renders empty enums as the valid never type in compact discovery", () => {
+    // `never` is the TypeScript bottom type, valid at both root and property
+    // positions; an empty string was neither a type nor a readable constraint.
+    const root = compactDiscoverySchema({ enum: [] });
+    expect(root).toEqual({ text: "never", truncated: false });
+    expectStructurallyCompleteTypeShape(root.text);
+
+    const nested = compactDiscoverySchema({
+      type: "object",
+      properties: { state: { enum: [] } },
+    });
+    expect(nested).toEqual({
+      text: "{ state?: never }",
+      truncated: false,
+    });
+    expectStructurallyCompleteTypeShape(nested.text);
+  });
+
+  it("renders empty enums as never in ordinary compact describe", async () => {
+    const shape = await shapeOf({ enum: [] });
+    expect(shape).toBe("never");
+    expectStructurallyCompleteTypeShape(shape);
+  });
+
   it("bounds nested UTF-8 enums without hiding other property types", () => {
     const values = Array.from(
       { length: 80 },
