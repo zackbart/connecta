@@ -193,9 +193,19 @@ phrase check. If no tool covers every non-conversational term, the same scorer
 preserves the wider any-term fallback and marks the result
 `matchMode: "partial"`.
 
-Every partial or no-match lexical search also returns bounded `queryAnalysis`;
-an all-term result needs no recovery advice. `representedTerms` occur in the
-current page, `otherResultTerms` occur only in another result, and
+Every returned tool in a term-bearing search carries bounded `queryCoverage`.
+`nameTerms` matched the tool name, `descriptionTerms` matched only its
+description, and `unmatchedTerms` did not match that tool. A name match takes
+precedence when the same term occurs in both fields. Coverage preserves query
+order, includes at most eight terms of at most 64 characters each, and marks a
+clipped inventory with `truncated: true`. It exposes no ranking score: use the
+signal to reject a broad description-only decoy, not to reconstruct the
+scorer. Empty-query browse results omit it.
+
+Every partial or no-match lexical search also returns bounded page-level
+`queryAnalysis`; an all-term result needs no recovery advice.
+`representedTerms` occur in the current page, `otherResultTerms` occur only in
+another result, and
 `unmatchedTerms` have no lexical match in the catalogs that answered. Partial
 results explain that no single tool covered every term and recommend splitting
 distinct intents. A true negative says that no matching capability is

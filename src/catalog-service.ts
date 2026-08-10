@@ -45,8 +45,8 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-const MAX_QUERY_ANALYSIS_TERMS = 8;
-const MAX_QUERY_ANALYSIS_TERM_LENGTH = 64;
+const MAX_QUERY_TERMS = 8;
+const MAX_QUERY_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
 
@@ -211,6 +211,12 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
+    queryCoverage?: {
+      nameTerms: string[];
+      descriptionTerms: string[];
+      unmatchedTerms: string[];
+      truncated?: true;
+    };
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -659,7 +665,16 @@ export class CatalogService {
       retrievalQuery,
     );
     const hasQuery = query.trim().length > 0;
-    const queryTermCount = lexicalQueryTerms(retrievalQuery).length;
+    const queryTerms = lexicalQueryTerms(retrievalQuery);
+    const queryTermCount = queryTerms.length;
+    const analyzedTerms = queryTerms.slice(0, MAX_QUERY_TERMS);
+    const displayTerm = (term: string) =>
+      term.length <= MAX_QUERY_TERM_LENGTH
+        ? term
+        : `${term.slice(0, MAX_QUERY_TERM_LENGTH - 1)}…`;
+    const queryMetadataTruncated =
+      queryTerms.length > analyzedTerms.length ||
+      analyzedTerms.some((term) => term.length > MAX_QUERY_TERM_LENGTH);
     const collectMatches = (mode: "all" | "partial") => {
       const collected: typeof matches = [];
       let orderBase = 0;
@@ -746,6 +761,20 @@ export class CatalogService {
         renderedInput?.truncated === true || renderedOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(match.connector);
+      const nameTerms: string[] = [];
+      const descriptionTerms: string[] = [];
+      const uncoveredTerms: string[] = [];
+      for (const term of analyzedTerms) {
+        if (statistics.nameMatches.get(term)?.has(match.tool)) {
+          nameTerms.push(displayTerm(term));
+        } else if (
+          statistics.descriptionMatches.get(term)?.has(match.tool)
+        ) {
+          descriptionTerms.push(displayTerm(term));
+        } else {
+          uncoveredTerms.push(displayTerm(term));
+        }
+      }
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -790,6 +819,18 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
+          ...(queryTerms.length > 0
+            ? {
+                queryCoverage: {
+                  nameTerms,
+                  descriptionTerms,
+                  unmatchedTerms: uncoveredTerms,
+                  ...(queryMetadataTruncated
+                    ? { truncated: true as const }
+                    : {}),
+                },
+              }
+            : {}),
           ...(requiredReasons
             ? {
                 guideRequired: true as const,
@@ -803,12 +844,6 @@ export class CatalogService {
       offset + entries.length < matches.length
         ? offset + entries.length
         : undefined;
-    const queryTerms = lexicalQueryTerms(retrievalQuery);
-    const analyzedTerms = queryTerms.slice(0, MAX_QUERY_ANALYSIS_TERMS);
-    const displayTerm = (term: string) =>
-      term.length <= MAX_QUERY_ANALYSIS_TERM_LENGTH
-        ? term
-        : `${term.slice(0, MAX_QUERY_ANALYSIS_TERM_LENGTH - 1)}…`;
     const pageTools = new Set(pageMatches.map((match) => match.tool));
     const matchingTools = (term: string) =>
       new Set([
@@ -935,10 +970,7 @@ export class CatalogService {
               representedTerms,
               otherResultTerms,
               unmatchedTerms,
-              ...(queryTerms.length > analyzedTerms.length ||
-              analyzedTerms.some(
-                (term) => term.length > MAX_QUERY_ANALYSIS_TERM_LENGTH,
-              )
+              ...(queryMetadataTruncated
                 ? { truncated: true as const }
                 : {}),
               ...(args.connector ? { connectorScope: args.connector } : {}),

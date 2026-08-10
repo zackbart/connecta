@@ -680,13 +680,26 @@ describe("buildSandboxProviders", () => {
       query: "add",
       includeSchemas: "compact",
     })) as {
-      tools: Array<{ address: string; inputSchema: string }>;
+      tools: Array<{
+        address: string;
+        inputSchema: string;
+        queryCoverage: {
+          nameTerms: string[];
+          descriptionTerms: string[];
+          unmatchedTerms: string[];
+        };
+      }>;
     };
     expect(search.tools[0]).toMatchObject({
       address: "calc.add",
       inputSchema: "{ a: number, b: number }",
       inputKeys: ["a", "b"],
       requiredInputKeys: ["a", "b"],
+      queryCoverage: {
+        nameTerms: ["add"],
+        descriptionTerms: [],
+        unmatchedTerms: [],
+      },
     });
 
     const partial = (await required(connecta.fns.search)({
@@ -697,12 +710,24 @@ describe("buildSandboxProviders", () => {
         representedTerms: string[];
         unmatchedTerms: string[];
       };
-      tools: Array<{ address: string }>;
+      tools: Array<{
+        address: string;
+        queryCoverage: {
+          nameTerms: string[];
+          descriptionTerms: string[];
+          unmatchedTerms: string[];
+        };
+      }>;
     };
     expect(partial.matchMode).toBe("partial");
     expect(required(partial.tools[0]).address).toBe("calc.add");
     expect(partial.queryAnalysis).toMatchObject({
       representedTerms: ["add", "numbers"],
+      unmatchedTerms: ["operands", "result", "metadata"],
+    });
+    expect(required(partial.tools[0]).queryCoverage).toMatchObject({
+      nameTerms: ["add"],
+      descriptionTerms: ["numbers"],
       unmatchedTerms: ["operands", "result", "metadata"],
     });
     // Key metadata accompanies schemas; a search that asked for neither pays

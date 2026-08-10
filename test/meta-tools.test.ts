@@ -848,7 +848,17 @@ describe("catalog-lookup health accounting", () => {
 interface SearchGroup {
   id: string;
   description?: string;
-  tools: { name: string; address: string; description?: string }[];
+  tools: {
+    name: string;
+    address: string;
+    description?: string;
+    queryCoverage?: {
+      nameTerms: string[];
+      descriptionTerms: string[];
+      unmatchedTerms: string[];
+      truncated?: true;
+    };
+  }[];
 }
 interface SearchResult {
   connectors: SearchGroup[];
@@ -1123,6 +1133,9 @@ describe("search_tools", () => {
     expect(first.limit).toBe(8);
     expect(first.total).toBe(12);
     expect(first.connectors.flatMap((group) => group.tools)).toHaveLength(8);
+    expect(
+      first.connectors.flatMap((group) => group.tools)[0],
+    ).not.toHaveProperty("queryCoverage");
     expect(first.nextOffset).toBe(8);
 
     const second = textOf(
@@ -1172,6 +1185,57 @@ describe("search_tools", () => {
     }
     // The rejected calls never reached listTools.
     expect(loads).toBe(1);
+  });
+
+  it("bounds query coverage on default and maximum result pages", async () => {
+    const terms = Array.from(
+      { length: 8 },
+      (_, index) => `${index}${"x".repeat(79)}`,
+    );
+    const connector: Connector = {
+      id: "coverage_budget",
+      staticTools: Array.from({ length: MAX_SEARCH_LIMIT }, (_, index) => ({
+        name: `read_${String(index).padStart(3, "0")}`,
+        description: terms.join(" "),
+      })),
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    for (const limit of [undefined, MAX_SEARCH_LIMIT]) {
+      const result = await mt.searchTools({
+        query: terms.join(" "),
+        ...(limit === undefined ? {} : { limit }),
+      });
+      const parsed = textOf(result) as SearchResult;
+      const tools = parsed.connectors.flatMap((group) => group.tools);
+
+      expect(tools).toHaveLength(limit ?? 8);
+      expect(tools.every((tool) => tool.queryCoverage?.truncated)).toBe(true);
+      expect(
+        tools.every(
+          (tool) => tool.queryCoverage?.descriptionTerms.length === 8,
+        ),
+      ).toBe(true);
+      expect(
+        tools.every((tool) =>
+          required(tool.queryCoverage).descriptionTerms.every(
+            (term) => term.length <= 64,
+          ),
+        ),
+      ).toBe(true);
+      const responseBytes = new TextEncoder().encode(
+        required(result.content[0]).text,
+      ).length;
+      expect(responseBytes).toBeLessThan(
+        limit === undefined ? 10_000 : 100_000,
+      );
+      expect(responseBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
+    }
   });
 
   it("keeps 100,000-tool pagination exact at the first, middle, and final page", async () => {
@@ -1656,6 +1720,24 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(first.matchMode).toBeUndefined();
+    const intended = required(required(first.connectors[0]).tools[0]);
+    const decoy = required(required(first.connectors[0]).tools[1]);
+    expect(intended).toMatchObject({
+      queryCoverage: {
+        nameTerms: ["list", "organizations"],
+        descriptionTerms: [],
+        unmatchedTerms: ["projects"],
+      },
+    });
+    expect(decoy).toMatchObject({
+      queryCoverage: {
+        nameTerms: [],
+        descriptionTerms: ["list", "organizations", "projects"],
+        unmatchedTerms: [],
+      },
+    });
+    expect(intended).not.toHaveProperty("score");
+    expect(required(intended.queryCoverage)).not.toHaveProperty("score");
 
     const second = textOf(
       await mt.searchTools({
@@ -1669,6 +1751,11 @@ describe("search_tools", () => {
       "List-All-Organizations",
     ]);
     expect(second).toMatchObject({ total: 10, hasMore: false });
+    expect(
+      second.connectors.flatMap((group) => group.tools).every(
+        (tool) => tool.queryCoverage !== undefined,
+      ),
+    ).toBe(true);
 
     const rawPhrase = textOf(
       await mt.searchTools({
@@ -1723,8 +1810,24 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(first.matchMode).toBe("partial");
-    expect(first.connectors.flatMap((group) => group.tools).map((t) => t.name))
+    const firstTools = first.connectors.flatMap((group) => group.tools);
+    expect(firstTools.map((t) => t.name))
       .toEqual(["get_experiment", "get_results"]);
+    expect(required(firstTools[0]).queryCoverage).toMatchObject({
+      nameTerms: ["get", "experiment"],
+      descriptionTerms: ["details", "metrics", "variants"],
+      unmatchedTerms: ["results", "configuration"],
+    });
+    expect(required(firstTools[1]).queryCoverage).toMatchObject({
+      nameTerms: ["get", "results"],
+      descriptionTerms: ["experiment"],
+      unmatchedTerms: [
+        "details",
+        "metrics",
+        "variants",
+        "configuration",
+      ],
+    });
     expect(first.total).toBe(3);
     expect(first.nextOffset).toBe(2);
 
