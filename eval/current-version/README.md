@@ -19,6 +19,20 @@ before the closed #188 research corpus was inspected. It is held-out release
 evidence: do not tune ranking rules, stopwords, aliases, or thresholds against
 its cases.
 
+Ranking development uses the separate
+[`discovery-development.json`](./discovery-development.json). It contains the
+mixed all/partial analytics decoy that reproduced #326 without adding the
+fixture to the sealed holdout. Run its isolated deterministic lane with:
+
+```sh
+npm --prefix eval/current-version run audit:development
+```
+
+The development report records exact expected top-1 accuracy, recall,
+precision, query-coverage assertions, and the response-token cost of
+`queryCoverage`. Its server advertises only the synthetic development
+connector. The release gate remains the complete holdout `audit` command.
+
 ## Run
 
 Install the repository and audit dependencies once:

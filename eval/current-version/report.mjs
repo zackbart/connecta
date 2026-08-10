@@ -18,7 +18,7 @@ export function renderReport(audit, jsonName) {
           metrics.falsePositiveRate === null
             ? "—"
             : pct(metrics.falsePositiveRate)
-        } | ${metrics.meanResultCount.toFixed(2)} | ${metrics.meanResponseTokens.toFixed(1)} |`,
+        } | ${metrics.meanResultCount.toFixed(2)} | ${metrics.meanResponseTokens.toFixed(1)} | ${metrics.meanQueryCoverageTokens.toFixed(1)} |`,
     )
     .join("\n");
   const failed = audit.tasks.cases.filter((entry) => !entry.passed);
@@ -36,9 +36,11 @@ Machine-readable results: [\`${jsonName}\`](./${jsonName})
 - Release gate: ${audit.qualification.passed ? "pass" : "FAIL"}
 - Task scenarios: ${audit.tasks.summary.passed}/${audit.tasks.summary.caseCount} passed (${pct(audit.tasks.summary.taskSuccessRate)})
 - Discovery top-1 accuracy: ${pct(audit.discovery.metrics.top1Accuracy)}
+- Discovery expected top-1 accuracy: ${pct(audit.discovery.metrics.expectedTopAccuracy)}
 - Discovery positive recall: ${pct(audit.discovery.metrics.positiveRecall)}
 - Recall at the default page: ${pct(audit.discovery.metrics.recallAtDefaultPage)}
 - Negative-query false-positive rate: ${pct(audit.discovery.metrics.falsePositiveRate)}
+- Query-coverage cost: ${integer(audit.discovery.metrics.totalQueryCoverageTokens)} of ${integer(audit.discovery.metrics.totalResponseTokens)} discovery response tokens (${pct(audit.discovery.metrics.queryCoverageShare)})
 - Round trips: ${audit.totals.roundTrips}; summed call latency: ${audit.totals.summedLatencyMs.toFixed(1)} ms
 - Connecta surface: ${integer(audit.totals.definitionTokens)} definition + ${integer(audit.totals.requestTokens)} request + ${integer(audit.totals.responseTokens)} response = **${integer(audit.totals.measuredSurfaceTokens)} tokens**
 - Result compatibility observed: \`content\` ${audit.compatibility.contentResults}/${audit.compatibility.resultCount}, \`structuredContent\` ${audit.compatibility.structuredContentResults}/${audit.compatibility.resultCount}
@@ -50,8 +52,8 @@ ${failed.length === 0 ? "" : `Failed task scenarios: ${failed.map((entry) => `\`
 
 The holdout contains ${audit.discovery.corpus.toolCount} tools across ${audit.discovery.corpus.connectorCount} connectors and ${audit.discovery.corpus.queryCount} independently authored queries. It is release qualification evidence and must not be used to tune ranking behavior.
 
-| Category | Queries | Top-1 | Recall | Precision | False positives | Mean results | Mean response tokens |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| Category | Queries | Top-1 | Recall | Precision | False positives | Mean results | Mean response tokens | Mean coverage tokens |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${categoryRows}
 
 ## Scope

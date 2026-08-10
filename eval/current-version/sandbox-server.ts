@@ -26,9 +26,20 @@ interface HoldoutCorpus {
   }[];
 }
 
-const holdout = JSON.parse(
+const developmentCorpusEnabled =
+  process.env.CONNECTA_EVAL_DEVELOPMENT_CORPUS === "enabled";
+const discoveryOnly =
+  process.env.CONNECTA_EVAL_DISCOVERY_ONLY === "enabled";
+const discoveryCorpus = JSON.parse(
   await readFile(
-    fileURLToPath(new URL("./discovery-holdout.json", import.meta.url)),
+    fileURLToPath(
+      new URL(
+        developmentCorpusEnabled
+          ? "./discovery-development.json"
+          : "./discovery-holdout.json",
+        import.meta.url,
+      ),
+    ),
     "utf8",
   ),
 ) as HoldoutCorpus;
@@ -204,6 +215,47 @@ function agentFixtureContract(
   name: string,
 ): Pick<ApiTool, "inputSchema" | "outputSchema" | "handler"> | undefined {
   const address = `${connectorId}.${name}`;
+  if (
+    address === "analytics.List-Organizations" ||
+    address === "analytics.List-All-Organizations"
+  ) {
+    return {
+      inputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string", minLength: 1 },
+        },
+        required: ["projectId"],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: "object",
+        properties: {
+          projectId: { type: "string" },
+          organizations: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: { type: "string" },
+                name: { type: "string" },
+              },
+              required: ["id", "name"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["projectId", "organizations"],
+        additionalProperties: false,
+      },
+      handler: (args: { projectId: string }) => ({
+        projectId: args.projectId,
+        organizations: [
+          { id: "org_eval_7", name: "Evaluation Organization" },
+        ],
+      }),
+    };
+  }
   if (address === "projects.list_issues") {
     return {
       inputSchema: {
@@ -379,12 +431,13 @@ function fixtureTools(
   }));
 }
 
-const discoveryConnectors: Connector[] = holdout.connectors.map((fixture) =>
-  api(fixture.id, {
-    description: fixture.description,
-    strictValidation: true,
-    tools: fixtureTools(fixture.id, fixture.tools),
-  }),
+const discoveryConnectors: Connector[] = discoveryCorpus.connectors.map(
+  (fixture) =>
+    api(fixture.id, {
+      description: fixture.description,
+      strictValidation: true,
+      tools: fixtureTools(fixture.id, fixture.tools),
+    }),
 );
 
 const guidedWorkItems = api("work-items", {
@@ -1135,20 +1188,22 @@ const connecta = createConnecta({
     bearerToken(token, { subjectId: "current-version-evaluator" }),
     operatorAuth,
   ],
-  connectors: [
-    ...discoveryConnectors,
-    guidedWorkItems,
-    bookshelf,
-    edgeDns,
-    genericLedger,
-    unavailableCatalog,
-    controlled,
-    routing,
-    oauthRecoverable,
-    oauthUnavailable,
-    staticRecoverable,
-    staticUnavailable,
-  ],
+  connectors: discoveryOnly
+    ? discoveryConnectors
+    : [
+        ...discoveryConnectors,
+        guidedWorkItems,
+        bookshelf,
+        edgeDns,
+        genericLedger,
+        unavailableCatalog,
+        controlled,
+        routing,
+        oauthRecoverable,
+        oauthUnavailable,
+        staticRecoverable,
+        staticUnavailable,
+      ],
   storage,
   executor,
   credentials: {
