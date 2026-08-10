@@ -49,6 +49,8 @@ export interface PrecompileValidatorOptions {
 const validators = new WeakMap<JsonSchema, Validator | null>();
 const REQUIRED_PROPERTY_RE =
   /^Instance does not have required property "([^"]+)"\.$/;
+const ADDITIONAL_PROPERTY_RE =
+  /^Property "([^"]+)" does not match additional properties schema\.$/;
 
 interface ValidationUnit {
   keyword: string;
@@ -56,6 +58,18 @@ interface ValidationUnit {
   instanceLocation: string;
   error: string;
 }
+
+const CONTAINER_VALIDATION_KEYWORDS = new Set([
+  "properties",
+  "items",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "if",
+  "not",
+  "patternProperties",
+  "additionalProperties",
+]);
 
 function decodePointerPart(value: string): string {
   return value.replaceAll("~1", "/").replaceAll("~0", "~");
@@ -79,6 +93,84 @@ function pointerValue(value: unknown, pointer: string): unknown {
 function argumentPath(location: string): string {
   if (location === "#") return "/";
   return location.startsWith("#") ? location.slice(1) || "/" : "/";
+}
+
+function validationUnitKey(unit: ValidationUnit): string {
+  return JSON.stringify([
+    unit.keyword,
+    unit.keywordLocation,
+    unit.instanceLocation,
+    unit.error,
+  ]);
+}
+
+function normalizedValidationUnits(units: ValidationUnit[]): ValidationUnit[] {
+  const leafUnits = units.filter(
+    (unit) => !CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword),
+  );
+  const nonFalseLocations = new Set(
+    leafUnits
+      .filter((unit) => unit.keyword !== "false")
+      .map((unit) => unit.instanceLocation),
+  );
+  const parentLocations = new Set<string>();
+  for (const unit of leafUnits) {
+    let location = unit.instanceLocation;
+    let separator = location.lastIndexOf("/");
+    while (separator > 0) {
+      location = location.slice(0, separator);
+      parentLocations.add(location);
+      separator = location.lastIndexOf("/");
+    }
+  }
+  const seen = new Set<string>();
+  return leafUnits.filter((unit) => {
+    if (
+      unit.keyword === "false" &&
+      (nonFalseLocations.has(unit.instanceLocation) ||
+        parentLocations.has(unit.instanceLocation))
+    ) {
+      return false;
+    }
+    const key = validationUnitKey(unit);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function validationMessageUnits(
+  units: ValidationUnit[],
+  leafUnits: ValidationUnit[],
+): ValidationUnit[] {
+  const leafKeys = new Set(leafUnits.map(validationUnitKey));
+  const falseUnitsByLocation = new Map<string, ValidationUnit[]>();
+  for (const unit of units) {
+    if (unit.keyword !== "false") continue;
+    const atLocation = falseUnitsByLocation.get(unit.instanceLocation) ?? [];
+    atLocation.push(unit);
+    falseUnitsByLocation.set(unit.instanceLocation, atLocation);
+  }
+  return units.filter((unit) => {
+    if (unit.keyword === "false") {
+      return leafKeys.has(validationUnitKey(unit));
+    }
+    if (unit.keyword !== "additionalProperties") return true;
+    const property = ADDITIONAL_PROPERTY_RE.exec(unit.error)?.[1];
+    if (!property) return true;
+    const childLocation = `${unit.instanceLocation}/${encodePointerPart(property)}`;
+    const falseUnits = falseUnitsByLocation.get(childLocation);
+    return (
+      falseUnits === undefined ||
+      falseUnits.some((falseUnit) => leafKeys.has(validationUnitKey(falseUnit)))
+    );
+  });
+}
+
+function agentFacingValidationError(unit: ValidationUnit): string {
+  return unit.keyword === "false"
+    ? "Value is not allowed by the declared schema."
+    : unit.error;
 }
 
 function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefined {
@@ -120,22 +212,8 @@ function validationDetails(
   schema: JsonSchema,
   units: ValidationUnit[],
 ): ArgumentValidationDetails {
-  const leafUnits = units.filter(
-    (unit) =>
-      ![
-        "properties",
-        "items",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "if",
-        "not",
-        "patternProperties",
-        "additionalProperties",
-      ].includes(unit.keyword),
-  );
   const issues: ArgumentValidationIssue[] = [];
-  for (const unit of leafUnits) {
+  for (const unit of units) {
     const missing =
       unit.keyword === "required"
         ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1]
@@ -246,15 +324,21 @@ export function validateToolInput(
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   if (result && !result.valid) {
-    const units = result.errors.filter((u) => u.instanceLocation !== "#");
-    const detail = (units.length > 0 ? units : result.errors)
-      .slice(0, 3)
-      .map((u) => `${u.instanceLocation}: ${u.error}`)
+    const units = normalizedValidationUnits(result.errors);
+    const messageUnits = validationMessageUnits(result.errors, units);
+    const nestedUnits = messageUnits.filter(
+      (unit) => unit.instanceLocation !== "#",
+    );
+    const detail = (nestedUnits.length > 0 ? nestedUnits : messageUnits)
+      .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
+      .map((unit) =>
+        `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
+      )
       .join("; ");
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
-      { validation: validationDetails(schema, result.errors) },
+      { validation: validationDetails(schema, units) },
     );
   }
   return null;
