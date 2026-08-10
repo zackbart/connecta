@@ -1,10 +1,10 @@
 # Issue #322 discovery evidence
 
 The current release audit passes. The mixed all/partial development case now
-has complete retrieval. The coverage-off ablation is better than coverage-on
-for execution correctness, round trips, whole-agent tokens, and latency.
-Current `queryCoverage` is not justified by this evidence. Keep the ranking
-fix, but redesign #323's coverage into a compact form before release.
+has complete retrieval. Coverage-off remains materially cheaper than the
+compact #323 candidate while matching its exact execution correctness.
+Do not merge or release compact commit `afbaa32`. Keep the ranking fix, but
+redesign coverage again and rerun this qualification.
 
 ## Provenance
 
@@ -161,6 +161,93 @@ per arm, this is a canary rather than a significance claim. The effect is large
 and consistent across the primary measures: the current verbose coverage shape
 does not earn its 29.4% held-out response cost. Redesign it before release,
 then rerun this ablation against the compact candidate.
+
+## Compact-coverage qualification
+
+The final arm combines compact product commit
+`afbaa320b86ff996806a97009adcafec55148e56` with the exact PR #333 eval tree
+from `f84d0b3d7f06079a5d7a9e97f8bd135983a6ab66`. The temporary worktree used
+`git restore --source f84d0b3 --staged --worktree eval/current-version` on the
+compact product. It did not merge either PR.
+
+- Compact product tree: `d98f4ca388f0f17798493c16254a5bc1e88ddaf9`
+- Compact product file: `b61ca75632aed4ab3d039583c9f240eb5bac616e71fea1e2dd9db22211eabea1`
+- PR #333 eval tree: `65bd023242c18f26db3296f77cb7cb3875030c20`
+- Eval overlay patch: `1b36bdf808aea6b1dcc6efda2c01608a4e1c369176653f303291682fc7b74758`
+- Deterministic indexed-term adapter: `a033f402147ab5e541f74a881b192bdf23f9baf5f077aa648e31f0f7e88c10f0`
+
+The adapter ran only after the cold arm. It resolves compact coverage indexes
+through the page's `queryTerms` table for the existing semantic assertions. Its
+token counterfactual removes both the term table and per-tool coverage. The
+cold harness remained byte-identical to coverage-off at `dd11bb3b…`.
+
+[`issue-322-cold-agent-compact.json`](./issue-322-cold-agent-compact.json) and
+[`issue-322-cold-agent-compact.md`](./issue-322-cold-agent-compact.md) record
+the raw cold arm. Its configuration object is identical to coverage-off except
+for the product source: Node 26.5.1, Codex CLI 0.147.0, `gpt-5.6-sol`, 10
+repetitions, concurrency 5, and zero host or foreign calls in both arms.
+
+| Metric | Coverage off | Compact on | Compact minus off |
+| --- | ---: | ---: | ---: |
+| First-search recall | 10/10 | 10/10 | 0 pp |
+| First-search top-1 | 10/10 | 10/10 | 0 pp |
+| Exact address | 7/10 | 7/10 | 0 pp |
+| Exact arguments | 7/10 | 7/10 | 0 pp |
+| Final answer | 7/10 | 9/10 | +20 pp |
+| Address + arguments + final | 7/10 | 7/10 | 0 pp |
+| Intended outer route | 4/10 | 4/10 | 0 pp |
+| Clean intended route | 4/10 | 4/10 | 0 pp |
+| Mean Connecta round trips | 1.7 | 2.8 | +64.7% |
+| Mean search-result tokens | 1,080.1 | 2,328.1 | +115.5% |
+| Mean estimated search-noise tokens | 865.3 | 1,893.0 | +118.8% |
+| Mean Connecta MCP result tokens | 612.5 | 1,340.4 | +118.8% |
+| Mean whole-agent input tokens | 59,894.5 | 77,328.9 | +29.1% |
+| Mean non-cached input tokens | 14,966.5 | 23,799.3 | +59.0% |
+| Mean latency | 23.0 s | 30.0 s | +30.5% |
+
+Compact coverage is not materially equivalent to coverage-off. It preserves
+exact execution correctness. Two extra final texts match without correct
+execution, so the combined 7/10 measure remains authoritative. Every main cost
+mean regresses. The medians do not reverse the result: round trips stay 2.0,
+search tokens rise 1,254.5 to 1,526.0 (+21.6%), non-cached input rises 17,048.5
+to 20,035.0 (+17.5%), and latency rises 18.7 to 20.1 seconds (+7.4%). Median
+whole-agent input is nearly flat at +0.8%; median outer MCP tokens rise from
+115.5 to 1,628 because the route mix changes. Three five-round-trip compact
+runs drive part of the larger mean regression, but the robust medians still
+favor coverage-off.
+
+Against d58, compact still improves exact execution
+from 10% to 70%, final answers from 10% to 90%, and clean intended routing from
+10% to 40%. It also raises round trips by 16.7%, search-result tokens by 44.0%,
+outer Connecta tokens by 150.1%, and non-cached input by 5.0%. Whole-agent
+input is effectively flat at +0.7%; latency improves 13.7%.
+
+The compact deterministic artifacts are
+[`issue-322-compact-audit.json`](./issue-322-compact-audit.json),
+[`issue-322-compact-audit.md`](./issue-322-compact-audit.md),
+[`issue-322-compact-development.json`](./issue-322-compact-development.json),
+and [`issue-322-compact-development.md`](./issue-322-compact-development.md).
+The sealed holdout hash remains
+`25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a`.
+
+| Deterministic metric | Verbose | Compact | Movement |
+| --- | ---: | ---: | ---: |
+| Holdout top-1 | 93.1% | 93.1% | 0 pp |
+| Holdout recall | 100.0% | 100.0% | 0 pp |
+| Holdout false positives | 40.0% | 40.0% | 0 pp |
+| Holdout mean response tokens | 595.4 | 560.2 | -5.9% |
+| Holdout coverage tokens | 5,945 | 4,749 | -20.1% |
+| Holdout coverage share | 29.4% | 24.9% | -4.5 pp |
+| Complete measured surface tokens | 29,537 | 28,319 | -4.1% |
+| Development top-1 and recall | 100.0% | 100.0% | 0 pp |
+| Development coverage tokens | 790 | 450 | -43.0% |
+| Development coverage share | 34.2% | 22.8% | -11.4 pp |
+
+The compact encoding reduces repeated coverage strings, but the holdout still
+spends one quarter of discovery response tokens on the signal. The cold arm
+does not recover a route or execution gain over coverage-off and materially
+increases cost. The release criterion fails. Do not merge #334; redesign the
+signal again or remove it, then rerun the exact three-arm evidence.
 
 ## Commands
 
