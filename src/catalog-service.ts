@@ -335,7 +335,7 @@ export interface CatalogSearchPage {
     guideRequiredReasons?: GuideRequiredReason[];
     guidance?: string;
   };
-  /** Trailing bounded analysis keyed by canonical addresses from this page. */
+  /** Trailing bounded analysis ordered by row, with each canonical address. */
   queryCoverage?: QueryCoverage;
 }
 
