@@ -62,6 +62,10 @@ const disabledHostFeatures = [
   "goals",
   "tool_suggest",
   "skill_search",
+  "shell_snapshot",
+  "shell_tool",
+  "unified_exec",
+  "workspace_dependencies",
 ];
 const sourceCommit = execFileSync("git", ["rev-parse", "HEAD"], {
   cwd: root,
@@ -85,10 +89,16 @@ const discoveryCorpusText = await readFile(
   "utf8",
 );
 const discoveryCorpus = JSON.parse(discoveryCorpusText);
+const developmentCorpusText = await readFile(
+  resolve(here, "discovery-development.json"),
+  "utf8",
+);
 const harnessSha256 = sha256(
   await readFile(fileURLToPath(import.meta.url), "utf8"),
 );
-const corpusSha256 = sha256(discoveryCorpusText);
+const corpusSha256 = sha256(
+  `${discoveryCorpusText}\0${developmentCorpusText}`,
+);
 const sandboxSha256 = sha256(
   await readFile(resolve(here, "sandbox-server.ts"), "utf8"),
 );
@@ -99,6 +109,7 @@ const knownConnectorIds = new Set([
   "oauth-unavailable",
   "static-recoverable",
   "static-unavailable",
+  "analytics",
 ]);
 
 function parseJson(text) {
@@ -159,6 +170,31 @@ ${currentTask}`;
 }
 
 const lookupCases = [
+  {
+    id: "mixed-decoy-organizations",
+    family: "mixed-all-partial",
+    context: "clean",
+    developmentCorpus: true,
+    prompt:
+      "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+    expectedAddresses: ["analytics.List-Organizations"],
+    expectedCalls: [
+      {
+        address: "analytics.List-Organizations",
+        args: { projectId: "mxp_eval_42" },
+      },
+    ],
+    expectedFinalFacts: [
+      {
+        projectId: "mxp_eval_42",
+        organizations: [
+          { id: "org_eval_7", name: "Evaluation Organization" },
+        ],
+      },
+    ],
+    expectedRoute: "call_tool",
+    expectedOuterRoute: ["search_tools", "call_tool"],
+  },
   {
     id: "open-issues-clean",
     family: "open-issues",
@@ -296,7 +332,7 @@ const lookupCases = [
   },
 ];
 
-function startServer() {
+function startServer(fixture) {
   const child = spawn(
     process.execPath,
     ["--import", "tsx", "sandbox-server.ts"],
@@ -308,6 +344,12 @@ function startServer() {
         CONNECTA_EVAL_TOKEN: bearer,
         CONNECTA_EVAL_SOURCE_COMMIT: sourceCommit,
         CONNECTA_EVAL_TRACE: "enabled",
+        ...(fixture.developmentCorpus
+          ? {
+              CONNECTA_EVAL_DEVELOPMENT_CORPUS: "enabled",
+              CONNECTA_EVAL_DISCOVERY_ONLY: "enabled",
+            }
+          : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -984,7 +1026,7 @@ async function worker() {
     process.stderr.write(
       `Running lookup case ${job.fixture.id} (${job.repetition}/${repetitions})…\n`,
     );
-    const server = startServer();
+    const server = startServer(job.fixture);
     try {
       const ready = await server.ready;
       caseResults[index] = await runAgent(

@@ -1,5 +1,9 @@
 # Latest-main agent lookup benchmark
 
+> Historical evidence from the source commit below. Despite the legacy
+> filename, this is not the current benchmark. See
+> [`issue-322-evidence.md`](./issue-322-evidence.md).
+
 Generated: 2026-07-29T17:37:10.414Z
 
 Source: `cd20638bf36fc6808fddebe792cfe5e7e03ae49a`; codex-cli 0.145.0; model gpt-5.6-sol

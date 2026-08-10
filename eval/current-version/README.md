@@ -19,6 +19,79 @@ before the closed #188 research corpus was inspected. It is held-out release
 evidence: do not tune ranking rules, stopwords, aliases, or thresholds against
 its cases.
 
+Ranking development uses the separate
+[`discovery-development.json`](./discovery-development.json). It contains the
+mixed all/partial analytics decoy that reproduced #326 without adding the
+fixture to the sealed holdout. Run its isolated deterministic lane with:
+
+```sh
+npm --prefix eval/current-version run audit:development
+```
+
+The development report records exact expected top-1 accuracy, recall,
+precision, query-coverage assertions, and the response-token cost of
+`queryCoverage`. Its server advertises only the synthetic development
+connector. The release gate remains the complete holdout `audit` command.
+The current combined report is
+[`results/issue-322-evidence.md`](./results/issue-322-evidence.md).
+
+### Reproduce the issue #322 trailing audits
+
+The committed discovery adapter reads the verbose, indexed, and trailing-entry
+coverage shapes. Reproduce the trailing deterministic reports from a clean
+checkout by replacing `PREREG_COMMIT` with the commit that contains
+[`issue-322-qualification-plan.json`](./issue-322-qualification-plan.json):
+
+```sh
+git worktree add --detach /tmp/connecta-322-trailing \
+  bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+git -C /tmp/connecta-322-trailing restore --source PREREG_COMMIT \
+  --staged --worktree eval/current-version
+(cd /tmp/connecta-322-trailing && npm ci)
+(cd /tmp/connecta-322-trailing/eval/current-version && npm ci)
+npm --prefix /tmp/connecta-322-trailing/eval/current-version \
+  run audit:development -- --source-commit \
+  bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+npm --prefix /tmp/connecta-322-trailing/eval/current-version run audit -- \
+  --source-commit bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
+```
+
+The coverage-off comparator uses the same preregistration commit plus the exact
+[`issue-322-coverage-off.patch`](./patches/issue-322-coverage-off.patch). Its
+SHA-256 is recorded in the preregistration plan. The qualification runner
+rejects mismatched commits, patches, harnesses, corpora, sandboxes, runtimes,
+models, or CLI versions before it starts a sample.
+
+For the committed #322 result, the plan commit existed locally at
+05:01:23Z before sampling. GitHub recorded its PushEvent at 05:03:14Z, after
+the first trailing batch ended at 05:02:39Z and four seconds before the first
+off batch ended at 05:03:18Z. This is local precommitment, not remote
+preregistration proof. The delayed push weakens the formal claim, but it does
+not weaken the conservative BLOCK verdict produced by the fixed gates.
+
+```sh
+git worktree add --detach /tmp/connecta-322-off PREREG_COMMIT
+git -C /tmp/connecta-322-off apply \
+  eval/current-version/patches/issue-322-coverage-off.patch
+(cd /tmp/connecta-322-off && npm ci)
+(cd /tmp/connecta-322-off/eval/current-version && npm ci)
+CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol node \
+  eval/current-version/issue-322-qualification-runner.mjs \
+  --off-worktree /tmp/connecta-322-off \
+  --trailing-worktree /tmp/connecta-322-trailing
+```
+
+The paired cold-agent decoy lane uses the same case, model, repetitions, and
+concurrency on both product commits:
+
+```sh
+CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol \
+  npm --prefix eval/current-version run perf:lookup -- \
+  --case mixed-decoy-organizations \
+  --repetitions 10 \
+  --concurrency 5
+```
+
 ## Run
 
 Install the repository and audit dependencies once:

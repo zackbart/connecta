@@ -1,0 +1,296 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-10T05:12:20.787Z",
+  "preregistration": {
+    "plan": "issue-322-qualification-plan.json",
+    "planSha256": "b93461101fe41112d86f1a6480dbcf1327b78511d30ab246d2d921cc790c8b86",
+    "commit": "6b84d5f57749323b675bab7d0c9e2cd705fd59e1"
+  },
+  "environment": {
+    "model": "gpt-5.6-sol",
+    "codexVersion": "codex-cli 0.147.0",
+    "nodeVersion": "26.5.1",
+    "tokenizer": "o200k_base",
+    "case": "mixed-decoy-organizations",
+    "repetitionsPerArm": 30,
+    "batchRepetitions": 5,
+    "batchesPerArm": 6,
+    "concurrency": 5,
+    "harnessSha256": "dd11bb3b16a3b99d481e26983485787fb10dfa2c43db59ad6655c1944f7810c3",
+    "corpusSha256": "48006378093890eaac28c61540a94bd4ee8c9e2d48e59aada92178539b28fdd1",
+    "sandboxSha256": "7a8b811f4e241db3209b3490fa4642795a2b7b80e9a23660b01d34e54821a11b",
+    "requiredHostActions": 0,
+    "requiredForeignCalls": 0
+  },
+  "schedule": [
+    {
+      "arm": "trailing",
+      "batchIndex": 1,
+      "startedAt": "2026-08-10T05:01:52.560Z",
+      "completedAt": "2026-08-10T05:02:39.376Z",
+      "artifactSha256": "02bf5107b9f90313d33ac115852f54d7012ba6026d90fe90c507a27ae1e64948"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 1,
+      "startedAt": "2026-08-10T05:02:39.376Z",
+      "completedAt": "2026-08-10T05:03:18.403Z",
+      "artifactSha256": "784bb040f8dd96dbfbe9cab3d2bd249d093bd399660b2afb6946a542a4bd635f"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 2,
+      "startedAt": "2026-08-10T05:03:18.403Z",
+      "completedAt": "2026-08-10T05:04:55.178Z",
+      "artifactSha256": "6eb360b4de8026cbcb3ecb4c6f501eb271d1f33695dd8df14459aeb65fd03fe3"
+    },
+    {
+      "arm": "trailing",
+      "batchIndex": 2,
+      "startedAt": "2026-08-10T05:04:55.178Z",
+      "completedAt": "2026-08-10T05:05:51.693Z",
+      "artifactSha256": "f147b669d316126d2d35b91fedf155a25c118933e14ca166f2c4a18e115004bb"
+    },
+    {
+      "arm": "trailing",
+      "batchIndex": 3,
+      "startedAt": "2026-08-10T05:05:51.693Z",
+      "completedAt": "2026-08-10T05:06:24.594Z",
+      "artifactSha256": "59604e510b4c04d7e7f339af752c799aea07dab01460fce6cf84a1eac9ec8bca"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 3,
+      "startedAt": "2026-08-10T05:06:24.594Z",
+      "completedAt": "2026-08-10T05:06:58.471Z",
+      "artifactSha256": "d1168f6227c12ff4d01d51402778012322ac25584c0abaf85d46bf00b86dc94a"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 4,
+      "startedAt": "2026-08-10T05:06:58.471Z",
+      "completedAt": "2026-08-10T05:07:56.918Z",
+      "artifactSha256": "99792ce570cf050c7c56789fce683b31cb4e765b2528715c1b32153b80709fea"
+    },
+    {
+      "arm": "trailing",
+      "batchIndex": 4,
+      "startedAt": "2026-08-10T05:07:56.919Z",
+      "completedAt": "2026-08-10T05:08:33.175Z",
+      "artifactSha256": "7bdeba2f0a2430f8c2fd2b531f2c532682dc11aee7e7ca3d0634f6c672543529"
+    },
+    {
+      "arm": "trailing",
+      "batchIndex": 5,
+      "startedAt": "2026-08-10T05:08:33.176Z",
+      "completedAt": "2026-08-10T05:08:59.099Z",
+      "artifactSha256": "91598a81b072e11efc7889311b94a49e5beedc392ad49a398a420c52c3c2bff1"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 5,
+      "startedAt": "2026-08-10T05:08:59.099Z",
+      "completedAt": "2026-08-10T05:10:23.778Z",
+      "artifactSha256": "21145d75e64490513cf1136260742343bf753f042066bbae4df050cfbdf30826"
+    },
+    {
+      "arm": "off",
+      "batchIndex": 6,
+      "startedAt": "2026-08-10T05:10:23.778Z",
+      "completedAt": "2026-08-10T05:11:26.045Z",
+      "artifactSha256": "04ca3d32496272fd0b8c4eafeec3982b07662399f9cca85f9d351f761fdbc0aa"
+    },
+    {
+      "arm": "trailing",
+      "batchIndex": 6,
+      "startedAt": "2026-08-10T05:11:26.045Z",
+      "completedAt": "2026-08-10T05:12:20.786Z",
+      "artifactSha256": "171d6daef5b7433cc49caae811f4f963572b71b76b941cf79f9546a005382ccd"
+    }
+  ],
+  "arms": {
+    "off": {
+      "runs": 30,
+      "combinedCorrect": 18,
+      "cleanRoute": 9,
+      "addressCorrect": 18,
+      "argumentCorrect": 18,
+      "finalCorrect": 20,
+      "retrievalTop1": 30,
+      "retrievalRecallComplete": 30,
+      "hostActions": 0,
+      "foreignCalls": 0,
+      "distributions": {
+        "wholeInput": {
+          "mean": 68834.1,
+          "median": 62780,
+          "min": 44287,
+          "max": 156153
+        },
+        "nonCachedInput": {
+          "mean": 19298.1,
+          "median": 18950.5,
+          "min": 7221,
+          "max": 34006
+        },
+        "roundTrips": {
+          "mean": 2.3,
+          "median": 2,
+          "min": 1,
+          "max": 7
+        },
+        "latency": {
+          "mean": 32276.7,
+          "median": 27000.1,
+          "min": 17120.5,
+          "max": 96122.5
+        },
+        "searchTokens": {
+          "mean": 1627.8,
+          "median": 1301,
+          "min": 604,
+          "max": 6579
+        },
+        "searchNoiseTokens": {
+          "mean": 1317,
+          "median": 1025,
+          "min": 488,
+          "max": 5419
+        },
+        "connectaTokens": {
+          "mean": 663.6,
+          "median": 236.5,
+          "min": 74,
+          "max": 1794
+        }
+      }
+    },
+    "trailing": {
+      "runs": 30,
+      "combinedCorrect": 24,
+      "cleanRoute": 13,
+      "addressCorrect": 24,
+      "argumentCorrect": 24,
+      "finalCorrect": 25,
+      "retrievalTop1": 30,
+      "retrievalRecallComplete": 30,
+      "hostActions": 0,
+      "foreignCalls": 0,
+      "distributions": {
+        "wholeInput": {
+          "mean": 64452.1,
+          "median": 63452,
+          "min": 44367,
+          "max": 99520
+        },
+        "nonCachedInput": {
+          "mean": 18926.7,
+          "median": 18813,
+          "min": 8011,
+          "max": 39618
+        },
+        "roundTrips": {
+          "mean": 1.9,
+          "median": 2,
+          "min": 1,
+          "max": 4
+        },
+        "latency": {
+          "mean": 25495.9,
+          "median": 20895.7,
+          "min": 14422.1,
+          "max": 55841.5
+        },
+        "searchTokens": {
+          "mean": 1448.2,
+          "median": 1631,
+          "min": 758,
+          "max": 3147
+        },
+        "searchNoiseTokens": {
+          "mean": 924.3,
+          "median": 1025,
+          "min": 488,
+          "max": 1980
+        },
+        "connectaTokens": {
+          "mean": 870.8,
+          "median": 522,
+          "min": 74,
+          "max": 1733
+        }
+      }
+    }
+  },
+  "analysis": {
+    "combinedDelta": 0.2,
+    "cleanRouteDelta": 0.1333,
+    "cleanRouteFisherTwoSidedP": 0.421975,
+    "meanRatios": {
+      "wholeInput": 0.9363,
+      "nonCachedInput": 0.9808,
+      "roundTrips": 0.8261
+    },
+    "medianRatios": {
+      "wholeInput": 1.0107,
+      "nonCachedInput": 0.9927,
+      "roundTrips": 1
+    },
+    "latencyMeanRatio": 0.7899
+  },
+  "gates": [
+    {
+      "id": "combined-noninferiority",
+      "actual": 0.2,
+      "minimum": -0.1,
+      "passed": true
+    },
+    {
+      "id": "clean-route-improvement",
+      "actualDifference": 0.1333,
+      "minimumDifference": 0.2,
+      "fisherTwoSidedP": 0.421975,
+      "maximumP": 0.05,
+      "passed": false
+    },
+    {
+      "id": "mean-efficiency",
+      "ratios": {
+        "wholeInput": 0.9363,
+        "nonCachedInput": 0.9808,
+        "roundTrips": 0.8261
+      },
+      "maximumRatio": 1.1,
+      "passed": true
+    },
+    {
+      "id": "median-efficiency",
+      "ratios": {
+        "wholeInput": 1.0107,
+        "nonCachedInput": 0.9927,
+        "roundTrips": 1
+      },
+      "maximumRatio": 1.1,
+      "passed": true
+    },
+    {
+      "id": "latency",
+      "meanRatio": 0.7899,
+      "maximumRatio": 1.1,
+      "passed": true
+    },
+    {
+      "id": "isolation",
+      "off": {
+        "hostActions": 0,
+        "foreignCalls": 0
+      },
+      "trailing": {
+        "hostActions": 0,
+        "foreignCalls": 0
+      },
+      "passed": true
+    }
+  ],
+  "passed": false
+}

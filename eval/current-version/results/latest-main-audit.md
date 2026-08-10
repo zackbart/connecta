@@ -1,5 +1,9 @@
 # Current-version Connecta audit
 
+> Historical evidence from the source commit below. Despite the legacy
+> filename, this is not the current audit. See
+> [`issue-322-current-audit.md`](./issue-322-current-audit.md).
+
 Source commit: `cd20638bf36fc6808fddebe792cfe5e7e03ae49a`
 
 Runtime: Node 26.5.0; tokenizer `o200k_base`; executor `enabled`

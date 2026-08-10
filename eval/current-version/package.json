@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "audit": "node run-audit.mjs",
+    "audit:development": "node run-development-discovery.mjs",
     "perf:logic": "node logic-benchmark.mjs",
     "perf:agent": "node agent-benchmark.mjs",
     "perf:agent:compare": "node agent-benchmark-compare.mjs",
