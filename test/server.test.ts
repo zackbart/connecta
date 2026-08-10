@@ -774,7 +774,12 @@ describe("server /mcp end-to-end", () => {
     expect(guided.search).toContain("`guideRequiredReasons`");
     expect(guided.search).toContain("`guideRequired: true`");
     expect(guided.destructive).toContain("fetch any connector guide");
-    expect(guided.execute).toContain("guideRequired: true is a hard stop");
+    expect(guided.execute).toContain("guideRequired: true = stop");
+    expect(guided.execute).toContain("Describe clears only schema_truncated");
+    expect(guided.execute).toContain("return its exact guide");
+    expect(guided.execute).toContain("fetch with top-level skills");
+    expect(guided.execute).toContain("write the informed call");
+    expect(guided.execute.length).toBeLessThan(4_400);
     expect(guided.usage).toBe(plain.usage);
   });
 
