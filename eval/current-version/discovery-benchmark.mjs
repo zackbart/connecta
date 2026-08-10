@@ -174,6 +174,9 @@ export async function runDiscoveryBenchmark(context, corpusPath) {
     const responseTokensWithoutCoverage = context.tokens(
       resultWithoutQueryCoverage(result),
     );
+    const responseBytesWithoutCoverage = context.bytes(
+      resultWithoutQueryCoverage(result),
+    );
     cases.push({
       id: fixture.id,
       category: fixture.category,
@@ -197,6 +200,10 @@ export async function runDiscoveryBenchmark(context, corpusPath) {
       responseTokensWithoutCoverage,
       queryCoverageTokens:
         observation.responseTokens - responseTokensWithoutCoverage,
+      responseBytes: observation.responseBytes,
+      responseBytesWithoutCoverage,
+      queryCoverageBytes:
+        observation.responseBytes - responseBytesWithoutCoverage,
       queryCoverageRows: coverage.length,
       coverage,
       coverageExpectedCorrect,
@@ -311,8 +318,16 @@ export async function runDiscoveryBenchmark(context, corpusPath) {
         (sum, entry) => sum + entry.responseTokens,
         0,
       ),
+      totalResponseBytes: cases.reduce(
+        (sum, entry) => sum + entry.responseBytes,
+        0,
+      ),
       totalQueryCoverageTokens: cases.reduce(
         (sum, entry) => sum + entry.queryCoverageTokens,
+        0,
+      ),
+      totalQueryCoverageBytes: cases.reduce(
+        (sum, entry) => sum + entry.queryCoverageBytes,
         0,
       ),
       meanQueryCoverageTokens: round(

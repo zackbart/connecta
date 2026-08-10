@@ -135,10 +135,11 @@ try {
       discovery.cases.every((entry) => entry.passed) &&
       discovery.metrics.expectedTopAccuracy === 1 &&
       discovery.metrics.positiveRecall === 1 &&
-      discovery.metrics.coverageExpectedChecks > 0 &&
-      discovery.metrics.coverageExpectedPassed ===
-        discovery.metrics.coverageExpectedChecks &&
-      discovery.metrics.coverageDiscriminatingCases > 0,
+      discovery.cases.every(
+        (entry) =>
+          entry.queryCoverageRows === 0 &&
+          entry.queryCoverageTokens === 0,
+      ),
   };
   const result = {
     schemaVersion: 1,
@@ -177,9 +178,8 @@ Machine-readable results: [\`${basename(outputPath)}\`](./${basename(outputPath)
 - Expected top-1 accuracy: ${(metrics.expectedTopAccuracy * 100).toFixed(1)}%
 - Positive recall: ${(metrics.positiveRecall * 100).toFixed(1)}%
 - Mean precision: ${(metrics.meanPrecision * 100).toFixed(1)}%
-- Coverage assertions: ${metrics.coverageExpectedPassed}/${metrics.coverageExpectedChecks}
-- Cases where coverage distinguishes the name match from description-only decoys: ${metrics.coverageDiscriminatingCases}/${discovery.corpus.queryCount}
-- Query-coverage cost: ${metrics.totalQueryCoverageTokens} of ${metrics.totalResponseTokens} response tokens (${(metrics.queryCoverageShare * 100).toFixed(1)}%)
+- Serialized query-coverage rows: ${discovery.cases.reduce((sum, entry) => sum + entry.queryCoverageRows, 0)}
+- Serialized query-coverage bytes/tokens: ${metrics.totalQueryCoverageBytes}/${metrics.totalQueryCoverageTokens}
 
 The development corpus is separate from the sealed release holdout. The server exposes only its synthetic analytics connector on loopback. It does not call a model, the Codex CLI, a host app, a plugin, or an external account.
 `;

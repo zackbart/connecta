@@ -2,6 +2,23 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+The mixed complete/partial lexical ranking remains, including the exact-name
+path that keeps an intended operation ahead of broad description-only decoys.
+The per-result `queryCoverage` experiment is removed from grouped and flat
+discovery responses after its cold-agent qualification failed. Deployments can
+ignore this unless they read that unreleased metadata from a build of `main`;
+those callers must select from the existing purpose, address, schema, safety,
+and page-level `queryAnalysis` fields instead.
+
+### Removed
+
+- **Per-result lexical query coverage.** `search_tools` and
+  `connecta.search` no longer serialize `queryCoverage`. The wire saves its
+  full repeated-string cost while preserving ranking, pagination, filters,
+  Unicode handling, and partial/no-match recovery (#322, #323, #326).
+
 ## 0.14.2 — 2026-08-08
 
 Remote MCP connectors can now make one explicit compatibility concession for a

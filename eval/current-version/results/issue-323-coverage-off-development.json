@@ -1,0 +1,195 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-10T05:34:29.758Z",
+  "source": {
+    "commit": "aca486ce83abd9b9ac5084927c254ca26d353a08",
+    "nodeVersion": "26.5.1",
+    "platform": "darwin-arm64",
+    "tokenizer": "o200k_base",
+    "corpusSha256": "7f705c6b1f76f7a8dacc433f8fb52cf1d0aa13669f517df451ff3cc6833e6776",
+    "harnessSha256": "c3317999ea754a02a67085cf43f7fee9bf7cc3b09fc0d8fb6b2ac60e1e131aae",
+    "sandboxSha256": "7a8b811f4e241db3209b3490fa4642795a2b7b80e9a23660b01d34e54821a11b",
+    "hostIsolation": "Loopback-only sandbox with only the development connector configured; deterministic provider handlers; no model, Codex CLI, external account, host app, or plugin."
+  },
+  "qualification": {
+    "passed": true
+  },
+  "connection": {
+    "latencyMs": 59.6,
+    "toolsListBytes": 11371,
+    "toolsListTokens": 2596,
+    "toolCount": 7,
+    "tools": [
+      {
+        "name": "skills",
+        "definitionBytes": 492,
+        "definitionTokens": 119
+      },
+      {
+        "name": "search_tools",
+        "definitionBytes": 1811,
+        "definitionTokens": 395
+      },
+      {
+        "name": "call_tool",
+        "definitionBytes": 1328,
+        "definitionTokens": 309
+      },
+      {
+        "name": "call_destructive_tool",
+        "definitionBytes": 1160,
+        "definitionTokens": 261
+      },
+      {
+        "name": "authorize_connector",
+        "definitionBytes": 543,
+        "definitionTokens": 118
+      },
+      {
+        "name": "get_result",
+        "definitionBytes": 976,
+        "definitionTokens": 243
+      },
+      {
+        "name": "execute_code",
+        "definitionBytes": 5043,
+        "definitionTokens": 1153
+      }
+    ]
+  },
+  "discovery": {
+    "corpus": {
+      "schemaVersion": 1,
+      "name": "Connecta lexical discovery development corpus",
+      "authorship": {
+        "createdFor": "https://github.com/zackbart/connecta/issues/322",
+        "source": "Synthetic reproduction of the mixed all/partial Mixpanel-shaped failure recorded in issue #326.",
+        "policy": "This corpus is development evidence. Ranking work may use it. The separate discovery-holdout.json remains qualification-only."
+      },
+      "connectorCount": 1,
+      "toolCount": 12,
+      "queryCount": 2
+    },
+    "metrics": {
+      "top1Accuracy": 1,
+      "expectedTopAccuracy": 1,
+      "positiveRecall": 1,
+      "recallAtDefaultPage": 1,
+      "meanPrecision": 0.125,
+      "falsePositiveRate": 0,
+      "meanResultCount": 8,
+      "meanResponseTokens": 760,
+      "totalResponseTokens": 1520,
+      "totalResponseBytes": 7520,
+      "totalQueryCoverageTokens": 0,
+      "totalQueryCoverageBytes": 0,
+      "meanQueryCoverageTokens": 0,
+      "queryCoverageShare": 0,
+      "coverageExpectedChecks": 0,
+      "coverageExpectedPassed": 0,
+      "coverageDiscriminatingCases": 0,
+      "roundTrips": 2,
+      "summedLatencyMs": 9.3
+    },
+    "categories": {
+      "mixed-all-partial": {
+        "queries": 2,
+        "top1Accuracy": 1,
+        "expectedTopAccuracy": 1,
+        "positiveRecall": 1,
+        "meanPrecision": 0.125,
+        "falsePositiveRate": null,
+        "meanResultCount": 8,
+        "meanResponseTokens": 760,
+        "meanQueryCoverageTokens": 0,
+        "meanLatencyMs": 4.7
+      }
+    },
+    "cases": [
+      {
+        "id": "mixed-all-partial-organizations",
+        "category": "mixed-all-partial",
+        "query": "list organizations projects",
+        "relevant": [
+          "analytics.List-Organizations"
+        ],
+        "pageAddresses": [
+          "analytics.List-Organizations",
+          "analytics.business_context_0",
+          "analytics.business_context_1",
+          "analytics.business_context_2",
+          "analytics.business_context_3",
+          "analytics.business_context_4",
+          "analytics.business_context_5",
+          "analytics.business_context_6"
+        ],
+        "total": 10,
+        "returned": 8,
+        "top1": 1,
+        "expectedTop": "analytics.List-Organizations",
+        "expectedTopMatch": true,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.125,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 758,
+        "responseTokensWithoutCoverage": 758,
+        "queryCoverageTokens": 0,
+        "responseBytes": 3752,
+        "responseBytesWithoutCoverage": 3752,
+        "queryCoverageBytes": 0,
+        "queryCoverageRows": 0,
+        "coverage": [],
+        "coverageExpectedCorrect": null,
+        "coverageDiscriminates": false,
+        "latencyMs": 6,
+        "passed": true
+      },
+      {
+        "id": "exact-raw-name-frame",
+        "category": "mixed-all-partial",
+        "query": "list all organizations projects",
+        "relevant": [
+          "analytics.List-All-Organizations"
+        ],
+        "pageAddresses": [
+          "analytics.List-All-Organizations",
+          "analytics.business_context_0",
+          "analytics.business_context_1",
+          "analytics.business_context_2",
+          "analytics.business_context_3",
+          "analytics.business_context_4",
+          "analytics.business_context_5",
+          "analytics.business_context_6"
+        ],
+        "total": 10,
+        "returned": 8,
+        "top1": 1,
+        "expectedTop": "analytics.List-All-Organizations",
+        "expectedTopMatch": true,
+        "recall": 1,
+        "recallAtDefaultPage": 1,
+        "precision": 0.125,
+        "falsePositive": false,
+        "matchMode": "all",
+        "hasMore": true,
+        "nextOffset": 8,
+        "responseTokens": 762,
+        "responseTokensWithoutCoverage": 762,
+        "queryCoverageTokens": 0,
+        "responseBytes": 3768,
+        "responseBytesWithoutCoverage": 3768,
+        "queryCoverageBytes": 0,
+        "queryCoverageRows": 0,
+        "coverage": [],
+        "coverageExpectedCorrect": null,
+        "coverageDiscriminates": false,
+        "latencyMs": 3.3,
+        "passed": true
+      }
+    ]
+  }
+}
