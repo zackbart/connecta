@@ -806,11 +806,7 @@ describe("server /mcp end-to-end", () => {
               name: "add",
               address: "calc.add",
               description: "Add two numbers",
-              queryCoverage: {
-                nameTerms: ["add"],
-                descriptionTerms: [],
-                unmatchedTerms: [],
-              },
+              queryCoverage: { name: [0] },
               annotations: { readOnlyHint: true },
             },
           ],
@@ -820,6 +816,7 @@ describe("server /mcp end-to-end", () => {
       offset: 0,
       limit: 8,
       hasMore: false,
+      queryTerms: ["add"],
     });
     expect(body.result.structuredContent).toEqual(payload);
     expect(body.result.content[0].text).toBe(

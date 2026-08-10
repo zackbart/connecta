@@ -551,6 +551,8 @@ export const CONTRACT_CASES: ContractCase[] = [
       const match = page.tools.filter((tool) => tool.address === "reader.read")[0];
       return {
         pageKeys: Object.keys(page).sort(),
+        queryTerms: page.queryTerms,
+        queryCoverage: match.queryCoverage,
         address: match.address,
         inputKeys: match.inputKeys,
         requiredInputKeys: match.requiredInputKeys,
@@ -565,9 +567,15 @@ export const CONTRACT_CASES: ContractCase[] = [
         "hasMore",
         "limit",
         "offset",
+        "queryTerms",
         "tools",
         "total",
       ]);
+      expect(result.queryTerms).toEqual(["read", "value"]);
+      expect(result.queryCoverage).toEqual({
+        name: [0],
+        description: [1],
+      });
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);
       expect(result.requiredInputKeys).toEqual(["value"]);

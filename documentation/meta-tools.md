@@ -207,14 +207,23 @@ phrase check. If no tool covers every non-conversational term, the same scorer
 preserves the wider any-term fallback and marks the result
 `matchMode: "partial"`.
 
-Every returned tool in a term-bearing search carries bounded `queryCoverage`.
-`nameTerms` matched the tool name, `descriptionTerms` matched only its
-description, and `unmatchedTerms` did not match that tool. A name match takes
-precedence when the same term occurs in both fields. Coverage preserves query
-order, includes at most eight terms of at most 64 characters each, and marks a
-clipped inventory with `truncated: true`. It exposes no ranking score: use the
-signal to reject a broad description-only decoy, not to reconstruct the
-scorer. Empty-query browse results omit it.
+A term-bearing page carries one ordered `queryTerms` table. Every returned tool
+carries `queryCoverage`, whose optional `name`, `description`, and `unmatched`
+arrays contain indexes into that table. `description` means description-only;
+a name match takes precedence when the same term occurs in both fields. Empty
+arrays are omitted. The table contains at most eight terms of at most 64
+Unicode code points each, and `queryTermsTruncated: true` marks a clipped
+inventory. Coverage exposes no ranking score: use it to reject a broad
+description-only decoy, not to reconstruct the scorer. Every page repeats the
+same table, so indexes remain stable across pagination. Empty-query browse
+results omit both the table and per-tool coverage.
+
+Migration note: the unreleased main branch briefly repeated strings in
+`queryCoverage.nameTerms`, `descriptionTerms`, and `unmatchedTerms`, with a
+per-tool `truncated` flag. Read the page's `queryTerms` once and resolve the new
+numeric `name`, `description`, and `unmatched` indexes instead. The old fields
+are not retained because they caused most of the discovery response growth
+measured before release.
 
 Only an empty or whitespace-only query browses. A non-empty query that
 normalizes to no ASCII lexical terms returns no tools instead of unrelated

@@ -230,10 +230,9 @@ interface CatalogSearchEntry {
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
     queryCoverage?: {
-      nameTerms: string[];
-      descriptionTerms: string[];
-      unmatchedTerms: string[];
-      truncated?: true;
+      name?: number[];
+      description?: number[];
+      unmatched?: number[];
     };
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
@@ -312,6 +311,9 @@ export interface CatalogSearchPage {
   hasMore: boolean;
   nextOffset?: number;
   matchMode?: "partial";
+  /** Bounded ordered vocabulary referenced by each tool's queryCoverage. */
+  queryTerms?: string[];
+  queryTermsTruncated?: true;
   queryAnalysis?: {
     representedTerms: string[];
     otherResultTerms: string[];
@@ -787,20 +789,20 @@ export class CatalogService {
         renderedInput?.truncated === true || renderedOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(match.connector);
-      const nameTerms: string[] = [];
-      const descriptionTerms: string[] = [];
-      const uncoveredTerms: string[] = [];
-      for (const term of coverageTerms) {
+      const name: number[] = [];
+      const descriptionOnly: number[] = [];
+      const unmatched: number[] = [];
+      coverageTerms.forEach((term, index) => {
         if (statistics.nameMatches.get(term)?.has(match.tool)) {
-          nameTerms.push(displayTerm(term));
+          name.push(index);
         } else if (
           statistics.descriptionMatches.get(term)?.has(match.tool)
         ) {
-          descriptionTerms.push(displayTerm(term));
+          descriptionOnly.push(index);
         } else {
-          uncoveredTerms.push(displayTerm(term));
+          unmatched.push(index);
         }
-      }
+      });
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -848,12 +850,11 @@ export class CatalogService {
           ...(queryTerms.length > 0
             ? {
                 queryCoverage: {
-                  nameTerms,
-                  descriptionTerms,
-                  unmatchedTerms: uncoveredTerms,
-                  ...(queryMetadataTruncated
-                    ? { truncated: true as const }
+                  ...(name.length > 0 ? { name } : {}),
+                  ...(descriptionOnly.length > 0
+                    ? { description: descriptionOnly }
                     : {}),
+                  ...(unmatched.length > 0 ? { unmatched } : {}),
                 },
               }
             : {}),
@@ -994,6 +995,14 @@ export class CatalogService {
       ...(nextOffset !== undefined ? { nextOffset } : {}),
       ...(matchMode === "partial" && matches.length > 0
         ? { matchMode }
+        : {}),
+      ...(coverageTerms.length > 0
+        ? {
+            queryTerms: coverageTerms.map(displayTerm),
+            ...(queryMetadataTruncated
+              ? { queryTermsTruncated: true as const }
+              : {}),
+          }
         : {}),
       ...(reportsQueryAnalysis
         ? {
@@ -1155,6 +1164,10 @@ export function groupedSearchResult(page: CatalogSearchPage) {
     }
   }
   return {
+    ...(page.queryTerms ? { queryTerms: page.queryTerms } : {}),
+    ...(page.queryTermsTruncated
+      ? { queryTermsTruncated: page.queryTermsTruncated }
+      : {}),
     connectors: groups,
     total: page.total,
     offset: page.offset,
@@ -1168,6 +1181,10 @@ export function groupedSearchResult(page: CatalogSearchPage) {
 
 export function flatSearchResult(page: CatalogSearchPage) {
   return {
+    ...(page.queryTerms ? { queryTerms: page.queryTerms } : {}),
+    ...(page.queryTermsTruncated
+      ? { queryTermsTruncated: page.queryTermsTruncated }
+      : {}),
     tools: page.entries.map((entry) => ({
       ...entry.tool,
       ...(entry.guide ? { guide: entry.guide } : {}),

@@ -853,10 +853,9 @@ interface SearchGroup {
     address: string;
     description?: string;
     queryCoverage?: {
-      nameTerms: string[];
-      descriptionTerms: string[];
-      unmatchedTerms: string[];
-      truncated?: true;
+      name?: number[];
+      description?: number[];
+      unmatched?: number[];
     };
   }[];
 }
@@ -868,6 +867,8 @@ interface SearchResult {
   hasMore: boolean;
   nextOffset?: number;
   matchMode?: "partial";
+  queryTerms?: string[];
+  queryTermsTruncated?: true;
   queryAnalysis?: {
     representedTerms: string[];
     otherResultTerms: string[];
@@ -888,6 +889,32 @@ interface SearchResult {
     guideRequiredReasons?: string[];
     guidance?: string;
   };
+}
+
+/** Recreate the repeated-string coverage shape that briefly existed on main. */
+function legacyCoverageText(result: SearchResult): string {
+  const terms = result.queryTerms ?? [];
+  return JSON.stringify(result, (key, value: unknown) => {
+    if (key === "queryTerms" || key === "queryTermsTruncated") {
+      return undefined;
+    }
+    if (key !== "queryCoverage" || value === null || typeof value !== "object") {
+      return value;
+    }
+    const coverage = value as {
+      name?: number[];
+      description?: number[];
+      unmatched?: number[];
+    };
+    const expand = (indexes: number[] | undefined) =>
+      (indexes ?? []).map((index) => required(terms[index]));
+    return {
+      nameTerms: expand(coverage.name),
+      descriptionTerms: expand(coverage.description),
+      unmatchedTerms: expand(coverage.unmatched),
+      ...(result.queryTermsTruncated ? { truncated: true } : {}),
+    };
+  });
 }
 
 describe("search_tools", () => {
@@ -1013,13 +1040,10 @@ describe("search_tools", () => {
     const tools = parsed.connectors.flatMap((group) => group.tools);
 
     expect(tools).toHaveLength(1);
+    expect(parsed.queryTerms).toEqual(["add"]);
     expect(required(tools[0])).toMatchObject({
       address: "calc.add",
-      queryCoverage: {
-        nameTerms: ["add"],
-        descriptionTerms: [],
-        unmatchedTerms: [],
-      },
+      queryCoverage: { name: [0] },
     });
     expect(parsed.queryAnalysis).toBeUndefined();
   });
@@ -1202,6 +1226,8 @@ describe("search_tools", () => {
     expect(first.limit).toBe(8);
     expect(first.total).toBe(12);
     expect(first.connectors.flatMap((group) => group.tools)).toHaveLength(8);
+    expect(first).not.toHaveProperty("queryTerms");
+    expect(first).not.toHaveProperty("queryTermsTruncated");
     expect(
       first.connectors.flatMap((group) => group.tools)[0],
     ).not.toHaveProperty("queryCoverage");
@@ -1256,7 +1282,7 @@ describe("search_tools", () => {
     expect(loads).toBe(1);
   });
 
-  it("bounds query coverage on default and maximum result pages", async () => {
+  it("bounds and normalizes query coverage on default and maximum pages", async () => {
     const terms = Array.from(
       { length: 8 },
       (_, index) => `${index}${"x".repeat(79)}`,
@@ -1284,22 +1310,28 @@ describe("search_tools", () => {
       const tools = parsed.connectors.flatMap((group) => group.tools);
 
       expect(tools).toHaveLength(limit ?? 8);
-      expect(tools.every((tool) => tool.queryCoverage?.truncated)).toBe(true);
+      expect(parsed.queryTermsTruncated).toBe(true);
+      expect(parsed.queryTerms).toHaveLength(8);
       expect(
         tools.every(
-          (tool) => tool.queryCoverage?.descriptionTerms.length === 8,
+          (tool) => tool.queryCoverage?.description?.length === 8,
         ),
       ).toBe(true);
       expect(
-        tools.every((tool) =>
-          required(tool.queryCoverage).descriptionTerms.every(
-            (term) => term.length <= 64,
-          ),
-        ),
+        required(parsed.queryTerms).every((term) => [...term].length <= 64),
       ).toBe(true);
       const responseBytes = new TextEncoder().encode(
         required(result.content[0]).text,
       ).length;
+      const legacyBytes = new TextEncoder().encode(
+        legacyCoverageText(parsed),
+      ).length;
+      expect({ responseBytes, legacyBytes }).toEqual(
+        limit === undefined
+          ? { responseBytes: 2_996, legacyBytes: 7_146 }
+          : { responseBytes: 29_296, legacyBytes: 88_002 },
+      );
+      expect(responseBytes).toBeLessThan(legacyBytes * 0.45);
       expect(responseBytes).toBeLessThan(
         limit === undefined ? 10_000 : 100_000,
       );
@@ -1791,21 +1823,14 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(first.matchMode).toBeUndefined();
+    expect(first.queryTerms).toEqual(["list", "organizations", "projects"]);
     const intended = required(required(first.connectors[0]).tools[0]);
     const decoy = required(required(first.connectors[0]).tools[1]);
     expect(intended).toMatchObject({
-      queryCoverage: {
-        nameTerms: ["list", "organizations"],
-        descriptionTerms: [],
-        unmatchedTerms: ["projects"],
-      },
+      queryCoverage: { name: [0, 1], unmatched: [2] },
     });
     expect(decoy).toMatchObject({
-      queryCoverage: {
-        nameTerms: [],
-        descriptionTerms: ["list", "organizations", "projects"],
-        unmatchedTerms: [],
-      },
+      queryCoverage: { description: [0, 1, 2] },
     });
     expect(intended).not.toHaveProperty("score");
     expect(required(intended.queryCoverage)).not.toHaveProperty("score");
@@ -1822,6 +1847,7 @@ describe("search_tools", () => {
       "List-All-Organizations",
     ]);
     expect(second).toMatchObject({ total: 10, hasMore: false });
+    expect(second.queryTerms).toEqual(first.queryTerms);
     expect(
       second.connectors.flatMap((group) => group.tools).every(
         (tool) => tool.queryCoverage !== undefined,
@@ -1881,23 +1907,27 @@ describe("search_tools", () => {
     ) as SearchResult;
 
     expect(first.matchMode).toBe("partial");
+    expect(first.queryTerms).toEqual([
+      "get",
+      "experiment",
+      "details",
+      "metrics",
+      "variants",
+      "results",
+      "configuration",
+    ]);
     const firstTools = first.connectors.flatMap((group) => group.tools);
     expect(firstTools.map((t) => t.name))
       .toEqual(["get_experiment", "get_results"]);
     expect(required(firstTools[0]).queryCoverage).toMatchObject({
-      nameTerms: ["get", "experiment"],
-      descriptionTerms: ["details", "metrics", "variants"],
-      unmatchedTerms: ["results", "configuration"],
+      name: [0, 1],
+      description: [2, 3, 4],
+      unmatched: [5, 6],
     });
     expect(required(firstTools[1]).queryCoverage).toMatchObject({
-      nameTerms: ["get", "results"],
-      descriptionTerms: ["experiment"],
-      unmatchedTerms: [
-        "details",
-        "metrics",
-        "variants",
-        "configuration",
-      ],
+      name: [0, 5],
+      description: [1],
+      unmatched: [2, 3, 4, 6],
     });
     expect(first.total).toBe(3);
     expect(first.nextOffset).toBe(2);
