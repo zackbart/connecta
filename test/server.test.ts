@@ -473,6 +473,10 @@ describe("server /mcp end-to-end", () => {
       visibility: ["model"],
     });
     expect(execute.description).toContain("connecta.ui(html, options?)");
+    expect(execute.description).toContain(
+      "{ reads: { name: { address, fixedArgs?, viewArgs? } } }",
+    );
+    expect(execute.description).toContain("connecta.read(name, args)");
     // U12: the model never sees the view, so the description says what the
     // program owes it instead — a return value that mirrors what was rendered.
     // A view the return does not mirror is a view nobody can check (#282).
