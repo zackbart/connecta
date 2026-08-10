@@ -1,10 +1,10 @@
 # Issue #322 discovery evidence
 
 The current release audit passes. The mixed all/partial development case now
-has complete retrieval. Coverage-off remains materially cheaper than the
-compact #323 candidate while matching its exact execution correctness.
-Do not merge or release compact commit `afbaa32`. Keep the ranking fix, but
-redesign coverage again and rerun this qualification.
+has complete retrieval. The final trailing-coverage candidate preserves
+coverage-off execution correctness, improves clean routing, and avoids the
+first compact candidate's material agent-efficiency regression. The stated
+gate passes for exact product commit `bbfb522`; it is qualified to merge.
 
 ## Provenance
 
@@ -248,6 +248,98 @@ spends one quarter of discovery response tokens on the signal. The cold arm
 does not recover a route or execution gain over coverage-off and materially
 increases cost. The release criterion fails. Do not merge #334; redesign the
 signal again or remove it, then rerun the exact three-arm evidence.
+
+## Final trailing-coverage qualification
+
+The replacement candidate moves coverage after the complete result rows and
+keeps one ordered page-level table. This arm combines exact product commit
+`bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c` with the exact PR #333 eval tree
+from `f84d0b3d7f06079a5d7a9e97f8bd135983a6ab66`. It uses the same temporary
+eval overlay method and does not merge either PR.
+
+- Product tree: `ce24ad2eac7d299eaf61c2e4a4be9bbb11016c0f`
+- Product file: `3faa304f145723c4bfa4e5954e1f5b99619ef495cfb4f7d3ac9fd4f0884abc1f`
+- PR #333 eval tree: `65bd023242c18f26db3296f77cb7cb3875030c20`
+- Eval overlay patch: `1b36bdf808aea6b1dcc6efda2c01608a4e1c369176653f303291682fc7b74758`
+- Trailing deterministic adapter: `80fe433520f0cecc25ddcaf34fb8de1e44a44f8d23f1af5b1d79e2217ec1041b`
+
+The adapter ran only after the cold arm. It aligns each trailing entry with its
+canonical address and resolves indexes through the trailing `terms` table. The
+token counterfactual removes the complete trailing block. The cold harness,
+corpus, sandbox, model, CLI, Node, prompt, repetitions, concurrency, isolation,
+and scoring are identical to coverage-off. Both arms record zero host and
+foreign calls.
+
+The raw cold artifacts are
+[`issue-322-cold-agent-trailing.json`](./issue-322-cold-agent-trailing.json) and
+[`issue-322-cold-agent-trailing.md`](./issue-322-cold-agent-trailing.md).
+
+| Metric | Coverage off | Trailing | Movement |
+| --- | ---: | ---: | ---: |
+| First-search recall | 10/10 | 10/10 | 0 pp |
+| First-search top-1 | 10/10 | 10/10 | 0 pp |
+| Exact address | 7/10 | 7/10 | 0 pp |
+| Exact arguments | 7/10 | 7/10 | 0 pp |
+| Final answer | 7/10 | 7/10 | 0 pp |
+| Address + arguments + final | 7/10 | 7/10 | 0 pp |
+| Intended outer route | 4/10 | 7/10 | +30 pp |
+| Clean intended route | 4/10 | 7/10 | +30 pp |
+| Mean Connecta round trips | 1.7 | 2.1 | +23.5% |
+| Mean search-result tokens | 1,080.1 | 1,596.5 | +47.8% |
+| Mean estimated search-noise tokens | 865.3 | 1,010.3 | +16.8% |
+| Mean Connecta MCP result tokens | 612.5 | 1,269.1 | +107.2% |
+| Mean whole-agent input tokens | 59,894.5 | 66,762.1 | +11.5% |
+| Mean non-cached input tokens | 14,966.5 | 19,530.1 | +30.5% |
+| Mean latency | 23.0 s | 19.6 s | -14.8% |
+
+Trailing costs more than coverage-off, but it exposes a routing benefit the
+prior compact placement did not: clean intended routing rises from 4/10 to
+7/10 without losing combined correctness. The robust medians show the trade:
+round trips stay 2.0; search tokens rise 30.0%; outer MCP tokens rise because
+seven runs take the visible intended route; whole-agent input falls 1.5%;
+non-cached input falls 19.0%; and latency falls 10.2%.
+
+The trailing candidate avoids the first compact candidate's material
+efficiency regression. At the same 7/10 combined correctness, mean round trips
+fall 25.0%, search tokens 31.4%, search noise 46.6%, whole-agent input 13.7%,
+non-cached input 17.9%, and latency 34.7%. Clean routing rises 4/10 to 7/10.
+Median whole-agent input, non-cached input, and latency also improve 2.3%,
+31.1%, and 16.4%; median round trips stay equal at 2.0. Median search and outer
+MCP tokens rise 6.9% and 6.4%, which is not the first candidate's broad
+regression.
+
+Against d58, trailing improves exact execution and combined correctness from
+1/10 to 7/10, and clean intended routing from 1/10 to 7/10. Mean round trips
+fall 12.5%, search tokens 1.2%, noise 34.1%, whole-agent input 13.1%, non-cached
+input 13.8%, and latency 43.6%. Outer Connecta tokens rise 136.8% because the
+agent now uses the visible intended route. Medians keep round trips equal and
+improve whole-agent input 0.4%, non-cached input 35.3%, and latency 43.0%; they
+raise search and outer MCP tokens 34.8% and 1,733.9% from d58's mostly hidden,
+mostly incorrect execution path.
+
+The deterministic artifacts are
+[`issue-322-trailing-audit.json`](./issue-322-trailing-audit.json),
+[`issue-322-trailing-audit.md`](./issue-322-trailing-audit.md),
+[`issue-322-trailing-development.json`](./issue-322-trailing-development.json),
+and [`issue-322-trailing-development.md`](./issue-322-trailing-development.md).
+The release gate passes with 21/21 scenarios, 93.1% top-1, 100% recall, and
+40% negative false positives. The sealed holdout remains byte-identical at
+`25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a`.
+
+Trailing coverage costs 6,087 of 20,385 held-out discovery response tokens,
+or 29.9%. That is slightly larger than verbose coverage's 5,945 tokens and
+29.4% share. It is also larger than the first compact wire. The signal earns a
+cold-agent routing benefit only in trailing position; it is not a wire-size
+win. Development top-1 and recall remain 100%; trailing coverage costs 662 of
+2,182 response tokens, or 30.3%.
+
+This is a 10-run canary, not a significance claim. The exact gate nevertheless
+passes: 7/10 combined correctness is preserved, clean routing exceeds the 4/10
+floor, the first compact candidate's broad efficiency regression is gone, and
+the combined product remains materially better than d58 on correctness,
+round trips, whole-agent input, non-cached input, and latency. Product commit
+`bbfb522` is qualified to merge. Rerun the committed evidence after merge
+before cutting the release; do not substitute the rejected `afbaa32` arm.
 
 ## Commands
 
