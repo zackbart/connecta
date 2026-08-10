@@ -2,22 +2,67 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.15.0 — 2026-08-10
 
-The mixed complete/partial lexical ranking remains, including the exact-name
-path that keeps an intended operation ahead of broad description-only decoys.
-The per-result `queryCoverage` experiment is removed from grouped and flat
-discovery responses after its cold-agent qualification failed. Deployments can
-ignore this unless they read that unreleased metadata from a build of `main`;
-those callers must select from the existing purpose, address, schema, safety,
-and page-level `queryAnalysis` fields instead.
+Discovery now keeps strong action/object near-matches visible beside complete
+matches, gives each compact enum its own bound, and states the grouped, flat,
+and describe envelopes plainly. Invalid arguments also stop producing the
+contradictory claim that a declared property is undeclared. The result is a
+more dependable route from a short query to one correctly shaped call, without
+a new tool, a semantic index, or a larger discovery budget.
+
+No published surface is removed. Per-result `queryCoverage` was prototyped on
+`main`, measured in cold-agent runs, and removed before this release because it
+did not earn its repeated response cost. Deployments upgrading from 0.14.2 can
+ignore that experiment. Discovery consumers should note that result order can
+improve, an empty output object no longer emits `outputKeys: []`, and a large
+enum's compact rendering is now abbreviated; exact JSON schemas remain
+available through JSON discovery and `connecta.describe`.
+
+### Changed
+
+- **Complete and partial lexical matches can share a page.** A weak all-term
+  description match no longer suppresses a stronger action/object tool.
+  Complete matches normally lead; a partial candidate whose full normalized
+  tool name occurs in the raw query can compete by score, and other candidates
+  covering at least two terms fill the remaining page after all complete
+  matches. Stable pagination, connector and safety filters, the no-complete
+  any-term fallback, and discovery size bounds remain intact (#326).
+- **Large compact enums have a per-node budget.** Each enum receives 256 bytes
+  inside the unchanged 1,024-byte schema ceiling. Truncation preserves whole
+  values and reports the exact omitted count before `unknown`; an empty enum
+  renders as `never`. Small enums remain complete, surrounding property types
+  stay visible, and JSON discovery and describe retain every value (#325).
+- **Discovery envelopes and schema-key metadata are explicit.** Guidance now
+  distinguishes grouped top-level `search_tools`, flat `connecta.search`, and
+  the `connecta.describe` tools envelope. Output objects with no declared
+  properties omit `outputKeys`, while zero-input objects still report empty
+  input-key lists. Program-UI guidance again documents the read manifest and
+  its exact `connecta.read(name, args)` route (#324).
+- **Non-lexical input no longer becomes a browse.** A non-empty query with no
+  ASCII lexical terms returns bounded no-match analysis; mixed input searches
+  with its ASCII terms, and echoed query feedback clips at Unicode character
+  boundaries rather than splitting a code point (#323).
+
+### Fixed
+
+- **Argument failures report only the constraints that failed.** When a
+  declared property violates its enum, type, or another subschema beside
+  `additionalProperties: false`, the error no longer also calls that property
+  undeclared or exposes the validator's `False boolean schema` wording.
+  Genuine unknown properties still produce one `additionalProperties` issue;
+  independent false-schema failures, nested paths, empty property names,
+  issue truncation, and strict-validation behavior remain accurate (#316).
 
 ### Removed
 
-- **Per-result lexical query coverage.** `search_tools` and
-  `connecta.search` no longer serialize `queryCoverage`. The wire saves its
-  full repeated-string cost while preserving ranking, pagination, filters,
-  Unicode handling, and partial/no-match recovery (#322, #323, #326).
+- **Unreleased per-result lexical query coverage.** `search_tools` and
+  `connecta.search` do not serialize the experimental `queryCoverage` field.
+  Coverage-off beat the verbose wire, the first compact wire regressed
+  efficiency, and the trailing form missed its locally precommitted 30-run
+  gate: 13/30 clean routes versus 9/30 without coverage (+13.3 percentage
+  points, Fisher p=0.422). Ranking, pagination, filters, Unicode handling, and
+  page-level partial/no-match `queryAnalysis` remain (#322, #323, #326).
 
 ## 0.14.2 — 2026-08-08
 
