@@ -806,6 +806,11 @@ describe("server /mcp end-to-end", () => {
               name: "add",
               address: "calc.add",
               description: "Add two numbers",
+              queryCoverage: {
+                nameTerms: ["add"],
+                descriptionTerms: [],
+                unmatchedTerms: [],
+              },
               annotations: { readOnlyHint: true },
             },
           ],
