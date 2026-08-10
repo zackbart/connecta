@@ -3,6 +3,7 @@ import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
 import {
   compactDiscoverySchema,
+  compactSchema,
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
 } from "../src/catalog.js";
 import { CatalogService } from "../src/catalog-service.js";
@@ -2081,19 +2082,103 @@ describe("compact schema rendering", () => {
     expect(shape).toBe("{ pt: { x?: number } }");
   });
 
-  it("keeps truncated emoji enums and nested objects structurally complete", () => {
-    const emojiEnum = compactDiscoverySchema({
-      enum: Array.from(
-        { length: 80 },
-        (_, index) => `${"😀".repeat(12)}-${index}`,
-      ),
+  it("preserves small enums in compact discovery", () => {
+    expect(
+      compactDiscoverySchema({
+        type: "object",
+        properties: { mode: { enum: ["read", "write"] } },
+      }),
+    ).toEqual({
+      text: '{ mode?: "read" | "write" }',
+      truncated: false,
     });
-    expect(emojiEnum).toEqual({
-      text: "unknown /* truncated */",
-      truncated: true,
-    });
-    expectStructurallyCompleteTypeShape(emojiEnum.text);
+  });
 
+  it("bounds nested UTF-8 enums without hiding other property types", () => {
+    const values = Array.from(
+      { length: 80 },
+      (_, index) => `${"😀".repeat(4)}-region-${index}`,
+    );
+    const schema = {
+      type: "object",
+      properties: {
+        workspace: { type: "string" },
+        filters: {
+          type: "object",
+          properties: {
+            states: { type: "array", items: { enum: values } },
+          },
+        },
+        traceId: { type: "string" },
+        limit: { type: "integer" },
+      },
+      required: ["workspace"],
+    };
+    const compact = compactDiscoverySchema(schema);
+    const exact = compactSchema(schema);
+
+    expect(compact.truncated).toBe(true);
+    expect(compact.text).toContain("workspace: string");
+    expect(compact.text).toContain("filters?: { states?: (");
+    expect(compact.text).toContain(")[] }");
+    expect(compact.text).toContain("traceId?: string");
+    expect(compact.text).toContain("limit?: integer");
+    const omitted = compact.text.match(/(\d+) enum values omitted/);
+    expect(omitted).not.toBeNull();
+    const shown = compact.text.match(/-region-/g)?.length ?? 0;
+    expect(shown + Number(required(omitted ?? undefined)[1])).toBe(
+      values.length,
+    );
+    expectStructurallyCompleteTypeShape(compact.text);
+    expect(new TextEncoder().encode(compact.text).length).toBeLessThan(
+      new TextEncoder().encode(exact).length * 0.25,
+    );
+    expect(exact).toContain(required(values.at(-1)));
+  });
+
+  it("keeps exact enum values in JSON discovery and describe", async () => {
+    const values = Array.from({ length: 40 }, (_, index) => `state-${index}`);
+    const schema = {
+      type: "object",
+      properties: { state: { enum: values } },
+    };
+    const conn: Connector = {
+      id: "enum_exact",
+      kind: "mcp",
+      async listTools() {
+        return [{ name: "read", description: "Read state", inputSchema: schema }];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = makeRegistry([conn]);
+    const search = textOf(
+      await createMetaTools(registry, BASE).searchTools({
+        query: "read state",
+        includeSchemas: "json",
+      }),
+    ) as any;
+    expect(required(required(search.connectors[0]).tools[0]).inputSchema).toEqual(
+      schema,
+    );
+
+    const [describedJson] = await new CatalogService(registry, BASE).describe({
+      addresses: ["enum_exact.read"],
+      format: "json",
+    });
+    expect(required(describedJson).inputSchema).toEqual(schema);
+    const [describedCompact] = await new CatalogService(
+      registry,
+      BASE,
+    ).describe({ addresses: ["enum_exact.read"], format: "compact" });
+    expect(required(describedCompact).inputSchema).toContain(
+      required(values.at(-1)),
+    );
+    expect(required(describedCompact).inputSchema).not.toContain("omitted");
+  });
+
+  it("keeps oversized nested objects structurally complete", () => {
     const nestedObject = compactDiscoverySchema({
       type: "object",
       properties: {
@@ -2122,11 +2207,9 @@ describe("compact schema rendering", () => {
     );
     expectStructurallyCompleteTypeShape(nestedObject.text);
 
-    for (const shape of [emojiEnum.text, nestedObject.text]) {
-      expect(new TextEncoder().encode(shape).length).toBeLessThanOrEqual(
-        MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-      );
-    }
+    expect(new TextEncoder().encode(nestedObject.text).length).toBeLessThanOrEqual(
+      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+    );
   });
 });
 

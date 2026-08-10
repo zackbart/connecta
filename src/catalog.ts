@@ -3,6 +3,8 @@ import type { JsonSchema, ToolDef } from "./types.js";
 const DEFAULT_DESCRIPTION_LENGTH = 240;
 const DISCOVERY_DESCRIPTION_LENGTH = 160;
 export const MAX_COMPACT_DISCOVERY_SCHEMA_BYTES = 1_024;
+const MAX_COMPACT_DISCOVERY_ENUM_BYTES =
+  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
 const schemaEncoder = new TextEncoder();
 const COMPACT_DISCOVERY_TRUNCATION = " /* truncated */";
 
@@ -426,6 +428,35 @@ function grouped(part: string): string {
   return part;
 }
 
+function renderEnum(
+  values: unknown[],
+  byteLimit: number | undefined,
+  onTruncated: (() => void) | undefined,
+): string {
+  const renderedValues = values.map((value) => JSON.stringify(value));
+  const full = renderedValues.join(" | ");
+  if (
+    byteLimit === undefined ||
+    schemaEncoder.encode(full).length <= byteLimit
+  ) {
+    return full;
+  }
+
+  onTruncated?.();
+  const marker = (omitted: number) =>
+    `unknown /* ${omitted} enum ${omitted === 1 ? "value" : "values"} omitted */`;
+  let rendered = `(${marker(values.length)})`;
+  const prefix: string[] = [];
+  for (let index = 0; index < renderedValues.length - 1; index += 1) {
+    prefix.push(renderedValues[index] as string);
+    const omitted = renderedValues.length - prefix.length;
+    const candidate = `(${prefix.join(" | ")} | ${marker(omitted)})`;
+    if (schemaEncoder.encode(candidate).length > byteLimit) break;
+    rendered = candidate;
+  }
+  return rendered;
+}
+
 function renderSchema(
   schema: unknown,
   defs: Record<string, unknown>,
@@ -434,6 +465,8 @@ function renderSchema(
   options: {
     propertyDescriptions: boolean;
     requiredFirst: boolean;
+    enumByteLimit?: number;
+    onEnumTruncated?: () => void;
   },
 ): string {
   if (depth > 4) return "…";
@@ -484,7 +517,7 @@ function renderSchema(
     );
   }
   if (Array.isArray(s.enum)) {
-    return s.enum.map((value) => JSON.stringify(value)).join(" | ");
+    return renderEnum(s.enum, options.enumByteLimit, options.onEnumTruncated);
   }
   // Checked before type/properties so a discriminator like
   // { type: "string", const: "emoji" } renders as "emoji" rather than string.
@@ -623,10 +656,18 @@ export function compactDiscoverySchema(
     ...(schema.definitions as Record<string, unknown>),
   };
   let rendered: string;
+  let enumTruncated = false;
   try {
     rendered = renderSchema(schema, defs, new Set(), 0, {
       propertyDescriptions: false,
       requiredFirst: true,
+      // One routing constraint cannot spend more than one quarter of the
+      // complete discovery-shape budget. Whole values are retained, so the
+      // bound is UTF-8 safe and the rest of the schema keeps room to render.
+      enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
+      onEnumTruncated: () => {
+        enumTruncated = true;
+      },
     });
   } catch {
     rendered = JSON.stringify(schema);
@@ -634,7 +675,7 @@ export function compactDiscoverySchema(
   const bytes = schemaEncoder.encode(rendered);
   let result: CompactDiscoverySchema;
   if (bytes.length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {
-    result = { text: rendered, truncated: false };
+    result = { text: rendered, truncated: enumTruncated };
   } else {
     result = {
       text: truncatedDiscoverySchema(schema),

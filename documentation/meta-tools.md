@@ -75,11 +75,15 @@ Compact search is deliberately a routing view, not a second copy of connector
 documentation. Tool purposes are capped at 160 characters, connector
 descriptions and property prose are omitted, required input fields render
 before optional ones, and each input or output shape is capped at 1,024 UTF-8
-bytes. A capped object becomes a valid required-first shape with `unknown`
-types; other shapes become `unknown /* truncated */`. The match also carries
+bytes. Within that unchanged total, each enum node may spend at most 256 UTF-8
+bytes: one quarter leaves room for the surrounding properties that choose and
+populate a tool. A large enum keeps the longest whole-value prefix that fits,
+then adds `unknown` and a comment with the exact omitted-value count. A capped
+object becomes a valid required-first shape with `unknown` types; other shapes
+become `unknown /* truncated */`. Either cap marks the match with
 `inputSchemaTruncated` or `outputSchemaTruncated`; repeat the search with
 `includeSchemas: "json"` or use the existing describe path when exact
-constraints matter.
+constraints matter. Small enums and both exact paths remain complete.
 
 ## Connector guide selection
 
