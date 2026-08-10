@@ -1,16 +1,21 @@
 # Issue #322 discovery evidence
 
 The current release audit passes. The mixed all/partial development case now
-has complete retrieval, and the cold agent succeeds more often. The gain has a
-material token cost and does not make cold-agent routing reliable by itself.
+has complete retrieval. The coverage-off ablation is better than coverage-on
+for execution correctness, round trips, whole-agent tokens, and latency.
+Current `queryCoverage` is not justified by this evidence. Keep the ranking
+fix, but redesign #323's coverage into a compact form before release.
 
 ## Provenance
 
-The deterministic baseline is `/tmp/connecta-orchestration/before-audit.json`
-from `d58f874588bdf6aa37b4404b9416a8b9b0b917c9`. The current audit tests product
-commit `62e2b1f0f6ec681cd3049a3a12621ab3d6978ff6`. The committed evidence change is
-eval-only, so the cold candidate commit `4123d2fafc6e9e6b2878de9a6b1b67c64a8d2a6c`
-contains the same product source.
+The committed deterministic baseline is
+[`issue-322-before-audit.json`](./issue-322-before-audit.json) from
+`d58f874588bdf6aa37b4404b9416a8b9b0b917c9`. Its artifact SHA-256 is
+`0775ed3e1a502089b5999932d25653e6a66b9e6bac808895d56f089810b0279d`.
+The current audit tests product commit
+`62e2b1f0f6ec681cd3049a3a12621ab3d6978ff6`. The committed evidence change is
+eval-only, so cold candidate commit
+`4123d2fafc6e9e6b2878de9a6b1b67c64a8d2a6c` contains the same product source.
 
 The release audit used Node 26.5.1 on darwin-arm64 and tokenizer
 `o200k_base`. It used a loopback sandbox, deterministic providers, the required
@@ -111,6 +116,51 @@ matched without a correct execution, so routing-result agreement is the safer
 correctness measure. Query coverage and mixed-candidate ranking shipped
 together between these commits. This comparison proves their combined routing
 effect; it does not isolate the causal value of the coverage fields alone.
+
+## Coverage-off ablation
+
+The causal arm uses the exact current candidate commit and removes only the
+serialized `queryCoverage` object in an uncommitted worktree. Ranking and all
+other current behavior stay fixed. No product flag or alternate surface was
+added. The coverage-on and coverage-off artifacts have identical model, CLI,
+Node, tokenizer, prompt, repetitions, concurrency, harness, corpus, sandbox,
+host isolation, and scoring configuration.
+
+- Coverage-on product file: `2d94f669afb090fbfe34e8935e0123ac84883ad78a5c58f7423f7c09cf80a2d1`
+- Coverage-off product file: `cbaaefd04012daf6fe9a3a38fab27f332d05e554f18816b1728d381718efd7cb`
+- One-deletion patch: `9db0c8011ea3743a0d605aa86fa0842c769125f89006f05e768e6080a522226f`
+
+The raw arm is
+[`issue-322-cold-agent-coverage-off.json`](./issue-322-cold-agent-coverage-off.json)
+with its generated
+[`Markdown report`](./issue-322-cold-agent-coverage-off.md).
+
+| Metric | Coverage on | Coverage off | Off minus on |
+| --- | ---: | ---: | ---: |
+| First-search recall | 10/10 | 10/10 | 0 pp |
+| First-search top-1 | 10/10 | 10/10 | 0 pp |
+| Exact address | 3/10 | 7/10 | +40 pp |
+| Exact arguments | 3/10 | 7/10 | +40 pp |
+| Final answer | 4/10 | 7/10 | +30 pp |
+| Address + arguments + final | 3/10 | 7/10 | +40 pp |
+| Intended outer route | 2/10 | 4/10 | +20 pp |
+| Clean intended route | 2/10 | 4/10 | +20 pp |
+| Mean Connecta round trips | 2.2 | 1.7 | -22.7% |
+| Mean search-result tokens | 1,912.1 | 1,080.1 | -43.5% |
+| Mean estimated search-noise tokens | 1,575.3 | 865.3 | -45.1% |
+| Mean Connecta MCP result tokens | 463.0 | 612.5 | +32.3% |
+| Mean whole-agent input tokens | 67,173.0 | 59,894.5 | -10.8% |
+| Mean non-cached input tokens | 19,096.2 | 14,966.5 | -21.6% |
+| Mean latency | 33.5 s | 23.0 s | -31.3% |
+
+Coverage-on reduced outer Connecta MCP result tokens because agents used
+`execute_code` more often, which keeps nested search payloads inside the
+sandbox. That narrow saving did not offset worse execution correctness, more
+searches, more whole-agent input, or higher latency. With 10 stochastic runs
+per arm, this is a canary rather than a significance claim. The effect is large
+and consistent across the primary measures: the current verbose coverage shape
+does not earn its 29.4% held-out response cost. Redesign it before release,
+then rerun this ablation against the compact candidate.
 
 ## Commands
 
