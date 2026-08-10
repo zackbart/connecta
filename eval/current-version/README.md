@@ -32,6 +32,19 @@ The development report records exact expected top-1 accuracy, recall,
 precision, query-coverage assertions, and the response-token cost of
 `queryCoverage`. Its server advertises only the synthetic development
 connector. The release gate remains the complete holdout `audit` command.
+The current combined report is
+[`results/issue-322-evidence.md`](./results/issue-322-evidence.md).
+
+The paired cold-agent decoy lane uses the same case, model, repetitions, and
+concurrency on both product commits:
+
+```sh
+CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol \
+  npm --prefix eval/current-version run perf:lookup -- \
+  --case mixed-decoy-organizations \
+  --repetitions 10 \
+  --concurrency 5
+```
 
 ## Run
 

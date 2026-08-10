@@ -1,5 +1,9 @@
 # Tool lookup accuracy and context investigation
 
+> Historical investigation from the source commit below. Despite the legacy
+> filename, this is not current evidence. See
+> [`issue-322-evidence.md`](./issue-322-evidence.md).
+
 Source under test: `cd20638bf36fc6808fddebe792cfe5e7e03ae49a`
 (`origin/main` on 2026-07-29)
 
