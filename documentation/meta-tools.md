@@ -338,7 +338,9 @@ exist. `nextAction` points to discovery scoped to the same connector and tool
 name when the compact schema is needed — routed like any other miss, so a
 program is sent to `connecta.search` and a top-level call to `search_tools` —
 while `retry` says to correct the listed arguments and reissue the original
-operation. A schema the local
+operation. A declared property reports only its failed schema keyword, while a
+truly undeclared property reports `additionalProperties`; validator-internal
+duplicate `additionalProperties` branches never reach the caller. A schema the local
 validator cannot evaluate passes through to the provider. Provider error prose
 is not parsed or guessed, so an unknown format remains
 `connector_call_failed`.

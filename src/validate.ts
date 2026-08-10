@@ -57,6 +57,18 @@ interface ValidationUnit {
   error: string;
 }
 
+const CONTAINER_VALIDATION_KEYWORDS = new Set([
+  "properties",
+  "items",
+  "allOf",
+  "anyOf",
+  "oneOf",
+  "if",
+  "not",
+  "patternProperties",
+  "additionalProperties",
+]);
+
 function decodePointerPart(value: string): string {
   return value.replaceAll("~1", "/").replaceAll("~0", "~");
 }
@@ -79,6 +91,110 @@ function pointerValue(value: unknown, pointer: string): unknown {
 function argumentPath(location: string): string {
   if (location === "#") return "/";
   return location.startsWith("#") ? location.slice(1) || "/" : "/";
+}
+
+function validationUnitKey(unit: ValidationUnit): string {
+  return JSON.stringify([
+    unit.keyword,
+    unit.keywordLocation,
+    unit.instanceLocation,
+    unit.error,
+  ]);
+}
+
+function childPropertyName(
+  parentLocation: string,
+  childLocation: string,
+): string | undefined {
+  const prefix = parentLocation === "#" ? "#/" : `${parentLocation}/`;
+  if (!childLocation.startsWith(prefix)) return undefined;
+  const encoded = childLocation.slice(prefix.length);
+  return !encoded.includes("/") ? decodePointerPart(encoded) : undefined;
+}
+
+function schemaDeclaresProperty(schema: unknown, property: string): boolean {
+  if (schema === null || typeof schema !== "object" || Array.isArray(schema)) {
+    return false;
+  }
+  const record = schema as Record<string, unknown>;
+  const properties = record.properties;
+  if (
+    properties !== null &&
+    typeof properties === "object" &&
+    !Array.isArray(properties) &&
+    Object.hasOwn(properties, property)
+  ) {
+    return true;
+  }
+  const patterns = record.patternProperties;
+  if (
+    patterns === null ||
+    typeof patterns !== "object" ||
+    Array.isArray(patterns)
+  ) {
+    return false;
+  }
+  for (const pattern of Object.keys(patterns)) {
+    try {
+      if (new RegExp(pattern).test(property)) return true;
+    } catch {
+      // The validator owns schema support. An unusable pattern cannot prove
+      // that this additional-properties branch is a duplicate.
+    }
+  }
+  return false;
+}
+
+function isDuplicateAdditionalPropertiesBranch(
+  schema: JsonSchema,
+  units: ValidationUnit[],
+  index: number,
+): boolean {
+  const unit = units[index];
+  const wrapper = units[index - 1];
+  if (
+    unit?.keyword !== "false" ||
+    wrapper?.keyword !== "additionalProperties" ||
+    !wrapper.keywordLocation.endsWith("/additionalProperties")
+  ) {
+    return false;
+  }
+  const property = childPropertyName(
+    wrapper.instanceLocation,
+    unit.instanceLocation,
+  );
+  if (property === undefined) return false;
+  const parentSchemaLocation = wrapper.keywordLocation.slice(
+    0,
+    -"/additionalProperties".length,
+  );
+  return schemaDeclaresProperty(
+    pointerValue(schema, parentSchemaLocation || "#"),
+    property,
+  );
+}
+
+function normalizedValidationUnits(
+  schema: JsonSchema,
+  units: ValidationUnit[],
+): ValidationUnit[] {
+  const seen = new Set<string>();
+  return units.filter((unit, index) => {
+    if (CONTAINER_VALIDATION_KEYWORDS.has(unit.keyword)) return false;
+    if (isDuplicateAdditionalPropertiesBranch(schema, units, index)) {
+      return false;
+    }
+    const key = validationUnitKey(unit);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function agentFacingValidationError(unit: ValidationUnit): string {
+  return unit.keyword === "false"
+    ? "Value is not allowed by the declared schema."
+    : unit.error;
 }
 
 function expectedType(schema: JsonSchema, unit: ValidationUnit): string | undefined {
@@ -120,22 +236,8 @@ function validationDetails(
   schema: JsonSchema,
   units: ValidationUnit[],
 ): ArgumentValidationDetails {
-  const leafUnits = units.filter(
-    (unit) =>
-      ![
-        "properties",
-        "items",
-        "allOf",
-        "anyOf",
-        "oneOf",
-        "if",
-        "not",
-        "patternProperties",
-        "additionalProperties",
-      ].includes(unit.keyword),
-  );
   const issues: ArgumentValidationIssue[] = [];
-  for (const unit of leafUnits) {
+  for (const unit of units) {
     const missing =
       unit.keyword === "required"
         ? REQUIRED_PROPERTY_RE.exec(unit.error)?.[1]
@@ -246,15 +348,18 @@ export function validateToolInput(
     return opts.failClosed ? unevaluableSchema(opts.address) : null;
   }
   if (result && !result.valid) {
-    const units = result.errors.filter((u) => u.instanceLocation !== "#");
-    const detail = (units.length > 0 ? units : result.errors)
-      .slice(0, 3)
-      .map((u) => `${u.instanceLocation}: ${u.error}`)
+    const units = normalizedValidationUnits(schema, result.errors);
+    const nestedUnits = units.filter((unit) => unit.instanceLocation !== "#");
+    const detail = (nestedUnits.length > 0 ? nestedUnits : units)
+      .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
+      .map((unit) =>
+        `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
+      )
       .join("; ");
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
-      { validation: validationDetails(schema, result.errors) },
+      { validation: validationDetails(schema, units) },
     );
   }
   return null;
