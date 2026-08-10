@@ -285,7 +285,9 @@ function schemaKeyMetadata(
           requiredInputKeys: inputKeys.required,
         }
       : {}),
-    ...(outputKeys ? { outputKeys: outputKeys.properties } : {}),
+    ...(outputKeys && outputKeys.properties.length > 0
+      ? { outputKeys: outputKeys.properties }
+      : {}),
   };
 }
 

@@ -473,6 +473,10 @@ describe("server /mcp end-to-end", () => {
       visibility: ["model"],
     });
     expect(execute.description).toContain("connecta.ui(html, options?)");
+    expect(execute.description).toContain(
+      "{ reads: { name: { address, fixedArgs?, viewArgs? } } }",
+    );
+    expect(execute.description).toContain("connecta.read(name, args)");
     // U12: the model never sees the view, so the description says what the
     // program owes it instead — a return value that mirrors what was rendered.
     // A view the return does not mirror is a view nobody can check (#282).
@@ -770,11 +774,16 @@ describe("server /mcp end-to-end", () => {
     expect(guided.search).toContain("`guideRequiredReasons`");
     expect(guided.search).toContain("`guideRequired: true`");
     expect(guided.destructive).toContain("fetch any connector guide");
-    expect(guided.execute).toContain("guideRequired: true is a hard stop");
+    expect(guided.execute).toContain("guideRequired: true = stop");
+    expect(guided.execute).toContain("Describe clears only schema_truncated");
+    expect(guided.execute).toContain("return its exact guide");
+    expect(guided.execute).toContain("fetch with top-level skills");
+    expect(guided.execute).toContain("write the informed call");
+    expect(guided.execute.length).toBeLessThan(4_400);
     expect(guided.usage).toBe(plain.usage);
   });
 
-  it("tools/call search_tools returns results grouped by connector", async () => {
+  it("tools/call search_tools returns its grouped discovery envelope", async () => {
     const c = makeConnecta();
     const res = await rpc(
       c,
@@ -788,7 +797,30 @@ describe("server /mcp end-to-end", () => {
       connectors: { id: string; tools: { address: string }[] }[];
       total: number;
     };
-    expect(payload.connectors).toHaveLength(1);
+    expect(payload).toEqual({
+      connectors: [
+        {
+          id: "calc",
+          tools: [
+            {
+              name: "add",
+              address: "calc.add",
+              description: "Add two numbers",
+              queryCoverage: {
+                nameTerms: ["add"],
+                descriptionTerms: [],
+                unmatchedTerms: [],
+              },
+              annotations: { readOnlyHint: true },
+            },
+          ],
+        },
+      ],
+      total: 1,
+      offset: 0,
+      limit: 8,
+      hasMore: false,
+    });
     expect(body.result.structuredContent).toEqual(payload);
     expect(body.result.content[0].text).toBe(
       JSON.stringify(body.result.structuredContent),
@@ -1824,6 +1856,15 @@ describe("execute_code registration (code mode)", () => {
     // shape belongs in the line an author actually reads (#282).
     expect(executeTool.description).toContain(
       "Every batch entry is { address, ok: true, data }",
+    );
+    expect(executeTool.description).toContain(
+      "top-level search_tools returns { connectors: [{ id, tools }], total, offset, limit, hasMore }",
+    );
+    expect(executeTool.description).toContain(
+      "connecta.search returns { tools, total, offset, limit, hasMore }",
+    );
+    expect(executeTool.description).toContain(
+      "connecta.describe returns { tools }",
     );
     // Hosts truncate long descriptions, so the bullets are a fixed budget:
     // #282 moved weight forward instead of adding it, and this ceiling is what

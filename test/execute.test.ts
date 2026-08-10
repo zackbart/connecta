@@ -908,6 +908,7 @@ describe("buildSandboxProviders", () => {
             description: "A tool that genuinely takes no fields",
             annotations: { readOnlyHint: true },
             inputSchema: { type: "object" },
+            outputSchema: { type: "object", properties: {} },
           },
         ];
       },
@@ -948,10 +949,12 @@ describe("buildSandboxProviders", () => {
     expect(union).not.toHaveProperty("inputKeys");
     expect(union).not.toHaveProperty("requiredInputKeys");
 
-    // An object with no properties is the one case where empty is the truth.
+    // A zero-input object truthfully reports no required inputs. An output
+    // object with no declared properties has no useful inventory to report.
     const argless = required(tools.argless);
     expect(argless.inputKeys).toEqual([]);
     expect(argless.requiredInputKeys).toEqual([]);
+    expect(argless.outputSchema).toBe("{}");
     expect(argless).not.toHaveProperty("outputKeys");
 
     const optedOut = await byName("referenced", { includeSchemaKeys: false });
@@ -1036,7 +1039,12 @@ describe("buildSandboxProviders", () => {
         connector: "verbose",
         fullDescriptions: true,
       }),
-    ).rejects.toMatchObject({ code: "result_too_large" });
+    ).rejects.toMatchObject({
+      code: "result_too_large",
+      message: expect.stringContaining(
+        `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
+      ),
+    });
     // The same ceiling applies to a full JSON schema, which is the other way a
     // single description can outgrow the discovery budget.
     const wide = await buildSandboxProviders(
@@ -1068,7 +1076,12 @@ describe("buildSandboxProviders", () => {
         addresses: ["wide.read"],
         format: "json",
       }),
-    ).rejects.toMatchObject({ code: "result_too_large" });
+    ).rejects.toMatchObject({
+      code: "result_too_large",
+      message: expect.stringContaining(
+        `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
+      ),
+    });
   });
 
   it("honors the configured probe deadline and names connecta.describe when a catalog probe times out", async () => {

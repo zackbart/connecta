@@ -561,9 +561,13 @@ export const CONTRACT_CASES: ContractCase[] = [
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(result.pageKeys).toEqual(
-        expect.arrayContaining(["hasMore", "limit", "offset", "tools", "total"]),
-      );
+      expect(result.pageKeys).toEqual([
+        "hasMore",
+        "limit",
+        "offset",
+        "tools",
+        "total",
+      ]);
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);
       expect(result.requiredInputKeys).toEqual(["value"]);
@@ -661,15 +665,20 @@ export const CONTRACT_CASES: ContractCase[] = [
       const described = await connecta.describe({
         addresses: ["reader.read", "nope.read", "reader.nope"]
       });
-      return described.tools.map((tool) => ({
-        address: tool.address,
-        hasSchema: tool.inputSchema !== undefined,
-        error: tool.error
-      }));
+      return {
+        envelopeKeys: Object.keys(described).sort(),
+        tools: described.tools.map((tool) => ({
+          address: tool.address,
+          hasSchema: tool.inputSchema !== undefined,
+          error: tool.error
+        }))
+      };
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
-      const tools = outcome.result as Array<Record<string, unknown>>;
+      const result = record(outcome);
+      expect(result.envelopeKeys).toEqual(["tools"]);
+      const tools = result.tools as Array<Record<string, unknown>>;
       expect(tools).toHaveLength(3);
       expect(required(tools[0])).toMatchObject({
         address: "reader.read",
