@@ -1,0 +1,2036 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-08-10T05:35:41.676Z",
+  "source": {
+    "commit": "aca486ce83abd9b9ac5084927c254ca26d353a08",
+    "productDirty": false,
+    "nodeVersion": "26.5.1",
+    "platform": "darwin-arm64",
+    "codexVersion": "codex-cli 0.147.0",
+    "model": "gpt-5.6-sol",
+    "tokenizer": "o200k_base"
+  },
+  "configuration": {
+    "repetitions": 5,
+    "concurrency": 5,
+    "selectedCase": "mixed-decoy-organizations",
+    "jobOrder": "repetition-major with clean/pressure pairs adjacent",
+    "harnessSha256": "dd11bb3b16a3b99d481e26983485787fb10dfa2c43db59ad6655c1944f7810c3",
+    "corpusSha256": "8084aaea13387fd5274aea6fda844fd4cd951a8d249d8152aa90e3cfbc0fe41f",
+    "sandboxSha256": "7a8b811f4e241db3209b3490fa4642795a2b7b80e9a23660b01d34e54821a11b",
+    "disabledHostFeatures": [
+      "apps",
+      "plugins",
+      "browser_use",
+      "computer_use",
+      "in_app_browser",
+      "image_generation",
+      "multi_agent",
+      "goals",
+      "tool_suggest",
+      "skill_search",
+      "shell_snapshot",
+      "shell_tool",
+      "unified_exec",
+      "workspace_dependencies"
+    ],
+    "isolation": "Fresh Connecta server and ephemeral Codex session for every run; user config ignored; host apps/plugins/browser/computer/agent features disabled; read-only filesystem sandbox.",
+    "noiseEstimate": "Search-result tokens minus a reconstructed result retaining only expected candidates and the same MCP content/structured-content shape.",
+    "trace": "Per-run eval-server trace captures outer MCP meta-tool calls, nested execute_code provider operations, and payload-free downstream activity. Search metrics include outer and nested discovery."
+  },
+  "summary": {
+    "runs": 5,
+    "lookupAccurate": 5,
+    "routingResultCorrect": 5,
+    "addressAccurate": 5,
+    "argumentCorrect": 5,
+    "finalCorrect": 5,
+    "connectaRouteCorrect": 4,
+    "routeClean": 4,
+    "retrievalTop1Accuracy": 1,
+    "meanRetrievalRecall": 1,
+    "meanRetrievalMrr": 1,
+    "retrievalNegativeCleanRate": null,
+    "totalSearchResultTokens": 5808,
+    "totalNestedSearchCalls": 1,
+    "totalNestedSearchResultTokens": 604,
+    "totalEstimatedLookupNoiseTokens": 4588,
+    "totalConnectaMcpResultTokens": 5686,
+    "totalForeignMcpResultTokens": 0,
+    "totalMcpResultTokens": 5686,
+    "totalInputTokens": 319060,
+    "totalNonCachedInputTokens": 74836,
+    "totalOutputTokens": 2123,
+    "totalLatencyMs": 104123.3,
+    "totalConnectaRoundTrips": 9
+  },
+  "byCase": {
+    "mixed-decoy-organizations": {
+      "runs": 5,
+      "lookupAccuracy": 1,
+      "routingResultAccuracy": 1,
+      "addressAccuracy": 1,
+      "argumentAccuracy": 1,
+      "finalAccuracy": 1,
+      "routeAccuracy": 0.8,
+      "connectaRouteAccuracy": 0.8,
+      "meanSearchPrecision": 0.125,
+      "retrievalTop1Accuracy": 1,
+      "meanRetrievalRecall": 1,
+      "meanRetrievalMrr": 1,
+      "retrievalNegativeCleanRate": null,
+      "meanIrrelevantCandidates": 7,
+      "meanLookupAttempts": 1,
+      "meanNestedLookupAttempts": 0.2,
+      "meanConnectaRoundTrips": 1.8,
+      "unknownConnectorFilterRate": 0,
+      "meanSearchResultTokens": 1161.6,
+      "meanNestedSearchResultTokens": 120.8,
+      "meanEstimatedLookupNoiseTokens": 917.6,
+      "meanMcpResultTokens": 1137.2,
+      "meanForeignMcpResultTokens": 0,
+      "meanInputTokens": 63812,
+      "meanNonCachedInputTokens": 14967.2,
+      "meanLatencyMs": 20824.7,
+      "guidanceFetchRate": 0,
+      "hostActionRate": 0,
+      "foreignToolRate": 0
+    }
+  },
+  "cases": [
+    {
+      "id": "mixed-decoy-organizations",
+      "family": "mixed-all-partial",
+      "context": "clean",
+      "repetition": 1,
+      "promptSha256": "4339f2bf5b69d74c757515955bba9bf709d1773b66e42579cfd139c8b428935c",
+      "promptTokens": 31,
+      "promptPreview": "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+      "expectedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "expectedCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          }
+        }
+      ],
+      "expectedRoute": "call_tool",
+      "expectedOuterRoute": [
+        "search_tools",
+        "call_tool"
+      ],
+      "latencyMs": 17976.6,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "argumentCorrect": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "executionCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          },
+          "source": "outer"
+        }
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "directSearchCalls": 1,
+      "nestedSearchCalls": 0,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "retrievalTop1": true,
+      "retrievalRecall": 1,
+      "retrievalMrr": 1,
+      "retrievalNegativeClean": null,
+      "searchTraces": [
+        {
+          "source": "outer",
+          "query": "list organizations projects",
+          "connector": null,
+          "includeSchemas": "compact",
+          "matchMode": "all",
+          "returned": 8,
+          "total": 10,
+          "addresses": [
+            "analytics.List-Organizations",
+            "analytics.business_context_0",
+            "analytics.business_context_1",
+            "analytics.business_context_2",
+            "analytics.business_context_3",
+            "analytics.business_context_4",
+            "analytics.business_context_5",
+            "analytics.business_context_6"
+          ],
+          "relevantRanks": [
+            1
+          ],
+          "relevantReturned": 1,
+          "top1Relevant": true,
+          "precision": 0.125,
+          "irrelevantCandidates": 7,
+          "resultTokens": 1301,
+          "minimalRelevantResultTokens": 276,
+          "estimatedNoiseTokens": 1025
+        }
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"analytics\",\"tools\":[{\"name\":\"List-Organizations\",\"address\":\"analytics.List-Organizations\",\"description\":\"List organizations available to the caller\",\"inputSchema\":\"{ projectId: string }\",\"outputSchema\":\"{ projectId: string, organizations: { id: string, name: string }[] }\",\"inputKeys\":[\"projectId\"],\"requiredInputKeys\":[\"projectId\"],\"outputKeys\":[\"projectId\",\"organizations\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_0\",\"address\":\"analytics.business_context_0\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_1\",\"address\":\"analytics.business_context_1\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_2\",\"address\":\"analytics.business_context_2\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_3\",\"address\":\"analytics.business_context_3\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_4\",\"address\":\"analytics.business_context_4\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_5\",\"address\":\"analytics.business_context_5\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_6\",\"address\":\"analytics.business_context_6\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":10,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "analytics",
+                  "tools": [
+                    {
+                      "name": "List-Organizations",
+                      "address": "analytics.List-Organizations",
+                      "description": "List organizations available to the caller",
+                      "inputSchema": "{ projectId: string }",
+                      "outputSchema": "{ projectId: string, organizations: { id: string, name: string }[] }",
+                      "inputKeys": [
+                        "projectId"
+                      ],
+                      "requiredInputKeys": [
+                        "projectId"
+                      ],
+                      "outputKeys": [
+                        "projectId",
+                        "organizations"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_0",
+                      "address": "analytics.business_context_0",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_1",
+                      "address": "analytics.business_context_1",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_2",
+                      "address": "analytics.business_context_2",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_3",
+                      "address": "analytics.business_context_3",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_4",
+                      "address": "analytics.business_context_4",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_5",
+                      "address": "analytics.business_context_5",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_6",
+                      "address": "analytics.business_context_6",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 10,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": true,
+              "nextOffset": 8
+            }
+          },
+          "durationMs": 11.312416999999186,
+          "resultTokens": 1301
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "analytics.List-Organizations",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 2,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":3,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "projectId": "mxp_eval_42",
+                "organizations": [
+                  {
+                    "id": "org_eval_7",
+                    "name": "Evaluation Organization"
+                  }
+                ]
+              },
+              "durationMs": 3,
+              "attempts": 1
+            }
+          },
+          "durationMs": 8.898124999999709,
+          "resultTokens": 102
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 18.3,
+          "resultBytes": 5699,
+          "resultTokens": 1301,
+          "search": {
+            "query": "list organizations projects",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "all",
+            "returned": 8,
+            "total": 10,
+            "addresses": [
+              "analytics.List-Organizations",
+              "analytics.business_context_0",
+              "analytics.business_context_1",
+              "analytics.business_context_2",
+              "analytics.business_context_3",
+              "analytics.business_context_4",
+              "analytics.business_context_5",
+              "analytics.business_context_6"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 276,
+            "estimatedNoiseTokens": 1025
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 12.4,
+          "resultBytes": 373,
+          "resultTokens": 102
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]}",
+      "usage": {
+        "input_tokens": 78918,
+        "cached_input_tokens": 69376,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 460,
+        "reasoning_output_tokens": 220
+      },
+      "nonCachedInputTokens": 9542,
+      "connectaMcpResultTokens": 1403,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1403,
+      "searchResultTokens": 1301,
+      "nestedSearchResultTokens": 0,
+      "estimatedLookupNoiseTokens": 1025,
+      "connectaRoundTrips": 2
+    },
+    {
+      "id": "mixed-decoy-organizations",
+      "family": "mixed-all-partial",
+      "context": "clean",
+      "repetition": 2,
+      "promptSha256": "4339f2bf5b69d74c757515955bba9bf709d1773b66e42579cfd139c8b428935c",
+      "promptTokens": 31,
+      "promptPreview": "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+      "expectedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "expectedCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          }
+        }
+      ],
+      "expectedRoute": "call_tool",
+      "expectedOuterRoute": [
+        "search_tools",
+        "call_tool"
+      ],
+      "latencyMs": 32781.8,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "argumentCorrect": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "executionCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          },
+          "source": "outer"
+        }
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "directSearchCalls": 1,
+      "nestedSearchCalls": 0,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "retrievalTop1": true,
+      "retrievalRecall": 1,
+      "retrievalMrr": 1,
+      "retrievalNegativeClean": null,
+      "searchTraces": [
+        {
+          "source": "outer",
+          "query": "list organizations projects",
+          "connector": null,
+          "includeSchemas": "compact",
+          "matchMode": "all",
+          "returned": 8,
+          "total": 10,
+          "addresses": [
+            "analytics.List-Organizations",
+            "analytics.business_context_0",
+            "analytics.business_context_1",
+            "analytics.business_context_2",
+            "analytics.business_context_3",
+            "analytics.business_context_4",
+            "analytics.business_context_5",
+            "analytics.business_context_6"
+          ],
+          "relevantRanks": [
+            1
+          ],
+          "relevantReturned": 1,
+          "top1Relevant": true,
+          "precision": 0.125,
+          "irrelevantCandidates": 7,
+          "resultTokens": 1301,
+          "minimalRelevantResultTokens": 276,
+          "estimatedNoiseTokens": 1025
+        }
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"analytics\",\"tools\":[{\"name\":\"List-Organizations\",\"address\":\"analytics.List-Organizations\",\"description\":\"List organizations available to the caller\",\"inputSchema\":\"{ projectId: string }\",\"outputSchema\":\"{ projectId: string, organizations: { id: string, name: string }[] }\",\"inputKeys\":[\"projectId\"],\"requiredInputKeys\":[\"projectId\"],\"outputKeys\":[\"projectId\",\"organizations\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_0\",\"address\":\"analytics.business_context_0\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_1\",\"address\":\"analytics.business_context_1\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_2\",\"address\":\"analytics.business_context_2\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_3\",\"address\":\"analytics.business_context_3\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_4\",\"address\":\"analytics.business_context_4\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_5\",\"address\":\"analytics.business_context_5\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_6\",\"address\":\"analytics.business_context_6\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":10,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "analytics",
+                  "tools": [
+                    {
+                      "name": "List-Organizations",
+                      "address": "analytics.List-Organizations",
+                      "description": "List organizations available to the caller",
+                      "inputSchema": "{ projectId: string }",
+                      "outputSchema": "{ projectId: string, organizations: { id: string, name: string }[] }",
+                      "inputKeys": [
+                        "projectId"
+                      ],
+                      "requiredInputKeys": [
+                        "projectId"
+                      ],
+                      "outputKeys": [
+                        "projectId",
+                        "organizations"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_0",
+                      "address": "analytics.business_context_0",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_1",
+                      "address": "analytics.business_context_1",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_2",
+                      "address": "analytics.business_context_2",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_3",
+                      "address": "analytics.business_context_3",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_4",
+                      "address": "analytics.business_context_4",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_5",
+                      "address": "analytics.business_context_5",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_6",
+                      "address": "analytics.business_context_6",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 10,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": true,
+              "nextOffset": 8
+            }
+          },
+          "durationMs": 11.375209000001632,
+          "resultTokens": 1301
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "analytics.List-Organizations",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 2,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":2,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "projectId": "mxp_eval_42",
+                "organizations": [
+                  {
+                    "id": "org_eval_7",
+                    "name": "Evaluation Organization"
+                  }
+                ]
+              },
+              "durationMs": 2,
+              "attempts": 1
+            }
+          },
+          "durationMs": 7.62316699999792,
+          "resultTokens": 102
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 18.4,
+          "resultBytes": 5699,
+          "resultTokens": 1301,
+          "search": {
+            "query": "list organizations projects",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "all",
+            "returned": 8,
+            "total": 10,
+            "addresses": [
+              "analytics.List-Organizations",
+              "analytics.business_context_0",
+              "analytics.business_context_1",
+              "analytics.business_context_2",
+              "analytics.business_context_3",
+              "analytics.business_context_4",
+              "analytics.business_context_5",
+              "analytics.business_context_6"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 276,
+            "estimatedNoiseTokens": 1025
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 10.7,
+          "resultBytes": 373,
+          "resultTokens": 102
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]}",
+      "usage": {
+        "input_tokens": 71832,
+        "cached_input_tokens": 60416,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 372,
+        "reasoning_output_tokens": 181
+      },
+      "nonCachedInputTokens": 11416,
+      "connectaMcpResultTokens": 1403,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1403,
+      "searchResultTokens": 1301,
+      "nestedSearchResultTokens": 0,
+      "estimatedLookupNoiseTokens": 1025,
+      "connectaRoundTrips": 2
+    },
+    {
+      "id": "mixed-decoy-organizations",
+      "family": "mixed-all-partial",
+      "context": "clean",
+      "repetition": 3,
+      "promptSha256": "4339f2bf5b69d74c757515955bba9bf709d1773b66e42579cfd139c8b428935c",
+      "promptTokens": 31,
+      "promptPreview": "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+      "expectedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "expectedCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          }
+        }
+      ],
+      "expectedRoute": "call_tool",
+      "expectedOuterRoute": [
+        "search_tools",
+        "call_tool"
+      ],
+      "latencyMs": 18473.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "argumentCorrect": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "executionCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          },
+          "source": "outer"
+        }
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "directSearchCalls": 1,
+      "nestedSearchCalls": 0,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "retrievalTop1": true,
+      "retrievalRecall": 1,
+      "retrievalMrr": 1,
+      "retrievalNegativeClean": null,
+      "searchTraces": [
+        {
+          "source": "outer",
+          "query": "list organizations projects",
+          "connector": null,
+          "includeSchemas": "compact",
+          "matchMode": "all",
+          "returned": 8,
+          "total": 10,
+          "addresses": [
+            "analytics.List-Organizations",
+            "analytics.business_context_0",
+            "analytics.business_context_1",
+            "analytics.business_context_2",
+            "analytics.business_context_3",
+            "analytics.business_context_4",
+            "analytics.business_context_5",
+            "analytics.business_context_6"
+          ],
+          "relevantRanks": [
+            1
+          ],
+          "relevantReturned": 1,
+          "top1Relevant": true,
+          "precision": 0.125,
+          "irrelevantCandidates": 7,
+          "resultTokens": 1301,
+          "minimalRelevantResultTokens": 276,
+          "estimatedNoiseTokens": 1025
+        }
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"analytics\",\"tools\":[{\"name\":\"List-Organizations\",\"address\":\"analytics.List-Organizations\",\"description\":\"List organizations available to the caller\",\"inputSchema\":\"{ projectId: string }\",\"outputSchema\":\"{ projectId: string, organizations: { id: string, name: string }[] }\",\"inputKeys\":[\"projectId\"],\"requiredInputKeys\":[\"projectId\"],\"outputKeys\":[\"projectId\",\"organizations\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_0\",\"address\":\"analytics.business_context_0\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_1\",\"address\":\"analytics.business_context_1\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_2\",\"address\":\"analytics.business_context_2\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_3\",\"address\":\"analytics.business_context_3\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_4\",\"address\":\"analytics.business_context_4\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_5\",\"address\":\"analytics.business_context_5\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_6\",\"address\":\"analytics.business_context_6\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":10,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "analytics",
+                  "tools": [
+                    {
+                      "name": "List-Organizations",
+                      "address": "analytics.List-Organizations",
+                      "description": "List organizations available to the caller",
+                      "inputSchema": "{ projectId: string }",
+                      "outputSchema": "{ projectId: string, organizations: { id: string, name: string }[] }",
+                      "inputKeys": [
+                        "projectId"
+                      ],
+                      "requiredInputKeys": [
+                        "projectId"
+                      ],
+                      "outputKeys": [
+                        "projectId",
+                        "organizations"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_0",
+                      "address": "analytics.business_context_0",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_1",
+                      "address": "analytics.business_context_1",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_2",
+                      "address": "analytics.business_context_2",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_3",
+                      "address": "analytics.business_context_3",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_4",
+                      "address": "analytics.business_context_4",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_5",
+                      "address": "analytics.business_context_5",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_6",
+                      "address": "analytics.business_context_6",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 10,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": true,
+              "nextOffset": 8
+            }
+          },
+          "durationMs": 12.275916999999026,
+          "resultTokens": 1301
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "analytics.List-Organizations",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 1,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":2,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "projectId": "mxp_eval_42",
+                "organizations": [
+                  {
+                    "id": "org_eval_7",
+                    "name": "Evaluation Organization"
+                  }
+                ]
+              },
+              "durationMs": 2,
+              "attempts": 1
+            }
+          },
+          "durationMs": 5.718124999999418,
+          "resultTokens": 102
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 19.5,
+          "resultBytes": 5699,
+          "resultTokens": 1301,
+          "search": {
+            "query": "list organizations projects",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "all",
+            "returned": 8,
+            "total": 10,
+            "addresses": [
+              "analytics.List-Organizations",
+              "analytics.business_context_0",
+              "analytics.business_context_1",
+              "analytics.business_context_2",
+              "analytics.business_context_3",
+              "analytics.business_context_4",
+              "analytics.business_context_5",
+              "analytics.business_context_6"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 276,
+            "estimatedNoiseTokens": 1025
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 8.1,
+          "resultBytes": 373,
+          "resultTokens": 102
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":2,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 61372,
+        "cached_input_tokens": 38144,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 375,
+        "reasoning_output_tokens": 152
+      },
+      "nonCachedInputTokens": 23228,
+      "connectaMcpResultTokens": 1403,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1403,
+      "searchResultTokens": 1301,
+      "nestedSearchResultTokens": 0,
+      "estimatedLookupNoiseTokens": 1025,
+      "connectaRoundTrips": 2
+    },
+    {
+      "id": "mixed-decoy-organizations",
+      "family": "mixed-all-partial",
+      "context": "clean",
+      "repetition": 4,
+      "promptSha256": "4339f2bf5b69d74c757515955bba9bf709d1773b66e42579cfd139c8b428935c",
+      "promptTokens": 31,
+      "promptPreview": "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+      "expectedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "expectedCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          }
+        }
+      ],
+      "expectedRoute": "call_tool",
+      "expectedOuterRoute": [
+        "search_tools",
+        "call_tool"
+      ],
+      "latencyMs": 17573.4,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "argumentCorrect": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": true,
+      "routeClean": true,
+      "executedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "executionCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          },
+          "source": "outer"
+        }
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "directSearchCalls": 1,
+      "nestedSearchCalls": 0,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "retrievalTop1": true,
+      "retrievalRecall": 1,
+      "retrievalMrr": 1,
+      "retrievalNegativeClean": null,
+      "searchTraces": [
+        {
+          "source": "outer",
+          "query": "list organizations projects",
+          "connector": null,
+          "includeSchemas": "compact",
+          "matchMode": "all",
+          "returned": 8,
+          "total": 10,
+          "addresses": [
+            "analytics.List-Organizations",
+            "analytics.business_context_0",
+            "analytics.business_context_1",
+            "analytics.business_context_2",
+            "analytics.business_context_3",
+            "analytics.business_context_4",
+            "analytics.business_context_5",
+            "analytics.business_context_6"
+          ],
+          "relevantRanks": [
+            1
+          ],
+          "relevantReturned": 1,
+          "top1Relevant": true,
+          "precision": 0.125,
+          "irrelevantCandidates": 7,
+          "resultTokens": 1301,
+          "minimalRelevantResultTokens": 276,
+          "estimatedNoiseTokens": 1025
+        }
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"connectors\":[{\"id\":\"analytics\",\"tools\":[{\"name\":\"List-Organizations\",\"address\":\"analytics.List-Organizations\",\"description\":\"List organizations available to the caller\",\"inputSchema\":\"{ projectId: string }\",\"outputSchema\":\"{ projectId: string, organizations: { id: string, name: string }[] }\",\"inputKeys\":[\"projectId\"],\"requiredInputKeys\":[\"projectId\"],\"outputKeys\":[\"projectId\",\"organizations\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_0\",\"address\":\"analytics.business_context_0\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_1\",\"address\":\"analytics.business_context_1\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_2\",\"address\":\"analytics.business_context_2\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_3\",\"address\":\"analytics.business_context_3\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_4\",\"address\":\"analytics.business_context_4\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_5\",\"address\":\"analytics.business_context_5\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}},{\"name\":\"business_context_6\",\"address\":\"analytics.business_context_6\",\"description\":\"List organizations and projects configured for business analysis\",\"inputSchema\":\"{ id: string }\",\"outputSchema\":\"{}\",\"inputKeys\":[\"id\"],\"requiredInputKeys\":[\"id\"],\"annotations\":{\"readOnlyHint\":true,\"idempotentHint\":true}}]}],\"total\":10,\"offset\":0,\"limit\":8,\"hasMore\":true,\"nextOffset\":8}"
+              }
+            ],
+            "structuredContent": {
+              "connectors": [
+                {
+                  "id": "analytics",
+                  "tools": [
+                    {
+                      "name": "List-Organizations",
+                      "address": "analytics.List-Organizations",
+                      "description": "List organizations available to the caller",
+                      "inputSchema": "{ projectId: string }",
+                      "outputSchema": "{ projectId: string, organizations: { id: string, name: string }[] }",
+                      "inputKeys": [
+                        "projectId"
+                      ],
+                      "requiredInputKeys": [
+                        "projectId"
+                      ],
+                      "outputKeys": [
+                        "projectId",
+                        "organizations"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_0",
+                      "address": "analytics.business_context_0",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_1",
+                      "address": "analytics.business_context_1",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_2",
+                      "address": "analytics.business_context_2",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_3",
+                      "address": "analytics.business_context_3",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_4",
+                      "address": "analytics.business_context_4",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_5",
+                      "address": "analytics.business_context_5",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    },
+                    {
+                      "name": "business_context_6",
+                      "address": "analytics.business_context_6",
+                      "description": "List organizations and projects configured for business analysis",
+                      "inputSchema": "{ id: string }",
+                      "outputSchema": "{}",
+                      "inputKeys": [
+                        "id"
+                      ],
+                      "requiredInputKeys": [
+                        "id"
+                      ],
+                      "annotations": {
+                        "readOnlyHint": true,
+                        "idempotentHint": true
+                      }
+                    }
+                  ]
+                }
+              ],
+              "total": 10,
+              "offset": 0,
+              "limit": 8,
+              "hasMore": true,
+              "nextOffset": 8
+            }
+          },
+          "durationMs": 10.450417000000016,
+          "resultTokens": 1301
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "analytics.List-Organizations",
+          "source": "call_tool",
+          "outcome": "success",
+          "durationMs": 2,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":2,\"attempts\":1}"
+              }
+            ],
+            "structuredContent": {
+              "ok": true,
+              "data": {
+                "projectId": "mxp_eval_42",
+                "organizations": [
+                  {
+                    "id": "org_eval_7",
+                    "name": "Evaluation Organization"
+                  }
+                ]
+              },
+              "durationMs": 2,
+              "attempts": 1
+            }
+          },
+          "durationMs": 8.214500000000044,
+          "resultTokens": 102
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "includeSchemas": "compact",
+            "safety": "readOnly"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 25,
+          "resultBytes": 5699,
+          "resultTokens": 1301,
+          "search": {
+            "query": "list organizations projects",
+            "connector": null,
+            "includeSchemas": "compact",
+            "matchMode": "all",
+            "returned": 8,
+            "total": 10,
+            "addresses": [
+              "analytics.List-Organizations",
+              "analytics.business_context_0",
+              "analytics.business_context_1",
+              "analytics.business_context_2",
+              "analytics.business_context_3",
+              "analytics.business_context_4",
+              "analytics.business_context_5",
+              "analytics.business_context_6"
+            ],
+            "relevantRanks": [
+              1
+            ],
+            "relevantReturned": 1,
+            "top1Relevant": true,
+            "precision": 0.125,
+            "irrelevantCandidates": 7,
+            "minimalRelevantResultTokens": 276,
+            "estimatedNoiseTokens": 1025
+          }
+        },
+        {
+          "server": "connecta",
+          "tool": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            },
+            "resultMode": "value"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 11.5,
+          "resultBytes": 373,
+          "resultTokens": 102
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"ok\":true,\"data\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]},\"durationMs\":2,\"attempts\":1}",
+      "usage": {
+        "input_tokens": 62682,
+        "cached_input_tokens": 43264,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 366,
+        "reasoning_output_tokens": 133
+      },
+      "nonCachedInputTokens": 19418,
+      "connectaMcpResultTokens": 1403,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 1403,
+      "searchResultTokens": 1301,
+      "nestedSearchResultTokens": 0,
+      "estimatedLookupNoiseTokens": 1025,
+      "connectaRoundTrips": 2
+    },
+    {
+      "id": "mixed-decoy-organizations",
+      "family": "mixed-all-partial",
+      "context": "clean",
+      "repetition": 5,
+      "promptSha256": "4339f2bf5b69d74c757515955bba9bf709d1773b66e42579cfd139c8b428935c",
+      "promptTokens": 31,
+      "promptPreview": "Using only Connecta, search for `list organizations projects`, then list organizations for analytics project `mxp_eval_42`. Return only the connector JSON.",
+      "expectedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "expectedCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          }
+        }
+      ],
+      "expectedRoute": "call_tool",
+      "expectedOuterRoute": [
+        "search_tools",
+        "call_tool"
+      ],
+      "latencyMs": 17318.1,
+      "lookupAccurate": true,
+      "addressAccurate": true,
+      "argumentCorrect": true,
+      "finalCorrect": true,
+      "routingResultCorrect": true,
+      "connectaRouteCorrect": false,
+      "routeClean": false,
+      "executedAddresses": [
+        "analytics.List-Organizations"
+      ],
+      "executionCalls": [
+        {
+          "address": "analytics.List-Organizations",
+          "args": {
+            "projectId": "mxp_eval_42"
+          },
+          "source": "execute_code"
+        }
+      ],
+      "guidanceFetched": false,
+      "foreignToolCalls": 0,
+      "foreignTools": [],
+      "searchCalls": 1,
+      "directSearchCalls": 0,
+      "nestedSearchCalls": 1,
+      "emptySearches": 0,
+      "unknownConnectorFilters": 0,
+      "searchReturned": 8,
+      "searchRelevantReturned": 1,
+      "searchIrrelevantCandidates": 7,
+      "searchPrecision": 0.125,
+      "retrievalTop1": true,
+      "retrievalRecall": 1,
+      "retrievalMrr": 1,
+      "retrievalNegativeClean": null,
+      "searchTraces": [
+        {
+          "source": "execute_code",
+          "query": "list organizations projects",
+          "connector": null,
+          "includeSchemas": "compact",
+          "matchMode": "all",
+          "returned": 8,
+          "total": 10,
+          "addresses": [
+            "analytics.List-Organizations",
+            "analytics.business_context_0",
+            "analytics.business_context_1",
+            "analytics.business_context_2",
+            "analytics.business_context_3",
+            "analytics.business_context_4",
+            "analytics.business_context_5",
+            "analytics.business_context_6"
+          ],
+          "relevantRanks": [
+            1
+          ],
+          "relevantReturned": 1,
+          "top1Relevant": true,
+          "precision": 0.125,
+          "irrelevantCandidates": 7,
+          "resultTokens": 604,
+          "minimalRelevantResultTokens": 116,
+          "estimatedNoiseTokens": 488
+        }
+      ],
+      "serverTraces": [
+        {
+          "schemaVersion": 1,
+          "sequence": 1,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "search_tools",
+          "arguments": {
+            "query": "list organizations projects",
+            "safety": "readOnly",
+            "includeSchemas": "compact"
+          },
+          "result": {
+            "tools": [
+              {
+                "name": "List-Organizations",
+                "address": "analytics.List-Organizations",
+                "description": "List organizations available to the caller",
+                "inputSchema": "{ projectId: string }",
+                "outputSchema": "{ projectId: string, organizations: { id: string, name: string }[] }",
+                "inputKeys": [
+                  "projectId"
+                ],
+                "requiredInputKeys": [
+                  "projectId"
+                ],
+                "outputKeys": [
+                  "projectId",
+                  "organizations"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_0",
+                "address": "analytics.business_context_0",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_1",
+                "address": "analytics.business_context_1",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_2",
+                "address": "analytics.business_context_2",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_3",
+                "address": "analytics.business_context_3",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_4",
+                "address": "analytics.business_context_4",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_5",
+                "address": "analytics.business_context_5",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              },
+              {
+                "name": "business_context_6",
+                "address": "analytics.business_context_6",
+                "description": "List organizations and projects configured for business analysis",
+                "inputSchema": "{ id: string }",
+                "outputSchema": "{}",
+                "inputKeys": [
+                  "id"
+                ],
+                "requiredInputKeys": [
+                  "id"
+                ],
+                "annotations": {
+                  "readOnlyHint": true,
+                  "idempotentHint": true
+                }
+              }
+            ],
+            "total": 10,
+            "offset": 0,
+            "limit": 8,
+            "hasMore": true,
+            "nextOffset": 8
+          },
+          "durationMs": 1.507541000000856,
+          "resultTokens": 604
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 2,
+          "kind": "execution",
+          "address": "analytics.List-Organizations",
+          "source": "execute_code",
+          "outcome": "success",
+          "durationMs": 0,
+          "attempts": 1
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 3,
+          "kind": "meta_tool",
+          "source": "execute_code",
+          "operation": "call_tool",
+          "arguments": {
+            "address": "analytics.List-Organizations",
+            "args": {
+              "projectId": "mxp_eval_42"
+            }
+          },
+          "result": {
+            "projectId": "mxp_eval_42",
+            "organizations": [
+              {
+                "id": "org_eval_7",
+                "name": "Evaluation Organization"
+              }
+            ]
+          },
+          "durationMs": 1.2265409999999974,
+          "resultTokens": 26
+        },
+        {
+          "schemaVersion": 1,
+          "sequence": 4,
+          "kind": "meta_tool",
+          "source": "outer",
+          "operation": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const { tools } = await connecta.search({\n    query: \"list organizations projects\",\n    safety: \"readOnly\",\n    includeSchemas: \"compact\"\n  });\n  const candidates = tools.filter(t =>\n    /list.*organizations|organizations.*list/i.test((t.address || \"\") + \" \" + (t.description || \"\")) &&\n    /project/i.test((t.address || \"\") + \" \" + (t.description || \"\") + \" \" + JSON.stringify(t.requiredInputKeys || []))\n  );\n  if (!candidates.length) throw new Error(\"No matching list-organizations-for-project tool found\");\n  const exact = candidates.find(t => Array.isArray(t.requiredInputKeys) && t.requiredInputKeys.some(k => /project/i.test(k)));\n  const tool = exact || candidates[0];\n  const keys = tool.requiredInputKeys || [];\n  const args = {};\n  for (const key of keys) {\n    if (/project/i.test(key)) args[key] = \"mxp_eval_42\";\n    else throw new Error(\"Unsupported required input: \" + key);\n  }\n  return await connecta.call(tool.address, args);\n}"
+          },
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "{\"result\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]}}"
+              }
+            ],
+            "structuredContent": {
+              "result": {
+                "projectId": "mxp_eval_42",
+                "organizations": [
+                  {
+                    "id": "org_eval_7",
+                    "name": "Evaluation Organization"
+                  }
+                ]
+              }
+            }
+          },
+          "durationMs": 88.16808400000082,
+          "resultTokens": 74
+        }
+      ],
+      "toolCalls": [
+        {
+          "server": "connecta",
+          "tool": "execute_code",
+          "arguments": {
+            "code": "async () => {\n  const { tools } = await connecta.search({\n    query: \"list organizations projects\",\n    safety: \"readOnly\",\n    includeSchemas: \"compact\"\n  });\n  const candidates = tools.filter(t =>\n    /list.*organizations|organizations.*list/i.test((t.address || \"\") + \" \" + (t.description || \"\")) &&\n    /project/i.test((t.address || \"\") + \" \" + (t.description || \"\") + \" \" + JSON.stringify(t.requiredInputKeys || []))\n  );\n  if (!candidates.length) throw new Error(\"No matching list-organizations-for-project tool found\");\n  const exact = candidates.find(t => Array.isArray(t.requiredInputKeys) && t.requiredInputKeys.some(k => /project/i.test(k)));\n  const tool = exact || candidates[0];\n  const keys = tool.requiredInputKeys || [];\n  const args = {};\n  for (const key of keys) {\n    if (/project/i.test(key)) args[key] = \"mxp_eval_42\";\n    else throw new Error(\"Unsupported required input: \" + key);\n  }\n  return await connecta.call(tool.address, args);\n}"
+          },
+          "status": "completed",
+          "error": null,
+          "durationMs": 90,
+          "resultBytes": 295,
+          "resultTokens": 74
+        }
+      ],
+      "nonMcpActions": [],
+      "hostActionCount": 0,
+      "finalText": "{\"result\":{\"projectId\":\"mxp_eval_42\",\"organizations\":[{\"id\":\"org_eval_7\",\"name\":\"Evaluation Organization\"}]}}",
+      "usage": {
+        "input_tokens": 44256,
+        "cached_input_tokens": 33024,
+        "cache_write_input_tokens": 0,
+        "output_tokens": 550,
+        "reasoning_output_tokens": 182
+      },
+      "nonCachedInputTokens": 11232,
+      "connectaMcpResultTokens": 74,
+      "foreignMcpResultTokens": 0,
+      "allMcpResultTokens": 74,
+      "searchResultTokens": 604,
+      "nestedSearchResultTokens": 604,
+      "estimatedLookupNoiseTokens": 488,
+      "connectaRoundTrips": 1
+    }
+  ]
+}

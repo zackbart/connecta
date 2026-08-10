@@ -32,7 +32,9 @@ The development report records exact expected top-1 accuracy, recall,
 precision, and the absence of the removed per-result query-coverage wire. Its
 server advertises only the synthetic development connector. The release gate
 remains the complete holdout `audit` command.
-The current combined report is
+The current removal report is
+[`results/issue-323-removal-evidence.md`](./results/issue-323-removal-evidence.md).
+The causal coverage-shape history remains in
 [`results/issue-322-evidence.md`](./results/issue-322-evidence.md).
 
 ### Reproduce the issue #322 trailing audits
@@ -98,7 +100,7 @@ Install the repository and audit dependencies once:
 
 ```sh
 npm ci
-npm ci --prefix eval/current-version
+(cd eval/current-version && npm ci)
 ```
 
 Then one command runs the complete audit and writes machine-readable JSON plus
