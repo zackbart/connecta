@@ -126,6 +126,8 @@ export interface RankedTool {
   tool: ToolDef;
   score: number;
   order: number;
+  exactName: boolean;
+  matchedTermCount: number;
 }
 
 const searchIndexes = new WeakMap<ToolDef[], SearchIndex>();
@@ -304,8 +306,8 @@ function scoreDocument(
   terms: string[],
   mode: LexicalMatchMode,
   statistics: LexicalCorpusStatistics,
-): number | null {
-  if (!phrase) return 0;
+): { score: number; matchedTermCount: number } | null {
+  if (!phrase) return { score: 0, matchedTermCount: 0 };
   const matchedTerms = terms.filter((term) =>
     statistics.nameMatches.get(term)?.has(doc.tool) ||
     statistics.descriptionMatches.get(term)?.has(doc.tool),
@@ -343,7 +345,12 @@ function scoreDocument(
       score += 1.5 * weight;
     }
   }
-  return score;
+  return { score, matchedTermCount: matchedTerms.length };
+}
+
+function queryContainsExactName(doc: SearchDocument, phrase: string): boolean {
+  if (!doc.name || !phrase) return false;
+  return (` ${phrase} `).includes(` ${doc.name} `);
 }
 
 /** Rank a connector's tools while caching its normalized plain-data index. */
@@ -360,8 +367,16 @@ export function rankTools(
   const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
   const ranked: RankedTool[] = [];
   documentsFor(tools).forEach((doc, order) => {
-    const score = scoreDocument(doc, phrase, terms, mode, statistics);
-    if (score !== null) ranked.push({ tool: doc.tool, score, order });
+    const scored = scoreDocument(doc, phrase, terms, mode, statistics);
+    if (scored !== null) {
+      ranked.push({
+        tool: doc.tool,
+        score: scored.score,
+        order,
+        exactName: queryContainsExactName(doc, phrase),
+        matchedTermCount: scored.matchedTermCount,
+      });
+    }
   });
   return ranked;
 }

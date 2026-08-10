@@ -647,6 +647,9 @@ export class CatalogService {
       tool: ToolDef;
       score: number;
       order: number;
+      exactName: boolean;
+      matchedTermCount: number;
+      complete: boolean;
     }> = [];
     let matchMode: "all" | "partial" = "all";
     const statistics = lexicalCorpusStatistics(
@@ -655,8 +658,10 @@ export class CatalogService {
       ),
       retrievalQuery,
     );
+    const hasQuery = query.trim().length > 0;
+    const queryTermCount = lexicalQueryTerms(retrievalQuery).length;
     const collectMatches = (mode: "all" | "partial") => {
-      matches.length = 0;
+      const collected: typeof matches = [];
       let orderBase = 0;
       searchableCatalogs.forEach((catalog, connectorIndex) => {
         const connector = connectors[connectorIndex];
@@ -670,24 +675,52 @@ export class CatalogService {
             mode,
             statistics,
           )) {
-            matches.push({
+            collected.push({
               connector,
               tool: ranked.tool,
               score: ranked.score,
               order: orderBase + ranked.order,
+              exactName: ranked.exactName,
+              matchedTermCount: ranked.matchedTermCount,
+              complete:
+                !hasQuery || ranked.matchedTermCount === queryTermCount,
             });
           }
         }
         orderBase +=
           catalog.status === "fulfilled" ? catalog.value.length : 1;
       });
+      return collected;
     };
-    collectMatches("all");
-    if (query.trim() && matches.length === 0) {
+    const rankedMatches = collectMatches(hasQuery ? "partial" : "all");
+    const completeMatchCount = rankedMatches.filter(
+      (match) => match.complete,
+    ).length;
+    matches.push(
+      ...rankedMatches.filter(
+        (match) =>
+          match.complete ||
+          completeMatchCount === 0 ||
+          match.exactName ||
+          match.matchedTermCount >= 2,
+      ),
+    );
+    if (hasQuery && completeMatchCount === 0) {
       matchMode = "partial";
-      collectMatches(matchMode);
     }
-    matches.sort((a, b) => b.score - a.score || a.order - b.order);
+    // Complete matches and exact tool-name phrases share the first rank tier.
+    // This lets a strong action/object name beat a weak description-only
+    // decoy. Other partial matches fill the remaining page only after every
+    // complete match, regardless of a rare-term score spike.
+    matches.sort((a, b) => {
+      const aFirstTier = a.complete || a.exactName;
+      const bFirstTier = b.complete || b.exactName;
+      return (
+        Number(bFirstTier) - Number(aFirstTier) ||
+        b.score - a.score ||
+        a.order - b.order
+      );
+    });
     const pageMatches = matches.slice(offset, offset + limit);
     const entries = pageMatches.map((match) => {
       const input = match.tool.inputSchema ?? { type: "object" };
