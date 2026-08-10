@@ -50,6 +50,24 @@ const MAX_QUERY_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
 
+/** Clip one echoed query term without splitting a non-BMP code point. */
+function boundedQueryTerm(term: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const characters: string[] = [];
+  for (const character of term) {
+    characters.push(character);
+    if (characters.length > MAX_QUERY_TERM_LENGTH) {
+      return {
+        text: `${characters.slice(0, MAX_QUERY_TERM_LENGTH - 1).join("")}…`,
+        truncated: true,
+      };
+    }
+  }
+  return { text: characters.join(""), truncated: false };
+}
+
 /**
  * The discovery route a routing failure should send a caller back through. Same
  * catalog logic serves both the top-level `search_tools` path and the
@@ -672,13 +690,10 @@ export class CatalogService {
     const analysisTerms = unsearchableQuery ? [trimmedQuery] : queryTerms;
     const analyzedTerms = analysisTerms.slice(0, MAX_QUERY_TERMS);
     const coverageTerms = queryTerms.slice(0, MAX_QUERY_TERMS);
-    const displayTerm = (term: string) =>
-      term.length <= MAX_QUERY_TERM_LENGTH
-        ? term
-        : `${term.slice(0, MAX_QUERY_TERM_LENGTH - 1)}…`;
+    const displayTerm = (term: string) => boundedQueryTerm(term).text;
     const queryMetadataTruncated =
       analysisTerms.length > analyzedTerms.length ||
-      analyzedTerms.some((term) => term.length > MAX_QUERY_TERM_LENGTH);
+      analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
     const collectMatches = (mode: "all" | "partial") => {
       const collected: typeof matches = [];
       let orderBase = 0;

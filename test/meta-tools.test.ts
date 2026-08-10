@@ -986,6 +986,23 @@ describe("search_tools", () => {
     ).toBeLessThan(1_600);
   });
 
+  it("clips non-BMP no-match analysis by Unicode code point", async () => {
+    const parsed = textOf(
+      await createMetaTools(
+        makeRegistry([calcConnector, remoteConnector]),
+        BASE,
+      ).searchTools({ query: "😀".repeat(80) }),
+    ) as SearchResult;
+    const unmatched = required(
+      required(parsed.queryAnalysis).unmatchedTerms[0],
+    );
+
+    expect(parsed.connectors).toEqual([]);
+    expect(unmatched).toBe(`${"😀".repeat(63)}…`);
+    expect([...unmatched]).toHaveLength(64);
+    expect(required(parsed.queryAnalysis).truncated).toBe(true);
+  });
+
   it("uses searchable ASCII terms from a mixed Unicode query", async () => {
     const parsed = textOf(
       await createMetaTools(

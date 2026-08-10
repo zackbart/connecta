@@ -731,7 +731,7 @@ describe("buildSandboxProviders", () => {
       unmatchedTerms: ["operands", "result", "metadata"],
     });
     const unicodeOnly = (await required(connecta.fns.search)({
-      query: "界".repeat(80),
+      query: "😀".repeat(80),
     })) as {
       tools: unknown[];
       queryAnalysis?: {
@@ -742,10 +742,13 @@ describe("buildSandboxProviders", () => {
     };
     expect(unicodeOnly.tools).toEqual([]);
     expect(unicodeOnly.queryAnalysis).toMatchObject({
-      unmatchedTerms: [`${"界".repeat(63)}…`],
+      unmatchedTerms: [`${"😀".repeat(63)}…`],
       truncated: true,
       guidance: expect.stringContaining("no searchable lexical terms"),
     });
+    expect([
+      ...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0]),
+    ]).toHaveLength(64);
 
     const mixedUnicode = (await required(connecta.fns.search)({
       query: `${"界".repeat(80)} add`,
