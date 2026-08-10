@@ -209,16 +209,19 @@ preserves the wider any-term fallback and marks the result
 
 A non-empty search page ends with one `queryCoverage` block after the complete
 tool rows and pagination metadata. Its ordered `terms` table appears once.
-`byAddress` uses each returned tool's canonical address as a key, with optional
-`name`, `description`, and `unmatched` arrays containing indexes into that
-table. `description` means description-only; a name match takes precedence
-when the same term occurs in both fields. Empty arrays are omitted. The table
+`entries` has one item per returned row, in the same order. Each item carries
+that row's canonical `address` plus optional `name`, `description`, and
+`unmatched` arrays containing indexes into the table. `description` means
+description-only; a name match takes precedence when the same term occurs in
+both fields. Empty arrays are omitted. Duplicate canonical addresses remain
+separate entries, because configured catalogs may return duplicate tool names.
+The table
 contains at most eight terms of at most 64 Unicode code points each, and
 `truncated: true` marks a clipped inventory. Coverage exposes no ranking score:
 use it to reject a broad description-only decoy, not to reconstruct the
 scorer. Every page repeats the same table, so indexes remain stable across
 pagination. A query with no ASCII lexical terms carries empty `terms` and
-`byAddress`; its `queryAnalysis` holds the bounded raw no-match detail.
+`entries`; its `queryAnalysis` holds the bounded raw no-match detail.
 Empty-query browse results omit the whole block. Tool rows are identical to the
 coverage-off shape and remain readable before the analysis.
 
@@ -226,10 +229,12 @@ Migration note: the unreleased main branch briefly repeated strings in each
 tool's `queryCoverage.nameTerms`, `descriptionTerms`, and `unmatchedTerms`.
 The first compact correction then put numeric coverage back on each tool and a
 `queryTerms` table before the rows. Both shapes are replaced. Read the trailing
-page-level `queryCoverage.terms` once, look up the canonical address under
-`byAddress`, and resolve its numeric `name`, `description`, and `unmatched`
-indexes. Neither prior shape is retained because cold-agent qualification found
-that per-row coverage made discovery materially less efficient.
+page-level `queryCoverage.terms` once, align each ordered `entries` item with
+its returned row, then resolve its numeric `name`,
+`description`, and `unmatched` indexes. Do not key these items by address:
+duplicate addresses are valid returned rows. Neither prior shape is retained
+because cold-agent qualification found that per-tool coverage made discovery
+materially less efficient.
 
 Only an empty or whitespace-only query browses. A non-empty query that
 normalizes to no ASCII lexical terms returns no tools instead of unrelated

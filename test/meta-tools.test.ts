@@ -6,7 +6,11 @@ import {
   compactSchema,
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
 } from "../src/catalog.js";
-import { CatalogService } from "../src/catalog-service.js";
+import {
+  CatalogService,
+  flatSearchResult,
+  groupedSearchResult,
+} from "../src/catalog-service.js";
 import {
   CredentialVault,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
@@ -889,7 +893,7 @@ interface SearchResult {
   };
   queryCoverage?: {
     terms: string[];
-    byAddress: Record<string, IndexedToolCoverage>;
+    entries: Array<IndexedToolCoverage & { address: string }>;
     truncated?: true;
   };
 }
@@ -905,16 +909,20 @@ function coverageWireTexts(result: SearchResult): {
   delete page.queryCoverage;
   const withToolCoverage = (
     render: (indexed: IndexedToolCoverage) => unknown,
-  ) => ({
-    ...page,
-    connectors: page.connectors.map((group) => ({
-      ...group,
-      tools: group.tools.map((tool) => ({
-        ...tool,
-        queryCoverage: render(required(coverage.byAddress[tool.address])),
+  ) => {
+    let index = 0;
+    return {
+      ...page,
+      connectors: page.connectors.map((group) => ({
+        ...group,
+        tools: group.tools.map((tool) => {
+          const entry = required(coverage.entries[index++]);
+          expect(entry.address).toBe(tool.address);
+          return { ...tool, queryCoverage: render(entry) };
+        }),
       })),
-    })),
-  });
+    };
+  };
   const expand = (indexes: number[] | undefined) =>
     (indexes ?? []).map((index) => required(coverage.terms[index]));
   return {
@@ -929,7 +937,11 @@ function coverageWireTexts(result: SearchResult): {
     firstCompact: JSON.stringify({
       queryTerms: coverage.terms,
       ...(coverage.truncated ? { queryTermsTruncated: true } : {}),
-      ...withToolCoverage((indexed) => indexed),
+      ...withToolCoverage((indexed) => ({
+        ...(indexed.name ? { name: indexed.name } : {}),
+        ...(indexed.description ? { description: indexed.description } : {}),
+        ...(indexed.unmatched ? { unmatched: indexed.unmatched } : {}),
+      })),
     }),
     off: JSON.stringify(page),
   };
@@ -1046,7 +1058,7 @@ describe("search_tools", () => {
     expect(unmatched).toBe(`${"😀".repeat(63)}…`);
     expect([...unmatched]).toHaveLength(64);
     expect(required(parsed.queryAnalysis).truncated).toBe(true);
-    expect(parsed.queryCoverage).toEqual({ terms: [], byAddress: {} });
+    expect(parsed.queryCoverage).toEqual({ terms: [], entries: [] });
   });
 
   it("uses searchable ASCII terms from a mixed Unicode query", async () => {
@@ -1063,7 +1075,7 @@ describe("search_tools", () => {
     expect(required(tools[0])).not.toHaveProperty("queryCoverage");
     expect(parsed.queryCoverage).toEqual({
       terms: ["add"],
-      byAddress: { "calc.add": { name: [0] } },
+      entries: [{ address: "calc.add", name: [0] }],
     });
     expect(parsed.queryAnalysis).toBeUndefined();
   });
@@ -1334,8 +1346,11 @@ describe("search_tools", () => {
       expect(coverage.terms).toHaveLength(8);
       expect(
         tools.every(
-          (tool) =>
-            coverage.byAddress[tool.address]?.description?.length === 8,
+          (tool, index) => {
+            const entry = coverage.entries[index];
+            return entry?.address === tool.address &&
+              entry.description?.length === 8;
+          },
         ),
       ).toBe(true);
       expect(tools.every((tool) => !("queryCoverage" in tool))).toBe(true);
@@ -1354,11 +1369,11 @@ describe("search_tools", () => {
         off: bytes(prior.off),
       }).toEqual(
         limit === undefined
-          ? { verbose: 7_146, firstCompact: 2_996, trailing: 3_101, off: 2_002 }
+          ? { verbose: 7_146, firstCompact: 2_996, trailing: 3_179, off: 2_002 }
           : {
               verbose: 88_002,
               firstCompact: 29_296,
-              trailing: 30_413,
+              trailing: 31_411,
               off: 23_702,
             },
       );
@@ -1366,6 +1381,73 @@ describe("search_tools", () => {
         limit === undefined ? 10_000 : 100_000,
       );
       expect(responseBytes).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
+    }
+  });
+
+  it("keeps duplicate-address coverage aligned by row across envelopes and pages", async () => {
+    const connector: Connector = {
+      id: "duplicates",
+      staticTools: [
+        { name: "lookup", description: "Lookup alpha records" },
+        { name: "lookup", description: "Lookup beta records" },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const catalog = new CatalogService(makeRegistry([connector]), BASE);
+    const query = "lookup alpha beta";
+    const expected = {
+      terms: ["lookup", "alpha", "beta"],
+      entries: [
+        {
+          address: "duplicates.lookup",
+          name: [0],
+          description: [1],
+          unmatched: [2],
+        },
+        {
+          address: "duplicates.lookup",
+          name: [0],
+          description: [2],
+          unmatched: [1],
+        },
+      ],
+    };
+    const fullPage = await catalog.search({ query, limit: 2 });
+    const grouped = groupedSearchResult(fullPage);
+    const flat = flatSearchResult(fullPage);
+
+    expect(grouped.connectors.flatMap((group) => group.tools)
+      .map((tool) => tool.address)).toEqual([
+      "duplicates.lookup",
+      "duplicates.lookup",
+    ]);
+    expect(flat.tools.map((tool) => tool.address)).toEqual([
+      "duplicates.lookup",
+      "duplicates.lookup",
+    ]);
+    expect(grouped.queryCoverage).toEqual(expected);
+    expect(flat.queryCoverage).toEqual(expected);
+
+    for (const offset of [0, 1]) {
+      const page = await catalog.search({ query, limit: 1, offset });
+      const groupedPage = groupedSearchResult(page);
+      const flatPage = flatSearchResult(page);
+      expect(groupedPage.queryCoverage).toEqual({
+        terms: expected.terms,
+        entries: [required(expected.entries[offset])],
+      });
+      expect(flatPage.queryCoverage).toEqual(groupedPage.queryCoverage);
+      expect(groupedPage.connectors[0]?.tools[0]?.address).toBe(
+        required(expected.entries[offset]).address,
+      );
+      expect(flatPage.tools[0]?.address).toBe(
+        required(expected.entries[offset]).address,
+      );
     }
   });
 
@@ -1853,15 +1935,19 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(first.matchMode).toBeUndefined();
-    expect(first.queryCoverage).toMatchObject({
-      terms: ["list", "organizations", "projects"],
-      byAddress: {
-        "analytics.List-Organizations": {
-          name: [0, 1],
-          unmatched: [2],
-        },
-        "analytics.business_context_0": { description: [0, 1, 2] },
-      },
+    expect(required(first.queryCoverage).terms).toEqual([
+      "list",
+      "organizations",
+      "projects",
+    ]);
+    expect(required(first.queryCoverage).entries[0]).toEqual({
+      address: "analytics.List-Organizations",
+      name: [0, 1],
+      unmatched: [2],
+    });
+    expect(required(first.queryCoverage).entries[1]).toEqual({
+      address: "analytics.business_context_0",
+      description: [0, 1, 2],
     });
     const intended = required(required(first.connectors[0]).tools[0]);
     const decoy = required(required(first.connectors[0]).tools[1]);
@@ -1885,10 +1971,11 @@ describe("search_tools", () => {
     expect(required(second.queryCoverage).terms).toEqual(
       required(first.queryCoverage).terms,
     );
-    expect(Object.keys(required(second.queryCoverage).byAddress)).toEqual([
-      "analytics.business_context_7",
-      "analytics.List-All-Organizations",
-    ]);
+    expect(required(second.queryCoverage).entries.map((entry) => entry.address))
+      .toEqual([
+        "analytics.business_context_7",
+        "analytics.List-All-Organizations",
+      ]);
 
     const rawPhrase = textOf(
       await mt.searchTools({
@@ -1950,14 +2037,14 @@ describe("search_tools", () => {
     const firstTools = first.connectors.flatMap((group) => group.tools);
     expect(firstTools.map((t) => t.name))
       .toEqual(["get_experiment", "get_results"]);
-    expect(required(first.queryCoverage).byAddress["experiments.get_experiment"])
-      .toMatchObject({
+    expect(required(first.queryCoverage).entries[0]).toMatchObject({
+      address: "experiments.get_experiment",
       name: [0, 1],
       description: [2, 3, 4],
       unmatched: [5, 6],
     });
-    expect(required(first.queryCoverage).byAddress["experiments.get_results"])
-      .toMatchObject({
+    expect(required(first.queryCoverage).entries[1]).toMatchObject({
+      address: "experiments.get_results",
       name: [0, 5],
       description: [1],
       unmatched: [2, 3, 4, 6],

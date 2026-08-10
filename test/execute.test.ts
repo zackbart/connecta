@@ -682,7 +682,7 @@ describe("buildSandboxProviders", () => {
     })) as {
       queryCoverage: {
         terms: string[];
-        byAddress: Record<string, { name?: number[] }>;
+        entries: Array<{ address: string; name?: number[] }>;
       };
       tools: Array<{
         address: string;
@@ -691,7 +691,7 @@ describe("buildSandboxProviders", () => {
     };
     expect(search.queryCoverage).toEqual({
       terms: ["add"],
-      byAddress: { "calc.add": { name: [0] } },
+      entries: [{ address: "calc.add", name: [0] }],
     });
     expect(search.tools[0]).toMatchObject({
       address: "calc.add",
@@ -711,7 +711,8 @@ describe("buildSandboxProviders", () => {
       };
       queryCoverage: {
         terms: string[];
-        byAddress: Record<string, {
+        entries: Array<{
+          address: string;
           name?: number[];
           description?: number[];
           unmatched?: number[];
@@ -734,7 +735,8 @@ describe("buildSandboxProviders", () => {
       "result",
       "metadata",
     ]);
-    expect(partial.queryCoverage.byAddress["calc.add"]).toMatchObject({
+    expect(partial.queryCoverage.entries[0]).toMatchObject({
+      address: "calc.add",
       name: [0],
       description: [1],
       unmatched: [2, 3, 4],
@@ -745,7 +747,7 @@ describe("buildSandboxProviders", () => {
       tools: unknown[];
       queryCoverage?: {
         terms: string[];
-        byAddress: Record<string, unknown>;
+        entries: unknown[];
       };
       queryAnalysis?: {
         unmatchedTerms: string[];
@@ -759,7 +761,7 @@ describe("buildSandboxProviders", () => {
       truncated: true,
       guidance: expect.stringContaining("no searchable lexical terms"),
     });
-    expect(unicodeOnly.queryCoverage).toEqual({ terms: [], byAddress: {} });
+    expect(unicodeOnly.queryCoverage).toEqual({ terms: [], entries: [] });
     expect([
       ...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0]),
     ]).toHaveLength(64);
@@ -769,7 +771,7 @@ describe("buildSandboxProviders", () => {
     })) as {
       queryCoverage: {
         terms: string[];
-        byAddress: Record<string, { name?: number[] }>;
+        entries: Array<{ address: string; name?: number[] }>;
       };
       tools: Array<{
         address: string;
@@ -782,7 +784,7 @@ describe("buildSandboxProviders", () => {
     expect(required(mixedUnicode.tools[0])).not.toHaveProperty("queryCoverage");
     expect(mixedUnicode.queryCoverage).toEqual({
       terms: ["add"],
-      byAddress: { "calc.add": { name: [0] } },
+      entries: [{ address: "calc.add", name: [0] }],
     });
     // Key metadata accompanies schemas; a search that asked for neither pays
     // for neither.

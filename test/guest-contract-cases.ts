@@ -574,9 +574,9 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(result.rowKeys).not.toContain("queryCoverage");
       expect(result.queryCoverage).toEqual({
         terms: ["read", "value"],
-        byAddress: {
-          "reader.read": { name: [0], description: [1] },
-        },
+        entries: [
+          { address: "reader.read", name: [0], description: [1] },
+        ],
       });
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);

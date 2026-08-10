@@ -817,7 +817,7 @@ describe("server /mcp end-to-end", () => {
       hasMore: false,
       queryCoverage: {
         terms: ["add"],
-        byAddress: { "calc.add": { name: [0] } },
+        entries: [{ address: "calc.add", name: [0] }],
       },
     });
     expect(body.result.structuredContent).toEqual(payload);

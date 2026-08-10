@@ -299,6 +299,7 @@ interface CatalogFailureDetail {
 }
 
 interface ToolQueryCoverage {
+  address: string;
   name?: number[];
   description?: number[];
   unmatched?: number[];
@@ -306,7 +307,7 @@ interface ToolQueryCoverage {
 
 interface QueryCoverage {
   terms: string[];
-  byAddress: Record<string, ToolQueryCoverage>;
+  entries: ToolQueryCoverage[];
   truncated?: true;
 }
 
@@ -855,7 +856,7 @@ export class CatalogService {
       offset + entries.length < matches.length
         ? offset + entries.length
         : undefined;
-    const coverageByAddress: Record<string, ToolQueryCoverage> = {};
+    const coverageEntries: ToolQueryCoverage[] = [];
     for (const match of pageMatches) {
       const name: number[] = [];
       const descriptionOnly: number[] = [];
@@ -871,13 +872,14 @@ export class CatalogService {
           unmatched.push(index);
         }
       });
-      coverageByAddress[`${match.connector.id}.${match.tool.name}`] = {
+      coverageEntries.push({
+        address: `${match.connector.id}.${match.tool.name}`,
         ...(name.length > 0 ? { name } : {}),
         ...(descriptionOnly.length > 0
           ? { description: descriptionOnly }
           : {}),
         ...(unmatched.length > 0 ? { unmatched } : {}),
-      };
+      });
     }
     const pageTools = new Set(pageMatches.map((match) => match.tool));
     const matchingTools = (term: string) =>
@@ -1045,7 +1047,7 @@ export class CatalogService {
         ? {
             queryCoverage: {
               terms: coverageTerms.map(displayTerm),
-              byAddress: coverageByAddress,
+              entries: coverageEntries,
               ...(queryCoverageTruncated
                 ? { truncated: true as const }
                 : {}),
