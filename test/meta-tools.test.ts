@@ -1363,7 +1363,9 @@ describe("search_tools", () => {
     expect(textOf(result)).toMatchObject({
       error: {
         code: "result_too_large",
-        message: expect.stringContaining("UTF-8 bytes"),
+        message: expect.stringContaining(
+          `${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling`,
+        ),
         retryable: false,
       },
     });
@@ -2082,6 +2084,14 @@ describe("search_tools", () => {
           annotations: { readOnlyHint: true },
           handler: () => ({ temperature: 20 }),
         },
+        {
+          name: "empty_output",
+          description: "Read an object with no declared output properties",
+          inputSchema: { type: "object", properties: {} },
+          outputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
+          handler: () => ({}),
+        },
       ],
     });
     const mcpConnector: Connector = {
@@ -2133,6 +2143,11 @@ describe("search_tools", () => {
     expect(required(required(byId.weather).tools[0]).annotations).toEqual({
       readOnlyHint: true,
     });
+    const emptyOutput = required(required(byId.weather).tools[1]);
+    expect(emptyOutput.inputKeys).toEqual([]);
+    expect(emptyOutput.requiredInputKeys).toEqual([]);
+    expect(emptyOutput.outputSchema).toBe("{}");
+    expect(emptyOutput).not.toHaveProperty("outputKeys");
     expect(required(required(byId.crm).tools[0]).inputSchema).toBe("{ id: string }");
     expect(required(required(byId.crm).tools[0]).annotations).toMatchObject({
       readOnlyHint: true,

@@ -46,6 +46,18 @@ read-only calls and returns typed outcomes, and an unfiltered
 `connecta.search({})` browses every catalog a program can reach. Live connector
 probing is an operator concern: the operator pages and `/health` own it.
 
+The three discovery routes use deliberately different envelopes. These are
+their smallest successful one-tool shapes:
+
+```js
+// Top-level search_tools
+{ connectors: [{ id: "ci", tools: [{ name: "get_run", address: "ci.get_run" }] }], total: 1, offset: 0, limit: 8, hasMore: false }
+
+// Inside execute_code
+{ tools: [{ name: "get_run", address: "ci.get_run" }], total: 1, offset: 0, limit: 8, hasMore: false } // connecta.search
+{ tools: [{ name: "get_run", address: "ci.get_run", inputSchema: "{ runId: integer }" }] } // connecta.describe
+```
+
 ## Discovery context
 
 Start an unknown-address lookup with two to four distinctive action/object
@@ -60,8 +72,10 @@ or setting it to `"all"`, preserves the complete configured catalog. This is
 only a discovery filter: it neither grants authority nor changes invocation admission.
 `includeSchemas: "compact"` adds each match's input and any declared output
 shape. Bounded plain-object schemas also expose `inputKeys`,
-`requiredInputKeys`, and `outputKeys`; a truncated shape omits its corresponding
-list rather than repeating a large partial inventory. Matches carry declared
+`requiredInputKeys`, and `outputKeys`; a zero-input object keeps
+`requiredInputKeys: []`, while an output object with no declared properties
+omits `outputKeys`. A truncated shape omits its corresponding list rather than
+repeating a large partial inventory. Matches carry declared
 behavior annotations. Lexical rank is only one signal: select a candidate whose
 required inputs are available, whose schema is complete enough for the call,
 and whose safety and declared outputs fit the work. A reducer uses `outputKeys`

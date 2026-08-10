@@ -86,10 +86,10 @@ export interface ApiOptions {
  * conversion if you prefer zod). call_tool JSON-wraps the handler's return.
  *
  * Arguments are validated against `inputSchema` before the handler runs
- * (disable with `validateArgs: false`). This is deliberately asymmetric with
- * remote MCP connectors, which stay pass-through: the downstream server is
- * authoritative for its own schemas, and re-validating with our JSON Schema
- * draft/format semantics could reject calls the downstream would accept.
+ * (disable with `validateArgs: false`). Remote MCP inputs are also validated,
+ * but in the shared invocation path against the request-local downstream
+ * catalog. These API-only controls stay here because hand-written handlers may
+ * deliberately accept loose coercion or choose fail-closed schema handling.
  */
 export function api(id: string, opts: ApiOptions): Connector {
   const defs: ToolDef[] = opts.tools.map((t) => ({
