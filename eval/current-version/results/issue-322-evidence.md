@@ -1,10 +1,9 @@
 # Issue #322 discovery evidence
 
-The current release audit passes. The mixed all/partial development case now
-has complete retrieval. The final trailing-coverage candidate preserves
-coverage-off execution correctness, improves clean routing, and avoids the
-first compact candidate's material agent-efficiency regression. The stated
-gate passes for exact product commit `bbfb522`; it is qualified to merge.
+The deterministic release audit passes, and the mixed all/partial development
+case has complete retrieval. The preregistered 30-run qualification does not
+show a statistically credible clean-route improvement from trailing coverage.
+The exact product commit `bbfb522` is not qualified to merge or release.
 
 ## Provenance
 
@@ -249,7 +248,7 @@ does not recover a route or execution gain over coverage-off and materially
 increases cost. The release criterion fails. Do not merge #334; redesign the
 signal again or remove it, then rerun the exact three-arm evidence.
 
-## Final trailing-coverage qualification
+## Superseded 10-run trailing-coverage canary
 
 The replacement candidate moves coverage after the complete result rows and
 keeps one ordered page-level table. This arm combines exact product commit
@@ -333,13 +332,71 @@ cold-agent routing benefit only in trailing position; it is not a wire-size
 win. Development top-1 and recall remain 100%; trailing coverage costs 662 of
 2,182 response tokens, or 30.3%.
 
-This is a 10-run canary, not a significance claim. The exact gate nevertheless
-passes: 7/10 combined correctness is preserved, clean routing exceeds the 4/10
-floor, the first compact candidate's broad efficiency regression is gone, and
-the combined product remains materially better than d58 on correctness,
-round trips, whole-agent input, non-cached input, and latency. Product commit
-`bbfb522` is qualified to merge. Rerun the committed evidence after merge
-before cutting the release; do not substitute the rejected `afbaa32` arm.
+This 10-run canary suggested a route benefit but could not establish one. The
+preregistered 30-run qualification below supersedes its merge verdict. Do not
+use the 10-run result as release evidence.
+
+## Preregistered 30-run off-vs-trailing qualification
+
+The machine-readable plan was committed before sampling at
+`6b84d5f57749323b675bab7d0c9e2cd705fd59e1`. The same OID was pushed to
+`refs/heads/eval/322-current-discovery-evidence` during the first batch. No
+gate, scorer, run, or arm changed after sampling started. The committed
+[`remote provenance`](./issue-322-preregistered-provenance.json) records the
+remote OID and hashes for the plan, exact coverage-off patch, comparison, and
+both raw arms.
+
+The plan used 30 fresh sessions per arm in six five-run batches. The fixed
+schedule interleaved both arms. Both arms used `gpt-5.6-sol`, Codex CLI
+0.147.0, Node 26.5.1, tokenizer `o200k_base`, concurrency 5, the same prompt,
+and byte-identical harness, corpus, sandbox, isolation, and scoring. Both arms
+recorded zero host actions and zero foreign MCP calls.
+
+The raw results are
+[`issue-322-preregistered-off.json`](./issue-322-preregistered-off.json) and
+[`issue-322-preregistered-trailing.json`](./issue-322-preregistered-trailing.json).
+The generated
+[`machine comparison`](./issue-322-preregistered-comparison.json) and
+[`Markdown comparison`](./issue-322-preregistered-comparison.md) apply the
+preregistered gates without adjustment.
+
+| Correctness metric | Coverage off | Trailing | Movement |
+| --- | ---: | ---: | ---: |
+| Exact address | 18/30 | 24/30 | +20.0 pp |
+| Exact arguments | 18/30 | 24/30 | +20.0 pp |
+| Final answer | 20/30 | 25/30 | +16.7 pp |
+| Address + arguments + final | 18/30 | 24/30 | +20.0 pp |
+| Clean intended route | 9/30 | 13/30 | +13.3 pp |
+| Clean-route Fisher two-sided p | — | — | 0.421975 |
+| First-search top-1 | 30/30 | 30/30 | 0 pp |
+| First-search complete recall | 30/30 | 30/30 | 0 pp |
+
+| Efficiency metric | Off mean | Trailing mean | Ratio | Off median | Trailing median | Ratio |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Whole-agent input | 68,834.1 | 64,452.1 | 0.936 | 62,780.0 | 63,452.0 | 1.011 |
+| Non-cached input | 19,298.1 | 18,926.7 | 0.981 | 18,950.5 | 18,813.0 | 0.993 |
+| Connecta round trips | 2.3 | 1.9 | 0.826 | 2.0 | 2.0 | 1.000 |
+| Wall latency, ms | 32,276.7 | 25,495.9 | 0.790 | 27,000.1 | 20,895.7 | 0.774 |
+| Search-result tokens | 1,627.8 | 1,448.2 | 0.890 | 1,301.0 | 1,631.0 | 1.254 |
+| Connecta MCP tokens | 663.6 | 870.8 | 1.312 | 236.5 | 522.0 | 2.207 |
+
+Combined correctness passes noninferiority with a +20-point movement. All
+preregistered mean, median, latency, and isolation gates pass. Search tokens
+fall on the mean but rise on the median. Connecta MCP tokens rise on both.
+Those secondary measures cannot offset a failed primary gate.
+
+The clean-route gate fails both required parts. The observed improvement is
+13.3 points, below the 20-point minimum, and Fisher p=0.421975, above 0.05.
+The prior 4/10 to 7/10 route movement did not reproduce at sufficient scale.
+This candidate does not prove that its 29.9% deterministic coverage-token cost
+causes the intended route benefit.
+
+All tested `queryCoverage` shapes are blocked: verbose coverage lost its
+coverage-off ablation, the first compact shape regressed efficiency, and the
+trailing shape failed the preregistered route gate. **Do not merge PR #334 or
+release any tested coverage shape.** Remove serialized `queryCoverage` while
+preserving the ranking improvement. Qualify that removal before release. A new
+shape requires a new preregistered qualification.
 
 ## Commands
 
@@ -349,8 +406,9 @@ npm --prefix eval/current-version run audit -- \
   --output results/issue-322-current-audit.json \
   --report results/issue-322-current-audit.md
 CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol \
-  npm --prefix eval/current-version run perf:lookup -- \
-  --case mixed-decoy-organizations --repetitions 10 --concurrency 5
+  node eval/current-version/issue-322-qualification-runner.mjs \
+  --off-worktree /tmp/connecta-322-off \
+  --trailing-worktree /tmp/connecta-322-trailing
 npm --prefix eval/current-version run check
 npm run check
 ```

@@ -82,10 +82,10 @@ const planText = await readFile(planPath, "utf8");
 const plan = JSON.parse(planText);
 const offWorktree = resolve(option("--off-worktree"));
 const trailingWorktree = resolve(option("--trailing-worktree"));
-const outputDirectory = resolve(
-  here,
-  option("--output-dir", "results"),
-);
+const outputOption = option("--output-dir");
+const outputDirectory = outputOption
+  ? resolve(outputOption)
+  : resolve(here, "results");
 const batchDirectory = resolve(outputDirectory, ".issue-322-batches");
 const model = process.env.CONNECTA_EVAL_AGENT_MODEL;
 const nodeVersion = process.versions.node;

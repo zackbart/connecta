@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "verifiedAt": "2026-08-10T05:12:49Z",
+  "remote": "https://github.com/zackbart/connecta.git",
+  "ref": "refs/heads/eval/322-current-discovery-evidence",
+  "oid": "6b84d5f57749323b675bab7d0c9e2cd705fd59e1",
+  "preregistrationPlanSha256": "b93461101fe41112d86f1a6480dbcf1327b78511d30ab246d2d921cc790c8b86",
+  "coverageOffPatchSha256": "9db0c8011ea3743a0d605aa86fa0842c769125f89006f05e768e6080a522226f",
+  "comparisonSha256": "39d68057f58af0fd87971595427fdf2a19af1cde272158af2a6c9085a81c5637",
+  "offRawSha256": "e87db1521162d70035b2098b4aa77af6a1e5576862b84a22d72cadeed1d0c0b5",
+  "trailingRawSha256": "952f229ecf928c0d4b1092296b6442b5987f77dd27aaa8b1f7bcd5e129dc68a7"
+}
