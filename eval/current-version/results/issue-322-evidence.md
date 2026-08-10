@@ -1,9 +1,10 @@
 # Issue #322 discovery evidence
 
 The deterministic release audit passes, and the mixed all/partial development
-case has complete retrieval. The preregistered 30-run qualification does not
-show a statistically credible clean-route improvement from trailing coverage.
-The exact product commit `bbfb522` is not qualified to merge or release.
+case has complete retrieval. The 30-run qualification against locally
+precommitted gates does not show a statistically credible clean-route
+improvement from trailing coverage. The exact product commit `bbfb522` is not
+qualified to merge or release.
 
 ## Provenance
 
@@ -333,18 +334,22 @@ win. Development top-1 and recall remain 100%; trailing coverage costs 662 of
 2,182 response tokens, or 30.3%.
 
 This 10-run canary suggested a route benefit but could not establish one. The
-preregistered 30-run qualification below supersedes its merge verdict. Do not
-use the 10-run result as release evidence.
+30-run qualification below supersedes its merge verdict. Do not use the
+10-run result as release evidence.
 
-## Preregistered 30-run off-vs-trailing qualification
+## 30-run off-vs-trailing qualification
 
-The machine-readable plan was committed before sampling at
-`6b84d5f57749323b675bab7d0c9e2cd705fd59e1`. The same OID was pushed to
-`refs/heads/eval/322-current-discovery-evidence` during the first batch. No
-gate, scorer, run, or arm changed after sampling started. The committed
-[`remote provenance`](./issue-322-preregistered-provenance.json) records the
-remote OID and hashes for the plan, exact coverage-off patch, comparison, and
-both raw arms.
+The machine-readable plan was committed locally at 05:01:23Z before sampling.
+Trailing batch 1 ended at 05:02:39Z. GitHub recorded the commit's PushEvent at
+05:03:14Z. Off batch 1 ended at 05:03:18Z. This is local precommitment, not
+remote preregistration proof. The delayed push weakens the formal claim, but
+the conservative BLOCK verdict is unchanged. No gate, scorer, run, or arm
+changed after sampling started.
+
+The commit is `6b84d5f57749323b675bab7d0c9e2cd705fd59e1`. The committed
+[`timing provenance`](./issue-322-preregistered-provenance.json) records the
+GitHub PushEvent, remote OID, and hashes for the plan, exact coverage-off patch,
+comparison, and both raw arms.
 
 The plan used 30 fresh sessions per arm in six five-run batches. The fixed
 schedule interleaved both arms. Both arms used `gpt-5.6-sol`, Codex CLI
@@ -358,7 +363,7 @@ The raw results are
 The generated
 [`machine comparison`](./issue-322-preregistered-comparison.json) and
 [`Markdown comparison`](./issue-322-preregistered-comparison.md) apply the
-preregistered gates without adjustment.
+locally precommitted gates without adjustment.
 
 | Correctness metric | Coverage off | Trailing | Movement |
 | --- | ---: | ---: | ---: |
@@ -381,7 +386,7 @@ preregistered gates without adjustment.
 | Connecta MCP tokens | 663.6 | 870.8 | 1.312 | 236.5 | 522.0 | 2.207 |
 
 Combined correctness passes noninferiority with a +20-point movement. All
-preregistered mean, median, latency, and isolation gates pass. Search tokens
+precommitted mean, median, latency, and isolation gates pass. Search tokens
 fall on the mean but rise on the median. Connecta MCP tokens rise on both.
 Those secondary measures cannot offset a failed primary gate.
 
@@ -393,10 +398,10 @@ causes the intended route benefit.
 
 All tested `queryCoverage` shapes are blocked: verbose coverage lost its
 coverage-off ablation, the first compact shape regressed efficiency, and the
-trailing shape failed the preregistered route gate. **Do not merge PR #334 or
+trailing shape failed the precommitted route gate. **Do not merge PR #334 or
 release any tested coverage shape.** Remove serialized `queryCoverage` while
 preserving the ranking improvement. Qualify that removal before release. A new
-shape requires a new preregistered qualification.
+shape requires a new remotely durable preregistered qualification.
 
 ## Commands
 

@@ -47,8 +47,8 @@ git worktree add --detach /tmp/connecta-322-trailing \
   bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
 git -C /tmp/connecta-322-trailing restore --source PREREG_COMMIT \
   --staged --worktree eval/current-version
-npm ci --prefix /tmp/connecta-322-trailing
-npm ci --prefix /tmp/connecta-322-trailing/eval/current-version
+(cd /tmp/connecta-322-trailing && npm ci)
+(cd /tmp/connecta-322-trailing/eval/current-version && npm ci)
 npm --prefix /tmp/connecta-322-trailing/eval/current-version \
   run audit:development -- --source-commit \
   bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c
@@ -62,10 +62,19 @@ SHA-256 is recorded in the preregistration plan. The qualification runner
 rejects mismatched commits, patches, harnesses, corpora, sandboxes, runtimes,
 models, or CLI versions before it starts a sample.
 
+For the committed #322 result, the plan commit existed locally at
+05:01:23Z before sampling. GitHub recorded its PushEvent at 05:03:14Z, after
+the first trailing batch ended at 05:02:39Z and four seconds before the first
+off batch ended at 05:03:18Z. This is local precommitment, not remote
+preregistration proof. The delayed push weakens the formal claim, but it does
+not weaken the conservative BLOCK verdict produced by the fixed gates.
+
 ```sh
 git worktree add --detach /tmp/connecta-322-off PREREG_COMMIT
 git -C /tmp/connecta-322-off apply \
   eval/current-version/patches/issue-322-coverage-off.patch
+(cd /tmp/connecta-322-off && npm ci)
+(cd /tmp/connecta-322-off/eval/current-version && npm ci)
 CONNECTA_EVAL_AGENT_MODEL=gpt-5.6-sol node \
   eval/current-version/issue-322-qualification-runner.mjs \
   --off-worktree /tmp/connecta-322-off \

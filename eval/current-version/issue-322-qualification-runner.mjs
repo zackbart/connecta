@@ -466,11 +466,13 @@ await writeFile(
 );
 
 const percentage = (value) => `${(value * 100).toFixed(1)}%`;
-const markdown = `# Issue #322 preregistered off-vs-trailing qualification
+const markdown = `# Issue #322 off-vs-trailing qualification
 
 Plan SHA-256: \`${comparison.preregistration.planSha256}\`
 
 Preregistration commit: \`${comparison.preregistration.commit}\`
+
+Confirm remote timing before describing this commit as formal preregistration.
 
 Result: **${comparison.passed ? "PASS" : "FAIL"}**
 
@@ -497,7 +499,7 @@ ${["wholeInput", "nonCachedInput", "roundTrips", "latency", "searchTokens", "con
 }).join("\n")}
 
 Search and Connecta MCP tokens are reported but do not offset a failed primary
-gate. Every arm used 30 fresh sessions in the preregistered six-by-five batch
+gate. Every arm used 30 fresh sessions in the predeclared six-by-five batch
 schedule with concurrency five. Host actions and foreign calls were zero.
 `;
 await writeFile(

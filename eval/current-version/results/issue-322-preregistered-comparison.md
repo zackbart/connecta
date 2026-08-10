@@ -1,8 +1,14 @@
-# Issue #322 preregistered off-vs-trailing qualification
+# Issue #322 off-vs-trailing qualification
 
 Plan SHA-256: `b93461101fe41112d86f1a6480dbcf1327b78511d30ab246d2d921cc790c8b86`
 
 Preregistration commit: `6b84d5f57749323b675bab7d0c9e2cd705fd59e1`
+
+This is local precommitment, not remote preregistration proof. The commit was
+created locally at 05:01:23Z. Trailing batch 1 ended at 05:02:39Z, GitHub
+recorded the PushEvent at 05:03:14Z, and off batch 1 ended at 05:03:18Z. The
+delayed push weakens the formal claim but does not change this conservative
+FAIL result.
 
 Result: **FAIL**
 
@@ -35,5 +41,5 @@ Result: **FAIL**
 | connectaTokens | 663.6 | 870.8 | 1.312 | 236.5 | 522 | 2.207 |
 
 Search and Connecta MCP tokens are reported but do not offset a failed primary
-gate. Every arm used 30 fresh sessions in the preregistered six-by-five batch
+gate. Every arm used 30 fresh sessions in the predeclared six-by-five batch
 schedule with concurrency five. Host actions and foreign calls were zero.
