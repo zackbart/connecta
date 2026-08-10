@@ -229,11 +229,6 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
-    queryCoverage?: {
-      name?: number[];
-      description?: number[];
-      unmatched?: number[];
-    };
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -303,6 +298,18 @@ interface CatalogFailureDetail {
   retryAfterMs?: number;
 }
 
+interface ToolQueryCoverage {
+  name?: number[];
+  description?: number[];
+  unmatched?: number[];
+}
+
+interface QueryCoverage {
+  terms: string[];
+  byAddress: Record<string, ToolQueryCoverage>;
+  truncated?: true;
+}
+
 export interface CatalogSearchPage {
   entries: CatalogSearchEntry[];
   total: number;
@@ -311,9 +318,6 @@ export interface CatalogSearchPage {
   hasMore: boolean;
   nextOffset?: number;
   matchMode?: "partial";
-  /** Bounded ordered vocabulary referenced by each tool's queryCoverage. */
-  queryTerms?: string[];
-  queryTermsTruncated?: true;
   queryAnalysis?: {
     representedTerms: string[];
     otherResultTerms: string[];
@@ -330,6 +334,8 @@ export interface CatalogSearchPage {
     guideRequiredReasons?: GuideRequiredReason[];
     guidance?: string;
   };
+  /** Trailing bounded analysis keyed by canonical addresses from this page. */
+  queryCoverage?: QueryCoverage;
 }
 
 export interface CatalogDescription {
@@ -698,6 +704,9 @@ export class CatalogService {
     const queryMetadataTruncated =
       analysisTerms.length > analyzedTerms.length ||
       analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
+    const queryCoverageTruncated =
+      queryTerms.length > coverageTerms.length ||
+      coverageTerms.some((term) => boundedQueryTerm(term).truncated);
     const collectMatches = (mode: "all" | "partial") => {
       const collected: typeof matches = [];
       let orderBase = 0;
@@ -789,20 +798,6 @@ export class CatalogService {
         renderedInput?.truncated === true || renderedOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(match.connector);
-      const name: number[] = [];
-      const descriptionOnly: number[] = [];
-      const unmatched: number[] = [];
-      coverageTerms.forEach((term, index) => {
-        if (statistics.nameMatches.get(term)?.has(match.tool)) {
-          name.push(index);
-        } else if (
-          statistics.descriptionMatches.get(term)?.has(match.tool)
-        ) {
-          descriptionOnly.push(index);
-        } else {
-          unmatched.push(index);
-        }
-      });
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -847,17 +842,6 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
-          ...(queryTerms.length > 0
-            ? {
-                queryCoverage: {
-                  ...(name.length > 0 ? { name } : {}),
-                  ...(descriptionOnly.length > 0
-                    ? { description: descriptionOnly }
-                    : {}),
-                  ...(unmatched.length > 0 ? { unmatched } : {}),
-                },
-              }
-            : {}),
           ...(requiredReasons
             ? {
                 guideRequired: true as const,
@@ -871,6 +855,30 @@ export class CatalogService {
       offset + entries.length < matches.length
         ? offset + entries.length
         : undefined;
+    const coverageByAddress: Record<string, ToolQueryCoverage> = {};
+    for (const match of pageMatches) {
+      const name: number[] = [];
+      const descriptionOnly: number[] = [];
+      const unmatched: number[] = [];
+      coverageTerms.forEach((term, index) => {
+        if (statistics.nameMatches.get(term)?.has(match.tool)) {
+          name.push(index);
+        } else if (
+          statistics.descriptionMatches.get(term)?.has(match.tool)
+        ) {
+          descriptionOnly.push(index);
+        } else {
+          unmatched.push(index);
+        }
+      });
+      coverageByAddress[`${match.connector.id}.${match.tool.name}`] = {
+        ...(name.length > 0 ? { name } : {}),
+        ...(descriptionOnly.length > 0
+          ? { description: descriptionOnly }
+          : {}),
+        ...(unmatched.length > 0 ? { unmatched } : {}),
+      };
+    }
     const pageTools = new Set(pageMatches.map((match) => match.tool));
     const matchingTools = (term: string) =>
       new Set([
@@ -996,14 +1004,6 @@ export class CatalogService {
       ...(matchMode === "partial" && matches.length > 0
         ? { matchMode }
         : {}),
-      ...(coverageTerms.length > 0
-        ? {
-            queryTerms: coverageTerms.map(displayTerm),
-            ...(queryMetadataTruncated
-              ? { queryTermsTruncated: true as const }
-              : {}),
-          }
-        : {}),
       ...(reportsQueryAnalysis
         ? {
             queryAnalysis: {
@@ -1038,6 +1038,17 @@ export class CatalogService {
                   }
                 : {}),
               ...(guidance ? { guidance } : {}),
+            },
+          }
+        : {}),
+      ...(!isBrowse
+        ? {
+            queryCoverage: {
+              terms: coverageTerms.map(displayTerm),
+              byAddress: coverageByAddress,
+              ...(queryCoverageTruncated
+                ? { truncated: true as const }
+                : {}),
             },
           }
         : {}),
@@ -1164,10 +1175,6 @@ export function groupedSearchResult(page: CatalogSearchPage) {
     }
   }
   return {
-    ...(page.queryTerms ? { queryTerms: page.queryTerms } : {}),
-    ...(page.queryTermsTruncated
-      ? { queryTermsTruncated: page.queryTermsTruncated }
-      : {}),
     connectors: groups,
     total: page.total,
     offset: page.offset,
@@ -1176,15 +1183,12 @@ export function groupedSearchResult(page: CatalogSearchPage) {
     ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
     ...(page.matchMode ? { matchMode: page.matchMode } : {}),
     ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
+    ...(page.queryCoverage ? { queryCoverage: page.queryCoverage } : {}),
   };
 }
 
 export function flatSearchResult(page: CatalogSearchPage) {
   return {
-    ...(page.queryTerms ? { queryTerms: page.queryTerms } : {}),
-    ...(page.queryTermsTruncated
-      ? { queryTermsTruncated: page.queryTermsTruncated }
-      : {}),
     tools: page.entries.map((entry) => ({
       ...entry.tool,
       ...(entry.guide ? { guide: entry.guide } : {}),
@@ -1199,5 +1203,6 @@ export function flatSearchResult(page: CatalogSearchPage) {
     ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
     ...(page.matchMode ? { matchMode: page.matchMode } : {}),
     ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
+    ...(page.queryCoverage ? { queryCoverage: page.queryCoverage } : {}),
   };
 }

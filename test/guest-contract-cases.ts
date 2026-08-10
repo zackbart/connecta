@@ -550,9 +550,9 @@ export const CONTRACT_CASES: ContractCase[] = [
       });
       const match = page.tools.filter((tool) => tool.address === "reader.read")[0];
       return {
-        pageKeys: Object.keys(page).sort(),
-        queryTerms: page.queryTerms,
-        queryCoverage: match.queryCoverage,
+        pageKeys: Object.keys(page),
+        rowKeys: Object.keys(match),
+        queryCoverage: page.queryCoverage,
         address: match.address,
         inputKeys: match.inputKeys,
         requiredInputKeys: match.requiredInputKeys,
@@ -564,17 +564,19 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome) {
       const result = record(outcome);
       expect(result.pageKeys).toEqual([
-        "hasMore",
-        "limit",
-        "offset",
-        "queryTerms",
         "tools",
         "total",
+        "offset",
+        "limit",
+        "hasMore",
+        "queryCoverage",
       ]);
-      expect(result.queryTerms).toEqual(["read", "value"]);
+      expect(result.rowKeys).not.toContain("queryCoverage");
       expect(result.queryCoverage).toEqual({
-        name: [0],
-        description: [1],
+        terms: ["read", "value"],
+        byAddress: {
+          "reader.read": { name: [0], description: [1] },
+        },
       });
       expect(result.address).toBe("reader.read");
       expect(result.inputKeys).toEqual(["value"]);

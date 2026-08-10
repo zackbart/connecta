@@ -806,7 +806,6 @@ describe("server /mcp end-to-end", () => {
               name: "add",
               address: "calc.add",
               description: "Add two numbers",
-              queryCoverage: { name: [0] },
               annotations: { readOnlyHint: true },
             },
           ],
@@ -816,9 +815,20 @@ describe("server /mcp end-to-end", () => {
       offset: 0,
       limit: 8,
       hasMore: false,
-      queryTerms: ["add"],
+      queryCoverage: {
+        terms: ["add"],
+        byAddress: { "calc.add": { name: [0] } },
+      },
     });
     expect(body.result.structuredContent).toEqual(payload);
+    expect(Object.keys(payload)).toEqual([
+      "connectors",
+      "total",
+      "offset",
+      "limit",
+      "hasMore",
+      "queryCoverage",
+    ]);
     expect(body.result.content[0].text).toBe(
       JSON.stringify(body.result.structuredContent),
     );
