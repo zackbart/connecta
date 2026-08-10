@@ -1668,6 +1668,25 @@ describe("search_tools", () => {
       "List-All-Organizations",
     ]);
     expect(second).toMatchObject({ total: 10, hasMore: false });
+
+    const rawPhrase = textOf(
+      await mt.searchTools({
+        query: "list all organizations projects",
+        limit: 8,
+      }),
+    ) as SearchResult;
+    expect(
+      required(rawPhrase.connectors[0]).tools.map((tool) => tool.name),
+    ).toEqual([
+      "List-All-Organizations",
+      ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
+    ]);
+    expect(rawPhrase).toMatchObject({
+      total: 10,
+      nextOffset: 8,
+      hasMore: true,
+    });
+    expect(rawPhrase.matchMode).toBeUndefined();
   });
 
   it("uses deterministic partial-term ranking when no all-term match exists", async () => {

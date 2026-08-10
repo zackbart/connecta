@@ -353,7 +353,11 @@ function queryContainsExactName(doc: SearchDocument, phrase: string): boolean {
   return (` ${phrase} `).includes(` ${doc.name} `);
 }
 
-/** Rank a connector's tools while caching its normalized plain-data index. */
+/**
+ * Rank a connector's tools while caching its normalized plain-data index.
+ * `exactNameQuery` may retain framing removed from the scoring query: those
+ * words are weak term evidence, but remain part of a real tool-name phrase.
+ */
 export function rankTools(
   tools: ToolDef[],
   query: string,
@@ -362,8 +366,10 @@ export function rankTools(
     [tools],
     query,
   ),
+  exactNameQuery: string = query,
 ): RankedTool[] {
   const phrase = normalized(query);
+  const exactNamePhrase = normalized(exactNameQuery);
   const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
   const ranked: RankedTool[] = [];
   documentsFor(tools).forEach((doc, order) => {
@@ -373,7 +379,7 @@ export function rankTools(
         tool: doc.tool,
         score: scored.score,
         order,
-        exactName: queryContainsExactName(doc, phrase),
+        exactName: queryContainsExactName(doc, exactNamePhrase),
         matchedTermCount: scored.matchedTermCount,
       });
     }

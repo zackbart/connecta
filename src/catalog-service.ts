@@ -674,6 +674,7 @@ export class CatalogService {
             retrievalQuery,
             mode,
             statistics,
+            query,
           )) {
             collected.push({
               connector,

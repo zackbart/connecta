@@ -179,11 +179,13 @@ search, so a rare domain term outranks a ubiquitous action while action terms
 still distinguish `get`, `list`, `search`, and write operations. The scorer
 always evaluates useful near-matches instead of letting one broad all-term
 description hide them. Complete matches rank before ordinary partial matches;
-a partial candidate whose complete normalized tool name occurs in the query
-competes with complete matches by score, and other candidates covering at
-least two terms fill the remaining page after them. If no tool covers every
-non-conversational term, the same scorer preserves the wider any-term fallback
-and marks the result `matchMode: "partial"`.
+a partial candidate whose complete normalized tool name occurs in the
+normalized raw query competes with complete matches by score, and other
+candidates covering at least two terms fill the remaining page after them.
+Conversational cleanup applies only to scoring terms, never to the exact-name
+phrase check. If no tool covers every non-conversational term, the same scorer
+preserves the wider any-term fallback and marks the result
+`matchMode: "partial"`.
 
 Every partial or no-match lexical search also returns bounded `queryAnalysis`;
 an all-term result needs no recovery advice. `representedTerms` occur in the
