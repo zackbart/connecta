@@ -40,7 +40,7 @@ Machine-readable results: [\`${jsonName}\`](./${jsonName})
 - Discovery positive recall: ${pct(audit.discovery.metrics.positiveRecall)}
 - Recall at the default page: ${pct(audit.discovery.metrics.recallAtDefaultPage)}
 - Negative-query false-positive rate: ${pct(audit.discovery.metrics.falsePositiveRate)}
-- Query-coverage cost: ${integer(audit.discovery.metrics.totalQueryCoverageTokens)} of ${integer(audit.discovery.metrics.totalResponseTokens)} discovery response tokens (${pct(audit.discovery.metrics.queryCoverageShare)})
+- Removed query-coverage wire: ${integer(audit.discovery.metrics.totalQueryCoverageBytes)} bytes and ${integer(audit.discovery.metrics.totalQueryCoverageTokens)} tokens of ${integer(audit.discovery.metrics.totalResponseBytes)} discovery response bytes and ${integer(audit.discovery.metrics.totalResponseTokens)} tokens
 - Round trips: ${audit.totals.roundTrips}; summed call latency: ${audit.totals.summedLatencyMs.toFixed(1)} ms
 - Connecta surface: ${integer(audit.totals.definitionTokens)} definition + ${integer(audit.totals.requestTokens)} request + ${integer(audit.totals.responseTokens)} response = **${integer(audit.totals.measuredSurfaceTokens)} tokens**
 - Result compatibility observed: \`content\` ${audit.compatibility.contentResults}/${audit.compatibility.resultCount}, \`structuredContent\` ${audit.compatibility.structuredContentResults}/${audit.compatibility.resultCount}

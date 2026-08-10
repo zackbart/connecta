@@ -683,11 +683,6 @@ describe("buildSandboxProviders", () => {
       tools: Array<{
         address: string;
         inputSchema: string;
-        queryCoverage: {
-          nameTerms: string[];
-          descriptionTerms: string[];
-          unmatchedTerms: string[];
-        };
       }>;
     };
     expect(search.tools[0]).toMatchObject({
@@ -695,12 +690,9 @@ describe("buildSandboxProviders", () => {
       inputSchema: "{ a: number, b: number }",
       inputKeys: ["a", "b"],
       requiredInputKeys: ["a", "b"],
-      queryCoverage: {
-        nameTerms: ["add"],
-        descriptionTerms: [],
-        unmatchedTerms: [],
-      },
     });
+    expect(required(search.tools[0])).not.toHaveProperty("queryCoverage");
+    expect(required(search.tools[0])).not.toHaveProperty("score");
 
     const partial = (await required(connecta.fns.search)({
       query: "add numbers operands result metadata",
@@ -710,14 +702,7 @@ describe("buildSandboxProviders", () => {
         representedTerms: string[];
         unmatchedTerms: string[];
       };
-      tools: Array<{
-        address: string;
-        queryCoverage: {
-          nameTerms: string[];
-          descriptionTerms: string[];
-          unmatchedTerms: string[];
-        };
-      }>;
+      tools: Array<{ address: string }>;
     };
     expect(partial.matchMode).toBe("partial");
     expect(required(partial.tools[0]).address).toBe("calc.add");
@@ -725,11 +710,8 @@ describe("buildSandboxProviders", () => {
       representedTerms: ["add", "numbers"],
       unmatchedTerms: ["operands", "result", "metadata"],
     });
-    expect(required(partial.tools[0]).queryCoverage).toMatchObject({
-      nameTerms: ["add"],
-      descriptionTerms: ["numbers"],
-      unmatchedTerms: ["operands", "result", "metadata"],
-    });
+    expect(required(partial.tools[0])).not.toHaveProperty("queryCoverage");
+    expect(required(partial.tools[0])).not.toHaveProperty("score");
     const unicodeOnly = (await required(connecta.fns.search)({
       query: "😀".repeat(80),
     })) as {
@@ -753,16 +735,16 @@ describe("buildSandboxProviders", () => {
     const mixedUnicode = (await required(connecta.fns.search)({
       query: `${"界".repeat(80)} add`,
     })) as {
-      tools: Array<{
-        address: string;
-        queryCoverage: { nameTerms: string[] };
-      }>;
+      tools: Array<{ address: string }>;
     };
     expect(mixedUnicode.tools).toHaveLength(1);
     expect(mixedUnicode.tools[0]).toMatchObject({
       address: "calc.add",
-      queryCoverage: { nameTerms: ["add"] },
     });
+    expect(required(mixedUnicode.tools[0])).not.toHaveProperty(
+      "queryCoverage",
+    );
+    expect(required(mixedUnicode.tools[0])).not.toHaveProperty("score");
     // Key metadata accompanies schemas; a search that asked for neither pays
     // for neither.
     expect(required(partial.tools[0])).not.toHaveProperty("inputKeys");

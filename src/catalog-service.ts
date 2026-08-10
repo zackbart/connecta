@@ -229,12 +229,6 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
-    queryCoverage?: {
-      nameTerms: string[];
-      descriptionTerms: string[];
-      unmatchedTerms: string[];
-      truncated?: true;
-    };
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -691,7 +685,6 @@ export class CatalogService {
     const unsearchableQuery = !isBrowse && queryTermCount === 0;
     const analysisTerms = unsearchableQuery ? [trimmedQuery] : queryTerms;
     const analyzedTerms = analysisTerms.slice(0, MAX_QUERY_TERMS);
-    const coverageTerms = queryTerms.slice(0, MAX_QUERY_TERMS);
     const displayTerm = (term: string) => boundedQueryTerm(term).text;
     const queryMetadataTruncated =
       analysisTerms.length > analyzedTerms.length ||
@@ -787,20 +780,6 @@ export class CatalogService {
         renderedInput?.truncated === true || renderedOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(match.connector);
-      const nameTerms: string[] = [];
-      const descriptionTerms: string[] = [];
-      const uncoveredTerms: string[] = [];
-      for (const term of coverageTerms) {
-        if (statistics.nameMatches.get(term)?.has(match.tool)) {
-          nameTerms.push(displayTerm(term));
-        } else if (
-          statistics.descriptionMatches.get(term)?.has(match.tool)
-        ) {
-          descriptionTerms.push(displayTerm(term));
-        } else {
-          uncoveredTerms.push(displayTerm(term));
-        }
-      }
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -844,18 +823,6 @@ export class CatalogService {
             : {}),
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
-            : {}),
-          ...(queryTerms.length > 0
-            ? {
-                queryCoverage: {
-                  nameTerms,
-                  descriptionTerms,
-                  unmatchedTerms: uncoveredTerms,
-                  ...(queryMetadataTruncated
-                    ? { truncated: true as const }
-                    : {}),
-                },
-              }
             : {}),
           ...(requiredReasons
             ? {

@@ -68,19 +68,7 @@
       "category": "mixed-all-partial",
       "query": "list organizations projects",
       "relevant": ["analytics.List-Organizations"],
-      "expectedTop": "analytics.List-Organizations",
-      "expectedCoverage": {
-        "analytics.List-Organizations": {
-          "nameTerms": ["list", "organizations"],
-          "descriptionTerms": [],
-          "unmatchedTerms": ["projects"]
-        },
-        "analytics.business_context_0": {
-          "nameTerms": [],
-          "descriptionTerms": ["list", "organizations", "projects"],
-          "unmatchedTerms": []
-        }
-      }
+      "expectedTop": "analytics.List-Organizations"
     },
     {
       "id": "exact-raw-name-frame",

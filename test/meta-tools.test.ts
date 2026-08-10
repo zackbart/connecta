@@ -852,12 +852,6 @@ interface SearchGroup {
     name: string;
     address: string;
     description?: string;
-    queryCoverage?: {
-      nameTerms: string[];
-      descriptionTerms: string[];
-      unmatchedTerms: string[];
-      truncated?: true;
-    };
   }[];
 }
 interface SearchResult {
@@ -1015,12 +1009,9 @@ describe("search_tools", () => {
     expect(tools).toHaveLength(1);
     expect(required(tools[0])).toMatchObject({
       address: "calc.add",
-      queryCoverage: {
-        nameTerms: ["add"],
-        descriptionTerms: [],
-        unmatchedTerms: [],
-      },
     });
+    expect(required(tools[0])).not.toHaveProperty("queryCoverage");
+    expect(required(tools[0])).not.toHaveProperty("score");
     expect(parsed.queryAnalysis).toBeUndefined();
   });
 
@@ -1256,7 +1247,7 @@ describe("search_tools", () => {
     expect(loads).toBe(1);
   });
 
-  it("bounds query coverage on default and maximum result pages", async () => {
+  it("keeps default and maximum result pages coverage-free", async () => {
     const terms = Array.from(
       { length: 8 },
       (_, index) => `${index}${"x".repeat(79)}`,
@@ -1284,19 +1275,8 @@ describe("search_tools", () => {
       const tools = parsed.connectors.flatMap((group) => group.tools);
 
       expect(tools).toHaveLength(limit ?? 8);
-      expect(tools.every((tool) => tool.queryCoverage?.truncated)).toBe(true);
-      expect(
-        tools.every(
-          (tool) => tool.queryCoverage?.descriptionTerms.length === 8,
-        ),
-      ).toBe(true);
-      expect(
-        tools.every((tool) =>
-          required(tool.queryCoverage).descriptionTerms.every(
-            (term) => term.length <= 64,
-          ),
-        ),
-      ).toBe(true);
+      expect(tools.every((tool) => !("queryCoverage" in tool))).toBe(true);
+      expect(tools.every((tool) => !("score" in tool))).toBe(true);
       const responseBytes = new TextEncoder().encode(
         required(result.content[0]).text,
       ).length;
@@ -1791,24 +1771,11 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(first.matchMode).toBeUndefined();
-    const intended = required(required(first.connectors[0]).tools[0]);
-    const decoy = required(required(first.connectors[0]).tools[1]);
-    expect(intended).toMatchObject({
-      queryCoverage: {
-        nameTerms: ["list", "organizations"],
-        descriptionTerms: [],
-        unmatchedTerms: ["projects"],
-      },
-    });
-    expect(decoy).toMatchObject({
-      queryCoverage: {
-        nameTerms: [],
-        descriptionTerms: ["list", "organizations", "projects"],
-        unmatchedTerms: [],
-      },
-    });
-    expect(intended).not.toHaveProperty("score");
-    expect(required(intended.queryCoverage)).not.toHaveProperty("score");
+    expect(
+      required(first.connectors[0]).tools.every(
+        (tool) => !("queryCoverage" in tool) && !("score" in tool),
+      ),
+    ).toBe(true);
 
     const second = textOf(
       await mt.searchTools({
@@ -1824,7 +1791,7 @@ describe("search_tools", () => {
     expect(second).toMatchObject({ total: 10, hasMore: false });
     expect(
       second.connectors.flatMap((group) => group.tools).every(
-        (tool) => tool.queryCoverage !== undefined,
+        (tool) => !("queryCoverage" in tool) && !("score" in tool),
       ),
     ).toBe(true);
 
@@ -1846,6 +1813,11 @@ describe("search_tools", () => {
       hasMore: true,
     });
     expect(rawPhrase.matchMode).toBeUndefined();
+    expect(
+      rawPhrase.connectors.flatMap((group) => group.tools).every(
+        (tool) => !("queryCoverage" in tool) && !("score" in tool),
+      ),
+    ).toBe(true);
   });
 
   it("uses deterministic partial-term ranking when no all-term match exists", async () => {
@@ -1884,20 +1856,22 @@ describe("search_tools", () => {
     const firstTools = first.connectors.flatMap((group) => group.tools);
     expect(firstTools.map((t) => t.name))
       .toEqual(["get_experiment", "get_results"]);
-    expect(required(firstTools[0]).queryCoverage).toMatchObject({
-      nameTerms: ["get", "experiment"],
-      descriptionTerms: ["details", "metrics", "variants"],
-      unmatchedTerms: ["results", "configuration"],
-    });
-    expect(required(firstTools[1]).queryCoverage).toMatchObject({
-      nameTerms: ["get", "results"],
-      descriptionTerms: ["experiment"],
-      unmatchedTerms: [
+    expect(
+      firstTools.every(
+        (tool) => !("queryCoverage" in tool) && !("score" in tool),
+      ),
+    ).toBe(true);
+    expect(first.queryAnalysis).toMatchObject({
+      representedTerms: [
+        "get",
+        "experiment",
         "details",
         "metrics",
         "variants",
-        "configuration",
+        "results",
       ],
+      otherResultTerms: ["configuration"],
+      unmatchedTerms: [],
     });
     expect(first.total).toBe(3);
     expect(first.nextOffset).toBe(2);

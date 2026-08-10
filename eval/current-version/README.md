@@ -29,9 +29,9 @@ npm --prefix eval/current-version run audit:development
 ```
 
 The development report records exact expected top-1 accuracy, recall,
-precision, query-coverage assertions, and the response-token cost of
-`queryCoverage`. Its server advertises only the synthetic development
-connector. The release gate remains the complete holdout `audit` command.
+precision, and the absence of the removed per-result query-coverage wire. Its
+server advertises only the synthetic development connector. The release gate
+remains the complete holdout `audit` command.
 The current combined report is
 [`results/issue-322-evidence.md`](./results/issue-322-evidence.md).
 
