@@ -45,10 +45,28 @@ export const DEFAULT_SEARCH_LIMIT = 8;
 export const MAX_SEARCH_LIMIT = 100;
 export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
-const MAX_QUERY_ANALYSIS_TERMS = 8;
-const MAX_QUERY_ANALYSIS_TERM_LENGTH = 64;
+const MAX_QUERY_TERMS = 8;
+const MAX_QUERY_TERM_LENGTH = 64;
 
 const encoder = new TextEncoder();
+
+/** Clip one echoed query term without splitting a non-BMP code point. */
+function boundedQueryTerm(term: string): {
+  text: string;
+  truncated: boolean;
+} {
+  const characters: string[] = [];
+  for (const character of term) {
+    characters.push(character);
+    if (characters.length > MAX_QUERY_TERM_LENGTH) {
+      return {
+        text: `${characters.slice(0, MAX_QUERY_TERM_LENGTH - 1).join("")}…`,
+        truncated: true,
+      };
+    }
+  }
+  return { text: characters.join(""), truncated: false };
+}
 
 /**
  * The discovery route a routing failure should send a caller back through. Same
@@ -211,6 +229,12 @@ interface CatalogSearchEntry {
     requiredInputKeys?: string[];
     outputKeys?: string[];
     annotations?: ToolDef["annotations"];
+    queryCoverage?: {
+      nameTerms: string[];
+      descriptionTerms: string[];
+      unmatchedTerms: string[];
+      truncated?: true;
+    };
     guideRequired?: true;
     guideRequiredReasons?: GuideRequiredReason[];
   };
@@ -658,8 +682,18 @@ export class CatalogService {
       ),
       retrievalQuery,
     );
-    const hasQuery = query.trim().length > 0;
-    const queryTermCount = lexicalQueryTerms(retrievalQuery).length;
+    const trimmedQuery = query.trim();
+    const isBrowse = trimmedQuery.length === 0;
+    const queryTerms = lexicalQueryTerms(retrievalQuery);
+    const queryTermCount = queryTerms.length;
+    const unsearchableQuery = !isBrowse && queryTermCount === 0;
+    const analysisTerms = unsearchableQuery ? [trimmedQuery] : queryTerms;
+    const analyzedTerms = analysisTerms.slice(0, MAX_QUERY_TERMS);
+    const coverageTerms = queryTerms.slice(0, MAX_QUERY_TERMS);
+    const displayTerm = (term: string) => boundedQueryTerm(term).text;
+    const queryMetadataTruncated =
+      analysisTerms.length > analyzedTerms.length ||
+      analyzedTerms.some((term) => boundedQueryTerm(term).truncated);
     const collectMatches = (mode: "all" | "partial") => {
       const collected: typeof matches = [];
       let orderBase = 0;
@@ -684,7 +718,7 @@ export class CatalogService {
               exactName: ranked.exactName,
               matchedTermCount: ranked.matchedTermCount,
               complete:
-                !hasQuery || ranked.matchedTermCount === queryTermCount,
+                isBrowse || ranked.matchedTermCount === queryTermCount,
             });
           }
         }
@@ -693,7 +727,12 @@ export class CatalogService {
       });
       return collected;
     };
-    const rankedMatches = collectMatches(hasQuery ? "partial" : "all");
+    // A non-empty query that normalizes to no lexical terms is not a browse.
+    // Ranking an empty phrase would otherwise return every tool as an
+    // unrelated zero-score match, with no coverage to explain the result.
+    const rankedMatches = unsearchableQuery
+      ? []
+      : collectMatches(isBrowse ? "all" : "partial");
     const completeMatchCount = rankedMatches.filter(
       (match) => match.complete,
     ).length;
@@ -706,7 +745,7 @@ export class CatalogService {
           match.matchedTermCount >= 2,
       ),
     );
-    if (hasQuery && completeMatchCount === 0) {
+    if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {
       matchMode = "partial";
     }
     // Complete matches and exact tool-name phrases share the first rank tier.
@@ -746,6 +785,20 @@ export class CatalogService {
         renderedInput?.truncated === true || renderedOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(match.connector);
+      const nameTerms: string[] = [];
+      const descriptionTerms: string[] = [];
+      const uncoveredTerms: string[] = [];
+      for (const term of coverageTerms) {
+        if (statistics.nameMatches.get(term)?.has(match.tool)) {
+          nameTerms.push(displayTerm(term));
+        } else if (
+          statistics.descriptionMatches.get(term)?.has(match.tool)
+        ) {
+          descriptionTerms.push(displayTerm(term));
+        } else {
+          uncoveredTerms.push(displayTerm(term));
+        }
+      }
       return {
         connector: match.connector,
         ...(connectorGuide(match.connector)
@@ -790,6 +843,18 @@ export class CatalogService {
           ...(match.tool.annotations
             ? { annotations: match.tool.annotations }
             : {}),
+          ...(queryTerms.length > 0
+            ? {
+                queryCoverage: {
+                  nameTerms,
+                  descriptionTerms,
+                  unmatchedTerms: uncoveredTerms,
+                  ...(queryMetadataTruncated
+                    ? { truncated: true as const }
+                    : {}),
+                },
+              }
+            : {}),
           ...(requiredReasons
             ? {
                 guideRequired: true as const,
@@ -803,12 +868,6 @@ export class CatalogService {
       offset + entries.length < matches.length
         ? offset + entries.length
         : undefined;
-    const queryTerms = lexicalQueryTerms(retrievalQuery);
-    const analyzedTerms = queryTerms.slice(0, MAX_QUERY_ANALYSIS_TERMS);
-    const displayTerm = (term: string) =>
-      term.length <= MAX_QUERY_ANALYSIS_TERM_LENGTH
-        ? term
-        : `${term.slice(0, MAX_QUERY_ANALYSIS_TERM_LENGTH - 1)}…`;
     const pageTools = new Set(pageMatches.map((match) => match.tool));
     const matchingTools = (term: string) =>
       new Set([
@@ -878,19 +937,24 @@ export class CatalogService {
       args.connector && !scopedConnector
         ? `Connector "${args.connector}" is not configured in this deployment. Omit connector to search all configured tools.`
         : undefined;
-    // Term-bearing searches report analysis only when the scorer had to
-    // degrade; a browse has no terms to analyse and normally reports none at
-    // all. But neither "this catalog is unavailable" nor "there is no such
-    // connector" is a statement about terms, and answering either browse with
-    // an empty entry list alone is indistinguishable from a connector that
-    // simply exposes no tools. The term partitions stay empty on those paths
-    // because there were no terms — the scope fields carry the whole message.
+    // Searchable queries report analysis when the scorer had to degrade. A
+    // non-empty query with no searchable terms reports the bounded raw input
+    // as unmatched instead of silently becoming a browse. A real browse has
+    // no terms to analyse and normally reports none at all. Scope failures are
+    // the exception, because an empty result alone looks like a connector that
+    // correctly exposes no tools.
     const reportsQueryAnalysis =
-      queryTerms.length > 0
+      unsearchableQuery ||
+      (queryTerms.length > 0
         ? matchMode === "partial"
-        : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0;
+        : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0);
     const guidance =
-      queryTerms.length === 0
+      unsearchableQuery
+        ? (unknownConnectorGuidance ??
+          (scopedConnector && unavailableCatalogs > 0
+            ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
+            : "The query contained no searchable lexical terms. Use 2–4 ASCII action/object terms, or browse with an empty query."))
+        : queryTerms.length === 0
         ? // A browse has no terms to advise about, so it stays silent unless
           // the scope itself failed: the guidance on a scoped miss recommends
           // browsing with an empty query, and that advice must not lead into a
@@ -935,10 +999,7 @@ export class CatalogService {
               representedTerms,
               otherResultTerms,
               unmatchedTerms,
-              ...(queryTerms.length > analyzedTerms.length ||
-              analyzedTerms.some(
-                (term) => term.length > MAX_QUERY_ANALYSIS_TERM_LENGTH,
-              )
+              ...(queryMetadataTruncated
                 ? { truncated: true as const }
                 : {}),
               ...(args.connector ? { connectorScope: args.connector } : {}),

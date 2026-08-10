@@ -680,13 +680,26 @@ describe("buildSandboxProviders", () => {
       query: "add",
       includeSchemas: "compact",
     })) as {
-      tools: Array<{ address: string; inputSchema: string }>;
+      tools: Array<{
+        address: string;
+        inputSchema: string;
+        queryCoverage: {
+          nameTerms: string[];
+          descriptionTerms: string[];
+          unmatchedTerms: string[];
+        };
+      }>;
     };
     expect(search.tools[0]).toMatchObject({
       address: "calc.add",
       inputSchema: "{ a: number, b: number }",
       inputKeys: ["a", "b"],
       requiredInputKeys: ["a", "b"],
+      queryCoverage: {
+        nameTerms: ["add"],
+        descriptionTerms: [],
+        unmatchedTerms: [],
+      },
     });
 
     const partial = (await required(connecta.fns.search)({
@@ -697,13 +710,58 @@ describe("buildSandboxProviders", () => {
         representedTerms: string[];
         unmatchedTerms: string[];
       };
-      tools: Array<{ address: string }>;
+      tools: Array<{
+        address: string;
+        queryCoverage: {
+          nameTerms: string[];
+          descriptionTerms: string[];
+          unmatchedTerms: string[];
+        };
+      }>;
     };
     expect(partial.matchMode).toBe("partial");
     expect(required(partial.tools[0]).address).toBe("calc.add");
     expect(partial.queryAnalysis).toMatchObject({
       representedTerms: ["add", "numbers"],
       unmatchedTerms: ["operands", "result", "metadata"],
+    });
+    expect(required(partial.tools[0]).queryCoverage).toMatchObject({
+      nameTerms: ["add"],
+      descriptionTerms: ["numbers"],
+      unmatchedTerms: ["operands", "result", "metadata"],
+    });
+    const unicodeOnly = (await required(connecta.fns.search)({
+      query: "😀".repeat(80),
+    })) as {
+      tools: unknown[];
+      queryAnalysis?: {
+        unmatchedTerms: string[];
+        truncated?: true;
+        guidance?: string;
+      };
+    };
+    expect(unicodeOnly.tools).toEqual([]);
+    expect(unicodeOnly.queryAnalysis).toMatchObject({
+      unmatchedTerms: [`${"😀".repeat(63)}…`],
+      truncated: true,
+      guidance: expect.stringContaining("no searchable lexical terms"),
+    });
+    expect([
+      ...required(required(unicodeOnly.queryAnalysis).unmatchedTerms[0]),
+    ]).toHaveLength(64);
+
+    const mixedUnicode = (await required(connecta.fns.search)({
+      query: `${"界".repeat(80)} add`,
+    })) as {
+      tools: Array<{
+        address: string;
+        queryCoverage: { nameTerms: string[] };
+      }>;
+    };
+    expect(mixedUnicode.tools).toHaveLength(1);
+    expect(mixedUnicode.tools[0]).toMatchObject({
+      address: "calc.add",
+      queryCoverage: { nameTerms: ["add"] },
     });
     // Key metadata accompanies schemas; a search that asked for neither pays
     // for neither.
