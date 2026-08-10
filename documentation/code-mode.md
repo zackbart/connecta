@@ -219,7 +219,7 @@ const page = await connecta.search({
 });
 ```
 
-**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes; capped shapes remain structurally valid with `unknown` types plus `/* truncated */`, and carry `inputSchemaTruncated` or `outputSchemaTruncated`. Use `connecta.describe` (or JSON search) for omitted exact constraints.
+**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes; capped shapes remain structurally valid with `unknown` types plus `/* truncated */`, and carry `inputSchemaTruncated` or `outputSchemaTruncated`. Use `connecta.describe` (or JSON search) for omitted exact constraints.
 
 **S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`, connector shortcuts, and `connecta.batch`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
 
@@ -840,7 +840,7 @@ the upstream `Executor` shape assignable.
 | `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
 | `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
 | `A5` | verdict; `A1`–`A3` are its enforcement |
-| `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`) |
+| `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools.test.ts` (mixed complete/partial ranking and stable pagination) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
 | `S4` | `test/guest-api-contract.test.ts` (unknown address in `describe`) |
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |

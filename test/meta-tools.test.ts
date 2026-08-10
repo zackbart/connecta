@@ -1599,7 +1599,97 @@ describe("search_tools", () => {
     expect(parsed.matchMode).toBeUndefined();
   });
 
-  it("falls back to deterministic partial-term ranking only when all-term search is empty", async () => {
+  it("mixes an exact action/object near-match into an all-term decoy page", async () => {
+    // Development-only reproduction of #326's live Mixpanel failure. The
+    // sealed discovery holdout stays unchanged; these synthetic descriptions
+    // model broad business-context tools that happen to repeat every query
+    // term and used to hide the exact action/object tool entirely.
+    const connector: Connector = {
+      id: "analytics",
+      staticTools: [
+        {
+          name: "List-Organizations",
+          description: "List organizations available to the caller",
+        },
+        {
+          // This partial candidate has the same strong term score as the
+          // intended tool, but its extra name token makes it non-exact. It
+          // must remain behind every complete match.
+          name: "List-All-Organizations",
+          description: "List organizations available to the caller",
+        },
+        ...Array.from({ length: 8 }, (_, index) => ({
+          name: `business_context_${index}`,
+          description:
+            "List organizations and projects configured for business analysis",
+        })),
+        ...Array.from({ length: 2 }, (_, index) => ({
+          name: `project_note_${index}`,
+          description: "Inspect one project note",
+        })),
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    const first = textOf(
+      await mt.searchTools({
+        query: "list organizations projects",
+        limit: 8,
+      }),
+    ) as SearchResult;
+
+    expect(
+      required(first.connectors[0]).tools.map((tool) => tool.name),
+    ).toEqual([
+      "List-Organizations",
+      ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
+    ]);
+    expect(first).toMatchObject({
+      total: 10,
+      nextOffset: 8,
+      hasMore: true,
+    });
+    expect(first.matchMode).toBeUndefined();
+
+    const second = textOf(
+      await mt.searchTools({
+        query: "list organizations projects",
+        limit: 8,
+        offset: required(first.nextOffset),
+      }),
+    ) as SearchResult;
+    expect(required(second.connectors[0]).tools.map((tool) => tool.name)).toEqual([
+      "business_context_7",
+      "List-All-Organizations",
+    ]);
+    expect(second).toMatchObject({ total: 10, hasMore: false });
+
+    const rawPhrase = textOf(
+      await mt.searchTools({
+        query: "list all organizations projects",
+        limit: 8,
+      }),
+    ) as SearchResult;
+    expect(
+      required(rawPhrase.connectors[0]).tools.map((tool) => tool.name),
+    ).toEqual([
+      "List-All-Organizations",
+      ...Array.from({ length: 7 }, (_, index) => `business_context_${index}`),
+    ]);
+    expect(rawPhrase).toMatchObject({
+      total: 10,
+      nextOffset: 8,
+      hasMore: true,
+    });
+    expect(rawPhrase.matchMode).toBeUndefined();
+  });
+
+  it("uses deterministic partial-term ranking when no all-term match exists", async () => {
     const conn: Connector = {
       id: "experiments",
       description: "Experiment service",
