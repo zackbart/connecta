@@ -83,18 +83,17 @@ The wrapper classifies Linear's documented `list_*`, `get_*`, and
 downstream leaves unannotated fails closed onto `call_destructive_tool` until a
 Connecta release reviews it.
 
-That classification is **fill-in only**, and unconditionally so: it supplies
-the annotations Linear leaves unset and contradicts an explicit downstream
-annotation in neither direction. A tool on the read allowlist arriving with
+That classification fills in downstream silence and otherwise preserves
+explicit annotations. A tool on the read allowlist arriving with
 `destructiveHint: true` or `readOnlyHint: false` keeps exactly what the
 downstream said and stays behind `call_destructive_tool`. A tool on neither
 maintained list arriving with `readOnlyHint: true` keeps that too, and stays
 callable from `execute_code`. Both are the downstream telling you this
 release's allowlist is stale, and on a name no release has reviewed its word is
-the only evidence there is. The one classification that still outranks the
-downstream is a name this release reviewed and filed destructive: a `save_*`
-tool claiming `readOnlyHint: true` is a downstream bug rather than news, and
-stays on the approval path.
+the only evidence there is. One narrow fail-closed exception applies to a name
+this release reviewed and filed destructive: a `save_*` tool claiming
+`readOnlyHint: true` is a downstream bug rather than news, and stays on the
+approval path.
 
 One detail of Linear's own design shapes the classification: **`save_*` tools
 are upserts.** Omitting a record id creates; supplying one updates in place.

@@ -111,8 +111,6 @@ describe("mixpanel()", () => {
       { name: "Run-Query", annotations: { openWorldHint: true } },
       // Allowlisted read with no annotations object at all.
       { name: "List-Dashboards" },
-      // Maintained destructive write: tighten, whatever the downstream claims.
-      { name: "Delete-Dashboard", annotations: { readOnlyHint: true } },
       // Maintained additive create: leaves the read path without inflating the
       // host's approval copy with a destruction it does not perform.
       { name: "Create-Dashboard" },
@@ -132,12 +130,21 @@ describe("mixpanel()", () => {
       readOnlyHint: true,
       destructiveHint: false,
     });
-    expect(tools[2]?.annotations).toMatchObject({
+    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
+    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("keeps a vetted destructive tool closed despite a read-only claim", async () => {
+    mocks.listTools.mockResolvedValue([
+      { name: "Delete-Dashboard", annotations: { readOnlyHint: true } },
+    ]);
+    const connector = mixpanel("analytics", { purpose: "Product decisions" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
     });
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toEqual({ readOnlyHint: false });
   });
 
   it("believes an explicit annotation on a tool no release has classified", async () => {

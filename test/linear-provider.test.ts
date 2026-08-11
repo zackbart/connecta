@@ -185,9 +185,6 @@ describe("linear()", () => {
       { name: "list_issues", annotations: { openWorldHint: true } },
       // Allowlisted read with no annotations object at all.
       { name: "get_issue" },
-      // Maintained destructive write: an upsert can overwrite, so tighten it
-      // whatever the downstream claims.
-      { name: "save_issue", annotations: { readOnlyHint: true } },
       // Maintained additive create: leaves the read path without inflating the
       // host's approval copy with a destruction it does not perform.
       { name: "create_issue_label" },
@@ -207,12 +204,21 @@ describe("linear()", () => {
       readOnlyHint: true,
       destructiveHint: false,
     });
-    expect(tools[2]?.annotations).toMatchObject({
+    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
+    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
+  });
+
+  it("keeps a vetted destructive tool closed despite a read-only claim", async () => {
+    mocks.listTools.mockResolvedValue([
+      { name: "save_issue", annotations: { readOnlyHint: true } },
+    ]);
+    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const tools = await connector.listTools(context);
+
+    expect(tools[0]?.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
     });
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[4]?.annotations).toEqual({ readOnlyHint: false });
   });
 
   it("believes an explicit annotation on a tool no release has classified", async () => {

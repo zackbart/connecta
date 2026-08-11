@@ -47,13 +47,15 @@ choice does not grant the connection different runtime privileges. Two
 instances of the same provider are isolated in exactly the same way as two
 hand-written connectors with different ids.
 
-A prebuilt connection's vetted annotations are fill-in only. They classify what
-the downstream leaves unannotated and do not argue with what it states — not an
-explicit `destructiveHint: true` or `readOnlyHint: false` on a name the
-connection files as a read, nor an explicit `readOnlyHint: true` on a name no
-release has classified at all. Silence on an unclassified name still means not
-read-only, so catalog drift fails closed. The fail-closed read-only invariant
-is unchanged by the authoring path.
+A prebuilt connection's vetted annotations fill in downstream silence and
+otherwise preserve explicit annotations. This includes an explicit
+`destructiveHint: true` or `readOnlyHint: false` on a vetted read, and an
+explicit `readOnlyHint: true` on a name no release has classified. One narrow
+exception stays fail-closed: a release-reviewed destructive classification
+overrides a contradictory `readOnlyHint: true`, because Connecta has
+independently established that the tool mutates existing state. Silence on an
+unclassified name still means not read-only. The authoring path never weakens
+the fail-closed read-only invariant.
 
 Prebuilt means preferred when available, not mandatory. A deployment may mix
 prebuilt connections, custom `remoteMcp()` connections, and custom `api()`

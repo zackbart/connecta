@@ -137,18 +137,18 @@ exists rather than a fresh object appearing beside it. Additive writes
 `readOnlyHint: false` already routes them through `call_destructive_tool`, and
 asserting destruction only inflates the approval copy the host shows a human.
 
-That classification is **fill-in only**, and unconditionally so: it supplies
-the annotations Stripe leaves unset — Stripe documents no MCP annotations at
-all — and contradicts an explicit downstream annotation in neither direction. A
-tool on the read allowlist arriving with `destructiveHint: true` or
-`readOnlyHint: false` keeps exactly what the downstream said and stays behind
-`call_destructive_tool`. A tool on neither maintained list arriving with
-`readOnlyHint: true` keeps that too, and stays callable from `execute_code`.
-Both are the downstream telling you this release's allowlist is stale, and on a
-name no release has reviewed its word is the only evidence there is. The one
-classification that still outranks the downstream is a name this release
-reviewed and filed destructive: a `create_refund` claiming `readOnlyHint: true`
-is a downstream bug rather than news, and stays on the approval path.
+That classification fills in downstream silence and otherwise preserves
+explicit annotations. It supplies the annotations Stripe leaves unset — Stripe
+documents no MCP annotations at all. A tool on the read allowlist arriving with
+`destructiveHint: true` or `readOnlyHint: false` keeps exactly what the
+downstream said and stays behind `call_destructive_tool`. A tool on neither
+maintained list arriving with `readOnlyHint: true` keeps that too, and stays
+callable from `execute_code`. Both are the downstream telling you this release's
+allowlist is stale, and on a name no release has reviewed its word is the only
+evidence there is. One narrow fail-closed exception applies to a name this
+release reviewed and filed destructive: a `create_refund` claiming
+`readOnlyHint: true` is a downstream bug rather than news, and stays on the
+approval path.
 
 An unfamiliar tool that annotates nothing fails closed onto
 `call_destructive_tool` until a Connecta release reviews it. That is not
