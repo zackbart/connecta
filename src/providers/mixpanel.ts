@@ -125,17 +125,18 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
 ]);
 
 /**
- * Fill in what the downstream leaves unsaid; never argue with what it says.
+ * Fill in downstream silence; keep reviewed destructive tools fail-closed.
  *
  * Silence is what a vetted classification is for, and an explicit downstream
- * annotation wins in both directions. `destructiveHint: true` or
+ * annotation otherwise wins in both directions. `destructiveHint: true` or
  * `readOnlyHint: false` on an allowlisted read name is the downstream telling
  * us this release's allowlist is stale; `readOnlyHint: true` on a name no
  * release has classified says the same thing from the other side. The single
  * place a vetted verdict still overrides the downstream is a name this release
  * reviewed and filed destructive: there connecta knows what the tool does, and
  * a claim to the contrary is a downstream bug rather than news
- * ([#310](https://github.com/zackbart/connecta/issues/310)).
+ * ([#310](https://github.com/zackbart/connecta/issues/310),
+ * [#315](https://github.com/zackbart/connecta/issues/315)).
  */
 function vettedSafety(definition: ToolDef): ToolDef {
   const downstream = definition.annotations ?? {};
