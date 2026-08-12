@@ -151,6 +151,7 @@ Prefer \`notion.search\` over listing databases.
       tools: [
         {
           name: "read",
+          description: "Read a value",
           inputSchema: {
             type: "object",
             properties: Object.fromEntries(
@@ -485,7 +486,9 @@ Prefer \`notion.search\` over listing databases.
       tools: [
         {
           name: "invoke",
+          description: "Invoke a generic operation",
           inputSchema: { type: "object" },
+          annotations: { readOnlyHint: false },
           handler: () => ({}),
         },
       ],
@@ -582,7 +585,9 @@ Prefer \`notion.search\` over listing databases.
       tools: [
         {
           name: "invoke",
+          description: "Invoke a generic operation",
           inputSchema: { type: "object" },
+          annotations: { readOnlyHint: false },
           handler: () => ({}),
         },
       ],
@@ -2505,6 +2510,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "erase",
+          description: "Erase the thing",
           annotations: {
             destructiveHint: true,
             readOnlyHint: false,
@@ -2555,6 +2561,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "erase",
+          description: "Erase the thing",
           annotations: { destructiveHint: true, readOnlyHint: false },
           handler: () => ({ erased: true }),
         },
@@ -2654,6 +2661,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "erase",
+          description: "Erase the thing",
           annotations: { destructiveHint: true, readOnlyHint: false },
           handler: (args: unknown) => {
             seen.push(args);
@@ -2678,17 +2686,26 @@ describe("call_tool", () => {
 
   it("requires approval for unannotated and contradictory tools", async () => {
     const calls: string[] = [];
+    // An unannotated tool no longer comes from api() — it refuses to
+    // construct one — so it arrives the way it does in production: from a
+    // catalog somebody else annotated, or forgot to.
+    const silent: Connector = {
+      id: "silent",
+      kind: "mcp",
+      description: "A downstream that annotates nothing",
+      async listTools() {
+        return [{ name: "unannotated", description: "Who knows" }];
+      },
+      async callTool() {
+        calls.push("unannotated");
+        return { ok: true };
+      },
+    };
     const ambiguous = api("ambiguous", {
       tools: [
         {
-          name: "unannotated",
-          handler: () => {
-            calls.push("unannotated");
-            return { ok: true };
-          },
-        },
-        {
           name: "contradictory",
+          description: "Claims to read and destroy at once",
           annotations: {
             readOnlyHint: true,
             destructiveHint: true,
@@ -2700,10 +2717,10 @@ describe("call_tool", () => {
         },
       ],
     });
-    const mt = createMetaTools(makeRegistry([ambiguous]), BASE);
+    const mt = createMetaTools(makeRegistry([silent, ambiguous]), BASE);
 
     for (const address of [
-      "ambiguous.unannotated",
+      "silent.unannotated",
       "ambiguous.contradictory",
     ]) {
       const ordinary = await mt.callTool({ address });
@@ -2713,7 +2730,7 @@ describe("call_tool", () => {
     expect(calls).toEqual([]);
 
     const approved = await mt.callDestructiveTool({
-      address: "ambiguous.unannotated",
+      address: "silent.unannotated",
     });
     expect(approved.isError).toBeFalsy();
     expect(calls).toEqual(["unannotated"]);
@@ -2805,6 +2822,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "safe_read",
+          description: "Read a value, retryably",
           annotations: { readOnlyHint: true },
           handler: () => {
             safeCalls++;
@@ -2814,6 +2832,8 @@ describe("call_tool", () => {
         },
         {
           name: "unsafe_write",
+          description: "Write something the host must approve",
+          annotations: { readOnlyHint: false },
           handler: () => {
             unsafeCalls++;
             throw new Error("temporary 503");
@@ -2867,6 +2887,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "wait",
+          description: "Wait until the deadline",
           annotations: { readOnlyHint: true },
           async handler(_args, ctx) {
             sawSignal = Boolean(ctx.signal);
@@ -2904,6 +2925,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "peek",
+          description: "Report the request context it received",
           annotations: { readOnlyHint: true },
           handler: (_args, ctx) => {
             seen.push({
@@ -2941,6 +2963,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "wait",
+          description: "Wait until the deadline",
           annotations: { readOnlyHint: true },
           async handler(_args, ctx) {
             await new Promise<void>((resolve) => {
@@ -2969,6 +2992,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             throw new ConnectorCallError("rate_limited", "slow down", {
@@ -3000,6 +3024,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             throw new ConnectorCallError("rate_limited", "slow down");
@@ -3026,6 +3051,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             calls++;
@@ -3062,6 +3088,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           async handler(_args, ctx) {
             calls++;
@@ -3099,6 +3126,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           async handler() {
             calls++;
@@ -3131,6 +3159,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             calls++;
@@ -3166,6 +3195,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             calls++;
@@ -3232,6 +3262,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             calls++;
@@ -3269,6 +3300,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             throw new ConnectorCallError(
@@ -3317,6 +3349,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             throw new ConnectorCallError(
@@ -3349,6 +3382,7 @@ describe("call_tool", () => {
       tools: [
         {
           name: "page",
+          description: "Read one page of values",
           annotations: { readOnlyHint: true },
           inputSchema: {
             type: "object",
@@ -5105,6 +5139,7 @@ describe("authorize_connector", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => {
             throw new Error("the connector must not run without its vault");

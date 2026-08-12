@@ -191,8 +191,8 @@ comes from Cloudflare's API reference.
 
 ### Where the `perPage` bounds come from
 
-`strictValidation` is on, so an out-of-range `perPage` is refused locally
-before it reaches Cloudflare. That is only a favor when the bound is really
+`api()` enforces every hand-written schema, so an out-of-range `perPage` is
+refused locally before it reaches Cloudflare. That is only a favor when the bound is really
 Cloudflare's, so the schemas record which ones are and the descriptions say so
 out loud:
 

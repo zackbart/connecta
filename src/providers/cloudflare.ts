@@ -843,8 +843,8 @@ const RAW_INPUT_PROPERTY: JsonSchema = {
  * an out-of-range value with a 400, so each caller passes its own. Encoding
  * them in the schema turns a wasted round trip into a local repair — but only
  * where the bound is really Cloudflare's. `bounds` records who chose the
- * range, because `strictValidation` refuses an out-of-range `perPage` locally
- * and an agent deserves to know whether the wall it hit is the API's or ours:
+ * range, because `api()` refuses an out-of-range `perPage` locally and an
+ * agent deserves to know whether the wall it hit is the API's or ours:
  *
  * - `"cloudflare"` — the schema's own documented minimum and maximum.
  * - `"clamped"` — Cloudflare accepts more; this connection caps it lower.
@@ -3924,9 +3924,6 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
       options.instructions,
       authentication,
     ),
-    // The schemas are hand-written and closed; a schema that cannot be
-    // enforced is a bug in this file, not input to pass through.
-    strictValidation: true,
     ...(options.maxResultBytes !== undefined
       ? { maxResultBytes: options.maxResultBytes }
       : {}),

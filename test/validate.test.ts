@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
-import { precompileValidator, validateToolInput } from "../src/validate.js";
+import { compileValidator, validateToolInput } from "../src/validate.js";
 import type { JsonSchema, Logger } from "../src/types.js";
 import { required, silentLogger } from "./helpers.js";
 
@@ -443,39 +443,47 @@ describe("validateToolInput", () => {
   });
 });
 
-describe("precompileValidator", () => {
-  it("warns and disables a schema the validator cannot compile, without throwing", () => {
-    const { logger, warn } = loggerSpy();
+describe("compileValidator", () => {
+  it("throws on a schema the validator cannot compile, naming the address", () => {
     const schema: JsonSchema = {
-      $id: "urn:connecta-test:precompile-bad",
+      $id: "urn:connecta-test:compile-bad",
       type: "object",
-      $defs: { clash: { $id: "urn:connecta-test:precompile-bad" } },
+      $defs: { clash: { $id: "urn:connecta-test:compile-bad" } },
     };
     expect(() =>
-      precompileValidator(schema, { address: "acme.precompile_bad", logger }),
-    ).not.toThrow();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("acme.precompile_bad");
-    // The disabled schema is cached: the runtime path passes through (default)
-    // rather than recompiling and warning a second time.
+      compileValidator(schema, { address: "acme.compile_bad" }),
+    ).toThrow(/acme\.compile_bad/);
+    expect(() =>
+      compileValidator(schema, { address: "acme.compile_bad" }),
+    ).toThrow(/cannot use/);
+  });
+
+  it("refuses a schema an earlier call already found unusable", () => {
+    const { logger, warn } = loggerSpy();
+    // Unresolvable $ref: it compiles, then blows up on first validate, which
+    // is where the fail-open proxy path disables it.
+    const schema: JsonSchema = {
+      type: "object",
+      properties: { x: { $ref: "#/definitions/missing" } },
+    };
     expect(
-      validateToolInput(schema, { anything: true }, {
-        address: "acme.precompile_bad",
-        logger,
-      }),
+      validateToolInput(schema, { x: 1 }, { address: "acme.late", logger }),
     ).toBeNull();
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(() => compileValidator(schema, { address: "acme.late" })).toThrow(
+      /acme\.late/,
+    );
   });
 
   it("silently caches a good schema so the runtime path hits the cache", () => {
-    const { logger, warn } = loggerSpy();
     const schema: JsonSchema = {
       type: "object",
       properties: { n: { type: "integer" } },
       required: ["n"],
     };
-    precompileValidator(schema, { address: "acme.precompile_ok", logger });
-    expect(warn).not.toHaveBeenCalled();
+    expect(() =>
+      compileValidator(schema, { address: "acme.compile_ok" }),
+    ).not.toThrow();
     expect(validateToolInput(schema, { n: 1 }, OPTS)).toBeNull();
     expect(validateToolInput(schema, { n: "1" }, OPTS)?.code).toBe(
       "invalid_args",

@@ -124,6 +124,33 @@ Maintained provider guides:
 - [Notion](./notion.md)
 - [Stripe](./stripe.md)
 
+## The `api()` construction contract
+
+`api()` is the path every custom integration takes, and whatever it accepts is
+what an agent eventually reads. Three things are refused at construction rather
+than discovered in production
+([#340](https://github.com/zackbart/connecta/issues/340)):
+
+- **A tool with no description.** Discovery has nothing else to route on, and a
+  guess costs a call.
+- **A tool with no explicit boolean `annotations.readOnlyHint`.** `true`
+  declares a read and admits the tool to `call_tool` and `execute_code`;
+  `false` declares work that crosses `call_destructive_tool`, where the host
+  can ask a human. Connecta never infers the classification from a tool name,
+  description, schema, HTTP method, or the other annotations — an unclassified
+  tool is a bug in the deployment, not a puzzle to solve.
+- **An `inputSchema` the validator cannot compile.** Declaring one is optional;
+  declaring one that cannot be enforced is not. A schema that only reveals
+  itself on first use — an unresolvable `$ref`, say — fails that call as
+  non-retryable `invalid_args` rather than forwarding raw arguments to the
+  handler. `validateArgs: false` still opts out of enforcement for deployments
+  that want loose coercion; it does not opt out of the schema being real.
+
+None of this reaches a proxied catalog: hosted-MCP tools arrive as their
+downstream wrote them, and an unannotated or contradictory one stays
+fail-closed onto `call_destructive_tool`. The contract binds the surfaces we
+write, not the catalogs we relay.
+
 ## MCP version skew
 
 Connecta deliberately sits between protocol generations

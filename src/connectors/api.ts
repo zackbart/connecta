@@ -1,4 +1,4 @@
-import { precompileValidator, validateToolInput } from "../validate.js";
+import { compileValidator, validateToolInput } from "../validate.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -14,16 +14,28 @@ import type {
 
 export interface ApiTool {
   name: string;
-  description?: string;
-  /** A plain JSON Schema object describing the tool input. */
+  /**
+   * Required, non-empty. Discovery has nothing else to go on: a nameless
+   * capability costs the agent a guess, and a guess costs a wrong call.
+   */
+  description: string;
+  /**
+   * A plain JSON Schema object describing the tool input. Optional, but what
+   * you supply must be a schema the validator can compile — `api()` refuses to
+   * construct otherwise.
+   */
   inputSchema?: JsonSchema;
   /** A plain JSON Schema object describing the tool's structured output. */
   outputSchema?: JsonSchema;
   /**
-   * Standard MCP-style behavior hints. Only an explicit readOnlyHint: true
-   * admits the tool to call_tool and execute_code.
+   * Standard MCP-style behavior hints, with an explicit `readOnlyHint`
+   * required: `true` declares a read and admits the tool to call_tool and
+   * execute_code, `false` declares work that must cross
+   * `call_destructive_tool` where a host can ask a human. Connecta never
+   * infers the classification from a name, a description, a schema, or the
+   * other annotations.
    */
-  annotations?: ToolAnnotations;
+  annotations: ToolAnnotations & { readOnlyHint: boolean };
   handler: (args: any, ctx: ConnectorContext) => Promise<unknown> | unknown;
 }
 
@@ -67,17 +79,37 @@ export interface ApiOptions {
    * on loose coercion.
    */
   validateArgs?: boolean;
-  /**
-   * Fail-closed on a tool whose `inputSchema` the validator cannot evaluate
-   * (default false). The default surfaces such a schema as a one-time warning
-   * and then passes the raw arguments through, so a broken schema never breaks
-   * an otherwise working tool. Set true to instead reject those calls with a
-   * non-retryable `invalid_args` ConnectorCallError, so a schema that cannot be
-   * enforced never silently admits unvalidated input. Only consulted when
-   * `validateArgs` is not false.
-   */
-  strictValidation?: boolean;
   tools: ApiTool[];
+}
+
+/**
+ * Enforce the construction contract for one hand-written tool.
+ *
+ * Everything here is something only the author can supply and no runtime can
+ * guess: what the tool does, and whether calling it needs a human's blessing.
+ * Guessing either one is how a deployment boots into the wrong shape, so this
+ * throws instead. Note what it does *not* do — it never reads a name, verb, or
+ * HTTP method to infer a safety class. An unclassified tool is a bug in the
+ * deployment, not a puzzle for connecta to solve.
+ */
+function checkToolContract(id: string, tool: ApiTool): void {
+  const address = `${id}.${tool.name}`;
+  if (typeof tool.description !== "string" || tool.description.trim() === "") {
+    throw new Error(
+      `api() tool "${address}" needs a non-empty description — it is what an ` +
+        "agent reads to choose the tool (convention: imperative one-liner, " +
+        'e.g. "Send an email via Resend").',
+    );
+  }
+  if (typeof tool.annotations?.readOnlyHint !== "boolean") {
+    throw new Error(
+      `api() tool "${address}" needs an explicit annotations.readOnlyHint: ` +
+        "true for a read, false for work that must cross " +
+        "call_destructive_tool. Connecta never infers the classification " +
+        "from a tool name, description, schema, or other annotations.",
+    );
+  }
+  if (tool.inputSchema) compileValidator(tool.inputSchema, { address });
 }
 
 /**
@@ -85,31 +117,28 @@ export interface ApiOptions {
  * Tool inputs are plain JSON Schema objects (bring your own zod-to-json-schema
  * conversion if you prefer zod). call_tool JSON-wraps the handler's return.
  *
- * Arguments are validated against `inputSchema` before the handler runs
- * (disable with `validateArgs: false`). Remote MCP inputs are also validated,
- * but in the shared invocation path against the request-local downstream
- * catalog. These API-only controls stay here because hand-written handlers may
- * deliberately accept loose coercion or choose fail-closed schema handling.
+ * Every tool declares a description and an explicit `annotations.readOnlyHint`,
+ * and any `inputSchema` it carries must compile — a tool that fails the
+ * contract throws here rather than reaching a catalog. Arguments are then
+ * validated against `inputSchema` before the handler runs (disable with
+ * `validateArgs: false`, which opts out of enforcement, not out of the schema
+ * being real), and a schema that only reveals itself as unenforceable on first
+ * use — an unresolvable `$ref`, say — fails the call rather than passing raw
+ * arguments through. Remote MCP inputs are also validated, but in the shared
+ * invocation path against the request-local downstream catalog, where a
+ * downstream's schema is its own affair and stays fail-open.
  */
 export function api(id: string, opts: ApiOptions): Connector {
+  for (const t of opts.tools) checkToolContract(id, t);
   const defs: ToolDef[] = opts.tools.map((t) => ({
     name: t.name,
-    ...(t.description !== undefined ? { description: t.description } : {}),
+    description: t.description,
     ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
     ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
-    ...(t.annotations !== undefined ? { annotations: t.annotations } : {}),
+    annotations: t.annotations,
   }));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
-  const strictValidation = opts.strictValidation ?? false;
-  if (validateArgs) {
-    // Compile each schema now so a validator-hostile inputSchema surfaces once
-    // here rather than silently on its first call. Warning-only; never throws.
-    for (const t of opts.tools) {
-      if (t.inputSchema)
-        precompileValidator(t.inputSchema, { address: `${id}.${t.name}` });
-    }
-  }
   return {
     id,
     ...(opts.title !== undefined ? { title: opts.title } : {}),
@@ -145,7 +174,10 @@ export function api(id: string, opts: ApiOptions): Connector {
         const invalid = validateToolInput(tool.inputSchema, input, {
           address: `${id}.${name}`,
           logger: ctx.logger,
-          failClosed: strictValidation,
+          // Always: the schema compiled at construction, so anything that
+          // fails here is a schema that cannot be enforced, and a surface we
+          // wrote ourselves does not get to admit unvalidated input quietly.
+          failClosed: true,
         });
         if (invalid) throw invalid;
       }

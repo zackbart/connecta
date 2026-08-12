@@ -1401,6 +1401,7 @@ describe("/oauth/callback/<id> route", () => {
             {
               name: "noop",
               description: "does nothing",
+              annotations: { readOnlyHint: true },
               handler: async () => ({}),
             },
           ],
@@ -1550,6 +1551,7 @@ describe("/oauth/callback/<id> route", () => {
             {
               name: "noop",
               description: "does nothing",
+              annotations: { readOnlyHint: true },
               handler: async () => ({}),
             },
           ],

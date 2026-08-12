@@ -29,17 +29,12 @@ export interface ValidateToolInputOptions {
   failClosed?: boolean;
 }
 
-export interface PrecompileValidatorOptions {
+export interface CompileValidatorOptions {
   /**
-   * Tool address used in the warning text, conventionally
+   * Tool address used in the error text, conventionally
    * `"connectorId.toolName"`.
    */
   address: string;
-  /**
-   * Destination for the warning emitted when the schema cannot be compiled.
-   * Default console.
-   */
-  logger?: Logger;
 }
 
 // Lazy validator cache keyed by the schema object itself; null marks a schema
@@ -279,6 +274,14 @@ function unevaluableSchema(address: string): ConnectorCallError {
   );
 }
 
+function unusableSchema(address: string, detail: string): Error {
+  return new Error(
+    `Tool "${address}" has an inputSchema the validator cannot use ` +
+      `(${detail}) — fix the schema or drop it; a schema that cannot be ` +
+      "enforced must not ship as one that can.",
+  );
+}
+
 function disableValidation(
   schema: JsonSchema,
   address: string,
@@ -366,22 +369,34 @@ export function validateToolInput(
 }
 
 /**
- * Eagerly compile and cache a tool's inputSchema so a schema the validator
- * cannot use surfaces once at connector construction rather than silently on
- * the first call. Reuses the same module-level cache `validateToolInput` reads,
- * so the runtime path hits the cache. Warning-only: it never throws and never
- * changes call behavior. A schema that only fails on first `validate()` (e.g.
- * an unresolvable `$ref`) still slips through here and is caught at call time.
+ * Eagerly compile and cache a tool's inputSchema, throwing when the validator
+ * cannot use it. Reuses the same module-level cache `validateToolInput` reads,
+ * so the runtime path hits the cache.
+ *
+ * This is the construction-time half of the contract hand-written tools sign:
+ * a schema connecta cannot enforce is the author's bug, and a deployment that
+ * boots with one is a deployment quietly promising validation it will not do.
+ * A schema that only fails on first `validate()` (an unresolvable `$ref`, say)
+ * still slips through here — the validator resolves those lazily — and is
+ * caught at call time by the caller's `failClosed`.
  */
-export function precompileValidator(
+export function compileValidator(
   schema: JsonSchema,
-  opts: PrecompileValidatorOptions,
+  opts: CompileValidatorOptions,
 ): void {
-  if (validators.has(schema)) return;
-  const logger = opts.logger ?? console;
+  const cached = validators.get(schema);
+  if (cached) return;
+  // null marks a schema an earlier call already found unusable; recompiling it
+  // into a working validator would be the fail-open behavior wearing a hat.
+  if (cached === null) {
+    throw unusableSchema(opts.address, "an earlier call could not evaluate it");
+  }
   try {
     validators.set(schema, new Validator(schema as never, "2020-12", false));
   } catch (err) {
-    disableValidation(schema, opts.address, logger, err);
+    throw unusableSchema(
+      opts.address,
+      err instanceof Error ? err.message : String(err),
+    );
   }
 }

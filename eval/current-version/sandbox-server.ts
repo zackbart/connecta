@@ -435,7 +435,6 @@ const discoveryConnectors: Connector[] = discoveryCorpus.connectors.map(
   (fixture) =>
     api(fixture.id, {
       description: fixture.description,
-      strictValidation: true,
       tools: fixtureTools(fixture.id, fixture.tools),
     }),
 );
@@ -453,7 +452,6 @@ than the display name.
 
 Example: \`team = ENG AND status = "In Progress"\`.
 `,
-  strictValidation: true,
   tools: [
     {
       name: "search_issues",
@@ -509,7 +507,6 @@ const bookshelf = api("bookshelf", {
 Only \`list_books\` uses cursor pagination. A \`get_book\` point lookup takes
 the stable book id directly and needs no pagination convention.
 `,
-  strictValidation: true,
   tools: [
     {
       name: "get_book",
@@ -596,7 +593,6 @@ Use nested SDK argument objects, not flat ids. Resolve the account's zone with
 \`list_zones({ account: { id } })\`, then pass the returned zone id as
 \`list_dns_records({ zone: { id }, filter: { recordType } })\`.
 `,
-  strictValidation: true,
   tools: [
     {
       name: "list_zones",
@@ -709,7 +705,6 @@ guessed endpoint.
     summary: "Required method, path, and query conventions for a generic API wrapper.",
     required: true,
   },
-  strictValidation: true,
   tools: [
     {
       name: "request",
@@ -933,7 +928,6 @@ const routing = api("routing", {
   title: "Routing Guidance Eval Fixtures",
   description:
     "Deterministic fixtures for schema-aware selection and declared output roots",
-  strictValidation: true,
   tools: [
     {
       name: "search_releases_by_registry",
