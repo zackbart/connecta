@@ -38,14 +38,15 @@ order, and amending it is a design decision, not a drive-by edit.
 - **One fetch-native core, two runtimes.** The same code runs unchanged on
   Cloudflare Workers and in Node — a Worker or a Docker stack, your pick. Web
   APIs only in the core; Node touches live behind explicit subpaths.
-- **Observable, never administrable.** Operator pages show connector status,
-  masked credentials, and payload-free activity. They can rotate a secret;
-  they cannot add a connector, change policy, or alter what an agent can call.
+- **Observable, actionable only over authentication material.** Operator pages
+  show connector status, masked credentials, and payload-free activity — and
+  they act: rotate a credential, issue or revoke an access token, run a
+  downstream OAuth flow. Declared capability is what they cannot touch.
 
 ## What this isn't
 
 - **Not a platform.** No runtime connector registration, no admin UI that
-  changes behavior, no policy engine, no approvals, no pauses.
+  changes declared capability, no policy engine, no approvals, no pauses.
 - **Not a schema ingester.** No OpenAPI or GraphQL → tools. Generated tool
   sprawl is the disease the meta-tools treat, not a feature to add.
 - **Not multi-tenant.** No accounts dimension, no per-user credential store,
@@ -80,6 +81,7 @@ proposing one without a new argument is not.
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Agent credential recovery | accepted | one `auth_required` route through `authorize_connector`; only an operator handles secrets ([#192](https://github.com/zackbart/connecta/issues/192)) |
 | Operator-issued MCP access tokens | accepted | named, revocable authentication gives header-capable clients a small alternative to OAuth; tokens identify callers but never scope tools or become operator credentials |
+| Operator boundary reworded: authentication material, never declared capability | accepted | supersedes "observable, never administrable", which had stopped describing the surface: operator routes already rotate credentials, issue and revoke access tokens, and drive downstream OAuth, each under its own accepted row, and the owner has decided the surface stays actionable — so the boundary now says what is actually true, that operator routes may manage authentication material for capabilities declared in deployment configuration and may not change the connector set, the declared tool catalog or annotations, requested OAuth scopes, admission policy, authorization rules, or caller tool scope; the claim is deliberately about *declared* capability, and twice so, because replacing an API token with a broader-scoped one widens downstream reach and no browser page can honestly promise otherwise, and because a remote MCP server's catalog is discovered rather than declared — connecta declares the connector, its credential slot, and its admission policy, while the tools that server serves are its own answer, so storing a credential or finishing an OAuth flow can legitimately take an `mcp()` connector from no tools to N, which is discovery arriving, not an operator editing the deployment ([#338](https://github.com/zackbart/connecta/issues/338)) |
 | Structured result surface | accepted | canonical `structuredContent` plus complete compact `content`; summary-only text is gated on host-forwarding evidence ([#191](https://github.com/zackbart/connecta/issues/191)) |
 | Code mode (`execute_code`) | accepted | the primary read, discovery, and composition surface: smaller serialized definitions, far smaller results once composition and projection happen before the model sees them, and a cold-start model that read the interface without help ([exploration](./documentation/code-first-exploration.md), [#224](https://github.com/zackbart/connecta/issues/224)) |
 | Code-first as the default; the eval gate retired | accepted | owner decision, 2026-07-30: one operator, no deploy-time flip; [`eval/code-first-gate`](./eval/code-first-gate/README.md) survives as measurement, but nothing waits on its verdict ([#222](https://github.com/zackbart/connecta/issues/222), [#224](https://github.com/zackbart/connecta/issues/224)) |
@@ -132,8 +134,11 @@ Breaking one is not a bug fix — it is a design change wearing a disguise.
   `node:` builtin.
 - **The published surface is a boundary.** Heavyweight or platform-bound code
   goes behind an optional-peer subpath, never into core.
-- **No runtime admin.** If a browser could change what an agent can reach,
-  that feature is a non-goal wearing a disguise.
+- **Operator routes manage authentication material, never declared
+  capability.** Authenticating a declared capability is allowed; the connector
+  set, declared catalog and annotations, OAuth scopes, admission, authorization
+  rules, and caller tool scope take a config edit. A downstream catalog is
+  discovered, not declared — remote MCP tools appear when its credential does.
 - **Structural mistakes throw at construction.** A deployment that boots into
   the wrong shape is worse than one that refuses to boot.
 
