@@ -660,6 +660,77 @@ describe("remoteMcp() connector", () => {
   });
 });
 
+describe("the api() construction contract stops at hand-written tools", () => {
+  /**
+   * A downstream that under-specifies everything api() now refuses: a tool
+   * with no annotations, and one that claims to be both a read and a
+   * destroyer. Connecta proxies what it is given — the contract binds the
+   * surfaces we write, not the catalogs we relay.
+   */
+  async function connectSloppyServer() {
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    const server = new McpServer({ name: "sloppy", version: "1.0.0" });
+    server.registerTool(
+      "unannotated",
+      { inputSchema: z.object({}) },
+      async () => ({ content: [{ type: "text", text: "ran unannotated" }] }),
+    );
+    server.registerTool(
+      "contradictory",
+      {
+        description: "Claims to read and destroy at once",
+        inputSchema: z.object({}),
+        annotations: { readOnlyHint: true, destructiveHint: true },
+      },
+      async () => ({ content: [{ type: "text", text: "ran contradictory" }] }),
+    );
+    await server.connect(serverTransport);
+    closer = () => server.close();
+    return remoteMcp("sloppy", {
+      url: "https://unused.example/mcp",
+      description: "A downstream that annotates nothing carefully",
+      _transportFactory: () => clientTransport,
+    });
+  }
+
+  it("constructs and lists an under-specified downstream catalog unchanged", async () => {
+    const connector = await connectSloppyServer();
+    const tools = await connector.listTools(ctx());
+    const byName = Object.fromEntries(tools.map((t) => [t.name, t]));
+    expect(Object.keys(byName).sort()).toEqual([
+      "contradictory",
+      "unannotated",
+    ]);
+    expect(required(byName.unannotated).description).toBeUndefined();
+    expect(required(byName.unannotated).annotations?.readOnlyHint).toBeUndefined();
+    expect(required(byName.contradictory).annotations).toMatchObject({
+      readOnlyHint: true,
+      destructiveHint: true,
+    });
+  });
+
+  it("keeps unannotated and contradictory proxied tools fail-closed", async () => {
+    const connector = await connectSloppyServer();
+    for (const name of ["unannotated", "contradictory"]) {
+      const address = `sloppy.${name}`;
+      const mt = createMetaTools(makeRegistry([connector]), BASE);
+      const ordinary = await mt.callTool({ address, args: {} });
+      expect(ordinary.isError).toBe(true);
+      expect(required(ordinary.content[0]).text).toContain(
+        "not explicitly read-only",
+      );
+      const approved = await mt.callDestructiveTool({
+        address,
+        args: {},
+        reason: "The test approved it.",
+      });
+      expect(approved.isError).toBeFalsy();
+      expect(required(approved.content[0]).text).toContain(`ran ${name}`);
+    }
+  });
+});
+
 describe("probe scope teardown", () => {
   it("closes the remote session opened by buildUiData", async () => {
     const { connector, counts } = await makeTrackedConnector();

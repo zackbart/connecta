@@ -2,6 +2,47 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+`api()` stops being forgiving. A hand-written tool now declares what it does
+and whether calling it needs a human, and any `inputSchema` it ships is one
+Connecta can actually enforce — all three checked at construction, where a
+deployment can still refuse to boot, rather than discovered by an agent at
+2 a.m. The warn-once-then-pass-raw-arguments-through behavior behind an
+unenforceable schema is gone, and with it the `strictValidation` option that
+existed only to turn it off.
+
+This breaks `api()` authors, and only `api()` authors. Migration is
+mechanical: give every tool a non-empty `description` and an explicit
+`annotations.readOnlyHint` — `true` for a read, `false` for work that should
+cross `call_destructive_tool` — then delete `strictValidation`, which is now
+the only behavior. A tool that used to ship unannotated becomes
+`readOnlyHint: false`, which is exactly the routing it already got.
+Hosted-MCP proxies are untouched: `remoteMcp()` relays a downstream's names,
+descriptions, schemas, and annotations as they arrive, and an unannotated or
+contradictory downstream tool still fails closed onto `call_destructive_tool`.
+Connecta infers read-only behavior from nothing, anywhere.
+
+### Changed
+
+- **`api()` enforces its construction contract.** Every tool requires a
+  non-empty `description` and an explicit boolean `annotations.readOnlyHint`;
+  a missing or non-boolean classification throws with the address that needs
+  fixing. The classification is never inferred from a tool name, description,
+  schema, HTTP method, or the other annotations (#340).
+- **An unenforceable `inputSchema` fails at construction.** A schema the
+  validator cannot compile throws when the connector is built, whether or not
+  `validateArgs` is on — opting out of enforcement is not opting out of the
+  schema being real. A schema that only reveals itself on first use, such as an
+  unresolvable `$ref`, now fails that call as non-retryable `invalid_args`
+  instead of forwarding raw arguments to the handler (#340).
+
+### Removed
+
+- **`ApiOptions.strictValidation`.** Fail-closed schema handling is the only
+  behavior, so the opt-in has nothing left to switch. Delete the option;
+  nothing else changes (#340).
+
 ## 0.15.1 — 2026-08-12
 
 The Cloudflare connection now supports legacy user-scoped Global API Keys as
