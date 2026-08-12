@@ -27,10 +27,12 @@ Two things this audit deliberately does not decide:
   named surface against the escape hatch with usage evidence. H14's keep/prune
   judgment is reported here as open, not answered.
 - **Whether a downstream catalog has drifted since a release reviewed it.**
-  That is [#343](https://github.com/zackbart/connecta/issues/343) (detection at
-  refresh) and [#351](https://github.com/zackbart/connecta/issues/351) (the
-  maintainer-run check). P13 is audited as "is the list addressable by such a
-  check", not as "is the list current".
+  Detection at refresh shipped with
+  [#343](https://github.com/zackbart/connecta/issues/343) and the maintainer-run
+  check is [#351](https://github.com/zackbart/connecta/issues/351). P13 is
+  audited as "is the list addressable by such a check", not as "is the list
+  current" — the answer to the second question arrives from a running
+  deployment, not from a reading.
 
 ## Cloudflare — hand-written HTTP
 
@@ -95,7 +97,7 @@ deliberate surface.
 | P10 no credential test | meets | no `credential`, `testCredential`, or `testCredentials` on the wrapper |
 | P11 transport vs tool error | meets | inherited whole from `remoteMcp()`; the wrapper adds no error handling and reads no downstream prose |
 | P12 admission budget | meets | exemplary, and the reason P12 exists. Linear documents no MCP-specific limit and meters the underlying API per user per hour, so the connection declares no budget and documents how an operator supplies one |
-| P13 drift visible | meets | both lists are module-level constants in one file per provider, addressable by the check [#351](https://github.com/zackbart/connecta/issues/351) will run |
+| P13 drift visible | meets | both lists are module-level constants in one file per provider, and now *are* the manifest the wrapper classifies from, compared against the live catalog on every refresh ([#343](https://github.com/zackbart/connecta/issues/343)); the maintainer-run check is [#351](https://github.com/zackbart/connecta/issues/351) |
 
 ## Stripe — hosted-MCP proxy
 
@@ -113,7 +115,7 @@ deliberate surface.
 | P10 no credential test | meets | no credential slot; the mode/key contradiction throws at construction instead, which is where P10 says the H12 guarantee gets paid |
 | P11 transport vs tool error | meets | inherited from `remoteMcp()`; the guide now also says that a rejected argument or plan restriction arrives in Stripe's own words and is not an authorization problem |
 | P12 admission budget | meets | a citable documented number (100/s live, 25/s sandbox), transcribed per mode, with `maxConcurrency` labeled as Connecta's own conservative choice |
-| P13 drift visible | meets | both lists are module-level constants in one file |
+| P13 drift visible | meets | both lists are module-level constants in one file, and are the manifest the refresh-time drift check compares against ([#343](https://github.com/zackbart/connecta/issues/343)) |
 
 ## Mixpanel — hosted-MCP proxy
 
@@ -135,7 +137,7 @@ Linear's reasoning.
 | P10 no credential test | partial — n/a for half | no `credential`, `testCredential`, or `testCredentials`, as required. The construction-time contradiction check P10 points at has nothing to check here: a Mixpanel service-account token does not encode its region, so there is no recognizable credential for a declared region to contradict. Recorded rather than invented — guessing a region from a token shape this release does not understand is precisely what P4 tells Stripe not to do |
 | P11 transport vs tool error | meets | inherited from `remoteMcp()`; the guide now names the `auth_required` → `authorize_connector` route and says a plan restriction arrives in Mixpanel's own words |
 | P12 admission budget | **missed → fixed** | the connection hardcoded a 600-call hourly budget transcribed from a limit Mixpanel meters **per user**. P12 names this case exactly: a per-runtime counter cannot approximate a per-user quota in either direction — one runtime serving several users under-counts, several isolates sharing one credential each admit a full budget. The default is removed; `callAdmission` is now an operator option with a documented example, matching Linear |
-| P13 drift visible | meets | both lists are module-level constants in one file |
+| P13 drift visible | meets | both lists are module-level constants in one file, and are the manifest the refresh-time drift check compares against ([#343](https://github.com/zackbart/connecta/issues/343)) |
 
 ## Scoreboard
 

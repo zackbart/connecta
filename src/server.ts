@@ -132,6 +132,10 @@ export function createFetchHandler(
           status: "ok",
           connectors: registry.listConnectors().length,
           server: opts.serverInfo,
+          // Counts only, from refreshes that already happened — the endpoint
+          // asks no downstream anything, and `connecta doctor` reads it to
+          // report a stale allowlist without a probe of its own (#343).
+          catalogDrift: registry.catalogDriftSnapshot(),
           admission: {
             policy: "global-fifo",
             requests: opts.requestAdmission.snapshot(),

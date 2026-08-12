@@ -11,6 +11,7 @@ export const WORKERS_SUITES = [
   "test/bearer.test.ts",
   "test/branding.test.ts",
   "test/call-admission.test.ts",
+  "test/catalog-drift.test.ts",
   "test/catalog.test.ts",
   "test/clerk.test.ts",
   "test/cloudflare-provider.test.ts",

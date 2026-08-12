@@ -484,10 +484,26 @@ export function createConnecta(config: ConnectaConfig): Connecta {
         "operator may create, rename, or revoke deployment access tokens",
     );
   }
+  const serverInfo = {
+    ...config.serverInfo,
+    name: config.serverInfo?.name ?? "connecta",
+    version: config.serverInfo?.version ?? CONNECTA_VERSION,
+  };
   const registry = new Registry(config.connectors, {
     storage,
     logger,
     ...(credentialVault !== undefined ? { credentialVault } : {}),
+    ...(config.activity?.store !== undefined
+      ? {
+          catalogDriftActivity: {
+            sink: config.activity.store,
+            serverInfo,
+            ...(config.activity.deploymentId !== undefined
+              ? { deploymentId: config.activity.deploymentId }
+              : {}),
+          },
+        }
+      : {}),
     ...(config.discovery?.catalogTtlSeconds !== undefined
       ? { toolCacheTtlSeconds: config.discovery.catalogTtlSeconds }
       : {}),
@@ -529,11 +545,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     registry,
     auth: inboundAuth,
     ...(config.publicUrl !== undefined ? { publicUrl: config.publicUrl } : {}),
-    serverInfo: {
-      ...config.serverInfo,
-      name: config.serverInfo?.name ?? "connecta",
-      version: config.serverInfo?.version ?? CONNECTA_VERSION,
-    },
+    serverInfo,
     logger,
     ...(config.activity?.store !== undefined
       ? { activity: config.activity.store }
