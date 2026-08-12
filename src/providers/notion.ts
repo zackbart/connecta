@@ -1,4 +1,5 @@
 import { api, type ApiTool } from "../connectors/api.js";
+import { guardedFetch } from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type {
   Connector,
@@ -46,6 +47,16 @@ const MAX_CHILDREN_PER_REQUEST = 100;
  * hits this ceiling it stops and says so in `truncated`.
  */
 const MAX_CONTENT_REQUESTS = 20;
+
+/**
+ * The largest response this connection will read.
+ *
+ * Notion's own limits put a legitimate answer nowhere near this: `page_size`
+ * tops out at 100, and every payload here is JSON. Four mebibytes is a ceiling
+ * on absurdity — a proxy that decided to answer with something enormous — not
+ * a budget any real read has to think about.
+ */
+const NOTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
 /**
  * Approximates Notion's documented limit: "an average of three requests per
@@ -211,54 +222,55 @@ function notionFailure(
   });
 }
 
+/**
+ * The one transport every Notion tool goes through.
+ *
+ * URL confinement, `ctx.signal`, redirect refusal, bounded reads, and the
+ * "could not reach the provider" normalization live in the shared helper. The
+ * two things that cannot be shared stay here: the integration token becomes
+ * the headers Notion accepts, and `notionFailure` decides what a status means
+ * — which is the whole reason a generic HTTP client is the wrong shape, given
+ * that Notion's 403 and 404 both mean something no status table would guess.
+ */
+const send = guardedFetch({
+  provider: "Notion",
+  baseUrl: NOTION_API_BASE_URL,
+  headers: { "Notion-Version": NOTION_API_VERSION },
+  maxResponseBytes: NOTION_MAX_RESPONSE_BYTES,
+  authenticate: async (ctx) => {
+    const token = (await ctx.credential?.get())?.trim();
+    if (!token) {
+      throw new ConnectorCallError(
+        "auth_required",
+        "No Notion integration token is configured for this connector — an operator must add one on /credentials before any Notion call can run.",
+      );
+    }
+    return { Authorization: `Bearer ${token}` };
+  },
+});
+
 async function notionRequest(
   ctx: ConnectorContext,
   request: NotionRequest,
 ): Promise<any> {
-  const token = (await ctx.credential?.get())?.trim();
-  if (!token) {
-    throw new ConnectorCallError(
-      "auth_required",
-      "No Notion integration token is configured for this connector — an operator must add one on /credentials before any Notion call can run.",
-    );
-  }
-
-  const url = new URL(request.path, NOTION_API_BASE_URL);
-  for (const [key, value] of Object.entries(request.query ?? {})) {
-    if (value !== undefined) url.searchParams.set(key, String(value));
-  }
-
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${token}`,
-    "Notion-Version": NOTION_API_VERSION,
-  };
-  if (request.body !== undefined) headers["Content-Type"] = "application/json";
-
-  const response = await fetch(url, {
-    method: request.method,
-    headers,
-    ...(request.body !== undefined
-      ? { body: JSON.stringify(request.body) }
-      : {}),
-    ...(ctx.signal ? { signal: ctx.signal } : {}),
+  return await send(request, ctx, async (response) => {
+    let payload: Record<string, unknown> | undefined;
+    try {
+      // Notion answers a delete with an empty body and a gateway answers with
+      // HTML; neither is a payload, and neither is worth a different failure.
+      payload = (await response.json()) as Record<string, unknown> | undefined;
+    } catch {
+      payload = undefined;
+    }
+    if (!response.ok) {
+      throw notionFailure(
+        response.status,
+        payload,
+        response.headers.get("Retry-After"),
+      );
+    }
+    return payload ?? {};
   });
-
-  const text = await response.text();
-  let payload: Record<string, unknown> | undefined;
-  try {
-    payload = text ? (JSON.parse(text) as Record<string, unknown>) : undefined;
-  } catch {
-    payload = undefined;
-  }
-
-  if (!response.ok) {
-    throw notionFailure(
-      response.status,
-      payload,
-      response.headers.get("Retry-After"),
-    );
-  }
-  return payload ?? {};
 }
 
 // ---------------------------------------------------------------------------

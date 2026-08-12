@@ -64,6 +64,13 @@ latter of which built the Connecta repository rather than a consumer project —
 are gone. Existing deployments can ignore all of this; nothing in the package's
 runtime surface moved.
 
+Underneath all of it, the two hand-written providers stopped each keeping their
+own copy of the same transport safety machinery. Nothing about their behavior
+changed — their existing suites are the proof, unmodified — but Cloudflare and
+Notion now send every request through one guarded transport that owns URL
+confinement, redirect refusal, bounded response reads, and network-failure
+normalization, and owns no opinion at all about what a status code means.
+
 ### Added
 
 - **The Node template is Docker-ready.** `Dockerfile`, `docker-compose.yml`,
@@ -99,6 +106,18 @@ runtime surface moved.
   name their id-resolution rules, say the hosted catalog is not a fixed set, and
   give the `auth_required` → `authorize_connector` recovery route. Notion's
   guide states that it deliberately has no raw-REST escape hatch (#342).
+- **A guarded fetch transport for hand-written connectors.** One factory
+  supplies the machinery every `api()` HTTP surface was re-deriving: strict
+  base-origin and path confinement checked after URL normalization, encoded
+  query and JSON body construction, `ctx.signal` propagation, a required
+  response-byte ceiling enforced while reading, a flat refusal to follow a
+  redirect or to let a request header shadow an authentication one, and an
+  unreachable provider normalized to a retryable `unavailable`. Authentication
+  and status interpretation stay in provider callbacks — the helper never
+  guesses what a 403 means. Cloudflare and Notion both run on it; it is held
+  internal this release rather than exported, and
+  [`documentation/connectors.md`](./documentation/connectors.md#the-guarded-fetch-transport)
+  records why (#341).
 
 ### Changed
 

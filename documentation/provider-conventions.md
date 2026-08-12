@@ -81,6 +81,14 @@ Connecta owns the whole surface here, which means every miss is ours. These
 apply to `api()`-based prebuilt connections (Cloudflare, Notion) and are the
 bar any future one is written to.
 
+None of them asks an author to re-derive transport safety. URL confinement,
+query and body construction, `ctx.signal`, redirect refusal, credential
+shadowing, bounded response reads, and network-failure normalization are the
+[guarded fetch transport](./connectors.md#the-guarded-fetch-transport)'s job
+([#341](https://github.com/zackbart/connecta/issues/341)). What the conventions
+below still demand — H11's error mapping and H12's credential test above all —
+is the provider knowledge no shared helper can hold.
+
 ### H1 — Identity is deployment-owned; the provider supplies everything else
 
 The constructor takes an `id`, a required `purpose`, an optional `title`, and
