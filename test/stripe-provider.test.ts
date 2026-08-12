@@ -11,6 +11,7 @@ vi.mock("../src/connectors/remote-mcp.js", () => ({
 }));
 
 import { STRIPE_MCP_ENDPOINT, stripe } from "../src/providers/stripe.js";
+import { connectorGuideSummary } from "../src/skills.js";
 
 const context = {
   storage: {
@@ -21,6 +22,19 @@ const context = {
   logger: console,
   baseUrl: "https://connecta.example",
 };
+
+
+/**
+ * Every maintained provider guide is structured now (H13, P7), so a guide
+ * assertion reads its `content` rather than the connector field.
+ */
+function guideOf(connector: Connector): string {
+  const guide = connector.usageGuide;
+  if (typeof guide !== "object" || guide === undefined) {
+    throw new Error("expected a structured usage guide");
+  }
+  return guide.content;
+}
 
 describe("stripe()", () => {
   beforeEach(() => {
@@ -57,19 +71,19 @@ describe("stripe()", () => {
         requireHttps: true,
       }),
     );
-    expect(connector.usageGuide).toContain("Mode: production");
-    expect(connector.usageGuide).toContain("PRODUCTION account");
-    expect(connector.usageGuide).toContain("stripe_api_details");
+    expect(guideOf(connector)).toContain("Mode: production");
+    expect(guideOf(connector)).toContain("PRODUCTION account");
+    expect(guideOf(connector)).toContain("stripe_api_details");
     // The dedicated tools must stay named: a refund routed through the generic
     // `stripe_api_write` degrades the approval prompt a human actually reads.
-    expect(connector.usageGuide).toContain("create_refund");
-    expect(connector.usageGuide).toContain("get_stripe_account_info");
-    expect(connector.usageGuide).toContain("Idempotency-Key");
-    expect(connector.usageGuide).toContain("100 requests per second");
+    expect(guideOf(connector)).toContain("create_refund");
+    expect(guideOf(connector)).toContain("get_stripe_account_info");
+    expect(guideOf(connector)).toContain("Idempotency-Key");
+    expect(guideOf(connector)).toContain("100 requests per second");
     // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(connector.usageGuide).toContain("## Account instructions");
-    expect(connector.usageGuide).not.toContain("+## Account instructions");
-    expect(connector.usageGuide).toContain(
+    expect(guideOf(connector)).toContain("## Account instructions");
+    expect(guideOf(connector)).not.toContain("+## Account instructions");
+    expect(guideOf(connector)).toContain(
       "Never refund above $500 without a human in the loop.",
     );
   });
@@ -88,10 +102,46 @@ describe("stripe()", () => {
           "Stripe payments (sandbox — test data, no real money) — Rehearsing billing changes before they touch production",
       }),
     );
-    expect(connector.usageGuide).toContain("Mode: sandbox");
-    expect(connector.usageGuide).toContain("SANDBOX account");
-    expect(connector.usageGuide).toContain("never answer a question about live");
-    expect(connector.usageGuide).toContain("25 requests per second");
+    expect(guideOf(connector)).toContain("Mode: sandbox");
+    expect(guideOf(connector)).toContain("SANDBOX account");
+    expect(guideOf(connector)).toContain("never answer a question about live");
+    expect(guideOf(connector)).toContain("25 requests per second");
+  });
+
+  it("declares a mode-shaped guide summary rather than deriving one (P7)", () => {
+    // The derived summary would be "Mode: production. Account purpose: …",
+    // which spends the 120-character budget on the operator's prose and buries
+    // the one fact an agent must not get wrong.
+    const production = stripe("live", {
+      mode: "production",
+      purpose: "Billing operations for the production account",
+    });
+    const sandbox = stripe("test", {
+      mode: "sandbox",
+      purpose: "Billing operations for the production account",
+    });
+    const live = connectorGuideSummary(production);
+    const rehearsal = connectorGuideSummary(sandbox);
+    expect(live).toContain("PRODUCTION");
+    expect(rehearsal).toContain("Sandbox");
+    expect(live).not.toEqual(rehearsal);
+    for (const summary of [live, rehearsal]) {
+      expect(summary?.length).toBeLessThanOrEqual(120);
+      expect(summary).not.toContain("Account purpose");
+    }
+  });
+
+  it("tells the guide to resolve ids and to expect a varying catalog (P6, P8)", () => {
+    const connector = stripe("live", {
+      mode: "production",
+      purpose: "Billing operations",
+    });
+    const guide = guideOf(connector);
+    expect(guide).toContain("never guess one");
+    expect(guide).toContain("cus_");
+    expect(guide).toContain("stripe_api_search");
+    expect(guide).toContain("not a fixed set");
+    expect(guide).toContain("authorize_connector");
   });
 
   it("scales the admission budget to the mode's documented rate", () => {

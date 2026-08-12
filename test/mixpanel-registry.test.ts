@@ -46,6 +46,20 @@ function twoAccounts(storage: KVStorage) {
     connectors: [
       mixpanel("mixpanel_us", {
         purpose: "Production product decisions",
+        // Only this instance opts into a ceiling; the other must stay
+        // unmetered, because the connection invents no default budget for a
+        // limit Mixpanel meters per user.
+        callAdmission: {
+          rules: [
+            {
+              budget: {
+                kind: "rolling-window",
+                maxCalls: 300,
+                windowMs: 3_600_000,
+              },
+            },
+          ],
+        },
       }),
       mixpanel("mixpanel_eu", {
         purpose: "EU product reporting",
@@ -117,20 +131,27 @@ describe("mixpanel() inside a real deployment", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it("meters and observes each account separately", async () => {
+  it("meters only the account that asked to be metered, and observes both", async () => {
     const connecta = twoAccounts(memoryStorage());
-    expect(Object.keys(connecta.registry.callAdmissionSnapshot()).sort())
-      .toEqual(["mixpanel_eu", "mixpanel_us"]);
+    // No invented default ceiling: the unmetered instance has no admission
+    // controller at all, while the operator-configured one does.
+    expect(Object.keys(connecta.registry.callAdmissionSnapshot())).toEqual([
+      "mixpanel_us",
+    ]);
 
-    // One account spending its 600/hour budget leaves the other's untouched.
-    const permit = await connecta.registry.admitCall("mixpanel_us", {
+    const metered = await connecta.registry.admitCall("mixpanel_us", {
       toolName: "Run-Query",
       args: {},
     });
-    permit.release();
+    metered.release();
+    const unmetered = await connecta.registry.admitCall("mixpanel_eu", {
+      toolName: "Run-Query",
+      args: {},
+    });
+    unmetered.release();
     const budgets = connecta.registry.callAdmissionSnapshot();
     expect(budgets["mixpanel_us"]?.totals.admitted).toBe(1);
-    expect(budgets["mixpanel_eu"]?.totals.admitted).toBe(0);
+    expect(budgets["mixpanel_eu"]).toBeUndefined();
 
     // Health and activity are keyed by connector id the same way.
     connecta.registry.recordFailure("mixpanel_us", 5, new Error("boom"));

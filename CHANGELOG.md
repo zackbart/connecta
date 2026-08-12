@@ -41,6 +41,19 @@ policy, and the usage guide now names the replacement routes —
 `cloudflare_api_get` at `/accounts/{accountId}/r2/metrics`. Every other
 Cloudflare tool, argument, projection, and annotation is unchanged.
 
+All five maintained prebuilt connections have been audited against the written
+provider conventions, one report per provider, with a verdict for every
+applicable convention. Nineteen misses were found and fixed. Sixteen of them
+were a guide, a title, or a schema description failing to say something the
+implementation already did correctly — the conventions were mostly not asking
+for different behavior, they were asking for the behavior to reach the agent.
+
+Three of them did change behavior, and two of those break a deployment:
+`linear()` now requires an `access` mode, and `mixpanel()` no longer declares a
+call-admission budget. Both failures are loud — one at construction, one as an
+absent ceiling an operator can restore in one option. Everything else is a
+smaller catalog, a better summary, and a guide that says what it always meant.
+
 The repository now models exactly the two deployments it actually has: a Node
 one and a Worker one. `connecta init` still copies the same template, but that
 template now carries its own `Dockerfile` and `docker-compose.yml`, so the
@@ -70,6 +83,22 @@ runtime surface moved.
   Markdown artifact. It needs no model, no network, and no credential: the real
   constructor, schemas, validation path, handlers, and catalog service run, and
   only `fetch` is a probe that records the request (#350).
+- **Five provider audit reports** in
+  [`documentation/provider-audit.md`](./documentation/provider-audit.md), with
+  a verdict per convention, the fix for every miss, and every accepted
+  exception recorded with its argument (#342).
+- **A convention test over the shipped surface.**
+  `test/provider-conventions.test.ts` walks both `api()` providers on every run
+  and enforces the mechanically checkable bar — naming, description budgets,
+  closed schemas described at every depth, compact-render budgets, declared
+  outputs, structured guides, and credential tests — so a convention met once
+  stays met. The one accepted gap, the undescribed name/value members of
+  Cloudflare's escape-hatch request parts, is listed by path in the suite with
+  its argument rather than left for a shallower check to miss (#342).
+- **Guide coverage the schemas cannot carry.** Stripe and Mixpanel guides now
+  name their id-resolution rules, say the hosted catalog is not a fixed set, and
+  give the `auth_required` → `authorize_connector` recovery route. Notion's
+  guide states that it deliberately has no raw-REST escape hatch (#342).
 
 ### Changed
 
@@ -84,6 +113,47 @@ runtime surface moved.
   schema being real. A schema that only reveals itself on first use, such as an
   unresolvable `$ref`, now fails that call as non-retryable `invalid_args`
   instead of forwarding raw arguments to the handler (#340).
+- **`linear()` requires `access`.** There is no safe default between Linear's
+  two endpoints: `"read-write"` hands out writes nobody asked for, and
+  `"read-only"` breaks a writing deployment at Linear, at runtime, where no
+  agent can repair it. Construction now throws naming both options. Add
+  `access: "read-write"` to keep an existing deployment's behavior (#342).
+- **`mixpanel()` declares no call-admission budget.** The old hardcoded 600
+  calls per hour transcribed a limit Mixpanel meters *per user*, which a
+  per-runtime counter cannot approximate in either direction. Supply
+  `callAdmission` explicitly if the account needs a ceiling, as Linear already
+  did (#342).
+- **`mixpanel()` titles itself by region.** The default title is now
+  `Mixpanel (us)`, `(eu)`, or `(in)`, and the guide opens with the residency,
+  because a project lives in exactly one and search never shows a description.
+  An unknown region throws at construction (#342).
+- **Provider guides are structured everywhere.** All five declare an explicit
+  `summary` instead of leaning on the guide's first line, which was truncating
+  the routing fact at 120 characters on three of them (#342).
+- **Smaller discovery payloads.** Over-budget tool descriptions
+  (`cloudflare_api_get`, `cloudflare_api_mutate`, `create_dns_record`, Notion's
+  `search`) were trimmed to the 240-character describe budget, and shared
+  property descriptions were cut so `cloudflare_api_upload` and
+  `query_data_source` render inside the 1,024-byte compact budget instead of
+  degrading and costing a describe round trip (#342).
+
+### Fixed
+
+- **Notion declares the `required` lists it was missing.** `search`,
+  `list_users`, `get_self`, and `create_page` now say which arguments a call
+  must carry, so a malformed call is refused locally instead of at Notion. The
+  fail-closed schema handling those lists rely on is the package default as of
+  #340 (#342).
+- **Cloudflare's cursor pagination says so in the schema.**
+  `list_zone_rulesets`, `list_kv_keys`, `list_r2_buckets`, and
+  `list_r2_objects` now state on both the `cursor` argument and the
+  `nextCursor` result that they page by cursor and return no `page` object —
+  previously only the usage guide said it (#342).
+- **Nested schema properties describe themselves.** The six fields inside
+  `bulk_write_kv_values`'s `entries[]` — including the expiry pair, whose units
+  and 60-second floor were the entire question — and Notion's
+  `sorts[].direction` were shipping bare types, because H5's description rule
+  had only ever been read at the top level (#342).
 
 ### Removed
 

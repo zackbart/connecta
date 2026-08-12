@@ -11,6 +11,7 @@ import { linear } from "@zackbart/connecta/providers/linear";
 const tracker = linear("product_tracker", {
   title: "Product issue tracking",
   purpose: "Issue and project planning for the platform team",
+  access: "read-write",
   instructions: "File bugs into the Platform team unless the request names another.",
 });
 ```
@@ -23,12 +24,20 @@ cannot change the connector's safety classification.
 
 ## Access modes
 
-Linear publishes two hosted endpoints, and `access` selects between them:
+Linear publishes two hosted endpoints, and `access` selects between them. It is
+**required**, with no default:
 
 | `access` | Endpoint | OAuth scopes |
 | --- | --- | --- |
-| `"read-write"` (default) | `https://mcp.linear.app/mcp` | `read`, `write` |
+| `"read-write"` | `https://mcp.linear.app/mcp` | `read`, `write` |
 | `"read-only"` | `https://mcp.linear.app/mcp/readonly` | `read` |
+
+There is no safe default to pick. Defaulting to `"read-write"` hands a
+deployment write access it never asked for; defaulting to `"read-only"` turns a
+deployment that does write into one whose every write fails at Linear — at
+runtime, where no agent can repair it. So the operator declares which one this
+is, and a deployment that forgot fails at construction with a message naming
+both options.
 
 Read-only is not a client-side filter. The endpoint advertises the `read` scope
 alone, so the token minted for it cannot reach Linear's write APIs — a stronger
@@ -63,6 +72,7 @@ also accepts a bearer token or a personal API key passed directly in the
 ```ts
 linear("automation_tracker", {
   purpose: "Headless release reporting",
+  access: "read-only",
   auth: {
     type: "headers",
     headers: { Authorization: env.LINEAR_API_KEY },
@@ -130,6 +140,7 @@ one. An operator who knows their workspace can supply one explicitly:
 ```ts
 linear("product_tracker", {
   purpose: "Issue and project planning for the platform team",
+  access: "read-write",
   callAdmission: {
     rules: [
       { budget: { kind: "rolling-window", maxCalls: 1_000, windowMs: 3_600_000 } },
@@ -141,3 +152,10 @@ linear("product_tracker", {
 A budget-only rule needs no queue. If you add `maxConcurrency` you are asking
 for a queue, and the admission controller then requires the rest of the queue
 settings at construction.
+
+## Conventions
+
+This connection is audited against
+[the provider conventions](./provider-conventions.md). Its verdict per
+convention, including every recorded exception, is the Linear section of
+[the provider audit](./provider-audit.md).

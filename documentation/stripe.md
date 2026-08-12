@@ -158,6 +158,14 @@ serves, an unclassified and unannotated `create_customer` lands on the approval
 path. Expect the undocumented Treasury tools Stripe alludes to to arrive
 unclassified as well — annotated ones will be taken at their word.
 
+The upshot is that this account's tool list is not a fixed set, and the usage
+guide tells the agent so: search this connector for what it actually exposes
+rather than assuming a documented tool is present. The guide also names the id
+discipline the downstream schemas cannot enforce — Stripe ids are typed
+prefixes (`cus_`, `sub_`, `ch_`, `pi_`, `in_`, `acct_`), a plausible-looking one
+belongs to a different object or to nobody, and the id a write takes comes from
+`stripe_api_search` or a list read rather than from a guess.
+
 Stripe publishes no stability or deprecation policy for this tool set and
 invites tool requests by email, so treat the list as unversioned. `get_balance_summary`
 is Treasury, which Stripe labels public preview and gates behind an access
@@ -200,3 +208,10 @@ about rather than read:
   are Stripe's documented API conventions; how they thread through the generic
   tools' arguments is not documented. The guide states them because an agent
   that ignores them is wrong either way.
+
+## Conventions
+
+This connection is audited against
+[the provider conventions](./provider-conventions.md). Its verdict per
+convention, including every recorded exception, is the Stripe section of
+[the provider audit](./provider-audit.md).

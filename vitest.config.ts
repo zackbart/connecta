@@ -35,6 +35,7 @@ export const WORKERS_SUITES = [
   "test/notion-provider.test.ts",
   "test/notion-registry.test.ts",
   "test/operator-boundary.test.ts",
+  "test/provider-conventions.test.ts",
   "test/registry.test.ts",
   "test/request-admission.test.ts",
   "test/remote-mcp-pagination.test.ts",

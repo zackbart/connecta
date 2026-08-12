@@ -204,8 +204,14 @@ method classification into user input:
 
 All three accept explicit endpoint-specific headers, which supports R2
 jurisdictions, conditional requests, encryption controls, and object metadata.
-Authentication, host selection, content type, content length, and transfer
-framing remain connector-owned and cannot be overridden.
+`Authorization`, `Cookie`, `Host`, `Content-Length`, `Content-Type`, and
+`Transfer-Encoding` remain connector-owned and are refused: authentication,
+host selection, content type, and request framing are not the caller's to set.
+That refused list lives in the usage guide rather than in each header property
+description, because the compact renderer inlines a property description once
+per tool that shares it, and repeating it three times pushed
+`cloudflare_api_upload`'s compact input shape past the 1,024-byte discovery
+budget.
 
 Paths are relative to `/client/v4`. Absolute URLs, protocol-relative paths,
 `..` traversal, fragments, and embedded query strings are refused locally;
@@ -293,8 +299,12 @@ Paginated lists add a `page` object derived from `result_info`:
 field to branch on.
 
 Some endpoints do not work that way, and the schemas say so rather than leaving
-an agent to discover it. `list_r2_buckets`, `list_r2_objects`, and
-`list_kv_keys` paginate by cursor and return `nextCursor` instead of `page`.
+an agent to discover it. `list_zone_rulesets`, `list_r2_buckets`,
+`list_r2_objects`, and `list_kv_keys` paginate by cursor and return
+`nextCursor` instead of `page`. On those four the `cursor` argument says the
+endpoint pages by cursor rather than page number, and the `nextCursor` result
+says it is the only signal and that no `page` object is coming — so the loop
+condition is legible from either end of one tool, without fetching the guide.
 `list_worker_scripts` reports no counters at all and omits `page` entirely.
 
 Projected resource reads expose `raw: true` where the provider's larger object
@@ -362,3 +372,10 @@ dashboard traffic of a human sharing the account is counted by Cloudflare but
 not by Connecta. `maxConcurrency` is the bound that actually protects a shared
 credential, because a single `execute_code` program can fan out far faster than
 the window notices.
+
+## Conventions
+
+This connection is audited against
+[the provider conventions](./provider-conventions.md). Its verdict per
+convention, including every recorded exception, is the Cloudflare section of
+[the provider audit](./provider-audit.md).

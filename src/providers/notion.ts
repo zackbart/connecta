@@ -636,10 +636,16 @@ function projectSchemaProperty(property: any): Record<string, unknown> {
 // Shared schema fragments
 // ---------------------------------------------------------------------------
 
+// The compact renderer inlines every property description, so these three
+// shared strings are paid for once per tool that uses them. `query_data_source`
+// carries all three plus a filter grammar and rendered past the 1,024-byte
+// compact budget until they were cut to the fact each one actually adds
+// ([#342](https://github.com/zackbart/connecta/issues/342)); the long versions
+// live in the usage guide, which is fetched once rather than per tool.
 const RAW_PROPERTY: JsonSchema = {
   type: "boolean",
   description:
-    "Return Notion's unprojected response instead of the lean projection. Payloads are large — use only when a field the projection drops is genuinely needed.",
+    "Return Notion's much larger unprojected response instead of the lean projection.",
 };
 
 const PAGE_SIZE_PROPERTY: JsonSchema = {
@@ -652,14 +658,14 @@ const PAGE_SIZE_PROPERTY: JsonSchema = {
 const START_CURSOR_PROPERTY: JsonSchema = {
   type: "string",
   description:
-    "Opaque cursor from a previous response's next_cursor. Pass it back verbatim; never parse or construct one.",
+    "Opaque next_cursor from the previous response. Pass it back verbatim.",
 };
 
 const PROPERTY_SELECT: JsonSchema = {
   type: "array",
   items: { type: "string" },
   description:
-    "Return only these property names. Omit for all properties. Narrowing here is the cheapest way to keep results small.",
+    "Return only these property names. Omit for all. The cheapest way to shrink a result.",
 };
 
 function listOutputSchema(itemSchema: JsonSchema): JsonSchema {
@@ -832,10 +838,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
     {
       name: "search",
       description:
-        "Find pages and data sources by title across everything shared with this integration. Matches titles only, never page content — use query_data_source to filter rows inside a database. Returns identity fields only; call get_page for a match's properties.",
+        "Find pages and data sources by title across everything shared with this integration. Never searches page content — use query_data_source for rows inside a database. Returns identity fields only.",
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
+        required: [],
         properties: {
           query: {
             type: "string",
@@ -1243,6 +1250,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
                 direction: {
                   type: "string",
                   enum: ["ascending", "descending"],
+                  description: "Direction for this sort.",
                 },
               },
               additionalProperties: false,
@@ -1287,6 +1295,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       annotations: { readOnlyHint: true },
       inputSchema: {
         type: "object",
+        required: [],
         properties: {
           page_size: PAGE_SIZE_PROPERTY,
           start_cursor: START_CURSOR_PROPERTY,
@@ -1311,7 +1320,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       description:
         "Identify the integration this connector authenticates as, and the workspace it is installed in. The cheapest way to confirm the token works before a longer sequence.",
       annotations: { readOnlyHint: true },
-      inputSchema: { type: "object", additionalProperties: false },
+      inputSchema: {
+        type: "object",
+        required: [],
+        properties: {},
+        additionalProperties: false,
+      },
       outputSchema: {
         type: "object",
         properties: {
@@ -1378,16 +1392,24 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         "Create a page, either as a child of another page or as a row in a data source. Notion has no idempotency key: a retried create makes a second page, so confirm with search before repeating one.",
       annotations: { readOnlyHint: false },
       inputSchema: {
+        // Empty rather than absent: a parent is required, but *which* parent is
+        // an exclusive choice a plain-object `required` list cannot express,
+        // and the top-level `anyOf` that could would cost the tool its
+        // `inputKeys` in discovery. The choice is stated in both parent
+        // descriptions and enforced locally as `invalid_args` before any round
+        // trip ([#342](https://github.com/zackbart/connecta/issues/342)).
+        required: [],
         type: "object",
         properties: {
           parent_page_id: {
             type: "string",
-            description: "Create as a child page of this page.",
+            description:
+              "Create as a child page of this page. Exactly one parent id, this or parent_data_source_id.",
           },
           parent_data_source_id: {
             type: "string",
             description:
-              "Create as a row in this data source. Not a database id.",
+              "Create as a row in this data source, not a database id. Exactly one parent id, this or parent_page_id.",
           },
           title: { type: "string", description: "Plain-text title." },
           title_property: {
@@ -1802,6 +1824,13 @@ it. A block type this projection does not model keeps its payload under
   Re-authorizing cannot fix it; an operator must change it in Notion.
 - **429** carries a retry window. Notion allows roughly three requests per
   second per integration, so wait it out rather than retrying immediately.
+
+## No escape hatch
+
+This connection has no guarded raw-REST tool, deliberately. Notion's public
+API is small and slow-moving enough for the named surface to cover it, so
+there is no \`notion_api_*\` to reach for — an operation absent from the tool
+list is absent from this connection, not hidden behind a generic call.
 
 ## Writes and pagination
 

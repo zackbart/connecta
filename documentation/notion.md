@@ -231,3 +231,19 @@ block updates or deletes, no page moves. Those are all real Notion endpoints
 and all deliberately absent: this is a deliberate tool surface, not a mirror of
 the API. Anything missing is reachable through a custom `api()` connector
 beside this one, which remains a first-class path.
+
+There is also **no guarded raw-REST escape hatch** — no `notion_api_get`, no
+`notion_api_mutate`. The convention that permits one
+([H14](./provider-conventions.md#h14--a-named-tool-must-beat-the-escape-hatch-and-the-escape-hatch-splits-by-safety))
+also permits a small provider to have none, provided it says so, and Notion's
+public API is finite and slow-moving enough that a named surface can cover it.
+The usage guide says it too, because an agent that assumes a hatch exists
+spends a search proving it does not: absent from the tool list means absent
+from this connection, not hidden behind a generic call.
+
+## Conventions
+
+This connection is audited against
+[the provider conventions](./provider-conventions.md). Its verdict per
+convention, including every recorded exception, is the Notion section of
+[the provider audit](./provider-audit.md).
