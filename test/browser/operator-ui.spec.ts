@@ -28,6 +28,10 @@ let accessTokens: Array<{
   revokedAt?: string;
 }> = [];
 let requests: RecordedRequest[] = [];
+/** `METHOD /path` → the failure that route should answer with, once armed. */
+let faults = new Map<string, string>();
+/** A deployment that has been stood up but not yet used. */
+let emptyDeployment = false;
 
 function data(): UiData {
   return {
@@ -37,7 +41,7 @@ function data(): UiData {
     accessTokenManagement: "available",
     oauthManagement: true,
     activityEnabled: true,
-    connectors: [
+    connectors: emptyDeployment ? [] : [
       {
         id: "vaulted",
         title: "Vaulted service",
@@ -127,6 +131,11 @@ test.beforeAll(async () => {
       sendJson(response, 401, { error: "unauthorized" });
       return;
     }
+    const fault = faults.get(`${method} ${url.pathname}`);
+    if (fault) {
+      sendJson(response, 502, { error: fault });
+      return;
+    }
 
     if (method === "GET" && url.pathname === "/ui/data") {
       sendJson(response, 200, data());
@@ -134,7 +143,7 @@ test.beforeAll(async () => {
     }
     if (method === "GET" && url.pathname === "/ui/activity") {
       sendJson(response, 200, {
-        events: [
+        events: emptyDeployment ? [] : [
           {
             schemaVersion: 1,
             id: "activity-1",
@@ -261,6 +270,8 @@ test.beforeEach(() => {
   oauthConnected = true;
   accessTokens = [];
   requests = [];
+  faults = new Map();
+  emptyDeployment = false;
 });
 
 async function openAuthenticated(
@@ -381,8 +392,9 @@ test("creates, reveals once, renames, and revokes an access token", async ({
     .toBeVisible();
 
   await page.getByRole("link", { name: "Connections" }).click();
-  await expect(page.locator("#tokenReveal")).toBeHidden();
-  await expect(page.locator("#createdToken")).toHaveText("");
+  // Gone rather than blanked: leaving the page unmounts the reveal entirely.
+  await expect(page.locator("#tokenReveal")).toHaveCount(0);
+  await expect(page.locator("#createdToken")).toHaveCount(0);
 
   await page.getByRole("link", { name: "Access tokens" }).click();
   await expect(page.locator("#tokenCreateForm")).toBeVisible();
@@ -417,8 +429,8 @@ test("clears a one-time access token before the document is cached", async ({
     "window.dispatchEvent(new PageTransitionEvent('pagehide'))",
   );
 
-  await expect(page.locator("#tokenReveal")).toBeHidden();
-  await expect(page.locator("#createdToken")).toHaveText("");
+  await expect(page.locator("#tokenReveal")).toHaveCount(0);
+  await expect(page.locator("#createdToken")).toHaveCount(0);
   await expect(page.locator("#tokenCreateForm")).toBeVisible();
 });
 
@@ -440,4 +452,78 @@ test("navigates to the activity list and back without a shell reload", async ({
   await page.goBack();
   await expect(page).toHaveURL(origin + "/");
   await expect(page.getByRole("heading", { name: "Connections" })).toBeVisible();
+});
+
+test("names the empty state of every collection a new deployment has", async ({
+  page,
+}) => {
+  emptyDeployment = true;
+  await openAuthenticated(page);
+
+  await expect(
+    page.getByText("No connectors are declared in this deployment."),
+  ).toBeVisible();
+
+  await page.getByRole("link", { name: "Access tokens" }).click();
+  await expect(page.getByText("No access tokens yet")).toBeVisible();
+
+  await page.getByRole("link", { name: "Activity" }).click();
+  await expect(
+    page.getByText("No connector tool calls recorded yet."),
+  ).toBeVisible();
+});
+
+test("keeps a rejected credential save on screen and retryable", async ({
+  page,
+}) => {
+  faults.set("PUT /ui/credentials/vaulted", "vault unavailable");
+  await openAuthenticated(page, "/credentials");
+
+  await page.getByRole("button", { name: "Add credential" }).click();
+  await page.getByLabel("API token").fill("first-secret");
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.locator("#credentialNotice")).toHaveText("vault unavailable");
+  // No dead end: the form stays open holding what was typed, so the operator
+  // retries with one click rather than re-entering a secret.
+  await expect(page.getByLabel("API token")).toHaveValue("first-secret");
+
+  faults.clear();
+  await page.getByRole("button", { name: "Save" }).click();
+  await expect(page.getByText("configured · ••••cret")).toBeVisible();
+});
+
+test("offers a retry when the access-token list cannot be loaded", async ({
+  page,
+}) => {
+  faults.set("GET /ui/access-tokens", "token store unavailable");
+  await openAuthenticated(page, "/tokens");
+  await expect(page.locator("#tokenNotice")).toHaveText(
+    "token store unavailable",
+  );
+
+  faults.clear();
+  await page
+    .getByRole("button", { name: "Try loading access tokens again" })
+    .click();
+  await expect(page.getByText("No access tokens yet")).toBeVisible();
+});
+
+test("reports a failed OAuth restart and re-enables the control", async ({
+  page,
+}) => {
+  faults.set("POST /ui/oauth/oauth", "downstream unavailable");
+  await openAuthenticated(page);
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "Reconnect OAuth for CRM" }).click();
+  await expect(page.locator("#oauthNotice")).toHaveText(
+    "downstream unavailable",
+  );
+  // The failure refreshed the ledger and gave the button back.
+  await expect(
+    page.getByRole("button", { name: "Reconnect OAuth for CRM" }),
+  ).toBeEnabled();
+  expect(
+    requests.filter((request) => request.path === "/ui/data").length,
+  ).toBeGreaterThan(1);
 });

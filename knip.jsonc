@@ -12,13 +12,14 @@
     "src/providers/mixpanel.ts",
     "src/providers/notion.ts",
     "src/providers/stripe.ts",
-    "src/operator-ui/browser.ts",
+    "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",
     "scripts/*.mjs",
     "test/**/*.test.ts"
   ],
   "project": [
     "src/**/*.ts",
+    "src/**/*.tsx",
     "examples/**/*.ts",
     "scripts/**/*.mjs",
     "test/**/*.ts",

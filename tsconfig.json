@@ -19,5 +19,5 @@
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["node_modules", "examples", "src/operator-ui/browser.ts"]
+  "exclude": ["node_modules", "examples", "src/operator-ui/app"]
 }

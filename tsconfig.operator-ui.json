@@ -3,11 +3,15 @@
   "compilerOptions": {
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "types": [],
+    "jsx": "react-jsx",
+    "jsxImportSource": "preact",
     "noEmit": true
   },
   "include": [
-    "src/operator-ui/browser.ts",
-    "src/operator-ui/model.ts"
+    "src/operator-ui/app/**/*.ts",
+    "src/operator-ui/app/**/*.tsx",
+    "src/operator-ui/model.ts",
+    "src/operator-ui/view.ts"
   ],
   "exclude": ["node_modules"]
 }

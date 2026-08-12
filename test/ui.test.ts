@@ -30,6 +30,22 @@ import type {
 } from "../src/activity.js";
 import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
+import {
+  accessTokenUnavailableCopy,
+  activitySummary,
+  actorLabel,
+  actorStableId,
+  credentialUnavailableCopy,
+  failure,
+  filterActivity,
+  info,
+  initialState,
+  resetIdentity,
+  safeHttpHref,
+  withPage,
+  type OperatorState,
+  type UiActivityEvent,
+} from "../src/operator-ui/view.js";
 import { createTestConnecta, required, makeRegistry } from "./helpers.js";
 
 const TOKEN = "test-token-123";
@@ -97,52 +113,6 @@ function scriptSrcs(body: string): string[] {
   return (body.match(/<script[^>]*>/g) ?? [])
     .map((tag) => /\bsrc="([^"]*)"/.exec(tag)?.[1])
     .filter((src): src is string => src !== undefined);
-}
-
-function inlineScript(body: string): string {
-  const scripts = [...body.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)];
-  return scripts.at(-1)?.[1] ?? "";
-}
-
-class TestElement {
-  textContent = "";
-  value = "";
-  children: TestElement[] = [];
-  private html = "";
-  private classes = new Set<string>();
-  readonly classList = {
-    add: (...names: string[]) => names.forEach((name) => this.classes.add(name)),
-    remove: (...names: string[]) =>
-      names.forEach((name) => this.classes.delete(name)),
-    toggle: (name: string, force?: boolean) => {
-      const enabled = force ?? !this.classes.has(name);
-      if (enabled) this.classes.add(name);
-      else this.classes.delete(name);
-      return enabled;
-    },
-    contains: (name: string) => this.classes.has(name),
-  };
-
-  get innerHTML() {
-    return this.html;
-  }
-  set innerHTML(value: string) {
-    this.html = value;
-    this.children = [];
-  }
-  setAttribute() {}
-  removeAttribute() {}
-  appendChild(child: TestElement) {
-    this.children.push(child);
-    return child;
-  }
-  focus() {}
-  querySelector() {
-    return null;
-  }
-  querySelectorAll() {
-    return [];
-  }
 }
 
 function fakeClerk(
@@ -494,6 +464,209 @@ describe("operator page routing and capabilities", () => {
   });
 });
 
+describe("operator app state", () => {
+  const token = {
+    id: "token-1",
+    name: "Claude desktop",
+    tokenPrefix: "cta_abc",
+    createdAt: "2026-07-30T12:00:00.000Z",
+  };
+
+  function event(address: string, actor?: UiActivityEvent["actor"]) {
+    return {
+      occurredAt: "2026-07-23T12:00:00.000Z",
+      ...(actor ? { actor } : {}),
+      connectorId: address.split(".")[0] ?? address,
+      toolName: address.split(".")[1] ?? address,
+      address,
+      source: "call_tool",
+      outcome: "success",
+      durationMs: 2,
+      attempts: 1,
+    } satisfies UiActivityEvent;
+  }
+
+  /** Every identity-scoped field carrying something an operator could read. */
+  function loaded(): OperatorState {
+    return {
+      ...initialState("tokens"),
+      session: "ready",
+      pendingFocus: "tokenNotice",
+      data: {
+        serverInfo: { name: "identity-a", version: "host" },
+        connectaVersion: "package",
+        connectors: [],
+        activityEnabled: true,
+        credentialManagement: "available",
+        accessTokenManagement: "available",
+        oauthManagement: true,
+      },
+      connectorFilter: "billing",
+      oauthNotice: info("OAuth disconnected."),
+      oauthBusy: "crm",
+      credentialNotice: info("identity-a secret-shaped notice"),
+      credentialEditing: "vaulted",
+      credentialBusy: "vaulted",
+      tokenPhase: "ready",
+      tokenNotice: info("Access token created."),
+      tokens: [token],
+      createdToken: "cta_one_time_secret",
+      tokenRenaming: "token-1",
+      tokenBusy: true,
+      activityPhase: "ready",
+      activityNotice: info("loaded"),
+      activityEvents: [event("calc.add")],
+      activityCursor: "cursor-1",
+      activitySearch: "ada",
+    };
+  }
+
+  it("erases every identity-scoped field and fences work already in flight", () => {
+    const before = loaded();
+    const after = resetIdentity(before, failure("Signed out."));
+
+    // The generation is the fence: a response that started under the previous
+    // identity compares its captured value against this one and is dropped.
+    expect(after.generation).toBe(before.generation + 1);
+    expect(after.session).toBe("gated");
+    expect(after.gate).toEqual({ message: "Signed out.", tone: "error" });
+    // Field by field rather than by spot check: a value left behind here is one
+    // operator's data on another operator's screen.
+    expect(after).toMatchObject({
+      data: null,
+      connectorFilter: "",
+      oauthNotice: null,
+      oauthBusy: null,
+      credentialNotice: null,
+      credentialEditing: null,
+      credentialBusy: null,
+      pendingFocus: null,
+      tokenPhase: "idle",
+      tokenNotice: null,
+      tokens: [],
+      createdToken: null,
+      tokenRenaming: null,
+      tokenBusy: false,
+      activityPhase: "idle",
+      activityNotice: null,
+      activityEvents: [],
+      activityCursor: null,
+      activitySearch: "",
+    });
+    // The page survives an identity change; only what the page *showed* does not.
+    expect(after.page).toBe("tokens");
+    expect(JSON.stringify(after)).not.toContain("cta_one_time_secret");
+    expect(JSON.stringify(after)).not.toContain("identity-a");
+  });
+
+  it("re-idles deferred collections so a new identity refetches its own", () => {
+    const after = resetIdentity(loaded());
+    expect(after.tokenPhase).toBe("idle");
+    expect(after.activityPhase).toBe("idle");
+  });
+
+  it("drops the one-time secret and the open credential form when a page changes", () => {
+    const after = withPage(loaded(), "connections");
+    expect(after.page).toBe("connections");
+    expect(after.createdToken).toBeNull();
+    expect(after.tokenRenaming).toBeNull();
+    expect(after.credentialEditing).toBeNull();
+    expect(after.credentialNotice).toBeNull();
+    expect(after.tokenNotice).toBeNull();
+    // Loaded collections are this identity's own, so navigation keeps them.
+    expect(after.tokens).toEqual([token]);
+  });
+
+  it("labels activity actors and shows a stable id only when it disambiguates", () => {
+    expect(
+      actorLabel({ kind: "clerk", id: "user_1", label: "Ada Lovelace" }),
+    ).toBe("clerk · Ada Lovelace");
+    expect(actorLabel({ kind: "clerk", id: "user_fallback" })).toBe(
+      "clerk · user_fallback",
+    );
+    expect(actorLabel(undefined)).toBe("unknown");
+    expect(
+      actorStableId({
+        kind: "clerk",
+        id: "user_1",
+        namespace: "https://tenant-a.example",
+        label: "Ada Lovelace",
+      }),
+    ).toBe("https://tenant-a.example · user_1");
+    // A bare id is already its own label — printing it twice says nothing.
+    expect(actorStableId({ kind: "clerk", id: "user_fallback" })).toBeNull();
+  });
+
+  it("filters loaded activity across labels, ids, and namespaces", () => {
+    const events = [
+      event("calc.add", {
+        kind: "clerk",
+        id: "user_1",
+        namespace: "https://tenant-a.example",
+        label: "Ada Lovelace",
+      }),
+      event("notes.list", {
+        kind: "clerk",
+        id: "user_2",
+        namespace: "https://tenant-b.example",
+        label: "Ada Lovelace",
+      }),
+      event("calc.add", { kind: "clerk", id: "user_fallback" }),
+    ];
+    expect(filterActivity(events, "ada lovelace")).toHaveLength(2);
+    expect(filterActivity(events, "user_1")).toHaveLength(1);
+    expect(filterActivity(events, "tenant-b.example")).toEqual([events[1]]);
+    expect(filterActivity(events, "")).toEqual(events);
+  });
+
+  it("summarizes activity as counts and never as payloads", () => {
+    expect(activitySummary([])).toBe("Arguments and results are never stored.");
+    expect(
+      activitySummary([
+        event("calc.add"),
+        event("calc.add"),
+        event("notes.list"),
+      ]),
+    ).toBe(
+      "3 loaded calls · 2 tools · no arguments or results stored",
+    );
+  });
+
+  it("lets only http(s) values become an href", () => {
+    expect(safeHttpHref("https://provider.test/oauth?x=1")).toBe(
+      "https://provider.test/oauth?x=1",
+    );
+    expect(safeHttpHref("http://provider.test")).toBe("http://provider.test");
+    for (const hostile of [
+      "javascript:alert(1)",
+      "data:text/plain,alert(1)",
+      "//provider.test",
+      "/relative",
+      undefined,
+    ]) {
+      expect(safeHttpHref(hostile)).toBeNull();
+    }
+  });
+
+  it("names each unavailable capability without revealing topology", () => {
+    expect(credentialUnavailableCopy("no_slots")).toContain(
+      "No connectors declare operator-managed credential slots",
+    );
+    expect(credentialUnavailableCopy("vault_not_configured")).toContain(
+      "credentials.encryptionKey",
+    );
+    expect(credentialUnavailableCopy("requires_clerk")).toContain(
+      "eligible Clerk operator",
+    );
+    expect(accessTokenUnavailableCopy("not_configured")).toContain(
+      "not configured for this deployment",
+    );
+    expect(accessTokenUnavailableCopy("requires_clerk")).toContain(
+      "cannot create or revoke other tokens",
+    );
+  });
+});
+
 describe("status UI", () => {
   it("serves direct, page-specific, data-free operator shells", async () => {
     const c = makeConnecta();
@@ -510,25 +683,20 @@ describe("status UI", () => {
       expect(body).toContain("<!doctype html>");
       expect(body).toContain(`<title>${label} — Connecta</title>`);
       expect(body).toContain(`const INITIAL_PAGE = "${page}";`);
-      expect(body).toContain(`<section id="${page}View">`);
-      expect(body).toContain(`id="${page}Nav"`);
-      expect(body).toContain(
-        `data-operator-page="${page}" aria-current="page"`,
-      );
-      expect(body).toContain('href="/"');
-      expect(body).toContain('href="/credentials"');
-      expect(body).toContain('href="/activity"');
+      // The shell is a mount point and a no-JS fallback. Everything with a
+      // state — nav, gate, and the four pages — is rendered by the bundle.
+      expect(body).toContain(`<h1 class="pcap">${label}</h1>`);
+      expect(body).toContain('<div id="operatorNav"></div>');
+      expect(body).toContain('<main id="operatorContent"');
+      expect(body).toContain("<noscript>");
       expect(body).toContain("history.pushState");
       expect(body).toContain('addEventListener("popstate"');
-      // Gated, the page views are hidden and their headings cannot take focus:
-      // the gate's own h1 is the only visible heading, so Back/Forward while
-      // signed out must target it rather than dropping focus to <body>.
-      expect(body).toContain(
-        "$(DATA ? next + \"Heading\" : \"gateHeading\").focus()",
-      );
+      // Gated, no page view is rendered at all, so a focus request while signed
+      // out must land on the gate's own h1 rather than dropping to <body>.
+      expect(body).toContain('"gateHeading"');
       expect(body).toContain("/ui/data");
       expect(body).toContain(`const MCP_URL = "${BASE}/mcp";`);
-      expect(body).toContain('placeholder="Bearer token"');
+      expect(body).toContain('placeholder: "Bearer token"');
       expect(body).not.toContain("Calculator");
       expect(body).not.toContain("Broken connector");
       expect(body).not.toContain("clerk.browser.js");
@@ -883,547 +1051,6 @@ describe("status UI", () => {
     });
     expect(withClerk).toContain("clerk.browser.js");
     expect(withClerk).not.toContain("nonce=");
-  });
-
-  it("fences identity-scoped UI state by session and activity generation", () => {
-    const html = renderUiHtml();
-    // esbuild may lower module-scoped `let` to `var` while preserving the
-    // bundle's one-script lexical boundary.
-    expect(html).toMatch(/\b(?:let|var) SESSION_GENERATION = 0;/);
-    expect(html).toMatch(/\b(?:let|var) ACTIVITY_GENERATION = 0;/);
-    expect(html).toContain("function clearIdentityState()");
-    expect(html).toContain("SESSION_GENERATION += 1;");
-    expect(html).toMatch(
-      /function showGate\(msg\) \{\s+clearIdentityState\(\);/,
-    );
-    expect(html).toContain("DATA = null;");
-    expect(html).toContain('$("credentialList").innerHTML = "";');
-    expect(html).toContain('$("activityList").innerHTML = "";');
-    expect(
-      html.match(/generation !== SESSION_GENERATION/g)?.length,
-    ).toBeGreaterThanOrEqual(5);
-    expect(html).toContain(
-      "sessionGeneration === SESSION_GENERATION &&",
-    );
-    expect(html).toContain(
-      "activityGeneration === ACTIVITY_GENERATION",
-    );
-    expect(html).toContain("if (isCurrent())");
-  });
-
-  it("clears and refetches identity state when Clerk reports a new session", async () => {
-    const html = renderUiHtml({
-      kind: "clerk",
-      publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.com",
-    });
-    const elements = new Map<string, TestElement>();
-    const element = (id: string) => {
-      let value = elements.get(id);
-      if (!value) {
-        value = new TestElement();
-        elements.set(id, value);
-      }
-      return value;
-    };
-    const documentListeners = new Map<string, (...args: any[]) => unknown>();
-    const windowListeners = new Map<string, (...args: any[]) => unknown>();
-    const document = {
-      title: "",
-      getElementById: element,
-      createElement: () => new TestElement(),
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
-        documentListeners.set(name, listener),
-    };
-    const location = new URL(`${BASE}/`);
-    const window = {
-      location,
-      confirm: () => true,
-      setTimeout,
-      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
-        windowListeners.set(name, listener),
-      Clerk: undefined as unknown,
-    };
-    const localStorage = {
-      getItem: () => null,
-      setItem: () => {},
-      removeItem: () => {},
-    };
-    let session = {
-      id: "sess_a",
-      getToken: async () => "token-a",
-    };
-    let clerkListener: ((resources: { session: typeof session }) => void) | undefined;
-    const Clerk = {
-      user: { id: "user_a" },
-      get session() {
-        return session;
-      },
-      load: async () => {},
-      addListener: (listener: typeof clerkListener) => {
-        clerkListener = listener;
-      },
-      redirectToSignIn: () => {},
-      signOut: async () => {},
-    };
-    window.Clerk = Clerk;
-
-    const payload = (id: string) => ({
-      serverInfo: { name: id, version: "host-build-1" },
-      connectaVersion: "package-7.8.9",
-      credentialManagement: "available",
-      oauthManagement: true,
-      activityEnabled: true,
-      connectors: [
-        {
-          id,
-          title: id,
-          status: "ok",
-          toolCount: 0,
-          tools: [],
-          oauth: true,
-        },
-      ],
-    });
-    let resolveSecond: ((response: Response) => void) | undefined;
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json(payload("identity-a")))
-      .mockImplementationOnce(
-        () =>
-          new Promise<Response>((resolve) => {
-            resolveSecond = resolve;
-          }),
-      );
-    const run = new Function(
-      "window",
-      "document",
-      "history",
-      "localStorage",
-      "fetch",
-      "Clerk",
-      "navigator",
-      "CSS",
-      "URL",
-      "URLSearchParams",
-      inlineScript(html),
-    );
-    run(
-      window,
-      document,
-      { pushState: () => {} },
-      localStorage,
-      fetch,
-      Clerk,
-      { clipboard: { writeText: async () => {} } },
-      { escape: (value: string) => value },
-      URL,
-      URLSearchParams,
-    );
-    await windowListeners.get("load")?.();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(element("list").children[0]?.innerHTML).toContain("identity-a");
-    expect(element("list").children[0]?.innerHTML).toContain(
-      'data-oauth-action="disconnect"',
-    );
-    expect(element("list").children[0]?.innerHTML).toContain(
-      'data-oauth-action="reconnect"',
-    );
-    expect(element("list").children[0]?.innerHTML).toContain(
-      'aria-label="Disconnect OAuth for identity-a"',
-    );
-    expect(element("serverInfo").textContent).toBe(
-      "identity-a vpackage-7.8.9",
-    );
-
-    const navigate = (page: string, path: string) =>
-      documentListeners.get("click")?.({
-        target: {
-          closest: () => ({
-            href: `${BASE}${path}`,
-            dataset: { operatorPage: page },
-          }),
-        },
-        button: 0,
-        defaultPrevented: false,
-        metaKey: false,
-        ctrlKey: false,
-        shiftKey: false,
-        altKey: false,
-        preventDefault: () => {},
-      });
-    navigate("credentials", "/credentials");
-    element("credentialNotice").textContent = "identity-a secret-shaped notice";
-    navigate("connections", "/");
-    expect(element("credentialNotice").textContent).toBe("");
-
-    element("credentialNotice").textContent = "identity-a secret-shaped notice";
-    session = {
-      id: "sess_b",
-      getToken: async () => "token-b",
-    };
-    clerkListener?.({ session });
-    await Promise.resolve();
-    await Promise.resolve();
-
-    expect(element("list").children).toEqual([]);
-    expect(element("credentialList").children).toEqual([]);
-    expect(element("credentialNotice").textContent).toBe("");
-    expect(element("activityList").children).toEqual([]);
-    expect(element("credentialsNav").classList.contains("hidden")).toBe(true);
-    expect(element("activityNav").classList.contains("hidden")).toBe(true);
-    expect(fetch).toHaveBeenCalledTimes(2);
-
-    const secondPayload = payload("identity-b");
-    required(secondPayload.connectors[0]).status = "error";
-    resolveSecond?.(Response.json(secondPayload));
-    await vi.waitFor(() => {
-      expect(element("list").children[0]?.innerHTML).toContain("identity-b");
-      expect(element("list").children[0]?.innerHTML).toContain(
-        'aria-label="Disconnect OAuth for identity-b"',
-      );
-      expect(element("list").children[0]?.innerHTML).toContain(
-        "Restart authorization",
-      );
-    });
-  });
-
-  it("runs OAuth controls through confirm, Clerk auth, reload, and error recovery", async () => {
-    const html = renderUiHtml({
-      kind: "clerk",
-      publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.com",
-    });
-    const elements = new Map<string, TestElement>();
-    const element = (id: string) => {
-      let value = elements.get(id);
-      if (!value) {
-        value = new TestElement();
-        elements.set(id, value);
-      }
-      return value;
-    };
-    const documentListeners = new Map<string, (...args: any[]) => unknown>();
-    const windowListeners = new Map<string, (...args: any[]) => unknown>();
-    let renderedButtons: Array<{
-      dataset: { connector: string; oauthAction: string };
-      disabled: boolean;
-    }> = [];
-    const document = {
-      title: "",
-      getElementById: element,
-      createElement: () => new TestElement(),
-      querySelector: () => null,
-      querySelectorAll: () => renderedButtons,
-      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
-        documentListeners.set(name, listener),
-    };
-    let confirms = true;
-    const window = {
-      location: new URL(`${BASE}/`),
-      confirm: vi.fn(() => confirms),
-      setTimeout,
-      addEventListener: (name: string, listener: (...args: any[]) => unknown) =>
-        windowListeners.set(name, listener),
-      Clerk: undefined as unknown,
-    };
-    const Clerk = {
-      user: { id: "user_a" },
-      session: {
-        id: "sess_a",
-        getToken: async () => "operator-token",
-      },
-      load: async () => {},
-      addListener: () => {},
-      redirectToSignIn: () => {},
-      signOut: async () => {},
-    };
-    window.Clerk = Clerk;
-    const payload = (status: "ok" | "auth_required" | "error") => ({
-      serverInfo: { name: "connecta", version: "host-build" },
-      connectaVersion: "package-1.2.3",
-      credentialManagement: "no_slots",
-      oauthManagement: true,
-      activityEnabled: false,
-      connectors: [
-        {
-          id: "oauth",
-          title: "CRM",
-          status,
-          message:
-            status === "auth_required" ? "OAuth disconnected." : undefined,
-          toolCount: status === "ok" ? 1 : 0,
-          tools:
-            status === "ok"
-              ? [{ name: "read", address: "oauth.read" }]
-              : [],
-          oauth: true,
-        },
-      ],
-    });
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(Response.json(payload("ok")))
-      .mockResolvedValueOnce(new Response(null, { status: 204 }))
-      .mockResolvedValueOnce(Response.json(payload("auth_required")))
-      .mockResolvedValueOnce(
-        Response.json(
-          { error: "downstream unavailable" },
-          { status: 502 },
-        ),
-      )
-      .mockResolvedValueOnce(Response.json(payload("error")));
-    const run = new Function(
-      "window",
-      "document",
-      "history",
-      "localStorage",
-      "fetch",
-      "Clerk",
-      "navigator",
-      "CSS",
-      "URL",
-      "URLSearchParams",
-      inlineScript(html),
-    );
-    run(
-      window,
-      document,
-      { pushState: () => {} },
-      { getItem: () => null, setItem: () => {}, removeItem: () => {} },
-      fetch,
-      Clerk,
-      { clipboard: { writeText: async () => {} } },
-      { escape: (value: string) => value },
-      URL,
-      URLSearchParams,
-    );
-    await windowListeners.get("load")?.();
-
-    const click = (button: (typeof renderedButtons)[number]) =>
-      (element("list") as any).onclick({
-        target: { closest: () => button },
-      });
-    const disconnect = {
-      dataset: { connector: "oauth", oauthAction: "disconnect" },
-      disabled: false,
-    };
-    renderedButtons = [disconnect];
-
-    confirms = false;
-    await click(disconnect);
-    expect(fetch).toHaveBeenCalledTimes(1);
-
-    confirms = true;
-    await click(disconnect);
-    expect(fetch).toHaveBeenNthCalledWith(
-      2,
-      "/ui/oauth/oauth",
-      expect.objectContaining({
-        method: "DELETE",
-        headers: { Authorization: "Bearer operator-token" },
-      }),
-    );
-    expect(fetch).toHaveBeenNthCalledWith(
-      3,
-      "/ui/data",
-      expect.objectContaining({
-        headers: { Authorization: "Bearer operator-token" },
-      }),
-    );
-    expect(element("oauthNotice").textContent).toContain(
-      "OAuth disconnected",
-    );
-    expect(disconnect.disabled).toBe(false);
-    expect(element("list").children[0]?.innerHTML).toContain(
-      'aria-label="Disconnect OAuth for CRM"',
-    );
-    expect(element("list").children[0]?.innerHTML).toContain(
-      "Restart authorization",
-    );
-
-    const reconnect = {
-      dataset: { connector: "oauth", oauthAction: "reconnect" },
-      disabled: false,
-    };
-    renderedButtons = [reconnect];
-    await click(reconnect);
-    expect(fetch).toHaveBeenNthCalledWith(
-      4,
-      "/ui/oauth/oauth",
-      expect.objectContaining({
-        method: "POST",
-        headers: { Authorization: "Bearer operator-token" },
-      }),
-    );
-    expect(fetch).toHaveBeenCalledTimes(5);
-    expect(element("oauthNotice").textContent).toBe(
-      "downstream unavailable",
-    );
-    expect(
-      element("oauthNotice").classList.contains("error-notice"),
-    ).toBe(true);
-    expect(reconnect.disabled).toBe(false);
-  });
-
-  it("renders friendly activity labels with visible stable-id disambiguation", async () => {
-    const html = renderUiHtml();
-    const elements = new Map<string, TestElement>();
-    const element = (id: string) => {
-      let value = elements.get(id);
-      if (!value) {
-        value = new TestElement();
-        elements.set(id, value);
-      }
-      return value;
-    };
-    const document = {
-      title: "",
-      getElementById: element,
-      createElement: () => new TestElement(),
-      querySelector: () => null,
-      querySelectorAll: () => [],
-      addEventListener: () => {},
-    };
-    const events = [
-      {
-        schemaVersion: 1,
-        id: "event-1",
-        occurredAt: "2026-07-23T12:00:00.000Z",
-        requestId: "request",
-        actor: {
-          kind: "clerk",
-          id: "user_1",
-          namespace: "https://tenant-a.example",
-          label: "Ada Lovelace",
-        },
-        connectorId: "calc",
-        toolName: "add",
-        address: "calc.add",
-        source: "call_tool",
-        outcome: "success",
-        durationMs: 2,
-        attempts: 1,
-        serverName: "connecta",
-        serverVersion: "0.1.0",
-      },
-      {
-        schemaVersion: 1,
-        id: "event-2",
-        occurredAt: "2026-07-23T12:01:00.000Z",
-        requestId: "request",
-        actor: {
-          kind: "clerk",
-          id: "user_2",
-          namespace: "https://tenant-b.example",
-          label: "Ada Lovelace",
-        },
-        connectorId: "notes",
-        toolName: "list",
-        address: "notes.list",
-        source: "call_tool",
-        outcome: "success",
-        durationMs: 3,
-        attempts: 1,
-        serverName: "connecta",
-        serverVersion: "0.1.0",
-      },
-      {
-        schemaVersion: 1,
-        id: "event-3",
-        occurredAt: "2026-07-23T12:02:00.000Z",
-        requestId: "request",
-        actor: { kind: "clerk", id: "user_fallback" },
-        connectorId: "calc",
-        toolName: "add",
-        address: "calc.add",
-        source: "call_tool",
-        outcome: "success",
-        durationMs: 4,
-        attempts: 1,
-        serverName: "connecta",
-        serverVersion: "0.1.0",
-      },
-    ];
-    const fetch = vi
-      .fn()
-      .mockResolvedValueOnce(
-        Response.json({
-          serverInfo: { name: "connecta", version: "host" },
-          connectaVersion: "package",
-          credentialManagement: "no_slots",
-          oauthManagement: false,
-          activityEnabled: true,
-          connectors: [],
-        }),
-      )
-      .mockResolvedValueOnce(Response.json({ events }));
-    const run = new Function(
-      "window",
-      "document",
-      "history",
-      "localStorage",
-      "fetch",
-      "Clerk",
-      "navigator",
-      "CSS",
-      "URL",
-      "URLSearchParams",
-      inlineScript(html),
-    );
-    run(
-      {
-        location: new URL(`${BASE}/activity`),
-        confirm: () => true,
-        setTimeout,
-        addEventListener: () => {},
-      },
-      document,
-      { pushState: () => {} },
-      {
-        getItem: () => TOKEN,
-        setItem: () => {},
-        removeItem: () => {},
-      },
-      fetch,
-      undefined,
-      { clipboard: { writeText: async () => {} } },
-      { escape: (value: string) => value },
-      URL,
-      URLSearchParams,
-    );
-
-    await vi.waitFor(() => {
-      expect(element("activityList").children).toHaveLength(3);
-    });
-    expect(required(element("activityList").children[0]).innerHTML).toContain(
-      "clerk · Ada Lovelace",
-    );
-    expect(required(element("activityList").children[0]).innerHTML).toContain("user_1");
-    expect(required(element("activityList").children[0]).innerHTML).toContain(
-      "https://tenant-a.example · user_1",
-    );
-    expect(required(element("activityList").children[1]).innerHTML).toContain("user_2");
-    expect(required(element("activityList").children[1]).innerHTML).toContain(
-      "https://tenant-b.example · user_2",
-    );
-    expect(required(element("activityList").children[2]).innerHTML).toContain(
-      "clerk · user_fallback",
-    );
-
-    element("activitySearch").value = "ada lovelace";
-    await (element("activitySearch") as any).oninput();
-    expect(element("activityList").children).toHaveLength(2);
-    element("activitySearch").value = "user_1";
-    await (element("activitySearch") as any).oninput();
-    expect(element("activityList").children).toHaveLength(1);
-    expect(required(element("activityList").children[0]).innerHTML).toContain("user_1");
-    element("activitySearch").value = "tenant-b.example";
-    await (element("activitySearch") as any).oninput();
-    expect(element("activityList").children).toHaveLength(1);
-    expect(required(element("activityList").children[0]).innerHTML).toContain("user_2");
   });
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
@@ -2501,14 +2128,16 @@ describe("status UI", () => {
     const credentials = await (
       await connecta.fetch(new Request(`${BASE}/credentials`))
     ).text();
-    const connectionsMarkup = connections.slice(
-      0,
-      connections.lastIndexOf("<script"),
-    );
+    // Everything between <body> and the bundle: the served markup, without the
+    // stylesheet that names classes the app has not drawn yet.
+    const markup = (page: string) =>
+      page.slice(page.indexOf("<body>"), page.lastIndexOf("<script"));
 
-    expect(connectionsMarkup).not.toContain("data-credential-action");
-    expect(credentials).toContain('data-credential-action="save"');
-    expect(credentials).toContain('autocomplete="new-password"');
+    // Both shells are the same data-free mount point; the credential form only
+    // exists in the bundle, and only the store decides when to draw it.
+    expect(markup(connections)).not.toContain("credential");
+    expect(markup(credentials)).not.toContain("credential");
+    expect(credentials).toContain('"new-password"');
     expect(credentials).toContain("/ui/credentials/");
     expect(connections).not.toContain("valid-secret-9876");
     expect(credentials).not.toContain("valid-secret-9876");
@@ -2573,11 +2202,10 @@ describe("status UI credential management", () => {
       )
     ).text();
     expect(html).not.toContain("live-key-secret");
-    // Credentials is client-rendered from /ui/data, so the shell carries the
-    // branch: the notice prints as muted copy, not the underlined `.msg` an
-    // error gets, and the Test button is still drawn.
-    expect(html).toContain('<p class="credential-copy meta">\' + esc(cred.notice)');
-    expect(html).toContain('data-credential-action="test"');
+    // Credentials is rendered from /ui/data, so the page ships both branches:
+    // the notice prints as muted copy, not the underlined `.msg` an error gets.
+    expect(html).toContain('"credential-copy meta"');
+    expect(html).toContain('"msg"');
 
     const test = await credentialRequest(
       connecta,

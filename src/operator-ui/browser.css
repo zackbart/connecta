@@ -77,7 +77,6 @@
   .pbody { grid-column: 2 / -1; min-width: 0; }
   .cap, .meta { color: var(--muted); font-size: .9em; }
   .mono { font-family: var(--mono); font-size: .78rem; }
-  .hidden { display: none !important; }
   .visually-hidden {
     clip: rect(0 0 0 0);
     clip-path: inset(50%);
@@ -175,9 +174,6 @@
   .connector-tools { border-bottom: 1px solid var(--rule); }
   .toolbar { margin-bottom: 1.5rem; }
   .toolbar input { flex-basis: 18rem; }
-  #notice { margin-bottom: .75rem; }
-  #notice:empty { display: none; }
-  #notice:not(:empty) { text-decoration: underline; }
   #oauthNotice { margin-bottom: .75rem; }
   #oauthNotice:empty { display: none; }
   .error-notice, .msg { text-decoration: underline; }
