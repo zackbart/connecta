@@ -49,8 +49,11 @@ exports.
   the old rationale, but treat `ethos.md` as the authority where they disagree.
 - [`README.md`](./README.md) — the human-facing overview.
 - [`templates/node/`](./templates/node/) — the one standalone Node deployment
-  shape copied by `connecta init`. Keep it small and prescribed; examples may
-  demonstrate alternatives, but they must not become competing scaffolds.
+  shape copied by `connecta init`, Docker-ready rather than Docker-only. Keep
+  it small and prescribed. There are exactly two deployment shapes, this one
+  and [`examples/worker/`](./examples/worker/); a third scaffold that is a
+  diff away from one of them is the shape
+  [#344](https://github.com/zackbart/connecta/issues/344) deleted.
 
 **Read `ethos.md` and the subsystem's guide (or its git-history predecessor)
 before changing a subsystem.**
@@ -61,9 +64,12 @@ before changing a subsystem.**
 pins the generated deployment to the CLI package's exact version, restores the
 template `.gitignore`, and refuses to merge into an existing path.
 `connecta doctor` verifies a running deployment's health, executor, and exact
-seven-tool surface. Setup changes must keep the root README, template, Docker
-example, and `scripts/check-package.mjs` smoke aligned; do not add a second
-initializer or another “recommended” project shape.
+seven-tool surface. The template carries its own `Dockerfile` and
+`docker-compose.yml`, so the generated project is the container: setup changes
+must keep the root README, the template (source, container files, and README),
+and the `scripts/check-package.mjs` smoke — which builds and runs that
+container when Docker is available — aligned. Do not add a second initializer,
+a second container recipe, or another “recommended” project shape.
 
 ## Where new code goes
 

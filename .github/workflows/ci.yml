@@ -21,6 +21,10 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: npm
       - run: npm ci
+      # release:check ends in the package smoke, which packs the tarball, runs
+      # `connecta init`, and then builds and runs the generated deployment's own
+      # container. Runners have Docker, and the smoke fails rather than skips
+      # when CI is set — so there is no separate image job to drift from it.
       - run: npm run release:check
 
   current-version-eval:
@@ -45,24 +49,3 @@ jobs:
           npm --prefix eval/current-version run audit -- \
             --output "$RUNNER_TEMP/current-version.json" \
             --report "$RUNNER_TEMP/current-version.md"
-
-  docker:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Build the example image
-        run: docker build -f examples/docker/Dockerfile -t connecta-example .
-      - name: Smoke-test /health
-        run: |
-          docker run -d --rm --name connecta \
-            -e CONNECTA_TOKEN=ci-smoke-token -p 8787:8787 connecta-example
-          for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:8787/health >/dev/null; then
-              docker stop connecta
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::container never became healthy"
-          docker logs connecta
-          exit 1

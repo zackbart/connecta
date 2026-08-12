@@ -43,7 +43,7 @@ const connecta = createConnecta({
 CPU, wall-time, memory, stack, queue, result, log, and IPC bounds are configured
 on the executor. Server bundlers must keep the `@zackbart/connecta/quickjs`
 package files external so the child entry stays on disk. The
-[Node example](../examples/node/README.md) carries the complete setup.
+[Node template](../templates/node/README.md) carries the complete setup.
 
 On Cloudflare Workers, the Worker Loader binding provides the required sandbox:
 
