@@ -59,11 +59,21 @@ my-connecta/
 ├── src/index.ts       # connectors, auth, storage, public URL
 ├── package.json       # exact Connecta and QuickJS versions
 ├── tsconfig.json
+├── Dockerfile         # the same source, containerized
+├── docker-compose.yml # one service, state on a named volume
+├── .dockerignore
 ├── .env.example
 ├── .gitignore
 ├── AGENTS.md
 ├── CLAUDE.md -> AGENTS.md
 └── README.md
+```
+
+The same project runs as a long-lived container without changing a line of it:
+
+```sh
+cp .env.example .env    # set CONNECTA_TOKEN
+docker compose up -d --build
 ```
 
 For an agent setting this up, the contract is:
@@ -88,11 +98,9 @@ connector tools are reachable. Unannotated or write-capable calls stay
 individual and cross `call_destructive_tool`, where the MCP host can ask the
 operator for approval.
 
-Other supported deployment shapes:
+There are two deployment shapes and no others:
 
-- [Prescribed Node template](./templates/node/)
-- [Node repository example](./examples/node/)
-- [Code-first Docker deployment (repository-only)](https://github.com/zackbart/connecta/tree/main/examples/docker)
+- [Node, local or Docker](./templates/node/) — what `init` copies
 - [Cloudflare Worker deployment](./examples/worker/)
 - [Subsystem documentation](./documentation/)
 

@@ -1,0 +1,9 @@
+# The image installs its own dependencies and never needs local state or
+# secrets in the build context.
+node_modules
+.git
+.env
+.connecta-state.json
+*.log
+Dockerfile
+docker-compose.yml

@@ -23,6 +23,30 @@ descriptions, schemas, and annotations as they arrive, and an unannotated or
 contradictory downstream tool still fails closed onto `call_destructive_tool`.
 Connecta infers read-only behavior from nothing, anywhere.
 
+The repository now models exactly the two deployments it actually has: a Node
+one and a Worker one. `connecta init` still copies the same template, but that
+template now carries its own `Dockerfile` and `docker-compose.yml`, so the
+generated project runs from `npm start` locally and from `docker compose up`
+in production without becoming a second project shape. The two near-identical
+Node scaffolds that sat beside it — `examples/node` and `examples/docker`, the
+latter of which built the Connecta repository rather than a consumer project —
+are gone. Existing deployments can ignore all of this; nothing in the package's
+runtime surface moved.
+
+### Added
+
+- **The Node template is Docker-ready.** `Dockerfile`, `docker-compose.yml`,
+  and `.dockerignore` ship with `connecta init`. The image installs
+  `@zackbart/connecta` from the registry like any other consumer, runs as the
+  non-root `node` user with state on a named volume, probes the always-open
+  `/health` route, and keeps Node in the foreground so `compose down` stops it
+  promptly. `PUBLIC_URL` and `CONNECTA_STATE_FILE` now configure the generated
+  `src/index.ts`, which is what makes one source serve both run paths (#344).
+- **The package smoke exercises the generated container.** `check:package`
+  builds and runs the initialized deployment through Compose and points
+  `connecta doctor` at it; it fails rather than skips when Docker is missing
+  in CI (#344).
+
 ### Changed
 
 - **`api()` enforces its construction contract.** Every tool requires a
@@ -42,6 +66,10 @@ Connecta infers read-only behavior from nothing, anywhere.
 - **`ApiOptions.strictValidation`.** Fail-closed schema handling is the only
   behavior, so the opt-in has nothing left to switch. Delete the option;
   nothing else changes (#340).
+- **`examples/node` and `examples/docker`.** Both were diffs from the
+  template. `examples/` is the Worker deployment now, and the root
+  `.dockerignore` that existed only for the repository-context Docker build
+  went with them (#344).
 
 ## 0.15.1 — 2026-08-12
 
