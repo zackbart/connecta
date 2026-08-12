@@ -96,12 +96,23 @@ describe("startup convention warnings", () => {
     ).toBe(true);
   });
 
-  it("warns on api() tools missing description or inputSchema", () => {
+  it("warns on static tools missing description or inputSchema", () => {
     const { logger, warnings } = spyLogger();
-    const conn = api("bare", {
+    // Hand-rolled rather than api(): api() now refuses a description-less
+    // tool outright, so this warning covers the connectors that implement the
+    // interface themselves and still publish `staticTools`.
+    const conn: Connector = {
+      id: "bare",
+      kind: "api",
       description: "Bare — demo",
-      tools: [{ name: "go", handler: () => ({}) }],
-    });
+      staticTools: [{ name: "go" }],
+      async listTools() {
+        return [{ name: "go" }];
+      },
+      async callTool() {
+        return {};
+      },
+    };
     new Registry([conn], { storage: memoryStorage(), logger });
     expect(
       warnings.some((w) => w.includes('tool "bare.go" has no description')),
@@ -120,6 +131,7 @@ describe("startup convention warnings", () => {
           name: "do_thing",
           description: "Do the thing.",
           inputSchema: { type: "object", properties: {} },
+          annotations: { readOnlyHint: true },
           handler: () => ({}),
         },
       ],

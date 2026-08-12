@@ -13,8 +13,11 @@ earns its place, the verdict is `improve` and the fix is handed to #342 rather
 than done twice.
 
 **Outcome: 30 keep, 18 improve, 3 prune.** The three removals —
-`get_r2_metrics`, `set_r2_cors`, `delete_r2_cors` — are a breaking change in
-0.16.0. The surviving surface is 48 named tools.
+`get_r2_metrics`, `set_r2_cors`, `delete_r2_cors` — are a breaking change. Two
+of them were pruned on the measurement; `delete_r2_cors` measured clean and
+went with `set_r2_cors` as the other half of one policy pair, which the rule
+below states as its own ground so the record does not pretend it was a defect.
+The surviving surface is 48 named tools.
 
 ## The measurement
 
@@ -36,8 +39,8 @@ from the pre-audit run unless it says otherwise.
 
 The lane is deterministic and runs entirely inside the process. Nothing in the
 provider is stubbed: the real constructor, the real hand-written schemas, the
-real `api()` validation path with `strictValidation`, the real handlers, and
-the real `CatalogService` produce every number. Only `fetch` is a probe, and it
+real fail-closed `api()` validation path, the real handlers, and the real
+`CatalogService` produce every number. Only `fetch` is a probe, and it
 records the request the provider built. No credential, no packet, no account.
 The connector is measured unscoped — no `zoneId`, no `accountId` — because that
 is what a fresh deployment gets and it is the harder case.
@@ -49,7 +52,7 @@ Four costs, the four from
 | --- | --- |
 | discovery tokens | the exact per-entry payload `search_tools` emits with compact schemas, tokenized one tool at a time |
 | wrong-tool selection | the tool's rank in a real `search_tools` call for its own task, against the connector's whole catalog |
-| argument retries | four classes of argument mistake per tool, scored on whether the refusal happened locally or at Cloudflare |
+| argument retries | every argument mistake the tool's schema admits — up to four classes, two to four per tool — scored on whether the refusal happened locally or at Cloudflare |
 | result size | the provider's object goes down carrying known noise keys; the lane records what came back |
 
 ## What it found
@@ -96,16 +99,28 @@ report.** Connecta's activity events are payload-free by construction and do
 record tool-selection frequency, so this is exactly the evidence a live
 deployment could contribute — it simply was not available here.
 
-That absence sets the bar rather than lowering it. Every verdict below rests on
-measured surface properties, and no tool was pruned for being *unused*, because
-nothing here can know that. Pruning on measurement alone means pruning only
-where the tool is measurably weaker than the route that replaces it.
+That absence sets the bar rather than lowering it. No tool was pruned for being
+*unused*, because nothing here can know that. Every verdict below rests on
+measured surface properties, with one stated exception: `delete_r2_cors`, which
+measured clean and was removed as the other half of a policy pair. That is the
+only judgment in the table not carried by a number, and the rule below names it
+so it cannot hide inside the measured ones.
 
 ## How a verdict was assigned
 
-- **prune** — the tool adds nothing over the escape hatch except the path, *and*
-  the measurement shows a defect the hatch does not have. Both halves are
-  required.
+- **prune** — on either of two grounds, and the row says which.
+  - *measured* — the tool adds nothing over the escape hatch except the path,
+    *and* the measurement shows a defect the hatch does not have. Both halves
+    are required.
+  - *pair* — the tool is one half of a policy pair whose other half was pruned
+    on the measured ground, and naming only the surviving half would document
+    an inconsistency: the same policy would be changed through a named tool one
+    way and the raw route the other. This ground is a judgment, not a
+    measurement, so it never applies alone — it can only follow a measured
+    prune of its partner, it may never be used to remove a *read*, and a tool
+    pruned this way is stated as having measured clean. Ranking, sibling
+    collisions, and "the hatch already reaches this endpoint" are still not
+    grounds for anything.
 - **improve** — the tool earns its place, but a measured miss is real: it
   returns the provider's object unprojected, or declares no output keys. The
   fix is H8/H9 convention work and belongs to
@@ -152,10 +167,10 @@ capability to fix a ranking.
 | `delete_r2_bucket` | **keep** | 146 | 2 | fixed confirmation | 2 |
 | `list_r2_objects` | **keep** | 211 | 1 | projected −88.4% | 4 |
 | `delete_r2_object` | **keep** | 149 | 1 | fixed confirmation | 2 |
-| `get_r2_metrics` | **prune** | 82 | 5 | passthrough | 0 |
+| `get_r2_metrics` | **prune** (measured) | 82 | 5 | passthrough | 0 |
 | `get_r2_cors` | **improve** | 108 | 1 | passthrough | 0 |
-| `set_r2_cors` | **prune** | 139 | miss (cloudflare_api_upload) | passthrough | 0 |
-| `delete_r2_cors` | **prune** | 130 | miss (get_r2_cors) | fixed confirmation | 1 |
+| `set_r2_cors` | **prune** (measured) | 139 | miss (cloudflare_api_upload) | passthrough | 0 |
+| `delete_r2_cors` | **prune** (pair) | 130 | miss (get_r2_cors) | fixed confirmation | 1 |
 | `list_pages_projects` | **keep** | 187 | 1 | projected −72.1% | 2 |
 | `get_pages_project` | **improve** | 96 | 2 | projected −95.2% | 0 |
 | `list_pages_deployments` | **keep** | 156 | 7 | projected −72.3% | 2 |
@@ -196,11 +211,18 @@ destructive either way, so it did not beat it on safety routing. Search agreed:
 for its own task, `cloudflare_api_upload` ranked first and `set_r2_cors` did not
 place at all.
 
-**`delete_r2_cors`** — the other half of the same policy pair. With the write
-gone, keeping the delete would leave the guide explaining why one half of CORS
-management is named and the other is not. Its own task ranked `get_r2_cors`
-first and it did not place. Reading a policy stays named; changing one takes the
-approval-gated raw route, exactly as structured DNS data already does.
+**`delete_r2_cors`** — the honest one, because the measurement did not ask for
+it. It returned a fixed `{deleted: true}` confirmation, declared that key in a
+closed output schema, and refused all three argument mistakes its schema admits
+locally: by the keep definition above it is a textbook keep, and the only thing
+against it is that its own task ranked `get_r2_cors` first, which by the stated
+rule decides nothing. It goes on the *pair* ground alone. With the write
+unnamed, keeping the delete would mean one CORS policy is changed through a
+named tool one way and through the approval-gated raw route the other, and the
+guide would have to explain which half is which. Reading a policy stays named;
+changing one takes the raw route, exactly as structured DNS data already does.
+That is a judgment about surface coherence, and anyone who weighs the pair
+differently should read this row as the place to disagree.
 
 No capability was lost. `get_r2_cors` still reads the policy, and the usage
 guide now names the replacement routes explicitly:

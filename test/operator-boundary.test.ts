@@ -69,6 +69,7 @@ function oauthConnector(): Connector {
           name: "write",
           description: "Write to alpha",
           inputSchema: { type: "object", additionalProperties: false },
+          annotations: { readOnlyHint: false },
           handler: async () => ({ ok: true }),
         },
       ],

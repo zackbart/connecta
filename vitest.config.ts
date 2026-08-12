@@ -50,6 +50,10 @@ export const WORKERS_SUITES = [
 
 export const NODE_ONLY_SUITES = [
   {
+    file: "test/deployment-shapes.test.ts",
+    reason: "walks the template and example trees with Node filesystem APIs",
+  },
+  {
     file: "test/doc-links.test.ts",
     reason: "spawns the Node documentation checker against filesystem fixtures",
   },

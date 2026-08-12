@@ -29,6 +29,7 @@ function makeApi() {
           required: ["queued"],
         },
         annotations: {
+          readOnlyHint: false,
           idempotentHint: false,
           destructiveHint: true,
         },
@@ -39,6 +40,7 @@ function makeApi() {
       {
         name: "boom",
         description: "Always throws",
+        annotations: { readOnlyHint: true },
         handler: () => {
           throw new Error("handler exploded");
         },
@@ -46,6 +48,7 @@ function makeApi() {
       {
         name: "async_boom",
         description: "An async handler that throws before its first await",
+        annotations: { readOnlyHint: true },
         handler: async () => {
           throw new Error("async handler exploded");
         },
@@ -67,7 +70,14 @@ describe("api() connector", () => {
     const capped = api("docs", {
       description: "Docs",
       maxResultBytes: 200_000,
-      tools: [{ name: "fetch", handler: () => null }],
+      tools: [
+        {
+          name: "fetch",
+          description: "Fetch a document",
+          annotations: { readOnlyHint: true },
+          handler: () => null,
+        },
+      ],
     });
     expect(capped.maxResultBytes).toBe(200_000);
   });
@@ -78,7 +88,14 @@ describe("api() connector", () => {
     const limited = api("docs", {
       description: "Docs",
       callAdmission,
-      tools: [{ name: "fetch", handler: () => null }],
+      tools: [
+        {
+          name: "fetch",
+          description: "Fetch a document",
+          annotations: { readOnlyHint: true },
+          handler: () => null,
+        },
+      ],
     });
     expect(limited.callAdmission).toBe(callAdmission);
   });
@@ -89,7 +106,14 @@ describe("api() connector", () => {
     const guided = api("resend", {
       description: "Send email via Resend",
       usageGuide: guide,
-      tools: [{ name: "noop", handler: () => null }],
+      tools: [
+        {
+          name: "noop",
+          description: "Do nothing",
+          annotations: { readOnlyHint: true },
+          handler: () => null,
+        },
+      ],
     });
     expect(guided.usageGuide).toBe(guide);
     const structured = {
@@ -100,7 +124,14 @@ describe("api() connector", () => {
     expect(
       api("structured", {
         usageGuide: structured,
-        tools: [{ name: "noop", handler: () => null }],
+        tools: [
+          {
+            name: "noop",
+            description: "Do nothing",
+            annotations: { readOnlyHint: true },
+            handler: () => null,
+          },
+        ],
       }).usageGuide,
     ).toBe(structured);
   });
@@ -118,6 +149,7 @@ describe("api() connector", () => {
     expect((send.inputSchema as any).properties.to.type).toBe("string");
     expect((send.outputSchema as any).properties.queued.type).toBe("boolean");
     expect(send.annotations).toEqual({
+      readOnlyHint: false,
       idempotentHint: false,
       destructiveHint: true,
     });
@@ -132,7 +164,14 @@ describe("api() connector", () => {
   it("callTool defaults args to {} when omitted", async () => {
     let seen: unknown;
     const c = api("x", {
-      tools: [{ name: "peek", handler: (args) => ((seen = args), null) }],
+      tools: [
+        {
+          name: "peek",
+          description: "Report the arguments it received",
+          annotations: { readOnlyHint: true },
+          handler: (args) => ((seen = args), null),
+        },
+      ],
     });
     await c.callTool("peek", undefined, ctx());
     expect(seen).toEqual({});
@@ -200,7 +239,14 @@ describe("api() argument validation", () => {
   it("tools without an inputSchema stay pass-through", async () => {
     let seen: unknown;
     const c = api("x", {
-      tools: [{ name: "peek", handler: (args) => ((seen = args), null) }],
+      tools: [
+        {
+          name: "peek",
+          description: "Report the arguments it received",
+          annotations: { readOnlyHint: true },
+          handler: (args) => ((seen = args), null),
+        },
+      ],
     });
     await c.callTool("peek", { anything: true }, ctx());
     expect(seen).toEqual({ anything: true });
@@ -212,6 +258,8 @@ describe("api() argument validation", () => {
       tools: [
         {
           name: "coerce",
+          description: "Accept a loosely typed page number",
+          annotations: { readOnlyHint: true },
           inputSchema: {
             type: "object",
             properties: { page: { type: "integer" } },
@@ -226,42 +274,18 @@ describe("api() argument validation", () => {
     });
   });
 
-  it("a schema the validator cannot use warns once and passes through", async () => {
+  it("a schema that only fails on first use rejects the call, never passes through", async () => {
     const warn = vi.fn();
     const logger: Logger = { ...silentLogger, warn };
     const c = api("refy", {
       tools: [
         {
           name: "broken_schema",
-          // Unresolvable $ref — @cfworker/json-schema only surfaces this on
-          // the first validate() call, not at construction.
-          inputSchema: {
-            type: "object",
-            properties: { x: { $ref: "#/definitions/missing" } },
-          },
-          handler: (args: { x: unknown }) => ({ got: args.x }),
-        },
-      ],
-    });
-    const context = { ...ctx(), logger };
-    expect(await c.callTool("broken_schema", { x: 1 }, context)).toEqual({
-      got: 1,
-    });
-    expect(await c.callTool("broken_schema", { x: 2 }, context)).toEqual({
-      got: 2,
-    });
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("refy.broken_schema");
-  });
-
-  it("strictValidation rejects a call whose schema the validator cannot evaluate", async () => {
-    const warn = vi.fn();
-    const logger: Logger = { ...silentLogger, warn };
-    const c = api("strict", {
-      strictValidation: true,
-      tools: [
-        {
-          name: "broken_schema",
+          description: "Carries an unresolvable $ref",
+          annotations: { readOnlyHint: true },
+          // Unresolvable $ref — @cfworker/json-schema resolves lazily, so this
+          // compiles at construction and only blows up on the first
+          // validate(). It fails the call rather than reaching the handler.
           inputSchema: {
             type: "object",
             properties: { x: { $ref: "#/definitions/missing" } },
@@ -278,24 +302,131 @@ describe("api() argument validation", () => {
     const typed = err as ConnectorCallError;
     expect(typed.code).toBe("invalid_args");
     expect(typed.retryable).toBe(false);
-    expect(typed.message).toContain("strict.broken_schema");
+    expect(typed.message).toContain("refy.broken_schema");
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(required(warn.mock.calls[0])[0]).toContain("refy.broken_schema");
+  });
+});
+
+describe("api() construction contract", () => {
+  it("refuses a tool with no description", () => {
+    expect(() =>
+      api("acme", {
+        tools: [
+          {
+            name: "nameless",
+            description: "",
+            annotations: { readOnlyHint: true },
+            handler: () => null,
+          },
+        ],
+      }),
+    ).toThrow(/acme\.nameless.*non-empty description/s);
   });
 
-  it("default (strictValidation off) still passes an unevaluable schema through", async () => {
-    const c = api("loose", {
+  it("refuses a tool whose description is only whitespace", () => {
+    expect(() =>
+      api("acme", {
+        tools: [
+          {
+            name: "blank",
+            description: "   \n",
+            annotations: { readOnlyHint: true },
+            handler: () => null,
+          },
+        ],
+      }),
+    ).toThrow(/acme\.blank/);
+  });
+
+  it("refuses a tool with no explicit readOnlyHint", () => {
+    expect(() =>
+      api("acme", {
+        tools: [
+          {
+            name: "unclassified",
+            description: "Do something of unknown safety",
+            // A JS deployment can reach this; TypeScript refuses it outright.
+            annotations: { destructiveHint: true } as never,
+            handler: () => null,
+          },
+        ],
+      }),
+    ).toThrow(/acme\.unclassified.*annotations\.readOnlyHint/s);
+  });
+
+  it("never infers a classification from the tool name or description", () => {
+    expect(() =>
+      api("acme", {
+        tools: [
+          {
+            name: "list_things",
+            description: "List things. Reads only, honest.",
+            annotations: {} as never,
+            handler: () => [],
+          },
+        ],
+      }),
+    ).toThrow(/annotations\.readOnlyHint/);
+  });
+
+  it("refuses a schema the validator cannot compile", () => {
+    expect(() =>
+      api("acme", {
+        tools: [
+          {
+            name: "clashing_ids",
+            description: "Declares the same $id twice",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              $id: "urn:connecta-test:api-clash",
+              type: "object",
+              $defs: { clash: { $id: "urn:connecta-test:api-clash" } },
+            },
+            handler: () => null,
+          },
+        ],
+      }),
+    ).toThrow(/acme\.clashing_ids.*validator cannot use/s);
+  });
+
+  it("checks the schema even when validateArgs is off", () => {
+    // Opting out of enforcement is not opting out of the schema being real:
+    // the catalog still publishes it, and an agent still writes against it.
+    expect(() =>
+      api("acme", {
+        validateArgs: false,
+        tools: [
+          {
+            name: "clashing_ids",
+            description: "Declares the same $id twice",
+            annotations: { readOnlyHint: true },
+            inputSchema: {
+              $id: "urn:connecta-test:api-clash-loose",
+              type: "object",
+              $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } },
+            },
+            handler: () => null,
+          },
+        ],
+      }),
+    ).toThrow(/acme\.clashing_ids/);
+  });
+
+  it("accepts an explicit readOnlyHint: false as the destructive declaration", () => {
+    const c = api("acme", {
       tools: [
         {
-          name: "broken_schema",
-          inputSchema: {
-            type: "object",
-            properties: { x: { $ref: "#/definitions/missing" } },
-          },
-          handler: (args: { x: unknown }) => ({ got: args.x }),
+          name: "delete_thing",
+          description: "Delete a thing",
+          annotations: { readOnlyHint: false, destructiveHint: true },
+          handler: () => ({ deleted: true }),
         },
       ],
     });
-    expect(await c.callTool("broken_schema", { x: 7 }, ctx())).toEqual({
-      got: 7,
+    expect(required(c.staticTools?.[0]).annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
     });
   });
 });

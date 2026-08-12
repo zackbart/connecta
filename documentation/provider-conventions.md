@@ -66,9 +66,14 @@ floor. From `src/catalog.ts` and `src/catalog-service.ts`:
   the connector description has been written into a field the model does not
   read.
 
-Two construction-time checks already enforce the floor beneath all of this:
-`Registry.checkConventions()` warns about a connector with no description, and
-about a static tool with no description or no `inputSchema`.
+Two construction-time checks enforce the floor beneath all of this. The hard
+one is `api()` itself: since
+[#340](https://github.com/zackbart/connecta/issues/340) a hand-written tool
+throws unless it carries a non-empty description, an explicit boolean
+`annotations.readOnlyHint`, and an `inputSchema` — where it declares one — the
+validator can compile. The soft one is `Registry.checkConventions()`, which
+warns about a connector with no description, and about a static tool from any
+other source with no description or no `inputSchema`.
 
 ## Hand-written HTTP providers
 
@@ -123,10 +128,11 @@ wrong-tool selection.
 Every tool carries a hand-written `inputSchema`: a plain object at the top
 level, `additionalProperties: false`, an accurate `required` list, an `enum` on
 every constrained field, explicit numeric bounds on every page size and count,
-and a description on every property. `strictValidation: true`, so a schema the
-validator cannot evaluate fails the call rather than silently admitting
-unvalidated input — in a surface we wrote ourselves, an unevaluable schema is
-our bug.
+and a description on every property. `api()` enforces this for free since
+[#340](https://github.com/zackbart/connecta/issues/340): a schema the validator
+cannot compile throws at construction, and one that only reveals itself on
+first use fails the call rather than silently admitting unvalidated input — in
+a surface we wrote ourselves, an unenforceable schema is our bug.
 
 *Why:* a complete schema is the difference between one call and a call, a
 rejection, and a repair. *Cost:* argument retries.
@@ -437,7 +443,7 @@ than by reading:
 | H1, P2 | constructor throws on a blank `purpose`; `instructions` appear appended to the guide |
 | H2 | every tool name matches `^[a-z][a-z0-9_]*$` and opens with a verb from the connector's own set |
 | H3 | first sentence ≤ 160 characters; whole description ≤ 240 |
-| H5 | every tool has an `inputSchema` that is a closed plain object with a `required` list and a description on every property; the connector sets `strictValidation: true` |
+| H5 | every tool has an `inputSchema` that is a closed plain object with a `required` list and a description on every property; `api()` refuses to construct one it cannot enforce |
 | H7 | every compact input and output render stays inside 1,024 bytes, or the tool is on a recorded exception list |
 | H8 | every tool declares an `outputSchema` |
 | H9 | every read either projects or documents why it does not; `raw: true` exists wherever the projection drops something recoverable |

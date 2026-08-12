@@ -1,0 +1,21 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node"],
+    // The template is a consumer project with its own package.json, so it
+    // cannot self-reference this package the way an example under the root
+    // can. Point the three consumer specifiers at the built declarations —
+    // typechecking the shipped template against the shipped types is the
+    // whole point of running it here.
+    "baseUrl": ".",
+    "paths": {
+      "@zackbart/connecta": ["./dist/index.d.ts"],
+      "@zackbart/connecta/node": ["./dist/node.d.ts"],
+      "@zackbart/connecta/quickjs": ["./dist/executors/quickjs.d.ts"]
+    }
+  },
+  "include": [
+    "templates/node/src/**/*.ts"
+  ],
+  "exclude": ["node_modules"]
+}

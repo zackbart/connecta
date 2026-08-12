@@ -13,7 +13,6 @@
     "src/providers/notion.ts",
     "src/providers/stripe.ts",
     "src/operator-ui/browser.ts",
-    "examples/*/server.ts",
     "examples/*/src/index.ts",
     "scripts/*.mjs",
     "test/**/*.test.ts"
@@ -26,8 +25,8 @@
     "*.ts"
   ],
   "ignoreDependencies": [
-    // Loaded by the QuickJS parent when it forks a source-tree child and used
-    // directly by the runnable Node and Docker examples.
+    // Loaded by the QuickJS parent when it forks a source-tree child, and the
+    // runner the Node deployment template uses locally and in its container.
     "tsx",
     // Deployment CLI and the schema provider for examples/worker/wrangler.jsonc.
     "wrangler"

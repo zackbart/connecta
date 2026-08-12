@@ -13,6 +13,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Run `npm run typecheck` after configuration changes. With the server running,
   run `CONNECTA_TOKEN=... npm run doctor` before calling setup complete.
+- `Dockerfile` and `docker-compose.yml` containerize *this* source; they are
+  the same deployment, not a second one. Configuration belongs in `.env` and
+  `src/index.ts`, never in a divergent container entrypoint.
 
 Do not add alternate entrypoints, policy layers, generated connector catalogs,
 or runtime connector registration. Keep the deployment small enough to review

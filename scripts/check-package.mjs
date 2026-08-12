@@ -2,7 +2,14 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
-import { lstat, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  lstat,
+  mkdtemp,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -96,6 +103,34 @@ async function waitForHealth(url, child, output) {
   );
 }
 
+function dockerReady() {
+  for (const args of [["compose", "version"], ["info"]]) {
+    const probe = spawnSync("docker", args, {
+      stdio: "ignore",
+      timeout: 60_000,
+    });
+    if (probe.error || probe.status !== 0) return false;
+  }
+  return true;
+}
+
+async function waitForContainerHealth(url, timeoutMs, describe) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(1_000) });
+      if (response.ok) return;
+    } catch {
+      // The container is still starting.
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 500));
+  }
+  throw new Error(
+    `Generated container did not become healthy within ${timeoutMs}ms:\n` +
+      describe(),
+  );
+}
+
 async function stopChild(child) {
   if (child.exitCode !== null) return;
   child.kill("SIGTERM");
@@ -130,8 +165,11 @@ try {
     "bin/connecta.mjs",
     "documentation/code-mode.md",
     "ethos.md",
+    "templates/node/.dockerignore",
     "templates/node/.env.example",
     "templates/node/AGENTS.md",
+    "templates/node/Dockerfile",
+    "templates/node/docker-compose.yml",
     "templates/node/package.json",
     "templates/node/src/index.ts",
     "dist/index.js",
@@ -169,8 +207,14 @@ try {
     if (path.startsWith("eval/")) {
       throw new Error(`Eval-only file leaked into the package: ${path}`);
     }
-    if (path.startsWith("examples/docker/")) {
-      throw new Error(`Repository-only Docker file leaked into package: ${path}`);
+    // Two deployment shapes, no third: the Node one is the template (Docker
+    // files included), the Worker one is the example. A packed examples/node
+    // or examples/docker means a redundant scaffold grew back (#344).
+    if (
+      path.startsWith("examples/node/") ||
+      path.startsWith("examples/docker/")
+    ) {
+      throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
     if (
       path.includes("connectors/cloudflare") ||
@@ -456,6 +500,104 @@ try {
     }
   } finally {
     await stopChild(deployment);
+  }
+
+  // The generated deployment is also the container: `connecta init` ships the
+  // Dockerfile and Compose file, so the source that just answered over tsx has
+  // to answer again from `docker compose up` (#344). Docker is not a
+  // prerequisite for running a release check on a laptop, but CI has it and
+  // must not quietly skip the shape it is verifying.
+  if (!dockerReady()) {
+    if (process.env.CI) {
+      throw new Error(
+        "Docker is unavailable, so the generated container went untested. " +
+          "CI must exercise `connecta init` + `docker compose up`.",
+      );
+    }
+    console.log(
+      "package smoke: Docker unavailable — skipped the generated-container check",
+    );
+  } else {
+    await copyFile(archive, join(generatedRoot, packed.filename));
+    generatedPackage.dependencies["@zackbart/connecta"] =
+      `file:./${packed.filename}`;
+    await writeFile(
+      join(generatedRoot, "package.json"),
+      JSON.stringify(generatedPackage, null, 2) + "\n",
+    );
+    // `connecta init` leaves no lockfile, and the local install above wrote one
+    // pinned to a tarball outside the build context. Remove it so the image
+    // resolves exactly what a freshly initialized project resolves.
+    await rm(join(generatedRoot, "package-lock.json"), { force: true });
+    // The pin now points at a tarball that is not on the registry yet, so the
+    // build context has to carry it — the same substitution the local run
+    // above makes, one line earlier in the image. Everything else about the
+    // shipped Dockerfile is exercised unmodified.
+    const dockerfilePath = join(generatedRoot, "Dockerfile");
+    const dockerfile = await readFile(dockerfilePath, "utf8");
+    const manifestCopy = "COPY package.json package-lock.json* ./\n";
+    if (!dockerfile.includes(manifestCopy)) {
+      throw new Error(
+        "Template Dockerfile no longer copies the manifest before installing; " +
+          "the container smoke fixture cannot be built",
+      );
+    }
+    await writeFile(
+      dockerfilePath,
+      dockerfile.replace(
+        manifestCopy,
+        `COPY ${packed.filename} ./\n${manifestCopy}`,
+      ),
+    );
+
+    const containerPort = await freePort();
+    const compose = ["compose", "-p", `connecta-smoke-${process.pid}`];
+    const composeEnv = {
+      CONNECTA_TOKEN: smokeToken,
+      PORT: String(containerPort),
+    };
+    const composeLogs = () => {
+      const logs = spawnSync(
+        "docker",
+        [...compose, "logs", "--no-color", "--tail", "200"],
+        {
+          cwd: generatedRoot,
+          encoding: "utf8",
+          env: { ...process.env, ...composeEnv },
+        },
+      );
+      return `${logs.stdout ?? ""}\n${logs.stderr ?? ""}`;
+    };
+    try {
+      run("docker", [...compose, "up", "-d", "--build"], generatedRoot, composeEnv);
+      await waitForContainerHealth(
+        `http://127.0.0.1:${containerPort}/health`,
+        120_000,
+        composeLogs,
+      );
+      const containerDoctor = run(
+        join(
+          generatedRoot,
+          "node_modules",
+          ".bin",
+          process.platform === "win32" ? "connecta.cmd" : "connecta",
+        ),
+        ["doctor", "--url", `http://127.0.0.1:${containerPort}`],
+        generatedRoot,
+        { CONNECTA_TOKEN: smokeToken },
+      );
+      if (!containerDoctor.includes("QuickJS executed")) {
+        throw new Error(
+          `Containerized deployment did not prove execution: ${containerDoctor}`,
+        );
+      }
+    } finally {
+      spawnSync("docker", [...compose, "down", "-v", "--remove-orphans"], {
+        cwd: generatedRoot,
+        stdio: "inherit",
+        env: { ...process.env, ...composeEnv },
+      });
+    }
   }
 
   const coreDeclarations = await readFile(

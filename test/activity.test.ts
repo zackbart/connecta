@@ -87,7 +87,8 @@ describe("activity delivery", () => {
       tools: [
         {
           name: "erase",
-          annotations: { destructiveHint: true },
+          description: "Erase the thing",
+          annotations: { readOnlyHint: false, destructiveHint: true },
           handler: () => ({ erased: true }),
         },
       ],
@@ -125,6 +126,7 @@ describe("activity delivery", () => {
       tools: [
         {
           name: "read",
+          description: "Read a value",
           annotations: { readOnlyHint: true },
           handler: () => ({ value: "x".repeat(500) }),
         },
@@ -181,6 +183,7 @@ describe("activity delivery", () => {
           tools: [
             {
               name: "read",
+              description: "Read a value",
               annotations: { readOnlyHint: true },
               handler: () => ({ ok: true }),
             },
@@ -234,6 +237,7 @@ describe("activity delivery", () => {
           tools: [
             {
               name: "read",
+              description: "Read a value",
               annotations: { readOnlyHint: true },
               handler: () => ({ ok: true }),
             },

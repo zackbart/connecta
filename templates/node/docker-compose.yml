@@ -1,0 +1,31 @@
+# One service, no database: state is the fileStorage JSON on a named volume.
+#
+#   cp .env.example .env    # then set CONNECTA_TOKEN
+#   docker compose up -d --build
+#
+# Compose reads `.env` from this directory, so one file configures both the
+# build and the container.
+
+services:
+  connecta:
+    build: .
+    # An init process reaps the QuickJS children a program leaves behind.
+    init: true
+    ports:
+      - "${PORT:-8787}:${PORT:-8787}"
+    environment:
+      # Refuse to start without inbound auth — the same rule src/index.ts
+      # enforces, stated early enough that `up` fails before the build.
+      CONNECTA_TOKEN: ${CONNECTA_TOKEN:?set CONNECTA_TOKEN in .env}
+      PORT: ${PORT:-8787}
+      # Downstream OAuth calls back to this origin. Unset is fine until this
+      # deployment is reachable from somewhere other than this machine.
+      PUBLIC_URL: ${PUBLIC_URL:-}
+      # Keep the state file under /data so it lands on the volume below.
+      CONNECTA_STATE_FILE: ${CONNECTA_STATE_FILE:-/data/connecta-state.json}
+    volumes:
+      - connecta-state:/data
+    restart: unless-stopped
+
+volumes:
+  connecta-state:

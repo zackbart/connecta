@@ -159,15 +159,19 @@ A named tool is a permanent line item in every deployment's catalog, so the
 surface was measured against the escape hatches rather than assumed to beat
 them ([#350](https://github.com/zackbart/connecta/issues/350), evidence in
 [`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md)).
-Three named tools lost that comparison and were removed in 0.16.0:
+Two named tools lost that comparison, and a third followed one of them off the
+surface to keep a policy pair on one route:
 
 - **R2 CORS writes.** `set_r2_cors` declared its rule list as free-form objects
   — the untyped body this connection refuses everywhere else — so its schema
   validated the bucket name and waved through the part of the call that
   actually fails. It also returned Cloudflare's response unprojected and was
   destructive either way, which left nothing for it to beat
-  `cloudflare_api_mutate` on. `delete_r2_cors` went with it rather than leave
-  half of policy management named. Read a policy with `get_r2_cors`; change one
+  `cloudflare_api_mutate` on. `delete_r2_cors` did not lose that comparison:
+  it returned a fixed `{deleted: true}` behind a closed output schema and
+  refused every malformed argument locally. It went anyway, because naming only
+  the delete would mean one CORS policy is set through the raw route and
+  cleared through a named tool. Read a policy with `get_r2_cors`; change one
   with `cloudflare_api_mutate` at
   `PUT`/`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`. This is the
   same split the [DNS record types](#dns-record-types) already use: structured
@@ -220,8 +224,8 @@ comes from Cloudflare's API reference.
 
 ### Where the `perPage` bounds come from
 
-`strictValidation` is on, so an out-of-range `perPage` is refused locally
-before it reaches Cloudflare. That is only a favor when the bound is really
+`api()` enforces every hand-written schema, so an out-of-range `perPage` is
+refused locally before it reaches Cloudflare. That is only a favor when the bound is really
 Cloudflare's, so the schemas record which ones are and the descriptions say so
 out loud:
 

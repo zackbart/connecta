@@ -274,9 +274,9 @@ They run against `reference-connection-server.ts`, a second isolated
 deployment, and this is the part worth understanding before changing anything:
 
 - **The connection is real.** `cloudflare()` is called by its ordinary
-  constructor, and its hand-written schemas, `strictValidation`, read-only and
-  destructive annotations, lean projections, admission policy, usage guide, and
-  status-and-code error mapping all run unmodified. Nothing inside the provider
+  constructor, and its hand-written schemas and their enforcement, read-only
+  and destructive annotations, lean projections, admission policy, usage guide,
+  and status-and-code error mapping all run unmodified. Nothing inside the provider
   is stubbed. Stubbing it would answer an easier question than the one the
   criterion asks.
 - **Only the network is a double.** `cloudflare-fixture.ts` is an ordinary HTTP

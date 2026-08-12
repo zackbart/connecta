@@ -2,44 +2,107 @@
 
 All notable changes to this package are documented here.
 
-## 0.16.0 — unreleased
+## Unreleased
 
-The Cloudflare named surface was measured against its own escape hatches
-instead of being assumed to beat them, and three tools lost. Every named tool
-now carries a recorded `keep`, `prune`, or `improve` verdict backed by
-per-tool numbers: catalog tokens, rank in a real `search_tools` call for a
-representative operator request, whether four classes of argument mistake are
-refused before the round trip, and whether the handler projects Cloudflare's
-object or hands it back whole. The evidence, the tasks, and the reason for
-every removal are in
+`api()` stops being forgiving. A hand-written tool now declares what it does
+and whether calling it needs a human, and any `inputSchema` it ships is one
+Connecta can actually enforce — all three checked at construction, where a
+deployment can still refuse to boot, rather than discovered by an agent at
+2 a.m. The warn-once-then-pass-raw-arguments-through behavior behind an
+unenforceable schema is gone, and with it the `strictValidation` option that
+existed only to turn it off.
+
+That construction contract breaks `api()` authors and nobody else. Migration is
+mechanical: give every tool a non-empty `description` and an explicit
+`annotations.readOnlyHint` — `true` for a read, `false` for work that should
+cross `call_destructive_tool` — then delete `strictValidation`, which is now
+the only behavior. A tool that used to ship unannotated becomes
+`readOnlyHint: false`, which is exactly the routing it already got.
+Hosted-MCP proxies are untouched: `remoteMcp()` relays a downstream's names,
+descriptions, schemas, and annotations as they arrive, and an unannotated or
+contradictory downstream tool still fails closed onto `call_destructive_tool`.
+Connecta infers read-only behavior from nothing, anywhere.
+
+The maintained Cloudflare connection ships the second break. Its named surface
+was measured against its own escape hatches instead of being assumed to beat
+them, and three tools came out. Every named tool now carries a recorded `keep`,
+`prune`, or `improve` verdict backed by per-tool numbers: catalog tokens, rank
+in a real `search_tools` call for a representative operator request, whether
+classes of argument mistake are refused before the round trip, and whether the
+handler projects Cloudflare's object or hands it back whole. The evidence, the
+tasks, and the reason for every removal — including the one removed for pair
+symmetry rather than for a measured defect — are in
 [`eval/current-version/results/issue-350-evidence.md`](./eval/current-version/results/issue-350-evidence.md).
-
-**This breaks a deployment that calls `set_r2_cors`, `delete_r2_cors`, or
-`get_r2_metrics`.** No capability is lost: `get_r2_cors` still reads a bucket's
+**A deployment that calls `set_r2_cors`, `delete_r2_cors`, or `get_r2_metrics`
+has to change.** No capability is lost: `get_r2_cors` still reads a bucket's
 policy, and the usage guide now names the replacement routes —
 `cloudflare_api_mutate` at
 `PUT`/`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`, and
 `cloudflare_api_get` at `/accounts/{accountId}/r2/metrics`. Every other
-Cloudflare tool, argument, projection, and annotation is unchanged, so a
-deployment that touches neither area can ignore this release.
+Cloudflare tool, argument, projection, and annotation is unchanged.
+
+The repository now models exactly the two deployments it actually has: a Node
+one and a Worker one. `connecta init` still copies the same template, but that
+template now carries its own `Dockerfile` and `docker-compose.yml`, so the
+generated project runs from `npm start` locally and from `docker compose up`
+in production without becoming a second project shape. The two near-identical
+Node scaffolds that sat beside it — `examples/node` and `examples/docker`, the
+latter of which built the Connecta repository rather than a consumer project —
+are gone. Existing deployments can ignore all of this; nothing in the package's
+runtime surface moved.
 
 ### Added
 
+- **The Node template is Docker-ready.** `Dockerfile`, `docker-compose.yml`,
+  and `.dockerignore` ship with `connecta init`. The image installs
+  `@zackbart/connecta` from the registry like any other consumer, runs as the
+  non-root `node` user with state on a named volume, probes the always-open
+  `/health` route, and keeps Node in the foreground so `compose down` stops it
+  promptly. `PUBLIC_URL` and `CONNECTA_STATE_FILE` now configure the generated
+  `src/index.ts`, which is what makes one source serve both run paths (#344).
+- **The package smoke exercises the generated container.** `check:package`
+  builds and runs the initialized deployment through Compose and points
+  `connecta doctor` at it; it fails rather than skips when Docker is missing
+  in CI (#344).
 - **A deterministic named-surface measurement lane.**
   `npm --prefix eval/current-version run report:cloudflare-surface` measures the
   maintained Cloudflare connection one tool at a time and writes a JSON and
   Markdown artifact. It needs no model, no network, and no credential: the real
   constructor, schemas, validation path, handlers, and catalog service run, and
-  only `fetch` is a probe that records the request.
+  only `fetch` is a probe that records the request (#350).
 
 ### Changed
 
-- **The Cloudflare connection ships 52 tools, down from 55.** `set_r2_cors`
-  declared a free-form rule body, so its schema validated the ids and waved
-  through the part of the call that fails; `delete_r2_cors` followed it rather
-  than leave half of CORS management named; `get_r2_metrics` put one account id
-  into a path and returned the response unprojected. All three are one raw call
-  away, and the guide says which one.
+- **`api()` enforces its construction contract.** Every tool requires a
+  non-empty `description` and an explicit boolean `annotations.readOnlyHint`;
+  a missing or non-boolean classification throws with the address that needs
+  fixing. The classification is never inferred from a tool name, description,
+  schema, HTTP method, or the other annotations (#340).
+- **An unenforceable `inputSchema` fails at construction.** A schema the
+  validator cannot compile throws when the connector is built, whether or not
+  `validateArgs` is on — opting out of enforcement is not opting out of the
+  schema being real. A schema that only reveals itself on first use, such as an
+  unresolvable `$ref`, now fails that call as non-retryable `invalid_args`
+  instead of forwarding raw arguments to the handler (#340).
+
+### Removed
+
+- **`ApiOptions.strictValidation`.** Fail-closed schema handling is the only
+  behavior, so the opt-in has nothing left to switch. Delete the option;
+  nothing else changes (#340).
+- **Three Cloudflare named tools; the connection ships 52, down from 55.**
+  `set_r2_cors` declared a free-form rule body, so its schema validated the ids
+  and waved through the part of the call that fails, and `get_r2_metrics` put
+  one account id into a path and returned the response unprojected — both
+  measurably weaker than the raw call that replaces them. `delete_r2_cors`
+  measured clean and went anyway, to keep the CORS write pair together: with
+  the write unnamed, a named delete would leave half of policy management on
+  each route. All three are one raw call away, and the guide says which one
+  (#350).
+- **`examples/node` and `examples/docker`.** Both were diffs from the
+  template. `examples/` is the Worker deployment now, and the root
+  `.dockerignore` that existed only for the repository-context Docker build
+  went with them (#344).
 
 ## 0.15.1 — 2026-08-12
 
