@@ -111,6 +111,11 @@ export const connecta = createConnecta({
 All three are ordinary `Connector` instances by the time the registry sees
 them. Nothing in the list is privileged by how it was authored.
 
+What a maintained connection owes an agent is written down rather than
+inherited from whoever wrote it last:
+[provider conventions](./provider-conventions.md), one set for hand-written
+HTTP surfaces and one for hosted-MCP proxies.
+
 Maintained provider guides:
 
 - [Cloudflare](./cloudflare.md)
