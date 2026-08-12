@@ -16,6 +16,11 @@
  * required-key list, and a declared output shape.
  */
 import { api, type ApiTool } from "../connectors/api.js";
+import {
+  guardedFetch,
+  type GuardedRequest,
+  type GuardedTransport,
+} from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type {
   Connector,
@@ -359,14 +364,15 @@ function failureFor(
 
 // --- The request path --------------------------------------------------------
 
-interface RequestSpec {
-  method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
-  path: string;
-  query?: Record<string, string | number | boolean | undefined>;
-  headers?: Record<string, string | undefined>;
-  body?: unknown;
-  rawBody?: BodyInit;
-}
+/**
+ * The largest response this connection will read.
+ *
+ * Generous rather than tight, because `cloudflare_api_get` legitimately
+ * downloads Worker scripts and R2 objects. It is a ceiling on absurdity, not a
+ * quota: anything approaching it is already far past whatever `maxResultBytes`
+ * the deployment set, so the caller was never going to see it whole.
+ */
+const CLOUDFLARE_MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
 
 interface CloudflareResponse {
   result: unknown;
@@ -412,96 +418,72 @@ async function readAuthenticationHeaders(
   return { Authorization: `Bearer ${token}` };
 }
 
-function buildUrl(base: string, spec: RequestSpec): string {
-  const url = new URL(`${base.replace(/\/+$/, "")}${spec.path}`);
-  for (const [key, value] of Object.entries(spec.query ?? {})) {
-    if (value === undefined) continue;
-    url.searchParams.set(key, String(value));
-  }
-  return url.toString();
-}
-
-async function fetchCloudflare(
-  base: string,
-  spec: RequestSpec,
-  ctx: ConnectorContext,
-): Promise<Response> {
-  const authenticationHeaders = await readAuthenticationHeaders(ctx);
-  if (spec.body !== undefined && spec.rawBody !== undefined) {
-    throw new Error("A Cloudflare request cannot have both JSON and raw bodies.");
-  }
-  let response: Response;
-  try {
-    response = await fetch(buildUrl(base, spec), {
-      method: spec.method,
-      headers: {
-        ...authenticationHeaders,
-        Accept: "application/json",
-        ...(spec.body !== undefined
-          ? { "Content-Type": "application/json" }
-          : {}),
-        ...Object.fromEntries(
-          Object.entries(spec.headers ?? {}).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        ),
-      },
-      ...(spec.body !== undefined
-        ? { body: JSON.stringify(spec.body) }
-        : spec.rawBody !== undefined
-          ? { body: spec.rawBody }
-          : {}),
-      ...(ctx.signal ? { signal: ctx.signal } : {}),
-    });
-  } catch (cause) {
-    throw new ConnectorCallError(
-      "unavailable",
-      `Could not reach the Cloudflare API: ${
-        cause instanceof Error ? cause.message : String(cause)
-      }`,
-      { cause },
-    );
-  }
-  return response;
+/**
+ * The one transport every Cloudflare tool goes through.
+ *
+ * URL confinement, `ctx.signal`, redirect refusal, bounded reads, and the
+ * "could not reach the provider" normalization all live in the shared helper.
+ * What stays here is what only Cloudflare knows: which headers prove identity,
+ * and what a status code means once it arrives.
+ */
+function cloudflareTransport(baseUrl: string): GuardedTransport {
+  return guardedFetch({
+    provider: "Cloudflare",
+    baseUrl,
+    headers: { Accept: "application/json" },
+    maxResponseBytes: CLOUDFLARE_MAX_RESPONSE_BYTES,
+    authenticate: (ctx) => readAuthenticationHeaders(ctx as CloudflareContext),
+  });
 }
 
 async function callCloudflare(
-  base: string,
-  spec: RequestSpec,
+  send: GuardedTransport,
+  spec: GuardedRequest,
   ctx: ConnectorContext,
 ): Promise<CloudflareResponse> {
-  const response = await fetchCloudflare(base, spec, ctx);
+  return await send(spec, ctx, async (response) => {
+    let envelope: CloudflareEnvelope | undefined;
+    let parseFailure: unknown;
+    try {
+      envelope = (await response.json()) as CloudflareEnvelope | undefined;
+    } catch (cause) {
+      // A transport failure is not a parse failure. The connector's byte
+      // ceiling fires from inside this read and is deliberately non-retryable;
+      // routing it through the branch below would relabel it as a retryable
+      // `unavailable` and tell an agent to retry a response that will exceed
+      // the ceiling every time.
+      if (cause instanceof ConnectorCallError) throw cause;
+      parseFailure = cause;
+    }
+    if (envelope === undefined) {
+      // A gateway error page or an empty body, not an envelope: the status is
+      // the only real signal left.
+      throw response.ok
+        ? new ConnectorCallError(
+            "unavailable",
+            "Cloudflare returned a non-JSON body for a successful status.",
+            parseFailure !== undefined ? { cause: parseFailure } : {},
+          )
+        : failureFor(response.status, response.headers, []);
+    }
 
-  let envelope: CloudflareEnvelope;
-  try {
-    envelope = (await response.json()) as CloudflareEnvelope;
-  } catch (cause) {
-    // A gateway error page, not JSON: the status is the only real signal left.
-    throw response.ok
-      ? new ConnectorCallError(
-          "unavailable",
-          "Cloudflare returned a non-JSON body for a successful status.",
-          { cause },
-        )
-      : failureFor(response.status, response.headers, []);
-  }
-
-  const errors = Array.isArray(envelope.errors) ? envelope.errors : [];
-  if (!response.ok || envelope.success === false) {
-    throw failureFor(response.status, response.headers, errors);
-  }
-  const isV4Envelope =
-    "success" in envelope ||
-    "result" in envelope ||
-    "result_info" in envelope ||
-    "messages" in envelope;
-  return {
-    // `/graphql` and a small number of product APIs return ordinary JSON
-    // instead of the standard v4 envelope. Preserve that document whole so
-    // the raw tools cover them too.
-    result: isV4Envelope ? envelope.result : envelope,
-    resultInfo: isV4Envelope ? envelope.result_info : undefined,
-  };
+    const errors = Array.isArray(envelope.errors) ? envelope.errors : [];
+    if (!response.ok || envelope.success === false) {
+      throw failureFor(response.status, response.headers, errors);
+    }
+    const isV4Envelope =
+      "success" in envelope ||
+      "result" in envelope ||
+      "result_info" in envelope ||
+      "messages" in envelope;
+    return {
+      // `/graphql` and a small number of product APIs return ordinary JSON
+      // instead of the standard v4 envelope. Preserve that document whole so
+      // the raw tools cover them too.
+      result: isV4Envelope ? envelope.result : envelope,
+      resultInfo: isV4Envelope ? envelope.result_info : undefined,
+    };
+  });
 }
 
 function base64FromBytes(bytes: Uint8Array): string {
@@ -513,35 +495,39 @@ function base64FromBytes(bytes: Uint8Array): string {
 }
 
 async function callCloudflareContent(
-  base: string,
-  spec: RequestSpec,
+  send: GuardedTransport,
+  spec: GuardedRequest,
   ctx: ConnectorContext,
   responseType: "text" | "base64",
 ): Promise<JsonRecord> {
-  const response = await fetchCloudflare(base, spec, ctx);
-  if (!response.ok) {
-    let errors: CloudflareEnvelopeError[] = [];
-    try {
-      const envelope = (await response.clone().json()) as CloudflareEnvelope;
-      if (Array.isArray(envelope.errors)) errors = envelope.errors;
-    } catch {
-      // A raw or gateway error body has no structured detail to preserve.
+  return await send(spec, ctx, async (response) => {
+    if (!response.ok) {
+      let errors: CloudflareEnvelopeError[] = [];
+      try {
+        const envelope = (await response.json()) as
+          | CloudflareEnvelope
+          | undefined;
+        if (envelope && Array.isArray(envelope.errors)) errors = envelope.errors;
+      } catch {
+        // A raw or gateway error body has no structured detail to preserve,
+        // and one past the byte ceiling has none worth reporting over the
+        // status that already failed this call. Either way the throw below
+        // classifies the status, so nothing is swallowed into a success.
+      }
+      throw failureFor(response.status, response.headers, errors);
     }
-    throw failureFor(response.status, response.headers, errors);
-  }
-  const common = {
-    contentType: response.headers.get("content-type") ?? "application/octet-stream",
-    ...(response.headers.get("etag")
-      ? { etag: response.headers.get("etag")! }
-      : {}),
-  };
-  if (responseType === "text") {
-    return { ...common, text: await response.text() };
-  }
-  return {
-    ...common,
-    base64: base64FromBytes(new Uint8Array(await response.arrayBuffer())),
-  };
+    const common = {
+      contentType:
+        response.headers.get("content-type") ?? "application/octet-stream",
+      ...(response.headers.get("etag")
+        ? { etag: response.headers.get("etag")! }
+        : {}),
+    };
+    if (responseType === "text") {
+      return { ...common, text: await response.text() };
+    }
+    return { ...common, base64: base64FromBytes(await response.bytes()) };
+  });
 }
 
 // --- Projections -------------------------------------------------------------
@@ -965,7 +951,7 @@ const DNS_RECORD_SCHEMA: JsonSchema = {
 // --- Tool construction -------------------------------------------------------
 
 interface Scoping {
-  base: string;
+  send: GuardedTransport;
   accountId: string | undefined;
   zoneId: string | undefined;
 }
@@ -1332,7 +1318,7 @@ function buildTools(
   scope: Scoping,
   authentication: CloudflareAuthentication,
 ): ApiTool[] {
-  const { base } = scope;
+  const { send } = scope;
   const zoneArg = (args: JsonRecord): string =>
     requireScope(args["zoneId"], scope.zoneId, "zoneId");
   const accountArg = (args: JsonRecord): string =>
@@ -1368,7 +1354,7 @@ function buildTools(
           },
           handler: async (_args, ctx) => {
             const { result } = await callCloudflare(
-              base,
+              send,
               { method: "GET", path: "/user/tokens/verify" },
               ctx,
             );
@@ -1410,7 +1396,7 @@ function buildTools(
           },
           handler: async (_args, ctx) => {
             const { result } = await callCloudflare(
-              base,
+              send,
               { method: "GET", path: "/user" },
               ctx,
             );
@@ -1466,17 +1452,17 @@ function buildTools(
         const query = queryFromArgs(args["query"]);
         const headers = headersFromArgs(args["headers"]);
         const responseType = optionalString(args, "responseType") ?? "json";
-        const spec: RequestSpec = {
+        const spec: GuardedRequest = {
           method: "GET",
           path: cloudflareApiPath(args["path"]),
           ...(query !== undefined ? { query } : {}),
           ...(headers !== undefined ? { headers } : {}),
         };
         if (responseType === "text" || responseType === "base64") {
-          return await callCloudflareContent(base, spec, ctx, responseType);
+          return await callCloudflareContent(send, spec, ctx, responseType);
         }
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           spec,
           ctx,
         );
@@ -1531,11 +1517,11 @@ function buildTools(
         required: ["result"],
       },
       handler: async (args: JsonRecord, ctx) => {
-        const method = String(args["method"]) as RequestSpec["method"];
+        const method = String(args["method"]) as GuardedRequest["method"];
         const query = queryFromArgs(args["query"]);
         const headers = headersFromArgs(args["headers"]);
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method,
             path: cloudflareApiPath(args["path"]),
@@ -1636,7 +1622,7 @@ function buildTools(
         const headers = headersFromArgs(args["headers"]);
         const upload = uploadBody(args);
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: String(args["method"]) as "POST" | "PUT",
             path: cloudflareApiPath(args["path"]),
@@ -1672,7 +1658,7 @@ function buildTools(
       outputSchema: listOutputSchema("accounts", ACCOUNT_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: "/accounts",
@@ -1722,7 +1708,7 @@ function buildTools(
       outputSchema: listOutputSchema("zones", ZONE_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: "/zones",
@@ -1764,7 +1750,7 @@ function buildTools(
       outputSchema: ZONE_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           { method: "GET", path: `/zones/${encodeURIComponent(zoneArg(args))}` },
           ctx,
         );
@@ -1787,7 +1773,7 @@ function buildTools(
       outputSchema: listOutputSchema("settings", OPEN_OBJECT_OUTPUT_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodePathSegment(zoneArg(args))}/settings`,
@@ -1818,7 +1804,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodePathSegment(zoneArg(args))}/settings/${encodePathSegment(requireString(args, "settingId"))}`,
@@ -1855,7 +1841,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "PATCH",
             path: `/zones/${encodePathSegment(zoneArg(args))}/settings/${encodePathSegment(requireString(args, "settingId"))}`,
@@ -1896,7 +1882,7 @@ function buildTools(
       },
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodePathSegment(zoneArg(args))}/rulesets`,
@@ -1937,7 +1923,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodePathSegment(zoneArg(args))}/rulesets/${encodePathSegment(requireString(args, "rulesetId"))}`,
@@ -1995,7 +1981,7 @@ function buildTools(
       outputSchema: listOutputSchema("records", DNS_RECORD_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records`,
@@ -2039,7 +2025,7 @@ function buildTools(
       outputSchema: DNS_RECORD_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
@@ -2077,7 +2063,7 @@ function buildTools(
       }),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts`,
@@ -2113,7 +2099,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/settings`,
@@ -2144,7 +2130,7 @@ function buildTools(
       outputSchema: listOutputSchema("deployments", OPEN_OBJECT_OUTPUT_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/deployments`,
@@ -2187,7 +2173,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}`,
@@ -2231,7 +2217,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const scriptName = requireString(args, "scriptName");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(scriptName)}`,
@@ -2268,7 +2254,7 @@ function buildTools(
       }),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
@@ -2307,7 +2293,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}`,
@@ -2338,7 +2324,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces`,
@@ -2379,7 +2365,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "PUT",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}`,
@@ -2418,7 +2404,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const namespaceId = requireString(args, "namespaceId");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(namespaceId)}`,
@@ -2467,7 +2453,7 @@ function buildTools(
       },
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/keys`,
@@ -2529,7 +2515,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk/get`,
@@ -2612,7 +2598,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "PUT",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk`,
@@ -2654,7 +2640,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk/delete`,
@@ -2714,7 +2700,7 @@ function buildTools(
       },
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets`,
@@ -2758,7 +2744,7 @@ function buildTools(
       outputSchema: R2_BUCKET_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}`,
@@ -2796,7 +2782,7 @@ function buildTools(
       outputSchema: R2_BUCKET_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets`,
@@ -2842,7 +2828,7 @@ function buildTools(
       outputSchema: R2_BUCKET_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "PATCH",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}`,
@@ -2882,7 +2868,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const bucketName = requireString(args, "bucketName");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(bucketName)}`,
@@ -2941,7 +2927,7 @@ function buildTools(
       },
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/objects`,
@@ -3003,7 +2989,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const objectKey = requireString(args, "objectKey");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/objects/${encodeObjectKey(objectKey)}`,
@@ -3042,7 +3028,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/cors`,
@@ -3090,7 +3076,7 @@ function buildTools(
       }),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects`,
@@ -3130,7 +3116,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}`,
@@ -3166,7 +3152,7 @@ function buildTools(
       outputSchema: listOutputSchema("deployments", OPEN_OBJECT_OUTPUT_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result, resultInfo } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments`,
@@ -3214,7 +3200,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}`,
@@ -3241,7 +3227,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}/retry`,
@@ -3268,7 +3254,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}/rollback`,
@@ -3296,7 +3282,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const deploymentId = requireString(args, "deploymentId");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(deploymentId)}`,
@@ -3322,7 +3308,7 @@ function buildTools(
       outputSchema: listOutputSchema("domains", OPEN_OBJECT_OUTPUT_SCHEMA),
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "GET",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains`,
@@ -3349,7 +3335,7 @@ function buildTools(
       outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains`,
@@ -3378,7 +3364,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const domain = requireString(args, "domain");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains/${encodePathSegment(domain)}`,
@@ -3404,7 +3390,7 @@ function buildTools(
       outputSchema: { type: "object", properties: { purged: { type: "boolean" } }, required: ["purged"] },
       handler: async (args: JsonRecord, ctx) => {
         await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/purge_build_cache`,
@@ -3431,7 +3417,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const projectName = requireString(args, "projectName");
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(projectName)}`,
@@ -3507,7 +3493,7 @@ function buildTools(
       outputSchema: DNS_RECORD_SCHEMA,
       handler: async (args: JsonRecord, ctx) => {
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records`,
@@ -3621,7 +3607,7 @@ function buildTools(
           );
         }
         const { result } = await callCloudflare(
-          base,
+          send,
           {
             method: "PATCH",
             path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
@@ -3662,7 +3648,7 @@ function buildTools(
       handler: async (args: JsonRecord, ctx) => {
         const recordId = String(args["recordId"]);
         await callCloudflare(
-          base,
+          send,
           {
             method: "DELETE",
             path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(recordId)}`,
@@ -3783,7 +3769,7 @@ function buildTools(
         }
         const variant = everything ? "everything" : targeted[0]!;
         await callCloudflare(
-          base,
+          send,
           {
             method: "POST",
             path: `/zones/${encodeURIComponent(zoneId)}/purge_cache`,
@@ -3860,7 +3846,7 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     );
   }
   const scope: Scoping = {
-    base: options.baseUrl?.trim() || CLOUDFLARE_API_BASE,
+    send: cloudflareTransport(options.baseUrl?.trim() || CLOUDFLARE_API_BASE),
     accountId: options.accountId?.trim() || undefined,
     zoneId: options.zoneId?.trim() || undefined,
   };
@@ -3891,7 +3877,7 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
           async testCredential(value: string, ctx: ConnectorContext) {
             try {
               const { result } = await callCloudflare(
-                scope.base,
+                scope.send,
                 { method: "GET", path: "/user/tokens/verify" },
                 withAuthentication(
                   {
@@ -3923,7 +3909,7 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
           ) {
             try {
               const { result } = await callCloudflare(
-                scope.base,
+                scope.send,
                 { method: "GET", path: "/user" },
                 withAuthentication(
                   {

@@ -151,6 +151,63 @@ downstream wrote them, and an unannotated or contradictory one stays
 fail-closed onto `call_destructive_tool`. The contract binds the surfaces we
 write, not the catalogs we relay.
 
+## The guarded fetch transport
+
+Every hand-written HTTP surface re-derives the same safety machinery, and two
+of them had already derived it slightly differently. `src/connectors/guarded-fetch.ts`
+is that machinery extracted once ([#341](https://github.com/zackbart/connecta/issues/341)):
+one `guardedFetch({ provider, baseUrl, headers, maxResponseBytes, authenticate })`
+factory returning the transport a connector sends every request through.
+
+What it owns is mechanical and provider-independent:
+
+- **Confinement.** A request path is provider-relative, carries no query or
+  fragment, and is re-checked against the base origin and path prefix *after*
+  `new URL` normalization — because normalization is how a path escapes a
+  prefix, not something to trust before it.
+- **Construction.** Query parameters are encoded rather than concatenated, a
+  JSON body is serialized with the `Content-Type` to match, and a pre-framed
+  body gets none, so `fetch` still picks the multipart boundary.
+- **Credential forwarding.** `authenticate` is called once per request and its
+  headers are applied last; a request header wearing one of their names is
+  refused rather than allowed to shadow it. A 3xx is refused outright — a
+  redirect is an instruction to re-send the credential to whatever origin the
+  `Location` names, and a confinement a redirect can undo was never one.
+- **Bounded reads.** `maxResponseBytes` is required, not defaulted: what counts
+  as an absurd response is a fact about the API, not about HTTP. A declared
+  `Content-Length` past the ceiling fails before a byte is read, and a
+  streaming body is abandoned at the ceiling rather than buffered past it.
+- **Normalization.** An unreachable provider becomes a retryable `unavailable`
+  instead of whatever `TypeError` the runtime threw, and `ctx.signal` rides
+  every request.
+
+What it deliberately does not own is meaning. It never reads a status code and
+never invents an authentication scheme: the provider's `authenticate` callback
+supplies the headers, and the provider's mapper turns one `GuardedResponse`
+into a result or a typed failure. That split is not fastidiousness. Notion's
+403 means a capability the integration was never granted — re-authorizing
+cannot fix it — while Cloudflare's means a token scope, and the two want
+opposite next moves. A helper that guessed would be wrong for one of them.
+
+Cloudflare and Notion both run on it. Their existing suites carried over
+unchanged, which proves the migration kept the behavior those suites cover —
+not that nothing changed. Three things did, and the changelog names them: a
+3xx is refused where both providers used to follow it, both now fail past
+their byte ceiling, and `cloudflare()`'s `baseUrl` is validated at
+construction. Each suite gained one test for the ceiling, because the one
+guard the helper was written to add is the one a provider's own mapper can
+most easily disarm: a bare `catch` around `response.json()` swallows the
+transport's refusal along with a parse error, and turns a response nobody was
+allowed to read into an empty success. A mapper re-throws
+`ConnectorCallError` and swallows only what it recognizes.
+
+It is **not exported this release**: the two migrations proved the shape
+preserves behavior for connectors that already had this machinery, not that it
+is the right shape for an author starting from nothing, and an unexported
+symbol costs nothing to reshape while a published one is a promise.
+The provider audit ([#342](https://github.com/zackbart/connecta/issues/342))
+supplies the third caller that would settle it.
+
 ## MCP version skew
 
 Connecta deliberately sits between protocol generations

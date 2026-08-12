@@ -28,9 +28,12 @@ describe("public package boundary", () => {
     );
   });
 
-  it("ships only generic connector factories", () => {
+  it("ships only generic connector factories and their shared machinery", () => {
+    // guarded-fetch.ts is transport, not a third authoring path: it knows no
+    // provider, and a provider-named file here would still be a failure.
     expect(readdirSync(join(ROOT, "src", "connectors")).sort()).toEqual([
       "api.ts",
+      "guarded-fetch.ts",
       "remote-mcp.ts",
     ]);
   });
