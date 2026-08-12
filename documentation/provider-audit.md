@@ -43,7 +43,8 @@ hatches. The largest surface here and the one with the most to get wrong.
 | H2 names | meets | every name is `snake_case` and opens with a verb from the connector's own set; the hatches sort together as `cloudflare_api_*` |
 | H3 budgets | **missed → fixed** | `cloudflare_api_get` (289), `cloudflare_api_mutate` (266), and `create_dns_record` (305) exceeded the 240-character describe budget. All three trimmed; the record-type list `create_dns_record` was spending 60 characters on is already the `type` enum |
 | H4 disqualifiers | meets (a reading) | the hatch descriptions say what they will not do — mutate, upload — and `create_dns_record` now names the types it reads but cannot create |
-| H5 schemas | meets | every tool a closed plain object with a `required` list and a description on every property, and `api()` refuses an unenforceable schema at construction (#340) |
+| H5 schemas | **missed → fixed** | the top level was already exemplary — every tool a closed plain object with a `required` list, a description on every property, and an `api()` construction contract that refuses an unenforceable schema (#340) — but H5 says *every* property, and the nested ones had been read as furniture. `bulk_write_kv_values` shipped six undescribed fields inside `entries[]`, including the expiry pair whose units and floor are the whole question. All six now say what they are, and the convention test walks every depth rather than the first one |
+| H5 exception | recorded | the three escape hatches' request parts — `query[]`, `headers[]`, `fields[]`, `files[]` — keep undescribed `name`/`value` members, because H5 collides with H7 there. `query` and `headers` are one shared constant the renderer inlines into all three hatches, and `cloudflare_api_upload` sits at 1,007 of the 1,024-byte budget this same audit brought it back under; describing name/value pairs the parent property has already named as name/value pairs would truncate the whole tool in discovery. The 21 properties are listed by path in `test/provider-conventions.test.ts` and asserted exactly, so a new one fails and so does a stale entry |
 | H6 whose bound | meets | exemplary. `pagingInputProperties` carries a three-way `bounds` vocabulary — `cloudflare`, `clamped`, `undocumented` — and the description says which one applies |
 | H7 compact fit | **missed → fixed** | `cloudflare_api_upload` rendered to 1,297 bytes. The refused-header list, inlined once per hatch, moved to the usage guide; the remaining upload descriptions were cut to the fact each adds. Now 1,007 |
 | H8 output schemas | meets | 52 of 52 declare one |
@@ -66,7 +67,7 @@ deliberate surface.
 | H2 names | meets | `snake_case` throughout, and Notion's own vocabulary (`query_`, `append_`, `trash_`) where the shared verbs would lie — `trash_page` is not `delete_page`, because Notion does not delete |
 | H3 budgets | **missed → fixed** | `search` was 252 characters. Trimmed to 205; the clause it lost restated what `get_page` is for |
 | H4 disqualifiers | meets (a reading) | `search` "Never searches page content" is the convention document's own worked example, and it came from here |
-| H5 schemas | **missed → fixed** | three gaps. A schema the validator could not evaluate would have forwarded arguments unchecked rather than refusing — in a surface we wrote ourselves that is our bug being papered over; `api()` now refuses such a schema at construction for every connector (#340). `search`, `list_users`, and `get_self` carried no `required` list at all, and `create_page` carried none because its constraint is exclusive rather than positional. All four now declare one, and the shipped schemas are asserted evaluable so fail-closed handling cannot become a blanket refusal |
+| H5 schemas | **missed → fixed** | four gaps. A schema the validator could not evaluate would have forwarded arguments unchecked rather than refusing — in a surface we wrote ourselves that is our bug being papered over; `api()` now refuses such a schema at construction for every connector (#340). `search`, `list_users`, and `get_self` carried no `required` list at all, and `create_page` carried none because its constraint is exclusive rather than positional. All four now declare one, and the shipped schemas are asserted evaluable so fail-closed handling cannot become a blanket refusal. The fourth gap was nested: `query_data_source`'s `sorts[].direction` carried an enum and no description, which the top-level-only reading of H5 had missed |
 | H5 exception | recorded | `create_page` declares `required: []`, not the truth. A page needs exactly one parent, but *which* parent is an exclusive choice a plain-object `required` list cannot express, and the top-level `anyOf` that could would cost the tool its `inputKeys` in discovery — the caller would learn nothing about the arguments without expanding the schema. The rule is stated in both parent descriptions and enforced locally as `invalid_args` before any round trip, so the cost H5 exists to avoid is still avoided |
 | H6 whose bound | meets | `page_size` names Notion's 1–100 and says the default is the connector's configured one |
 | H7 compact fit | **missed → fixed** | `query_data_source` rendered to 1,087 bytes. Three shared property descriptions (`raw`, `start_cursor`, `properties`) were carrying guide-length prose that the renderer inlines once per tool that uses them; cut to the fact each one adds. `query_data_source` is now 909 and every other tool got smaller for free |
@@ -140,15 +141,15 @@ Linear's reasoning.
 
 | Provider | Meets | Missed and fixed | Recorded exception | Open |
 | --- | --- | --- | --- | --- |
-| Cloudflare | 10 | 4 | — | H14 keep/prune ([#350](https://github.com/zackbart/connecta/issues/350)) |
+| Cloudflare | 9 | 5 | H5 hatch request parts | H14 keep/prune ([#350](https://github.com/zackbart/connecta/issues/350)) |
 | Notion | 10 | 4 | H5 exclusive parent | — |
 | Linear | 11 | 2 | P4 departs from the letter | — |
 | Stripe | 10 | 3 | — | — |
 | Mixpanel | 7 | 5 | P10 half n/a | — |
 
-Eighteen misses, eighteen fixes, three recorded exceptions, one judgment left to
-the issue that owns it. The pattern in the misses is worth naming: fifteen of
-the eighteen are a guide, a title, or a schema description failing to *say*
+Nineteen misses, nineteen fixes, four recorded exceptions, one judgment left to
+the issue that owns it. The pattern in the misses is worth naming: sixteen of
+the nineteen are a guide, a title, or a schema description failing to *say*
 something the implementation already did correctly. Only three changed what a
 provider does — Notion refusing an unevaluable schema, Linear requiring an
 access declaration, Mixpanel dropping a budget it could not honestly compute.

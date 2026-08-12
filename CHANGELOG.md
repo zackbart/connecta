@@ -43,7 +43,7 @@ Cloudflare tool, argument, projection, and annotation is unchanged.
 
 All five maintained prebuilt connections have been audited against the written
 provider conventions, one report per provider, with a verdict for every
-applicable convention. Eighteen misses were found and fixed. Fifteen of them
+applicable convention. Nineteen misses were found and fixed. Sixteen of them
 were a guide, a title, or a schema description failing to say something the
 implementation already did correctly — the conventions were mostly not asking
 for different behavior, they were asking for the behavior to reach the agent.
@@ -90,8 +90,11 @@ runtime surface moved.
 - **A convention test over the shipped surface.**
   `test/provider-conventions.test.ts` walks both `api()` providers on every run
   and enforces the mechanically checkable bar — naming, description budgets,
-  closed schemas, compact-render budgets, declared outputs, structured guides,
-  and credential tests — so a convention met once stays met (#342).
+  closed schemas described at every depth, compact-render budgets, declared
+  outputs, structured guides, and credential tests — so a convention met once
+  stays met. The one accepted gap, the undescribed name/value members of
+  Cloudflare's escape-hatch request parts, is listed by path in the suite with
+  its argument rather than left for a shallower check to miss (#342).
 - **Guide coverage the schemas cannot carry.** Stripe and Mixpanel guides now
   name their id-resolution rules, say the hosted catalog is not a fixed set, and
   give the `auth_required` → `authorize_connector` recovery route. Notion's
@@ -146,6 +149,11 @@ runtime surface moved.
   `list_r2_objects` now state on both the `cursor` argument and the
   `nextCursor` result that they page by cursor and return no `page` object —
   previously only the usage guide said it (#342).
+- **Nested schema properties describe themselves.** The six fields inside
+  `bulk_write_kv_values`'s `entries[]` — including the expiry pair, whose units
+  and 60-second floor were the entire question — and Notion's
+  `sorts[].direction` were shipping bare types, because H5's description rule
+  had only ever been read at the top level (#342).
 
 ### Removed
 

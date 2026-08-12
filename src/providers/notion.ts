@@ -1250,6 +1250,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
                 direction: {
                   type: "string",
                   enum: ["ascending", "descending"],
+                  description: "Direction for this sort.",
                 },
               },
               additionalProperties: false,

@@ -78,6 +78,95 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
   ],
 };
 
+/**
+ * The nested properties allowed to ship without a description, with the
+ * argument for the whole set.
+ *
+ * H5 asks for a description on *every* property, and a check that only walked
+ * the top level would have let a nested one through while the audit claimed
+ * otherwise. Walking the whole schema leaves exactly these: the request parts
+ * of Cloudflare's three escape hatches, where H5 collides with H7. `query` and
+ * `headers` are one shared constant the compact renderer inlines into all
+ * three hatches, and `cloudflare_api_upload` already renders at 1,007 of the
+ * 1,024-byte budget this same audit brought it back under — describing
+ * `name`/`value` pairs the parent property has already named as name/value
+ * pairs would push it over and truncate the entire tool in discovery. H7 wins
+ * on that trade, and the exception is recorded rather than hidden behind a
+ * shallower check ([#342](https://github.com/zackbart/connecta/issues/342)).
+ *
+ * The list is asserted exactly, so a new undescribed nested property fails and
+ * so does a stale entry here.
+ */
+const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  cloudflare: [
+    "cloudflare_api_get.query[].name",
+    "cloudflare_api_get.query[].value",
+    "cloudflare_api_get.headers[].name",
+    "cloudflare_api_get.headers[].value",
+    "cloudflare_api_mutate.query[].name",
+    "cloudflare_api_mutate.query[].value",
+    "cloudflare_api_mutate.headers[].name",
+    "cloudflare_api_mutate.headers[].value",
+    "cloudflare_api_upload.query[].name",
+    "cloudflare_api_upload.query[].value",
+    "cloudflare_api_upload.headers[].name",
+    "cloudflare_api_upload.headers[].value",
+    "cloudflare_api_upload.fields[].name",
+    "cloudflare_api_upload.fields[].value",
+    "cloudflare_api_upload.fields[].contentType",
+    "cloudflare_api_upload.fields[].fileName",
+    "cloudflare_api_upload.files[].name",
+    "cloudflare_api_upload.files[].fileName",
+    "cloudflare_api_upload.files[].contentType",
+    "cloudflare_api_upload.files[].text",
+    "cloudflare_api_upload.files[].base64",
+  ],
+  notion: [],
+};
+
+interface SchemaNode {
+  properties?: Record<string, SchemaNode | undefined>;
+  items?: SchemaNode;
+  additionalProperties?: unknown;
+  description?: string;
+  anyOf?: SchemaNode[];
+  oneOf?: SchemaNode[];
+  allOf?: SchemaNode[];
+}
+
+/**
+ * Collect every property below the top level that H5 would object to.
+ *
+ * Only nodes that declare `properties` are held to closedness: a deliberate
+ * passthrough like Notion's `filter` is an opaque object by design, and
+ * closing a shape the provider owns is not connecta's call.
+ */
+function schemaGaps(
+  schema: SchemaNode | undefined,
+  path: string,
+  gaps: { undescribed: string[]; open: string[] },
+): void {
+  if (!schema || typeof schema !== "object") return;
+  if (schema.properties) {
+    if (schema.additionalProperties !== false) gaps.open.push(path);
+    for (const [property, definition] of Object.entries(schema.properties)) {
+      const at = `${path}.${property}`;
+      if (!definition?.description) gaps.undescribed.push(at);
+      schemaGaps(definition, at, gaps);
+    }
+  }
+  schemaGaps(schema.items, `${path}[]`, gaps);
+  for (const branch of [
+    ...(schema.anyOf ?? []),
+    ...(schema.oneOf ?? []),
+    ...(schema.allOf ?? []),
+  ]) {
+    schemaGaps(branch, path, gaps);
+  }
+}
+
 function utf8Length(value: string): number {
   return new TextEncoder().encode(value).length;
 }
@@ -136,7 +225,7 @@ describe.each(providers)(
       expect(overLong).toEqual([]);
     });
 
-    it("gives every tool a closed, described, required-listing schema (H5)", () => {
+    it("gives every tool a closed, required-listing top-level schema (H5)", () => {
       const gaps: string[] = [];
       for (const tool of tools) {
         const schema = tool.inputSchema as Record<string, unknown>;
@@ -147,17 +236,23 @@ describe.each(providers)(
         if (!Array.isArray(schema["required"])) {
           gaps.push(`${tool.name}: no required list`);
         }
-        const properties = (schema["properties"] ?? {}) as Record<
-          string,
-          { description?: string }
-        >;
-        for (const [property, definition] of Object.entries(properties)) {
-          if (!definition?.description) {
-            gaps.push(`${tool.name}.${property}: no description`);
-          }
-        }
       }
       expect(gaps).toEqual([]);
+    });
+
+    it("describes every property at every depth, exceptions apart (H5)", () => {
+      // Nested properties are properties. Walking only the top level would
+      // have passed while `query[].name` and friends shipped undescribed, so
+      // the walk goes all the way down and the accepted misses are named.
+      const gaps = { undescribed: [] as string[], open: [] as string[] };
+      for (const tool of tools) {
+        schemaGaps(tool.inputSchema as SchemaNode, tool.name, gaps);
+      }
+      const expected = [...(NESTED_DESCRIPTION_EXCEPTIONS[name] ?? [])].sort();
+      expect(gaps.undescribed.sort()).toEqual(expected);
+      // Closedness has no exception at any depth: an open nested object is an
+      // argument the validator waves through into the provider.
+      expect(gaps.open).toEqual([]);
     });
 
     it("keeps every compact input and output render inside the budget (H7)", () => {

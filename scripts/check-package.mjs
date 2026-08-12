@@ -264,7 +264,10 @@ const linearProvider = await import("@zackbart/connecta/providers/linear");
 if (typeof linearProvider.linear !== "function") {
   throw new Error("missing Linear provider constructor");
 }
+// access is required and has no default -- omitting it throws at construction
+// (#342), so the smoke declares one the way a deployment must.
 const linearConnection = linearProvider.linear("tracker", {
+  access: "read-write",
   purpose: "package smoke",
 });
 if (linearConnection.id !== "tracker") {

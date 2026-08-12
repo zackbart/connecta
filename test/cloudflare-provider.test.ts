@@ -382,7 +382,7 @@ describe("cloudflare() tool surface", () => {
     }
     expect(names).toContain("get_r2_cors");
 
-    const guide = connection().usageGuide as string;
+    const { content: guide } = connection().usageGuide as { content: string };
     expect(guide).toContain("/accounts/{accountId}/r2/buckets/{bucketName}/cors");
     expect(guide).toContain("/accounts/{accountId}/r2/metrics");
 

@@ -2568,12 +2568,34 @@ function buildTools(
             items: {
               type: "object",
               properties: {
-                key: { type: "string", minLength: 1, maxLength: 512 },
-                value: { type: "string", maxLength: 26_214_400 },
-                expiration: { type: "number" },
-                expiration_ttl: { type: "number", minimum: 60 },
-                metadata: { type: ["object", "array", "string", "number", "boolean", "null"] },
-                base64: { type: "boolean" },
+                key: {
+                  type: "string",
+                  minLength: 1,
+                  maxLength: 512,
+                  description: "Key name, up to Cloudflare's 512 bytes.",
+                },
+                value: {
+                  type: "string",
+                  maxLength: 26_214_400,
+                  description: "Value, up to Cloudflare's 25 MiB.",
+                },
+                expiration: {
+                  type: "number",
+                  description: "Absolute expiry as a Unix timestamp in seconds.",
+                },
+                expiration_ttl: {
+                  type: "number",
+                  minimum: 60,
+                  description: "Relative expiry in seconds; Cloudflare's floor is 60.",
+                },
+                metadata: {
+                  type: ["object", "array", "string", "number", "boolean", "null"],
+                  description: "JSON metadata returned beside the key by list_kv_keys.",
+                },
+                base64: {
+                  type: "boolean",
+                  description: "Treat value as base64 and store the decoded bytes.",
+                },
               },
               required: ["key", "value"],
               additionalProperties: false,
