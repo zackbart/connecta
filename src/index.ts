@@ -631,6 +631,8 @@ export type {
 } from "./connectors/remote-mcp.js";
 export type { ApiOptions, ApiTool } from "./connectors/api.js";
 export type {
+  CatalogDriftCounts,
+  CatalogDriftReport,
   Connector,
   ConnectorCallAdmissionInput,
   ConnectorCallAdmissionPolicy,
@@ -673,6 +675,7 @@ export type {
   ActivitySink,
   ActivityStore,
   AgentFriction,
+  CatalogDriftActivityEvent,
   ToolCallActivityEvent,
 } from "./activity.js";
 export { InvalidActivityCursorError } from "./activity.js";

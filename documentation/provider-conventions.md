@@ -473,12 +473,26 @@ not an alarm.
 **Where it surfaces.** Connector status carries the counts and the time they
 were observed; `/health` carries the same per connector, which is where
 `connecta doctor` reads them, and doctor reports drift without failing on it.
+Both reads are projections — four counts and a bounded timestamp, rebuilt from
+whatever the connector seam returned, because `/health` is unauthenticated and
+`Connector.catalogDrift()` is third-party code.
 One activity event per *change* in the counts — an identical report every TTL
 is a heartbeat, not news — carrying the connector id and four integers. The
 event type has nowhere to put a tool name, a schema, an argument, a result, or
 downstream error prose, which is the same construction guarantee the tool-call
 event makes. Which tool drifted is deliberately absent from the runtime: it is
 answered by the maintainer-run check, with a live catalog in front of it.
+
+**How far an observation reaches.** One runtime, and no further. The
+observation lives in the isolate or process that served the refresh; unlike the
+catalog, it is not persisted, so nothing carries it across a Workers isolate, a
+restart, or a second Node process. Status and `/health` therefore answer for
+the instance that took the request: on Workers a `connecta doctor` run will
+usually land on an isolate that has served no refresh and print nothing, and
+behind more than one process it is a coin flip. Read an empty report as *this
+runtime has observed nothing*, never as *nothing drifted* — the durable record
+of a finding is the activity event a sink already stored, and naming the tool
+is still the maintainer-run check's job.
 
 **What a finding obliges.** A contradicted vetted verdict — the downstream
 calling a release-reviewed destructive tool `readOnlyHint: true`, or a vetted

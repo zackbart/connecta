@@ -1,6 +1,7 @@
 // Web-API only, like the rest of the core: a manifest comparison that ran on
 // Node but not on Workers would leave half the deployments unable to tell a
 // stale allowlist from a current one.
+import { boundedEchoText } from "./errors.js";
 import type {
   CatalogDriftCounts,
   CatalogDriftReport,
@@ -8,6 +9,45 @@ import type {
   ConnectorContext,
   ToolDef,
 } from "./types.js";
+
+/**
+ * Byte budget for the one string a drift report carries. An ISO timestamp is
+ * 24 bytes; anything near this bound is a plugin sending something else.
+ */
+const MAX_OBSERVED_AT_BYTES = 64;
+
+/** A count, or 0 when the seam returned something that is not one. */
+function boundedCount(value: number): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.max(0, Math.trunc(value))
+    : 0;
+}
+
+/**
+ * Rebuild a drift report as four counts and a bounded timestamp.
+ *
+ * `Connector.catalogDrift()` sits on the open plugin seam, and what it returns
+ * lands in the body of unauthenticated `/health` and on connector status.
+ * TypeScript constrains neither an extra enumerable property nor the length of
+ * `observedAt` at runtime, so "counts and nothing else" is *made* true here —
+ * at the boundary where third-party output becomes a response — rather than
+ * trusted. The activity path reconstructs its five fields for the same reason.
+ */
+export function boundedCatalogDrift(
+  report: CatalogDriftReport | undefined,
+): CatalogDriftReport | undefined {
+  if (!report || typeof report !== "object") return undefined;
+  return {
+    observedAt: boundedEchoText(
+      typeof report.observedAt === "string" ? report.observedAt : "",
+      MAX_OBSERVED_AT_BYTES,
+    ),
+    unclassifiedTools: boundedCount(report.unclassifiedTools),
+    unservedTools: boundedCount(report.unservedTools),
+    annotationConflicts: boundedCount(report.annotationConflicts),
+    schemaChanges: boundedCount(report.schemaChanges),
+  };
+}
 
 /**
  * What a release decided a tool does. `"read-only"` is observational;

@@ -210,9 +210,11 @@ export interface ConnectorStatus {
   authorizationUrl?: string;
   message?: string;
   /**
-   * Drift observed the last time this connector served a catalog refresh.
-   * Absent until one has happened — status reports what a refresh saw, and
-   * never asks a downstream a question of its own.
+   * Drift observed the last time this connector served a catalog refresh *in
+   * this runtime*. Absent until one has happened — status reports what a
+   * refresh saw, and never asks a downstream a question of its own. The
+   * observation is not persisted the way the catalog is, so absence means this
+   * isolate or process has seen nothing, not that nothing drifted.
    */
   catalogDrift?: CatalogDriftReport;
 }

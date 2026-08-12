@@ -22,6 +22,7 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
+import { boundedCatalogDrift } from "./catalog-drift.js";
 import {
   fingerprintSerializedCatalog,
   snapshotCatalog,
@@ -475,13 +476,18 @@ export class Registry implements RegistryView {
    * Payload-free drift counts for the open health endpoint, so `connecta
    * doctor` can report a stale allowlist without asking any downstream
    * anything. Only connectors that ship a vetted manifest *and* have already
-   * served a refresh appear — a deployment that has answered no catalog
-   * request yet honestly reports nothing.
+   * served a refresh *in this runtime* appear — a process or isolate that has
+   * answered no catalog request yet honestly reports nothing, and drift is not
+   * persisted the way the catalog itself is.
+   *
+   * Every report is rebuilt by {@link boundedCatalogDrift} on the way out:
+   * `Connector.catalogDrift()` is the open plugin seam, and this snapshot is
+   * serialized into an unauthenticated response.
    */
   catalogDriftSnapshot(): Record<string, CatalogDriftReport> {
     const snapshot: Record<string, CatalogDriftReport> = {};
     for (const connector of this.connectors.values()) {
-      const report = connector.catalogDrift?.();
+      const report = boundedCatalogDrift(connector.catalogDrift?.());
       if (report) snapshot[connector.id] = report;
     }
     return snapshot;
@@ -498,9 +504,11 @@ export class Registry implements RegistryView {
    * waiting for.
    */
   private observeCatalogDrift(connector: Connector): void {
-    const report = connector.catalogDrift?.();
+    const report = boundedCatalogDrift(connector.catalogDrift?.());
     if (!report) return;
     const previous = this.reportedDrift.get(connector.id);
+    // Bounded counts, so a seam returning NaN cannot make every refresh look
+    // like a change and emit an event per refresh forever.
     const counts: CatalogDriftCounts = {
       unclassifiedTools: report.unclassifiedTools,
       unservedTools: report.unservedTools,
@@ -1118,8 +1126,11 @@ export class Registry implements RegistryView {
     // refresh saw. Reading it is a lookup, not a probe: a connector that has
     // listed nothing yet reports nothing, and status never lists on its own to
     // make the field appear.
+    // The report is rebuilt rather than spread through: what the seam returned
+    // is third-party output, and status is read by the operator UI and copied
+    // into responses.
     const withDrift = (status: ConnectorStatus): ConnectorStatus => {
-      const report = connector.catalogDrift?.();
+      const report = boundedCatalogDrift(connector.catalogDrift?.());
       return report ? { ...status, catalogDrift: report } : status;
     };
     if (connector.status) {

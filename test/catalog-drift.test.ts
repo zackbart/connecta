@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createConnecta } from "../src/index.js";
+import { createConnecta, CONNECTA_VERSION } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import {
@@ -8,7 +8,14 @@ import {
   vettedSchemaDigest,
   withVettedCatalog,
 } from "../src/catalog-drift.js";
-import type { CatalogDriftActivityEvent } from "../src/activity.js";
+// From the root entry on purpose: a deployment writing an activity store reaches
+// these by name, and only naming them here proves the re-export exists.
+import type {
+  ActivitySink,
+  CatalogDriftActivityEvent,
+  CatalogDriftCounts,
+  CatalogDriftReport,
+} from "../src/index.js";
 import type { Connector, ToolDef } from "../src/types.js";
 import { silentLogger } from "./helpers.js";
 
@@ -447,5 +454,121 @@ describe("/health", () => {
         schemaChanges: 0,
       },
     });
+  });
+});
+
+describe("the connector seam is projected, not echoed", () => {
+  /**
+   * `Connector.catalogDrift()` is the open plugin seam and `/health` is
+   * unauthenticated, so "four counts and nothing else" has to be built at the
+   * boundary rather than trusted: TypeScript constrains neither an extra
+   * enumerable property nor the length of `observedAt` at runtime.
+   */
+  const leaky = (): Connector =>
+    ({
+      id: "leaky",
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+      catalogDrift() {
+        return {
+          observedAt: `2026-08-12T00:00:00.000Z${"x".repeat(500)}`,
+          unclassifiedTools: 2,
+          unservedTools: -1,
+          annotationConflicts: Number.NaN,
+          schemaChanges: 1.7,
+          driftedTools: ["delete_everything"],
+          downstreamError: "prose from a downstream",
+        };
+      },
+    }) as unknown as Connector;
+
+  const REPORT_KEYS = [
+    "annotationConflicts",
+    "observedAt",
+    "schemaChanges",
+    "unclassifiedTools",
+    "unservedTools",
+  ];
+
+  it("strips extra fields and bounds the timestamp on /health", async () => {
+    const connecta = createConnecta({
+      executor: { execute: async () => ({ result: null }) },
+      storage: memoryStorage(),
+      logger: silentLogger,
+      publicUrl: BASE,
+      connectors: [leaky()],
+    });
+    const health = (await (
+      await connecta.fetch(new Request(`${BASE}/health`))
+    ).json()) as { catalogDrift: Record<string, Record<string, unknown>> };
+    const report = health.catalogDrift.leaky ?? {};
+    expect(Object.keys(report).sort()).toEqual(REPORT_KEYS);
+    expect(report).toMatchObject({
+      unclassifiedTools: 2,
+      unservedTools: 0,
+      annotationConflicts: 0,
+      schemaChanges: 1,
+    });
+    expect(String(report.observedAt).length).toBeLessThanOrEqual(65);
+  });
+
+  it("strips them on connector status too", async () => {
+    const registry = new Registry([leaky()], {
+      storage: memoryStorage(),
+      logger: silentLogger,
+    });
+    const status = await registry.statusFor("leaky", BASE);
+    expect(Object.keys(status.catalogDrift ?? {}).sort()).toEqual(REPORT_KEYS);
+  });
+});
+
+describe("the drift types are on the public surface", () => {
+  it("types an activity adapter written outside this package", () => {
+    // Contextual typing carries an inline object literal, so only naming the
+    // types catches a missing re-export — which is what an activity store in
+    // examples/ has to do.
+    const rows: CatalogDriftCounts[] = [];
+    const sink: Pick<ActivitySink, "recordCatalogDrift"> = {
+      recordCatalogDrift(event: CatalogDriftActivityEvent) {
+        rows.push(event);
+      },
+    };
+    const report: CatalogDriftReport = {
+      observedAt: "2026-08-12T00:00:00.000Z",
+      unclassifiedTools: 1,
+      unservedTools: 0,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    };
+    sink.recordCatalogDrift?.({
+      schemaVersion: 1,
+      id: "evt-1",
+      occurredAt: report.observedAt,
+      connectorId: "linear",
+      unclassifiedTools: report.unclassifiedTools,
+      unservedTools: report.unservedTools,
+      annotationConflicts: report.annotationConflicts,
+      schemaChanges: report.schemaChanges,
+      serverName: "connecta",
+      serverVersion: CONNECTA_VERSION,
+    });
+    expect(rows).toEqual([
+      {
+        schemaVersion: 1,
+        id: "evt-1",
+        occurredAt: report.observedAt,
+        connectorId: "linear",
+        unclassifiedTools: 1,
+        unservedTools: 0,
+        annotationConflicts: 0,
+        schemaChanges: 0,
+        serverName: "connecta",
+        serverVersion: CONNECTA_VERSION,
+      },
+    ]);
   });
 });
