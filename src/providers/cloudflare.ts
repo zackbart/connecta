@@ -885,6 +885,28 @@ function pagingInputProperties(
   };
 }
 
+/**
+ * The second pagination convention, and the schemas say so.
+ *
+ * Rulesets, KV keys, and both R2 listings page by cursor rather than by page
+ * number, because that is how Cloudflare built them. The guide names the four,
+ * but an agent reading one tool's schema should not have to fetch the guide to
+ * learn that the `page` object it expected is not coming: absence of
+ * `nextCursor` is the loop condition here, and it is stated on both ends
+ * ([#342](https://github.com/zackbart/connecta/issues/342)).
+ */
+const CURSOR_INPUT_PROPERTY: JsonSchema = {
+  type: "string",
+  description:
+    "Opaque cursor from a previous call's nextCursor. This endpoint pages by cursor, not page number.",
+};
+
+const NEXT_CURSOR_OUTPUT_PROPERTY: JsonSchema = {
+  type: "string",
+  description:
+    "Pass back as `cursor` to continue. Absent when the listing is complete — this is the only signal; there is no page object.",
+};
+
 function listOutputSchema(key: string, item: JsonSchema): JsonSchema {
   return {
     type: "object",
@@ -1234,7 +1256,7 @@ const OPEN_OBJECT_OUTPUT_SCHEMA: JsonSchema = {
 const QUERY_INPUT_PROPERTY: JsonSchema = {
   type: "array",
   description:
-    "Optional query parameters as name/value pairs. Each parameter name may appear once.",
+    "Query parameters as name/value pairs; each name may appear once.",
   items: {
     type: "object",
     properties: {
@@ -1246,10 +1268,15 @@ const QUERY_INPUT_PROPERTY: JsonSchema = {
   },
 };
 
+// Shared by all three escape hatches, and the compact renderer inlines it
+// three times over. The refused-header list is the connector's boundary rather
+// than a fact the caller composes with, so it lives in the usage guide; keeping
+// it here pushed cloudflare_api_upload's compact input past the 1,024-byte
+// budget ([#342](https://github.com/zackbart/connecta/issues/342)).
 const HEADERS_INPUT_PROPERTY: JsonSchema = {
   type: "array",
   description:
-    "Optional provider headers as name/value pairs, for example cf-r2-jurisdiction, Range, If-None-Match, or Cloudflare product metadata. Authorization, Cookie, Host, Content-Length, Content-Type, and Transfer-Encoding are connector-owned and refused.",
+    "Endpoint headers as name/value pairs, e.g. cf-r2-jurisdiction or Range. Connector-owned headers are refused.",
   items: {
     type: "object",
     properties: {
@@ -1394,7 +1421,7 @@ function buildTools(
     {
       name: "cloudflare_api_get",
       description:
-        "Call any GET endpoint under Cloudflare's v4 API with this connector's credential. Use a named tool when one exists; use this read-only escape hatch for Images, Stream, Email Routing, D1, Queues, Access, Tunnels, Analytics, and newer product endpoints the curated surface does not yet name.",
+        "Call any GET endpoint under Cloudflare's v4 API with this connector's credential. Prefer a named tool when one exists; this read-only hatch covers the products the named surface does not reach, such as Images, Stream, D1, and Queues.",
       annotations: readOnly,
       inputSchema: {
         type: "object",
@@ -1462,7 +1489,7 @@ function buildTools(
     {
       name: "cloudflare_api_mutate",
       description:
-        "Call any JSON POST, PUT, PATCH, or DELETE endpoint under Cloudflare's v4 API with this connector's credential. This is the approval-gated escape hatch for managing Cloudflare products without waiting for a named tool. It does not support multipart or binary uploads.",
+        "Call any JSON POST, PUT, PATCH, or DELETE endpoint under Cloudflare's v4 API with this connector's credential. The approval-gated write hatch for products the named surface does not reach. No multipart or binary uploads.",
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: {
         type: "object",
@@ -1535,13 +1562,13 @@ function buildTools(
           method: {
             type: "string",
             enum: ["POST", "PUT"],
-            description: "HTTP upload method required by the Cloudflare endpoint.",
+            description: "Upload method the Cloudflare endpoint requires.",
           },
           path: {
             type: "string",
             minLength: 1,
             description:
-              "Relative path below /client/v4, beginning with '/'. Do not include a query string.",
+              "Path below /client/v4, beginning with '/'. No query string.",
           },
           query: QUERY_INPUT_PROPERTY,
           headers: HEADERS_INPUT_PROPERTY,
@@ -1549,19 +1576,19 @@ function buildTools(
             type: "string",
             minLength: 1,
             description:
-              "Content-Type for a raw text/base64 body. Omit for multipart because fetch supplies the boundary.",
+              "Content-Type for a raw text or base64 body. Omit for multipart.",
           },
           textBody: {
             type: "string",
-            description: "Raw UTF-8 request body. Mutually exclusive with base64Body and multipart fields/files.",
+            description: "Raw UTF-8 body. Exclusive with base64Body and fields/files.",
           },
           base64Body: {
             type: "string",
-            description: "Base64-encoded request bytes. Mutually exclusive with textBody and multipart fields/files.",
+            description: "Base64-encoded body bytes. Exclusive with textBody and fields/files.",
           },
           fields: {
             type: "array",
-            description: "String fields for a multipart/form-data request.",
+            description: "String fields of a multipart/form-data request.",
             items: {
               type: "object",
               properties: {
@@ -1577,7 +1604,7 @@ function buildTools(
           files: {
             type: "array",
             description:
-              "File parts for multipart/form-data. Each file needs exactly one of text or base64.",
+              "Multipart file parts. Each needs exactly one of text or base64.",
             items: {
               type: "object",
               properties: {
@@ -1854,10 +1881,7 @@ function buildTools(
             maximum: 50,
             description: "Rulesets per request, 1 to 50.",
           },
-          cursor: {
-            type: "string",
-            description: "Opaque cursor returned as nextCursor by the previous call.",
-          },
+          cursor: CURSOR_INPUT_PROPERTY,
         },
         required: scopeRequired("zoneId", scope.zoneId),
         additionalProperties: false,
@@ -1866,7 +1890,7 @@ function buildTools(
         type: "object",
         properties: {
           rulesets: { type: "array", items: OPEN_OBJECT_OUTPUT_SCHEMA },
-          nextCursor: { type: "string" },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
         },
         required: ["rulesets"],
       },
@@ -2428,10 +2452,7 @@ function buildTools(
             maximum: 1000,
             description: "Keys per request, 10 to 1000. Defaults to 1000.",
           },
-          cursor: {
-            type: "string",
-            description: "Opaque cursor returned as nextCursor by the previous call.",
-          },
+          cursor: CURSOR_INPUT_PROPERTY,
         },
         required: [...scopeRequired("accountId", scope.accountId), "namespaceId"],
         additionalProperties: false,
@@ -2440,7 +2461,7 @@ function buildTools(
         type: "object",
         properties: {
           keys: { type: "array", items: OPEN_OBJECT_OUTPUT_SCHEMA },
-          nextCursor: { type: "string" },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
         },
         required: ["keys"],
       },
@@ -2641,11 +2662,7 @@ function buildTools(
             maximum: 1000,
             description: "Buckets per request, 1 to 1000. Defaults to 20.",
           },
-          cursor: {
-            type: "string",
-            description:
-              "Opaque cursor from a previous call's nextCursor. R2 paginates by cursor, not page number.",
-          },
+          cursor: CURSOR_INPUT_PROPERTY,
           jurisdiction: R2_JURISDICTION_PROPERTY,
           raw: RAW_INPUT_PROPERTY,
         },
@@ -2669,11 +2686,7 @@ function buildTools(
               required: ["name"],
             },
           },
-          nextCursor: {
-            type: "string",
-            description:
-              "Pass back as `cursor` to continue. Absent when the listing is complete.",
-          },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
         },
         required: ["buckets"],
       },
@@ -2889,10 +2902,7 @@ function buildTools(
             maximum: 1000,
             description: "Objects per request, 1 to 1000.",
           },
-          cursor: {
-            type: "string",
-            description: "Opaque cursor returned as nextCursor by the previous call.",
-          },
+          cursor: CURSOR_INPUT_PROPERTY,
         },
         required: [...scopeRequired("accountId", scope.accountId), "bucketName"],
         additionalProperties: false,
@@ -2902,7 +2912,7 @@ function buildTools(
         properties: {
           objects: { type: "array", items: R2_OBJECT_SCHEMA },
           commonPrefixes: { type: "array", items: { type: "string" } },
-          nextCursor: { type: "string" },
+          nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
           truncated: { type: "boolean" },
         },
         required: ["objects", "truncated"],
@@ -3415,7 +3425,7 @@ function buildTools(
       // through call_destructive_tool.
       name: "create_dns_record",
       description:
-        "Create a content-based DNS record (A, AAAA, CNAME, MX, NS, OPENPGPKEY, PTR, TXT) in a zone. Check for an existing record with list_dns_records first: Cloudflare rejects a duplicate rather than replacing it. Record types that carry structured data, such as SRV and CAA, are readable here but not creatable.",
+        "Create a content-based DNS record in a zone; the type enum lists the creatable types. Check list_dns_records first — Cloudflare rejects a duplicate rather than replacing it. Structured types like SRV and CAA are readable but not creatable.",
       annotations: { readOnlyHint: false },
       inputSchema: {
         type: "object",
@@ -3795,11 +3805,11 @@ Account purpose: ${purpose}
 
 - ${zoneLine}
 - ${accountLine}
-- Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use \`cloudflare_api_get\` for GET, \`cloudflare_api_mutate\` for JSON POST/PUT/PATCH/DELETE, or \`cloudflare_api_upload\` for raw and multipart content. Raw tools take a path below \`/client/v4\`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use \`headers\` for endpoint-specific controls such as \`cf-r2-jurisdiction\`, ETags, and object metadata; authentication, host, content type, and request framing remain connector-owned.
+- Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use \`cloudflare_api_get\` for GET, \`cloudflare_api_mutate\` for JSON POST/PUT/PATCH/DELETE, or \`cloudflare_api_upload\` for raw and multipart content. Raw tools take a path below \`/client/v4\`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use \`headers\` for endpoint-specific controls such as \`cf-r2-jurisdiction\`, \`Range\`, \`If-None-Match\`, and Cloudflare product metadata. \`Authorization\`, \`Cookie\`, \`Host\`, \`Content-Length\`, \`Content-Type\`, and \`Transfer-Encoding\` are connector-owned and refused: authentication, host, content type, and request framing are not the caller's to set.
 - The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The configured Cloudflare credential remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in \`path\` are refused locally.
 - Useful raw paths include \`/accounts/{accountId}/images/v1\` (Images), \`/accounts/{accountId}/stream\` (Stream), \`/zones/{zoneId}/email/routing/rules\` (Email Routing), \`/accounts/{accountId}/d1/database\` (D1), and \`/accounts/{accountId}/queues\` (Queues). On GET, use \`responseType: "text"\` or \`"base64"\` for non-JSON content. Direct-upload endpoints can issue upload URLs; \`cloudflare_api_upload\` can also send explicit text, base64 bytes, or multipart fields/files.
 - Two R2 areas are deliberately unnamed. Read a bucket's CORS policy with \`get_r2_cors\`, then change it with \`cloudflare_api_mutate\` — \`PUT\` or \`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors\`, rule fields per Cloudflare's reference — and read account storage totals with \`cloudflare_api_get\` at \`/accounts/{accountId}/r2/metrics\`.
-- Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_zone_rulesets\`, \`list_r2_buckets\`, \`list_r2_objects\`, and \`list_kv_keys\` instead return \`nextCursor\`; \`list_worker_scripts\` is unpaginated.
+- Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_zone_rulesets\`, \`list_r2_buckets\`, \`list_r2_objects\`, and \`list_kv_keys\` page by cursor instead: pass \`cursor\`, continue while \`nextCursor\` is present, and expect no \`page\` object. Their schemas say so too. \`list_worker_scripts\` is unpaginated.
 - Results are projected to the fields that identify and describe a resource. Pass \`raw: true\` on a read when you genuinely need a field the projection drops.
 - ${authenticationLine}
 - A \`rate_limited\` failure carries the wait window. Cloudflare's limit is 1,200 requests per five minutes per user, counted across the dashboard and every token, so do not fan out speculatively; filter server-side with \`name\`, \`type\`, and \`content\` instead of listing everything and filtering locally.
@@ -3837,12 +3847,19 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     description: `Cloudflare control-plane access for zones, DNS, Workers, KV, R2, Pages, media, email, and other v4 APIs — ${purpose}`,
     credential: credentialConfig(authentication, options.credential),
     callAdmission: admissionPolicy(maxConcurrency),
-    usageGuide: usageGuide(
-      purpose,
-      scope,
-      options.instructions,
-      authentication,
-    ),
+    usageGuide: {
+      content: usageGuide(purpose, scope, options.instructions, authentication),
+      // Explicit rather than derived: the first content line is the zone
+      // scoping rule, which varies per deployment and reads as an instruction
+      // rather than as the routing fact a browsing agent needs.
+      summary:
+        "Zone and account scoping, named-vs-raw routing, two pagination shapes, and lean-vs-raw results.",
+      // Deliberately not `required`. Every named tool's schema is complete
+      // enough to call it correctly on its own, and the scoping convention the
+      // guide carries is repeated on each `zoneId` and `accountId` property —
+      // so forcing the guide into context before every operation would spend
+      // tokens on a sequence the schemas already express.
+    },
     ...(options.maxResultBytes !== undefined
       ? { maxResultBytes: options.maxResultBytes }
       : {}),

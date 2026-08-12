@@ -259,11 +259,14 @@ ${copy.warning}
 - Prefer a dedicated tool when one covers the task: \`get_stripe_account_info\` for which account this is, \`get_balance_summary\` for balances, \`create_refund\` for refunds, \`stripe_report\` for reports. One call instead of three, and a refund named \`create_refund\` reads far more clearly in the approval a human sees than the same refund buried in \`stripe_api_write\` arguments.
 - \`stripe_api_write\` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; expect approval on every call.
 - Lists are cursor-paginated: \`limit\` defaults to 10 and caps at 100, \`starting_after\` and \`ending_before\` take an object id and are mutually exclusive, and \`has_more\` says whether to continue. Page inside \`execute_code\` and reduce before returning.
+- Resolve ids before acting; never guess one. Stripe ids are typed prefixes — \`cus_\` customer, \`sub_\` subscription, \`ch_\` charge, \`pi_\` payment intent, \`in_\` invoice, \`acct_\` account — and a plausible-looking id belongs to a different object or to nobody. Find the object with \`stripe_api_search\` (or a list endpoint through \`stripe_api_read\`) and carry the \`id\` it returned into the write.
+- This account's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
 - Amounts are integers in the currency's minor unit: \`1099\` is 10.99 USD, and zero-decimal currencies like JPY take \`10\` for 10 JPY. Never send a decimal.
 - Send an \`Idempotency-Key\` on every write you might retry, if the tool accepts it, and reuse the same key for the retry. A retry with a fresh key is a second charge, not a second attempt.
 - Stripe answers a rate limit with \`429\` and a \`Stripe-Rate-Limited-Reason\` header; back off on that rather than retrying immediately. This account's documented ceiling is ${rate} requests per second, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
 - Use \`search_stripe_documentation\` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
 - Treat every create, update, delete, refund, and report run as a write. Connecta routes the maintained write catalog through \`call_destructive_tool\`; newly added tools also fail closed until classified.
+- An \`auth_required\` failure means this connector's Stripe authorization is missing or expired: run \`authorize_connector\` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
 ${
     accountInstructions
       ? `\n## Account instructions\n\n${accountInstructions}\n`
@@ -293,7 +296,20 @@ export function stripe(id: string, options: StripeOptions): Connector {
     auth,
     requireHttps: true,
     callAdmission: STRIPE_ADMISSION[mode],
-    usageGuide: usageGuide(mode, purpose, options.instructions),
+    usageGuide: {
+      content: usageGuide(mode, purpose, options.instructions),
+      // Explicit rather than derived: production versus sandbox is the fact an
+      // agent must not get wrong, and the derived summary would be the
+      // "Mode: … Account purpose: …" line with the operator's prose eating the
+      // budget ([#342](https://github.com/zackbart/connecta/issues/342)).
+      summary:
+        mode === "production"
+          ? "PRODUCTION: writes move real money. Generic api tools, id prefixes, minor units, idempotency."
+          : "Sandbox: test data only, never live figures. Generic api tools, id prefixes, minor units.",
+      // Not `required`. The four generic tools are the routing decision, and
+      // the mode warning already rides the title and description; a guide
+      // forced into every call would pay for the same paragraph repeatedly.
+    },
     ...(options.maxResultBytes !== undefined
       ? { maxResultBytes: options.maxResultBytes }
       : {}),

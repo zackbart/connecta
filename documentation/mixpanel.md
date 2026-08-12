@@ -2,9 +2,9 @@
 
 Import `mixpanel()` independently from
 `@zackbart/connecta/providers/mixpanel`. It wraps Mixpanel's hosted MCP server
-with regional endpoint selection, OAuth by default, a provider-rate admission
-budget, a task-oriented usage guide, and a vetted safety classification. It
-adds no provider dependency and is not reachable from Connecta's root entry.
+with regional endpoint selection, OAuth by default, a task-oriented usage
+guide, and a vetted safety classification. It adds no provider dependency and
+is not reachable from Connecta's root entry.
 
 ```ts
 import { mixpanel } from "@zackbart/connecta/providers/mixpanel";
@@ -25,6 +25,12 @@ connector's safety classification.
 
 `region` accepts `"us"` (the default), `"eu"`, or `"in"` and selects the
 corresponding [official hosted endpoint](https://docs.mixpanel.com/docs/mcp#mcp-server-urls).
+A project lives in exactly one residency, so the region also decides what this
+connection can see at all: a question pointed at the wrong one comes back empty
+rather than wrong, which reads as the project having no data. That makes it a
+routing fact, so it rides the default `title` (`Mixpanel (us)`, `Mixpanel
+(eu)`, `Mixpanel (in)`) and opens the usage guide — `search_tools` renders a
+connector's title and guide summary and never its description.
 OAuth is the recommended default and keeps each connector instance's flow and
 tokens in its connector-scoped storage. Mixpanel service accounts are also
 supported with an explicit header override:
@@ -68,9 +74,36 @@ approval copy the host shows a human.
 Experiments and Feature Flags — 15 of the 63 classified tools — are Mixpanel
 beta surfaces. Expect their names and schemas to move faster than the rest.
 
-The connection also declares a per-runtime call-admission budget matching
-Mixpanel's documented 600 requests per hour — a best-effort approximation of
-the per-user limit, not an enforcement of it. Each runtime keeps its own
-counter, so N Worker isolates or Node processes serving one deployment can each
-admit up to 600. Discovery traffic is outside connector call admission and
-still needs restrained use.
+## Rate limits
+
+Mixpanel meters its MCP server **per user per hour**, shared with everything
+else that credential does. Connecta's counter is per runtime, not per user, and
+the two cannot be reconciled in either direction: one runtime serving several
+users under-counts, and several Worker isolates or Node processes sharing one
+credential each admit a full budget. A hardcoded ceiling would therefore either
+throttle a healthy deployment or fail to protect a busy one, so this connection
+declares **no call-admission budget by default**. An operator who knows the
+account can supply one explicitly:
+
+```ts
+mixpanel("product_analytics", {
+  purpose: "Product and growth decisions for the production app",
+  callAdmission: {
+    rules: [
+      { budget: { kind: "rolling-window", maxCalls: 300, windowMs: 3_600_000 } },
+    ],
+  },
+});
+```
+
+A budget-only rule needs no queue. If you add `maxConcurrency` you are asking
+for a queue, and the admission controller then requires the rest of the queue
+settings at construction. Discovery traffic is outside connector call admission
+either way and still needs restrained use.
+
+## Conventions
+
+This connection is audited against
+[the provider conventions](./provider-conventions.md). Its verdict per
+convention, including every recorded exception, is the Mixpanel section of
+[the provider audit](./provider-audit.md).

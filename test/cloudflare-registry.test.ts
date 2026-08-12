@@ -150,10 +150,12 @@ describe("cloudflare() inside a real deployment", () => {
 
   it("scopes each account's defaults to its own tool schemas", async () => {
     const { registry } = twoAccounts(memoryStorage());
-    const prodGuide = registry.getConnector("cloudflare_prod")
-      ?.usageGuide as string;
-    const stagingGuide = registry.getConnector("cloudflare_staging")
-      ?.usageGuide as string;
+    // The guide is structured (H13); the scoping copy lives in its content.
+    const guideFor = (id: string): string =>
+      (registry.getConnector(id)?.usageGuide as { content: string } | undefined)
+        ?.content ?? "";
+    const prodGuide = guideFor("cloudflare_prod");
+    const stagingGuide = guideFor("cloudflare_staging");
     expect(prodGuide).toContain("zone-prod");
     expect(prodGuide).toContain("acct-prod");
     expect(stagingGuide).toContain("zone-staging");

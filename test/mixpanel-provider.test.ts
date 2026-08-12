@@ -14,6 +14,7 @@ import {
   MIXPANEL_MCP_ENDPOINTS,
   mixpanel,
 } from "../src/providers/mixpanel.js";
+import { connectorGuideSummary } from "../src/skills.js";
 
 const context = {
   storage: {
@@ -24,6 +25,19 @@ const context = {
   logger: console,
   baseUrl: "https://connecta.example",
 };
+
+
+/**
+ * Every maintained provider guide is structured now (H13, P7), so a guide
+ * assertion reads its `content` rather than the connector field.
+ */
+function guideOf(connector: Connector): string {
+  const guide = connector.usageGuide;
+  if (typeof guide !== "object" || guide === undefined) {
+    throw new Error("expected a structured usage guide");
+  }
+  return guide.content;
+}
 
 describe("mixpanel()", () => {
   beforeEach(() => {
@@ -55,29 +69,21 @@ describe("mixpanel()", () => {
         url: MIXPANEL_MCP_ENDPOINTS.us,
         title: "Production analytics",
         description:
-          "Mixpanel product analytics — Growth team product decisions",
+          "Mixpanel product analytics (US residency) — Growth team product decisions",
         auth: { type: "oauth" },
         requireHttps: true,
-        callAdmission: {
-          rules: [
-            {
-              budget: {
-                kind: "rolling-window",
-                maxCalls: 600,
-                windowMs: 3_600_000,
-              },
-            },
-          ],
-        },
       }),
     );
-    expect(connector.usageGuide).toContain("Get-Business-Context");
-    expect(connector.usageGuide).toContain("Get-Query-Schema");
-    expect(connector.usageGuide).toContain("600 requests per user per hour");
+    expect(guideOf(connector)).toContain("Get-Business-Context");
+    expect(guideOf(connector)).toContain("Get-Query-Schema");
+    expect(guideOf(connector)).toContain("meters MCP traffic per user per hour");
+    expect(guideOf(connector)).toContain("not a fixed set");
+    expect(guideOf(connector)).toContain("authorize_connector");
+    expect(guideOf(connector)).toContain("never guess one");
     // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(connector.usageGuide).toContain("## Account instructions");
-    expect(connector.usageGuide).not.toContain("+## Account instructions");
-    expect(connector.usageGuide).toContain(
+    expect(guideOf(connector)).toContain("## Account instructions");
+    expect(guideOf(connector)).not.toContain("+## Account instructions");
+    expect(guideOf(connector)).toContain(
       "Use project 42 unless the request names another project.",
     );
   });
@@ -103,6 +109,59 @@ describe("mixpanel()", () => {
         maxResultBytes: 25_000,
       }),
     );
+  });
+
+  it("puts the residency in the title and the guide's first line (P3)", () => {
+    // `search_tools` renders a connector's title and guide summary and never
+    // its description, so residency — which decides whether a project is
+    // reachable at all — has to live in both.
+    for (const region of ["us", "eu", "in"] as const) {
+      const connector = mixpanel(`analytics_${region}`, {
+        purpose: "Product decisions",
+        region,
+      });
+      expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
+        `analytics_${region}`,
+        expect.objectContaining({ title: `Mixpanel (${region})` }),
+      );
+      const summary = connectorGuideSummary(connector);
+      expect(summary).toContain("residency");
+      expect(summary?.length).toBeLessThanOrEqual(120);
+      expect(guideOf(connector)).toContain(`Mixpanel's ${region} endpoint`);
+    }
+  });
+
+  it("declares no call-admission budget of its own (P12)", () => {
+    // Mixpanel meters its MCP server per user per hour, and a per-runtime
+    // counter cannot approximate a per-user quota in either direction. The
+    // number belongs to the operator who knows the account.
+    mixpanel("analytics", { purpose: "Product decisions" });
+    expect(mocks.remoteMcp.mock.calls[0]?.[1]).not.toHaveProperty(
+      "callAdmission",
+    );
+
+    const policy = {
+      rules: [
+        { budget: { kind: "rolling-window" as const, maxCalls: 300, windowMs: 3_600_000 } },
+      ],
+    };
+    mixpanel("bounded_analytics", {
+      purpose: "Product decisions",
+      callAdmission: policy,
+    });
+    expect(mocks.remoteMcp).toHaveBeenLastCalledWith(
+      "bounded_analytics",
+      expect.objectContaining({ callAdmission: policy }),
+    );
+  });
+
+  it("rejects a region it has no endpoint for", () => {
+    expect(() =>
+      mixpanel("analytics", {
+        purpose: "Product decisions",
+        region: "apac" as never,
+      }),
+    ).toThrow('region must be "us", "eu", or "in"');
   });
 
   it("fills in silent annotations and fails closed on catalog drift", async () => {

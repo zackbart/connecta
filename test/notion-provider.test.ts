@@ -272,6 +272,15 @@ describe("notion() tool surface", () => {
     );
   });
 
+  it("says in the guide that it deliberately has no escape hatch (H14)", () => {
+    // A finite surface may honestly have no guarded raw-REST tool, but it has
+    // to say so: an agent that assumes one exists spends a search proving it
+    // does not.
+    const guide = build().usageGuide as { content: string };
+    expect(guide.content).toContain("no guarded raw-REST tool");
+    expect(guide.content).toContain("notion_api_");
+  });
+
   it("rejects a missing purpose or an out-of-range page size", () => {
     expect(() => notion("workspace", { purpose: "  " })).toThrow(
       "notion() requires a non-empty workspace purpose.",

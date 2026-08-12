@@ -46,6 +46,7 @@ function twoWorkspaces(storage: KVStorage) {
     connectors: [
       linear("linear_product", {
         purpose: "Product delivery planning",
+        access: "read-write",
       }),
       linear("linear_reporting", {
         purpose: "Executive delivery reporting",

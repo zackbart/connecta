@@ -11,9 +11,23 @@ import {
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { silentLogger } from "./helpers.js";
-import type { ConnectorContext, ToolDef } from "../src/types.js";
+import type {
+  Connector,
+  ConnectorContext,
+  ConnectorUsageGuide,
+  ToolDef,
+} from "../src/types.js";
 
 const TOKEN = "cf-token";
+
+/** The guide is structured (H13); assertions read its parts, not the field. */
+function structuredGuide(connector: Connector): ConnectorUsageGuide {
+  const guide = connector.usageGuide;
+  if (typeof guide !== "object" || guide === undefined) {
+    throw new Error("expected a structured usage guide");
+  }
+  return guide;
+}
 
 function contextWithToken(token: string | null = TOKEN): ConnectorContext {
   return {
@@ -180,25 +194,37 @@ describe("cloudflare() construction", () => {
   });
 
   it("carries a guide covering only what the schemas cannot say", () => {
-    const guide = connection({
-      instructions: "Never touch the legacy zone.",
-    }).usageGuide as string;
-    expect(guide).toContain("Production edge and DNS administration");
-    expect(guide).toContain("list_zones");
-    expect(guide).toContain("1,200 requests per five minutes");
-    expect(guide).toContain("page.hasMore");
-    expect(guide).toContain("## Account instructions");
-    expect(guide).toContain("Never touch the legacy zone.");
+    const guide = structuredGuide(
+      connection({ instructions: "Never touch the legacy zone." }),
+    );
+    expect(guide.content).toContain("Production edge and DNS administration");
+    expect(guide.content).toContain("list_zones");
+    expect(guide.content).toContain("1,200 requests per five minutes");
+    expect(guide.content).toContain("page.hasMore");
+    expect(guide.content).toContain("## Account instructions");
+    expect(guide.content).toContain("Never touch the legacy zone.");
     // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(guide).not.toContain("+## Account instructions");
+    expect(guide.content).not.toContain("+## Account instructions");
+  });
+
+  it("declares an explicit guide summary rather than leaning on the first line", () => {
+    // H13: the derived summary would be the zone-scoping rule, which varies
+    // per deployment and reads as an instruction rather than a routing fact.
+    const guide = structuredGuide(connection({ zoneId: "zone-1" }));
+    expect(guide.summary).toBeTruthy();
+    expect(guide.summary?.length).toBeLessThanOrEqual(120);
+    expect(guide.summary).not.toContain("zone-1");
+    // Not required: every named schema is complete enough to call on its own.
+    expect(guide.required).toBeUndefined();
   });
 
   it("tells the guide which discovery step a default makes unnecessary", () => {
-    const scoped = connection({ zoneId: "zone-1", accountId: "acct-1" })
-      .usageGuide as string;
+    const scoped = structuredGuide(
+      connection({ zoneId: "zone-1", accountId: "acct-1" }),
+    ).content;
     expect(scoped).toContain("defaults to zone `zone-1`");
     expect(scoped).toContain("defaults to account `acct-1`");
-    const unscoped = connection().usageGuide as string;
+    const unscoped = structuredGuide(connection()).content;
     expect(unscoped).toContain("declares no default zone");
     expect(unscoped).toContain("declares no default account");
   });

@@ -31,11 +31,20 @@ export interface LinearOptions {
   /** Which workspace this is and what decisions it answers. */
   purpose: string;
   /**
-   * Endpoint selection. Defaults to `"read-write"`. `"read-only"` binds the
-   * connection to Linear's read-only endpoint, whose token is scope-limited
-   * downstream — a stronger guarantee than any annotation Connecta applies.
+   * Endpoint selection. Required, and deliberately undefaulted.
+   *
+   * `"read-only"` binds the connection to Linear's read-only endpoint, whose
+   * token is scope-limited downstream — a stronger guarantee than any
+   * annotation Connecta applies. `"read-write"` reaches the full API.
+   *
+   * Neither is a safe default. Defaulting to `"read-write"` hands a deployment
+   * write access it never asked for, and defaulting to `"read-only"` turns a
+   * deployment that does write into one whose every write fails at Linear —
+   * at runtime, where no agent can repair it. So the operator declares it, and
+   * a deployment that forgot fails here instead
+   * ([#342](https://github.com/zackbart/connecta/issues/342)).
    */
-  access?: LinearAccess;
+  access: LinearAccess;
   /** OAuth by default; static headers support a Linear personal API key. */
   auth?: RemoteMcpAuth;
   /** Workspace-specific conventions appended to the maintained provider guide. */
@@ -272,7 +281,12 @@ export function linear(id: string, options: LinearOptions): Connector {
   if (!purpose) {
     throw new Error("linear() requires a non-empty workspace purpose.");
   }
-  const access = options.access ?? "read-write";
+  const access = options.access;
+  if (access !== "read-write" && access !== "read-only") {
+    throw new Error(
+      `linear("${id}") requires access "read-write" or "read-only".`,
+    );
+  }
   const connector = remoteMcp(id, {
     url: LINEAR_MCP_ENDPOINTS[access],
     // The title is what browse-time discovery renders; a read-only connection
@@ -285,7 +299,20 @@ export function linear(id: string, options: LinearOptions): Connector {
         : `Linear issue tracking and project planning — ${purpose}`,
     auth: options.auth ?? { type: "oauth" },
     requireHttps: true,
-    usageGuide: usageGuide(purpose, access, options.instructions),
+    usageGuide: {
+      content: usageGuide(purpose, access, options.instructions),
+      // Explicit rather than derived. The derived summary would truncate the
+      // access note mid-sentence at 120 characters, and the one thing a
+      // browsing agent must not get wrong is whether this connection can write
+      // at all ([#342](https://github.com/zackbart/connecta/issues/342)).
+      summary:
+        access === "read-only"
+          ? "Read-only: every write fails at Linear. Id resolution, upsert semantics, and cursor paging."
+          : "Read-write. Id resolution, `save_*` upsert semantics, plan-gated areas, and cursor paging.",
+      // Not `required`. Linear's own schemas describe each call correctly; the
+      // guide adds cross-tool sequence advice that is worth reading before a
+      // write, not worth loading before every read.
+    },
     ...(options.callAdmission !== undefined
       ? { callAdmission: options.callAdmission }
       : {}),

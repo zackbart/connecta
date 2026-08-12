@@ -430,6 +430,10 @@ runs this document against each of the five providers and returns a verdict per
 convention: **meets**, **misses** (with the fix), or **not applicable** (with
 the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
+Its five reports live in [provider-audit.md](./provider-audit.md), and the
+mechanically checkable half of the hand-written bar runs on every test run in
+[`test/provider-conventions.test.ts`](../test/provider-conventions.test.ts) —
+so a convention that was met once stays met, or fails loudly.
 
 Hand-written providers are audited against H1–H14; hosted-MCP proxies against
 P1–P13. Applying a hand-written convention to a proxy is a category error, not

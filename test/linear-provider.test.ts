@@ -23,6 +23,18 @@ const context = {
   baseUrl: "https://connecta.example",
 };
 
+/**
+ * Every maintained provider guide is structured now (H13, P7), so a guide
+ * assertion reads its `content` rather than the connector field.
+ */
+function guideOf(connector: Connector): string {
+  const guide = connector.usageGuide;
+  if (typeof guide !== "object" || guide === undefined) {
+    throw new Error("expected a structured usage guide");
+  }
+  return guide.content;
+}
+
 describe("linear()", () => {
   beforeEach(() => {
     mocks.listTools.mockReset();
@@ -44,6 +56,7 @@ describe("linear()", () => {
     const connector = linear("product_tracker", {
       title: "Product issue tracking",
       purpose: "Platform team issue and project planning",
+      access: "read-write",
       instructions: "File bugs into the Platform team unless told otherwise.",
     });
 
@@ -59,26 +72,32 @@ describe("linear()", () => {
       }),
     );
     // Conventions the schemas cannot express.
-    expect(connector.usageGuide).toContain("ENG-123");
-    expect(connector.usageGuide).toContain("upsert");
-    expect(connector.usageGuide).toContain("create_issue_label");
-    expect(connector.usageGuide).toContain("authorize_connector");
-    expect(connector.usageGuide).toContain("cursor");
+    expect(guideOf(connector)).toContain("ENG-123");
+    expect(guideOf(connector)).toContain("upsert");
+    expect(guideOf(connector)).toContain("create_issue_label");
+    expect(guideOf(connector)).toContain("authorize_connector");
+    expect(guideOf(connector)).toContain("cursor");
     // Real markdown, not a diff hunk: agents read this string verbatim.
-    expect(connector.usageGuide).toContain("## Workspace instructions");
-    expect(connector.usageGuide).not.toContain("+## Workspace instructions");
-    expect(connector.usageGuide).toContain(
+    expect(guideOf(connector)).toContain("## Workspace instructions");
+    expect(guideOf(connector)).not.toContain("+## Workspace instructions");
+    expect(guideOf(connector)).toContain(
       "File bugs into the Platform team unless told otherwise.",
     );
   });
 
   it("omits the account section entirely when no instructions are given", () => {
-    const connector = linear("tracker", { purpose: "Roadmap questions" });
-    expect(connector.usageGuide).not.toContain("## Workspace instructions");
+    const connector = linear("tracker", {
+      purpose: "Roadmap questions",
+      access: "read-write",
+    });
+    expect(guideOf(connector)).not.toContain("## Workspace instructions");
   });
 
   it("declares no call-admission budget of its own", () => {
-    linear("tracker", { purpose: "Roadmap questions" });
+    linear("tracker", {
+      purpose: "Roadmap questions",
+      access: "read-write",
+    });
     // Linear documents no MCP-specific limit and meters per user per hour, so
     // the connection invents no per-runtime ceiling. An operator may still set
     // one explicitly.
@@ -107,12 +126,15 @@ describe("linear()", () => {
     expect(LINEAR_MCP_ENDPOINTS["read-only"]).toBe(
       "https://mcp.linear.app/mcp/readonly",
     );
-    expect(connector.usageGuide).toContain("read-only endpoint");
-    expect(connector.usageGuide).not.toContain("call_destructive_tool");
+    expect(guideOf(connector)).toContain("read-only endpoint");
+    expect(guideOf(connector)).not.toContain("call_destructive_tool");
   });
 
   it("defaults the title to plain Linear for a read-write connection", () => {
-    linear("tracker", { purpose: "Roadmap questions" });
+    linear("tracker", {
+      purpose: "Roadmap questions",
+      access: "read-write",
+    });
     expect(mocks.remoteMcp.mock.calls[0]?.[1]).toMatchObject({
       title: "Linear",
     });
@@ -131,22 +153,35 @@ describe("linear()", () => {
 
   it("leads the guide with access, so the discovery summary carries it", () => {
     // `search_tools` shows a connector's guide summary and never its
-    // description, and the summary is the guide's first content line. Leading
-    // with the workspace purpose hid whether the connection could write at all.
+    // description. The summary is now declared rather than derived (P7), so
+    // the access fact is stated whole instead of being truncated at 120
+    // characters, and the guide's first content line still repeats it.
     const readOnly = linear("reporting", {
       purpose: "Reporting on delivery status",
       access: "read-only",
     });
-    const readWrite = linear("tracker", { purpose: "Delivery planning" });
+    const readWrite = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
 
-    expect(connectorGuideSummary(readOnly)).toContain("Read-only connection");
-    expect(connectorGuideSummary(readWrite)).toContain("Read-write connection");
+    expect(connectorGuideSummary(readOnly)).toContain("Read-only");
+    expect(connectorGuideSummary(readWrite)).toContain("Read-write");
     expect(connectorGuideSummary(readOnly)).not.toContain("Workspace purpose");
+    for (const connector of [readOnly, readWrite]) {
+      const summary = connectorGuideSummary(connector);
+      // Declared, not truncated: a derived summary ends in an ellipsis here.
+      expect(summary?.length).toBeLessThanOrEqual(120);
+      expect(summary).not.toContain("\u2026");
+    }
+    expect(guideOf(readOnly)).toContain("Read-only connection");
+    expect(guideOf(readWrite)).toContain("Read-write connection");
   });
 
   it("supports API-key header auth and operator-supplied limits", () => {
     linear("automation_tracker", {
       purpose: "Headless release reporting",
+      access: "read-write",
       auth: { type: "headers", headers: { Authorization: "lin_api_secret" } },
       maxResultBytes: 25_000,
       callAdmission: {
@@ -192,7 +227,10 @@ describe("linear()", () => {
       // closed.
       { name: "summon_new_thing" },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toMatchObject({
@@ -212,7 +250,10 @@ describe("linear()", () => {
     mocks.listTools.mockResolvedValue([
       { name: "save_issue", annotations: { readOnlyHint: true } },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toEqual({
@@ -232,7 +273,10 @@ describe("linear()", () => {
       // The same rule in the other direction.
       { name: "wreck_new_thing", annotations: { destructiveHint: true } },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
@@ -256,7 +300,10 @@ describe("linear()", () => {
       // Same tool from a workspace that reports nothing: filled in, not feared.
       { name: "extract_images" },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toEqual({
@@ -278,7 +325,10 @@ describe("linear()", () => {
       { name: "prepare_attachment_upload" },
       { name: "search_documentation" },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toMatchObject({ readOnlyHint: true });
@@ -300,7 +350,10 @@ describe("linear()", () => {
       // Same story stated the other way round.
       { name: "get_project", annotations: { readOnlyHint: false } },
     ]);
-    const connector = linear("tracker", { purpose: "Delivery planning" });
+    const connector = linear("tracker", {
+      purpose: "Delivery planning",
+      access: "read-write",
+    });
     const tools = await connector.listTools(context);
 
     expect(tools[0]?.annotations).toEqual({
@@ -312,8 +365,24 @@ describe("linear()", () => {
   });
 
   it("rejects an empty workspace purpose at construction", () => {
-    expect(() => linear("tracker", { purpose: "  " })).toThrow(
-      "linear() requires a non-empty workspace purpose.",
-    );
+    expect(() =>
+      linear("tracker", { purpose: "  ", access: "read-write" }),
+    ).toThrow("linear() requires a non-empty workspace purpose.");
+  });
+
+  it("requires the operator to declare an access mode (P4)", () => {
+    // Neither endpoint is a safe default: `read-write` hands out writes nobody
+    // asked for, and `read-only` breaks a writing deployment at Linear, at
+    // runtime, where no agent can repair it. So the declaration is required
+    // and a deployment that forgot fails here, at construction.
+    expect(() =>
+      linear("tracker", { purpose: "Delivery planning" } as never),
+    ).toThrow('requires access "read-write" or "read-only"');
+    expect(() =>
+      linear("tracker", {
+        purpose: "Delivery planning",
+        access: "readonly" as never,
+      }),
+    ).toThrow('requires access "read-write" or "read-only"');
   });
 });
