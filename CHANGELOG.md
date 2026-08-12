@@ -2,6 +2,45 @@
 
 All notable changes to this package are documented here.
 
+## 0.16.0 — unreleased
+
+The Cloudflare named surface was measured against its own escape hatches
+instead of being assumed to beat them, and three tools lost. Every named tool
+now carries a recorded `keep`, `prune`, or `improve` verdict backed by
+per-tool numbers: catalog tokens, rank in a real `search_tools` call for a
+representative operator request, whether four classes of argument mistake are
+refused before the round trip, and whether the handler projects Cloudflare's
+object or hands it back whole. The evidence, the tasks, and the reason for
+every removal are in
+[`eval/current-version/results/issue-350-evidence.md`](./eval/current-version/results/issue-350-evidence.md).
+
+**This breaks a deployment that calls `set_r2_cors`, `delete_r2_cors`, or
+`get_r2_metrics`.** No capability is lost: `get_r2_cors` still reads a bucket's
+policy, and the usage guide now names the replacement routes —
+`cloudflare_api_mutate` at
+`PUT`/`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`, and
+`cloudflare_api_get` at `/accounts/{accountId}/r2/metrics`. Every other
+Cloudflare tool, argument, projection, and annotation is unchanged, so a
+deployment that touches neither area can ignore this release.
+
+### Added
+
+- **A deterministic named-surface measurement lane.**
+  `npm --prefix eval/current-version run report:cloudflare-surface` measures the
+  maintained Cloudflare connection one tool at a time and writes a JSON and
+  Markdown artifact. It needs no model, no network, and no credential: the real
+  constructor, schemas, validation path, handlers, and catalog service run, and
+  only `fetch` is a probe that records the request.
+
+### Changed
+
+- **The Cloudflare connection ships 52 tools, down from 55.** `set_r2_cors`
+  declared a free-form rule body, so its schema validated the ids and waved
+  through the part of the call that fails; `delete_r2_cors` followed it rather
+  than leave half of CORS management named; `get_r2_metrics` put one account id
+  into a path and returned the response unprojected. All three are one raw call
+  away, and the guide says which one.
+
 ## 0.15.1 — 2026-08-12
 
 The Cloudflare connection now supports legacy user-scoped Global API Keys as

@@ -2,7 +2,7 @@
 
 Import `cloudflare()` independently from
 `@zackbart/connecta/providers/cloudflare`. It is a deliberate, hand-written
-surface over Cloudflare's v4 REST API. Fifty-five tools combine ergonomic,
+surface over Cloudflare's v4 REST API. Fifty-two tools combine ergonomic,
 fully described operations for common work with three guarded escape hatches
 for the rest of Cloudflare's fast-moving control plane. Reads, JSON mutations,
 and raw/multipart uploads remain separate so safety routing does not depend on
@@ -144,7 +144,7 @@ projections:
 | DNS/cache | list and get records | create, update, delete, targeted/full purge |
 | Workers | scripts, settings, deployments | delete a script |
 | KV | namespaces, keys, bulk values | create/rename/delete namespace, bulk write/delete |
-| R2 | buckets, object metadata, metrics, CORS | create/update/delete bucket, delete object, replace/delete CORS |
+| R2 | buckets, object metadata, CORS | create/update/delete bucket, delete object |
 | Pages | projects, deployments, domains | retry/rollback/delete deployments, add/delete domains, purge build cache, delete project |
 
 Every named tool carries a complete hand-written input schema: closed
@@ -152,6 +152,35 @@ Every named tool carries a complete hand-written input schema: closed
 every constrained field, endpoint-specific pagination bounds, and a description
 on every property. `test/cloudflare-provider.test.ts` walks the surface and
 asserts those properties rather than leaving them as a claim.
+
+### What the named surface deliberately leaves out
+
+A named tool is a permanent line item in every deployment's catalog, so the
+surface was measured against the escape hatches rather than assumed to beat
+them ([#350](https://github.com/zackbart/connecta/issues/350), evidence in
+[`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md)).
+Three named tools lost that comparison and were removed in 0.16.0:
+
+- **R2 CORS writes.** `set_r2_cors` declared its rule list as free-form objects
+  — the untyped body this connection refuses everywhere else — so its schema
+  validated the bucket name and waved through the part of the call that
+  actually fails. It also returned Cloudflare's response unprojected and was
+  destructive either way, which left nothing for it to beat
+  `cloudflare_api_mutate` on. `delete_r2_cors` went with it rather than leave
+  half of policy management named. Read a policy with `get_r2_cors`; change one
+  with `cloudflare_api_mutate` at
+  `PUT`/`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`. This is the
+  same split the [DNS record types](#dns-record-types) already use: structured
+  bodies stay readable through named tools and writable through the
+  approval-gated raw route.
+- **R2 account metrics.** `get_r2_metrics` took one account id, put it in a
+  path, and returned the response untouched — `cloudflare_api_get` at
+  `/accounts/{accountId}/r2/metrics` does the same thing without a permanent
+  catalog line.
+
+The surviving 48 named tools all refuse malformed arguments locally, which is
+the one thing no escape hatch can do: a hatch's path is an opaque string, so it
+can only check that a path is a path.
 
 ### The whole-v4 escape hatch
 
