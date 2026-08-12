@@ -5,4 +5,5 @@ test-results/
 .dev.vars
 .env
 .connecta-state.json
+.claude/
 *.log

@@ -28,6 +28,9 @@ import type {
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
 
+/** Authentication schemes accepted by Cloudflare's v4 API. */
+export type CloudflareAuthentication = "apiToken" | "globalApiKey";
+
 /**
  * Every DNS record type the records API accepts, for filtering a list.
  * Enumerated in the schema so an agent picks a legal type without reading
@@ -100,7 +103,9 @@ export interface CloudflareOptions {
   zoneId?: string;
   /** API base override for a proxy or a test double. Defaults to the v4 API. */
   baseUrl?: string;
-  /** Credential presentation override; the token is always operator-managed. */
+  /** Authentication scheme. Defaults to the recommended scoped API token. */
+  authentication?: CloudflareAuthentication;
+  /** Credential presentation override; credentials are always operator-managed. */
   credential?: ConnectorCredentialConfig;
   /** Account-specific conventions appended to the maintained provider guide. */
   instructions?: string;
@@ -132,12 +137,64 @@ function admissionPolicy(maxConcurrency: number): ConnectorCallAdmissionPolicy {
   };
 }
 
-const DEFAULT_CREDENTIAL: ConnectorCredentialConfig = {
+const API_TOKEN_CREDENTIAL: ConnectorCredentialConfig = {
   label: "Cloudflare API token",
   description:
     "A scoped API token (My Profile → API Tokens → Create Token), not a Global API Key. Grant only the permissions the deployment needs: zone-scoped \"Zone Read\", \"Zone Settings Write\", \"DNS Write\", \"Cache Purge\", and the phase-specific Rules product Read permissions as needed; account-scoped \"Workers Scripts Read/Write\", \"Workers KV Storage Read/Write\", \"Workers R2 Storage Read/Write\", or \"Cloudflare Pages Read/Write\" for the platform tools.",
   placeholder: "Paste API token",
 };
+
+const GLOBAL_API_KEY_CREDENTIAL: ConnectorCredentialConfig = {
+  label: "Cloudflare Global API Key",
+  description:
+    "Legacy user-scoped authentication. The key has the same access as its Cloudflare user across every account and zone that user can reach. Prefer a scoped API token when possible.",
+  fields: [
+    {
+      name: "email",
+      label: "Account email",
+      description: "The verified email address for the Cloudflare user that owns the Global API Key.",
+      placeholder: "you@example.com",
+      inputType: "email",
+    },
+    {
+      name: "apiKey",
+      label: "Global API Key",
+      description: "The legacy Global API Key from My Profile → API Tokens.",
+      placeholder: "Paste Global API Key",
+      inputType: "password",
+    },
+  ],
+};
+
+function credentialConfig(
+  authentication: CloudflareAuthentication,
+  override: ConnectorCredentialConfig | undefined,
+): ConnectorCredentialConfig {
+  if (authentication === "apiToken") {
+    const credential = override ?? API_TOKEN_CREDENTIAL;
+    if (credential.fields?.length) {
+      throw new Error(
+        "cloudflare() API token authentication requires a single-value credential.",
+      );
+    }
+    return credential;
+  }
+
+  const credential = override
+    ? {
+        ...GLOBAL_API_KEY_CREDENTIAL,
+        ...override,
+        fields: override.fields ?? GLOBAL_API_KEY_CREDENTIAL.fields!,
+      }
+    : GLOBAL_API_KEY_CREDENTIAL;
+  const fields = credential.fields?.map((field) => field.name).sort();
+  if (fields?.join(",") !== "apiKey,email") {
+    throw new Error(
+      'cloudflare() Global API Key authentication requires credential fields named "email" and "apiKey".',
+    );
+  }
+  return credential;
+}
 
 // --- Cloudflare's response envelope -----------------------------------------
 
@@ -273,7 +330,7 @@ function failureFor(
   if (status === 401 || status === 403 || authCoded) {
     return new ConnectorCallError(
       "auth_required",
-      `Cloudflare rejected the API token (HTTP ${status}). ${detail} Check that the token is valid and carries the permission this call needs.`,
+      `Cloudflare rejected the configured credential (HTTP ${status}). ${detail} Check that it is valid and has permission to access this resource.`,
     );
   }
   if (status === 400 || status === 409 || status === 422) {
@@ -316,7 +373,35 @@ interface CloudflareResponse {
   resultInfo: CloudflareResultInfo | undefined;
 }
 
-async function readToken(ctx: ConnectorContext): Promise<string> {
+const AUTHENTICATION_CONTEXT = Symbol("cloudflareAuthentication");
+
+type CloudflareContext = ConnectorContext & {
+  [AUTHENTICATION_CONTEXT]?: CloudflareAuthentication;
+};
+
+function withAuthentication(
+  ctx: ConnectorContext,
+  authentication: CloudflareAuthentication,
+): CloudflareContext {
+  return { ...ctx, [AUTHENTICATION_CONTEXT]: authentication };
+}
+
+async function readAuthenticationHeaders(
+  ctx: CloudflareContext,
+): Promise<Record<string, string>> {
+  if (ctx[AUTHENTICATION_CONTEXT] === "globalApiKey") {
+    const values = await ctx.credential?.getAll();
+    const email = values?.["email"];
+    const apiKey = values?.["apiKey"];
+    if (!email || !apiKey) {
+      throw new ConnectorCallError(
+        "auth_required",
+        "No Cloudflare Global API Key and account email are configured for this connector. An operator must add both before any call can run.",
+      );
+    }
+    return { "X-Auth-Email": email, "X-Auth-Key": apiKey };
+  }
+
   const token = await ctx.credential?.get();
   if (!token) {
     throw new ConnectorCallError(
@@ -324,7 +409,7 @@ async function readToken(ctx: ConnectorContext): Promise<string> {
       "No Cloudflare API token is configured for this connector. An operator must add one before any call can run.",
     );
   }
-  return token;
+  return { Authorization: `Bearer ${token}` };
 }
 
 function buildUrl(base: string, spec: RequestSpec): string {
@@ -341,7 +426,7 @@ async function fetchCloudflare(
   spec: RequestSpec,
   ctx: ConnectorContext,
 ): Promise<Response> {
-  const token = await readToken(ctx);
+  const authenticationHeaders = await readAuthenticationHeaders(ctx);
   if (spec.body !== undefined && spec.rawBody !== undefined) {
     throw new Error("A Cloudflare request cannot have both JSON and raw bodies.");
   }
@@ -350,7 +435,7 @@ async function fetchCloudflare(
     response = await fetch(buildUrl(base, spec), {
       method: spec.method,
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...authenticationHeaders,
         Accept: "application/json",
         ...(spec.body !== undefined
           ? { "Content-Type": "application/json" }
@@ -405,9 +490,17 @@ async function callCloudflare(
   if (!response.ok || envelope.success === false) {
     throw failureFor(response.status, response.headers, errors);
   }
+  const isV4Envelope =
+    "success" in envelope ||
+    "result" in envelope ||
+    "result_info" in envelope ||
+    "messages" in envelope;
   return {
-    result: envelope.result,
-    resultInfo: envelope.result_info,
+    // `/graphql` and a small number of product APIs return ordinary JSON
+    // instead of the standard v4 envelope. Preserve that document whole so
+    // the raw tools cover them too.
+    result: isV4Envelope ? envelope.result : envelope,
+    resultInfo: isV4Envelope ? envelope.result_info : undefined,
   };
 }
 
@@ -1031,6 +1124,8 @@ function headersFromArgs(value: unknown): Record<string, string> | undefined {
   const headers: Record<string, string> = {};
   const forbidden = new Set([
     "authorization",
+    "x-auth-email",
+    "x-auth-key",
     "cookie",
     "host",
     "content-length",
@@ -1206,7 +1301,10 @@ const R2_OBJECT_SCHEMA: JsonSchema = {
   required: ["key"],
 };
 
-function buildTools(scope: Scoping): ApiTool[] {
+function buildTools(
+  scope: Scoping,
+  authentication: CloudflareAuthentication,
+): ApiTool[] {
   const { base } = scope;
   const zoneArg = (args: JsonRecord): string =>
     requireScope(args["zoneId"], scope.zoneId, "zoneId");
@@ -1215,54 +1313,88 @@ function buildTools(scope: Scoping): ApiTool[] {
 
   const readOnly = { readOnlyHint: true, destructiveHint: false } as const;
 
-  return [
-    {
-      name: "verify_api_token",
-      description:
-        "Verify the configured Cloudflare API token and report its status. Use this first when any other tool fails with an authentication error, to separate a bad token from a missing permission.",
-      annotations: readOnly,
-      inputSchema: {
-        type: "object",
-        properties: {},
-        required: [],
-        additionalProperties: false,
-      },
-      outputSchema: {
-        type: "object",
-        properties: {
-          id: { type: "string" },
-          status: {
-            type: "string",
-            description: "\"active\" for a usable token.",
+  const tools: ApiTool[] = [
+    authentication === "apiToken"
+      ? {
+          name: "verify_api_token",
+          description:
+            "Verify the configured Cloudflare API token and report its status. Use this first when any other tool fails with an authentication error, to separate a bad token from a missing permission.",
+          annotations: readOnly,
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+            additionalProperties: false,
           },
-          notBefore: { type: "string" },
-          expiresOn: { type: "string" },
+          outputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              status: {
+                type: "string",
+                description: "\"active\" for a usable token.",
+              },
+              notBefore: { type: "string" },
+              expiresOn: { type: "string" },
+            },
+            required: ["status"],
+          },
+          handler: async (_args, ctx) => {
+            const { result } = await callCloudflare(
+              base,
+              { method: "GET", path: "/user/tokens/verify" },
+              ctx,
+            );
+            const token = asRecord(result);
+            return {
+              id: token["id"],
+              status: token["status"],
+              ...(token["not_before"] !== undefined
+                ? { notBefore: token["not_before"] }
+                : {}),
+              ...(token["expires_on"] !== undefined
+                ? { expiresOn: token["expires_on"] }
+                : {}),
+            };
+          },
+        }
+      : {
+          name: "verify_global_api_key",
+          description:
+            "Verify the configured Cloudflare Global API Key and account email by retrieving the authenticated user. Use this first when another tool fails with an authentication error.",
+          annotations: readOnly,
+          inputSchema: {
+            type: "object",
+            properties: {},
+            required: [],
+            additionalProperties: false,
+          },
+          outputSchema: {
+            type: "object",
+            properties: {
+              id: { type: "string" },
+              email: { type: "string" },
+              status: {
+                type: "string",
+                description: "\"active\" when Cloudflare accepts the email and key.",
+              },
+            },
+            required: ["email", "status"],
+          },
+          handler: async (_args, ctx) => {
+            const { result } = await callCloudflare(
+              base,
+              { method: "GET", path: "/user" },
+              ctx,
+            );
+            const user = asRecord(result);
+            return { id: user["id"], email: user["email"], status: "active" };
+          },
         },
-        required: ["status"],
-      },
-      handler: async (_args, ctx) => {
-        const { result } = await callCloudflare(
-          base,
-          { method: "GET", path: "/user/tokens/verify" },
-          ctx,
-        );
-        const token = asRecord(result);
-        return {
-          id: token["id"],
-          status: token["status"],
-          ...(token["not_before"] !== undefined
-            ? { notBefore: token["not_before"] }
-            : {}),
-          ...(token["expires_on"] !== undefined
-            ? { expiresOn: token["expires_on"] }
-            : {}),
-        };
-      },
-    },
     {
       name: "cloudflare_api_get",
       description:
-        "Call any GET endpoint under Cloudflare's v4 API with this connector's token. Use a named tool when one exists; use this read-only escape hatch for Images, Stream, Email Routing, D1, Queues, Access, Tunnels, Analytics, and newer product endpoints the curated surface does not yet name.",
+        "Call any GET endpoint under Cloudflare's v4 API with this connector's credential. Use a named tool when one exists; use this read-only escape hatch for Images, Stream, Email Routing, D1, Queues, Access, Tunnels, Analytics, and newer product endpoints the curated surface does not yet name.",
       annotations: readOnly,
       inputSchema: {
         type: "object",
@@ -1330,7 +1462,7 @@ function buildTools(scope: Scoping): ApiTool[] {
     {
       name: "cloudflare_api_mutate",
       description:
-        "Call any JSON POST, PUT, PATCH, or DELETE endpoint under Cloudflare's v4 API with this connector's token. This is the approval-gated escape hatch for managing Cloudflare products without waiting for a named tool. It does not support multipart or binary uploads.",
+        "Call any JSON POST, PUT, PATCH, or DELETE endpoint under Cloudflare's v4 API with this connector's credential. This is the approval-gated escape hatch for managing Cloudflare products without waiting for a named tool. It does not support multipart or binary uploads.",
       annotations: { readOnlyHint: false, destructiveHint: true },
       inputSchema: {
         type: "object",
@@ -3715,12 +3847,18 @@ function buildTools(scope: Scoping): ApiTool[] {
       },
     },
   ];
+  return tools.map((tool) => ({
+    ...tool,
+    handler: (args, ctx) =>
+      tool.handler(args, withAuthentication(ctx, authentication)),
+  }));
 }
 
 function usageGuide(
   purpose: string,
   scope: Scoping,
   instructions: string | undefined,
+  authentication: CloudflareAuthentication,
 ): string {
   const accountInstructions = instructions?.trim();
   const zoneLine = scope.zoneId
@@ -3729,6 +3867,10 @@ function usageGuide(
   const accountLine = scope.accountId
     ? `It defaults to account \`${scope.accountId}\`; omit \`accountId\` unless the request names a different account.`
     : "It declares no default account. `list_accounts` supplies the `accountId` the Workers, KV, R2, and Pages tools need.";
+  const authenticationLine =
+    authentication === "apiToken"
+      ? "The API token is operator-managed and scoped by permission. An `auth_required` failure means the token is missing, invalid, or lacks that call's permission. Call `verify_api_token` first."
+      : "The Global API Key and account email are operator-managed. The key has the same access as its Cloudflare user. An `auth_required` failure means one field is missing, the pair is invalid, or the user lacks access. Call `verify_global_api_key` first.";
   return `# Cloudflare usage
 
 Account purpose: ${purpose}
@@ -3736,11 +3878,11 @@ Account purpose: ${purpose}
 - ${zoneLine}
 - ${accountLine}
 - Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use \`cloudflare_api_get\` for GET, \`cloudflare_api_mutate\` for JSON POST/PUT/PATCH/DELETE, or \`cloudflare_api_upload\` for raw and multipart content. Raw tools take a path below \`/client/v4\`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use \`headers\` for endpoint-specific controls such as \`cf-r2-jurisdiction\`, ETags, and object metadata; authentication, host, content type, and request framing remain connector-owned.
-- The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The API token remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in \`path\` are refused locally.
+- The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The configured Cloudflare credential remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in \`path\` are refused locally.
 - Useful raw paths include \`/accounts/{accountId}/images/v1\` (Images), \`/accounts/{accountId}/stream\` (Stream), \`/zones/{zoneId}/email/routing/rules\` (Email Routing), \`/accounts/{accountId}/d1/database\` (D1), and \`/accounts/{accountId}/queues\` (Queues). On GET, use \`responseType: "text"\` or \`"base64"\` for non-JSON content. Direct-upload endpoints can issue upload URLs; \`cloudflare_api_upload\` can also send explicit text, base64 bytes, or multipart fields/files.
 - Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_zone_rulesets\`, \`list_r2_buckets\`, \`list_r2_objects\`, and \`list_kv_keys\` instead return \`nextCursor\`; \`list_worker_scripts\` is unpaginated.
 - Results are projected to the fields that identify and describe a resource. Pass \`raw: true\` on a read when you genuinely need a field the projection drops.
-- The API token is operator-managed and scoped by permission, not by role. An \`auth_required\` failure means the token is missing, invalid, or lacks that call's permission — it is never fixed by retrying. Call \`verify_api_token\` to tell a dead token from a missing permission, then report which permission is needed rather than trying other tools.
+- ${authenticationLine}
 - A \`rate_limited\` failure carries the wait window. Cloudflare's limit is 1,200 requests per five minutes per user, counted across the dashboard and every token, so do not fan out speculatively; filter server-side with \`name\`, \`type\`, and \`content\` instead of listing everything and filtering locally.
 - Named creates that only add a resource are write-routed without claiming destruction. Updates, overwrites, deletes, rollbacks, cache purges, \`cloudflare_api_mutate\`, and \`cloudflare_api_upload\` are destructive. Read current state before changing it, and prefer a targeted \`purge_cache\` over \`everything\`.
 ${
@@ -3760,6 +3902,12 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
     throw new Error("cloudflare() maxConcurrency must be a positive integer.");
   }
+  const authentication = options.authentication ?? "apiToken";
+  if (authentication !== "apiToken" && authentication !== "globalApiKey") {
+    throw new Error(
+      'cloudflare() authentication must be "apiToken" or "globalApiKey".',
+    );
+  }
   const scope: Scoping = {
     base: options.baseUrl?.trim() || CLOUDFLARE_API_BASE,
     accountId: options.accountId?.trim() || undefined,
@@ -3768,36 +3916,84 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
   return api(id, {
     title: options.title ?? "Cloudflare",
     description: `Cloudflare control-plane access for zones, DNS, Workers, KV, R2, Pages, media, email, and other v4 APIs — ${purpose}`,
-    credential: options.credential ?? DEFAULT_CREDENTIAL,
+    credential: credentialConfig(authentication, options.credential),
     callAdmission: admissionPolicy(maxConcurrency),
-    usageGuide: usageGuide(purpose, scope, options.instructions),
+    usageGuide: usageGuide(
+      purpose,
+      scope,
+      options.instructions,
+      authentication,
+    ),
     // The schemas are hand-written and closed; a schema that cannot be
     // enforced is a bug in this file, not input to pass through.
     strictValidation: true,
     ...(options.maxResultBytes !== undefined
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
-    tools: buildTools(scope),
-    async testCredential(value, ctx) {
-      try {
-        const { result } = await callCloudflare(
-          scope.base,
-          { method: "GET", path: "/user/tokens/verify" },
-          {
-            ...ctx,
-            credential: { get: async () => value, getAll: async () => ({ value }) },
+    tools: buildTools(scope, authentication),
+    ...(authentication === "apiToken"
+      ? {
+          async testCredential(value: string, ctx: ConnectorContext) {
+            try {
+              const { result } = await callCloudflare(
+                scope.base,
+                { method: "GET", path: "/user/tokens/verify" },
+                withAuthentication(
+                  {
+                    ...ctx,
+                    credential: {
+                      get: async () => value,
+                      getAll: async () => ({ value }),
+                    },
+                  },
+                  authentication,
+                ),
+              );
+              const status = asRecord(result)["status"];
+              return status === "active"
+                ? { ok: true, message: "Token verified: active." }
+                : { ok: false, message: `Token status is "${String(status)}".` };
+            } catch (error) {
+              return {
+                ok: false,
+                message: error instanceof Error ? error.message : String(error),
+              };
+            }
           },
-        );
-        const status = asRecord(result)["status"];
-        return status === "active"
-          ? { ok: true, message: "Token verified: active." }
-          : { ok: false, message: `Token status is "${String(status)}".` };
-      } catch (error) {
-        return {
-          ok: false,
-          message: error instanceof Error ? error.message : String(error),
-        };
-      }
-    },
+        }
+      : {
+          async testCredentials(
+            values: Record<string, string>,
+            ctx: ConnectorContext,
+          ) {
+            try {
+              const { result } = await callCloudflare(
+                scope.base,
+                { method: "GET", path: "/user" },
+                withAuthentication(
+                  {
+                    ...ctx,
+                    credential: {
+                      get: async (field?: string) =>
+                        field ? values[field] ?? null : null,
+                      getAll: async () => values,
+                    },
+                  },
+                  authentication,
+                ),
+              );
+              const email = asRecord(result)["email"];
+              return {
+                ok: true,
+                message: `Global API Key verified for ${String(email)}.`,
+              };
+            } catch (error) {
+              return {
+                ok: false,
+                message: error instanceof Error ? error.message : String(error),
+              };
+            }
+          },
+        }),
   });
 }

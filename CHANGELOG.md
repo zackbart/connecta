@@ -2,6 +2,33 @@
 
 All notable changes to this package are documented here.
 
+## 0.15.1 — 2026-08-12
+
+The Cloudflare connection now supports legacy user-scoped Global API Keys as
+an explicit authentication mode. Scoped API tokens remain the default. The
+three guarded raw tools still cover the full v4 path space without adding one
+tool per endpoint, and ordinary JSON responses such as GraphQL results now
+survive that path intact.
+
+Nothing breaks for existing deployments. They keep their current API token,
+credential form, verification tool, and 55-tool surface. A deployment that
+needs the legacy scheme opts in and stores the Cloudflare user email and Global
+API Key as separate encrypted fields.
+
+### Added
+
+- **Legacy Cloudflare Global API Key authentication.** Set
+  `authentication: "globalApiKey"` to send operator-managed `X-Auth-Email` and
+  `X-Auth-Key` headers. `verify_global_api_key` checks the pair through
+  Cloudflare's authenticated user endpoint, and raw calls cannot replace either
+  connector-owned header.
+
+### Fixed
+
+- **Raw Cloudflare calls preserve non-envelope JSON.** Endpoints such as
+  `/graphql` return their complete JSON document instead of an undefined
+  `result`.
+
 ## 0.15.0 — 2026-08-10
 
 Discovery now keeps strong action/object near-matches visible beside complete

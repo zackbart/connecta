@@ -23,6 +23,18 @@ const edge = cloudflare("cloudflare_prod", {
 });
 ```
 
+Use the legacy user-scoped Global API Key when an existing deployment needs it:
+
+```ts
+const legacyEdge = cloudflare("cloudflare_legacy", {
+  purpose: "Legacy account administration",
+  authentication: "globalApiKey",
+});
+```
+
+The operator UI then asks for the Cloudflare user email and Global API Key as
+separate fields. The default remains a scoped API token.
+
 The `id` owns the ordinary connector namespaces; use a different id for every
 Cloudflare account or estate. `purpose` is required because an agent choosing
 between a production and a staging instance needs to know which one answers the
@@ -40,7 +52,7 @@ dependency would cost is real — an optional peer with its own install step and
 version skew, an import that never belongs in the root graph, and a second
 opinion about what a Cloudflare call looks like.
 
-The API itself does not need one. It is Bearer-token `fetch` with a uniform
+The API itself does not need one. It is authenticated `fetch` with a uniform
 `{ success, errors, messages, result, result_info }` response envelope. JSON,
 raw bytes, and multipart request bodies all use Web APIs, which keeps the
 provider Workers-clean and means `@zackbart/connecta/providers/cloudflare`
@@ -51,10 +63,16 @@ must be relative.
 
 ## Credentials
 
-The connection declares one operator-managed credential: a scoped Cloudflare
-API token, sent as `Authorization: Bearer <token>`. Create it under My Profile →
-API Tokens → Create Token. Do not use a Global API Key — it carries every
-permission on the account and cannot be scoped.
+The default credential is a scoped Cloudflare API token, sent as
+`Authorization: Bearer <token>`. Create it under My Profile → API Tokens →
+Create Token.
+
+Set `authentication: "globalApiKey"` to use the legacy user-scoped scheme. The
+credential form stores two encrypted fields and sends them as `X-Auth-Email`
+and `X-Auth-Key`. The Global API Key has the same access as its Cloudflare user
+across every account and zone that user can reach. It cannot be scoped, only
+one can exist per user, and it has no expiry or IP limits. Cloudflare recommends
+API tokens for new use, but existing Global API Keys remain supported.
 
 Grant only what the deployment needs:
 
@@ -83,10 +101,9 @@ scope. "Cache Purge" is a single permission with no Read/Write split, and
 Cloudflare's own reference renders a few labels differently between its
 Dashboard and API tabs.
 
-`verify_api_token` needs no permission beyond the token existing, which is what
-makes it the right first call when something fails. The `/credentials` Test
-action runs the same verification against the candidate token before it is
-stored.
+`verify_api_token` needs no permission beyond the token existing. In legacy
+mode, `verify_global_api_key` reads `/user` to confirm the email and key pair.
+The `/credentials` Test action runs the matching check before storage.
 
 Cloudflare rate-limits *authentication failures* aggressively and separately
 from the global limit: a few requests with a bad token return HTTP 429 with
@@ -146,7 +163,8 @@ method classification into user input:
   default; `responseType: "text" | "base64"` retrieves scripts, logs, R2
   objects, and media bodies without pretending they have a JSON envelope.
 - `cloudflare_api_mutate` accepts JSON POST, PUT, PATCH, and DELETE. It is always
-  destructive, even when a particular POST is merely additive.
+  destructive, even when a particular POST is merely additive. It preserves
+  ordinary non-envelope JSON from endpoints such as `/graphql`.
 - `cloudflare_api_upload` accepts POST or PUT plus exactly one of raw text,
   base64 bytes, or multipart fields/files. It is always destructive and reads
   no local files.
@@ -160,7 +178,7 @@ Paths are relative to `/client/v4`. Absolute URLs, protocol-relative paths,
 `..` traversal, fragments, and embedded query strings are refused locally;
 query parameters are explicit name/value pairs. These tools reuse the same
 credential, admission budget, abort signal, envelope parsing, and typed failure
-mapping as named tools. They do not widen the token's Cloudflare permissions.
+mapping as named tools. They do not widen the configured credential's access.
 
 This is intentionally not OpenAPI ingestion: it creates three stable tools,
 not one tool per Cloudflare operation. For example, an agent can list Images at
@@ -271,8 +289,8 @@ official table mapping error codes to causes, so that set is assembled from
 community reports and probing, not from documentation. The same goes for the
 claim below that `10000` is overloaded — that is an observation about responses
 seen in practice. Treat both as well-supported readings that Cloudflare could
-invalidate without notice, and prefer `verify_api_token` over the code list
-when a diagnosis actually matters.
+invalidate without notice. Prefer `verify_api_token` or
+`verify_global_api_key`, as configured, when a diagnosis matters.
 
 Two ordering decisions are deliberate. The 429 branch is checked before the
 authentication codes, because Cloudflare reuses the generic `10000` code on
@@ -280,15 +298,15 @@ throttled responses and reading a rate limit as an auth failure would tell an
 agent to stop when it should wait. And `10000` is *not* itself treated as an
 auth code: Cloudflare returns it for "Authentication error" but also for
 ordinary validation failures like "Invalid pagination cursor" and
-"domain_name is required", so routing on it would tell an agent its token was
+"domain_name is required", so routing on it would tell an agent its credential was
 broken when its arguments were. Genuine `10000` auth failures arrive with 401
 or 403 and are caught by status.
 
 Because the connection declares an operator-managed credential rather than an
 OAuth flow, an `auth_required` failure resolves to the `operator_config`
-recovery mode — the fix is a human updating the token, not an authorization
-URL the agent can open. A missing token fails that way before any request is
-made.
+recovery mode — the fix is a human updating the credential, not an authorization
+URL the agent can open. A missing credential fails that way before any request
+is made.
 
 Some failures never reach Cloudflare at all. A blank scope id, a `purge_cache`
 call with no variant or two, and an `update_dns_record` with nothing to change
@@ -309,5 +327,5 @@ enforcement of it. Each runtime keeps its own counter, so N Worker isolates or
 Node processes serving one deployment can each admit up to 1,200 — and the
 dashboard traffic of a human sharing the account is counted by Cloudflare but
 not by Connecta. `maxConcurrency` is the bound that actually protects a shared
-token, because a single `execute_code` program can fan out far faster than the
-window notices.
+credential, because a single `execute_code` program can fan out far faster than
+the window notices.

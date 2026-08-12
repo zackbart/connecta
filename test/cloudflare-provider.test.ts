@@ -27,6 +27,23 @@ function contextWithToken(token: string | null = TOKEN): ConnectorContext {
   };
 }
 
+function contextWithGlobalApiKey(
+  email: string | null = "operator@example.com",
+  apiKey: string | null = "global-key",
+): ConnectorContext {
+  const values = email && apiKey ? { email, apiKey } : null;
+  return {
+    storage: memoryStorage(),
+    logger: silentLogger,
+    baseUrl: "https://connecta.example",
+    credential: {
+      get: async (field?: string) =>
+        field && values ? values[field as keyof typeof values] ?? null : null,
+      getAll: async () => values,
+    },
+  };
+}
+
 interface StubResponse {
   status?: number;
   body?: unknown;
@@ -126,6 +143,40 @@ describe("cloudflare() construction", () => {
         },
       ],
     });
+  });
+
+  it("declares the two fields required by legacy Global API Key authentication", () => {
+    const connector = connection({ authentication: "globalApiKey" });
+    expect(connector.credential).toMatchObject({
+      label: "Cloudflare Global API Key",
+      fields: [
+        { name: "email", inputType: "email" },
+        { name: "apiKey", inputType: "password" },
+      ],
+    });
+    expect(connector.testCredential).toBeUndefined();
+    expect(connector.testCredentials).toBeTypeOf("function");
+  });
+
+  it("rejects a credential shape that cannot supply the selected authentication", () => {
+    expect(() =>
+      connection({
+        authentication: "apiToken",
+        credential: {
+          label: "Wrong shape",
+          fields: [{ name: "apiKey", label: "API key" }],
+        },
+      }),
+    ).toThrow("single-value credential");
+    expect(() =>
+      connection({
+        authentication: "globalApiKey",
+        credential: {
+          label: "Wrong fields",
+          fields: [{ name: "value", label: "One value" }],
+        },
+      }),
+    ).toThrow('fields named "email" and "apiKey"');
   });
 
   it("carries a guide covering only what the schemas cannot say", () => {
@@ -390,6 +441,20 @@ describe("cloudflare() tool surface", () => {
 });
 
 describe("cloudflare() request building", () => {
+  it("uses the user email and Global API Key headers when selected", async () => {
+    stubFetch({ body: { success: true, result: [] } });
+    await connection({ authentication: "globalApiKey" }).callTool(
+      "list_zones",
+      {},
+      contextWithGlobalApiKey(),
+    );
+    expect(calls[0]!.init.headers).toMatchObject({
+      "X-Auth-Email": "operator@example.com",
+      "X-Auth-Key": "global-key",
+    });
+    expect(calls[0]!.init.headers).not.toHaveProperty("Authorization");
+  });
+
   it("keeps arbitrary GET access read-only while forwarding query pairs", async () => {
     stubFetch({
       body: {
@@ -472,6 +537,23 @@ describe("cloudflare() request building", () => {
     );
     expect(calls[0]!.init.method).toBe("PUT");
     expect(bodyOf()).toEqual({ enabled: true });
+  });
+
+  it("preserves non-envelope JSON from endpoints such as GraphQL", async () => {
+    stubFetch({ body: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } } });
+    await expect(
+      connection().callTool(
+        "cloudflare_api_mutate",
+        {
+          method: "POST",
+          path: "/graphql",
+          body: { query: "query { viewer { zones { zoneTag } } }" },
+        },
+        contextWithToken(),
+      ),
+    ).resolves.toEqual({
+      result: { data: { viewer: { zones: [{ zoneTag: "zone-1" }] } } },
+    });
   });
 
   it("uploads raw content without JSON encoding it", async () => {
@@ -575,6 +657,18 @@ describe("cloudflare() request building", () => {
           headers: [{ name: "Authorization", value: "Bearer attacker" }],
         },
         contextWithToken(),
+      ),
+    ).rejects.toBeInstanceOf(ConnectorCallError);
+    expect(calls).toHaveLength(1);
+
+    await expect(
+      connection({ authentication: "globalApiKey" }).callTool(
+        "cloudflare_api_get",
+        {
+          path: "/user",
+          headers: [{ name: "X-Auth-Key", value: "attacker" }],
+        },
+        contextWithGlobalApiKey(),
       ),
     ).rejects.toBeInstanceOf(ConnectorCallError);
     expect(calls).toHaveLength(1);
@@ -1130,6 +1224,18 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("routes an incomplete Global API Key pair to auth_required before any request", async () => {
+    stubFetch({ body: { success: true, result: [] } });
+    await expect(
+      connection({ authentication: "globalApiKey" }).callTool(
+        "list_zones",
+        {},
+        contextWithGlobalApiKey(null, null),
+      ),
+    ).rejects.toMatchObject({ code: "auth_required", retryable: false });
+    expect(calls).toHaveLength(0);
+  });
+
   it("routes an invalid token to auth_required and walks the error chain", async () => {
     // Cloudflare answers an unusable token with 401 on resource endpoints and
     // nests the real reason in error_chain, so the chain must be flattened for
@@ -1424,5 +1530,29 @@ describe("cloudflare() credential test", () => {
     );
     expect(result?.ok).toBe(false);
     expect(result?.message).toContain("Invalid API Token");
+  });
+
+  it("verifies a Global API Key against the authenticated user endpoint", async () => {
+    stubFetch({
+      body: {
+        success: true,
+        result: { id: "user-1", email: "operator@example.com" },
+      },
+    });
+    const result = await connection({
+      authentication: "globalApiKey",
+    }).testCredentials?.(
+      { email: "operator@example.com", apiKey: "candidate-key" },
+      contextWithGlobalApiKey(null, null),
+    );
+    expect(result).toEqual({
+      ok: true,
+      message: "Global API Key verified for operator@example.com.",
+    });
+    expect(urlOf().pathname).toBe("/client/v4/user");
+    expect(calls[0]!.init.headers).toMatchObject({
+      "X-Auth-Email": "operator@example.com",
+      "X-Auth-Key": "candidate-key",
+    });
   });
 });
