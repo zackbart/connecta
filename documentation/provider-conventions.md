@@ -465,10 +465,12 @@ than by reading:
 
 The remainder — H4, H6, and the judgment in H14 about whether a named tool
 beats the escape hatch — is a reading, and the audit reports it as one. The
-Cloudflare keep/prune half of that judgment belongs to
-[#350](https://github.com/zackbart/connecta/issues/350), which measures the
-named surface with usage evidence; this document only supplies the test it is
-measured against.
+Cloudflare keep/prune half of that judgment was made in
+[#350](https://github.com/zackbart/connecta/issues/350): 30 keep, 18 improve,
+3 prune, measured per tool in
+[`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md).
+Its eighteen `improve` rows are H8 and H9 misses on tools that clearly earn
+their place, so they are this audit's work, not a second removal argument.
 
 Each provider's own guide ([Cloudflare](./cloudflare.md),
 [Linear](./linear.md), [Mixpanel](./mixpanel.md), [Notion](./notion.md),

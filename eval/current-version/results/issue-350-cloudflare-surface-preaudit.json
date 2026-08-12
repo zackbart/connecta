@@ -1,0 +1,1991 @@
+{
+  "issue": 350,
+  "generatedAt": "2026-08-12T22:47:56.860Z",
+  "sourceCommit": "297f0b990f54395f3fcb831bc4640b1fef7c5ee9",
+  "runtime": "v26.5.1",
+  "tokenizer": "o200k_base",
+  "scope": "unscoped cloudflare() instance: no zoneId or accountId default",
+  "summary": {
+    "toolCount": 55,
+    "namedCount": 51,
+    "hatchCount": 3,
+    "wholeCatalogTokens": 8511,
+    "namedCatalogTokens": 7683,
+    "hatchCatalogTokens": 678,
+    "top1SelectionRate": 0.529,
+    "top3SelectionRate": 0.784,
+    "unselectedTools": [
+      "list_zones",
+      "list_zone_settings",
+      "update_zone_setting",
+      "list_dns_records",
+      "delete_worker_script",
+      "create_kv_namespace",
+      "rename_kv_namespace",
+      "delete_kv_namespace",
+      "bulk_delete_kv_values",
+      "create_r2_bucket",
+      "update_r2_bucket",
+      "delete_r2_bucket",
+      "get_r2_metrics",
+      "set_r2_cors",
+      "delete_r2_cors",
+      "get_pages_project",
+      "list_pages_deployments",
+      "retry_pages_deployment",
+      "rollback_pages_deployment",
+      "delete_pages_project",
+      "create_dns_record",
+      "update_dns_record",
+      "delete_dns_record",
+      "purge_cache"
+    ],
+    "hatchOutrankedTools": [
+      "list_zone_settings",
+      "update_zone_setting",
+      "delete_worker_script",
+      "get_r2_metrics",
+      "set_r2_cors"
+    ],
+    "validCallFailures": [],
+    "guardMissTools": [],
+    "passthroughTools": [
+      "list_zone_settings",
+      "get_zone_setting",
+      "update_zone_setting",
+      "get_worker_settings",
+      "rename_kv_namespace",
+      "bulk_get_kv_values",
+      "bulk_write_kv_values",
+      "bulk_delete_kv_values",
+      "get_r2_metrics",
+      "get_r2_cors",
+      "set_r2_cors"
+    ],
+    "openOutputTools": [
+      "get_zone_setting",
+      "update_zone_setting",
+      "get_zone_ruleset",
+      "get_worker_settings",
+      "get_worker_deployment",
+      "get_kv_namespace",
+      "create_kv_namespace",
+      "rename_kv_namespace",
+      "bulk_get_kv_values",
+      "bulk_write_kv_values",
+      "bulk_delete_kv_values",
+      "get_r2_metrics",
+      "get_r2_cors",
+      "set_r2_cors",
+      "get_pages_project",
+      "get_pages_deployment",
+      "retry_pages_deployment",
+      "rollback_pages_deployment",
+      "add_pages_domain"
+    ],
+    "truncatedSchemaTools": []
+  },
+  "tools": [
+    {
+      "name": "verify_api_token",
+      "role": "credential",
+      "readOnly": true,
+      "compactTokens": 115,
+      "compactBytes": 505,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 163,
+      "declaredOutputKeys": 4,
+      "openOutput": false,
+      "guards": [],
+      "guardMisses": 0
+    },
+    {
+      "name": "cloudflare_api_get",
+      "role": "hatch",
+      "readOnly": true,
+      "compactTokens": 205,
+      "compactBytes": 844,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 538,
+      "declaredOutputKeys": 6,
+      "openOutput": false,
+      "guards": [],
+      "guardMisses": 0
+    },
+    {
+      "name": "cloudflare_api_mutate",
+      "role": "hatch",
+      "readOnly": false,
+      "compactTokens": 212,
+      "compactBytes": 881,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 470,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [],
+      "guardMisses": 0
+    },
+    {
+      "name": "cloudflare_api_upload",
+      "role": "hatch",
+      "readOnly": false,
+      "compactTokens": 261,
+      "compactBytes": 1051,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 672,
+      "declaredOutputKeys": 1,
+      "openOutput": false,
+      "guards": [],
+      "guardMisses": 0
+    },
+    {
+      "name": "list_accounts",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 162,
+      "compactBytes": 656,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 387,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "which cloudflare accounts can this token reach",
+      "selectionRank": 1,
+      "selectionTop": "list_accounts",
+      "selectionResultTokens": 1585,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 68.5
+    },
+    {
+      "name": "list_zones",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 228,
+      "compactBytes": 903,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 536,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "find the id for the domain example.com",
+      "selectionRank": 4,
+      "selectionTop": "add_pages_domain",
+      "selectionResultTokens": 1217,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 65.1
+    },
+    {
+      "name": "get_zone",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 165,
+      "compactBytes": 667,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 300,
+      "declaredOutputKeys": 11,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show the plan and name servers for one domain",
+      "selectionRank": 1,
+      "selectionTop": "get_zone",
+      "selectionResultTokens": 1169,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 87.5
+    },
+    {
+      "name": "list_zone_settings",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 127,
+      "compactBytes": 546,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 288,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what is currently configured on this domain",
+      "selectionRank": -1,
+      "selectionTop": "add_pages_domain",
+      "selectionResultTokens": 1239,
+      "hatchOutranked": true,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/settings",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": -22.7
+    },
+    {
+      "name": "get_zone_setting",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 103,
+      "compactBytes": 423,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 194,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "is always use https turned on",
+      "selectionRank": 1,
+      "selectionTop": "get_zone_setting",
+      "selectionResultTokens": 1288,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/settings/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "update_zone_setting",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 114,
+      "compactBytes": 507,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 236,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "turn on always use https",
+      "selectionRank": -1,
+      "selectionTop": "get_zone_setting",
+      "selectionResultTokens": 847,
+      "hatchOutranked": true,
+      "validCallAccepted": true,
+      "request": "PATCH /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/settings/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "list_zone_rulesets",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 122,
+      "compactBytes": 505,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 241,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what waf and transform phases exist here",
+      "selectionRank": 1,
+      "selectionTop": "list_zone_rulesets",
+      "selectionResultTokens": 816,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/rulesets",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 88.2
+    },
+    {
+      "name": "get_zone_ruleset",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 97,
+      "compactBytes": 398,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 186,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show the redirect rules and their expressions",
+      "selectionRank": 1,
+      "selectionTop": "get_zone_ruleset",
+      "selectionResultTokens": 1263,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/rulesets/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "list_dns_records",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 443,
+      "compactBytes": 1452,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 734,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show the txt records on the apex domain",
+      "selectionRank": 2,
+      "selectionTop": "create_dns_record",
+      "selectionResultTokens": 2029,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/dns_records",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 68.7
+    },
+    {
+      "name": "get_dns_record",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 257,
+      "compactBytes": 868,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 362,
+      "declaredOutputKeys": 11,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "fetch one dns record by its id",
+      "selectionRank": 1,
+      "selectionTop": "get_dns_record",
+      "selectionResultTokens": 1981,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/dns_records/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "list_worker_scripts",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 145,
+      "compactBytes": 608,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 345,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "which workers are deployed in this account",
+      "selectionRank": 1,
+      "selectionTop": "list_worker_scripts",
+      "selectionResultTokens": 527,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers/scripts",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 73.2
+    },
+    {
+      "name": "get_worker_settings",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 98,
+      "compactBytes": 442,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 186,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what compatibility date and bindings does this worker use",
+      "selectionRank": 1,
+      "selectionTop": "get_worker_settings",
+      "selectionResultTokens": 1290,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers/scripts/probe/settings",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "list_worker_deployments",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 136,
+      "compactBytes": 598,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 312,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show the release history and traffic split for a worker",
+      "selectionRank": 1,
+      "selectionTop": "list_worker_deployments",
+      "selectionResultTokens": 1430,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers/scripts/probe/deployments",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 92.1
+    },
+    {
+      "name": "get_worker_deployment",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 95,
+      "compactBytes": 432,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 199,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "which versions is one worker release serving",
+      "selectionRank": 1,
+      "selectionTop": "get_worker_deployment",
+      "selectionResultTokens": 1171,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers/scripts/probe/deployments/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 96.1
+    },
+    {
+      "name": "delete_worker_script",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 129,
+      "compactBytes": 581,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 224,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "take down a worker that is no longer used",
+      "selectionRank": 6,
+      "selectionTop": "bulk_get_kv_values",
+      "selectionResultTokens": 1239,
+      "hatchOutranked": true,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/workers/scripts/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "list_kv_namespaces",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 160,
+      "compactBytes": 655,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 399,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what kv namespaces exist in this account",
+      "selectionRank": 1,
+      "selectionTop": "list_kv_namespaces",
+      "selectionResultTokens": 1065,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 67.6
+    },
+    {
+      "name": "get_kv_namespace",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 82,
+      "compactBytes": 346,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 172,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "look up one kv namespace by id",
+      "selectionRank": 1,
+      "selectionTop": "get_kv_namespace",
+      "selectionResultTokens": 1039,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.1
+    },
+    {
+      "name": "create_kv_namespace",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 84,
+      "compactBytes": 372,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 175,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "make a new kv namespace called sessions",
+      "selectionRank": 2,
+      "selectionTop": "get_kv_namespace",
+      "selectionResultTokens": 1039,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.1
+    },
+    {
+      "name": "rename_kv_namespace",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 108,
+      "compactBytes": 486,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 215,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "give a kv namespace a different title",
+      "selectionRank": 3,
+      "selectionTop": "get_kv_namespace",
+      "selectionResultTokens": 1037,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "PUT /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "delete_kv_namespace",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 120,
+      "compactBytes": 530,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 197,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "destroy a kv namespace and everything in it",
+      "selectionRank": 4,
+      "selectionTop": "get_kv_namespace",
+      "selectionResultTokens": 1035,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 85.2
+    },
+    {
+      "name": "list_kv_keys",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 126,
+      "compactBytes": 532,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 280,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what kv keys are stored under a prefix",
+      "selectionRank": 1,
+      "selectionTop": "list_kv_keys",
+      "selectionResultTokens": 1115,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9/keys",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 92.7
+    },
+    {
+      "name": "bulk_get_kv_values",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 136,
+      "compactBytes": 572,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 294,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "read several kv values at once",
+      "selectionRank": 1,
+      "selectionTop": "bulk_get_kv_values",
+      "selectionResultTokens": 1065,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9/bulk/get",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "bulk_write_kv_values",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 151,
+      "compactBytes": 664,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 328,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "write many kv entries with expirations",
+      "selectionRank": 1,
+      "selectionTop": "bulk_write_kv_values",
+      "selectionResultTokens": 1080,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "PUT /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9/bulk",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "bulk_delete_kv_values",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 110,
+      "compactBytes": 478,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 247,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "remove a batch of kv keys",
+      "selectionRank": 3,
+      "selectionTop": "list_kv_keys",
+      "selectionResultTokens": 1035,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/storage/kv/namespaces/0a1b2c3d4e5f60718293a4b5c6d7e8f9/bulk/delete",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "list_r2_buckets",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 166,
+      "compactBytes": 679,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 395,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what r2 buckets does this account have",
+      "selectionRank": 1,
+      "selectionTop": "list_r2_buckets",
+      "selectionResultTokens": 1416,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 98.5
+    },
+    {
+      "name": "get_r2_bucket",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 149,
+      "compactBytes": 625,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 247,
+      "declaredOutputKeys": 5,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what region and storage class is one r2 bucket",
+      "selectionRank": 1,
+      "selectionTop": "get_r2_bucket",
+      "selectionResultTokens": 1405,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 95.2
+    },
+    {
+      "name": "create_r2_bucket",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 204,
+      "compactBytes": 834,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 317,
+      "declaredOutputKeys": 5,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "make a new r2 bucket in europe",
+      "selectionRank": 2,
+      "selectionTop": "get_r2_bucket",
+      "selectionResultTokens": 1426,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 95.2
+    },
+    {
+      "name": "update_r2_bucket",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 180,
+      "compactBytes": 782,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 290,
+      "declaredOutputKeys": 5,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "switch an r2 bucket to infrequent access storage",
+      "selectionRank": 3,
+      "selectionTop": "get_r2_bucket",
+      "selectionResultTokens": 1404,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "PATCH /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 95.2
+    },
+    {
+      "name": "delete_r2_bucket",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 146,
+      "compactBytes": 621,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 245,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "get rid of an empty r2 bucket",
+      "selectionRank": 2,
+      "selectionTop": "get_r2_bucket",
+      "selectionResultTokens": 1359,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "list_r2_objects",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 211,
+      "compactBytes": 901,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 437,
+      "declaredOutputKeys": 4,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what objects are stored under a prefix in this bucket",
+      "selectionRank": 1,
+      "selectionTop": "list_r2_objects",
+      "selectionResultTokens": 1437,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe/objects",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 88.4
+    },
+    {
+      "name": "delete_r2_object",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 149,
+      "compactBytes": 612,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 267,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "remove one stored object from a bucket by key",
+      "selectionRank": 1,
+      "selectionTop": "delete_r2_object",
+      "selectionResultTokens": 1384,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe/objects/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 91.8
+    },
+    {
+      "name": "get_r2_metrics",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 82,
+      "compactBytes": 362,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 155,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "how much data and how many objects are in r2",
+      "selectionRank": 5,
+      "selectionTop": "list_r2_objects",
+      "selectionResultTokens": 1517,
+      "hatchOutranked": true,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/metrics",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "get_r2_cors",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 108,
+      "compactBytes": 418,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 220,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what browser origins may fetch from this bucket",
+      "selectionRank": 1,
+      "selectionTop": "get_r2_cors",
+      "selectionResultTokens": 1490,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe/cors",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "set_r2_cors",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 139,
+      "compactBytes": 569,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 300,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "allow browser uploads from a new origin on this bucket",
+      "selectionRank": -1,
+      "selectionTop": "cloudflare_api_upload",
+      "selectionResultTokens": 1493,
+      "hatchOutranked": true,
+      "validCallAccepted": true,
+      "request": "PUT /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe/cors",
+      "noiseKeysReturned": 8,
+      "resultShape": "passthrough",
+      "resultReductionPercent": 0
+    },
+    {
+      "name": "delete_r2_cors",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 130,
+      "compactBytes": 529,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 226,
+      "declaredOutputKeys": 1,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "stop allowing any browser origin on this bucket",
+      "selectionRank": -1,
+      "selectionTop": "get_r2_cors",
+      "selectionResultTokens": 1363,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/r2/buckets/probe/cors",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 96.4
+    },
+    {
+      "name": "list_pages_projects",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 187,
+      "compactBytes": 802,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 468,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "what pages sites exist in this account",
+      "selectionRank": 1,
+      "selectionTop": "list_pages_projects",
+      "selectionResultTokens": 1173,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 72.1
+    },
+    {
+      "name": "get_pages_project",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 96,
+      "compactBytes": 445,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 220,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show the build command and output directory for a pages site",
+      "selectionRank": 2,
+      "selectionTop": "purge_pages_build_cache",
+      "selectionResultTokens": 1131,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 95.2
+    },
+    {
+      "name": "list_pages_deployments",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 156,
+      "compactBytes": 654,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 402,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "pageSizeOverMaximum",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "show recent pages builds and their branches",
+      "selectionRank": 7,
+      "selectionTop": "list_pages_projects",
+      "selectionResultTokens": 1131,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/deployments",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 72.3
+    },
+    {
+      "name": "get_pages_deployment",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 109,
+      "compactBytes": 490,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 249,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "why did one pages build fail, show its stages",
+      "selectionRank": 1,
+      "selectionTop": "get_pages_deployment",
+      "selectionResultTokens": 1139,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/deployments/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 96.1
+    },
+    {
+      "name": "retry_pages_deployment",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 107,
+      "compactBytes": 513,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 203,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "run that failed pages build again",
+      "selectionRank": 2,
+      "selectionTop": "purge_pages_build_cache",
+      "selectionResultTokens": 1129,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/deployments/0a1b2c3d4e5f60718293a4b5c6d7e8f9/retry",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 96.1
+    },
+    {
+      "name": "rollback_pages_deployment",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 114,
+      "compactBytes": 551,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 211,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "put the previous pages build back into production",
+      "selectionRank": 2,
+      "selectionTop": "purge_pages_build_cache",
+      "selectionResultTokens": 1263,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/deployments/0a1b2c3d4e5f60718293a4b5c6d7e8f9/rollback",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 96.1
+    },
+    {
+      "name": "delete_pages_deployment",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 129,
+      "compactBytes": 594,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 212,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "delete an old pages build and its url",
+      "selectionRank": 1,
+      "selectionTop": "delete_pages_deployment",
+      "selectionResultTokens": 1054,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/deployments/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 85
+    },
+    {
+      "name": "list_pages_domains",
+      "role": "named",
+      "readOnly": true,
+      "compactTokens": 129,
+      "compactBytes": 560,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 300,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "which custom domains are attached to a pages site",
+      "selectionRank": 1,
+      "selectionTop": "list_pages_domains",
+      "selectionResultTokens": 1118,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "GET /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/domains",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 84.4
+    },
+    {
+      "name": "add_pages_domain",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 103,
+      "compactBytes": 472,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 202,
+      "declaredOutputKeys": 0,
+      "openOutput": true,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "attach docs.example.com to a pages site",
+      "selectionRank": 1,
+      "selectionTop": "add_pages_domain",
+      "selectionResultTokens": 1116,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/domains",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 87.5
+    },
+    {
+      "name": "delete_pages_domain",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 118,
+      "compactBytes": 529,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 202,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "detach a custom domain from a pages site",
+      "selectionRank": 1,
+      "selectionTop": "delete_pages_domain",
+      "selectionResultTokens": 1118,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/domains/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 92.5
+    },
+    {
+      "name": "purge_pages_build_cache",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 119,
+      "compactBytes": 540,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 187,
+      "declaredOutputKeys": 1,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "force the next pages build to rebuild dependencies from scratch",
+      "selectionRank": 1,
+      "selectionTop": "purge_pages_build_cache",
+      "selectionResultTokens": 1134,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe/purge_build_cache",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 96.6
+    },
+    {
+      "name": "delete_pages_project",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 118,
+      "compactBytes": 542,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 191,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "remove a pages site entirely",
+      "selectionRank": -1,
+      "selectionTop": "list_pages_projects",
+      "selectionResultTokens": 1139,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/accounts/0a1b2c3d4e5f60718293a4b5c6d7e8f9/pages/projects/probe",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 91.3
+    },
+    {
+      "name": "create_dns_record",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 376,
+      "compactBytes": 1283,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 651,
+      "declaredOutputKeys": 11,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "add a txt record for domain verification",
+      "selectionRank": 2,
+      "selectionTop": "add_pages_domain",
+      "selectionResultTokens": 2029,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/dns_records",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "update_dns_record",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 371,
+      "compactBytes": 1325,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 599,
+      "declaredOutputKeys": 11,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "unknownEnumValue",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "point an existing a record at a new ip address",
+      "selectionRank": 2,
+      "selectionTop": "create_dns_record",
+      "selectionResultTokens": 2032,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "PATCH /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/dns_records/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "projected",
+      "resultReductionPercent": 91.6
+    },
+    {
+      "name": "delete_dns_record",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 122,
+      "compactBytes": 528,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 194,
+      "declaredOutputKeys": 2,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "remove a stale cname record",
+      "selectionRank": 4,
+      "selectionTop": "create_dns_record",
+      "selectionResultTokens": 1944,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "DELETE /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/dns_records/0a1b2c3d4e5f60718293a4b5c6d7e8f9",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 85.9
+    },
+    {
+      "name": "purge_cache",
+      "role": "named",
+      "readOnly": false,
+      "compactTokens": 167,
+      "compactBytes": 702,
+      "schemaTruncated": false,
+      "jsonDefinitionTokens": 450,
+      "declaredOutputKeys": 3,
+      "openOutput": false,
+      "guards": [
+        {
+          "kind": "unknownProperty",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        },
+        {
+          "kind": "missingRequired",
+          "refusedLocally": true,
+          "code": "invalid_args"
+        }
+      ],
+      "guardMisses": 0,
+      "query": "clear cached copies of these urls at the edge",
+      "selectionRank": 2,
+      "selectionTop": "purge_pages_build_cache",
+      "selectionResultTokens": 876,
+      "hatchOutranked": false,
+      "validCallAccepted": true,
+      "request": "POST /client/v4/zones/0a1b2c3d4e5f60718293a4b5c6d7e8f9/purge_cache",
+      "noiseKeysReturned": 0,
+      "resultShape": "fixed",
+      "resultReductionPercent": 82.9
+    }
+  ]
+}

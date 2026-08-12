@@ -5,6 +5,7 @@
   },
   "include": [
     "cloudflare-fixture.ts",
+    "cloudflare-surface-report.ts",
     "eval-tracing.ts",
     "performance-server.ts",
     "reference-connection-server.ts",

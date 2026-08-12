@@ -2982,30 +2982,17 @@ function buildTools(
         return { deleted: true, objectKey };
       },
     },
-    {
-      name: "get_r2_metrics",
-      description:
-        "Get account-level R2 object-count and storage-size metrics split by storage class and publication state.",
-      annotations: readOnly,
-      inputSchema: {
-        type: "object",
-        properties: { accountId: scopeProperty("accountId", scope.accountId) },
-        required: scopeRequired("accountId", scope.accountId),
-        additionalProperties: false,
-      },
-      outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
-      handler: async (args: JsonRecord, ctx) => {
-        const { result } = await callCloudflare(
-          base,
-          {
-            method: "GET",
-            path: `/accounts/${encodePathSegment(accountArg(args))}/r2/metrics`,
-          },
-          ctx,
-        );
-        return asRecord(result);
-      },
-    },
+    // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` here on purpose.
+    // The #350 measurement found `get_r2_metrics` an unprojected,
+    // output-schema-less wrapper around a path, and `set_r2_cors` carrying a
+    // free-form `additionalProperties: true` rule body, so its schema did not
+    // validate the part of the call that actually fails. `delete_r2_cors`
+    // measured clean — a fixed `{deleted}` confirmation behind a closed output
+    // schema — and went anyway, as the other half of one policy pair: with the
+    // write unnamed, a named delete would change a CORS policy through a
+    // different route than setting it does. Reading a policy is still named;
+    // changing one takes the approval-gated raw route, exactly as
+    // structured-data DNS records already do.
     {
       name: "get_r2_cors",
       description: "Get the browser CORS rules configured on an R2 bucket.",
@@ -3032,75 +3019,6 @@ function buildTools(
           ctx,
         );
         return asRecord(result);
-      },
-    },
-    {
-      name: "set_r2_cors",
-      description:
-        "Replace an R2 bucket's CORS policy. Supply the complete desired rule list; omitted existing rules are removed.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
-        type: "object",
-        properties: {
-          accountId: scopeProperty("accountId", scope.accountId),
-          bucketName: R2_BUCKET_NAME_PROPERTY,
-          jurisdiction: R2_JURISDICTION_PROPERTY,
-          rules: {
-            type: "array",
-            maxItems: 100,
-            description:
-              "Complete CORS rule list using Cloudflare fields: allowed.methods, allowed.origins, optional allowed.headers, id, exposeHeaders, and maxAgeSeconds.",
-            items: { type: "object", additionalProperties: true },
-          },
-        },
-        required: [...scopeRequired("accountId", scope.accountId), "bucketName", "rules"],
-        additionalProperties: false,
-      },
-      outputSchema: OPEN_OBJECT_OUTPUT_SCHEMA,
-      handler: async (args: JsonRecord, ctx) => {
-        const { result } = await callCloudflare(
-          base,
-          {
-            method: "PUT",
-            path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/cors`,
-            headers: r2Headers(args),
-            body: { rules: args["rules"] },
-          },
-          ctx,
-        );
-        return asRecord(result);
-      },
-    },
-    {
-      name: "delete_r2_cors",
-      description: "Remove the complete CORS policy from an R2 bucket.",
-      annotations: { readOnlyHint: false, destructiveHint: true },
-      inputSchema: {
-        type: "object",
-        properties: {
-          accountId: scopeProperty("accountId", scope.accountId),
-          bucketName: R2_BUCKET_NAME_PROPERTY,
-          jurisdiction: R2_JURISDICTION_PROPERTY,
-        },
-        required: [...scopeRequired("accountId", scope.accountId), "bucketName"],
-        additionalProperties: false,
-      },
-      outputSchema: {
-        type: "object",
-        properties: { deleted: { type: "boolean" } },
-        required: ["deleted"],
-      },
-      handler: async (args: JsonRecord, ctx) => {
-        await callCloudflare(
-          base,
-          {
-            method: "DELETE",
-            path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/cors`,
-            headers: r2Headers(args),
-          },
-          ctx,
-        );
-        return { deleted: true };
       },
     },
     {
@@ -3880,6 +3798,7 @@ Account purpose: ${purpose}
 - Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use \`cloudflare_api_get\` for GET, \`cloudflare_api_mutate\` for JSON POST/PUT/PATCH/DELETE, or \`cloudflare_api_upload\` for raw and multipart content. Raw tools take a path below \`/client/v4\`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use \`headers\` for endpoint-specific controls such as \`cf-r2-jurisdiction\`, ETags, and object metadata; authentication, host, content type, and request framing remain connector-owned.
 - The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The configured Cloudflare credential remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in \`path\` are refused locally.
 - Useful raw paths include \`/accounts/{accountId}/images/v1\` (Images), \`/accounts/{accountId}/stream\` (Stream), \`/zones/{zoneId}/email/routing/rules\` (Email Routing), \`/accounts/{accountId}/d1/database\` (D1), and \`/accounts/{accountId}/queues\` (Queues). On GET, use \`responseType: "text"\` or \`"base64"\` for non-JSON content. Direct-upload endpoints can issue upload URLs; \`cloudflare_api_upload\` can also send explicit text, base64 bytes, or multipart fields/files.
+- Two R2 areas are deliberately unnamed. Read a bucket's CORS policy with \`get_r2_cors\`, then change it with \`cloudflare_api_mutate\` — \`PUT\` or \`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors\`, rule fields per Cloudflare's reference — and read account storage totals with \`cloudflare_api_get\` at \`/accounts/{accountId}/r2/metrics\`.
 - Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_zone_rulesets\`, \`list_r2_buckets\`, \`list_r2_objects\`, and \`list_kv_keys\` instead return \`nextCursor\`; \`list_worker_scripts\` is unpaginated.
 - Results are projected to the fields that identify and describe a resource. Pass \`raw: true\` on a read when you genuinely need a field the projection drops.
 - ${authenticationLine}

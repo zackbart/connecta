@@ -12,7 +12,7 @@ deployment can still refuse to boot, rather than discovered by an agent at
 unenforceable schema is gone, and with it the `strictValidation` option that
 existed only to turn it off.
 
-This breaks `api()` authors, and only `api()` authors. Migration is
+That construction contract breaks `api()` authors and nobody else. Migration is
 mechanical: give every tool a non-empty `description` and an explicit
 `annotations.readOnlyHint` — `true` for a read, `false` for work that should
 cross `call_destructive_tool` — then delete `strictValidation`, which is now
@@ -22,6 +22,24 @@ Hosted-MCP proxies are untouched: `remoteMcp()` relays a downstream's names,
 descriptions, schemas, and annotations as they arrive, and an unannotated or
 contradictory downstream tool still fails closed onto `call_destructive_tool`.
 Connecta infers read-only behavior from nothing, anywhere.
+
+The maintained Cloudflare connection ships the second break. Its named surface
+was measured against its own escape hatches instead of being assumed to beat
+them, and three tools came out. Every named tool now carries a recorded `keep`,
+`prune`, or `improve` verdict backed by per-tool numbers: catalog tokens, rank
+in a real `search_tools` call for a representative operator request, whether
+classes of argument mistake are refused before the round trip, and whether the
+handler projects Cloudflare's object or hands it back whole. The evidence, the
+tasks, and the reason for every removal — including the one removed for pair
+symmetry rather than for a measured defect — are in
+[`eval/current-version/results/issue-350-evidence.md`](./eval/current-version/results/issue-350-evidence.md).
+**A deployment that calls `set_r2_cors`, `delete_r2_cors`, or `get_r2_metrics`
+has to change.** No capability is lost: `get_r2_cors` still reads a bucket's
+policy, and the usage guide now names the replacement routes —
+`cloudflare_api_mutate` at
+`PUT`/`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors`, and
+`cloudflare_api_get` at `/accounts/{accountId}/r2/metrics`. Every other
+Cloudflare tool, argument, projection, and annotation is unchanged.
 
 The repository now models exactly the two deployments it actually has: a Node
 one and a Worker one. `connecta init` still copies the same template, but that
@@ -46,6 +64,12 @@ runtime surface moved.
   builds and runs the initialized deployment through Compose and points
   `connecta doctor` at it; it fails rather than skips when Docker is missing
   in CI (#344).
+- **A deterministic named-surface measurement lane.**
+  `npm --prefix eval/current-version run report:cloudflare-surface` measures the
+  maintained Cloudflare connection one tool at a time and writes a JSON and
+  Markdown artifact. It needs no model, no network, and no credential: the real
+  constructor, schemas, validation path, handlers, and catalog service run, and
+  only `fetch` is a probe that records the request (#350).
 
 ### Changed
 
@@ -66,6 +90,15 @@ runtime surface moved.
 - **`ApiOptions.strictValidation`.** Fail-closed schema handling is the only
   behavior, so the opt-in has nothing left to switch. Delete the option;
   nothing else changes (#340).
+- **Three Cloudflare named tools; the connection ships 52, down from 55.**
+  `set_r2_cors` declared a free-form rule body, so its schema validated the ids
+  and waved through the part of the call that fails, and `get_r2_metrics` put
+  one account id into a path and returned the response unprojected — both
+  measurably weaker than the raw call that replaces them. `delete_r2_cors`
+  measured clean and went anyway, to keep the CORS write pair together: with
+  the write unnamed, a named delete would leave half of policy management on
+  each route. All three are one raw call away, and the guide says which one
+  (#350).
 - **`examples/node` and `examples/docker`.** Both were diffs from the
   template. `examples/` is the Worker deployment now, and the root
   `.dockerignore` that existed only for the repository-context Docker build

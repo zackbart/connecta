@@ -384,6 +384,35 @@ JSON; they are regeneration output, not evidence worth versioning — cite the
 command that produces them instead. Per-run detail is serialized once, at the
 artifact's top-level `runs`; `cases[]` carries aggregates only.
 
+### Named-surface weight, for a hand-written provider
+
+`report:cloudflare-surface` answers a different question from every lane above:
+not "did the agent succeed?" but "does this named tool deserve to exist?" It
+measures the maintained Cloudflare connection one tool at a time — compact
+catalog tokens, rank in a real `search_tools` call for a representative
+operator request, whether four classes of argument mistake are refused before
+the round trip, and whether the handler projects the provider's object or hands
+it back whole:
+
+```sh
+npm --prefix eval/current-version run report:cloudflare-surface
+```
+
+It needs no model, no network, and no credential. The real constructor,
+schemas, validation path, handlers, and `CatalogService` all run; only `fetch`
+is a probe that records the request. Because it is deterministic, two runs of
+the same surface produce the same numbers, which is the point — this lane
+exists to be re-run after the surface changes.
+
+The verdicts it produced for
+[#350](https://github.com/zackbart/connecta/issues/350) — 30 keep, 18 improve,
+3 prune — are in
+[`results/issue-350-evidence.md`](./results/issue-350-evidence.md), beside the
+pre- and post-change artifacts. It is Cloudflare-shaped today — another
+hand-written provider would need its own task file and its own constructor here
+— and it refuses to run when a named tool has no representative task, because a
+tool with no task gets no verdict.
+
 ### Tool-lookup and context-noise canary
 
 The focused lookup lane repeats natural-language discovery tasks against

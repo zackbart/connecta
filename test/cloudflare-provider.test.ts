@@ -225,7 +225,6 @@ describe("cloudflare() tool surface", () => {
       "delete_pages_domain",
       "delete_pages_project",
       "delete_r2_bucket",
-      "delete_r2_cors",
       "delete_r2_object",
       "delete_worker_script",
       "get_dns_record",
@@ -234,7 +233,6 @@ describe("cloudflare() tool surface", () => {
       "get_pages_project",
       "get_r2_bucket",
       "get_r2_cors",
-      "get_r2_metrics",
       "get_worker_deployment",
       "get_worker_settings",
       "get_zone",
@@ -259,7 +257,6 @@ describe("cloudflare() tool surface", () => {
       "rename_kv_namespace",
       "retry_pages_deployment",
       "rollback_pages_deployment",
-      "set_r2_cors",
       "update_dns_record",
       "update_r2_bucket",
       "update_zone_setting",
@@ -289,7 +286,6 @@ describe("cloudflare() tool surface", () => {
       "list_r2_buckets",
       "get_r2_bucket",
       "list_r2_objects",
-      "get_r2_metrics",
       "get_r2_cors",
       "list_pages_projects",
       "get_pages_project",
@@ -329,8 +325,6 @@ describe("cloudflare() tool surface", () => {
       "update_r2_bucket",
       "delete_r2_bucket",
       "delete_r2_object",
-      "set_r2_cors",
-      "delete_r2_cors",
       "rollback_pages_deployment",
       "delete_pages_deployment",
       "delete_pages_domain",
@@ -345,6 +339,41 @@ describe("cloudflare() tool surface", () => {
         destructiveHint: true,
       });
     }
+  });
+
+  it("leaves R2 metrics and CORS writes to the raw tools", async () => {
+    // #350 measured all three as unprojected wrappers around a path, and
+    // set_r2_cors accepted a rule body it never validated. A removal is only
+    // honest if the capability survives and the guide says where it went, so
+    // this pins the absence, the surviving read, the guide line, and the
+    // approval-gated route an operator now takes instead.
+    const tools = await connection().listTools(contextWithToken());
+    const names = tools.map((tool) => tool.name);
+    for (const removed of ["get_r2_metrics", "set_r2_cors", "delete_r2_cors"]) {
+      expect(names, `${removed} is measured out of the named surface`).not.toContain(
+        removed,
+      );
+    }
+    expect(names).toContain("get_r2_cors");
+
+    const guide = connection().usageGuide as string;
+    expect(guide).toContain("/accounts/{accountId}/r2/buckets/{bucketName}/cors");
+    expect(guide).toContain("/accounts/{accountId}/r2/metrics");
+
+    stubFetch({ body: { success: true, result: null } });
+    await connection().callTool(
+      "cloudflare_api_mutate",
+      {
+        method: "PUT",
+        path: "/accounts/acct-1/r2/buckets/assets/cors",
+        body: { rules: [{ allowed: { methods: ["GET"], origins: ["https://a.test"] } }] },
+      },
+      contextWithToken(),
+    );
+    expect(calls[0]!.init.method).toBe("PUT");
+    expect(urlOf(0).pathname).toBe(
+      "/client/v4/accounts/acct-1/r2/buckets/assets/cors",
+    );
   });
 
   it("hand-writes a complete schema for every tool", async () => {
