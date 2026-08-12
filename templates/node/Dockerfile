@@ -9,10 +9,12 @@ WORKDIR /app
 
 # `connecta init` deliberately leaves no lockfile — it rewrites the Connecta
 # version pin, and a lockfile shipped in the template would already disagree
-# with it. The first build resolves the pin and `npm install` writes the
-# lockfile; commit that file and every later build takes the reproducible
-# `npm ci` path instead. Dev dependencies stay in: tsx runs src/index.ts
-# directly, so the deployment you review is the deployment that runs.
+# with it. Without one the build resolves the pin itself, which is fine but not
+# reproducible. Run `npm install` on the host and commit the `package-lock.json`
+# it writes: the build context then carries it and every later build takes the
+# `npm ci` path. A lockfile written inside this layer stays inside the image.
+# Dev dependencies stay in: tsx runs src/index.ts directly, so the deployment
+# you review is the deployment that runs.
 COPY package.json package-lock.json* ./
 RUN if [ -f package-lock.json ]; then \
       npm ci --include=dev; \

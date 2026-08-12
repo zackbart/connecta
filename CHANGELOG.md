@@ -71,6 +71,8 @@ runtime surface moved.
   `.dockerignore` that existed only for the repository-context Docker build
   went with them (#344).
 
+## 0.15.1 — 2026-08-12
+
 The Cloudflare connection now supports legacy user-scoped Global API Keys as
 an explicit authentication mode. Scoped API tokens remain the default. The
 three guarded raw tools still cover the full v4 path space without adding one

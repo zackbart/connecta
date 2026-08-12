@@ -27,9 +27,11 @@ the named volume `connecta-state`, mounted at `/data`. `docker compose down`
 stops the service and keeps state; `down -v` wipes it. `/health` is always
 open, so the container's health probe never carries the bearer token.
 
-The first build has no lockfile to work from and resolves the pinned Connecta
-version itself. Commit the `package-lock.json` that `npm install` writes and
-every later build takes the reproducible `npm ci` path.
+A build with no lockfile in the context resolves the pinned Connecta version
+itself, and a lockfile npm writes inside the image never reaches this project.
+So commit the `package-lock.json` that the `npm install` above wrote on this
+machine: from then on the build context carries it and every build takes the
+reproducible `npm ci` path.
 
 ## Deployment contract
 
