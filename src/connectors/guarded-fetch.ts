@@ -278,10 +278,13 @@ async function drain(
  * is answered as empty without touching the response at all. Otherwise, when
  * the runtime hands back a readable body — every real response on Node and on
  * Workers — the ceiling is enforced *while* reading, so an oversized payload
- * is abandoned rather than buffered. When it does not (a hand-built stand-in),
- * there is nothing to meter, so the response's own accessors run and the
- * ceiling is checked against what came back. That last path is a weaker
- * guarantee and says so; it is not the path a provider takes in production.
+ * is abandoned rather than buffered. When it does not, there is nothing to
+ * meter mid-flight: `bytes()` and `text()` read the body whole and check the
+ * ceiling against what came back, and `json()` — with no bytes of its own to
+ * count — takes the stand-in at its word. That last path is the weaker
+ * guarantee and says so, but a real `fetch` Response with a body always
+ * streams, so it is not a path a provider takes in production; it is what a
+ * hand-built test double gets.
  */
 function boundedResponse(
   provider: string,
@@ -318,15 +321,18 @@ function boundedResponse(
     bytes,
     async text() {
       if (stream) return decoder.decode(await bytes());
-      const text = await response.text();
-      const size = encoder.encode(text).length;
+      const body = await response.text();
+      const size = encoder.encode(body).length;
       if (size > limit) throw oversized(provider, limit, `${size} bytes`);
-      return text;
+      return body;
     },
     async json() {
+      // No stream means no bytes to count: a stand-in that answers `json()`
+      // directly is taken at its word, which is the one accessor on the one
+      // path where the ceiling cannot be applied.
       if (!stream) return await response.json();
-      const text = decoder.decode(await bytes());
-      return text.trim() === "" ? undefined : JSON.parse(text);
+      const body = decoder.decode(await bytes());
+      return body.trim() === "" ? undefined : JSON.parse(body);
     },
   };
 }

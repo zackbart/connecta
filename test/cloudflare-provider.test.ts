@@ -1439,6 +1439,29 @@ describe("cloudflare() typed failures", () => {
     expect(error.code).toBe("unavailable");
   });
 
+  it("reports an oversized 2xx body as the ceiling failure it is", async () => {
+    // A body past the ceiling fails from inside the same `json()` a gateway
+    // page fails from, and the two are not the same failure: this one is not
+    // a retryable "non-JSON body", it is a non-retryable refusal to read a
+    // response this connection was never going to return whole.
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({
+            success: true,
+            result: { blob: "x".repeat(9 * 1024 * 1024) },
+          }),
+        ),
+    ) as unknown as typeof fetch;
+    const error = (await connection()
+      .callTool("list_zones", {}, contextWithToken())
+      .catch((thrown: unknown) => thrown)) as ConnectorCallError;
+    expect(error).toBeInstanceOf(ConnectorCallError);
+    expect(error.code).toBe("connector_call_failed");
+    expect(error.retryable).toBe(false);
+    expect(error.message).toContain("response ceiling");
+  });
+
   it("treats success: false with a 200 as a failure", async () => {
     const error = await failure({
       status: 200,

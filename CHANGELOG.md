@@ -54,6 +54,24 @@ call-admission budget. Both failures are loud — one at construction, one as an
 absent ceiling an operator can restore in one option. Everything else is a
 smaller catalog, a better summary, and a guide that says what it always meant.
 
+Underneath all of that, the two hand-written providers stopped each keeping
+their own copy of the same transport safety machinery. Cloudflare and Notion
+now send every request through one guarded transport that owns URL
+confinement, redirect refusal, bounded response reads, and network-failure
+normalization, and owns no opinion at all about what a status code means.
+
+Consolidating it was not free, and three of the differences are visible from
+outside. A 3xx from either provider is refused now rather than followed, which
+is what both used to do by default — a redirect is an instruction to re-send
+the connector's credential to whatever origin `Location` names, and neither
+API has a legitimate one to send. Both providers now cap what they will read,
+at 8 MiB for Cloudflare and 4 MiB for Notion, so a `cloudflare_api_get`
+downloading an R2 object or a Worker script larger than 8 MiB fails instead of
+returning it. And `cloudflare()`'s optional `baseUrl` is checked where it is
+written: a non-loopback plain-http origin, URL-embedded credentials, or a
+query or fragment throws at construction, so a deployment pointed at an http
+proxy stops booting rather than sending it a token.
+
 The repository now models exactly the two deployments it actually has: a Node
 one and a Worker one. `connecta init` still copies the same template, but that
 template now carries its own `Dockerfile` and `docker-compose.yml`, so the
@@ -63,13 +81,6 @@ Node scaffolds that sat beside it — `examples/node` and `examples/docker`, the
 latter of which built the Connecta repository rather than a consumer project —
 are gone. Existing deployments can ignore all of this; nothing in the package's
 runtime surface moved.
-
-Underneath all of it, the two hand-written providers stopped each keeping their
-own copy of the same transport safety machinery. Nothing about their behavior
-changed — their existing suites are the proof, unmodified — but Cloudflare and
-Notion now send every request through one guarded transport that owns URL
-confinement, redirect refusal, bounded response reads, and network-failure
-normalization, and owns no opinion at all about what a status code means.
 
 ### Added
 
@@ -155,6 +166,22 @@ normalization, and owns no opinion at all about what a status code means.
   property descriptions were cut so `cloudflare_api_upload` and
   `query_data_source` render inside the 1,024-byte compact budget instead of
   degrading and costing a describe round trip (#342).
+- **Cloudflare and Notion never follow a redirect.** Both used `fetch`'s
+  default `redirect: "follow"` and now send `redirect: "manual"`; a 3xx fails
+  as non-retryable `connector_call_failed` instead of re-sending the
+  connector's credential to whatever origin the `Location` names (#341).
+- **Cloudflare and Notion bound the response they will read.** 8 MiB and
+  4 MiB respectively, enforced against a declared `Content-Length` before the
+  first byte and again while the body streams. Both are ceilings on absurdity
+  rather than quotas — anything near them was already past whatever
+  `maxResultBytes` the deployment set — but a `cloudflare_api_get` reading an
+  R2 object or Worker script past 8 MiB now fails as non-retryable instead of
+  returning it (#341).
+- **`cloudflare()` checks its `baseUrl` at construction.** A non-loopback
+  plain-http origin, URL-embedded credentials, or a query or fragment throws
+  where the connector is written rather than on the first call. A deployment
+  overriding `baseUrl` with an http proxy must move it to https or bind it to
+  loopback; the default Cloudflare base is unaffected (#341).
 
 ### Fixed
 

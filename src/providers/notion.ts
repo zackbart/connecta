@@ -259,7 +259,11 @@ async function notionRequest(
       // Notion answers a delete with an empty body and a gateway answers with
       // HTML; neither is a payload, and neither is worth a different failure.
       payload = (await response.json()) as Record<string, unknown> | undefined;
-    } catch {
+    } catch (cause) {
+      // A transport failure is not a parse failure. The connector's byte
+      // ceiling fires from inside this read, and swallowing it would report an
+      // oversized response as an empty success on a 2xx.
+      if (cause instanceof ConnectorCallError) throw cause;
       payload = undefined;
     }
     if (!response.ok) {

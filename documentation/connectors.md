@@ -189,11 +189,22 @@ into a result or a typed failure. That split is not fastidiousness. Notion's
 cannot fix it — while Cloudflare's means a token scope, and the two want
 opposite next moves. A helper that guessed would be wrong for one of them.
 
-Cloudflare and Notion both run on it, with their existing suites unchanged as
-the proof. It is **not exported this release**: the two migrations proved the
-shape preserves behavior for connectors that already had this machinery, not
-that it is the right shape for an author starting from nothing, and an
-unexported symbol costs nothing to reshape while a published one is a promise.
+Cloudflare and Notion both run on it. Their existing suites carried over
+unchanged, which proves the migration kept the behavior those suites cover —
+not that nothing changed. Three things did, and the changelog names them: a
+3xx is refused where both providers used to follow it, both now fail past
+their byte ceiling, and `cloudflare()`'s `baseUrl` is validated at
+construction. Each suite gained one test for the ceiling, because the one
+guard the helper was written to add is the one a provider's own mapper can
+most easily disarm: a bare `catch` around `response.json()` swallows the
+transport's refusal along with a parse error, and turns a response nobody was
+allowed to read into an empty success. A mapper re-throws
+`ConnectorCallError` and swallows only what it recognizes.
+
+It is **not exported this release**: the two migrations proved the shape
+preserves behavior for connectors that already had this machinery, not that it
+is the right shape for an author starting from nothing, and an unexported
+symbol costs nothing to reshape while a published one is a promise.
 The provider audit ([#342](https://github.com/zackbart/connecta/issues/342))
 supplies the third caller that would settle it.
 

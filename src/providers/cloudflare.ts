@@ -447,6 +447,12 @@ async function callCloudflare(
     try {
       envelope = (await response.json()) as CloudflareEnvelope | undefined;
     } catch (cause) {
+      // A transport failure is not a parse failure. The connector's byte
+      // ceiling fires from inside this read and is deliberately non-retryable;
+      // routing it through the branch below would relabel it as a retryable
+      // `unavailable` and tell an agent to retry a response that will exceed
+      // the ceiling every time.
+      if (cause instanceof ConnectorCallError) throw cause;
       parseFailure = cause;
     }
     if (envelope === undefined) {
@@ -503,7 +509,10 @@ async function callCloudflareContent(
           | undefined;
         if (envelope && Array.isArray(envelope.errors)) errors = envelope.errors;
       } catch {
-        // A raw or gateway error body has no structured detail to preserve.
+        // A raw or gateway error body has no structured detail to preserve,
+        // and one past the byte ceiling has none worth reporting over the
+        // status that already failed this call. Either way the throw below
+        // classifies the status, so nothing is swallowed into a success.
       }
       throw failureFor(response.status, response.headers, errors);
     }

@@ -1075,6 +1075,24 @@ describe("notion() error mapping", () => {
     expect(error.code).toBe("unavailable");
     expect(error.message).toContain("HTTP 502");
   });
+
+  it("fails an oversized 2xx body instead of reporting an empty success", async () => {
+    // The transport's byte ceiling fires from inside the same `json()` the
+    // mapper tolerates a parse failure from. Reported as a success with no
+    // payload, an agent would read "this page has no properties" out of a
+    // response nobody was allowed to read.
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ blob: "x".repeat(5 * 1024 * 1024) })),
+    ) as unknown as typeof fetch;
+    const error = await call(build(), "get_self", {}).catch(
+      (thrown: any) => thrown,
+    );
+    expect(error).toBeInstanceOf(ConnectorCallError);
+    expect(error.code).toBe("connector_call_failed");
+    expect(error.retryable).toBe(false);
+    expect(error.message).toContain("response ceiling");
+  });
 });
 
 describe("notion() writes", () => {
