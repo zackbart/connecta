@@ -46,8 +46,9 @@ the points at which Connecta's own surface starts dropping characters on the
 floor. From `src/catalog.ts` and `src/catalog-service.ts`:
 
 - **A tool description is cut to 160 characters in `search_tools`** and to 240
-  in the describe path, both with a trailing `…`, unless the caller asks for
-  full descriptions. Prose past those points is written for nobody.
+  in the describe path, both with a trailing `…`, unless the caller passes
+  `fullDescriptions: true`. Prose past those points reaches an agent only when
+  it pays for the expansion.
 - **A compact schema renders into at most 1,024 UTF-8 bytes**, and any single
   enum node into at most 256. Past either cap the renderer keeps what fits and
   degrades the rest — a prefix of the enum plus `unknown`, a required-first
@@ -104,8 +105,9 @@ constraint, the disqualifier, the handoff — fits in the remaining 80 character
 (240 total, roughly 60 tokens). Detail that does not fit belongs in a property
 description or the usage guide, both of which are fetched only when needed.
 
-*Why:* search cuts at 160 and describe at 240, so a longer description is
-paid for in authoring effort and delivered to no one. *Cost:* discovery tokens.
+*Why:* search cuts at 160 and describe at 240 unless the caller passes
+`fullDescriptions: true`, so anything past the budget is delivered only to an
+agent that spends a second, larger read to get it. *Cost:* discovery tokens.
 
 ### H4 — The description names the disqualifier, not the pitch
 
@@ -154,8 +156,11 @@ tokens.
 
 Declared outputs are what produce `outputKeys` and the `fields` projection's
 `availableFields`, and they let a program reduce a result without first
-fetching one to look at. Connecta measured undeclared output schemas at 0/30
-and 3/30 on real deployments; a maintained provider has no excuse to join them.
+fetching one to look at. Connecta measured *declared* output schemas at 0 of 30
+tools on one real deployment and 3 of 30 on another
+([#282](https://github.com/zackbart/connecta/issues/282)) — nearly every tool an
+agent meets is a shape it can only learn by calling. A maintained provider has
+no excuse to join that majority.
 
 *Why:* an agent that knows the shape projects before it reads. *Cost:* result
 size.
@@ -298,9 +303,11 @@ hosted catalogs vary by plan and feature flags, so a classified name a
 workspace never returns costs nothing while an unclassified new one fails
 closed onto `call_destructive_tool`. The classification fills in downstream
 silence and otherwise preserves explicit annotations, with the single
-fail-closed exception the ethos records — a release-reviewed destructive
-verdict outranks a contradictory `readOnlyHint: true`. An additive write leaves
-`destructiveHint` unset.
+fail-closed exception the [ethos](../ethos.md) accepted-prebuilt row records
+([#315](https://github.com/zackbart/connecta/issues/315)) — a release-reviewed
+destructive verdict outranks a contradictory `readOnlyHint: true`, because that
+release independently established that the tool mutates existing state. An
+additive write leaves `destructiveHint` unset.
 
 *Why:* the fail-closed read-only invariant is not negotiable, and inflated
 destructive copy trains humans to approve without reading. *Cost:* wrong-tool
@@ -347,7 +354,43 @@ route.
 *Why:* one route back from an expired credential is what keeps a failed call
 from becoming an abandoned task. *Cost:* wrong-tool selection.
 
-### P10 — Declare an admission budget only when the provider documents a number
+### P10 — There is no credential test; the equivalent check happens at construction
+
+A proxy declares no operator credential slot and implements neither
+`testCredential` nor `testCredentials`. `remoteMcp()` has no `credential`
+option, and neither shape of proxy credential is vault-managed: OAuth lives in
+connector-scoped storage and is exercised by the authorization flow itself,
+while a headless key arrives as deployment configuration in `headers`, so there
+is nothing for the operator credentials page to hold or test. H12's guarantee is
+still owed, and a proxy pays it in two other places: construction throws when a
+recognizable credential contradicts the declared mode (P4), and a dead or
+revoked credential fails loudly at use as `auth_required` with the
+`authorize_connector` route attached (P9). Connecta never probes a downstream to
+see whether a credential is still alive — that shape is `removed` in the ethos
+([#179](https://github.com/zackbart/connecta/issues/179)). A provider that later
+does take a vault-managed secret inherits H12 whole.
+
+*Why:* an unasked-for liveness probe spends a call on every deployment to answer
+a question only a misconfigured one has. *Cost:* result size.
+
+### P11 — Connecta classifies the transport; the downstream owns the tool error
+
+Connecta maps what it can see from outside the tool: an authorization failure to
+`auth_required`, a session or scope teardown, a timeout, and a capability the
+proxy will not relay (`input_required`, task-required execution) to an explicit
+refusal that says so. A tool-level failure the downstream returns — a validation
+complaint, a not-found, a plan restriction — is passed back as it arrived. The
+proxy does not read downstream error prose to invent a Connecta classification,
+and does not repackage a downstream error as `invalid_args`, because it has no
+schema of its own to have validated against. Where a downstream reliably reports
+a retryable condition, the guide says how to recognize it rather than the code
+guessing.
+
+*Why:* a transport failure and a rejected argument need different next moves,
+and prose-sniffing routes the second one down the first one's path. *Cost:*
+argument retries.
+
+### P12 — Declare an admission budget only when the provider documents a number
 
 Where the provider publishes a rate limit, transcribe it as a rolling-window
 budget and say in the guide that it is a per-runtime approximation, not an
@@ -361,7 +404,7 @@ Connecta made and is labeled as one.
 protect a busy one, and both look like the provider being flaky. *Cost:*
 argument retries.
 
-### P11 — A drifting downstream must be visible, not absorbed
+### P13 — A drifting downstream must be visible, not absorbed
 
 The classification lists name what a release reviewed. When the downstream
 changes underneath them, the correct outcome is a loud unclassified tool on the
@@ -383,7 +426,7 @@ the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
 
 Hand-written providers are audited against H1–H14; hosted-MCP proxies against
-P1–P11. Applying a hand-written convention to a proxy is a category error, not
+P1–P13. Applying a hand-written convention to a proxy is a category error, not
 a finding.
 
 Most of the bar is mechanically checkable against the shipped surface rather
@@ -409,8 +452,10 @@ than by reading:
 | P5 | reads and writes are named lists; an unlisted tool resolves to not-read-only; a reviewed destructive name beats a contradictory `readOnlyHint: true` |
 | P6, P8 | the guide contains the catalog-varies note and the id-resolution rule |
 | P9 | `auth` defaults to OAuth and `requireHttps` is set |
-| P10 | a declared budget matches a citable documented limit, or the absence is justified in the guide |
-| P11 | classification lists are maintained in one place per provider, addressable by a drift check |
+| P10 | no `credential`, `testCredential`, or `testCredentials` on the wrapper; the mode/key contradiction throws at construction instead |
+| P11 | an authorization failure surfaces as `auth_required`; a downstream tool error is returned unchanged, with no code chosen from its prose |
+| P12 | a declared budget matches a citable documented limit, or the absence is justified in the guide |
+| P13 | classification lists are maintained in one place per provider, addressable by a drift check |
 
 The remainder — H4, H6, and the judgment in H14 about whether a named tool
 beats the escape hatch — is a reading, and the audit reports it as one. The
