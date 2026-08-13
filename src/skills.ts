@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Connecta exposes seven meta-tools. For one read at an unknown address, search_tools with 2–4 distinctive action/object terms and includeSchemas="compact", then one call_tool — a lone cold call is cheaper direct than a program. For read-only reduction, multiple or dependent calls, loops, joins, or branches, do not call top-level search_tools: make one execute_code call whose program searches, selects, calls, and reduces; never return discovery for another call. connecta.ui(html) is a guest function inside execute_code, never a connector address or search_tools result; pass one HTML string for display-only, or bind named read-only refresh/drill-down calls in its optional reads argument, and return the same initial summary data the HTML renders. Unannotated, write-capable, or destructive tools stay top level: search_tools, then call_destructive_tool; authorize_connector follows auth_required; get_result follows truncation. If this routing is unfamiliar, fetch skills({ name: "usage" }).';
+  'Choose a route before discovery. For one read at an unknown address, use search_tools then call_tool; a known address needs only call_tool. For read-only reduction, multiple or dependent calls, loops, joins, or branches, use one execute_code program that discovers, calls, and returns the reduced answer. Only readOnlyHint: true tools run there. Keep unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool. After auth_required use authorize_connector. After a truncated direct result use fields or get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Fetch skills({ name: "usage" }) once for program syntax, selection, repair, examples, and runtime details.';
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
@@ -9,29 +9,66 @@ const USAGE_SKILL_BASE = `# Connecta usage
 
 Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Broad discovery and multi-call work live in a program, not in top-level tools.
 
-## Choose the smallest execution tool
-
-Use exact addresses from discovery; never invent one. Search 2–4 distinctive action/object terms, not the whole request.
-
-- One read at an unknown address: \`search_tools({ query, includeSchemas: "compact" })\`, then \`call_tool\` once — one cold call is cheaper direct than a program.
-- Anything wider — two or more calls, dependent steps, loops, joins, branching, a whole-catalog browse, or a result to reduce: one \`execute_code\` run.
-- Any unannotated, write-capable, or destructive call: \`call_destructive_tool\`, one at a time, after reviewing its schema and consequences.
-- Truncated result: retry with \`fields\`, else page it with \`get_result\`.
-- \`auth_required\`: \`authorize_connector\`, hand its recovery text to the operator, retry the call.
+The always-loaded MCP instructions are authoritative for choosing the top-level route. Read this skill at most once per task for the program workflow and recovery details below.
 
 ## Inside a program
 
-Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch/process/timers/crypto/WebSocket. Dynamic Workers require only \`{ loader }\`; bindings/modules/globalOutbound violate it. Then env maps are empty; node:fs/http/https absent; outbound fetch/WebSocket/node:net/tls denied; DNS unresolved. Runtime builtins remain through import() and process.getBuiltinModule(), including node:path and cloudflare:workers; the set can drift. Timers/process/crypto/WebSocket and data: fetch remain. Avoid them; QuickJS fails.
+Write one plain-JavaScript async arrow function. TypeScript syntax and portable imports do not work. Return JSON-shaped data and reduce large results before returning.
 
-- \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
-- Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
-- Caught Connecta errors have \`message\`, \`code\`, \`retryable\`, and \`details\`; branch on fields. For 2–10 independent calls, \`connecta.batch([...])\` returns success data or an \`errorDetails\` whose code and retryable flag match the throw.
-- Search inside the run; return only the reduction the answer needs, never raw payloads.
-- Only tools annotated \`readOnlyHint: true\` are reachable; the gate, credentials, and admission are enforced below the sandbox — nothing a program does widens its reach.
+The minimum guest API is:
+
+- \`<connectorId>.<toolName>(args)\` calls a sanitized shortcut. Non-identifier characters become \`_\`; leading digits gain \`_\`; reserved words gain a trailing \`_\`.
+- \`connecta.call("connector.tool", args)\` uses the canonical address and returns the unwrapped value.
+- \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
+- \`connecta.batch(calls)\` runs 2–10 independent calls. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails }\`.
+- \`console.log(...)\` is captured. \`connecta.emit(block)\` and \`connecta.ui(html, options?)\` produce rich output.
+
+## Discover and select
+
+Search inside the run and finish the task there. A discovery-only program wastes a round trip. Use 2–4 distinctive action/object terms, not the full request. Use separate short searches for distinct operations.
+
+For top-level \`search_tools\`, omit \`limit\` initially (the default is 10), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and declared output shapes. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
+
+- \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for program calls. These inputs filter discovery; they grant no authority.
+- Request \`includeSchemas: "compact"\`. Check address, purpose, annotations, required inputs, truncation, safety, and declared outputs. Never select only because a result ranks first or has fewer required inputs.
+- Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
+- Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
+- Reduce through declared output keys. Do not guess collection roots such as \`items\` or \`results\`. If a match or result key is missing, inspect, re-search, or describe inside the same run instead of returning discovery for another call.
+
+Only tools explicitly annotated \`readOnlyHint: true\` are reachable. The catalog, credential, admission, and read-only gates run below the sandbox; code cannot widen its authority.
+
+## Errors and repair
+
+Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Batch failures expose the same classification in \`errorDetails\`. Branch on fields, never prose. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
+
+- \`destructive_tool_requires_approval\`: stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
+- \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
+- A truncated direct-call result: retry \`call_tool\` with \`fields\`, or follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
+- Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
+
+For a direct call, \`fields\` selects JSON dot-paths and \`[]\` traverses arrays, for example \`results[].id\`. Projection misses return \`data\` plus \`$connecta\` feedback. \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. \`maxRetries\` is honored only for safely annotated tools. \`diagnostics: true\` adds timing.
+
+\`get_result({ id, offset?, maxBytes? })\` returns \`{ text, offset, nextOffset?, totalBytes }\` for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1 and defaults to the deployment cap; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the response reports the served offset. Follow \`nextOffset\` to reassemble pages. An unknown or expired id is an error.
+
+Limits: 20 host calls per run, 10 calls per batch, and a 15-second deadline per host call.
+
+## Runtime portability
+
+Portable code uses only connector globals, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
+
+## Examples
+
+One read-only call at a known address:
+
+\`async () => await connecta.call("crm.get_account", { id: "acct_42" })\`
+
+Dependent calls, only when the second needs a value from the first:
+
+\`async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", safety: "readOnly", includeSchemas: "compact" }); const address = (suffix) => { const tool = tools.find((entry) => entry.address.endsWith(suffix)); if (!tool) throw new Error("missing " + suffix); return tool.address; }; const run = await connecta.call(address(".get_run"), { runId: 42 }); const logs = await connecta.call(address(".get_job_logs"), { jobId: run.failedJobId }); return logs.map(({ timestamp, message }) => ({ timestamp, message })); }\`
 
 ## Rendering a view
 
-\`connecta.ui(html)\` renders one success-only display view, never for the model. Fetch and check the shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables; the model reads the return value, not the view.
+\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. \`connecta.ui(html)\` renders one success-only display view outside model context. One argument is display-only. Bind read-only refresh or drill-down calls with \`{ reads: { name: { address, fixedArgs?, viewArgs? } } }\`; page markup calls \`connecta.read(name, args)\`. Admission and one shared budget apply to the UI and emitted content, not separate budgets. Fetch and check the data shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables and return the same initial summary because the model reads the return value, not the view. A second, invalid, or over-budget UI call throws catchably.
 
 `;
 

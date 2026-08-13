@@ -211,6 +211,13 @@ older ones are already done.
 
 Two construction rules need a deployment check.
 
+**Model-facing guidance is split by load cost.** MCP instructions and tool
+definitions now carry route selection, the fail-closed boundary, and minimum
+guest syntax. Detailed selection, repair, runtime, and example guidance moved
+to the existing `skills({ name: "usage" })` response. Clients that never fetch
+the skill keep the same routes and need no deployment change; clients that
+cache tool definitions should refresh them after upgrading.
+
 **A Dynamic Worker executor is loader-only.** The supported construction is
 exactly:
 

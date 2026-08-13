@@ -585,14 +585,14 @@ the same mistake as automatic host-side projection, refused in `ethos.md`
 ([#282](https://github.com/zackbart/connecta/issues/282)).
 
 **U13.** The always-loaded MCP instructions locate `connecta.ui(html)` before an
-agent chooses a route: it is a guest function inside `execute_code`, never a
-connector address or catalog result, takes one HTML string, and carries `U12`'s
-mirrored-return duty. The detailed tool description proved too late to stop cold
-agents from searching downstream catalogs for UI; the location distinction
-therefore rides `initialize`, under a 1,000-character ceiling for the complete
+agent chooses a route: it exists only inside `execute_code`, never in connector
+search, and carries `U12`'s mirrored-return duty. The detailed call, binding,
+budget, and repair rules live in the on-demand `usage` skill. The location
+distinction rides `initialize`, under a 1,000-character ceiling for the complete
 instructions string. This promotes existing contract, not capability: the
 seven-tool surface, guest API, catalog, Apps delivery, and runtime do not change
-([#286](https://github.com/zackbart/connecta/issues/286)).
+([#286](https://github.com/zackbart/connecta/issues/286),
+[#418](https://github.com/zackbart/connecta/issues/418)).
 
 Bounded view reads follow normative [`V1`–`V8`](./program-ui-read-calls.md) ([#287](https://github.com/zackbart/connecta/issues/287), [#289](https://github.com/zackbart/connecta/issues/289)).
 
@@ -875,7 +875,7 @@ the upstream `Executor` shape assignable.
 | `U7`, `U8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `U9` | `test/execute-ui.test.ts` (a `ui` byte aggregate distinct from `emitted`, absent when nothing was accepted) |
 | `U12` | `test/server.test.ts` (the `connecta.ui` bullet carries the return-value clause); a duty on program authors, so the description is the only place it can be enforced |
-| `U13` | `test/code-first-surface.test.ts`, `test/server.test.ts` (served `initialize.instructions` locate UI inside `execute_code`, exclude it from catalog search, state the one-string call and mirrored return, and stay within the complete 1,000-character budget) |
+| `U13` | `test/code-first-surface.test.ts`, `test/server.test.ts` (served `initialize.instructions` locate UI inside `execute_code`, exclude it from connector search, state the mirrored-return duty, and stay within the complete 1,000-character budget; the usage skill carries detailed call rules) |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |

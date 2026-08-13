@@ -145,11 +145,9 @@ describe("the advertised surface", () => {
     const servedSkill = skill.result.content[0].text as string;
     expect(servedSkill).toBe(USAGE_SKILL);
     expect(servedSkill).toContain(
-      'pass `connector: "<id>"` when obvious to load one',
+      'Pass `connector: "<id>"` when the integration is obvious',
     );
-    expect(servedSkill).toContain(
-      "Avoid them; QuickJS fails",
-    );
+    expect(servedSkill).toContain("Avoid every runtime-only capability");
 
     const advertised = [
       initialized.result.instructions,
@@ -174,15 +172,10 @@ describe("the advertised surface", () => {
     });
     const instructions = initialized.result.instructions as string;
     expect(instructions).toBe(CONNECTA_INSTRUCTIONS);
+    expect(instructions).toContain("connecta.ui(html) exists only inside execute_code");
+    expect(instructions).toContain("not in connector search");
     expect(instructions).toContain(
-      "connecta.ui(html) is a guest function inside execute_code",
-    );
-    expect(instructions).toContain(
-      "never a connector address or search_tools result",
-    );
-    expect(instructions).toContain("pass one HTML string");
-    expect(instructions).toContain(
-      "return the same initial summary data the HTML renders",
+      "return the same summary data the HTML renders",
     );
     // Always-loaded guidance is a context tax. Keep its total explicit rather
     // than letting one successful experiment license unbounded additions.

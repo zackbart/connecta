@@ -493,8 +493,12 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toContain(
       "never infer one from a connector id",
     );
-    expect(textFrom(fetched)).not.toContain("## Examples");
-    expect(textFrom(fetched)).not.toContain("crm.get_account");
+    // #418 moves detailed examples out of always-loaded definitions. The
+    // usage skill is now their one model-facing home.
+    expect(textFrom(fetched)).toContain("## Examples");
+    expect(textFrom(fetched)).toContain("crm.get_account");
+    expect(textFrom(fetched)).toContain("## Errors and repair");
+    expect(textFrom(fetched)).toContain("## Runtime portability");
     // The guarded-render recipe, whose whole point is the branch that does not
     // render: a program that finds the data is not what it expected hands the
     // model the record instead of a confident, empty view (#282).
@@ -526,7 +530,11 @@ Prefer \`notion.search\` over listing databases.
       "`usage` — How to route work between one execute_code program",
     );
     expect(listed).not.toContain("connector:");
-    expect(new TextEncoder().encode(expected).length).toBeLessThan(3_500);
+    // #418 moves program selection, direct-call repair, paging, UI bindings,
+    // runtime detail, and examples out of the always-loaded definitions. This
+    // deliberate 9 KB on-demand budget preserves every normative rule instead
+    // of truncating guidance to retain the former 7 KB ceiling.
+    expect(new TextEncoder().encode(expected).length).toBeLessThan(9_000);
   });
 
   it("errors — never falls back to the generic guide — for a connector with no guide", async () => {
