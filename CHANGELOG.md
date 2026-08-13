@@ -336,9 +336,11 @@ where they were.
   The published package is 163 files and 522 KB, down from 357 and 1.1 MB.
   Stepping into Connecta's TypeScript from an installed copy no longer works;
   the emitted JavaScript and the `.d.ts` files beside it do. `check:package`
-  now fails on a packed `src/`, `.map`, or `assets/` path, and derives the
-  shipped guide list from which guides are still stubs, so filling one in ships
-  it (#346).
+  now fails on a packed `src/`, `.map`, or `assets/` path, derives the shipped
+  guide list from which guides are still stubs, so filling one in ships it, and
+  refuses a packed document whose relative link lands on a guide the tarball
+  does not carry — the three that pointed at `operations.md` now name it
+  instead (#346).
 
 ## 0.15.1 — 2026-08-12
 

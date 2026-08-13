@@ -97,9 +97,8 @@ in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
 `node` project runs both lists; the `workers` project re-runs the portable list
 inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
 an unclassified, double-classified, stale, or reasonless entry. New behavior
-also gets a row in the test map in
-[`documentation/operations.md`](./documentation/operations.md) once that guide
-is rewritten; until then the row waits with the guide.
+also gets a row in the test map in `documentation/operations.md` once that
+guide is rewritten; until then the row waits with the guide.
 
 ## Conventions
 
