@@ -2324,6 +2324,68 @@ describe("compact schema rendering", () => {
     );
   });
 
+  it("renders numeric and string constraints in discovery and describe", async () => {
+    const schema = {
+      type: "object",
+      properties: {
+        limit: {
+          type: "integer",
+          minimum: 1,
+          exclusiveMinimum: 0,
+          maximum: 50,
+          exclusiveMaximum: 51,
+          multipleOf: 1,
+        },
+        name: {
+          type: "string",
+          minLength: 3,
+          maxLength: 64,
+          format: "hostname",
+          pattern: "^[a-z]+$",
+        },
+      },
+    };
+    const expected =
+      '{ limit?: integer /* >= 1; > 0; <= 50; < 51; multiple of 1 */, ' +
+      'name?: string /* length >= 3; length <= 64; format "hostname"; pattern "^[a-z]+$" */ }';
+
+    expect(compactDiscoverySchema(schema)).toEqual({
+      text: expected,
+      truncated: false,
+    });
+    expect(await shapeOf(schema)).toBe(expected);
+    expect(
+      compactDiscoverySchema({
+        anyOf: [{ type: "string" }, { type: "null" }],
+        minLength: 2,
+      }).text,
+    ).toBe("(string | null) /* length >= 2 */");
+    expect(compactDiscoverySchema({ minimum: 0 }).text).toBe(
+      "unknown /* >= 0 */",
+    );
+  });
+
+  it("drops constraints that push discovery over budget and flags the shape", () => {
+    const schema = {
+      type: "object",
+      properties: Object.fromEntries(
+        Array.from({ length: 36 }, (_, index) => [
+          `field${index}`,
+          { type: "string", minLength: 1, maxLength: 64 },
+        ]),
+      ),
+    };
+
+    const compact = compactDiscoverySchema(schema);
+    expect(compact.truncated).toBe(true);
+    expect(compact.text).toContain("field0?: string");
+    expect(compact.text).toContain("field35?: string");
+    expect(compact.text).not.toContain("length >=");
+    expect(new TextEncoder().encode(compact.text).length).toBeLessThanOrEqual(
+      MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+    );
+  });
+
   it('inlines $ref by name and falls back to "json" format on request', async () => {
     const schema = {
       type: "object",

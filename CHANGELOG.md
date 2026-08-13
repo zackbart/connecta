@@ -17,6 +17,13 @@ complete projections, genuine nulls, and empty arrays keep their prior shape.
   Schema-backed misses keep the same bounded guidance through nested arrays;
   schema-free projections still report their observed misses (#394).
 
+- **Compact schemas now carry declared numeric and string constraints.** Search
+  and compact describe show numeric bounds, multiples, string length bounds,
+  patterns, and formats beside the affected type. Search keeps its 1,024-byte
+  schema ceiling and 256-byte node budget: a constraint that does not fit is
+  dropped whole, and the existing truncation flag sends the caller to describe
+  for the complete shape (#391).
+
 ## 0.16.1 — 2026-08-13
 
 This is the cleanup that follows 0.16.0 out the door: the packaging housekeeping
