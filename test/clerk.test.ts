@@ -730,7 +730,12 @@ describe("clerkAuth inbound auth", () => {
       ["a non-string key", undefined],
       ["a key with no pk_ prefix", btoa("clerk.example.com$")],
       ["a key with the wrong environment prefix", "pk_dev_Y2xlcmsuZGV2JA=="],
-      ["a key whose payload is not base64", "pk_live_not base64!"],
+      // Rejected by the shape check: neither the space nor the `!` is a
+      // base64 character, so this one never reaches `atob`.
+      ["a key whose payload holds illegal characters", "pk_live_not base64!"],
+      // Every character is legal base64 and the length is not, which is the
+      // one way to reach `atob` and have it throw.
+      ["a key whose payload is not decodable base64", "pk_test_A"],
       // Decodable, but nothing a Frontend API could live at.
       ["a key that decodes to a non-domain", `pk_test_${btoa("localhost$")}`],
       ["a key that decodes to a URL", `pk_test_${btoa("https://clerk.dev/")}`],
@@ -749,12 +754,36 @@ describe("clerkAuth inbound auth", () => {
       }
     });
 
-    it("accepts both environments and pads or trims the encoded domain", () => {
+    // The row above proves `pk_test_A` is refused; this proves it is refused
+    // by the `atob` catch rather than by the shape check that precedes it,
+    // which is the only branch reachable with a payload this well-formed.
+    it("names the decode when the payload passes the shape check", () => {
+      expect(() => construct("pk_test_A")).toThrowError(
+        /does not carry decodable base64/,
+      );
+    });
+
+    it("accepts the keys Clerk actually issues", () => {
+      // Shaped like the real thing: a dev instance on `accounts.dev`, a
+      // production instance on the deployment's own domain, and the example
+      // host the rest of this suite uses.
+      const hosts = [
+        "wandering-tiger-42.clerk.accounts.dev",
+        "clerk.acme.com",
+        "clerk.example.com",
+      ];
       for (const prefix of ["pk_test_", "pk_live_"]) {
-        // Clerk terminates the encoded domain with `$`; some keys omit it.
-        for (const encoded of ["clerk.example.com$", "clerk.example.com"]) {
-          const auth = construct(`${prefix}${btoa(encoded)}`);
-          expect(auth.activityActorNamespace).toBe("https://clerk.example.com");
+        for (const host of hosts) {
+          // Clerk terminates the encoded domain with `$`; some keys omit it,
+          // and the base64 Clerk issues drops the `=` padding.
+          const payloads = [`${host}$`, host].flatMap((encoded) => [
+            btoa(encoded),
+            btoa(encoded).replace(/=+$/, ""),
+          ]);
+          for (const payload of payloads) {
+            const auth = construct(`${prefix}${payload}`);
+            expect(auth.activityActorNamespace).toBe(`https://${host}`);
+          }
         }
       }
     });
