@@ -297,6 +297,23 @@ where they were.
 
 ### Fixed
 
+- **The Node template's `.env.example` ships an empty `CONNECTA_TOKEN`.**
+  `docker-compose.yml` has always promised to refuse a deployment with no
+  inbound auth, but its `${CONNECTA_TOKEN:?…}` guard only fires on unset or
+  empty — and the file it reads shipped `replace-me`, which is neither. Copying
+  `.env.example` and running the README's Docker block therefore produced a
+  healthy, port-published deployment whose bearer token was a string published
+  in this repository. The value is now empty, so both Compose and `npm start`
+  refuse until an operator sets one (#367).
+- **The Worker example names the optional peer it imports.**
+  `examples/worker` wires `clerkAuth` by default and calls itself the starting
+  template for a deployment, but its README listed only `@cloudflare/codemode`
+  as an extra install. `@clerk/backend` is an optional peer that never installs
+  with Connecta, and `auth/clerk` imports it at the top level, so a copied
+  deployment following the README verbatim died at
+  `Could not resolve "@clerk/backend"` before it ever reached Cloudflare. The
+  deploy section now carries the whole install line for a copy in its own
+  repository (#367).
 - **Notion declares the `required` lists it was missing.** `search`,
   `list_users`, `get_self`, and `create_page` now say which arguments a call
   must carry, so a malformed call is refused locally instead of at Notion. The

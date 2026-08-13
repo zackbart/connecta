@@ -14,7 +14,10 @@
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
  *   1. `npm install` in the connecta package root (../../ from here) so the
- *      package import and wrangler resolve.
+ *      package import and wrangler resolve. A copy in its own repository
+ *      installs `@zackbart/connecta @cloudflare/codemode @clerk/backend`
+ *      instead — the last two are not part of connecta, and the Clerk import
+ *      below is an optional peer wrangler resolves at build time.
  *   2. Create a KV namespace and put its id in wrangler.jsonc under `kv_namespaces`.
  *   3. Set secrets:
  *        wrangler secret put SUPPORT_TOKEN

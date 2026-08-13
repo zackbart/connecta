@@ -22,6 +22,10 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
+`CONNECTA_TOKEN` ships empty on purpose: `up` fails on it until you set it,
+rather than starting a deployment whose bearer is a value published in this
+template. Everything else in `.env.example` has a working default.
+
 Compose reads `.env`, publishes `PORT` (8787 by default), and keeps state on
 the named volume `connecta-state`, mounted at `/data`. `docker compose down`
 stops the service and keeps state; `down -v` wipes it. `/health` is always
