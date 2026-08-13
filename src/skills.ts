@@ -21,17 +21,17 @@ Use exact addresses from discovery; never invent one. Search 2–4 distinctive a
 
 ## Inside a program
 
-One async arrow function. The only capabilities are one global per connector (\`<connectorId>.<toolName>(args)\`), the \`connecta\` functions, and \`console.log\`.
+Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch/process/timers/crypto/WebSocket. Dynamic Workers require only \`{ loader }\`; bindings/modules/globalOutbound violate it. Then env maps are empty; node:fs/http/https absent; outbound fetch/WebSocket/node:net/tls denied; DNS unresolved. Runtime builtins remain through import() and process.getBuiltinModule(), including node:path and cloudflare:workers; the set can drift. Timers/process/crypto/WebSocket and data: fetch remain. Avoid them; QuickJS fails.
 
 - \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
 - Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\` — how a program tells a policy refusal from a transient failure.
-- Search inside the run, not before it; return only the reduction the answer needs, never raw payloads.
+- Search inside the run; return only the reduction the answer needs, never raw payloads.
 - Only tools annotated \`readOnlyHint: true\` are reachable; the gate, credentials, and admission are enforced below the sandbox — nothing a program does widens its reach.
 
 ## Rendering a view
 
-\`connecta.ui(html)\` renders a display-only view on success for the client, never for the model. Fetch first, check the shape in code. On a surprise — empty array, missing key — return a trimmed first record instead of rendering: the wrong view becomes the sample you needed. Otherwise render from the variables you return; the model reads the return value, not the view.
+\`connecta.ui(html)\` renders one success-only display view, never for the model. Fetch and check the shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables; the model reads the return value, not the view.
 
 `;
 
@@ -39,7 +39,7 @@ One async arrow function. The only capabilities are one global per connector (\`
 const CONNECTOR_GUIDES_SECTION = `
 ## Per-connector guides
 
-When a connector here ships a deployment-scoped usage guide, \`skills({})\` and discovery return the exact \`guide\` name plus a bounded \`guideSummary\` saying what it covers. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop: fetch before calling. \`guideRequiredReasons\` says why — \`connector_required\` and \`approval_required\` stand however you expand the schema; \`schema_truncated\` clears once describe returns the exact one. Otherwise fetch when the summary names a connector-specific sequence, unit, pagination rule, alias, or generic API convention relevant to the task. A read-only call whose compact schema is complete and unambiguous may proceed without fetching an otherwise irrelevant guide. Connector guides do not replace the shared Connecta usage guide and never apply to another deployment implicitly.
+Connector guides appear in \`skills({})\` and discovery with an exact \`guide\` name and bounded \`guideSummary\`. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop. \`guideRequiredReasons\` says why: \`connector_required\` and \`approval_required\` stand after schema expansion; \`schema_truncated\` clears after exact describe. Otherwise fetch for a relevant sequence, unit, pagination rule, alias, or API convention. A read-only call with a complete compact schema may skip an irrelevant guide. Connector guides never apply to another deployment.
 `;
 
 /** Shared Connecta routing guidance, byte-identical across deployments. */

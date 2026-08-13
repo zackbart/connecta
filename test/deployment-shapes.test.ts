@@ -18,6 +18,17 @@ describe("deployment shapes", () => {
     expect(readdirSync(join(ROOT, "examples")).sort()).toEqual(["worker"]);
   });
 
+  it("keeps the Worker sandbox loader-only", () => {
+    const source = readFileSync(
+      join(ROOT, "examples", "worker", "src", "index.ts"),
+      "utf8",
+    );
+    const options = [...source.matchAll(
+      /new DynamicWorkerExecutor\(\{([^}]*)\}\)/g,
+    )].map((match) => match[1]?.trim());
+    expect(options).toEqual(["loader: env.LOADER"]);
+  });
+
   it("ships one Node deployment that is also its own container", () => {
     expect(readdirSync(TEMPLATE).sort()).toEqual([
       ".dockerignore",

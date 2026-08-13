@@ -18,6 +18,7 @@ import {
 } from "../src/executor-result.js";
 import type { Connector, Executor } from "../src/types.js";
 import {
+  CAPABILITY_PROBE_CODE,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -237,5 +238,52 @@ describe.skipIf(!workerExecutor)(
         contractCase.check(outcome, harness.state, follow);
       });
     }
+
+    it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
+      const outcome = await contractHarness().run(
+        required(workerExecutor),
+        CAPABILITY_PROBE_CODE,
+      );
+
+      expect(outcome.isError, outcome.text).toBe(false);
+      const outboundDenied =
+        "Error: This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.";
+      expect(outcome.result).toEqual({
+        globals: {
+          fetch: "function",
+          setTimeout: "function",
+          clearTimeout: "function",
+          process: "object",
+          crypto: "object",
+          WebSocket: "function",
+          require: "undefined",
+          Deno: "undefined",
+          Bun: "undefined",
+        },
+        dataFetch: "reachable",
+        externalHttp: outboundDenied,
+        externalHttps: outboundDenied,
+        webSocket: outboundDenied,
+        netConnect: outboundDenied,
+        tlsConnect: outboundDenied,
+        dnsLookup: "Error [ENOTFOUND]: queryA ENOTFOUND example.com",
+        unavailableImports: {
+          fs: "blocked",
+          http: "blocked",
+          https: "blocked",
+        },
+        unavailableBuiltins: {
+          fs: "undefined",
+          http: "undefined",
+          https: "undefined",
+        },
+        env: {
+          entrypoint: { type: "object", keys: 0 },
+          global: { type: "undefined", keys: 0 },
+          process: { type: "object", keys: 0 },
+          workers: { type: "object", keys: 0 },
+        },
+      });
+    });
   },
 );

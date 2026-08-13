@@ -53,8 +53,8 @@ createConnecta({
 });
 ```
 
-Dynamic Workers require the Workers Paid plan. The complete required binding and
-package setup is in the [Worker example](../examples/worker/README.md#code-mode).
+Dynamic Workers require the Workers Paid plan. The supported constructor passes only `loader`; `bindings`, `modules`, or
+`globalOutbound` grant ambient guest authority and violate `P2`. The [Worker example](../examples/worker/README.md#code-mode) carries the full setup.
 
 ## What an executor must implement
 
@@ -104,8 +104,8 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
    uncaught tool failure keeps its type (`E1`).
 6. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
-7. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`), with no
-   network, filesystem, environment, or import capability (`P2`).
+7. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`). Keep
+   ambient capabilities within the documented and tested `P2`/`X5` boundary.
 8. **Grant no ambient authority of its own.** Never back this with `eval` or
    `node:vm`: the sandbox is a containment layer on top of connecta's boundary,
    not a replacement for it, and every capability arrives through `fns`.
@@ -138,10 +138,10 @@ reinterpreted, so do not rely on it.
 It is host plumbing, callable but not contract: it takes a connector id and an
 unsanitized-or-sanitized tool name and can change shape without notice.
 
-Anything else a runtime happens to expose is outside the contract and must not
-be used, even where it exists. Neither executor grants network egress,
-filesystem access, credentials, or deployment configuration; what they leave
-lying around otherwise differs (`X5`).
+Anything else a runtime happens to expose is outside the portable contract and
+must not be used. QuickJS grants none of it. A loader-only Dynamic Worker denies
+external egress and filesystem access and keeps its environment maps empty, but
+it exposes the globals and runtime builtins described in `X5`.
 
 **P3.** Values cross the host bridge as JSON. Arguments must be
 JSON-serializable and results arrive as plain JSON values. A value outside JSON —
@@ -154,8 +154,9 @@ scratch storage carried to the next program, and no request-bound object outlive
 the request that created it. Within one execution, host calls share one
 downstream request scope.
 
-**P5.** Plain JavaScript only. TypeScript syntax is a syntax error, and there is
-no `import` or `require` to reach for.
+**P5.** Plain JavaScript only. TypeScript syntax is a syntax error. Portable code
+does not import: QuickJS blocks imports, while Dynamic Workers expose the `X5`
+runtime modules. Neither executor exposes `require`.
 
 ## Addressing
 
@@ -617,10 +618,10 @@ budget failure.
 
 - anything with `retryable: false` — a policy refusal, a missing credential, a
   bad address, or malformed arguments will fail identically forever;
-- `rate_limited`, immediately. The sandbox has no timers, so a program cannot
-  wait out a window; retrying inside it is the harm the signal exists to
-  prevent. Return the failure and let the model, which can wait, re-issue with
-  `retryAfterMs` in hand.
+- `rate_limited`, immediately. A portable program has no timer, and a
+  Dynamic-Worker-only wait would spend the run's wall-clock budget on code that
+  fails on QuickJS. Return the failure and let the model, which can wait,
+  re-issue with `retryAfterMs` in hand.
 - a cancelled or timed-out *execution*: it is already over (`L1`).
 
 **Y4.** Connecta's own retry machinery beneath the meta-tools honours a
@@ -750,11 +751,9 @@ Worker renders arguments with `String()` (so an object logs as
 latter two. Only the three captured everywhere are contract (`R5`); rendering is
 not.
 
-**X5. Leftover globals.** The QuickJS guest has no `fetch`, `process`, timers,
-`crypto`, or `WebSocket` at all. The Dynamic Worker guest has all of them:
-`fetch` exists but throws on use because outbound access is disabled,
-`process.env` is empty, and timers work. `P2` is the contract — a program that
-uses `setTimeout` is writing Workers-only code, and it will fail on Node.
+**X5. Leftover authority.** QuickJS blocks imports and has no `fetch`, `process`, timers, `crypto`, or `WebSocket`. A Dynamic Worker has those globals plus a non-contract set of runtime builtins through `import()` and `process.getBuiltinModule()`, including `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and `cloudflare:workers`. The upstream set can drift; this list is not an allowlist.
+The supported Worker construction is exactly `new DynamicWorkerExecutor({ loader })`. Do not pass `bindings`, `modules`, or `globalOutbound`: each can grant ambient configuration, code, or egress. Under it, `process.env`, lexical `this.env`, and `cloudflare:workers.env` are empty; `node:fs`, `node:http`, and `node:https` are unavailable through either access route; external `fetch`, `WebSocket`, `node:net`, and `node:tls` fail with workerd's outbound-denial error; DNS lookup ends unresolved; and `fetch("data:...")` resolves locally.
+`P2` is the portable contract. Programs use none of this runtime-only authority, including timers and `crypto`, because the same code fails on QuickJS. The `execute_code` description and served `usage` skill say so before an agent writes code.
 
 **X6. Stall detection.** QuickJS notices a program awaiting something that can
 never settle and fails fast; the Dynamic Worker waits for its deadline. The fast
@@ -833,7 +832,7 @@ the upstream `Executor` shape assignable.
 | Clauses | Test |
 | --- | --- |
 | `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax), `test/quickjs-executor.test.ts` (`normalizeCode`) |
-| `P2`, `X5` | `test/guest-api-contract.test.ts` (no usable network, no config) |
+| `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing) |

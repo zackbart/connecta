@@ -152,9 +152,10 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 "worker_loaders": [{ "binding": "LOADER" }]
 ```
 
-`src/index.ts` constructs `DynamicWorkerExecutor` from `env.LOADER` and serves
-the seven-tool surface. The executor package is one of the installs a copied
-deployment owns — see
+`src/index.ts` constructs `DynamicWorkerExecutor` with only `env.LOADER` and
+serves the seven-tool surface. Do not add `bindings`, `modules`, or
+`globalOutbound`; they grant guest code ambient authority. A copied deployment
+owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).
 
 ## Activity history (optional)

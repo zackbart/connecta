@@ -12,7 +12,11 @@ Mixpanel carries the conditional rules its live tools enforce. One construction
 contract tightens: an explicit `usageGuide.summary` over 120 characters now
 refuses to boot. Deployments whose summaries fit, or which let Connecta derive
 them, need no configuration change. Operator catalog reads retain their blocking
-freshness behavior.
+freshness behavior. This release also makes the two code sandboxes' runtime
+differences explicit. The shipped
+Worker example is already loader-only; deployments that added executor
+`bindings`, `modules`, or `globalOutbound` must remove them. Existing portable
+`execute_code` programs keep their behavior.
 
 ### Changed
 
@@ -29,6 +33,15 @@ freshness behavior.
   read in this runtime was fresh or stale (#396).
 
 ### Fixed
+
+- **`execute_code` now tells the truth about each shipped sandbox.** QuickJS
+  omits runtime globals and blocks imports. Loader-only Dynamic Workers deny
+  outbound fetch, WebSocket, `node:net`, and `node:tls`; leave DNS unresolved;
+  expose no environment bindings or filesystem/HTTP builtins; but retain local
+  `data:` fetch, runtime globals, and a non-contract builtin set that can drift.
+  The example pins the required loader-only
+  construction, and agent guidance tells portable programs to use none of that
+  Dynamic-only authority (#390).
 
 - **Array field misses now report what happened.** A path that misses every
   element appears in `unmatchedFields` instead of returning a clean array of

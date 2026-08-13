@@ -45,6 +45,106 @@ export interface ContractCase {
   ): void;
 }
 
+/** One program that pins the guest capability matrix on every shipped executor. */
+export const CAPABILITY_PROBE_CODE = `async () => {
+  const attempt = async (fn) => {
+    try { await fn(); return "resolved"; }
+    catch (error) { return String(error); }
+  };
+  const importStatus = async (specifier) => {
+    try { await import(specifier); return "available"; }
+    catch { return "blocked"; }
+  };
+  const builtinType = (specifier) => {
+    if (typeof process !== "object" || !process || typeof process.getBuiltinModule !== "function") return "process absent";
+    try { return typeof process.getBuiltinModule(specifier); }
+    catch (error) { return String(error); }
+  };
+  const envShape = (value) => ({
+    type: value === null ? "null" : typeof value,
+    keys: value && typeof value === "object" ? Object.keys(value).length : 0
+  });
+  let workerModule;
+  try { workerModule = await import("cloudflare:workers"); }
+  catch {}
+  const dataFetch = typeof fetch === "function"
+    ? await (await fetch("data:text/plain,reachable")).text()
+    : "absent";
+  const netConnect = await (async () => {
+    try {
+      const net = await import("node:net");
+      return await new Promise((resolve) => {
+        try {
+          const socket = net.connect(80, "example.com");
+          socket.once("connect", () => { socket.destroy(); resolve("resolved"); });
+          socket.once("error", (error) => resolve(String(error)));
+        } catch (error) { resolve(String(error)); }
+      });
+    } catch { return "import blocked"; }
+  })();
+  const tlsConnect = await (async () => {
+    try {
+      const tls = await import("node:tls");
+      return await new Promise((resolve) => {
+        try {
+          const socket = tls.connect({ host: "example.com", port: 443 });
+          socket.once("secureConnect", () => { socket.destroy(); resolve("resolved"); });
+          socket.once("error", (error) => resolve(String(error)));
+        } catch (error) { resolve(String(error)); }
+      });
+    } catch { return "import blocked"; }
+  })();
+  const dnsLookup = await (async () => {
+    try {
+      const dns = await import("node:dns");
+      try { await dns.promises.lookup("example.com"); return "resolved"; }
+      catch (error) { return String(error); }
+    } catch { return "import blocked"; }
+  })();
+  return {
+    globals: {
+      fetch: typeof fetch,
+      setTimeout: typeof setTimeout,
+      clearTimeout: typeof clearTimeout,
+      process: typeof process,
+      crypto: typeof crypto,
+      WebSocket: typeof WebSocket,
+      require: typeof require,
+      Deno: typeof Deno,
+      Bun: typeof Bun
+    },
+    dataFetch,
+    externalHttp: typeof fetch === "function"
+      ? await attempt(() => fetch("http://example.com/"))
+      : "absent",
+    externalHttps: typeof fetch === "function"
+      ? await attempt(() => fetch("https://example.com/"))
+      : "absent",
+    webSocket: typeof WebSocket === "function"
+      ? await attempt(() => new WebSocket("wss://example.com/"))
+      : "absent",
+    netConnect,
+    tlsConnect,
+    dnsLookup,
+    unavailableImports: {
+      fs: await importStatus("node:fs"),
+      http: await importStatus("node:http"),
+      https: await importStatus("node:https")
+    },
+    unavailableBuiltins: {
+      fs: builtinType("node:fs"),
+      http: builtinType("node:http"),
+      https: builtinType("node:https")
+    },
+    env: {
+      entrypoint: envShape(typeof this === "object" && this ? this.env : undefined),
+      global: envShape(globalThis.env),
+      process: envShape(typeof process === "object" && process ? process.env : undefined),
+      workers: envShape(workerModule ? workerModule.env : undefined)
+    }
+  };
+}`;
+
 function readOnly(name: string, extra: Partial<ToolDef> = {}): ToolDef {
   return { name, annotations: { readOnlyHint: true }, ...extra };
 }
@@ -727,34 +827,31 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "P2, X5",
-    name: "the sandbox has no usable network and no deployment config",
-    code: `async () => {
-      const out = {
-        fetch: typeof fetch,
-        timers: typeof setTimeout,
-        requires: typeof require,
-        process: typeof process
-      };
-      if (typeof fetch === "function") {
-        try {
-          await fetch("https://example.invalid/");
-          out.egress = "resolved";
-        } catch (err) {
-          out.egress = "blocked";
-        }
-      } else {
-        out.egress = "absent";
-      }
-      out.envKeys = typeof process === "object" && process && process.env
-        ? Object.keys(process.env).length
-        : 0;
-      return out;
-    }`,
+    name: "pins the portable ambient-authority boundary",
+    code: CAPABILITY_PROBE_CODE,
     check(outcome) {
       const result = record(outcome);
-      expect(result.egress).not.toBe("resolved");
-      expect(result.envKeys).toBe(0);
-      expect(result.requires).toBe("undefined");
+      const globals = result.globals as Record<string, string>;
+      const unavailableImports = result.unavailableImports as Record<
+        string,
+        string
+      >;
+      const env = result.env as Record<string, { keys: number }>;
+      expect(result.externalHttp).not.toBe("resolved");
+      expect(result.externalHttps).not.toBe("resolved");
+      expect(result.webSocket).not.toBe("resolved");
+      expect(result.netConnect).not.toBe("resolved");
+      expect(result.tlsConnect).not.toBe("resolved");
+      expect(result.dnsLookup).not.toBe("resolved");
+      expect(
+        Object.values(unavailableImports).every(
+          (status) => status === "blocked",
+        ),
+      ).toBe(true);
+      expect(Object.values(env).every((shape) => shape.keys === 0)).toBe(true);
+      expect(globals.require).toBe("undefined");
+      expect(globals.Deno).toBe("undefined");
+      expect(globals.Bun).toBe("undefined");
     },
   },
   {
