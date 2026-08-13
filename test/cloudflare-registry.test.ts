@@ -85,9 +85,9 @@ describe("cloudflare() inside a real deployment", () => {
     // A hand-written api() surface is static: an agent can list every tool
     // before the first credential exists, and never pays a discovery round trip.
     const tools = await registry.getTools("cloudflare_prod", BASE_URL);
-    expect(tools).toHaveLength(52);
+    expect(tools).toHaveLength(51);
     expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true))
-      .toHaveLength(28);
+      .toHaveLength(27);
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 

@@ -2,7 +2,7 @@
 
 Import `cloudflare()` independently from
 `@zackbart/connecta/providers/cloudflare`. It is a deliberate, hand-written
-surface over Cloudflare's v4 REST API. Fifty-two tools combine ergonomic,
+surface over Cloudflare's v4 REST API. Fifty-one tools combine ergonomic,
 fully described operations for common work with three guarded escape hatches
 for the rest of Cloudflare's fast-moving control plane. Reads, JSON mutations,
 and raw/multipart uploads remain separate so safety routing does not depend on
@@ -140,7 +140,7 @@ projections:
 
 | Area | Reads | Writes |
 | --- | --- | --- |
-| Zones | discovery, details, settings, rulesets | update a setting |
+| Zones | discovery, details, one setting at a time, rulesets | update a setting |
 | DNS/cache | list and get records | create, update, delete, targeted/full purge |
 | Workers | scripts, settings, deployments | delete a script |
 | KV | namespaces, keys, bulk values | create/rename/delete namespace, bulk write/delete |
@@ -159,8 +159,9 @@ A named tool is a permanent line item in every deployment's catalog, so the
 surface was measured against the escape hatches rather than assumed to beat
 them ([#350](https://github.com/zackbart/connecta/issues/350), evidence in
 [`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md)).
-Two named tools lost that comparison, and a third followed one of them off the
-surface to keep a policy pair on one route:
+Two named tools lost that comparison, a third followed one of them off the
+surface to keep a policy pair on one route, and a fourth left because
+Cloudflare deprecated the only endpoint it could call:
 
 - **R2 CORS writes.** `set_r2_cors` declared its rule list as free-form objects
   — the untyped body this connection refuses everywhere else — so its schema
@@ -181,8 +182,31 @@ surface to keep a policy pair on one route:
   path, and returned the response untouched — `cloudflare_api_get` at
   `/accounts/{accountId}/r2/metrics` does the same thing without a permanent
   catalog line.
+- **The bulk zone-settings read.** `list_zone_settings` called
+  `GET /zones/{zoneId}/settings`, which Cloudflare's published document now
+  marks `deprecated: true` along with its `PATCH` sibling
+  ([#361](https://github.com/zackbart/connecta/issues/361)). There is no bulk
+  replacement to repoint it at: the supported operations are the per-setting
+  `GET` and `PATCH /zones/{zoneId}/settings/{settingId}` that `get_zone_setting`
+  and `update_zone_setting` already call. Keeping the tool would have meant
+  maintaining a name over a contract Cloudflare has announced it intends to
+  stop honouring — and #350 had already measured this one as the sharpest
+  passthrough on the surface: it took a zone id, projected nothing, and *grew*
+  the payload 22.7% by wrapping Cloudflare's settings array in a page object an
+  unpaginated endpoint never filled. Read one setting with `get_zone_setting`.
+  Where the whole set is genuinely wanted — an audit, a config diff — an
+  operator can still ask for it explicitly through `cloudflare_api_get` at
+  `/zones/{zoneId}/settings`, which is the honest place for a call whose
+  endpoint is on its way out: named by the caller, at the caller's risk, rather
+  than promised by connecta's catalog.
 
-The surviving 48 named tools all refuse malformed arguments locally, which is
+Because `scripts/drift/cloudflare-endpoints.json` records the endpoints this
+connection *calls*, dropping the tool drops the row — so
+`npm run drift:check -- --specs` is quiet about zone settings by construction
+rather than by a recorded exception. A path reached only through a hatch is
+named by the caller, so it was never a touched endpoint.
+
+The surviving 47 named tools all refuse malformed arguments locally, which is
 the one thing no escape hatch can do: a hatch's path is an opaque string, so it
 can only check that a path is a path.
 

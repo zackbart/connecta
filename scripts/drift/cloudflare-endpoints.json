@@ -288,13 +288,6 @@
     },
     {
       "method": "GET",
-      "path": "/zones/{zone_id}/settings",
-      "specRevision": "4.0.0",
-      "deprecated": true,
-      "contract": "sha256:39b769e49810f7e38d232cd74592adf62700fc1792382a03f4b6b6176519cff6"
-    },
-    {
-      "method": "GET",
       "path": "/zones/{zone_id}/settings/{setting_id}",
       "specRevision": "4.0.0",
       "contract": "sha256:d40d6e69038efbcb47a4e211d4e2c293c557a943fb383975c838245ee9c96888"

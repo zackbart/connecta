@@ -477,4 +477,17 @@ describe("maintainer drift check", () => {
       }
     }
   });
+
+  it("stops touching Cloudflare's deprecated bulk zone-settings read", async () => {
+    // #361: the tool that called it is gone, so the row goes with it. A
+    // manifest row is a claim that this connection calls the endpoint, and
+    // leaving a deprecated one behind would make `--specs` argue with a
+    // surface that stopped calling it.
+    const rows = (await committed("cloudflare")).endpoints.map(
+      (endpoint) => `${endpoint.method} ${endpoint.path}`,
+    );
+    expect(rows).not.toContain("GET /zones/{zone_id}/settings");
+    expect(rows).toContain("GET /zones/{zone_id}/settings/{setting_id}");
+    expect(rows).toContain("PATCH /zones/{zone_id}/settings/{setting_id}");
+  });
 });
