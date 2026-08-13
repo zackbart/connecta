@@ -125,7 +125,10 @@ authentication material behind capabilities `src/index.ts` already declares —
 never the connector set, the tool catalog, or its annotations.
 
 `connecta doctor` reports the same line here as for a deployment with none of
-this on: connector count, executor, seven tools. It carries a bearer, and a
+this on: connector count, executor, seven tools. The executor it names is this
+one — `DynamicWorkerExecutor executed`, not the Node template's QuickJS, which
+is what doctor used to claim everywhere
+([#368](https://github.com/zackbart/connecta/issues/368)). It carries a bearer, and a
 bearer learns the model-facing surface rather than the deployment's
 configuration topology. Confirm the operator surface the way an operator will:
 sign in at `<PUBLIC_URL>/` and check that Tokens is live. Credentials joins it

@@ -215,6 +215,8 @@ function waitForReady(
 }
 
 class QuickJsChildPool implements AdmittingExecutor {
+  /** What `/health` and `connecta doctor` call this sandbox (#368). */
+  readonly name = "QuickJS";
   private readonly admission: AdmissionController;
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];

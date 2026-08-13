@@ -37,6 +37,8 @@ export interface ServerOptions {
   maxEmittedBlocks?: number;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
+  /** Sanitized identity of the configured sandbox, when it has one. */
+  executorName?: string;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
   requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */

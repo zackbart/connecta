@@ -186,6 +186,20 @@ async function doctor() {
   if (health.status !== "ok") {
     throw new Error(`Unexpected health status: ${String(health.status)}`);
   }
+  // Whatever ran the program is what doctor names. The deployment reports its
+  // own sandbox and a deployment that reports none gets an executor-neutral
+  // line — anything else is doctor asserting a sandbox it never saw (#368).
+  // The string arrives from a server and lands in a terminal, so it is
+  // sanitized here too rather than trusted twice.
+  const executorName =
+    typeof health.executor?.name === "string"
+      ? health.executor.name
+          .replace(/[^\w .+-]+/g, " ")
+          .replace(/\s+/g, " ")
+          .trim()
+          .slice(0, 40)
+          .trim()
+      : "";
   let requestId = 0;
   const mcp = async (method, params) =>
     jsonResponse(
@@ -240,7 +254,8 @@ async function doctor() {
     JSON.parse(executed.result?.content?.[0]?.text ?? "null");
   if (executed.result?.isError || executionResult?.result !== 42) {
     throw new Error(
-      `QuickJS execution check failed: ${JSON.stringify(executed.result)}`,
+      `${executorName ? `${executorName} execution` : "execute_code"} check ` +
+        `failed: ${JSON.stringify(executed.result)}`,
     );
   }
 
@@ -268,7 +283,8 @@ async function doctor() {
 
   console.log(
     `Connecta doctor passed: ${health.connectors} connector(s), ` +
-      "QuickJS executed, prescribed seven-tool surface" +
+      `${executorName ? `${executorName} executed` : "code executed"}, ` +
+      "prescribed seven-tool surface" +
       (drifted.length > 0
         ? `, catalog drift on ${drifted.length} connector(s).`
         : "."),

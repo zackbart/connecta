@@ -63,6 +63,10 @@ export const NODE_ONLY_SUITES = [
     reason: "spawns the Node documentation checker against filesystem fixtures",
   },
   {
+    file: "test/doctor-cli.test.ts",
+    reason: "spawns the CLI against a Node HTTP deployment over real sockets",
+  },
+  {
     file: "test/drift-check.test.ts",
     reason:
       "spawns the Node maintainer drift checker against filesystem fixtures",

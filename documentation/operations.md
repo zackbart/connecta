@@ -41,7 +41,13 @@ tarball), and refuses to merge into an existing path.
 
 `doctor` verifies a *running* deployment: `/health` reports ok, `tools/list` is
 exactly the seven prescribed names, and `execute_code` actually runs a trivial
-program. It refuses to send a bearer token over remote plaintext HTTP, and it
+program. The executor it names is the one the deployment reports on `/health`,
+from that executor's own `name` or its constructor name, sanitized and bounded
+on the way out: `QuickJS` on the Node template, `DynamicWorkerExecutor` on the
+Worker example, and `code executed` when an executor identifies as nothing —
+a checker that asserts a sandbox it never saw is worse than one that says it
+does not know ([#368](https://github.com/zackbart/connecta/issues/368)). It
+refuses to send a bearer token over remote plaintext HTTP, and it
 *reports* catalog drift without failing on it — an unclassified downstream tool
 already fails closed onto `call_destructive_tool`, so drift is a maintainer's
 next task rather than a broken deployment
@@ -216,6 +222,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | --- | --- | --- |
 | `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
+| `doctor-cli.test.ts` | `connecta doctor`'s executor line end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, and a hostile name is bounded and stripped before it reaches a terminal | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the maintainer drift checker — recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
 | `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor | runs the contract cases on the Node QuickJS executor |

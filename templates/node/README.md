@@ -136,6 +136,9 @@ connector count, QuickJS executed, seven tools, plus any catalog drift:
 Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed seven-tool surface.
 ```
 
+`QuickJS` is this deployment's sandbox, reported by the deployment itself —
+swap the executor and doctor names the one that actually ran the program.
+
 That is deliberate. Doctor holds a bearer, and a bearer learns the model-facing
 surface, not the deployment's configuration topology: whether this deployment
 issues access tokens or keeps a credential vault is operator data, and a client
