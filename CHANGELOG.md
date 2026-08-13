@@ -159,7 +159,7 @@ reachable. `exports` resolves only into `dist/`, so the packed `src/` was
 never imported by anything — it was there to back the source and declaration
 maps, and all three went together. Out with them, and out with the 230 KB
 README hero image, which npmjs.com renders from the repository anyway. An
-install unpacks to 1.9 MB instead of 3.8 MB. The code, the types, the CLI, the
+install unpacks to 1.8 MB instead of 3.8 MB. The code, the types, the CLI, the
 template, the Worker example, and every guide are exactly where they were —
 and there are four more guides than there were mid-release, because the four
 stubs `check:package` had been excluding got written instead.
@@ -198,7 +198,7 @@ it back byte-identical after each operator mutation.
   behavior rather than taste, the import-graph purity rule and what it actually
   prevents, both admission pools and why `/mcp` admits before it authenticates,
   and the connector-partitioned downstream policy. `operations.md` also carries
-  the test map AGENTS.md had been deferring since the docs restructure: all 60
+  the test map AGENTS.md had been deferring since the docs restructure: all 61
   suites plus the two browser specs, with each Node-only suite's reason for not
   running in workerd, so "this suite exists" and "this suite is justified" are
   one lookup. `connector-guides.md` gains the general authoring half #339 left
@@ -457,7 +457,7 @@ it back byte-identical after each operator mutation.
   went with them (#344).
 - **`src/`, `.js.map`, `.d.ts.map`, and `assets/` — from the tarball only.**
   All of them are still in the repository; none of them ships. The published
-  package is 167 files and 562 KB, down from 357 and 1.1 MB. The stub guides
+  package is 167 files and 550 KB, down from 357 and 1.1 MB. The stub guides
   left with them and came back written (#348), which is why the file count is
   four higher than the trim alone left it.
   Stepping into Connecta's TypeScript from an installed copy no longer works;
