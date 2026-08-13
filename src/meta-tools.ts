@@ -196,21 +196,45 @@ export function alignEndToCharBoundary(
 
 // --- fields selection (feature 2) -----------------------------------------
 
-/** Resolve a dot-path (segments) against a value; `key[]` maps the tail over an array. */
-function resolvePath(value: unknown, segments: string[]): unknown {
+type PathResolution =
+  | { status: "matched"; value: unknown }
+  | { status: "partial"; value: unknown }
+  | { status: "unmatched" };
+
+/** Resolve a dot-path and retain misses below every `[]` boundary. */
+function resolvePath(value: unknown, segments: string[]): PathResolution {
   const seg = segments[0];
-  if (seg === undefined) return value;
+  if (seg === undefined) {
+    return value === undefined
+      ? { status: "unmatched" }
+      : { status: "matched", value };
+  }
   const rest = segments.slice(1);
   const isArr = seg.endsWith("[]");
   const key = isArr ? seg.slice(0, -2) : seg;
   let next: unknown = value;
   if (key !== "") {
-    if (value === null || typeof value !== "object") return undefined;
+    if (value === null || typeof value !== "object") {
+      return { status: "unmatched" };
+    }
     next = (value as Record<string, unknown>)[key];
   }
   if (isArr) {
-    if (!Array.isArray(next)) return undefined;
-    return next.map((el) => resolvePath(el, rest));
+    if (!Array.isArray(next)) return { status: "unmatched" };
+    if (next.length === 0) return { status: "matched", value: [] };
+    const elements = next.map((el) => resolvePath(el, rest));
+    const matched = elements.some((element) => element.status !== "unmatched");
+    const missed = elements.some((element) => element.status !== "matched");
+    if (!matched) return { status: "unmatched" };
+    return {
+      status: missed ? "partial" : "matched",
+      // Undefined placeholders retain the historical array positions in the
+      // partial value. JSON renders them as null; partialFields says they are
+      // unresolved rather than genuine downstream nulls.
+      value: elements.map((element) =>
+        element.status === "unmatched" ? undefined : element.value,
+      ),
+    };
   }
   return resolvePath(next, rest);
 }
@@ -252,6 +276,7 @@ const NON_SEMANTIC_REF_SIBLINGS = new Set([
 interface FieldProjection {
   data: Record<string, unknown>;
   unmatchedFields: string[];
+  partialFields: string[];
 }
 
 interface ProjectionFeedback {
@@ -259,6 +284,7 @@ interface ProjectionFeedback {
   $connecta: {
     type: "field_projection";
     unmatchedFields: string[];
+    partialFields?: string[];
     hint?: string;
     schemaDeclared?: true;
     schemaCoverage?: "complete" | "partial";
@@ -668,12 +694,17 @@ function applyFields(
 ): FieldProjection {
   const out: Record<string, unknown> = {};
   const unmatchedFields: string[] = [];
+  const partialFields: string[] = [];
   for (const path of fields) {
     const resolved = resolvePath(value, path.split("."));
-    if (resolved === undefined) unmatchedFields.push(path);
-    else out[path] = resolved;
+    if (resolved.status === "unmatched") {
+      unmatchedFields.push(path);
+    } else {
+      out[path] = resolved.value;
+      if (resolved.status === "partial") partialFields.push(path);
+    }
   }
-  return { data: out, unmatchedFields };
+  return { data: out, unmatchedFields, partialFields };
 }
 
 /**
@@ -694,16 +725,27 @@ function projectionValue(
     projected.data,
     "$connecta",
   );
-  if (projected.unmatchedFields.length === 0 && !reservedCollision) {
+  if (
+    projected.unmatchedFields.length === 0 &&
+    projected.partialFields.length === 0 &&
+    !reservedCollision
+  ) {
     return projected.data;
   }
+  const problemFields = [
+    ...projected.unmatchedFields,
+    ...projected.partialFields,
+  ];
   return {
     data: projected.data,
     $connecta: {
       type: "field_projection",
       unmatchedFields: projected.unmatchedFields,
+      ...(projected.partialFields.length > 0
+        ? { partialFields: projected.partialFields }
+        : {}),
       ...(outputSchema
-        ? schemaProjectionFeedback(outputSchema, projected.unmatchedFields)
+        ? schemaProjectionFeedback(outputSchema, problemFields)
         : {}),
     },
   };

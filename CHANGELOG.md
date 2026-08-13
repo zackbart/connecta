@@ -2,6 +2,21 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This release repairs field projection across arrays. It changes only projections
+that previously serialized unresolved element paths as genuine `null` values;
+complete projections, genuine nulls, and empty arrays keep their prior shape.
+
+### Fixed
+
+- **Array field misses now report what happened.** A path that misses every
+  element appears in `unmatchedFields` instead of returning a clean array of
+  false nulls. A heterogeneous array keeps its positional result and names the
+  path in `partialFields`, so genuine downstream nulls remain distinguishable.
+  Schema-backed misses keep the same bounded guidance through nested arrays;
+  schema-free projections still report their observed misses (#394).
+
 ## 0.16.1 — 2026-08-13
 
 This is the cleanup that follows 0.16.0 out the door: the packaging housekeeping

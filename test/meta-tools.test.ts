@@ -3655,7 +3655,28 @@ const dataConnector: Connector = {
               items: {
                 type: "object",
                 additionalProperties: false,
-                properties: { id: { type: "number" } },
+                properties: {
+                  id: { type: "number" },
+                  optionalId: { type: "number" },
+                  realNull: { type: "null" },
+                },
+              },
+            },
+            groups: {
+              type: "array",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  results: {
+                    type: "array",
+                    items: {
+                      type: "object",
+                      additionalProperties: false,
+                      properties: { id: { type: "number" } },
+                    },
+                  },
+                },
               },
             },
           },
@@ -3687,11 +3708,21 @@ const dataConnector: Connector = {
     if (name === "get") {
       return {
         user: { name: "Ada", address: { city: "London" } },
-        results: [{ id: 1 }, { id: 2 }, { id: 3 }],
+        results: [
+          { id: 1, optionalId: 10, realNull: null },
+          { id: 2, realNull: null },
+          { id: 3, optionalId: 30, realNull: null },
+        ],
+        groups: [
+          { results: [{ id: 1 }, {}] },
+          { results: [{ id: 3 }] },
+        ],
       };
     }
     if (name === "big") return { blob: "x".repeat(500) };
-    if (name === "loose") return { a: 1, b: 2 };
+    if (name === "loose") {
+      return { a: 1, b: 2, results: [{ value: null }, {}] };
+    }
     if (name === "empty") return {};
     throw new Error(`Unknown tool "${name}" on connector "data"`);
   },
@@ -3908,6 +3939,162 @@ describe("call_tool fields selection", () => {
     expect(parsed).toEqual({
       "user.address.city": "London",
       "results[].id": [1, 2, 3],
+    });
+  });
+
+  it("reports an element-level total miss without serializing false nulls", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    const parsed = textOf(
+      await mt.callTool({
+        address: "data.get",
+        fields: ["results[].missing"],
+      }),
+    );
+    expect(parsed).toEqual({
+      data: {},
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: ["results[].missing"],
+        schemaDeclared: true,
+        schemaCoverage: "complete",
+        invalidFields: ["results[].missing"],
+        availableFields: [
+          "groups",
+          "groups[]",
+          "groups[].results",
+          "groups[].results[]",
+          "groups[].results[].id",
+          "results",
+          "results[]",
+          "results[].id",
+          "results[].optionalId",
+          "results[].realNull",
+          "user",
+          "user.address",
+          "user.address.city",
+          "user.name",
+        ],
+      },
+    });
+  });
+
+  it("distinguishes partial element misses from genuine nulls", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "data.get",
+          fields: ["results[].optionalId"],
+        }),
+      ),
+    ).toEqual({
+      data: { "results[].optionalId": [10, null, 30] },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: [],
+        partialFields: ["results[].optionalId"],
+        schemaDeclared: true,
+        schemaCoverage: "complete",
+        availableFields: [
+          "groups",
+          "groups[]",
+          "groups[].results",
+          "groups[].results[]",
+          "groups[].results[].id",
+          "results",
+          "results[]",
+          "results[].id",
+          "results[].optionalId",
+          "results[].realNull",
+          "user",
+          "user.address",
+          "user.address.city",
+          "user.name",
+        ],
+      },
+    });
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "data.get",
+          fields: ["results[].realNull"],
+        }),
+      ),
+    ).toEqual({ "results[].realNull": [null, null, null] });
+  });
+
+  it("tracks misses through nested arrays", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "data.get",
+          fields: ["groups[].results[].id"],
+        }),
+      ),
+    ).toEqual({
+      data: { "groups[].results[].id": [[1, null], [3]] },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: [],
+        partialFields: ["groups[].results[].id"],
+        schemaDeclared: true,
+        schemaCoverage: "complete",
+        availableFields: [
+          "groups",
+          "groups[]",
+          "groups[].results",
+          "groups[].results[]",
+          "groups[].results[].id",
+          "results",
+          "results[]",
+          "results[].id",
+          "results[].optionalId",
+          "results[].realNull",
+          "user",
+          "user.address",
+          "user.address.city",
+          "user.name",
+        ],
+      },
+    });
+  });
+
+  it("keeps an empty array traversal as a clean match", async () => {
+    const connector: Connector = {
+      ...dataConnector,
+      id: "empty-array",
+      async callTool() {
+        return { results: [] };
+      },
+    };
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "empty-array.get",
+          fields: ["results[].id"],
+        }),
+      ),
+    ).toEqual({ "results[].id": [] });
+  });
+
+  it("reports partial array misses without an output schema", async () => {
+    const mt = createMetaTools(makeRegistry([dataConnector]), BASE);
+    expect(
+      textOf(
+        await mt.callTool({
+          address: "data.loose",
+          fields: ["results[].value"],
+        }),
+      ),
+    ).toEqual({
+      data: { "results[].value": [null, null] },
+      $connecta: {
+        type: "field_projection",
+        unmatchedFields: [],
+        partialFields: ["results[].value"],
+      },
     });
   });
 
