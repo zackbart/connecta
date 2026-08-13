@@ -43,13 +43,13 @@ Connecta failure without parsing its message.
   guest code from forging the host transport on either executor (#393).
 
 - **`execute_code` now tells the truth about each shipped sandbox.** QuickJS
-  omits runtime globals and blocks imports. Loader-only Dynamic Workers deny
-  outbound fetch, WebSocket, `node:net`, and `node:tls`; leave DNS unresolved;
-  expose no environment bindings or filesystem/HTTP builtins; but retain local
-  `data:` fetch, runtime globals, and a non-contract builtin set that can drift.
-  The example pins the required loader-only
-  construction, and agent guidance tells portable programs to use none of that
-  Dynamic-only authority (#390).
+  has no `fetch`, `process`, timers, `crypto`, or `WebSocket`, and blocks
+  imports. Loader-only Dynamic Workers deny outbound fetch, WebSocket,
+  `node:net`, and `node:tls`; leave DNS unresolved; expose no environment
+  bindings or filesystem/HTTP builtins; but retain local `data:` fetch,
+  runtime globals, and a non-contract builtin set that can drift. The example
+  pins the required loader-only construction, and agent guidance tells portable
+  programs to use none of that Dynamic-only authority (#390).
 
 - **Clerk-authenticated operator pages now wait for ClerkJS before booting.**
   The loader runs before the later inline operator bundle instead of deferring
@@ -62,6 +62,19 @@ Connecta failure without parsing its message.
   so agents resolve the intended account through the live tool schema and stop
   when the target or selector is ambiguous. The guide also keeps organization
   accounts separate from the restricted-key-only Stripe Connect path (#404).
+
+- **The no-account-model constitution now matches provider-owned sessions.**
+  Connecta still has no account dimension: credentials, storage, admission,
+  and health remain connector-scoped. A provider may expose its own account
+  scope only through its live schema; metadata never proves identity, and an
+  ambiguous target or selector stops instead of becoming a guess (#410).
+
+- **The reviewed Notion page contracts are current again.** Notion added
+  create-page template and placement options plus update-page locking,
+  template, and erase options. The existing parent, properties, Markdown,
+  children, emoji, and trash request subsets remain valid, so this release
+  records the two changed endpoint digests without adding the new capabilities.
+  Their product decisions remain in #408 and #409.
 
 - **Array field misses now report what happened.** A path that misses every
   element appears in `unmatchedFields` instead of returning a clean array of

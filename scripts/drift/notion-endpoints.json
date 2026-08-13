@@ -50,7 +50,7 @@
       "method": "POST",
       "path": "/v1/pages",
       "specRevision": "1.0.0",
-      "contract": "sha256:1a92b9b60f523f119f27457e251cc7b2f06b4c884864f0281c911e38c1a95f17"
+      "contract": "sha256:961f5532f6d607185bc264c781d79c2618a2c0d15c6126cd2e648a3cd144a231"
     },
     {
       "method": "GET",
@@ -62,7 +62,7 @@
       "method": "PATCH",
       "path": "/v1/pages/{page_id}",
       "specRevision": "1.0.0",
-      "contract": "sha256:dd3071a82ccd2724be92315a8037e3003056f49acbf0d5cb5830fece7d5b1811"
+      "contract": "sha256:92003f9bb7912dac38cad0b16c11a3ee753743f2e5325c8c1d49355b7b9d94a6"
     },
     {
       "method": "GET",
