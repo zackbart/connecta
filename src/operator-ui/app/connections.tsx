@@ -105,6 +105,12 @@ function ConnectorCard({
         </p>
       ) : null}
       <DriftPanel connector={connector} />
+      {connector.catalogAccess ? (
+        <p class="meta">
+          Last agent catalog read · {connector.catalogAccess.state} ·{" "}
+          {new Date(connector.catalogAccess.observedAt).toLocaleString()}
+        </p>
+      ) : null}
       {connector.oauth && oauthManagement ? (
         <div class="credential-actions">
           <button

@@ -204,6 +204,13 @@ export interface CatalogDriftReport extends CatalogDriftCounts {
   observedAt: string;
 }
 
+/** The last agent-facing catalog read this runtime served for one connector. */
+export interface CatalogAccessObservation {
+  /** Fresh means the read used a live or unexpired catalog; stale means SWR. */
+  state: "fresh" | "stale";
+  observedAt: string;
+}
+
 export interface ConnectorStatus {
   state: ConnectorStatusState;
   /** When state === "auth_required", the URL the operator should open. */
@@ -217,6 +224,11 @@ export interface ConnectorStatus {
    * isolate or process has seen nothing, not that nothing drifted.
    */
   catalogDrift?: CatalogDriftReport;
+  /**
+   * The last agent-facing catalog read in this runtime. This payload-free
+   * observation is not persisted and operator reads do not replace it.
+   */
+  catalogAccess?: CatalogAccessObservation;
 }
 
 /** The whole plugin contract — the one open seam. */

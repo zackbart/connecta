@@ -4,18 +4,29 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-This release repairs field projection across arrays and makes guide discovery
-read Markdown as prose instead of physical lines. Projection changes apply only
-where unresolved element paths previously looked like genuine `null` values.
-One construction contract tightens: an explicit `usageGuide.summary` over 120
-characters now refuses to boot. Deployments whose summaries already fit, or
-which let Connecta derive them, need no configuration change.
+This minor release makes catalog discovery faster and its answers more exact.
+Agent reads can use a verified stale catalog while one bounded refresh runs,
+guide summaries now read Markdown as prose, compact schemas retain more declared
+constraints, array projection distinguishes misses from genuine nulls, and
+Mixpanel carries the conditional rules its live tools enforce. One construction
+contract tightens: an explicit `usageGuide.summary` over 120 characters now
+refuses to boot. Deployments whose summaries fit, or which let Connecta derive
+them, need no configuration change. Operator catalog reads retain their blocking
+freshness behavior.
 
 ### Changed
 
 - An explicit `usageGuide.summary` longer than 120 characters after whitespace
   normalization now throws during registry construction. Exactly 120 remains
   valid, and a blank explicit summary still falls back to derivation (#392).
+
+- **Agent catalog reads now serve a verified stale entry while they refresh it.**
+  Search, describe, and code-mode calls no longer await a downstream listing
+  when the runtime already holds a complete catalog inside its stale window.
+  The inbound request still causes the refresh; there is no timer, warmup, or
+  credential probe. One bounded refresh per connector owns and closes a fresh
+  scope, while operator status stays blocking and shows whether the last agent
+  read in this runtime was fresh or stale (#396).
 
 ### Fixed
 

@@ -1,4 +1,5 @@
 import type {
+  CatalogAccessObservation,
   CatalogDriftCounts,
   CatalogDriftReport,
   Connector,
@@ -8,6 +9,10 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
+import {
+  closeConnectorScope,
+  type DeferredWork,
+} from "./connector-scope.js";
 import {
   recordCatalogDriftActivity,
   type CatalogDriftActivityContext,
@@ -38,6 +43,7 @@ import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
 } from "./skills.js";
+import { withAbortableTimeout } from "./timeout.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -110,6 +116,13 @@ interface CacheEntry {
   fingerprint: string;
   exp: number; // epoch ms
   staleUntil: number;
+}
+
+interface CatalogRefreshFlight {
+  generation: number;
+  promise: Promise<ToolDef[]>;
+  /** One caught/logged tail shared by every stale reader that joins. */
+  deferredTail?: Promise<void>;
 }
 
 interface LegacyPersistedCatalog {
@@ -223,6 +236,13 @@ export type ConnectorOperationOptions = Pick<
   "signal" | "timeoutMs"
 >;
 
+/** Agent-only catalog behavior. This never enters a ConnectorContext. */
+export interface CatalogReadOptions {
+  defer?: DeferredWork;
+  /** Fresh deadline for a deferred refresh; never an inbound signal. */
+  refreshTimeoutMs: number;
+}
+
 /**
  * The registry surface a per-connection MCP server consumes: every meta-tool
  * (`src/meta-tools.ts`) and the `execute_code` sandbox bridge (`src/execute.ts`)
@@ -245,6 +265,7 @@ export interface RegistryView {
     baseUrl: string,
     requestScope?: object,
     callOptions?: ConnectorOperationOptions,
+    readOptions?: CatalogReadOptions,
   ): Promise<ToolDef[]>;
   refreshTools(
     id: string,
@@ -302,6 +323,16 @@ export class Registry implements RegistryView {
   private readonly requestCatalogLoads = new WeakMap<
     object,
     Map<string, Promise<ToolDef[]>>
+  >();
+  /** One live refresh per connector across agent and operator requests. */
+  private readonly catalogRefreshes = new Map<
+    string,
+    CatalogRefreshFlight
+  >();
+  /** Last payload-free agent catalog access in this runtime. */
+  private readonly catalogAccess = new Map<
+    string,
+    CatalogAccessObservation
   >();
   /** Deployment-wide observations — every call, whatever view made it. */
   private readonly health = new HealthLog();
@@ -912,24 +943,24 @@ export class Registry implements RegistryView {
     return next;
   }
 
-  /** Force a live listTools refresh and replace both catalog cache layers. */
-  async refreshTools(
+  private async refreshToolsWithContext(
     id: string,
-    baseUrl: string,
-    requestScope?: object,
-    callOptions: ConnectorOperationOptions = {},
+    connector: Connector,
+    ctx: ConnectorContext,
+    skipPublicationWhenAborted = false,
   ): Promise<ToolDef[]> {
-    const connector = this.connectors.get(id);
-    if (!connector) throw new Error(`Unknown connector "${id}"`);
-    if (connector.staticTools) return connector.staticTools;
     const generation = this.catalogGeneration(id);
-    const tools = await connector.listTools(
-      this.contextFor(id, baseUrl, requestScope, callOptions),
-    );
+    const tools = await connector.listTools(ctx);
     // The listing a maintained proxy just served is also the only catalog
     // comparison connecta ever makes. It rides this refresh whether or not the
     // result reaches a cache, because what drifted drifted.
     this.observeCatalogDrift(connector);
+    // A deferred deadline may close the owned scope while a connector that
+    // ignores abort is still listing. The completed list remains a valid drift
+    // observation, but must not overwrite a newer same-generation refresh.
+    // Blocking callers do not set this flag and retain their prior publication
+    // behavior when an inbound abort races a completed listing.
+    if (skipPublicationWhenAborted && ctx.signal?.aborted) return tools;
     // The caller that began this refresh may still use its result, but a
     // credential/OAuth change that landed while listTools was in flight means
     // the listing must not enter either shared cache layer.
@@ -943,7 +974,12 @@ export class Registry implements RegistryView {
     }
     const previous = this.cache.get(id);
     const snapshot = await snapshotCatalog(tools);
-    if (generation !== this.catalogGeneration(id)) return tools;
+    if (
+      generation !== this.catalogGeneration(id) ||
+      (skipPublicationWhenAborted && ctx.signal?.aborted)
+    ) {
+      return tools;
+    }
     if (snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES) {
       const message =
         `Connector "${id}" returned a ${snapshot.serializedBytes.byteLength}-byte ` +
@@ -981,8 +1017,47 @@ export class Registry implements RegistryView {
     return tools;
   }
 
-  /** Cached listTools with in-memory + persisted serializable catalog layers. */
-  private async loadTools(
+  /**
+   * Publish one shared refresh promise before starting its connector work.
+   * The first caller owns the scope and deadline; every later caller joins the
+   * result without gaining access to that context.
+   */
+  private startCatalogRefresh(
+    id: string,
+    generation: number,
+    start: () => Promise<ToolDef[]>,
+    finish?: () => Promise<void>,
+  ): CatalogRefreshFlight {
+    const existing = this.catalogRefreshes.get(id);
+    if (existing?.generation === generation) return existing;
+    let resolveWork!: (tools: ToolDef[]) => void;
+    let rejectWork!: (reason?: unknown) => void;
+    const work = new Promise<ToolDef[]>((resolve, reject) => {
+      resolveWork = resolve;
+      rejectWork = reject;
+    });
+    let flight!: CatalogRefreshFlight;
+    const promise = work
+      .finally(async () => {
+        if (finish) await finish();
+      })
+      .finally(() => {
+        if (this.catalogRefreshes.get(id) === flight) {
+          this.catalogRefreshes.delete(id);
+        }
+      });
+    flight = { generation, promise };
+    this.catalogRefreshes.set(id, flight);
+    try {
+      Promise.resolve(start()).then(resolveWork, rejectWork);
+    } catch (err) {
+      rejectWork(err);
+    }
+    return flight;
+  }
+
+  /** Force a live listTools refresh and replace both catalog cache layers. */
+  async refreshTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
@@ -991,13 +1066,117 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     if (connector.staticTools) return connector.staticTools;
+    const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
+    return this.startCatalogRefresh(id, this.catalogGeneration(id), () =>
+      this.refreshToolsWithContext(id, connector, ctx),
+    ).promise;
+  }
+
+  private observeCatalogAccess(
+    id: string,
+    state: CatalogAccessObservation["state"],
+  ): void {
+    this.catalogAccess.set(id, {
+      state,
+      observedAt: new Date().toISOString(),
+    });
+  }
+
+  /**
+   * Start or join one shared refresh. A newly deferred task owns its scope,
+   * deadline, and teardown; no inbound signal or request scope crosses into it.
+   */
+  private deferCatalogRefresh(
+    id: string,
+    baseUrl: string,
+    expectedGeneration: number,
+    options: CatalogReadOptions,
+  ): void {
+    const connector = this.connectors.get(id);
+    if (!connector || connector.staticTools || !options.defer) return;
+    let flight = this.catalogRefreshes.get(id);
+    if (flight?.generation !== expectedGeneration) flight = undefined;
+    if (!flight) {
+      const requestScope = {};
+      let ctx: ConnectorContext | undefined;
+      flight = this.startCatalogRefresh(
+        id,
+        expectedGeneration,
+        () =>
+          withAbortableTimeout(
+            (signal) => {
+              const current = this.cache.get(id);
+              if (current && current.exp > Date.now()) {
+                return Promise.resolve(current.tools);
+              }
+              if (
+                expectedGeneration !== this.catalogGeneration(id) ||
+                this.invalidated.has(id)
+              ) {
+                return Promise.reject(
+                  new Error(
+                    `Deferred catalog refresh of "${id}" was invalidated before it started.`,
+                  ),
+                );
+              }
+              ctx = this.contextFor(id, baseUrl, requestScope, {
+                signal,
+                timeoutMs: options.refreshTimeoutMs,
+              });
+              return this.refreshToolsWithContext(id, connector, ctx, true);
+            },
+            options.refreshTimeoutMs,
+            `deferred catalog refresh of "${id}"`,
+          ),
+        async () => {
+          if (ctx) await closeConnectorScope(connector, ctx, options.defer);
+        },
+      );
+    }
+    if (!flight.deferredTail) {
+      // Attach the rejection handler before handing the tail to waitUntil.
+      flight.deferredTail = flight.promise.then(
+        () => {},
+        (err) => {
+          this.opts.logger.warn(
+            `[connecta] connector "${id}" deferred catalog refresh failed: ${msg(err)}`,
+          );
+        },
+      );
+    }
+    try {
+      options.defer(flight.deferredTail);
+    } catch (err) {
+      this.opts.logger.warn(
+        `[connecta] connector "${id}" deferred catalog refresh could not attach to the runtime: ${msg(err)}`,
+      );
+    }
+  }
+
+  /** Cached listTools with in-memory + persisted serializable catalog layers. */
+  private async loadTools(
+    id: string,
+    baseUrl: string,
+    requestScope?: object,
+    callOptions: ConnectorOperationOptions = {},
+    readOptions?: CatalogReadOptions,
+  ): Promise<ToolDef[]> {
+    const connector = this.connectors.get(id);
+    if (!connector) throw new Error(`Unknown connector "${id}"`);
+    if (connector.staticTools) return connector.staticTools;
 
     const now = Date.now();
     const requestGeneration = this.catalogGeneration(id);
     const hit = this.cache.get(id);
-    if (hit && hit.exp > now) return hit.tools;
+    if (hit && hit.exp > now) {
+      if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
+      return hit.tools;
+    }
 
-    let stale = hit && hit.staleUntil > now ? hit.tools : undefined;
+    let stale =
+      hit && hit.staleUntil > now
+        ? { tools: hit.tools, staleUntil: hit.staleUntil }
+        : undefined;
     if (this.persistToolCatalog && !this.invalidated.has(id)) {
       const generation = this.catalogGeneration(id);
       let persisted: PersistedCatalog | null = null;
@@ -1016,56 +1195,124 @@ export class Registry implements RegistryView {
         persisted = null;
         stale = undefined;
       }
-      if (persisted && persisted.staleUntil > now) {
+      // Storage can yield while another request finishes a live refresh. Read
+      // the shared cache again before an older manifest gets any authority.
+      // The candidate with the later fresh deadline wins; both candidates have
+      // already passed their own fingerprint and completeness checks.
+      const reconciledAt = Date.now();
+      const current = this.cache.get(id);
+      const usableCurrent =
+        current && current.staleUntil > reconciledAt ? current : undefined;
+      if (usableCurrent) {
+        stale = {
+          tools: usableCurrent.tools,
+          staleUntil: usableCurrent.staleUntil,
+        };
+        if (usableCurrent.exp > reconciledAt) {
+          if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
+          return usableCurrent.tools;
+        }
+      }
+      if (
+        persisted &&
+        persisted.staleUntil > reconciledAt &&
+        (!usableCurrent || persisted.expiresAt > usableCurrent.exp)
+      ) {
         this.cache.set(id, {
           tools: persisted.tools,
           fingerprint: persisted.fingerprint,
           exp: persisted.expiresAt,
           staleUntil: persisted.staleUntil,
         });
-        if (persisted.expiresAt > now) return persisted.tools;
-        stale = persisted.tools;
+        if (persisted.expiresAt > reconciledAt) {
+          if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
+          return persisted.tools;
+        }
+        stale = {
+          tools: persisted.tools,
+          staleUntil: persisted.staleUntil,
+        };
+      }
+    }
+
+    if (
+      stale &&
+      stale.staleUntil > Date.now() &&
+      readOptions?.defer &&
+      requestGeneration === this.catalogGeneration(id) &&
+      !this.invalidated.has(id)
+    ) {
+      this.deferCatalogRefresh(
+        id,
+        baseUrl,
+        requestGeneration,
+        readOptions,
+      );
+      // Invalidation can land synchronously while the refresh is attached.
+      // Repeat the authority check at the exact stale publication point.
+      if (
+        stale.staleUntil > Date.now() &&
+        requestGeneration === this.catalogGeneration(id) &&
+        !this.invalidated.has(id)
+      ) {
+        this.observeCatalogAccess(id, "stale");
+        return stale.tools;
       }
     }
 
     try {
-      return await this.refreshTools(id, baseUrl, requestScope, callOptions);
+      const tools = await this.refreshTools(
+        id,
+        baseUrl,
+        requestScope,
+        callOptions,
+      );
+      if (readOptions?.defer) this.observeCatalogAccess(id, "fresh");
+      return tools;
     } catch (err) {
       if (
         stale &&
+        stale.staleUntil > Date.now() &&
         requestGeneration === this.catalogGeneration(id) &&
         !this.invalidated.has(id)
       ) {
+        if (readOptions?.defer) this.observeCatalogAccess(id, "stale");
         this.opts.logger.warn(
           `[connecta] connector "${id}" catalog refresh failed; serving stale catalog: ${msg(err)}`,
         );
-        return stale;
+        return stale.tools;
       }
       throw err;
     }
   }
 
   /**
-   * Coalesce one connector's cold load inside one inbound request. The WeakMap
-   * neither roots the request scope nor lets its connector context escape into
-   * another request; settled entries are also removed eagerly.
+   * Coalesce one connector's catalog traversal inside one inbound request. The
+   * WeakMap neither roots the request scope nor lets its connector context
+   * escape into another request; settled entries are also removed eagerly.
    *
-   * The first caller's `callOptions` govern the shared load: a later caller's
-   * signal or timeout neither cancels nor extends it, and an abort by the
-   * first caller rejects every coalesced caller. Within one request that is
-   * the deal being made — one fetch, one deadline.
+   * The deployment-wide flight below this layer coalesces the actual live
+   * refresh across requests. Its first caller's context and deadline govern;
+   * later callers join only its result, never its request scope.
    */
   async getTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
     callOptions: ConnectorOperationOptions = {},
+    readOptions?: CatalogReadOptions,
   ): Promise<ToolDef[]> {
     const connector = this.connectors.get(id);
     if (!connector) throw new Error(`Unknown connector "${id}"`);
     if (connector.staticTools) return connector.staticTools;
     if (!requestScope) {
-      return this.loadTools(id, baseUrl, requestScope, callOptions);
+      return this.loadTools(
+        id,
+        baseUrl,
+        requestScope,
+        callOptions,
+        readOptions,
+      );
     }
 
     let loads = this.requestCatalogLoads.get(requestScope);
@@ -1075,7 +1322,13 @@ export class Registry implements RegistryView {
     }
     const existing = loads.get(id);
     if (existing) return existing;
-    const loading = this.loadTools(id, baseUrl, requestScope, callOptions);
+    const loading = this.loadTools(
+      id,
+      baseUrl,
+      requestScope,
+      callOptions,
+      readOptions,
+    );
     loads.set(id, loading);
     try {
       return await loading;
@@ -1148,22 +1401,37 @@ export class Registry implements RegistryView {
     // The report is rebuilt rather than spread through: what the seam returned
     // is third-party output, and status is read by the operator UI and copied
     // into responses.
-    const withDrift = (status: ConnectorStatus): ConnectorStatus => {
+    const withObservations = (status: ConnectorStatus): ConnectorStatus => {
       const report = boundedCatalogDrift(connector.catalogDrift?.());
-      return report ? { ...status, catalogDrift: report } : status;
+      const access = this.catalogAccess.get(id);
+      // Connector.status is an open plugin seam. Rebuild its public fields so
+      // a connector cannot smuggle payload through either registry-owned
+      // observation when this runtime has not made one.
+      const boundedStatus: ConnectorStatus = {
+        state: status.state,
+        ...(status.authorizationUrl !== undefined
+          ? { authorizationUrl: status.authorizationUrl }
+          : {}),
+        ...(status.message !== undefined ? { message: status.message } : {}),
+      };
+      return {
+        ...boundedStatus,
+        ...(report ? { catalogDrift: report } : {}),
+        ...(access ? { catalogAccess: { ...access } } : {}),
+      };
     };
     if (connector.status) {
       try {
-        return withDrift(await connector.status(ctx));
+        return withObservations(await connector.status(ctx));
       } catch (err) {
-        return withDrift({ state: "error", message: msg(err) });
+        return withObservations({ state: "error", message: msg(err) });
       }
     }
     try {
       await this.getTools(id, baseUrl, requestScope, callOptions);
-      return withDrift({ state: "ok" });
+      return withObservations({ state: "ok" });
     } catch (err) {
-      return withDrift({ state: "error", message: msg(err) });
+      return withObservations({ state: "error", message: msg(err) });
     }
   }
 

@@ -4,6 +4,7 @@ import {
   MAX_CATALOG_TOOLS,
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "../src/catalog-limits.js";
+import { CatalogService } from "../src/catalog-service.js";
 import { api } from "../src/connectors/api.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -304,8 +305,9 @@ describe("tool cache TTL", () => {
     expect(storageWrites).toBe(2);
   });
 
-  it("does not share an in-flight catalog across request scopes", async () => {
+  it("shares a live refresh across request scopes without sharing their context", async () => {
     let catalogLoads = 0;
+    const usedScopes: object[] = [];
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
@@ -313,8 +315,9 @@ describe("tool cache TTL", () => {
     const connector: Connector = {
       id: "request_bound",
       kind: "mcp",
-      async listTools() {
+      async listTools(ctx) {
         catalogLoads++;
+        usedScopes.push(ctx.requestScope!);
         await gate;
         return [{ name: "read" }];
       },
@@ -328,11 +331,15 @@ describe("tool cache TTL", () => {
       persistToolCatalog: false,
       toolCacheTtlSeconds: 0,
     });
+    const firstScope = {};
+    const secondScope = {};
     const pending = [
-      registry.getTools("request_bound", BASE, {}),
-      registry.getTools("request_bound", BASE, {}),
+      registry.getTools("request_bound", BASE, firstScope),
+      registry.getTools("request_bound", BASE, secondScope),
     ];
-    await vi.waitFor(() => expect(catalogLoads).toBe(2));
+    await vi.waitFor(() => expect(catalogLoads).toBe(1));
+    expect(usedScopes).toEqual([firstScope]);
+    expect(usedScopes).not.toContain(secondScope);
     release();
     await Promise.all(pending);
   });
@@ -1130,5 +1137,650 @@ describe("broken-connector isolation", () => {
     expect(ok.state).toBe("ok");
     const tools = await registry.getTools("calc", BASE);
     expect(tools.map((t) => t.name)).toEqual(["add"]);
+  });
+});
+
+describe("catalog stale-while-revalidate", () => {
+  function deferred<T>() {
+    let resolve!: (value: T | PromiseLike<T>) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
+    return { promise, resolve, reject };
+  }
+
+  it("serves stale without awaiting and coalesces refreshes across requests", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      const contexts: object[] = [];
+      const closed: object[] = [];
+      let calls = 0;
+      const connector: Connector = {
+        id: "swr",
+        kind: "mcp",
+        async listTools(ctx) {
+          calls++;
+          contexts.push(ctx.requestScope!);
+          if (calls > 1) await gate.promise;
+          return [{ name: calls > 1 ? "new" : "old" }];
+        },
+        async callTool() {
+          return null;
+        },
+        async closeScope(ctx) {
+          closed.push(ctx.requestScope!);
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("swr", BASE, {});
+      vi.advanceTimersByTime(2_000);
+
+      const tails: Promise<unknown>[] = [];
+      const firstScope = {};
+      const secondScope = {};
+      const makeCatalog = (requestScope: object) =>
+        new CatalogService(registry, BASE, {
+          requestScope,
+          probeTimeoutMs: 5_000,
+          defer: (promise) => tails.push(promise),
+        });
+      const [first, second] = await Promise.all([
+        makeCatalog(firstScope).loadConnector("swr"),
+        makeCatalog(secondScope).loadConnector("swr"),
+      ]);
+
+      expect(first).toEqual([{ name: "old" }]);
+      expect(second).toEqual([{ name: "old" }]);
+      expect(calls).toBe(2);
+      expect(contexts[1]).not.toBe(firstScope);
+      expect(contexts[1]).not.toBe(secondScope);
+      expect(tails).toHaveLength(2);
+
+      gate.resolve();
+      await Promise.all(tails.slice(0, 2));
+      expect(closed).toEqual([contexts[1]]);
+      expect(registry.peekTools("swr")).toEqual([{ name: "new" }]);
+      await expect(registry.statusFor("swr", BASE)).resolves.toMatchObject({
+        state: "ok",
+        catalogAccess: { state: "stale" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("makes a blocking reader join an agent-owned deferred refresh", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      let calls = 0;
+      const connector: Connector = {
+        id: "agent_then_operator",
+        kind: "mcp",
+        async listTools() {
+          const call = ++calls;
+          if (call > 1) await gate.promise;
+          return [{ name: call === 1 ? "old" : "new" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("agent_then_operator", BASE, {});
+      vi.advanceTimersByTime(2_000);
+
+      const tails: Promise<unknown>[] = [];
+      await expect(
+        new CatalogService(registry, BASE, {
+          defer: (promise) => tails.push(promise),
+        }).loadConnector("agent_then_operator"),
+      ).resolves.toEqual([{ name: "old" }]);
+      await vi.waitFor(() => expect(calls).toBe(2));
+
+      let operatorSettled = false;
+      const operator = registry
+        .statusFor("agent_then_operator", BASE, {})
+        .finally(() => {
+          operatorSettled = true;
+        });
+      await Promise.resolve();
+      expect(operatorSettled).toBe(false);
+      expect(calls).toBe(2);
+
+      gate.resolve();
+      await expect(operator).resolves.toMatchObject({ state: "ok" });
+      expect(registry.peekTools("agent_then_operator")).toEqual([
+        { name: "new" },
+      ]);
+      await Promise.all(tails);
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("makes an agent stale read join a blocking refresh without awaiting it", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      let calls = 0;
+      const connector: Connector = {
+        id: "operator_then_agent",
+        kind: "mcp",
+        async listTools() {
+          const call = ++calls;
+          if (call > 1) await gate.promise;
+          return [{ name: call === 1 ? "old" : "new" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("operator_then_agent", BASE, {});
+      vi.advanceTimersByTime(2_000);
+
+      let operatorSettled = false;
+      const operator = registry
+        .statusFor("operator_then_agent", BASE, {})
+        .finally(() => {
+          operatorSettled = true;
+        });
+      await vi.waitFor(() => expect(calls).toBe(2));
+
+      const tails: Promise<unknown>[] = [];
+      await expect(
+        new CatalogService(registry, BASE, {
+          defer: (promise) => tails.push(promise),
+        }).loadConnector("operator_then_agent"),
+      ).resolves.toEqual([{ name: "old" }]);
+      expect(operatorSettled).toBe(false);
+      expect(tails).toHaveLength(1);
+      expect(calls).toBe(2);
+
+      gate.resolve();
+      await expect(operator).resolves.toMatchObject({ state: "ok" });
+      expect(registry.peekTools("operator_then_agent")).toEqual([
+        { name: "new" },
+      ]);
+      await Promise.all(tails);
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("uses a fresh bounded signal, logs failure, and always closes its scope", async () => {
+    vi.useFakeTimers();
+    try {
+      const inbound = new AbortController();
+      const warnings: string[] = [];
+      const contexts: Parameters<Connector["listTools"]>[0][] = [];
+      const closed: Parameters<NonNullable<Connector["closeScope"]>>[0][] = [];
+      let calls = 0;
+      const connector: Connector = {
+        id: "bounded_swr",
+        kind: "mcp",
+        async listTools(ctx) {
+          calls++;
+          contexts.push(ctx);
+          if (calls > 1) throw new Error("refresh broke");
+          return [{ name: "old" }];
+        },
+        async callTool() {
+          return null;
+        },
+        async closeScope(ctx) {
+          closed.push(ctx);
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: {
+          ...silentLogger,
+          warn: (...args: unknown[]) => warnings.push(String(args[0])),
+        },
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("bounded_swr", BASE, {});
+      vi.advanceTimersByTime(2_000);
+      const tails: Promise<unknown>[] = [];
+      const service = new CatalogService(registry, BASE, {
+        requestScope: {},
+        probeTimeoutMs: 123,
+        defer: (promise) => tails.push(promise),
+      });
+
+      await expect(
+        service.loadConnector("bounded_swr", { signal: inbound.signal }),
+      ).resolves.toEqual([{ name: "old" }]);
+      inbound.abort(new Error("request ended"));
+      await Promise.all(tails);
+
+      expect(contexts[1]?.signal).not.toBe(inbound.signal);
+      expect(contexts[1]?.timeoutMs).toBe(123);
+      expect(closed).toHaveLength(1);
+      expect(closed[0]).toBe(contexts[1]);
+      expect(
+        warnings.some((warning) =>
+          warning.includes("deferred catalog refresh failed: refresh broke"),
+        ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps blocking publication and drift when an inbound abort races completion", async () => {
+    const inbound = new AbortController();
+    let observed = false;
+    const connector: Connector = {
+      id: "blocking_abort",
+      kind: "mcp",
+      async listTools() {
+        observed = true;
+        inbound.abort(new Error("caller left after listing"));
+        return [{ name: "complete" }];
+      },
+      catalogDrift() {
+        return observed
+          ? {
+              observedAt: "2026-08-13T12:00:00.000Z",
+              unclassifiedTools: 0,
+              unservedTools: 0,
+              annotationConflicts: 0,
+              schemaChanges: 1,
+            }
+          : undefined;
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const registry = new Registry([connector], {
+      storage: memoryStorage(),
+      logger: silentLogger,
+    });
+
+    await expect(
+      registry.getTools("blocking_abort", BASE, {}, {
+        signal: inbound.signal,
+      }),
+    ).resolves.toEqual([{ name: "complete" }]);
+    expect(registry.peekTools("blocking_abort")).toEqual([
+      { name: "complete" },
+    ]);
+    expect(registry.catalogDriftSnapshot().blocking_abort).toMatchObject({
+      observedAt: "2026-08-13T12:00:00.000Z",
+      schemaChanges: 1,
+    });
+  });
+
+  it("rechecks invalidation at the stale publication point", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      const connector: Connector = {
+        id: "swr_generation",
+        kind: "mcp",
+        async listTools() {
+          calls++;
+          return [{ name: calls === 1 ? "old" : `live_${calls}` }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("swr_generation", BASE, {});
+      vi.advanceTimersByTime(2_000);
+      const tails: Promise<unknown>[] = [];
+      const service = new CatalogService(registry, BASE, {
+        defer(promise) {
+          tails.push(promise);
+          registry.invalidate("swr_generation");
+        },
+      });
+
+      await expect(service.loadConnector("swr_generation")).resolves.toEqual([
+        { name: "live_3" },
+      ]);
+      await Promise.all(tails);
+      expect(calls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("times out and closes a deferred scope without letting its zombie overwrite", async () => {
+    vi.useFakeTimers();
+    try {
+      const zombie = deferred<void>();
+      const contexts: Parameters<Connector["listTools"]>[0][] = [];
+      const closed: Parameters<NonNullable<Connector["closeScope"]>>[0][] = [];
+      let calls = 0;
+      const connector: Connector = {
+        id: "swr_timeout",
+        kind: "mcp",
+        async listTools(ctx) {
+          calls++;
+          contexts.push(ctx);
+          if (calls === 2) {
+            await zombie.promise;
+            return [{ name: "zombie" }];
+          }
+          return [{ name: calls === 1 ? "old" : "new" }];
+        },
+        async callTool() {
+          return null;
+        },
+        async closeScope(ctx) {
+          closed.push(ctx);
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await registry.getTools("swr_timeout", BASE, {});
+      vi.advanceTimersByTime(2_000);
+
+      const firstTails: Promise<unknown>[] = [];
+      await new CatalogService(registry, BASE, {
+        probeTimeoutMs: 100,
+        defer: (promise) => firstTails.push(promise),
+      }).loadConnector("swr_timeout");
+      expect(calls).toBe(2);
+      await vi.advanceTimersByTimeAsync(101);
+      await Promise.all(firstTails);
+      expect(contexts[1]?.signal?.aborted).toBe(true);
+      expect(closed).toEqual([contexts[1]]);
+
+      const secondTails: Promise<unknown>[] = [];
+      await expect(
+        new CatalogService(registry, BASE, {
+          probeTimeoutMs: 1_000,
+          defer: (promise) => secondTails.push(promise),
+        }).loadConnector("swr_timeout"),
+      ).resolves.toEqual([{ name: "old" }]);
+      await Promise.all(secondTails);
+      expect(registry.peekTools("swr_timeout")).toEqual([{ name: "new" }]);
+
+      zombie.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(registry.peekTools("swr_timeout")).toEqual([{ name: "new" }]);
+      expect(calls).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps an invalid persisted fingerprint off the stale path", async () => {
+    vi.useFakeTimers();
+    try {
+      const storage = memoryStorage();
+      let calls = 0;
+      const gate = deferred<void>();
+      const connector: Connector = {
+        id: "swr_fingerprint",
+        kind: "mcp",
+        async listTools() {
+          calls++;
+          if (calls > 1) await gate.promise;
+          return [{ name: calls > 1 ? "live" : "stored" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const first = new Registry([connector], {
+        storage,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await first.getTools("swr_fingerprint", BASE);
+      const manifest = await readManifest(storage, "swr_fingerprint");
+      await storage.set(
+        `catalog:swr_fingerprint:chunk:${manifest.revision}:0`,
+        '[{"name":"tampered"}]',
+      );
+      vi.advanceTimersByTime(2_000);
+
+      const tails: Promise<unknown>[] = [];
+      const cold = new Registry([connector], {
+        storage,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      let settled = false;
+      const pending = new CatalogService(cold, BASE, {
+        defer: (promise) => tails.push(promise),
+      })
+        .loadConnector("swr_fingerprint")
+        .finally(() => {
+          settled = true;
+        });
+      await vi.waitFor(() => expect(calls).toBe(2));
+      expect(settled).toBe(false);
+      expect(tails).toEqual([]);
+      gate.resolve();
+      await expect(pending).resolves.toEqual([{ name: "live" }]);
+
+      const restarted = new Registry([connector], {
+        storage,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await expect(restarted.statusFor("swr_fingerprint", BASE)).resolves.not.toHaveProperty(
+        "catalogAccess",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rechecks the stale deadline after persisted catalog I/O", async () => {
+    vi.useFakeTimers();
+    try {
+      const backing = memoryStorage();
+      let calls = 0;
+      const connector: Connector = {
+        id: "swr_deadline",
+        kind: "mcp",
+        async listTools() {
+          calls++;
+          return [{ name: calls === 1 ? "stored" : "live" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const first = new Registry([connector], {
+        storage: backing,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await first.getTools("swr_deadline", BASE);
+      vi.advanceTimersByTime(2_000);
+      let delayed = false;
+      const storage: KVStorage = {
+        async get(key) {
+          const value = await backing.get(key);
+          if (!delayed && key === "catalog:swr_deadline") {
+            delayed = true;
+            vi.advanceTimersByTime(30_000);
+          }
+          return value;
+        },
+        set: (key, value, options) => backing.set(key, value, options),
+        delete: (key) => backing.delete(key),
+      };
+      const tails: Promise<unknown>[] = [];
+      const cold = new Registry([connector], {
+        storage,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+
+      await expect(
+        new CatalogService(cold, BASE, {
+          defer: (promise) => tails.push(promise),
+        }).loadConnector("swr_deadline"),
+      ).resolves.toEqual([{ name: "live" }]);
+      expect(tails).toEqual([]);
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a delayed persisted manifest replace a newer live cache", async () => {
+    vi.useFakeTimers();
+    try {
+      const backing = memoryStorage();
+      let calls = 0;
+      const connector: Connector = {
+        id: "swr_storage_race",
+        kind: "mcp",
+        async listTools() {
+          calls++;
+          return [{ name: calls === 1 ? "persisted_old" : "live_new" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const first = new Registry([connector], {
+        storage: backing,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      await first.getTools("swr_storage_race", BASE);
+      vi.advanceTimersByTime(2_000);
+
+      const manifestRead = deferred<void>();
+      const releaseManifest = deferred<void>();
+      let delayed = false;
+      const storage: KVStorage = {
+        async get(key) {
+          const value = await backing.get(key);
+          if (!delayed && key === "catalog:swr_storage_race") {
+            delayed = true;
+            manifestRead.resolve();
+            await releaseManifest.promise;
+          }
+          return value;
+        },
+        set: (key, value, options) => backing.set(key, value, options),
+        delete: (key) => backing.delete(key),
+      };
+      const cold = new Registry([connector], {
+        storage,
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      const tails: Promise<unknown>[] = [];
+      const pending = new CatalogService(cold, BASE, {
+        defer: (promise) => tails.push(promise),
+      }).loadConnector("swr_storage_race");
+      await manifestRead.promise;
+
+      await expect(
+        cold.refreshTools("swr_storage_race", BASE, {}),
+      ).resolves.toEqual([{ name: "live_new" }]);
+      releaseManifest.resolve();
+
+      await expect(pending).resolves.toEqual([{ name: "live_new" }]);
+      expect(cold.peekTools("swr_storage_race")).toEqual([
+        { name: "live_new" },
+      ]);
+      expect(tails).toEqual([]);
+      expect(calls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps diagnostic reads blocking and starts nothing without demand", async () => {
+    vi.useFakeTimers();
+    try {
+      const gate = deferred<void>();
+      let calls = 0;
+      const connector: Connector = {
+        id: "diagnostic_refresh",
+        kind: "mcp",
+        async listTools() {
+          calls++;
+          if (calls > 1) await gate.promise;
+          return [{ name: calls > 1 ? "fresh" : "old" }];
+        },
+        async callTool() {
+          return null;
+        },
+      };
+      const registry = new Registry([connector], {
+        storage: memoryStorage(),
+        logger: silentLogger,
+        toolCacheTtlSeconds: 1,
+        toolCatalogStaleSeconds: 30,
+      });
+      const tails: Promise<unknown>[] = [];
+      new CatalogService(registry, BASE, {
+        defer: (promise) => tails.push(promise),
+      });
+      await Promise.resolve();
+      expect(calls).toBe(0);
+
+      await registry.getTools("diagnostic_refresh", BASE, {});
+      vi.advanceTimersByTime(2_000);
+      let settled = false;
+      const status = registry.statusFor("diagnostic_refresh", BASE, {}).finally(
+        () => {
+          settled = true;
+        },
+      );
+      await vi.waitFor(() => expect(calls).toBe(2));
+      expect(settled).toBe(false);
+      expect(tails).toEqual([]);
+      gate.resolve();
+      await expect(status).resolves.toEqual({ state: "ok" });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

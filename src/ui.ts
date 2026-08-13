@@ -463,6 +463,9 @@ export async function buildUiData(
         // `boundedCatalogDrift`, so what lands here cannot carry a name or a
         // schema even if the plugin seam returned one.
         ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
+        ...(status.catalogAccess
+          ? { catalogAccess: status.catalogAccess }
+          : {}),
         ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
         ...(credential ? { credential } : {}),
       };

@@ -26,7 +26,10 @@ ethos invariant, not a style preference: a client retained across requests on
 Workers is a cross-request capability leak, and a promise awaited after the
 response is work the runtime may have already torn down. Deferred work has one
 sanctioned channel — `ctx.waitUntil`, threaded through `fetch(request, env,
-ctx)` and used for best-effort activity writes.
+ctx)`. Best-effort activity writes use it. An agent read that already demanded
+an expired catalog refresh may also use it while serving a complete catalog
+inside its stale window. That refresh owns a new scope and deadline; it never
+carries the inbound scope or signal past the request.
 
 The registry is deliberately on the long side of that line and the MCP server
 deliberately on the short side. A fresh `McpServer` per request is what makes
@@ -87,8 +90,8 @@ owns or hands out, and a change usually belongs in exactly one of them:
 
 | Module | Owns |
 | --- | --- |
-| `src/registry.ts` | The connector set, id validation, address resolution, connector health, per-connector call limiters, and the drift snapshot. Construction-time refusal of structural mistakes lives here. |
-| `src/catalog-service.ts` | Tool listing: cold-load coalescing, TTL, persistence as manifest plus revision-addressed chunks, stale fallback, and the completeness rule — a partial catalog is a failure, never a cache write. |
+| `src/registry.ts` | The connector set, address resolution, catalog TTL/persistence/completeness, shared refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
+| `src/catalog-service.ts` | Request-local tool listing, search, and describe. It coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, per-attempt timeout, retry with the connector's own `Retry-After` honoured exactly or declined, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
 
@@ -137,7 +140,7 @@ src/
   apps-shell.ts       the one build-time MCP Apps template
   skills.ts           MCP instructions, the usage skill, connector guides
   registry.ts         connector set, addresses, health, call limiters
-  catalog-service.ts  catalog loading, caching, persistence, stale fallback
+  catalog-service.ts  request-local catalog access, search, and describe
   catalog.ts          ranking, summaries, compact schema rendering
   invocation.ts       one tool call, end to end
   catalog-drift.ts    vetted manifests and the counts a refresh produces

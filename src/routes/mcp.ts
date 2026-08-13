@@ -290,6 +290,9 @@ async function serveMcp(
         ? { discoveryConcurrency: opts.discoveryConcurrency }
         : {}),
       requestSignal: request.signal,
+      ...(runtimeContext?.waitUntil
+        ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
+        : {}),
     });
     registerExecuteTool(server, registry, {
       baseUrl,
@@ -297,6 +300,9 @@ async function serveMcp(
       logger: opts.logger,
       ...(activity ? { activity } : {}),
       requestSignal: request.signal,
+      ...(runtimeContext?.waitUntil
+        ? { defer: runtimeContext.waitUntil.bind(runtimeContext) }
+        : {}),
       ...(opts.discoveryConcurrency !== undefined
         ? { discoveryConcurrency: opts.discoveryConcurrency }
         : {}),

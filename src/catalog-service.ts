@@ -21,9 +21,11 @@ import {
 } from "./errors.js";
 import type { CallErrorDetails } from "./errors.js";
 import type {
+  CatalogReadOptions,
   ConnectorOperationOptions,
   RegistryView,
 } from "./registry.js";
+import type { DeferredWork } from "./connector-scope.js";
 import {
   connectorGuide,
   connectorGuideRequired,
@@ -389,6 +391,7 @@ export class CatalogService {
   private readonly probeTimeoutMs: number;
   private readonly concurrency: number;
   private readonly searchRoute: SearchRoute;
+  private readonly readOptions: CatalogReadOptions | undefined;
   private readonly loaded = new Map<string, ToolDef[]>();
   private readonly loading = new Map<string, Promise<ToolDef[]>>();
 
@@ -401,6 +404,8 @@ export class CatalogService {
       concurrency?: number;
       /** The discovery route recovery records name. Default `search_tools`. */
       searchRoute?: SearchRoute;
+      /** Runtime-owned tail for stale-while-revalidate catalog reads. */
+      defer?: DeferredWork;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};
@@ -408,6 +413,12 @@ export class CatalogService {
       normalizeTimeoutMs(options.probeTimeoutMs) ?? DEFAULT_PROBE_TIMEOUT_MS;
     this.concurrency = resolveDiscoveryConcurrency(options.concurrency);
     this.searchRoute = options.searchRoute ?? "search_tools";
+    this.readOptions = options.defer
+      ? {
+          defer: options.defer,
+          refreshTimeoutMs: this.probeTimeoutMs,
+        }
+      : undefined;
   }
 
   /**
@@ -444,7 +455,13 @@ export class CatalogService {
     const inFlight = this.loading.get(id);
     if (inFlight) return inFlight;
     const loading = this.registry
-      .getTools(id, this.baseUrl, this.requestScope, callOptions)
+      .getTools(
+        id,
+        this.baseUrl,
+        this.requestScope,
+        callOptions,
+        this.readOptions,
+      )
       .then((tools) => {
         this.loaded.set(id, tools);
         return tools;

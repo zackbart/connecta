@@ -2255,6 +2255,43 @@ describe("status UI", () => {
     expect(byId.calc.catalogDrift).toBeUndefined();
   });
 
+  it("/ui/data strips connector-supplied catalog-access payloads", async () => {
+    const hostile: Connector = {
+      id: "hostile_status",
+      description: "Hostile status seam",
+      async status() {
+        return {
+          state: "ok",
+          catalogAccess: {
+            state: "stale",
+            observedAt: "2026-08-13T12:00:00.000Z",
+            payload: "exfiltrate-this",
+          },
+          arbitraryPayload: "exfiltrate-this-too",
+        } as never;
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const c = makeConnecta([hostile]);
+    const res = await c.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    const body = (await res.json()) as any;
+    const connector = body.connectors.find(
+      (candidate: any) => candidate.id === "hostile_status",
+    );
+
+    expect(connector.catalogAccess).toBeUndefined();
+    expect(JSON.stringify(body)).not.toContain("exfiltrate-this");
+  });
+
   it("keeps credential controls in Credentials and secrets out of every shell", async () => {
     const { connecta } = makeCredentialConnecta();
     const connections = await (

@@ -8,8 +8,10 @@ needs most.
 
 `createConnecta(config)` returns `{ fetch, registry, close }`. `fetch` takes
 the Workers `(request, env, ctx)` signature; passing `ctx` through is what lets
-connecta hand deferred work — best-effort activity writes — to `ctx.waitUntil`
-instead of losing it when the response returns.
+connecta hand deferred work to `ctx.waitUntil` instead of losing it when the
+response returns. That work is best-effort activity writes and the bounded
+refresh an agent catalog read already demanded while it served a complete stale
+entry. Node's adapter tracks the same promises and drains them on shutdown.
 
 An `executor` is required. A deployment without one throws at construction
 rather than serving a smaller surface
@@ -84,7 +86,7 @@ optional.
 | `discovery.concurrency?` | 4 | connector catalogs/status probes in flight at once |
 | `discovery.catalogTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `discovery.persistCatalog?` | true | persist serializable catalogs as a manifest plus revision-addressed chunks |
-| `discovery.staleCatalogSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
+| `discovery.staleCatalogSeconds?` | 3600 | how long a complete expired catalog stays usable for agent SWR and as a refresh-failure fallback |
 | `discovery.probeTimeoutMs?` | 30_000 | per-connector deadline for catalog fan-out; a timed-out connector degrades alone. Not a tool-call deadline |
 | `calls.defaultTimeoutMs?` | **unset (opt-in)** | deadline for calls that pass no `timeoutMs`. Bounds one attempt, so retries can still extend total duration |
 | `calls.maxResultBytes?` | 50_000 | inline result cap before truncation and `get_result` paging; a connector may override it. Invalid values warn and fall back |
@@ -242,15 +244,15 @@ in.
 | `operator-boundary.test.ts` | the operator row of the decisions table, after every mutation route: authentication material managed without moving a declared structure, and the one honest exception — a credential write making a remote catalog appear, which is discovery arriving, not an operator editing the deployment |
 | `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, `gate()`, the generation fence, and the request path |
 | `provider-conventions.test.ts` | the conventions a test can hold: hand-written providers refusing schemas they cannot enforce (H5), their compact discovery schemas staying complete (H7), Cloudflare stating its second pagination convention in the schema (H10), and Notion saying it has no escape hatch (H14) |
-| `registry.test.ts` | construction and id validation, startup convention and result-cap warnings, address resolution, tool-cache TTL, and broken-connector isolation |
+| `registry.test.ts` | construction and id validation, startup warnings, address resolution, catalog TTL/persistence/completeness, agent-only stale-while-revalidate with cross-request single-flight shared with blocking reads in both start orders, owned teardown, invalidation/fingerprint guards, blocking diagnostics, and broken-connector isolation |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process server through the `_transportFactory` seam: passthrough, downstream `isError`, Workers-safe output-schema validation, request-scoped client reuse and at-most-once scope close; plus the real transport's manual redirect policy, destination guard, credential containment, and downstream session termination |
 | `remote-mcp-pagination.test.ts` | the `tools/list` cursor chain in both directions — exact cursor handoff, first-wins dedup, a failed later page rejecting rather than returning its prefix, the runaway backstops, the tool-metadata re-prime across pages, and paginated catalogs reaching the discovery path |
 | `request-admission.test.ts` | `/mcp` bounded before auth, the stable 503 and `Retry-After`, health and operator responsiveness under saturation, payload-free counters, queued cancellation, shutdown rejection while active work drains, and the separate fallback code pool |
-| `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → seven tools → usage skill → `call_tool`), the open routes, Clerk `.well-known` metadata with no network, and an end-to-end code-mode run |
+| `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → seven tools → usage skill → `call_tool`), the open routes, Clerk `.well-known` metadata with no network, an end-to-end code-mode run, and `waitUntil` reaching agent catalog reads through both `search_tools` and `execute_code` |
 | `server-route-contracts.test.ts` | the route contracts `server.ts` must keep byte-identical: every built-in answered ahead of connector routes inside the security wrapper, open data-free shells with framing denied, per-route auth and same-origin requirements with exact 401/403/405 bodies, and OAuth `verifyState`-before-`finishAuth` ordering |
 | `startup-warnings.test.ts` | every construction-time `logger.warn` and, as importantly, the conditions that must *not* trigger one: open mode with a credential or OAuth connector, `publicUrl` unset beside OAuth, dropped branding and `uiAuth` URLs, a missing `verifyState`, a credential test-hook mismatch, and an unusable `calls.maxResultBytes` |
 | `stripe-provider.test.ts` / `stripe-registry.test.ts` | the Stripe proxy's endpoint modes and admission, then the connector in a real deployment |
-| `ui.test.ts` | the server shell and `/ui/*` routes and the app's pure state rules from `view.ts` — filtering, page routing and capability states, credential management, gated `/ui/data` with broken-connector isolation, and the URL safety gates |
+| `ui.test.ts` | the server shell and `/ui/*` routes and the app's pure state rules from `view.ts` — filtering, page routing and capability states, credential management, gated `/ui/data` with broken-connector isolation and registry-owned catalog-observation containment, and the URL safety gates |
 | `validate.test.ts` | `validateToolInput()` — a returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema validator caching, and an unusable schema passed through with one warning |
 
 ### Node-bound (`NODE_ONLY_SUITES`)
