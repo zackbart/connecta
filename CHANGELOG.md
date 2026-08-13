@@ -2,6 +2,23 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+Packaging housekeeping found by the pre-release smoke gauntlet. Nothing in the
+runtime moved, and no deployment needs to do anything.
+
+### Fixed
+
+- **`@zackbart/connecta/package.json` resolves.** The `exports` map listed
+  every code subpath and nothing else, so a bundler plugin, framework build
+  step, or version probe reaching for the installed manifest — a thing the
+  ecosystem broadly expects to work — got `ERR_PACKAGE_PATH_NOT_EXPORTED`
+  instead of the file. The manifest is now exported. It is a data file, so this
+  widens the published surface by exactly zero code paths: the root entry's
+  Workers purity boundary and the optional-peer subpaths are untouched. The
+  package-surface gate now asserts the whole subpath set, manifest included, so
+  neither this entry nor an unwanted one can arrive unnoticed (#374).
+
 ## 0.16.0 — 2026-08-12
 
 This is the agent-efficiency refocus. One release, sixteen merges, and a single

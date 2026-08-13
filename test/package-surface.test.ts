@@ -41,6 +41,30 @@ describe("public package boundary", () => {
     expect(packageJson.files).not.toContain("assets");
   });
 
+  it("exports exactly the documented subpaths plus the manifest", () => {
+    // The manifest is a courtesy the ecosystem expects — bundler plugins,
+    // framework build steps, and version probes resolve `<pkg>/package.json`
+    // to read a field, and an `exports` map without it answers
+    // ERR_PACKAGE_PATH_NOT_EXPORTED instead (#374). It resolves to a data
+    // file, so it widens nothing: no code path becomes importable, and the
+    // root entry's purity boundary is untouched.
+    const providers = readdirSync(join(ROOT, "src", "providers"))
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => `./providers/${file.slice(0, -3)}`);
+    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
+      [
+        ".",
+        "./package.json",
+        "./node",
+        "./json-schema",
+        "./quickjs",
+        "./auth/clerk",
+        ...providers,
+      ].sort(),
+    );
+    expect(packageJson.exports?.["./package.json"]).toBe("./package.json");
+  });
+
   it("ships only generic connector factories and their shared machinery", () => {
     // guarded-fetch.ts is transport, not a third authoring path: it knows no
     // provider, and a provider-named file here would still be a failure.
