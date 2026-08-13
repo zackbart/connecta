@@ -458,6 +458,11 @@ export async function buildUiData(
           : {}),
         toolCount: tools.length,
         tools,
+        // Counts only, and only when a refresh in this runtime produced them.
+        // `Registry.statusFor` already rebuilt the report through
+        // `boundedCatalogDrift`, so what lands here cannot carry a name or a
+        // schema even if the plugin seam returned one.
+        ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
         ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
         ...(credential ? { credential } : {}),
       };
@@ -587,147 +592,18 @@ ${clerkScript}
   ${owner}
   <div class="mast-nav">
     ${product}
-    <div id="appNav" class="mast-actions hidden">
-      <nav class="page-nav" aria-label="Operator pages">
-        <a id="connectionsNav" class="navlink" href="/"
-          data-operator-page="connections"${page === "connections" ? ' aria-current="page"' : ""}>Connections</a>
-        <a id="credentialsNav" class="navlink hidden" href="/credentials"
-          data-operator-page="credentials"${page === "credentials" ? ' aria-current="page"' : ""}>Credentials</a>
-        <a id="tokensNav" class="navlink hidden" href="/tokens"
-          data-operator-page="tokens"${page === "tokens" ? ' aria-current="page"' : ""}>Access tokens</a>
-        <a id="activityNav" class="navlink hidden" href="/activity"
-          data-operator-page="activity"${page === "activity" ? ' aria-current="page"' : ""}>Activity</a>
-      </nav>
-      <div class="session-actions" aria-label="Session actions">
-        <button id="change" class="navlink hidden" type="button">Change token</button>
-        <button id="signout" class="navlink hidden" type="button">Sign out</button>
-      </div>
-    </div>
+    <div id="operatorNav"></div>
   </div>
 </header>
 
 <main id="operatorContent" class="page shell" tabindex="-1">
-  <section id="gate" class="hidden">
-    <div class="lead pgrid">
-      <h1 id="gateHeading" class="pcap" tabindex="-1">${OPERATOR_PAGE_LABELS[page]}</h1>
-      <div class="pbody lead-copy">
-        <p>${escapeHtmlAttr(brand.description)}</p>
-        <p id="gateCopy" class="meta"></p>
-        <div id="tokenGate" class="row gate-actions hidden">
-          <input id="token" type="password" placeholder="Bearer token" autocomplete="off"
-            aria-label="Bearer token">
-          <button id="save" class="linklike" type="button">Open operator pages</button>
-        </div>
-        <div id="clerkGate" class="actions gate-actions hidden">
-          <button id="signin" class="linklike" type="button">Team sign in</button>
-          <button id="gateSignout" class="linklike hidden" type="button">Sign out</button>
-        </div>
-        <p id="err" role="alert"></p>
-      </div>
+  <div class="lead pgrid">
+    <h1 class="pcap">${OPERATOR_PAGE_LABELS[page]}</h1>
+    <div class="pbody lead-copy">
+      <p>${escapeHtmlAttr(brand.description)}</p>
+      <noscript><p class="msg">The operator pages need JavaScript. Nothing else here
+      does — agents reach this deployment through <span class="mono">/mcp</span>.</p></noscript>
     </div>
-  </section>
-
-  <div id="app" class="hidden">
-  <section id="connectionsView"${page === "connections" ? "" : ' class="hidden"'}>
-    <div class="lead pgrid">
-      <h1 id="connectionsHeading" class="pcap" tabindex="-1">Connections</h1>
-      <div class="pbody lead-copy">
-        <p>Use this endpoint to give an MCP client access to the tools below.</p>
-        <div class="endpoint">
-          <div class="endpoint-row">
-            <code id="mcpUrl" class="mono"></code>
-            <button id="copyMcpUrl" class="linklike" type="button">Copy URL</button>
-          </div>
-        </div>
-        <p class="cap" id="serverInfo">${escapeHtmlAttr(brand.productName)} operator</p>
-        <p id="oauthNotice" class="meta" role="status" aria-live="polite" tabindex="-1"></p>
-      </div>
-    </div>
-    <section class="section pgrid" aria-labelledby="connectorLedgerHeading">
-      <h2 class="pcap" id="connectorLedgerHeading">Connectors</h2>
-      <div class="pbody">
-        <div class="row toolbar">
-          <input id="filter" type="search" placeholder="Filter connectors or tools…"
-            aria-label="Filter connectors or tools">
-        </div>
-        <div id="list" class="connector-tools" aria-busy="false"></div>
-      </div>
-    </section>
-  </section>
-
-  <section id="credentialsView"${page === "credentials" ? "" : ' class="hidden"'}>
-    <div class="lead pgrid">
-      <h1 id="credentialsHeading" class="pcap" tabindex="-1">Credentials</h1>
-      <div class="pbody">
-        <p class="activity-copy">Rotate operator-managed connector credentials. Stored values are never returned or displayed.</p>
-        <p id="credentialNotice" class="meta" role="status" aria-live="polite"
-          tabindex="-1"></p>
-        <div id="credentialUnavailable" class="unavailable hidden"></div>
-        <div id="credentialList" class="credential-ledger" aria-busy="false"></div>
-      </div>
-    </div>
-  </section>
-
-  <section id="tokensView"${page === "tokens" ? "" : ' class="hidden"'}>
-    <div class="lead pgrid">
-      <h1 id="tokensHeading" class="pcap" tabindex="-1">Access tokens</h1>
-      <div class="pbody">
-        <p class="activity-copy">Create named Bearer tokens for MCP clients. Each secret is shown once; revoke it when that client should lose access.</p>
-        <p id="tokenNotice" class="meta" role="status" aria-live="polite"
-          tabindex="-1"></p>
-        <div id="tokenUnavailable" class="unavailable hidden"></div>
-        <div id="tokenAvailable" class="hidden">
-          <form id="tokenCreateForm" class="token-create">
-            <label for="tokenName">Client name</label>
-            <div class="row">
-              <input id="tokenName" type="text" maxlength="80"
-                placeholder="Claude desktop, ChatGPT production…"
-                autocomplete="off">
-              <button id="createToken" class="linklike" type="submit">Create token</button>
-            </div>
-          </form>
-          <section id="tokenReveal" class="token-reveal hidden"
-            aria-labelledby="tokenRevealHeading">
-            <div class="token-reveal-head">
-              <h2 id="tokenRevealHeading" tabindex="-1">Copy this token now</h2>
-              <span class="cap">Shown once</span>
-            </div>
-            <p class="meta">Store it in the MCP client before leaving this page. It cannot be displayed again.</p>
-            <div class="endpoint-row token-secret">
-              <code id="createdToken" class="mono"></code>
-              <button id="copyCreatedToken" class="linklike" type="button">Copy token</button>
-            </div>
-            <button id="dismissCreatedToken" class="linklike" type="button">I stored it</button>
-          </section>
-          <div id="tokenList" class="token-ledger" aria-busy="false"></div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section id="activityView"${page === "activity" ? "" : ' class="hidden"'}>
-    <div class="lead pgrid">
-      <h1 id="activityHeading" class="pcap" tabindex="-1">Activity</h1>
-      <div class="pbody">
-        <p class="activity-copy" id="activitySummary">Arguments and results are never stored.</p>
-        <div id="activityUnavailable" class="unavailable hidden">
-          Activity history is not configured. Add an <span class="mono">activity.store</span>
-          with a list reader to enable this page.
-        </div>
-        <div id="activityAvailable">
-          <div class="row activity-controls">
-            <input id="activitySearch" type="search"
-              placeholder="Search user, tool, or outcome…"
-              aria-label="Search loaded activity">
-            <button id="refreshActivity" class="linklike" type="button">Refresh</button>
-          </div>
-          <p id="activityNotice" class="meta" role="status" aria-live="polite"></p>
-          <div id="activityList" class="activity-ledger" aria-busy="false"></div>
-          <button id="moreActivity" class="linklike activity-more hidden" type="button">Load older</button>
-        </div>
-      </div>
-    </div>
-  </section>
   </div>
 </main>
 
@@ -737,6 +613,7 @@ const MCP_URL = ${jsonForInlineScript(mcpUrl)};
 const INITIAL_PAGE = ${jsonForInlineScript(page)};
 const TITLE_SUFFIX = ${jsonForInlineScript(brand.pageTitle)};
 const PRODUCT_NAME = ${stringForInlineScript(brand.productName)};
+const PRODUCT_DESCRIPTION = ${stringForInlineScript(brand.description)};
 const PRODUCT_OPERATOR_LABEL = ${stringForInlineScript(brand.productName + " operator")};
 ${OPERATOR_UI_SCRIPT}</script>
 </body>

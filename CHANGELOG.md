@@ -161,6 +161,21 @@ failed closed onto `call_destructive_tool` before anyone counted it.
 
 ### Changed
 
+- **The operator UI is a component app.** The hand-written DOM layer is gone,
+  replaced by a small Preact app compiled by the same esbuild step and inlined
+  into a shell that is now a mount point rather than a page. Nothing builds
+  HTML from strings any more, so the escaping every rendered value used to
+  depend on is structural; the served markup is identical on all four pages and
+  still carries no operator data. Credential, token, and OAuth flows gained
+  deliberate loading, error, empty, and success states — a failed save keeps
+  the form and what was typed in it, a failed list offers a retry, and an empty
+  collection says what would fill it. Each connector card also reads the drift
+  the last catalog refresh saw (#343) as four category counts, with `clean`,
+  `warning`, and "not observed in this runtime" kept as three distinct answers
+  — no tool name, schema, or payload rides that panel. Preact rides in as a
+  `devDependency` inlined into the committed bundle and never reaches a
+  deployment's dependency tree (#347).
+
 - **`api()` enforces its construction contract.** Every tool requires a
   non-empty `description` and an explicit boolean `annotations.readOnlyHint`;
   a missing or non-boolean classification throws with the address that needs

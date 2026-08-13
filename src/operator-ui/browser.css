@@ -77,7 +77,6 @@
   .pbody { grid-column: 2 / -1; min-width: 0; }
   .cap, .meta { color: var(--muted); font-size: .9em; }
   .mono { font-family: var(--mono); font-size: .78rem; }
-  .hidden { display: none !important; }
   .visually-hidden {
     clip: rect(0 0 0 0);
     clip-path: inset(50%);
@@ -175,9 +174,6 @@
   .connector-tools { border-bottom: 1px solid var(--rule); }
   .toolbar { margin-bottom: 1.5rem; }
   .toolbar input { flex-basis: 18rem; }
-  #notice { margin-bottom: .75rem; }
-  #notice:empty { display: none; }
-  #notice:not(:empty) { text-decoration: underline; }
   #oauthNotice { margin-bottom: .75rem; }
   #oauthNotice:empty { display: none; }
   .error-notice, .msg { text-decoration: underline; }
@@ -236,6 +232,18 @@
   .connector-description { margin-top: .25rem; max-width: 40rem; }
   .connector-message,
   .connector-auth { margin-top: .75rem; }
+  .connector-drift { border-top: 1px solid var(--rule); margin-top: .75rem; padding-top: .75rem; }
+  .drift-summary { margin-top: .25rem; }
+  .drift-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem var(--gap);
+    margin-top: .5rem;
+  }
+  .drift-count { color: var(--muted); font-size: .9em; }
+  .drift-count.flagged { color: var(--ink); }
+  .drift-count-value { font-family: var(--mono); margin-right: .35rem; }
+  .drift-count.flagged .drift-count-value { text-decoration: underline; }
   .credential-ledger { border-bottom: 1px solid var(--rule); }
   .credential-card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
   .credential-head {
