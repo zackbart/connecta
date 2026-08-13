@@ -49,8 +49,12 @@ async function assertInstallScriptsApproved(directory, manifest) {
   const unapproved = [];
   for (const [path, entry] of Object.entries(lock.packages ?? {})) {
     if (!path || !entry?.hasInstallScript) continue;
+    const installedManifestPath = join(directory, path, "package.json");
+    // Lockfiles retain optional packages for every platform. A package npm did
+    // not install here cannot run a script here and has no manifest to inspect.
+    if (!existsSync(installedManifestPath)) continue;
     const installedManifest = JSON.parse(
-      await readFile(join(directory, path, "package.json"), "utf8"),
+      await readFile(installedManifestPath, "utf8"),
     );
     const declaresInstallScript = ["preinstall", "install", "postinstall"].some(
       (name) => typeof installedManifest.scripts?.[name] === "string",
