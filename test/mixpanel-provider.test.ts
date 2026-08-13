@@ -12,6 +12,7 @@ vi.mock("../src/connectors/remote-mcp.js", () => ({
 
 import {
   MIXPANEL_MCP_ENDPOINTS,
+  MIXPANEL_VETTED_CATALOG,
   mixpanel,
 } from "../src/providers/mixpanel.js";
 import { connectorGuideSummary } from "../src/skills.js";
@@ -80,6 +81,15 @@ describe("mixpanel()", () => {
     expect(guideOf(connector)).toContain("not a fixed set");
     expect(guideOf(connector)).toContain("authorize_connector");
     expect(guideOf(connector)).toContain("never guess one");
+    expect(guideOf(connector)).toContain(
+      "`Get-Business-Context` requires either `project_id` or `organization_id`",
+    );
+    expect(guideOf(connector)).toContain(
+      "`Get-Property-Values` requires `properties`",
+    );
+    expect(guideOf(connector)).toContain(
+      "`List-Properties` accepts `names` or `query`, never both",
+    );
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Account instructions");
     expect(guideOf(connector)).not.toContain("+## Account instructions");
@@ -109,6 +119,14 @@ describe("mixpanel()", () => {
         maxResultBytes: 25_000,
       }),
     );
+  });
+
+  it("records a reviewed schema digest for every classified tool", () => {
+    expect(MIXPANEL_VETTED_CATALOG.tools.size).toBe(63);
+    for (const [name, record] of MIXPANEL_VETTED_CATALOG.tools) {
+      expect(name).toBeTruthy();
+      expect(record.schemaDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
+    }
   });
 
   it("puts the residency in the title and the guide's first line (P3)", () => {

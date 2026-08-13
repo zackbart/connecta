@@ -24,6 +24,16 @@ complete projections, genuine nulls, and empty arrays keep their prior shape.
   dropped whole, and the existing truncation flag sends the caller to describe
   for the complete shape (#391).
 
+- **Carry Mixpanel's three enforced conditional-input rules in its maintained
+  guide.** A live read-only audit confirmed that `Get-Business-Context`,
+  `Get-Property-Values`, and `List-Properties` accept shapes in their advertised
+  schemas that their implementations reject. Connecta still preserves the
+  hosted schemas unchanged; the guide now prevents those rejected calls, the
+  vetted manifest records schema digests for all 63 tools, and the provider
+  defect is tracked upstream. The maintainer drift check also frames
+  Mixpanel's service account as its documented `Bearer Basic` value instead of
+  ordinary HTTP Basic (#395).
+
 ## 0.16.1 — 2026-08-13
 
 This is the cleanup that follows 0.16.0 out the door: the packaging housekeeping
