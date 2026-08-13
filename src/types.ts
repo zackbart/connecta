@@ -181,11 +181,42 @@ export interface ConnectorContext {
 
 type ConnectorStatusState = "ok" | "auth_required" | "error";
 
+/**
+ * How far a downstream catalog has moved away from the manifest a release
+ * reviewed. Four numbers and nothing else: names, schemas, and prose stay out
+ * of every surface this rides on, so a drift report can never become a payload
+ * ([#343](https://github.com/zackbart/connecta/issues/343)).
+ */
+export interface CatalogDriftCounts {
+  /** Live tools no release classified. Each one fails closed at call time. */
+  unclassifiedTools: number;
+  /** Classified names this catalog no longer serves — plan gating included. */
+  unservedTools: number;
+  /** Explicit downstream annotations that contradict a vetted verdict. */
+  annotationConflicts: number;
+  /** Tools whose reviewed schema digest no longer matches what arrived. */
+  schemaChanges: number;
+}
+
+/** One drift observation, taken while serving a catalog refresh. */
+export interface CatalogDriftReport extends CatalogDriftCounts {
+  /** When the observation was taken; never when a probe was scheduled. */
+  observedAt: string;
+}
+
 export interface ConnectorStatus {
   state: ConnectorStatusState;
   /** When state === "auth_required", the URL the operator should open. */
   authorizationUrl?: string;
   message?: string;
+  /**
+   * Drift observed the last time this connector served a catalog refresh *in
+   * this runtime*. Absent until one has happened — status reports what a
+   * refresh saw, and never asks a downstream a question of its own. The
+   * observation is not persisted the way the catalog is, so absence means this
+   * isolate or process has seen nothing, not that nothing drifted.
+   */
+  catalogDrift?: CatalogDriftReport;
 }
 
 /** The whole plugin contract — the one open seam. */
@@ -241,6 +272,15 @@ export interface Connector {
    * fetched lazily over the network and are not known at construction time.
    */
   staticTools?: ToolDef[];
+  /**
+   * Optional: the drift this connector saw the last time it listed tools,
+   * or undefined when it has not listed any yet. Implemented by maintained
+   * hosted-MCP proxies, which compare the live catalog with the manifest a
+   * release reviewed *while* serving a refresh the deployment already asked
+   * for. It is a getter over an observation, never a probe: calling it makes
+   * no request, touches no credential, and returns counts only.
+   */
+  catalogDrift?(): CatalogDriftReport | undefined;
   listTools(ctx: ConnectorContext): Promise<ToolDef[]>;
   callTool(
     name: string,

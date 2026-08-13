@@ -422,16 +422,84 @@ argument retries.
 
 ### P13 — A drifting downstream must be visible, not absorbed
 
-The classification lists name what a release reviewed. When the downstream
-changes underneath them, the correct outcome is a loud unclassified tool on the
-approval path and a maintained record of the drift — never a quiet re-guess.
-Detection during catalog refresh is
-[#343](https://github.com/zackbart/connecta/issues/343) and the maintainer-run
-check is [#351](https://github.com/zackbart/connecta/issues/351); this
-convention is what they are checking against.
+The classification lists name what a release reviewed, and they are the
+manifest the runtime drift check compares against — one structure per provider,
+built once by `vettedCatalog()` and used both to classify and to compare, so
+the annotation a caller gets and the verdict a check reads can never disagree.
+When the downstream changes underneath them, the correct outcome is a loud
+unclassified tool on the approval path and a maintained record of the drift —
+never a quiet re-guess. The runtime half is
+[the runtime drift policy](#the-runtime-drift-policy) below; the maintainer-run
+check is [#351](https://github.com/zackbart/connecta/issues/351).
 
 *Why:* an allowlist nobody can tell is stale is an allowlist that is wrong.
 *Cost:* wrong-tool selection.
+
+## The runtime drift policy
+
+Detection rides a refresh; it never causes one
+([#343](https://github.com/zackbart/connecta/issues/343)). The comparison
+happens inside the wrapper's `listTools`, on the listing the downstream just
+returned to serve a request the deployment already made, before the
+classification is applied — so what it reads is the downstream's own word, not
+connecta's fill-in. There is no scheduled job, no background request, no
+credential probe, and no automatic issue filing. Proactive credential liveness
+stays removed ([#179](https://github.com/zackbart/connecta/issues/179)); this
+is the shape that does not become it.
+
+**What a manifest holds.** Every tool name a release reviewed, the verdict it
+reviewed it as (`read-only`, `additive`, `destructive`), and — where a release
+actually read them — a digest of that tool's input and output schemas. Today
+the three proxies ship names and verdicts and no digests, because no release
+has read a live schema and written it down, and an invented digest reports a
+change that never happened. Recording them against a real catalog is #351's
+job; until then a manifest without digests counts no schema changes, which is
+the honest answer rather than a silent zero.
+
+**What it counts.** Four categories, and only counts:
+
+| Category | What it means |
+| --- | --- |
+| unclassified additions | the downstream serves a tool no release classified; it already fails closed onto `call_destructive_tool` |
+| names no longer served | a classified name is absent from this catalog |
+| annotation conflicts | the downstream *explicitly* contradicts a vetted verdict — `readOnlyHint: false` or `destructiveHint: true` on a vetted read, `readOnlyHint: true` on a vetted write |
+| schema changes | a recorded digest no longer matches the schemas that arrived |
+
+Silence is never a conflict: filling it in is what the classification is for.
+A non-zero "no longer served" count is the expected reading on a plan-gated
+workspace, because P5's lists are deliberate supersets — it is triage input,
+not an alarm.
+
+**Where it surfaces.** Connector status carries the counts and the time they
+were observed; `/health` carries the same per connector, which is where
+`connecta doctor` reads them, and doctor reports drift without failing on it.
+Both reads are projections — four counts and a bounded timestamp, rebuilt from
+whatever the connector seam returned, because `/health` is unauthenticated and
+`Connector.catalogDrift()` is third-party code.
+One activity event per *change* in the counts — an identical report every TTL
+is a heartbeat, not news — carrying the connector id and four integers. The
+event type has nowhere to put a tool name, a schema, an argument, a result, or
+downstream error prose, which is the same construction guarantee the tool-call
+event makes. Which tool drifted is deliberately absent from the runtime: it is
+answered by the maintainer-run check, with a live catalog in front of it.
+
+**How far an observation reaches.** One runtime, and no further. The
+observation lives in the isolate or process that served the refresh; unlike the
+catalog, it is not persisted, so nothing carries it across a Workers isolate, a
+restart, or a second Node process. Status and `/health` therefore answer for
+the instance that took the request: on Workers a `connecta doctor` run will
+usually land on an isolate that has served no refresh and print nothing, and
+behind more than one process it is a coin flip. Read an empty report as *this
+runtime has observed nothing*, never as *nothing drifted* — the durable record
+of a finding is the activity event a sink already stored, and naming the tool
+is still the maintainer-run check's job.
+
+**What a finding obliges.** A contradicted vetted verdict — the downstream
+calling a release-reviewed destructive tool `readOnlyHint: true`, or a vetted
+read `destructiveHint: true` — blocks that provider's next release until a
+human has re-reviewed the tool. Everything else enters ordinary issue triage.
+No finding changes what a caller may reach: an unclassified tool fails closed
+whether or not anybody noticed it arrived.
 
 ## What the audit checks
 
@@ -475,7 +543,7 @@ than by reading:
 | P10 | no `credential`, `testCredential`, or `testCredentials` on the wrapper; the mode/key contradiction throws at construction instead |
 | P11 | an authorization failure surfaces as `auth_required`; a downstream tool error is returned unchanged, with no code chosen from its prose |
 | P12 | a declared budget matches a citable documented limit, or the absence is justified in the guide |
-| P13 | classification lists are maintained in one place per provider, addressable by a drift check |
+| P13 | classification lists are maintained in one place per provider and built into the manifest the wrapper classifies from, so the drift check compares against the same fact the caller is served |
 
 The remainder — H4, H6, and the judgment in H14 about whether a named tool
 beats the escape hatch — is a reading, and the audit reports it as one. The

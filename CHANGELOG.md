@@ -82,8 +82,37 @@ latter of which built the Connecta repository rather than a consumer project —
 are gone. Existing deployments can ignore all of this; nothing in the package's
 runtime surface moved.
 
+The three maintained hosted-MCP connections now notice when the catalog they
+were reviewed against moves. Each ships a vetted manifest — the tool names and
+classifications a release read, plus schema digests once a release records
+them — and compares it with the live listing *inside* a catalog refresh the
+deployment already asked for. Nothing new is requested: no scheduled job, no
+background poll, no credential probe, which is the boundary that keeps this
+from being the proactive liveness checking connecta removed. What comes out is
+four counts — unclassified additions, names no longer served, explicit
+annotation conflicts, schema changes — on connector status, on `/health`, and
+in `connecta doctor`, plus one payload-free activity event per change in those
+counts for stores that implement the new optional `recordCatalogDrift`. The
+observation is per runtime and is not persisted, so status, `/health`, and
+doctor answer for the isolate or process that served the refresh — an empty
+report means that runtime has observed nothing, and the activity event is the
+durable half. A deployment can ignore all of it: an unclassified tool already
+failed closed onto `call_destructive_tool` before anyone counted it.
+
 ### Added
 
+- **Hosted-provider drift detection at refresh.** Linear, Stripe, and Mixpanel
+  each ship a vetted manifest and compare it with the live catalog while
+  serving a refresh that was going to happen anyway. `ConnectorStatus` gains
+  `catalogDrift` (four counts and the time they were observed), `/health` gains
+  the same per connector, `connecta doctor` reports it without failing on it,
+  and `ActivitySink` gains an optional `recordCatalogDrift` that receives one
+  payload-free event per change in the counts. Both read surfaces report what
+  the answering runtime observed — the observation is isolate-local, not
+  persisted — and both project the counts rather than echo the connector seam.
+  The policy is written up in
+  [`documentation/provider-conventions.md`](./documentation/provider-conventions.md#the-runtime-drift-policy)
+  (#343).
 - **The Node template is Docker-ready.** `Dockerfile`, `docker-compose.yml`,
   and `.dockerignore` ship with `connecta init`. The image installs
   `@zackbart/connecta` from the registry like any other consumer, runs as the

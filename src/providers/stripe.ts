@@ -2,10 +2,10 @@ import {
   remoteMcp,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
+import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
-  ToolDef,
 } from "../types.js";
 
 /**
@@ -113,62 +113,17 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
 ]);
 
 /**
- * Fill in downstream silence; keep reviewed destructive tools fail-closed.
- *
- * Silence is what a vetted classification is for, and an explicit downstream
- * annotation otherwise wins in both directions. `destructiveHint: true` or
- * `readOnlyHint: false` on an allowlisted read name is the downstream telling
- * us this release's allowlist is stale; `readOnlyHint: true` on a name no
- * release has classified says the same thing from the other side. The single
- * place a vetted verdict still overrides the downstream is a name this release
- * reviewed and filed destructive: there connecta knows what the tool does, and
- * a claim to the contrary is a downstream bug rather than news
- * ([#310](https://github.com/zackbart/connecta/issues/310),
- * [#315](https://github.com/zackbart/connecta/issues/315)).
+ * The manifest this release reviewed: both lists in one place, which is what
+ * makes the classification the connector applies and the drift check that runs
+ * beside it the same fact (P13). No schema digests yet — no release has read
+ * Stripe's live schemas and written them down, and an invented digest would
+ * report a change that never happened
+ * ([#351](https://github.com/zackbart/connecta/issues/351)).
  */
-function vettedSafety(definition: ToolDef): ToolDef {
-  const downstream = definition.annotations ?? {};
-  if (READ_ONLY_TOOLS.has(definition.name)) {
-    if (
-      downstream.destructiveHint === true ||
-      downstream.readOnlyHint === false
-    ) {
-      return definition;
-    }
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: true,
-        destructiveHint: downstream.destructiveHint ?? false,
-      },
-    };
-  }
-  if (WRITE_TOOLS.get(definition.name) === "destructive") {
-    return {
-      ...definition,
-      annotations: {
-        ...downstream,
-        readOnlyHint: false,
-        destructiveHint: true,
-      },
-    };
-  }
-  // Maintained additive writes and tools this release has never seen land here
-  // alike. Fill-in only: a silent tool is not read-only, so drift still fails
-  // closed onto `call_destructive_tool`, and neither population gets a
-  // `destructiveHint` it has not earned. A tool that arrives explicitly
-  // read-only keeps that annotation — on a name no release has reviewed, the
-  // downstream's own word is the only evidence there is, and rewriting it
-  // would be an overrule rather than a fill-in.
-  return {
-    ...definition,
-    annotations: {
-      ...downstream,
-      readOnlyHint: downstream.readOnlyHint ?? false,
-    },
-  };
-}
+const VETTED_CATALOG = vettedCatalog({
+  reads: READ_ONLY_TOOLS,
+  writes: WRITE_TOOLS,
+});
 
 /** Stripe key prefixes carry their own mode; only a clear reading counts. */
 const LIVE_KEY = /\b(?:sk|rk|pk)_live_/;
@@ -314,10 +269,5 @@ export function stripe(id: string, options: StripeOptions): Connector {
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
   });
-  return {
-    ...connector,
-    async listTools(ctx) {
-      return (await connector.listTools(ctx)).map(vettedSafety);
-    },
-  };
+  return withVettedCatalog(connector, VETTED_CATALOG);
 }

@@ -1,4 +1,6 @@
 import type {
+  CatalogDriftCounts,
+  CatalogDriftReport,
   Connector,
   ConnectorContext,
   ConnectorStatus,
@@ -6,6 +8,10 @@ import type {
   Logger,
   ToolDef,
 } from "./types.js";
+import {
+  recordCatalogDriftActivity,
+  type CatalogDriftActivityContext,
+} from "./activity.js";
 import {
   storedCredentialShape,
   type CredentialVault,
@@ -16,6 +22,7 @@ import {
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
+import { boundedCatalogDrift } from "./catalog-drift.js";
 import {
   fingerprintSerializedCatalog,
   snapshotCatalog,
@@ -187,6 +194,12 @@ export interface RegistryOptions {
    * to the default 50_000.
    */
   maxResultBytes?: number;
+  /**
+   * Where payload-free catalog-drift observations go. Present only when the
+   * deployment configured an activity store; drift is reported through
+   * connector status either way.
+   */
+  catalogDriftActivity?: Omit<CatalogDriftActivityContext, "logger">;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {
@@ -288,6 +301,8 @@ export class Registry implements RegistryView {
   >();
   /** Deployment-wide observations — every call, whatever view made it. */
   private readonly health = new HealthLog();
+  /** Last drift counts reported to activity, per connector, in this runtime. */
+  private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
   private readonly ttlMs: number;
   private readonly staleMs: number;
   private readonly persistToolCatalog: boolean;
@@ -454,6 +469,71 @@ export class Registry implements RegistryView {
         id,
         admission.snapshot(),
       ]),
+    );
+  }
+
+  /**
+   * Payload-free drift counts for the open health endpoint, so `connecta
+   * doctor` can report a stale allowlist without asking any downstream
+   * anything. Only connectors that ship a vetted manifest *and* have already
+   * served a refresh *in this runtime* appear — a process or isolate that has
+   * answered no catalog request yet honestly reports nothing, and drift is not
+   * persisted the way the catalog itself is.
+   *
+   * Every report is rebuilt by {@link boundedCatalogDrift} on the way out:
+   * `Connector.catalogDrift()` is the open plugin seam, and this snapshot is
+   * serialized into an unauthenticated response.
+   */
+  catalogDriftSnapshot(): Record<string, CatalogDriftReport> {
+    const snapshot: Record<string, CatalogDriftReport> = {};
+    for (const connector of this.connectors.values()) {
+      const report = boundedCatalogDrift(connector.catalogDrift?.());
+      if (report) snapshot[connector.id] = report;
+    }
+    return snapshot;
+  }
+
+  /**
+   * Turn the observation a refresh just took into at most one activity event.
+   *
+   * Emitted on change rather than on every refresh: an identical report every
+   * TTL is a heartbeat, not news, and the current counts are already on
+   * connector status. A first observation that is clean is not an event
+   * either — nothing moved — but a later return to clean is, because "the
+   * drift is gone" is exactly what an operator watching the timeline is
+   * waiting for.
+   */
+  private observeCatalogDrift(connector: Connector): void {
+    const report = boundedCatalogDrift(connector.catalogDrift?.());
+    if (!report) return;
+    const previous = this.reportedDrift.get(connector.id);
+    // Bounded counts, so a seam returning NaN cannot make every refresh look
+    // like a change and emit an event per refresh forever.
+    const counts: CatalogDriftCounts = {
+      unclassifiedTools: report.unclassifiedTools,
+      unservedTools: report.unservedTools,
+      annotationConflicts: report.annotationConflicts,
+      schemaChanges: report.schemaChanges,
+    };
+    const unchanged =
+      previous !== undefined &&
+      previous.unclassifiedTools === counts.unclassifiedTools &&
+      previous.unservedTools === counts.unservedTools &&
+      previous.annotationConflicts === counts.annotationConflicts &&
+      previous.schemaChanges === counts.schemaChanges;
+    if (unchanged) return;
+    const clean =
+      counts.unclassifiedTools === 0 &&
+      counts.unservedTools === 0 &&
+      counts.annotationConflicts === 0 &&
+      counts.schemaChanges === 0;
+    this.reportedDrift.set(connector.id, counts);
+    if (previous === undefined && clean) return;
+    recordCatalogDriftActivity(
+      this.opts.catalogDriftActivity
+        ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger }
+        : undefined,
+      { connectorId: connector.id, ...counts },
     );
   }
 
@@ -827,6 +907,10 @@ export class Registry implements RegistryView {
     const tools = await connector.listTools(
       this.contextFor(id, baseUrl, requestScope, callOptions),
     );
+    // The listing a maintained proxy just served is also the only catalog
+    // comparison connecta ever makes. It rides this refresh whether or not the
+    // result reaches a cache, because what drifted drifted.
+    this.observeCatalogDrift(connector);
     // The caller that began this refresh may still use its result, but a
     // credential/OAuth change that landed while listTools was in flight means
     // the listing must not enter either shared cache layer.
@@ -1038,18 +1122,29 @@ export class Registry implements RegistryView {
     const connector = this.connectors.get(id);
     if (!connector) return { state: "error", message: "Unknown connector" };
     const ctx = this.contextFor(id, baseUrl, requestScope, callOptions);
+    // Whatever the state turns out to be, it carries the drift the last
+    // refresh saw. Reading it is a lookup, not a probe: a connector that has
+    // listed nothing yet reports nothing, and status never lists on its own to
+    // make the field appear.
+    // The report is rebuilt rather than spread through: what the seam returned
+    // is third-party output, and status is read by the operator UI and copied
+    // into responses.
+    const withDrift = (status: ConnectorStatus): ConnectorStatus => {
+      const report = boundedCatalogDrift(connector.catalogDrift?.());
+      return report ? { ...status, catalogDrift: report } : status;
+    };
     if (connector.status) {
       try {
-        return await connector.status(ctx);
+        return withDrift(await connector.status(ctx));
       } catch (err) {
-        return { state: "error", message: msg(err) };
+        return withDrift({ state: "error", message: msg(err) });
       }
     }
     try {
       await this.getTools(id, baseUrl, requestScope, callOptions);
-      return { state: "ok" };
+      return withDrift({ state: "ok" });
     } catch (err) {
-      return { state: "error", message: msg(err) };
+      return withDrift({ state: "error", message: msg(err) });
     }
   }
 
