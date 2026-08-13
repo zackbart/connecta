@@ -84,6 +84,10 @@ export const NODE_ONLY_SUITES = [
     reason: "exercises the Node HTTP adapter over real TCP sockets",
   },
   {
+    file: "test/packed-links.test.ts",
+    reason: "spawns the Node packed-link gate against filesystem fixtures",
+  },
+  {
     file: "test/package-surface.test.ts",
     reason: "walks the package tree with Node filesystem APIs",
   },

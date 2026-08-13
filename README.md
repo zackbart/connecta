@@ -1,6 +1,6 @@
 # connecta
 
-![A monochrome clay Connecta hub joining many tools](./assets/connecta-clay-hero.png)
+![A monochrome clay Connecta hub joining many tools](https://raw.githubusercontent.com/zackbart/connecta/main/assets/connecta-clay-hero.png)
 
 One place for AI agents to connect to the tools you choose.
 

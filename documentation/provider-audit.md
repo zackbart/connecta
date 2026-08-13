@@ -14,7 +14,7 @@ error, not a finding, so the proxy reports have no H rows.
 Every miss below is fixed in the same change that recorded it
 ([#342](https://github.com/zackbart/connecta/issues/342)), except where the row
 says otherwise. The mechanically checkable half of the hand-written bar is now
-a test — [`test/provider-conventions.test.ts`](../test/provider-conventions.test.ts)
+a test — [`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts)
 walks the shipped surface of both `api()` providers on every run, so these
 verdicts cannot rot quietly back into prose. The proxies' mechanical rows live
 in their own suites, because what they assert is the wrapper's identity,
