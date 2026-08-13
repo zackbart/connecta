@@ -176,6 +176,38 @@ const cases = [
     },
   },
   {
+    id: "ts-prone-annotation",
+    workflow: "simple-read",
+    fixtureClass: "issue-419-typescript-prone",
+    prompt:
+      "Using Connecta code mode, call the read-only address `controlled.read_record` with id 7. Define a typed record shape and annotate the result before returning only the record JSON.",
+    expectedCalls: [
+      { address: "controlled.read_record", args: { id: 7 } },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 700 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return value?.id === 7 && value?.group === "beta" && value?.score === 18;
+    },
+  },
+  {
+    id: "ts-prone-generic",
+    workflow: "simple-read",
+    fixtureClass: "issue-419-typescript-prone",
+    prompt:
+      "Using Connecta code mode, call `controlled.read_record` with id 7. Use a generic typed projection helper and return only `{ id, score }` as JSON.",
+    expectedCalls: [
+      { address: "controlled.read_record", args: { id: 7 } },
+    ],
+    validOuterRoutes: [["execute_code"]],
+    costEnvelope: { maxRoundTrips: 2, maxMcpResultTokens: 700 },
+    correct(finalText) {
+      const value = parseJson(finalText);
+      return value?.id === 7 && value?.score === 18 && Object.keys(value).length === 2;
+    },
+  },
+  {
     id: "optional-guide-simple-read",
     workflow: "simple-read",
     fixtureClass: "guide-irrelevant-control",
