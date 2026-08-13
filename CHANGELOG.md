@@ -14,6 +14,16 @@ the supported ones and are untouched. A deployment that writes no `api()`
 connectors, branches on no error code, and never asked an agent for a whole
 zone's settings in one call upgrades without reading further.
 
+Alongside it, the upgrade path an existing deployment takes gets written down.
+`connecta init` was the golden path for a new deployment and the whole story
+for an old one, which is a gap with a shape: `init` refuses to merge into an
+existing path — the guard that keeps an initializer from eating a connector
+set — so an agent pointed at a deployment two releases behind had to
+reconstruct the procedure from release prose written for the maintainer. Both
+interesting failures there were silent too. It overwrites the configuration the
+deployment exists for, or it "fixes" a construction throw by weakening a
+fail-closed default and ships something quieter and wrong.
+
 ### Added
 
 - **`not_found`, for a downstream that answered and had nothing to give.** A
@@ -37,6 +47,38 @@ zone's settings in one call upgrades without reading further.
   stays generic with a message that says so. The hosted-MCP proxy path mints
   the code never, because `P1` forbids re-shaping downstream framing and
   provider prose is never parsed to invent a classification (#373).
+
+- **An upgrade runbook for existing deployments.**
+  [`documentation/upgrading.md`](./documentation/upgrading.md) is written for
+  the agent sitting inside a generated deployment it did not create: read the
+  exact pin and the template generation it implies, regenerate that generation
+  with `npx @zackbart/connecta@<pin> init` to get a real merge base, three-way
+  reconcile the scaffolding against the current template while `src/index.ts`
+  stays the deployment's own, cross the version boundaries that break
+  construction, and finish where `init` finishes — typecheck, start,
+  `connecta doctor`, then a program that exercises the deployment's *own*
+  connectors, which doctor deliberately knows nothing about. The migration
+  notes are per boundary and derived from this file: the 0.16.0 `api()`
+  construction contract (with the one safe answer for an unannotated tool
+  written down — `readOnlyHint: false`, which is the routing it already had),
+  the `linear()`, `mixpanel()`, and Cloudflare provider changes, redirect
+  refusal and the response ceilings, and the fail-closed shipped defaults; then
+  0.14's annotation-precedence change, 0.13's rewritten guide summaries, the
+  0.11.0 executor requirement, 0.7.0's `verifyState` requirement and
+  core-owned routes for the pre-template deployments that still have to cross
+  them, and every removed option that throws with its migration. It closes with five refusals, because each is somebody's plausible
+  shortcut: no re-init over the top, no weakening a fail-closed default to get
+  green, no pinning back, no vendored internals, no second project shape.
+  Reachable from the README, from `operations.md`, and — absolutely, because
+  that reader has no copy of this repository — from the template's `AGENTS.md`
+  (#380).
+- **A suite that keeps the guide honest.** `test/upgrade-guide.test.ts` pins
+  every claim its reader cannot check: the generated file inventory against
+  `templates/node/`, the seven tool names against the CLI's own list, each
+  named version boundary against a release that shipped, each removed option
+  against the release section that names its issue, the bump target against
+  this package's version, and the three places the guide is linked from. A template that gains a file now fails `npm run check` rather than
+  leaving an agent to guess which of the two is wrong (#380).
 
 ### Changed
 

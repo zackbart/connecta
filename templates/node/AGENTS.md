@@ -23,6 +23,11 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - `Dockerfile` and `docker-compose.yml` containerize *this* source; they are
   the same deployment, not a second one. Configuration belongs in `.env` and
   `src/index.ts`, never in a divergent container entrypoint.
+- Moving this deployment to a newer Connecta is its own procedure, and it is
+  not a re-`init` — `connecta init` refuses to merge into an existing path on
+  purpose. Follow
+  [the upgrade guide](https://github.com/zackbart/connecta/blob/main/documentation/upgrading.md),
+  which also ships at `node_modules/@zackbart/connecta/documentation/upgrading.md`.
 
 Do not add alternate entrypoints, policy layers, generated connector catalogs,
 or runtime connector registration. Keep the deployment small enough to review

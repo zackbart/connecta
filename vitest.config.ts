@@ -117,6 +117,11 @@ export const NODE_ONLY_SUITES = [
       "runs the Node template's filesystem activity store against real files",
   },
   {
+    file: "test/upgrade-guide.test.ts",
+    reason:
+      "reads the guide, the template tree, and the CLI with Node filesystem APIs",
+  },
+  {
     file: "test/version.test.ts",
     reason: "reads package.json with Node filesystem APIs",
   },
