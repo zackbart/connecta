@@ -49,8 +49,8 @@ order, and amending it is a design decision, not a drive-by edit.
   changes declared capability, no policy engine, no approvals, no pauses.
 - **Not a schema ingester.** No OpenAPI or GraphQL → tools. Generated tool
   sprawl is the disease the meta-tools treat, not a feature to add.
-- **Not multi-tenant.** No accounts dimension, no per-user credential store,
-  no org hierarchy. Two accounts on one service are two connector instances.
+- **Not multi-tenant.** No Connecta account model, per-user credential store, or org hierarchy; credentials, storage, admission, and health stay connector-scoped.
+  Provider-owned sessions may expose provider-native account scope only through live schemas. Metadata never proves account identity; Connecta never invents or normalizes selectors, and ambiguity stops.
 - **Not stateful.** No protocol sessions, no server push. Scope resolves per
   request — which is also where the MCP spec itself has now arrived.
 - **Not a nanny.** Credentials fail loudly at use; connecta never probes one.
