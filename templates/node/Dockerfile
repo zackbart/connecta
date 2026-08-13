@@ -33,6 +33,9 @@ USER node
 ENV NODE_ENV=production
 ENV PORT=8787
 ENV CONNECTA_STATE_FILE=/data/connecta-state.json
+# Read only once the activity block in src/index.ts is uncommented; defaulted
+# here so history lands on the volume rather than inside the container layer.
+ENV CONNECTA_ACTIVITY_FILE=/data/connecta-activity.jsonl
 EXPOSE 8787
 
 # /health is always open, so the probe never carries the bearer token and

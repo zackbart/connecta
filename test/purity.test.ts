@@ -107,6 +107,36 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     expect(graph.has(clerkAdapter)).toBe(false);
   });
 
+  it("never imports this package by its own name", () => {
+    // tsconfig.json maps `@zackbart/connecta` to src/index.ts so a suite can
+    // typecheck template code that imports the package the way a deployment
+    // does. Inside src/ that specifier would be a cycle through the public
+    // entry, invisible to the relative-import walk above and resolvable only
+    // because of that mapping — so it is banned here rather than left to
+    // taste.
+    const walk = (dir: string): string[] =>
+      readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) return walk(full);
+        return entry.name.endsWith(".ts") ? [full] : [];
+      });
+    // Import positions only: the name also appears in doc comments and in
+    // error messages that tell a deployment which subpath to reach for.
+    const selfImports = [
+      /^\s*(?:import|export)[^;]*?["']@zackbart\/connecta/m,
+      /\bimport\(\s*["']@zackbart\/connecta/,
+    ];
+    for (const file of walk(SRC)) {
+      const source = readFileSync(file, "utf8");
+      for (const pattern of selfImports) {
+        expect(
+          pattern.test(source),
+          `${file} imports @zackbart/connecta instead of a relative path`,
+        ).toBe(false);
+      }
+    }
+  });
+
   it("never reaches a prebuilt provider connection", () => {
     // Derived from the directory: a provider added without its own subpath
     // fails here rather than silently riding the root entry.

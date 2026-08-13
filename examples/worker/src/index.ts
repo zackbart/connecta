@@ -6,6 +6,11 @@
  * namespace. The required Worker Loader binding in wrangler.jsonc backs the
  * seven-tool surface.
  *
+ * The operator surface is wired here except for activity history, which needs
+ * a database this example does not create for you: sign-in, the credential
+ * vault, and access-token issuance are on, and activity is three commented
+ * lines below. README.md § "The operator surface" walks through all four.
+ *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
  *   1. `npm install` in the connecta package root (../../ from here) so the
@@ -16,6 +21,7 @@
  *        wrangler secret put EXEC_TOKEN
  *        wrangler secret put CLERK_SECRET_KEY
  *        wrangler secret put DOWNSTREAM_TOKEN
+ *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
  *      and CLERK_PUBLISHABLE_KEY + PUBLIC_URL as plain vars in wrangler.jsonc.
  *   4. Enable Dynamic Client Registration in the Clerk dashboard
  *        (OAuth Applications -> DCR toggle) so Claude/Cursor can self-register.
@@ -32,6 +38,8 @@ import {
 } from "@zackbart/connecta";
 import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { cloudflareKvStorage } from "./cloudflare-kv.js";
+// Activity history, off by default because it needs a D1 database.
+// import { d1ActivityStore } from "./d1-activity.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;
@@ -41,8 +49,16 @@ interface Env {
   EXEC_TOKEN: string;
   CLERK_PUBLISHABLE_KEY: string;
   CLERK_SECRET_KEY: string;
+  /**
+   * Base64 32-byte AES key encrypting operator-managed credentials in KV.
+   * Unset means no vault: /credentials stays read-only and connecta says so at
+   * startup. Never put it in KV — it is what protects KV.
+   */
+  CREDENTIAL_ENCRYPTION_KEY: string;
   DOWNSTREAM_TOKEN: string;
   PUBLIC_URL: string;
+  /** Uncomment with the `d1_databases` binding to enable activity history. */
+  // ACTIVITY_DB: D1Database;
   /**
    * Worker Loader binding (wrangler.jsonc `worker_loaders`) powering
    * execute_code. Dynamic Workers require the Workers Paid plan.
@@ -73,9 +89,30 @@ function build(env: Env) {
         // allowedDomains: ["acme.com"],
       }),
     ],
+    // Connectors that declare a `credential` slot become editable at
+    // /credentials, encrypted with this key before anything reaches KV. A
+    // saved replacement takes effect on the next call — no redeploy, and no
+    // liveness probe: credentials fail at use.
+    //
+    // The key is the vault, not the page: /credentials is a list of connector
+    // slots, so it stays hidden until a connector declares one. Neither
+    // connector below does — Notion here carries a deployment-owned static
+    // header and echo has no secret at all — so this example ships the vault
+    // ready and the page empty. Declare a slot (see the commented shape on
+    // `echo`, or use a provider connector like `notion()`, which declares its
+    // own) and the page appears on the next load.
+    credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },
     // Eligible Clerk operators can create named, revocable MCP Bearer tokens
     // at /tokens. Secrets are shown once; only their hashes enter KV.
     accessTokens: {},
+    // Payload-free activity at /activity, off until a database exists to hold
+    // it. Uncomment the `d1_databases` binding in wrangler.jsonc, apply the
+    // schema in README.md § "Activity history", then these three lines and the
+    // import above.
+    // activity: {
+    //   store: d1ActivityStore(env.ACTIVITY_DB),
+    //   deploymentId: "production",
+    // },
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",
@@ -87,6 +124,11 @@ function build(env: Env) {
       }),
       api("echo", {
         description: "Echo — text transforms",
+        // What a vault-backed connector adds — an operator edits this slot at
+        // /credentials and the handler reads it with
+        // `await ctx.credential?.get()`, so the secret never lives in source
+        // or in a Worker variable:
+        //   credential: { label: "API token" },
         tools: [
           {
             name: "shout",

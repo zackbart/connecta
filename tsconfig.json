@@ -16,7 +16,18 @@
     "noEmit": true,
     "esModuleInterop": true,
     "resolveJsonModule": true,
-    "allowSyntheticDefaultImports": true
+    "allowSyntheticDefaultImports": true,
+    // Consumer code a suite exercises — the Node template's activity store —
+    // imports this package by name, and `dist/` does not exist when typecheck
+    // runs. Point that one specifier at the source entry. It is for template
+    // and example files only: `test/purity.test.ts` fails if anything under
+    // src/ imports the package by its own name, and the template's own
+    // program (tsconfig.template.node.json) still checks it against the
+    // shipped declarations.
+    "baseUrl": ".",
+    "paths": {
+      "@zackbart/connecta": ["./src/index.ts"]
+    }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
   "exclude": [

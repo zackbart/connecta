@@ -1,3 +1,4 @@
+import { fileURLToPath } from "node:url";
 import { defineConfig } from "vitest/config";
 import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 
@@ -107,6 +108,11 @@ export const NODE_ONLY_SUITES = [
     reason: "walks the test directory to guard this partition",
   },
   {
+    file: "test/template-file-activity.test.ts",
+    reason:
+      "runs the Node template's filesystem activity store against real files",
+  },
+  {
     file: "test/version.test.ts",
     reason: "reads package.json with Node filesystem APIs",
   },
@@ -121,6 +127,19 @@ export default defineConfig({
   test: {
     projects: [
       {
+        // The Node template is a consumer project: it imports the package by
+        // name, and `dist/` does not exist yet when tests run. Point that one
+        // exact specifier at the source entry so a suite may exercise template
+        // code directly. Anchored so subpath specifiers never match — those
+        // belong to the Node-only entries the template's own tsconfig maps.
+        resolve: {
+          alias: [
+            {
+              find: /^@zackbart\/connecta$/,
+              replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),
+            },
+          ],
+        },
         test: {
           name: "node",
           include: NODE_SUITES,
