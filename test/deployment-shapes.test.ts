@@ -141,6 +141,40 @@ describe("deployment shapes", () => {
     );
   });
 
+  // Compose's `:?` guard fires on unset-or-empty, so any placeholder value
+  // shipped in .env.example is a bearer token published in this repository
+  // that `docker compose up` will happily accept (#367).
+  it("ships a Node template that cannot start on its own .env.example", () => {
+    const env = read(".env.example");
+    expect(env).toMatch(/^CONNECTA_TOKEN=\s*$/m);
+    expect(read("docker-compose.yml")).toContain(
+      "CONNECTA_TOKEN: ${CONNECTA_TOKEN:?",
+    );
+    // Local `npm start` reads the same file and refuses for the same reason.
+    expect(read("src", "index.ts")).toContain(
+      "Refusing to start without inbound auth",
+    );
+  });
+
+  // A copied deployment installs its own dependencies, and an optional peer
+  // that never installs with connecta breaks the build if the README that
+  // calls this example a starting template does not name it (#367).
+  it("names every optional peer the Worker example imports", () => {
+    const worker = join(ROOT, "examples", "worker");
+    const source = readFileSync(join(worker, "src", "index.ts"), "utf8");
+    const readme = readFileSync(join(worker, "README.md"), "utf8");
+    const peers: Record<string, string> = {
+      "@zackbart/connecta/auth/clerk": "@clerk/backend",
+      "@cloudflare/codemode": "@cloudflare/codemode",
+    };
+    for (const [specifier, packageName] of Object.entries(peers)) {
+      if (!source.includes(`from "${specifier}"`)) continue;
+      expect(readme).toMatch(
+        new RegExp(`npm install[^\\n]*${packageName.replace("/", "\\/")}`),
+      );
+    }
+  });
+
   it("keeps the initializer's .gitignore in step with the template's", () => {
     // `connecta init` writes this file itself, because npm strips .gitignore
     // from a packed dependency. Two copies drift; this is the seam.

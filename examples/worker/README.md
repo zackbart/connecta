@@ -50,6 +50,26 @@ Enable Dynamic Client Registration on the Clerk instance (OAuth Applications →
 DCR) so Claude/Cursor can self-register — full walkthrough in
 [setting up Clerk](../../documentation/auth.md).
 
+### Copied into its own repository
+
+The `npm install` above is the connecta repository's, which already has every
+dependency this file imports. A copy with its own `package.json` installs three
+things, because two of them are not part of connecta and never install with it:
+
+```sh
+npm install @zackbart/connecta @cloudflare/codemode @clerk/backend
+```
+
+`@cloudflare/codemode` is the executor behind `execute_code`, and
+`@clerk/backend` is the optional peer behind `@zackbart/connecta/auth/clerk` —
+which `src/index.ts` imports at the top level, so wrangler must resolve it at
+build time. Miss it and the build stops at
+`Could not resolve "@clerk/backend"`, which is a missing peer rather than a
+broken example. Drop `clerkAuth` from `auth` if this deployment has no operator
+sign-in, and the peer goes with it — but read
+[the operator surface](#the-operator-surface) first, because a deployment
+without it can never write a credential or issue an access token.
+
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, named MCP access tokens are at
 `/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`. Each
@@ -124,12 +144,9 @@ The required Worker Loader binding is checked into `wrangler.jsonc`:
 ```
 
 `src/index.ts` constructs `DynamicWorkerExecutor` from `env.LOADER` and serves
-the seven-tool surface. A deployment copied into its own repository must also
-install the executor package:
-
-```sh
-npm install @cloudflare/codemode
-```
+the seven-tool surface. The executor package is one of the installs a copied
+deployment owns — see
+[copied into its own repository](#copied-into-its-own-repository).
 
 ## Activity history (optional)
 

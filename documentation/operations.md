@@ -214,7 +214,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 
 | Suite | Covers | Why Node |
 | --- | --- | --- |
-| `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
+| `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `drift-check.test.ts` | the maintainer drift checker — recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
