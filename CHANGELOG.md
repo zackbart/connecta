@@ -4,8 +4,9 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-Packaging housekeeping found by the pre-release smoke gauntlet. Nothing in the
-runtime moved, and no deployment needs to do anything.
+Packaging housekeeping found by the pre-release smoke gauntlet, plus a rule that
+described itself too strictly. Nothing in the runtime moved, and no deployment
+needs to do anything.
 
 ### Fixed
 
@@ -18,6 +19,18 @@ runtime moved, and no deployment needs to do anything.
   Workers purity boundary and the optional-peer subpaths are untouched. The
   package-surface gate now asserts the whole subpath set, manifest included, so
   neither this entry nor an unwanted one can arrive unnoticed (#374).
+- **The published-surface rule says what it actually forbids.** `AGENTS.md`
+  claimed platform-specific storage adapters live in `examples/`, "not the
+  package", while the tarball has always carried `examples/worker` — Cloudflare
+  KV and D1 adapters included — because that example is the Workers starting
+  template a consumer copies. The invariant was never in danger: nothing under
+  `examples/` appears in the `exports` map, so those adapters are reference
+  source and not an importable subpath. The wording now draws the line where
+  the gates draw it — a platform-bound adapter must not reach `src/` or the
+  `exports` map — and says why the example ships, in `AGENTS.md`, the
+  operations guide, and the `scripts/check-package.mjs` comment. A new
+  assertion in `test/package-surface.test.ts` holds the instruction file and
+  the exports map to the same story (#377).
 
 ## 0.16.0 — 2026-08-12
 

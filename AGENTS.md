@@ -83,11 +83,18 @@ Two boundaries CI enforces that are not obvious from reading a file:
   and fails otherwise. Need a Node API? It goes behind an explicit Node-only
   subpath (`/node` or `/quickjs`), never the root.
 - **The published surface.** Platform-specific storage adapters live in
-  `examples/`, not the package. `@clerk/backend` and `quickjs-emscripten` are
-  optional peers behind the `./auth/clerk` and `./quickjs` subpaths and must
-  never become dependencies or install with core. Enforced by
-  `test/package-surface.test.ts` and `scripts/check-package.mjs`. Anything
-  heavyweight or platform-bound gets a subpath and an optional peer.
+  `examples/worker/`, never in `src/` and never in the `exports` map. That
+  example does ship in the tarball, Cloudflare KV and D1 adapters included —
+  it is the Workers starting template a consumer copies, and copying it is the
+  point — but every `exports` target resolves into `dist/`, so those adapters
+  are readable reference source and not an importable subpath. What is
+  forbidden is a platform-bound adapter becoming importable from the package,
+  not a file appearing in the artifact. `@clerk/backend` and
+  `quickjs-emscripten` are optional peers behind the `./auth/clerk` and
+  `./quickjs` subpaths and must never become dependencies or install with
+  core. Enforced by `test/package-surface.test.ts` and
+  `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
+  subpath and an optional peer.
 
 ## Where new tests go
 

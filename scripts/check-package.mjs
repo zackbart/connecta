@@ -225,6 +225,17 @@ try {
     ) {
       throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
+    // A platform-bound adapter belongs to a deployment, never to the package's
+    // importable surface. This is the blunt version of that rule: a
+    // Cloudflare-named connector or storage path fails anywhere in the
+    // artifact, `dist/` and `examples/` alike. The Worker example's own KV and
+    // D1 adapters ship on purpose — nothing under examples/ is in `exports`,
+    // so they are reference source a consumer copies, not a subpath anyone can
+    // import — and they clear this gate because of what they are named
+    // (`cloudflare-kv.ts`, `d1-activity.ts`), not because examples/ is exempt.
+    // Renaming one to `src/storage/cloudflare.ts` inside the example would
+    // trip it; that is a collision with a deliberately blunt pattern, not a
+    // published-surface violation (#377).
     if (
       path.includes("connectors/cloudflare") ||
       path.includes("storage/cloudflare")
