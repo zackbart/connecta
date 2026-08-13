@@ -61,7 +61,7 @@ describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");
-    expect(packageJson.engines?.node).toBe(">=20.9.0");
+    expect(packageJson.engines?.node).toBe(">=22.0.0");
     expect(packageJson.files).toEqual(
       expect.arrayContaining([
         "bin",

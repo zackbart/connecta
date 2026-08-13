@@ -41,7 +41,7 @@ const INERT_ICON_HEADERS = {
   "X-Content-Type-Options": "nosniff",
 };
 
-/** Per-request base64 nonce for an operator shell's scripts (Node 20+ and Workers). */
+/** Per-request base64 nonce for an operator shell's scripts (Node 22+ and Workers). */
 function uiScriptNonce(): string {
   const bytes = crypto.getRandomValues(new Uint8Array(16));
   let binary = "";
