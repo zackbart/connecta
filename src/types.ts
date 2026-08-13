@@ -398,6 +398,13 @@ export interface ExecutorProvider {
  * NEVER back this with an unsandboxed eval — the code is untrusted.
  */
 export interface Executor {
+  /**
+   * What `/health` and `connecta doctor` call this sandbox. Optional, and
+   * sanitized and bounded before it is reported. A class-shaped executor gets
+   * its constructor name for free, but that is runtime metadata a bundler may
+   * rewrite; set this to say the same thing minification-proof.
+   */
+  readonly name?: string;
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   /** Release runtime resources. Node's built-in pool implements this. */
   close?(): void | Promise<void>;

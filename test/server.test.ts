@@ -1666,7 +1666,7 @@ describe("server open routes", () => {
       executor: {
         name: "bad\nname " + "y".repeat(80),
         execute: async () => ({ result: null }),
-      } as any,
+      },
     });
     const hostileBody = (await (
       await hostile.fetch(new Request(`${BASE}/health`))

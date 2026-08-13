@@ -8,10 +8,9 @@ it is specified in prose first and implemented second — the same discipline th
 [MCP spec bump](./mcp-2026-07-28.md) followed.
 
 Two executors implement this document: QuickJS in a child process on Node, and
-`DynamicWorkerExecutor` from `@cloudflare/codemode` on Workers. Divergence
-between them is a bug unless it appears in
-[Executor exceptions](#executor-exceptions), which names the reason. Anyone can
-implement a third executor from this document without reading either.
+`DynamicWorkerExecutor` from `@cloudflare/codemode` on Workers. Divergence between
+them is a bug unless it appears in [Executor exceptions](#executor-exceptions),
+which names the reason. Anyone can implement a third from this document alone.
 
 The [code-first exploration](./code-first-exploration.md) is the evidence behind
 the direction; [`ethos.md`](../ethos.md) carries the verdicts. Where its prototype
@@ -54,9 +53,8 @@ createConnecta({
 });
 ```
 
-Dynamic Workers require the Workers Paid plan. The
-[Worker example](../examples/worker/README.md#code-mode) carries the complete
-required binding and package setup.
+Dynamic Workers require the Workers Paid plan. The complete required binding and
+package setup is in the [Worker example](../examples/worker/README.md#code-mode).
 
 ## What an executor must implement
 
@@ -64,6 +62,7 @@ The host side of the seam is two types in `src/types.ts` and nothing else.
 
 ```ts
 interface Executor {
+  readonly name?: string;                       // what /health and doctor report
   execute(code: string, providers: ExecutorProvider[]): Promise<ExecuteResult>;
   close?(): void | Promise<void>;
 }
@@ -113,8 +112,9 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 Optionally implement `AdmittingExecutor` (`acquire()` returning a lease whose
 `execute` runs once) for bounded admission (`L7`) and `close()` for shutdown;
-connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise. An
-optional `name` is what [`/health` and `doctor`](./operations.md#the-cli) report.
+connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise. The
+optional `name` — else a class's constructor name, which a minifier may rewrite
+— is what [`/health` and `doctor`](./operations.md#the-cli) report.
 
 Note what is *not* on this list: [emitted output](#emitted-output) asks nothing
 of an executor — `connecta.emit` is just another provider function (`M8`).

@@ -100,10 +100,10 @@ describe("connecta doctor's executor line", () => {
   });
 
   it("bounds and sanitizes the name before it reaches a terminal", async () => {
-    const hostile = {
+    const hostile: Executor = {
       name: "\u001b[31mEvil\nSandbox " + "x".repeat(80),
       execute: async () => ({ result: 42 }),
-    } as Executor;
+    };
     const line = await doctorAgainst(hostile);
     expect(line).toMatch(
       /^Connecta doctor passed: 1 connector\(s\), 31mEvil Sandbox x+ executed, prescribed seven-tool surface\.$/,
