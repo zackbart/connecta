@@ -915,8 +915,12 @@ export class CatalogService {
     const identityConnectorIds =
       matches.length === 0 && !isBrowse && !unsearchableQuery && !scopedConnector
         ? connectors
+            // The full query, not `analyzedTerms`: that cap exists to bound
+            // the serialized term fields, and ranking already reads every
+            // term. A ninth term is a real search term, and a search that
+            // ranked against it must not deny the connector it names.
             .filter((connector) =>
-              analyzedTerms.some(
+              queryTerms.some(
                 (term) =>
                   matchesLexicalTerm(connector.id, term) ||
                   (connector.title !== undefined &&

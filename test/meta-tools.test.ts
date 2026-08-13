@@ -1647,6 +1647,29 @@ describe("search_tools", () => {
       "No matching capability is configured in this deployment",
     );
 
+    // The term cap on the serialized analysis fields is not a cap on the
+    // search: ranking reads every term, so a connector named past the eighth
+    // one must be named back rather than denied.
+    const lateId = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta inventory",
+      }),
+    ) as SearchResult;
+    expect(lateId.total).toBe(0);
+    expect(required(required(lateId.queryAnalysis).guidance)).toContain(
+      'connector "inventory"',
+    );
+
+    const lateTitle = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta warehouse",
+      }),
+    ) as SearchResult;
+    expect(lateTitle.total).toBe(0);
+    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain(
+      'connector "inventory"',
+    );
+
     // Identity never enters ranking: a query that matches tools is answered
     // by the same tools, in the same order, with no identity advice.
     const matched = textOf(
