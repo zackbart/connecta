@@ -219,6 +219,25 @@ function matchingTokenCandidates(term: string): Set<string> {
   return candidates;
 }
 
+/**
+ * Whether one query term matches a whole token of arbitrary text, under the
+ * same inflection rules the tool index uses.
+ *
+ * Connector identity — an `id` or a `title` — is deliberately not a document in
+ * that index: making it one would move ranking for every query that already
+ * matches tools. This lets a caller ask the index's question of a string that
+ * never became a document, which is what the no-match analysis needs to tell
+ * "nothing like this exists here" from "that word is a connector".
+ */
+export function matchesLexicalTerm(text: string, term: string): boolean {
+  const tokens = new Set(lexicalTokens(text));
+  if (tokens.size === 0) return false;
+  for (const candidate of matchingTokenCandidates(term)) {
+    if (tokens.has(candidate)) return true;
+  }
+  return false;
+}
+
 export interface LexicalCorpusStatistics {
   documentCount: number;
   documentFrequency: ReadonlyMap<string, number>;

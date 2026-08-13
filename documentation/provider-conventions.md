@@ -64,7 +64,9 @@ floor. From `src/catalog.ts` and `src/catalog-service.ts`:
   fallback summary for a guide with no usable body line. Routing facts belong
   in the title and the guide's first line; a routing fact that lives only in
   the connector description has been written into a field the model does not
-  read.
+  read. Neither the `id` nor the `title` is a lexical document, so a term drawn
+  from one of them is not a search hit — it is a no-match whose guidance names
+  the connector and points at a scoped browse.
 
 Two construction-time checks enforce the floor beneath all of this. The hard
 one is `api()` itself: since
@@ -108,7 +110,10 @@ write never hides behind a neutral one. Escape hatches are named
 `<provider>_api_<class>` so they sort together and read as generic.
 
 *Why:* the name is the only thing lexical search indexes besides the
-description, and it is what an agent skims first. *Cost:* wrong-tool selection.
+description, and it is what an agent skims first. A connector's `id` and
+`title` are displayed, not indexed — a search for one of them matches no tool,
+and the miss is answered by guidance naming that connector rather than by a
+ranked result. *Cost:* wrong-tool selection.
 
 ### H3 — The selection sentence fits in 160 characters; the whole description in 240
 
