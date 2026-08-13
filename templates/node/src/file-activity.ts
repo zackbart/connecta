@@ -99,13 +99,20 @@ export function fileActivityStore(
     }
   };
   let events: ToolCallActivityEvent[] = [];
+  // Damage found at load that the file itself still carries: a dropped line, or
+  // a last line with no newline after it. Both are repaired by rewriting the
+  // file from what parsed, because the alternative is appending onto a
+  // fragment and losing the *next* event too — one that never had anything
+  // wrong with it.
+  let repairNeeded = false;
   if (existsSync(path)) {
     tighten();
     // A half-written trailing line is the normal cost of an append log, and
     // one unreadable line is not a reason to lose the history above it. Unlike
     // the state file there is nothing irreplaceable here — this is a record of
     // calls that already happened — so damaged lines are dropped, loudly.
-    const lines = readFileSync(path, "utf8").split("\n").filter(Boolean);
+    const raw = readFileSync(path, "utf8");
+    const lines = raw.split("\n").filter(Boolean);
     let dropped = 0;
     for (const line of lines) {
       try {
@@ -120,6 +127,7 @@ export function fileActivityStore(
           `line(s) of ${lines.length}.`,
       );
     }
+    repairNeeded = dropped > 0 || (raw.length > 0 && !raw.endsWith("\n"));
   }
   const ensureDirectory = () => {
     const dir = dirname(path);
@@ -139,6 +147,10 @@ export function fileActivityStore(
     renameSync(tmp, path);
     tighten();
   };
+  // Repair before the first append rather than at the next restart: the
+  // fragment is on disk until something rewrites the file, and an append onto
+  // it corrupts a good event into an unreadable line.
+  if (repairNeeded) compact();
   return {
     record(event) {
       events.push(event);

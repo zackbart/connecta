@@ -100,6 +100,13 @@ describe("deployment shapes", () => {
     );
     expect(read(".gitignore")).toContain(".connecta-activity.jsonl");
     expect(read("README.md")).toContain("## Turn on the operator surface");
+    // A vault is not a page: /credentials lists connector slots, and neither
+    // shape's shipped connectors need one. Both carry the slot's shape in
+    // place so nobody follows the vault step and finds a hidden page (#345).
+    expect(source).toContain('//   credential: { label: "API token" },');
+    expect(read("README.md")).toContain(
+      "The shipped `time`\nconnector declares none",
+    );
   });
 
   it("offers the full operator surface in the Worker example", () => {
@@ -118,9 +125,20 @@ describe("deployment shapes", () => {
     expect(
       readFileSync(join(ROOT, "examples", "worker", "wrangler.jsonc"), "utf8"),
     ).toContain('//     "binding": "ACTIVITY_DB",');
-    expect(
-      readFileSync(join(ROOT, "examples", "worker", "README.md"), "utf8"),
-    ).toContain("## The operator surface");
+    expect(worker).toContain('//   credential: { label: "API token" },');
+    const workerReadme = readFileSync(
+      join(ROOT, "examples", "worker", "README.md"),
+      "utf8",
+    );
+    expect(workerReadme).toContain("## The operator surface");
+    // The walkthrough may not end on a check that fails as deployed: this
+    // example has no credential slot and its activity store waits on D1.
+    expect(workerReadme).toContain(
+      "The vault is ready here, and the Credentials page is still hidden",
+    );
+    expect(workerReadme).not.toContain(
+      "checking that Credentials, Tokens, and Activity are live",
+    );
   });
 
   it("keeps the initializer's .gitignore in step with the template's", () => {

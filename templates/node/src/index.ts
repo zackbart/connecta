@@ -96,6 +96,12 @@ const connecta = createConnecta({
   connectors: [
     api("time", {
       description: "Time — current timestamp",
+      // /credentials lists connectors, not deployments: the page stays hidden
+      // until at least one connector declares a slot, vault or no vault. A
+      // connector that needs an operator-managed secret adds one here —
+      //   credential: { label: "API token" },
+      // — and reads it inside a handler with `await ctx.credential?.get()`.
+      // Telling the time needs no secret, so this one declares nothing.
       tools: [
         {
           name: "get_now",

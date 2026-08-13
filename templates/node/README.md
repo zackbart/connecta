@@ -39,7 +39,8 @@ Out of the box this deployment serves the seven-tool MCP surface and a
 read-only operator UI: open `http://localhost:8787/`, paste the bearer, and you
 get Connections. The other three pages are configuration away, and each one is
 a commented block in `src/index.ts` — uncomment it, set the variables it names
-in `.env`, restart. Do them in this order; the last two lean on the first.
+in `.env`, restart. Do them in this order; the last two lean on the first, and
+Credentials wants one thing more than a block, called out in step 2.
 
 **1. Operator sign-in (Clerk).** A bearer token is a client key. It may call
 tools and read connector status, but it may not write a credential or issue an
@@ -64,7 +65,14 @@ node -e "console.log(crypto.randomBytes(32).toString('base64'))"
 ```
 
 Every connector that declares a `credential` slot then becomes editable at
-`/credentials`, with values encrypted in the state file. Keep the key anywhere
+`/credentials`, with values encrypted in the state file. The shipped `time`
+connector declares none — telling the time needs no secret — so the key alone
+leaves the page hidden, which is the honest state for a page with nothing on
+it. Add `credential: { label: "API token" }` to an `api()` connector (the
+commented shape is in `src/index.ts`) and read it in a handler with
+`await ctx.credential?.get()`, or use a provider connector such as `notion()`,
+which declares its own; Credentials appears for a signed-in operator on the
+next restart. Keep the key anywhere
 except that file — it is the only thing standing between a copied state file
 and the secrets in it — and note that losing it makes stored values
 unreadable. A saved replacement takes effect on the next call; nothing
@@ -80,9 +88,12 @@ are stored, so a lost token is reissued, never recovered.
 import. `/activity` then answers with who called what, when, how long it took,
 and whether it worked — never arguments, results, generated code, or raw error
 messages, because the store is never handed one. `src/file-activity.ts` is
-yours: it appends a line per call and keeps the newest 5,000 events, which is a
-retention policy chosen for a single container and worth revisiting for
-anything busier. In Docker the log lands on the same volume as the state file.
+yours: it appends a line per call and rewrites the log down to the newest 5,000
+events once it runs a slack window past that, so the file holds a few hundred
+more than the ceiling between rewrites rather than being rewritten on every
+call. That is a retention policy chosen for a single container and worth
+revisiting for anything busier. In Docker the log lands on the same volume as
+the state file.
 
 None of this changes what agents can reach. Operator pages manage the
 authentication material behind capabilities this file already declares; the
@@ -125,4 +136,7 @@ That is deliberate. Doctor holds a bearer, and a bearer learns the model-facing
 surface, not the deployment's configuration topology: whether this deployment
 issues access tokens or keeps a credential vault is operator data, and a client
 key is not an operator. Confirm the operator surface the way an operator will —
-sign in at `/` and check that Credentials, Tokens, and Activity are live.
+sign in at `/` and check that the pages you turned on are there: Tokens and
+Activity once their blocks are uncommented, and Credentials once the vault has
+a connector credential slot to show. The nav lists a page only when this
+deployment can serve it, so an absent page is a report, not a fault.

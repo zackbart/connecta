@@ -52,7 +52,9 @@ DCR) so Claude/Cursor can self-register — full walkthrough in
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, named MCP access tokens are at
-`/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`.
+`/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`. Each
+of those three appears in the nav only when this deployment can serve it — see
+the next section for what turns each one on.
 
 ## The operator surface
 
@@ -79,6 +81,15 @@ nowhere near KV: it is the only thing that makes a copied namespace useless.
 Rotation takes effect on the next call, with no redeploy and no liveness probe,
 because credentials fail at use.
 
+The vault is ready here, and the Credentials page is still hidden, because that
+page lists connector credential slots rather than deployments. Neither
+connector in `src/index.ts` declares one — Notion carries a deployment-owned
+static header and echo has no secret — so nothing would be on the page. Add
+`credential: { label: "API token" }` to an `api()` connector (the commented
+shape on `echo` is exactly it) or use a provider connector such as `notion()`,
+which declares its own, and Credentials appears for a signed-in operator on the
+next load.
+
 **Access tokens** are `accessTokens: {}`. A signed-in operator mints named,
 revocable Bearer tokens at `/tokens` for header-capable clients that will not do
 OAuth. Secrets are shown once and only their hashes enter KV; a lost token is
@@ -96,8 +107,11 @@ never the connector set, the tool catalog, or its annotations.
 `connecta doctor` reports the same line here as for a deployment with none of
 this on: connector count, executor, seven tools. It carries a bearer, and a
 bearer learns the model-facing surface rather than the deployment's
-configuration topology. Confirm the operator surface by signing in at
-`<PUBLIC_URL>/` and checking that Credentials, Tokens, and Activity are live.
+configuration topology. Confirm the operator surface the way an operator will:
+sign in at `<PUBLIC_URL>/` and check that Tokens is live. Credentials joins it
+once a connector declares a `credential` slot, and Activity once the D1 wiring
+below is on — the nav shows a page when the deployment can actually serve it,
+so a missing page is the honest report that its half is still off.
 
 ## Code mode
 

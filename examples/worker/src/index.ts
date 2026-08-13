@@ -93,6 +93,14 @@ function build(env: Env) {
     // /credentials, encrypted with this key before anything reaches KV. A
     // saved replacement takes effect on the next call — no redeploy, and no
     // liveness probe: credentials fail at use.
+    //
+    // The key is the vault, not the page: /credentials is a list of connector
+    // slots, so it stays hidden until a connector declares one. Neither
+    // connector below does — Notion here carries a deployment-owned static
+    // header and echo has no secret at all — so this example ships the vault
+    // ready and the page empty. Declare a slot (see the commented shape on
+    // `echo`, or use a provider connector like `notion()`, which declares its
+    // own) and the page appears on the next load.
     credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },
     // Eligible Clerk operators can create named, revocable MCP Bearer tokens
     // at /tokens. Secrets are shown once; only their hashes enter KV.
@@ -116,6 +124,11 @@ function build(env: Env) {
       }),
       api("echo", {
         description: "Echo — text transforms",
+        // What a vault-backed connector adds — an operator edits this slot at
+        // /credentials and the handler reads it with
+        // `await ctx.credential?.get()`, so the secret never lives in source
+        // or in a Worker variable:
+        //   credential: { label: "API token" },
         tools: [
           {
             name: "shout",

@@ -205,13 +205,17 @@ walk through the enablement.
   environment variables they read (passed through Compose and defaulted in the
   Dockerfile so the container works the moment a block is uncommented), and
   `src/file-activity.ts` — a deployment-owned `ActivityStore` that appends one
-  JSON line per call and keeps the newest 5,000. The Worker example wires the
-  credential vault to a new `CREDENTIAL_ENCRYPTION_KEY` secret beside the Clerk
-  and access-token configuration it already had, and carries the D1 activity
-  wiring and its binding as commented lines rather than as README-only
-  instructions. Both READMEs walk through enabling each half, and both say why
-  `connecta doctor` reports none of it: doctor holds a bearer, and a client key
-  does not get to learn a deployment's configuration topology (#345).
+  JSON line per call and rewrites the log back down to the newest 5,000 once it
+  runs a slack window past that, repairing a torn trailing line on the way in
+  rather than appending onto it. The Worker example wires the credential vault
+  to a new `CREDENTIAL_ENCRYPTION_KEY` secret beside the Clerk and access-token
+  configuration it already had, and carries the D1 activity wiring and its
+  binding as commented lines rather than as README-only instructions. Both
+  READMEs walk through enabling each half — including the part neither vault
+  can supply, a connector that declares a `credential` slot, which is what puts
+  the Credentials page in the nav — and both say why `connecta doctor` reports
+  none of it: doctor holds a bearer, and a client key does not get to learn a
+  deployment's configuration topology (#345).
 
 ### Changed
 

@@ -21,6 +21,13 @@ activity as commented blocks in `src/index.ts` — plus a deployment-owned
 fourth, which needs a D1 database. Each README walks through its own
 enablement.
 
+The vault is the one whose page needs a second thing. `/credentials` lists
+connector credential slots, so `credentialManagement` stays `no_slots` — and
+the nav entry stays hidden — until a connector declares `credential`, however
+well-configured the vault is. Neither shape's shipped connectors need a secret,
+so both carry the slot's shape as a comment beside a connector and say so in
+their walkthrough, which is the honest version of the same page count.
+
 ## The shape
 
 | Piece | What it owns |
