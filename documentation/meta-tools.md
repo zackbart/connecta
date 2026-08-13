@@ -170,12 +170,18 @@ can shrink anything before it returns.
 
 `fields` keeps its historical flat `{ "<path>": value }` result when every
 requested dot-path resolves. Dot notation traverses objects; append `[]` to an
-array field before continuing, as in `results[].id`. An exact downstream
+array field before continuing, as in `results[].id`. Empty arrays resolve to
+empty arrays. An exact downstream
 `$connecta` field is always escaped under `data`. If any path misses—or that
 reserved name is selected—the result carries matches under `data` and reserves `$connecta` for a
 `type: "field_projection"` recovery record naming each `unmatchedFields`
-entry. When a miss matches a declared array path except for `[]`, the record
-also carries the traversal hint. The discriminator means downstream fields
+entry. A path that resolves for only some array elements stays in `data` and
+appears in `partialFields`; its unresolved positions serialize as `null`, while
+the recovery record distinguishes them from genuine downstream nulls. A path
+that misses every element appears in `unmatchedFields` and is omitted from
+`data`. Both lists scale with requested paths, never with array length. When a
+miss matches a declared array path except for `[]`, the record also carries the
+traversal hint. The discriminator means downstream fields
 named `data`, `projection`,
 or `$connecta` remain ordinary values nested under `data`, never apparent
 metadata. A declared output schema contributes a bounded `availableFields`
