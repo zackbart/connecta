@@ -7,3 +7,15 @@ test-results/
 .connecta-state.json
 .claude/
 *.log
+
+# Eval run artifacts. Every lane writes a JSON trace beside its Markdown
+# report; the traces run to five and six figures, and a settled issue's verdict
+# already lives in the report, in ethos.md, and in git history. The Markdown is
+# the evidence — cite the command that regenerates the JSON (#346).
+eval/current-version/results/*.json
+# Two exceptions, both unregenerable rather than disposable: the v1-legacy
+# fixture performance-report-self-test.mjs reads, and the #322 preregistration
+# timing record, which also carries the SHA-256 of every raw artifact retired
+# above.
+!eval/current-version/results/current-agent-performance.json
+!eval/current-version/results/issue-322-preregistered-provenance.json

@@ -29,13 +29,13 @@ operator request per named tool in
 npm --prefix eval/current-version run report:cloudflare-surface
 ```
 
-Pre-audit artifacts (the 55-tool surface at commit `297f0b9`, before this
-change):
-[`issue-350-cloudflare-surface-preaudit.json`](./issue-350-cloudflare-surface-preaudit.json)
-and [`.md`](./issue-350-cloudflare-surface-preaudit.md). The post-change run is
-[`issue-350-cloudflare-surface.json`](./issue-350-cloudflare-surface.json) and
-[`.md`](./issue-350-cloudflare-surface.md). Every number in this document is
-from the pre-audit run unless it says otherwise.
+The pre-audit report (the 55-tool surface at commit `297f0b9`, before this
+change) is
+[`issue-350-cloudflare-surface-preaudit.md`](./issue-350-cloudflare-surface-preaudit.md);
+the post-change run is
+[`issue-350-cloudflare-surface.md`](./issue-350-cloudflare-surface.md). Every
+number in this document is from the pre-audit run unless it says otherwise. The
+lane is deterministic, so the JSON behind either report is one command away.
 
 The lane is deterministic and runs entirely inside the process. Nothing in the
 provider is stubbed: the real constructor, the real hand-written schemas, the

@@ -4,7 +4,7 @@ Source commit: `afbaa320b86ff996806a97009adcafec55148e56`
 
 Runtime: Node 26.5.1 on darwin-arm64; tokenizer `o200k_base`
 
-Machine-readable results: [`issue-322-compact-development.json`](./issue-322-compact-development.json)
+Machine-readable results: `issue-322-compact-development.json` (run artifact, not committed)
 
 ## Result
 

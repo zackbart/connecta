@@ -378,11 +378,12 @@ use matching repeated `--case` artifacts when its behavior can affect only one
 workflow; retain the complete candidate smoke separately so unrelated routing
 variance stays visible rather than being averaged into the focused verdict.
 
-Commit the comparison JSON/Markdown pairs and any focused artifact small enough
-to read. Full-lane run artifacts retain every trace and run to five figures of
-JSON; they are regeneration output, not evidence worth versioning — cite the
-command that produces them instead. Per-run detail is serialized once, at the
-artifact's top-level `runs`; `cases[]` carries aggregates only.
+Commit the Markdown comparison; leave the JSON where it lands. Run artifacts
+retain every trace, run to five and six figures of JSON, and are regeneration
+output rather than evidence worth versioning — `results/*.json` is ignored, and
+[`results/README.md`](./results/README.md) records the two exceptions. Cite the
+command that produces an artifact instead. Per-run detail is serialized once, at
+the artifact's top-level `runs`; `cases[]` carries aggregates only.
 
 ### Named-surface weight, for a hand-written provider
 

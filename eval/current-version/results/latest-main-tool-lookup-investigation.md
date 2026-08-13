@@ -13,14 +13,12 @@ CLI version and harness fingerprint are recorded with the raw result.
 
 Evidence:
 
-- [`latest-main-audit.json`](./latest-main-audit.json) and
-  [`latest-main-audit.md`](./latest-main-audit.md): deterministic release audit
+- [`latest-main-audit.md`](./latest-main-audit.md): deterministic release audit
   and held-out lexical discovery.
-- [`latest-main-agent-lookup.json`](./latest-main-agent-lookup.json) and
-  [`latest-main-agent-lookup.md`](./latest-main-agent-lookup.md): 30 fresh,
+- [`latest-main-agent-lookup.md`](./latest-main-agent-lookup.md): 30 fresh,
   isolated agent runs (six cases, five repetitions).
-- [`latest-main-agent-single-read.json`](./latest-main-agent-single-read.json):
-  post-isolation smoke of the original agent benchmark.
+- `latest-main-agent-single-read.json`: post-isolation smoke of the original
+  agent benchmark, in git history only — it never had a Markdown report.
 
 ## Result
 

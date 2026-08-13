@@ -6,6 +6,7 @@ import {
   copyFile,
   lstat,
   mkdtemp,
+  readdir,
   readFile,
   rm,
   writeFile,
@@ -161,7 +162,6 @@ try {
     "AGENTS.md",
     "README.md",
     "LICENSE",
-    "assets/connecta-clay-hero.png",
     "bin/connecta.mjs",
     "documentation/code-mode.md",
     "ethos.md",
@@ -193,12 +193,6 @@ try {
     "dist/providers/stripe.d.ts",
     "dist/providers/cloudflare.js",
     "dist/providers/cloudflare.d.ts",
-    "src/index.ts",
-    "src/providers/cloudflare.ts",
-    "src/providers/linear.ts",
-    "src/providers/mixpanel.ts",
-    "src/providers/notion.ts",
-    "src/providers/stripe.ts",
   ]) {
     if (!paths.has(required)) {
       throw new Error(`Packed artifact is missing ${required}`);
@@ -207,6 +201,19 @@ try {
   for (const path of paths) {
     if (path.startsWith("eval/")) {
       throw new Error(`Eval-only file leaked into the package: ${path}`);
+    }
+    // The tarball is built output, not a checkout (#346). `exports` resolves
+    // only into dist/, so src/ served nothing but the source and declaration
+    // maps that pointed back at it — and both went with it. A packed .map is
+    // therefore either dangling or a sign the build config drifted back.
+    if (path.startsWith("src/") || path.endsWith(".map")) {
+      throw new Error(`Source-only artifact leaked into the package: ${path}`);
+    }
+    // The hero image is 230 KB of README decoration. npmjs.com resolves the
+    // README's relative image path against the repository, so the package page
+    // still renders it without every install paying for it (#346).
+    if (path.startsWith("assets/")) {
+      throw new Error(`README-only asset leaked into the package: ${path}`);
     }
     // Two deployment shapes, no third: the Node one is the template (Docker
     // files included), the Worker one is the example. A packed examples/node
@@ -222,6 +229,31 @@ try {
       path.includes("storage/cloudflare")
     ) {
       throw new Error(`Platform-specific implementation leaked into ${path}`);
+    }
+  }
+  // A stub guide says "the prior text lives in git history" — advice a package
+  // consumer cannot take, because they have no history. Placeholders stay out
+  // of the tarball (#346). That makes the `!documentation/...` negations in
+  // `files` a list that rots, so derive the expected set from the guides
+  // themselves: a stub that ships and a finished guide that does not are both
+  // failures, and filling a stub in is what un-excludes it.
+  for (const guide of await readdir(join(root, "documentation"))) {
+    if (!guide.endsWith(".md")) continue;
+    const stub = (
+      await readFile(join(root, "documentation", guide), "utf8")
+    ).includes("> **Stub.**");
+    const packedGuide = paths.has(`documentation/${guide}`);
+    if (stub && packedGuide) {
+      throw new Error(
+        `Placeholder guide documentation/${guide} is packed; add ` +
+          `"!documentation/${guide}" to package.json "files"`,
+      );
+    }
+    if (!stub && !packedGuide) {
+      throw new Error(
+        `documentation/${guide} is a written guide but is excluded from the ` +
+          `package; drop "!documentation/${guide}" from package.json "files"`,
+      );
     }
   }
   await writeFile(

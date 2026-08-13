@@ -4,7 +4,7 @@ Source commit: `aca486ce83abd9b9ac5084927c254ca26d353a08`
 
 Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
-Machine-readable results: [`issue-323-coverage-off-audit.json`](./issue-323-coverage-off-audit.json)
+Machine-readable results: `issue-323-coverage-off-audit.json` (run artifact, not committed)
 
 ## Qualification
 

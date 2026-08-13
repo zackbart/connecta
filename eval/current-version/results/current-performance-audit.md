@@ -4,7 +4,7 @@ Source commit: `e50a165acc8caa9ef08be3b9ccdfa8af235c68fe`
 
 Runtime: Node 26.5.0; tokenizer `o200k_base`; executor `enabled`
 
-Machine-readable results: [`current-performance-audit.json`](./current-performance-audit.json)
+Machine-readable results: `current-performance-audit.json` (run artifact, not committed)
 
 ## Qualification
 

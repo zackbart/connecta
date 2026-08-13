@@ -28,9 +28,8 @@ Artifact hashes:
 
 ## Sealed holdout
 
-[`issue-323-before-audit.json`](./issue-323-before-audit.json) and
-[`issue-323-coverage-off-audit.json`](./issue-323-coverage-off-audit.json) both
-pass all 21 task scenarios. The holdout is byte-identical in both arms.
+`issue-323-before-audit.json` and `issue-323-coverage-off-audit.json` both pass
+all 21 task scenarios. The holdout is byte-identical in both arms.
 
 | Metric | Main | Removal | Movement |
 | --- | ---: | ---: | ---: |
@@ -55,9 +54,9 @@ definition removes another 18 definition tokens.
 
 ## Development ranking
 
-[`issue-323-coverage-off-development.json`](./issue-323-coverage-off-development.json)
-uses the separate mixed all/partial corpus. Expected top-1 and recall remain
-100%. Both cases return zero serialized coverage rows, bytes, and tokens. The
+`issue-323-coverage-off-development.json` uses the separate mixed all/partial
+corpus. Expected top-1 and recall remain 100%. Both cases return zero
+serialized coverage rows, bytes, and tokens. The
 exact-name framing case still ranks `List-All-Organizations` first for `list
 all organizations projects`; the ordinary mixed case still ranks
 `List-Organizations` first.
@@ -76,8 +75,8 @@ The portable regressions also prove:
 
 ## Cold smoke
 
-[`issue-323-coverage-off-cold-smoke.json`](./issue-323-coverage-off-cold-smoke.json)
-uses five fresh sessions at concurrency five with `gpt-5.6-sol`, Codex CLI
+`issue-323-coverage-off-cold-smoke.json` uses five fresh sessions at
+concurrency five with `gpt-5.6-sol`, Codex CLI
 0.147.0, Node 26.5.1, the exact `aca486c` product, and zero host or foreign
 calls.
 

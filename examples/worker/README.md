@@ -8,7 +8,7 @@ and requires the Workers Paid plan.
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
 owns only its connector configuration, auth policy, domain, bindings,
-migrations, and secrets. See [deployment architecture](../../documentation/operations.md).
+migrations, and secrets. See [the Cloudflare guide](../../documentation/cloudflare.md).
 
 ## Files
 

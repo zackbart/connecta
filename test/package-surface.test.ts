@@ -19,13 +19,26 @@ const packageJson = JSON.parse(
 };
 
 describe("public package boundary", () => {
-  it("is configured as a public package with its README assets", () => {
+  it("is configured as a public package that ships built output", () => {
     expect(packageJson.private).not.toBe(true);
     expect(packageJson.publishConfig?.access).toBe("public");
     expect(packageJson.engines?.node).toBe(">=20.9.0");
     expect(packageJson.files).toEqual(
-      expect.arrayContaining(["dist", "src", "assets", "README.md", "LICENSE"]),
+      expect.arrayContaining([
+        "bin",
+        "dist",
+        "documentation",
+        "templates",
+        "README.md",
+        "LICENSE",
+      ]),
     );
+    // Nothing in `exports` resolves outside dist/, so src/ only ever fed the
+    // source and declaration maps — and both were retired with it (#346).
+    // assets/ is the README hero image, which npmjs.com renders straight from
+    // the repository. Neither belongs in every install.
+    expect(packageJson.files).not.toContain("src");
+    expect(packageJson.files).not.toContain("assets");
   });
 
   it("ships only generic connector factories and their shared machinery", () => {

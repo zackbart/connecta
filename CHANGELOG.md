@@ -124,6 +124,16 @@ D1 database nobody can create for you. Existing deployments can ignore this
 entirely: nothing in the package's runtime surface moved, and both READMEs
 walk through the enablement.
 
+Finally, the tarball is half of what it was, and nothing that left it was
+reachable. `exports` resolves only into `dist/`, so the packed `src/` was
+never imported by anything — it was there to back the source and declaration
+maps, and all three went together. Out with them: the 230 KB README hero image,
+which npmjs.com renders from the repository anyway, and the four documentation
+stubs whose only advice is to consult a git history an installed package does
+not have. An install unpacks to 1.8 MB instead of 3.8 MB. The code, the types,
+the CLI, the template, the Worker example, and every written guide are exactly
+where they were.
+
 ### Added
 
 - **A maintainer-run provider drift check.** `npm run drift:check` diffs the
@@ -321,6 +331,14 @@ walk through the enablement.
   template. `examples/` is the Worker deployment now, and the root
   `.dockerignore` that existed only for the repository-context Docker build
   went with them (#344).
+- **`src/`, `.js.map`, `.d.ts.map`, `assets/`, and the stub guides — from the
+  tarball only.** All of them are still in the repository; none of them ships.
+  The published package is 163 files and 522 KB, down from 357 and 1.1 MB.
+  Stepping into Connecta's TypeScript from an installed copy no longer works;
+  the emitted JavaScript and the `.d.ts` files beside it do. `check:package`
+  now fails on a packed `src/`, `.map`, or `assets/` path, and derives the
+  shipped guide list from which guides are still stubs, so filling one in ships
+  it (#346).
 
 ## 0.15.1 — 2026-08-12
 

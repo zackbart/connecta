@@ -8,8 +8,7 @@ qualified to merge or release.
 
 ## Provenance
 
-The committed deterministic baseline is
-[`issue-322-before-audit.json`](./issue-322-before-audit.json) from
+The deterministic baseline is `issue-322-before-audit.json` from
 `d58f874588bdf6aa37b4404b9416a8b9b0b917c9`. Its artifact SHA-256 is
 `0775ed3e1a502089b5999932d25653e6a66b9e6bac808895d56f089810b0279d`.
 The current audit tests product commit
@@ -32,7 +31,7 @@ recorded zero host actions and zero foreign MCP calls.
 
 ## Sealed holdout movement
 
-[`issue-322-current-audit.json`](./issue-322-current-audit.json) and
+`issue-322-current-audit.json` and its report
 [`issue-322-current-audit.md`](./issue-322-current-audit.md) are the current
 release evidence. `discovery-holdout.json` remains byte-identical at
 `25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a`.
@@ -64,8 +63,8 @@ reported evidence rather than gates.
 
 ## Development corpus
 
-[`issue-322-development-discovery.json`](./issue-322-development-discovery.json)
-and [`issue-322-development-discovery.md`](./issue-322-development-discovery.md)
+`issue-322-development-discovery.json` and
+[`issue-322-development-discovery.md`](./issue-322-development-discovery.md)
 use the separate `discovery-development.json`. The lane exposes only its
 synthetic analytics connector.
 
@@ -86,10 +85,9 @@ Each broad decoy reports all three terms as description-only matches.
 
 ## Cold-agent movement
 
-The paired artifacts are
-[`issue-322-cold-agent-before.json`](./issue-322-cold-agent-before.json),
+The paired artifacts are `issue-322-cold-agent-before.json`,
 [`issue-322-cold-agent-before.md`](./issue-322-cold-agent-before.md),
-[`issue-322-cold-agent-current.json`](./issue-322-cold-agent-current.json), and
+`issue-322-cold-agent-current.json`, and
 [`issue-322-cold-agent-current.md`](./issue-322-cold-agent-current.md).
 
 | Metric | d58f874 | Current | Movement |
@@ -130,9 +128,7 @@ host isolation, and scoring configuration.
 - Coverage-off product file: `cbaaefd04012daf6fe9a3a38fab27f332d05e554f18816b1728d381718efd7cb`
 - One-deletion patch: `9db0c8011ea3743a0d605aa86fa0842c769125f89006f05e768e6080a522226f`
 
-The raw arm is
-[`issue-322-cold-agent-coverage-off.json`](./issue-322-cold-agent-coverage-off.json)
-with its generated
+The raw arm is `issue-322-cold-agent-coverage-off.json`, with its generated
 [`Markdown report`](./issue-322-cold-agent-coverage-off.md).
 
 | Metric | Coverage on | Coverage off | Off minus on |
@@ -181,7 +177,7 @@ through the page's `queryTerms` table for the existing semantic assertions. Its
 token counterfactual removes both the term table and per-tool coverage. The
 cold harness remained byte-identical to coverage-off at `dd11bb3b…`.
 
-[`issue-322-cold-agent-compact.json`](./issue-322-cold-agent-compact.json) and
+`issue-322-cold-agent-compact.json` and
 [`issue-322-cold-agent-compact.md`](./issue-322-cold-agent-compact.md) record
 the raw cold arm. Its configuration object is identical to coverage-off except
 for the product source: Node 26.5.1, Codex CLI 0.147.0, `gpt-5.6-sol`, 10
@@ -223,9 +219,9 @@ outer Connecta tokens by 150.1%, and non-cached input by 5.0%. Whole-agent
 input is effectively flat at +0.7%; latency improves 13.7%.
 
 The compact deterministic artifacts are
-[`issue-322-compact-audit.json`](./issue-322-compact-audit.json),
+`issue-322-compact-audit.json`,
 [`issue-322-compact-audit.md`](./issue-322-compact-audit.md),
-[`issue-322-compact-development.json`](./issue-322-compact-development.json),
+`issue-322-compact-development.json`,
 and [`issue-322-compact-development.md`](./issue-322-compact-development.md).
 The sealed holdout hash remains
 `25928ad2634f44ba02653613fd54d3cd93da6bde9a6a7fee845e336a004bbb1a`.
@@ -270,8 +266,7 @@ corpus, sandbox, model, CLI, Node, prompt, repetitions, concurrency, isolation,
 and scoring are identical to coverage-off. Both arms record zero host and
 foreign calls.
 
-The raw cold artifacts are
-[`issue-322-cold-agent-trailing.json`](./issue-322-cold-agent-trailing.json) and
+The raw cold artifacts are `issue-322-cold-agent-trailing.json` and
 [`issue-322-cold-agent-trailing.md`](./issue-322-cold-agent-trailing.md).
 
 | Metric | Coverage off | Trailing | Movement |
@@ -318,9 +313,9 @@ raise search and outer MCP tokens 34.8% and 1,733.9% from d58's mostly hidden,
 mostly incorrect execution path.
 
 The deterministic artifacts are
-[`issue-322-trailing-audit.json`](./issue-322-trailing-audit.json),
+`issue-322-trailing-audit.json`,
 [`issue-322-trailing-audit.md`](./issue-322-trailing-audit.md),
-[`issue-322-trailing-development.json`](./issue-322-trailing-development.json),
+`issue-322-trailing-development.json`,
 and [`issue-322-trailing-development.md`](./issue-322-trailing-development.md).
 The release gate passes with 21/21 scenarios, 93.1% top-1, 100% recall, and
 40% negative false positives. The sealed holdout remains byte-identical at
@@ -357,13 +352,11 @@ schedule interleaved both arms. Both arms used `gpt-5.6-sol`, Codex CLI
 and byte-identical harness, corpus, sandbox, isolation, and scoring. Both arms
 recorded zero host actions and zero foreign MCP calls.
 
-The raw results are
-[`issue-322-preregistered-off.json`](./issue-322-preregistered-off.json) and
-[`issue-322-preregistered-trailing.json`](./issue-322-preregistered-trailing.json).
-The generated
-[`machine comparison`](./issue-322-preregistered-comparison.json) and
-[`Markdown comparison`](./issue-322-preregistered-comparison.md) apply the
-locally precommitted gates without adjustment.
+The raw results are `issue-322-preregistered-off.json` and
+`issue-322-preregistered-trailing.json`. The generated machine comparison
+(`issue-322-preregistered-comparison.json`, hashed in the provenance record
+above) and the [`Markdown comparison`](./issue-322-preregistered-comparison.md)
+apply the locally precommitted gates without adjustment.
 
 | Correctness metric | Coverage off | Trailing | Movement |
 | --- | ---: | ---: | ---: |

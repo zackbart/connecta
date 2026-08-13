@@ -6,7 +6,7 @@ Runtime: Node 22.23.2 on darwin-arm64; tokenizer `o200k_base`; required
 executor; seven-tool surface.
 
 Machine-readable artifact:
-[`issue-322-before-audit.json`](./issue-322-before-audit.json)
+`issue-322-before-audit.json`
 
 Artifact SHA-256:
 `0775ed3e1a502089b5999932d25653e6a66b9e6bac808895d56f089810b0279d`

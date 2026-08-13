@@ -170,7 +170,7 @@ Source commit: \`${sourceCommit}\`
 
 Runtime: Node ${result.source.nodeVersion} on ${result.source.platform}; tokenizer \`${tokenizerName}\`
 
-Machine-readable results: [\`${basename(outputPath)}\`](./${basename(outputPath)})
+Machine-readable results: \`${basename(outputPath)}\` (run artifact, not committed)
 
 ## Result
 

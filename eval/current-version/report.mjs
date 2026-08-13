@@ -29,7 +29,7 @@ Source commit: \`${audit.source.commit}\`
 
 Runtime: Node ${audit.source.nodeVersion}; tokenizer \`${audit.source.tokenizer}\`; surface \`${audit.source.surface}\`; executor \`${audit.source.executorMode}\`
 
-Machine-readable results: [\`${jsonName}\`](./${jsonName})
+Machine-readable results: \`${jsonName}\` (run artifact, not committed)
 
 ## Qualification
 
