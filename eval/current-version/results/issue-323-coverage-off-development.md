@@ -4,7 +4,7 @@ Source commit: `aca486ce83abd9b9ac5084927c254ca26d353a08`
 
 Runtime: Node 26.5.1 on darwin-arm64; tokenizer `o200k_base`
 
-Machine-readable results: [`issue-323-coverage-off-development.json`](./issue-323-coverage-off-development.json)
+Machine-readable results: `issue-323-coverage-off-development.json` (run artifact, not committed)
 
 ## Result
 

@@ -4,7 +4,7 @@ Source commit: `afbaa320b86ff996806a97009adcafec55148e56`
 
 Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
-Machine-readable results: [`issue-322-compact-audit.json`](./issue-322-compact-audit.json)
+Machine-readable results: `issue-322-compact-audit.json` (run artifact, not committed)
 
 ## Qualification
 

@@ -4,7 +4,7 @@ Source commit: `bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c`
 
 Runtime: Node 26.5.1 on darwin-arm64; tokenizer `o200k_base`
 
-Machine-readable results: [`issue-322-trailing-development.json`](./issue-322-trailing-development.json)
+Machine-readable results: `issue-322-trailing-development.json` (run artifact, not committed)
 
 ## Result
 

@@ -8,7 +8,7 @@ Source commit: `cd20638bf36fc6808fddebe792cfe5e7e03ae49a`
 
 Runtime: Node 26.5.0; tokenizer `o200k_base`; executor `enabled`
 
-Machine-readable results: [`latest-main-audit.json`](./latest-main-audit.json)
+Machine-readable results: `latest-main-audit.json` (run artifact, not committed)
 
 ## Qualification
 

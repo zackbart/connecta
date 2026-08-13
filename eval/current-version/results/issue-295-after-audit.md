@@ -4,7 +4,7 @@ Source commit: `a98bc18fa5123c2a1b56c8e470522413af2f7862`
 
 Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
-Machine-readable results: [`issue-295-after-audit.json`](./issue-295-after-audit.json)
+Machine-readable results: `issue-295-after-audit.json` (run artifact, not committed)
 
 ## Qualification
 

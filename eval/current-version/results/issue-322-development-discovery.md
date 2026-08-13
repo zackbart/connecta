@@ -4,7 +4,7 @@ Source commit: `62e2b1f0f6ec681cd3049a3a12621ab3d6978ff6`
 
 Runtime: Node 26.5.1 on darwin-arm64; tokenizer `o200k_base`
 
-Machine-readable results: [`issue-322-development-discovery.json`](./issue-322-development-discovery.json)
+Machine-readable results: `issue-322-development-discovery.json` (run artifact, not committed)
 
 ## Result
 

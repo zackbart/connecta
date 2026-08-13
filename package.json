@@ -31,9 +31,11 @@
   "files": [
     "bin",
     "dist",
-    "src",
-    "assets",
     "documentation",
+    "!documentation/architecture.md",
+    "!documentation/call-admission.md",
+    "!documentation/operations.md",
+    "!documentation/request-admission.md",
     "examples/worker",
     "templates",
     "AGENTS.md",

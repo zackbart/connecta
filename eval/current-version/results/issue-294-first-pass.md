@@ -6,11 +6,11 @@
 
 ## What is retained here
 
-Only the small artifacts are committed: the focused unavailable-catalog
-baseline and candidate, and the three comparison JSON/Markdown pairs. The three
-full-lane run artifacts behind the aggregate comparisons were 12k–15k lines
-each — four to five times anything else in `results/` — and are regenerated
-rather than stored:
+The Markdown: this narrative and the three comparison reports it links. Every
+JSON behind them — the focused unavailable-catalog baseline and candidate, the
+three machine comparisons, and the three full-lane run artifacts, which were
+12k–15k lines each — is regeneration output rather than evidence, and is
+regenerated rather than stored (#346):
 
 ```sh
 npm --prefix eval/current-version run perf:agent -- \

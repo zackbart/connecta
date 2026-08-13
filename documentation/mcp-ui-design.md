@@ -375,8 +375,7 @@ buy a guarantee the protocol already gives away.
   source carries the `srcdoc` and sandbox attributes and contains no
   message-forwarding path from the inner frame to the host.
 - `U1`–`U11` fold into `code-mode.md`, the `execute_code` description documents
-  `connecta.ui`, and the test-map row lands in
-  [`operations.md`](./operations.md) with that guide.
+  `connecta.ui`, and the test-map row lands in `operations.md` with that guide.
 - `npm run check` passes.
 
 The implementation issue (#277) carries these as acceptance criteria.

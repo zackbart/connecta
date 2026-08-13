@@ -4,7 +4,7 @@ Source commit: `bbfb5220cb94342acc21dadd7db9fe1bbcf5ce4c`
 
 Runtime: Node 26.5.1; tokenizer `o200k_base`; surface `seven-tool`; executor `required`
 
-Machine-readable results: [`issue-322-trailing-audit.json`](./issue-322-trailing-audit.json)
+Machine-readable results: `issue-322-trailing-audit.json` (run artifact, not committed)
 
 ## Qualification
 

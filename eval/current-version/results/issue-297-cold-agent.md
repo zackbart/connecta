@@ -64,9 +64,11 @@ sessions, host apps, plugins, or browser features.
 | Product commit | `3e26654` (`productDirty: false`) |
 | `productSha256` | `92ff9e0f…e9cbe491d` |
 
-The committed JSON is distilled to per-run verdicts, counters, and executed
-addresses. The full-trace artifact the command produces runs to five figures of
-JSON and is regeneration output, per this lane's standing convention.
+The numbers below were read from a distilled JSON of per-run verdicts,
+counters, and executed addresses. Neither it nor the full-trace artifact the
+command produces — five figures of JSON — is committed: this report is the
+evidence, and the run is regeneration output, per this lane's standing
+convention.
 
 ## Results
 
