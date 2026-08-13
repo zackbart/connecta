@@ -202,9 +202,10 @@ try {
     if (path.startsWith("eval/")) {
       throw new Error(`Eval-only file leaked into the package: ${path}`);
     }
-    // The tarball is built output, not a checkout (#346). `exports` resolves
-    // only into dist/, so src/ served nothing but the source and declaration
-    // maps that pointed back at it — and both went with it. A packed .map is
+    // The tarball is built output, not a checkout (#346). No code export
+    // leaves dist/ — only the manifest data export resolves to the package
+    // root (#374) — so src/ served nothing but the source and declaration
+    // maps that pointed back at it, and both went with it. A packed .map is
     // therefore either dangling or a sign the build config drifted back.
     if (path.startsWith("src/") || path.endsWith(".map")) {
       throw new Error(`Source-only artifact leaked into the package: ${path}`);
@@ -297,6 +298,15 @@ try {
   await writeFile(
     join(work, "smoke.mjs"),
     `
+import { createRequire } from "node:module";
+
+// Resolving the installed manifest is what bundler plugins and version probes
+// do; without a "./package.json" entry in the exports map this throws
+// ERR_PACKAGE_PATH_NOT_EXPORTED (#374).
+const manifest = createRequire(import.meta.url)("@zackbart/connecta/package.json");
+if (manifest.name !== "@zackbart/connecta") {
+  throw new Error("resolving the installed manifest did not yield the manifest");
+}
 const core = await import("@zackbart/connecta");
 if (typeof core.createConnecta !== "function") throw new Error("missing core");
 if (typeof core.validateToolInput !== "function") {

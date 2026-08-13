@@ -33,12 +33,38 @@ describe("public package boundary", () => {
         "LICENSE",
       ]),
     );
-    // Nothing in `exports` resolves outside dist/, so src/ only ever fed the
-    // source and declaration maps — and both were retired with it (#346).
+    // No code export resolves outside dist/ — the manifest data export
+    // (`./package.json`, #374) is the one exception, and it ships anyway — so
+    // src/ only ever fed the source and declaration maps, and both were
+    // retired with it (#346).
     // assets/ is the README hero image, which npmjs.com renders straight from
     // the repository. Neither belongs in every install.
     expect(packageJson.files).not.toContain("src");
     expect(packageJson.files).not.toContain("assets");
+  });
+
+  it("exports exactly the documented subpaths plus the manifest", () => {
+    // The manifest is a courtesy the ecosystem expects — bundler plugins,
+    // framework build steps, and version probes resolve `<pkg>/package.json`
+    // to read a field, and an `exports` map without it answers
+    // ERR_PACKAGE_PATH_NOT_EXPORTED instead (#374). It resolves to a data
+    // file, so it widens nothing: no code path becomes importable, and the
+    // root entry's purity boundary is untouched.
+    const providers = readdirSync(join(ROOT, "src", "providers"))
+      .filter((file) => file.endsWith(".ts"))
+      .map((file) => `./providers/${file.slice(0, -3)}`);
+    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual(
+      [
+        ".",
+        "./package.json",
+        "./node",
+        "./json-schema",
+        "./quickjs",
+        "./auth/clerk",
+        ...providers,
+      ].sort(),
+    );
+    expect(packageJson.exports?.["./package.json"]).toBe("./package.json");
   });
 
   it("ships only generic connector factories and their shared machinery", () => {
