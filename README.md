@@ -110,6 +110,10 @@ connector tools are reachable. Unannotated or write-capable calls stay
 individual and cross `call_destructive_tool`, where the MCP host can ask the
 operator for approval.
 
+The Node template also pins its one approved dependency install script:
+esbuild, which `tsx` needs to run the deployment source. A dependency update
+that adds or changes an install script fails the package smoke until reviewed.
+
 There are two deployment shapes and no others:
 
 - [Node, local or Docker](./templates/node/) — what `init` copies

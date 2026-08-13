@@ -6,6 +6,9 @@
   "engines": {
     "node": ">=20.9.0"
   },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  },
   "scripts": {
     "doctor": "connecta doctor",
     "start": "tsx src/index.ts",
