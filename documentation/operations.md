@@ -1,7 +1,278 @@
 # Operations
 
-> **Stub.** The old manual was retired in the phase-1 docs restructure. This
-> document will be rewritten as an agent-facing guide — what the subsystem is
-> for, how to work on it, and what it must never do — once the ideas in
-> [ethos.md](../ethos.md) settle. The prior text lives in git history as
-> `docs/operations.md`.
+Configuring, running, verifying, and upgrading a deployment — and the map of
+which suite proves what, which is the part an agent changing this repository
+needs most.
+
+## Running it
+
+`createConnecta(config)` returns `{ fetch, registry, close }`. `fetch` takes
+the Workers `(request, env, ctx)` signature; passing `ctx` through is what lets
+connecta hand deferred work — best-effort activity writes — to `ctx.waitUntil`
+instead of losing it when the response returns.
+
+An `executor` is required. A deployment without one throws at construction
+rather than serving a smaller surface
+([#273](https://github.com/zackbart/connecta/issues/273)): Node uses
+`quickJsExecutor()` from `@zackbart/connecta/quickjs`, Workers use
+`new DynamicWorkerExecutor({ loader: env.LOADER })` from
+`@cloudflare/codemode`.
+
+There are exactly two deployment shapes.
+[`templates/node/`](../templates/node/) is what `connecta init` copies — the
+one standalone Node project, Docker-ready rather than Docker-only — and
+[`examples/worker/`](../examples/worker/) is the Cloudflare shape. Both ship
+the whole operator feature set; each README walks through its own enablement.
+A third scaffold that is a diff away from either is the shape
+[#344](https://github.com/zackbart/connecta/issues/344) deleted, so do not add
+one.
+
+### The CLI
+
+```sh
+npx @zackbart/connecta init my-deployment
+cd my-deployment && npm install && npm start
+CONNECTA_TOKEN=… npx connecta doctor --url http://localhost:8787
+```
+
+`init` copies the template, pins the generated deployment to the CLI package's
+exact version, restores the template `.gitignore` (npm renames it in a
+tarball), and refuses to merge into an existing path.
+
+`doctor` verifies a *running* deployment: `/health` reports ok, `tools/list` is
+exactly the seven prescribed names, and `execute_code` actually runs a trivial
+program. It refuses to send a bearer token over remote plaintext HTTP, and it
+*reports* catalog drift without failing on it — an unclassified downstream tool
+already fails closed onto `call_destructive_tool`, so drift is a maintainer's
+next task rather than a broken deployment
+([#343](https://github.com/zackbart/connecta/issues/343)).
+
+### Configuration
+
+Structural seams stay top-level; tuning is grouped by subsystem. Every group is
+optional.
+
+| Option | Default | What it does |
+| --- | --- | --- |
+| `connectors` | — (required) | the connector set ([connectors](./connectors.md)) |
+| `executor` | — (required) | the sandbox `execute_code` runs in ([code mode](./code-mode.md#what-an-executor-must-implement)) |
+| `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before Clerk ([inbound auth](./auth.md)) |
+| `storage?` | `memoryStorage()` | the one state seam ([storage](./storage-and-credentials.md)) |
+| `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
+| `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }` |
+| `branding?` | neutral Connecta defaults | operator-page and OAuth result-page labels and marks |
+| `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec |
+| `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
+| `activity?` | unset | `{ store, readGate?, deploymentId? }` — payload-free activity storage, an optional operator-read gate, and a stable event label |
+| `credentials.encryptionKey?` | unset | base64 32-byte AES key for the connector vault. Without it, connectors declaring `credential` warn and their slots stay unmanageable |
+| `accessTokens?` | unset | `{ maxActive? }` (default 100) for operator-issued MCP bearer tokens. Requires a Clerk provider, or construction throws ([access tokens](./auth.md#operator-issued-access-tokens)) |
+| `discovery.concurrency?` | 4 | connector catalogs/status probes in flight at once |
+| `discovery.catalogTtlSeconds?` | 300 | fresh TTL for cached tool lists |
+| `discovery.persistCatalog?` | true | persist serializable catalogs as a manifest plus revision-addressed chunks |
+| `discovery.staleCatalogSeconds?` | 3600 | how long an expired catalog stays usable as a failure fallback |
+| `discovery.probeTimeoutMs?` | 30_000 | per-connector deadline for catalog fan-out; a timed-out connector degrades alone. Not a tool-call deadline |
+| `calls.defaultTimeoutMs?` | **unset (opt-in)** | deadline for calls that pass no `timeoutMs`. Bounds one attempt, so retries can still extend total duration |
+| `calls.maxResultBytes?` | 50_000 | inline result cap before truncation and `get_result` paging; a connector may override it. Invalid values warn and fall back |
+| `execute.maxEmittedBytes?` | 4_000_000 | aggregate `connecta.emit` bytes per run — a transport bound, not a context bound |
+| `execute.maxEmittedBlocks?` | 32 | content blocks `connecta.emit` accepts per run |
+| `admission.requests?` | 16 active / 32 queued / 5 s / 1 s | global FIFO `/mcp` capacity, taken before auth ([request admission](./request-admission.md)) |
+| `admission.code?` | 2 active / 8 queued / 5 s / 1 s | fallback pool for an executor that owns no `acquire()`; ignored with a warning when it does |
+
+Options removed in earlier releases throw with their migration named rather
+than falling back to a default: `toolkits`
+([#178](https://github.com/zackbart/connecta/issues/178)), `credentials.health`
+([#179](https://github.com/zackbart/connecta/issues/179)), `surface` and
+`calls.maxBatchResultBytes`
+([#273](https://github.com/zackbart/connecta/issues/273)), and the flat v0.6
+paths. Silently ignoring a removed option is how a deployment ends up running a
+policy its config file says it has.
+
+### Deployment as a release unit
+
+Treat the package and each running instance as separate release units:
+
+```
+@zackbart/connecta release
+          ↓ exact version
+deployment repository
+  src/index.ts       connector and auth configuration
+  package-lock.json  reproducible package graph
+  wrangler.jsonc     (Worker) domain, bindings
+  migrations/        (Worker) deployment-owned D1 schema history
+```
+
+An upgrade is an intentional dependency change followed by a normal build.
+Instances must not share KV namespaces, D1 databases, secrets, or encryption
+keys. Keeping deployment configuration private is sensible even though this
+package is public.
+
+## Verification
+
+`npm run check` must pass before anything is claimed done. In order:
+
+| Script | What it gates |
+| --- | --- |
+| `check:docs` | local Markdown targets and fragments, guide and ethos size caps, duplicate heading anchors, a resurrected `docs/`, stale manual references |
+| `check:operator-ui` | the committed browser bundle matches its source, byte for byte |
+| `check:lint` | Oxlint's correctness category only — style is authored, not enforced |
+| `check:unused` | Knip's unused-export and dependency gate |
+| `typecheck` | `tsc --noEmit` for the package and the separate DOM-lib browser project |
+| `test` | both vitest projects |
+| `build` | the operator bundle, then `tsc -p tsconfig.build.json` into `dist/` |
+| `check:examples` | the Node template and the Worker example typecheck against the built package |
+
+`npm run release:check` adds `check:security` (`npm audit --omit=dev
+--audit-level=moderate`) and `check:package`, and is what CI runs on every push
+and pull request. `check:package` packs the tarball, asserts the required files
+are in it and that no platform-specific implementation or unshippable path
+leaked in, derives the shipped guide list from which guides still carry a stub
+marker, checks that every packed doc's `documentation/` link resolves to
+something the tarball carries, and then runs `connecta init` and builds and
+runs the generated deployment's own container.
+
+Two more runners are deliberately outside `check`:
+
+- `npm run test:browser` — Playwright against a real headless Chromium
+  (`npm run test:browser:install` once). It covers the embedded bundle without
+  adding a browser download to both CI Node-version jobs.
+- `npm run drift:check` — the maintainer-run provider drift check, with local
+  provider credentials exported. No credential goes near CI and nothing files
+  itself; findings are read by a human and become issues
+  ([provider conventions](./provider-conventions.md#the-maintainer-run-drift-check)).
+- `npm run load:admission` — the opt-in capacity matrix and soak
+  ([request admission](./request-admission.md#measuring-capacity)).
+
+Releases: `npm run release:check`, tag `v<version>` matching `package.json`
+exactly (the publish workflow verifies this and fails otherwise), and
+publishing fires on GitHub **Release publication**, not on the tag push.
+
+## The test map
+
+Suites live in `test/` and run as two vitest projects. `WORKERS_SUITES` holds
+runtime-portable suites; `NODE_ONLY_SUITES` holds Node-bound suites, each with
+a stated reason. The `node` project runs their union; the `workers` project
+re-runs the portable list inside workerd against the Worker example's
+compatibility settings — so a Workers-only regression, the class of bug the
+`CfWorkerJsonSchemaValidator` workaround exists for, fails CI instead of being
+found by hand. `test/suite-partition.test.ts` walks the directory and refuses
+an unclassified, double-classified, stale, or reasonless entry.
+
+**New behavior gets a row here.** A suite that is not in this table is either
+new and undocumented or dead, and neither is a state to leave the repository
+in.
+
+### Runtime-portable (`WORKERS_SUITES`)
+
+| Suite | Covers |
+| --- | --- |
+| `access-tokens.test.ts` | the `AccessTokenManager` — a one-time secret created, authenticated, renamed, and revoked, bounded names and active count, enumerable storage required, a deployment with no Clerk operator refused — and the Clerk-only routes, down to historical activity still resolving a revoked token's name |
+| `activity.test.ts` | payload-free delivery: a rejected async write attaches to `waitUntil` instead of throwing, approved destructive calls record under their real entry point, result-size friction records without retaining the result, and a hallucinated connector id or invented identity is clamped so the event still cannot carry a payload |
+| `api-connector.test.ts` | `api()` — kind, description, tool defs, dispatch, default args, unknown tools, handler throws, argument validation, and the construction contract |
+| `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the retired audience options refusing rather than silently unbinding |
+| `branding.test.ts` | branding fallbacks and overrides across the operator shells, OAuth result pages, `/favicon.*`, page titles, and escaping — branding is not an injection vector |
+| `call-admission.test.ts` | connector-scoped per-runtime downstream admission ([call admission](./call-admission.md)): independent partitions, exact rolling-window reset, cancellation that charges no budget, bounded partition state, local-refusal health isolation, one shared limiter across direct and program calls, and payload-free `/health` aggregates |
+| `catalog-drift.test.ts` | `vettedCatalog()`, `detectCatalogDrift()`, and `withVettedCatalog()`; drift on the registry surface and on `/health`; the connector seam projected rather than echoed; and the drift types being public |
+| `catalog.test.ts` | lexical ranking and the compact schema renderer — `const`, `allOf` beside siblings, `$ref`, the depth limit, per-schema caching, and 2020-12 keyword compatibility |
+| `clerk.test.ts` | protected-resource metadata, the browser sign-in config, OAuth and session tokens, cached best-effort activity labels with their caps, the hand-applied `azp` rejection, and the `allowedDomains` allowlist including every lookalike that must not be repaired into a match |
+| `cloudflare-provider.test.ts` | `cloudflare()` construction, tool surface, request building, projections, typed failures, and credential test |
+| `cloudflare-registry.test.ts` | the same provider inside a real deployment: discovery, addressing, and admission through the registry |
+| `code-first-surface.test.ts` | the seven-tool surface itself — an executor required and both runtime configurations named, every removed option and removed top-level tool refused, and `connecta.ui` findable before an agent chooses catalog search |
+| `codemode-compat.test.ts` | the `Executor` seam staying structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor`, enforced by `tsc` |
+| `config.test.ts` | the grouped `ConnectaConfig` boundary — each group forwarding to its internals, malformed admission bounds failing construction, and one complete migration error for legacy own-properties |
+| `credentials.test.ts` | the pure stored-shape classifier (containment, not equality) and the AES-GCM vault: round-trip, ciphertext bound to its connector id, named field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys |
+| `d1-activity-example.test.ts` | the Worker example's deployment-owned D1 activity store: actor namespace round-trip, payload-free friction reconstructed from the persisted code, and agreement with the package's friction table |
+| `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips and races, `auth_required` versus `error`, `startAuth`/`finishAuth`, callback refusal equality, bounded diagnostics, and HTML escaping |
+| `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout, and framing errors |
+| `execute.test.ts` | the code-mode host bridge: identifier sanitization, MCP-result unwrapping, sandbox provider construction, fail-closed filtering of destructive and unannotated tools, and MCP/code-mode invocation parity |
+| `execute-emit.test.ts` | `connecta.emit` (M1–M10) — block validation, budgets, the provider, delivery after the result envelope on success only, and the defaults |
+| `execute-ui.test.ts` | `connecta.ui` (U1–U9) — validation, multiplicity and budget, the provider, `_meta` delivery, and the Apps shell |
+| `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
+| `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
+| `guest-api-contract.test.ts` | the executor-independent half of the guest API contract cases, including the serialized truncation envelope, capped logs, truncation reported as success, and an in-flight host call failing when the run ends |
+| `linear-provider.test.ts` / `linear-registry.test.ts` | the Linear proxy's construction, classification, and guide; then the same connector inside a real deployment |
+| `meta-tools.test.ts` | the registry-backed meta-tools: bounded discovery with page and address maxima, concise and full descriptions, compact and JSON schemas, structured errors, `skills` and connector-guide selection, stored-credential drift, catalog-lookup health accounting, `fields` selection, truncation and `get_result` offset validation and character alignment, per-connector `maxResultBytes`, probe timeouts, and empty-query browse of an unavailable or unconfigured catalog |
+| `mixpanel-provider.test.ts` / `mixpanel-registry.test.ts` | the Mixpanel proxy, then the same connector inside a real deployment |
+| `notion-provider.test.ts` / `notion-registry.test.ts` | Notion's tool surface, request construction, lean projections, both pagination conventions, error mapping, and writes; then the connector in a real deployment |
+| `operator-boundary.test.ts` | the operator row of the decisions table, after every mutation route: authentication material managed without moving a declared structure, and the one honest exception — a credential write making a remote catalog appear, which is discovery arriving, not an operator editing the deployment |
+| `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, `gate()`, the generation fence, and the request path |
+| `provider-conventions.test.ts` | the conventions a test can hold: hand-written providers refusing schemas they cannot enforce (H5), Cloudflare stating its second pagination convention in the schema (H10), and Notion saying it has no escape hatch (H14) |
+| `registry.test.ts` | construction and id validation, startup convention and result-cap warnings, address resolution, tool-cache TTL, and broken-connector isolation |
+| `remote-mcp.test.ts` | `remoteMcp()` against an in-process server through the `_transportFactory` seam: passthrough, downstream `isError`, Workers-safe output-schema validation, request-scoped client reuse and at-most-once scope close; plus the real transport's manual redirect policy, destination guard, credential containment, and downstream session termination |
+| `remote-mcp-pagination.test.ts` | the `tools/list` cursor chain in both directions — exact cursor handoff, first-wins dedup, a failed later page rejecting rather than returning its prefix, the runaway backstops, the tool-metadata re-prime across pages, and paginated catalogs reaching the discovery path |
+| `request-admission.test.ts` | `/mcp` bounded before auth, the stable 503 and `Retry-After`, health and operator responsiveness under saturation, payload-free counters, queued cancellation, shutdown rejection while active work drains, and the separate fallback code pool |
+| `server.test.ts` | end-to-end `/mcp` (401 → initialize instructions → seven tools → usage skill → `call_tool`), the open routes, Clerk `.well-known` metadata with no network, and an end-to-end code-mode run |
+| `server-route-contracts.test.ts` | the route contracts `server.ts` must keep byte-identical: every built-in answered ahead of connector routes inside the security wrapper, open data-free shells with framing denied, per-route auth and same-origin requirements with exact 401/403/405 bodies, and OAuth `verifyState`-before-`finishAuth` ordering |
+| `startup-warnings.test.ts` | every construction-time `logger.warn` and, as importantly, the conditions that must *not* trigger one: open mode with a credential or OAuth connector, `publicUrl` unset beside OAuth, dropped branding and `uiAuth` URLs, a missing `verifyState`, a credential test-hook mismatch, and an unusable `calls.maxResultBytes` |
+| `stripe-provider.test.ts` / `stripe-registry.test.ts` | the Stripe proxy's endpoint modes and admission, then the connector in a real deployment |
+| `ui.test.ts` | the server shell and `/ui/*` routes and the app's pure state rules from `view.ts` — filtering, page routing and capability states, credential management, gated `/ui/data` with broken-connector isolation, and the URL safety gates |
+| `validate.test.ts` | `validateToolInput()` — a returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema validator caching, and an unusable schema passed through with one warning |
+
+### Node-bound (`NODE_ONLY_SUITES`)
+
+Each entry carries its reason in `vitest.config.ts`; the reason is the
+justification for *not* re-running it in workerd, so "it was easier" is not one.
+
+| Suite | Covers | Why Node |
+| --- | --- | --- |
+| `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
+| `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
+| `drift-check.test.ts` | the maintainer drift checker — recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
+| `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
+| `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor | runs the contract cases on the Node QuickJS executor |
+| `node.test.ts` | the `listen()` adapter propagating an HTTP client disconnect through the Web `Request` and the MCP handler into a program's connector call, releasing both admission permits | exercises the Node HTTP adapter over real TCP sockets |
+| `package-surface.test.ts` | the published boundary — built output shipped, only generic factories, platform storage kept in examples, Clerk and QuickJS behind optional subpaths, every provider independently importable, and the Cloudflare provider free of bare specifiers | walks the package tree with Node filesystem APIs |
+| `purity.test.ts` | the import-graph guardrail ([architecture](./architecture.md#import-graph-purity)) — the core stays Workers-clean | walks the source import graph with Node filesystem APIs |
+| `quickjs-child-entry.test.ts` | a missing QuickJS child entry failing before `fork()`, with the expected path and the bundler-externalization constraint | mocks Node child-process and filesystem APIs |
+| `quickjs-child-stderr.test.ts` | abnormal child exits retaining only an 8 KiB stderr tail, included in the parent-side diagnostic | mocks Node child-process streams |
+| `quickjs-executor.test.ts` | the child-process sandbox — code normalization, lazy namespace proxies, bounded IPC, separate guest-CPU and wall budgets, saturation, cancellation and shutdown, crash and OOM recovery, host-call hangs, stalled-promise detection | runs the Node QuickJS child-process executor |
+| `quickjs-log-limits.test.ts` | bounded `console.*` capture — per-entry cut, cumulative character and transport budgets, escape-heavy floods preserving the guest result | runs the Node QuickJS child-process executor |
+| `suite-partition.test.ts` | this partition, including itself: every `*.test.ts` in exactly one list, stale entries and empty reasons refused | walks the test directory to guard the partition |
+| `template-file-activity.test.ts` | the Node template's own activity store — persistence across restart, torn-line repair, newest-first paging, and compaction past the slack window | runs it against real files |
+| `version.test.ts` | `CONNECTA_VERSION` matching `package.json` | reads `package.json` with Node filesystem APIs |
+
+### Outside `npm run check`
+
+| Suite | Covers |
+| --- | --- |
+| `browser/operator-ui.spec.ts` | the operator wiring in a real browser: the shell staying open until authentication, credential and access-token and OAuth flows end to end, drift shown without naming a tool, and every failure and empty state |
+| `browser/program-ui.spec.ts` | the Apps shell in a real browser: a bound view merging fixed and declared arguments and correlating concurrent reads, and the one-string payload receiving no read bridge ([program UI read calls](./program-ui-read-calls.md)) |
+
+**The `_transportFactory` seam.** `RemoteMcpOptions._transportFactory` is
+internal, not public API: when set, `remoteMcp()` uses that `Transport` instead
+of building an HTTP one. Tests link an in-memory transport to an in-process MCP
+server, so remote-MCP behavior is exercised without a network or a real OAuth
+server. Two consequences worth knowing before you use it: an in-memory
+transport has no session semantics, so anything about `Mcp-Session-Id` needs
+the real HTTP transport, and anything about redirects or destination
+confinement does too.
+
+## Troubleshooting
+
+- **MCP clients cache the tool list.** After adding a connector or completing a
+  downstream OAuth flow, restart the client. It will not re-list on its own.
+  Connecta declares a one-hour private `tools/list` cache hint, which is a
+  ceiling on how long a well-behaved client may wait, not a promise it will.
+- **`auth_required` that never clears.** Confirm `publicUrl` is set and
+  `GET <publicUrl>/oauth/callback/<connectorId>` is reachable from a browser,
+  and that storage is durable rather than `memoryStorage()` across restarts.
+  Then `authorize_connector` to restart the flow; `force: true` wipes stored
+  credentials for a clean retry.
+- **A connector with no `verifyState` refuses every callback.** That is the
+  designed behavior, not a bug: handing an unverified code to `finishAuth` is
+  the vulnerability. The startup warning names the connector.
+- **401 loops from a client that cannot discover auth.** The client must reach
+  the open `/.well-known/oauth-protected-resource` (and the `/mcp` variant);
+  confirm CORS and the Clerk keys, and that DCR is enabled on the Clerk
+  instance.
+- **No sessions and no server push, by design.** The transport is stateless.
+  Scope resolves per request, which is also where the MCP spec has arrived.
+- **A tool that should be callable from a program is not.** Only tools
+  explicitly annotated `readOnlyHint: true` are admissible inside the sandbox.
+  A missing, false, or contradictory annotation fails closed, every time, and
+  the recovery is `call_destructive_tool` — not a wider sandbox.
+- **`check:operator-ui` fails after a UI change.** Run
+  `npm run build:operator-ui` and commit the regenerated
+  `src/operator-ui/generated.ts` ([operator UI](./operator-ui.md#why-the-bundle-is-committed)).
+- **Upgrade the MCP SDK and Zod together**, then run `npm run release:check`.
+  The SDK packages are pinned exactly and paired with Zod 4 to keep the
+  optional code-mode peer graph valid.

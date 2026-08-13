@@ -42,11 +42,12 @@ exports.
   before building something new; "we already decided not to" is a real answer
   there, and its removed/provisional verdicts override anything staler.
 - [`documentation/`](./documentation/) — per-subsystem guides for agents
-  working on the repo. **Currently stubs**: the old manual (`docs/`) was
-  retired in the phase-1 docs restructure and each guide is being rewritten as
-  the ideas settle. Until a guide is filled in, the subsystem's prior manual
-  text lives in git history (`docs/<name>.md`) — consult it there when you need
-  the old rationale, but treat `ethos.md` as the authority where they disagree.
+  working on the repo. All of them are written now
+  ([#348](https://github.com/zackbart/connecta/issues/348)); the retired manual
+  (`docs/<name>.md`) survives only in git history, which is worth mining for
+  rationale a rewrite dropped and worth nothing where it disagrees with
+  `ethos.md`. Start with `architecture.md`, then the guide for the subsystem
+  you are changing.
 - [`README.md`](./README.md) — the human-facing overview.
 - [`templates/node/`](./templates/node/) — the one standalone Node deployment
   shape copied by `connecta init`, Docker-ready rather than Docker-only. Keep
@@ -55,8 +56,7 @@ exports.
   diff away from one of them is the shape
   [#344](https://github.com/zackbart/connecta/issues/344) deleted.
 
-**Read `ethos.md` and the subsystem's guide (or its git-history predecessor)
-before changing a subsystem.**
+**Read `ethos.md` and the subsystem's guide before changing a subsystem.**
 
 ## Deployment setup
 
@@ -97,8 +97,9 @@ in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
 `node` project runs both lists; the `workers` project re-runs the portable list
 inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
 an unclassified, double-classified, stale, or reasonless entry. New behavior
-also gets a row in the test map in `documentation/operations.md` once that
-guide is rewritten; until then the row waits with the guide.
+also gets a row in the test map in `documentation/operations.md`, which
+classifies every suite — one missing from it is either new and undocumented or
+dead, and neither is a state to leave the repository in.
 
 ## Conventions
 
