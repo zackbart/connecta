@@ -14,6 +14,14 @@ the supported ones and are untouched. A deployment that writes no `api()`
 connectors, branches on no error code, and never asked an agent for a whole
 zone's settings in one call upgrades without reading further.
 
+One thing to check before upgrading a Worker: `@cloudflare/codemode` is now a
+declared peer, so if your `package.json` holds it at a version outside
+`^0.4.4 || ^0.5.0` — a `0.3.x`, or a `0.4` below `0.4.4` — npm stops the
+upgrade with an `ERESOLVE` conflict rather than installing. Move it into the
+range this release is tested against, or pass `--legacy-peer-deps` if you have
+a reason to run outside it. A version already inside the range, and a range
+loose enough for npm to pick one that is, both resolve exactly as before.
+
 Alongside it, the upgrade path an existing deployment takes gets written down.
 `connecta init` was the golden path for a new deployment and the whole story
 for an old one, which is a gap with a shape: `init` refuses to merge into an
@@ -79,6 +87,18 @@ fail-closed default and ships something quieter and wrong.
   against the release section that names its issue, the bump target against
   this package's version, and the three places the guide is linked from. A template that gains a file now fails `npm run check` rather than
   leaving an agent to guess which of the two is wrong (#380).
+- **`@cloudflare/codemode` is a declared optional peer.** Every Workers
+  deployment installs the executor behind `execute_code` by hand, and until now
+  the only version range anywhere was a devDependency no consumer can read — a
+  fresh install resolved a minor ahead of what this repository tests, silently.
+  The manifest now publishes `^0.4.4 || ^0.5.0` for it, optional like
+  `@clerk/backend` and `quickjs-emscripten`, so a supported version installs in
+  silence and an unsupported one stops the install with something to act on
+  instead of becoming skew a Worker discovers in production. It still installs
+  with nothing: a default `npm install @zackbart/connecta` pulls no executor,
+  and the package smoke proves that, both halves of the range behavior, and
+  that the version this repository develops against stays inside the range it
+  publishes (#376).
 
 ### Changed
 

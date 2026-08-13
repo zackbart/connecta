@@ -18,6 +18,15 @@ rather than serving a smaller surface
 `new DynamicWorkerExecutor({ loader: env.LOADER })` from
 `@cloudflare/codemode`.
 
+Both executor packages are optional peers: they never install with connecta,
+and a deployment installs the one its runtime needs. The manifest publishes the
+range each release supports — `^0.32.0` for `quickjs-emscripten`,
+`^0.4.4 || ^0.5.0` for `@cloudflare/codemode` — so npm answers the version
+question at install time rather than leaving a deployment to discover the skew
+when a program runs ([#376](https://github.com/zackbart/connecta/issues/376)).
+The version this repository tests against is one the published range admits,
+and `test/package-surface.test.ts` fails if the two ever drift apart.
+
 There are exactly two deployment shapes.
 [`templates/node/`](../templates/node/) is what `connecta init` copies — the
 one standalone Node project, Docker-ready rather than Docker-only — and
