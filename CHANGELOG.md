@@ -314,6 +314,16 @@ where they were.
   `Could not resolve "@clerk/backend"` before it ever reached Cloudflare. The
   deploy section now carries the whole install line for a copy in its own
   repository (#367).
+- **A malformed Clerk publishable key fails like a configuration mistake.**
+  `clerkAuth` derives its Frontend API origin by base64-decoding
+  `publishableKey` and used to hand a bad key straight to `atob`, so the
+  placeholder the Workers example ships raised a bare `InvalidCharacterError`
+  from inside the returned object — and, on a deployment that builds per
+  request, turned every route including `/health` into a 500 whose stack named
+  base64 instead of the environment variable. The key's shape is now checked
+  where `allowedDomains` is, at construction, and the throw names the option.
+  It does not quote the rejected value back: the usual way to land here is
+  pasting the secret key into the publishable slot (#366).
 - **Notion declares the `required` lists it was missing.** `search`,
   `list_users`, `get_self`, and `create_page` now say which arguments a call
   must carry, so a malformed call is refused locally instead of at Notion. The

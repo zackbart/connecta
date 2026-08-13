@@ -4,6 +4,17 @@ Inbound auth decides who may reach the MCP endpoint. A deployment may admit a
 static bearer, operator-issued access tokens, Clerk identities, or a mixture.
 Static bearers are checked first.
 
+## Clerk configuration is checked at construction
+
+`clerkAuth` reads its Frontend API origin out of `publishableKey`, so a key that
+is not `pk_test_`/`pk_live_` followed by the base64-encoded domain cannot
+produce one. That throws where `allowedDomains` throws — when `clerkAuth` is
+called — with a message naming the option, never quoting the rejected value
+back: the usual way to land here is pasting the *secret* key into the
+publishable slot, and a startup error is a log line. A deployment that builds
+per request, as the Workers shape does, sees the same error on its first
+request instead of a base64 stack on every route.
+
 ## Operator-issued access tokens
 
 Set `accessTokens: {}` to let eligible Clerk operators create named Bearer
