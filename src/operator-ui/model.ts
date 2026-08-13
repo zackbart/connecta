@@ -1,4 +1,7 @@
-import type { CatalogDriftReport } from "../types.js";
+import type {
+  CatalogAccessObservation,
+  CatalogDriftReport,
+} from "../types.js";
 
 export interface UiTool {
   name: string;
@@ -58,6 +61,8 @@ export interface UiConnector {
    * a clean one.
    */
   catalogDrift?: CatalogDriftReport;
+  /** Last agent-facing catalog read in this runtime; never persisted. */
+  catalogAccess?: CatalogAccessObservation;
 }
 
 export type CredentialManagementCapability =

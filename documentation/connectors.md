@@ -252,6 +252,17 @@ the cursor ends, preserve schemas and annotations, and never cache or serve a
 partial walk. The fixed TTL is paired with a schema fingerprint so a changed
 catalog invalidates persisted results even within the time window.
 
+Agent reads use a complete entry inside `staleCatalogSeconds` immediately and
+defer the refresh that read already demanded. Every live refresh is
+single-flight per connector in one runtime. A blocking operator or direct read
+joins an agent-owned refresh and awaits it; an agent stale read joins an
+operator-owned refresh without awaiting it. The first refresh owns the context
+and deadline. A deferred first refresh owns a fresh scope and signal, then
+closes that scope. Operator status and direct registry reads still await
+freshness. The operator page reports whether the last agent read in this runtime
+was fresh or stale; this payload-free timestamp is not persisted. No timer or
+idle warmup originates downstream traffic.
+
 Tool calls must use the shared invocation path. That keeps direct calls, batch
 children, and code-mode host calls aligned on safety, retries, admission,
 timeouts, validation, result guards, and typed failures.

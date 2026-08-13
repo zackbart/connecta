@@ -3,7 +3,7 @@ import {
   Client,
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import {
   MCP_APPS_EXTENSION,
@@ -33,7 +33,7 @@ import { clerkAuth } from "../src/auth/clerk.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ActivityStore, ToolCallActivityEvent } from "../src/activity.js";
-import type { Connector, InboundAuth } from "../src/types.js";
+import type { Connector, Executor, InboundAuth } from "../src/types.js";
 
 const TOKEN = "test-token-123";
 const BASE = "https://connecta.test";
@@ -128,10 +128,19 @@ function recoverableStaticConnector(): Connector {
 
 let nextId = 1;
 async function rpc(
-  connecta: { fetch: (r: Request) => Promise<Response> },
+  connecta: {
+    fetch: (
+      r: Request,
+      env?: unknown,
+      ctx?: { waitUntil(promise: Promise<unknown>): void },
+    ) => Promise<Response>;
+  },
   method: string,
   params: unknown,
-  opts: { token?: string } = {},
+  opts: {
+    token?: string;
+    runtimeContext?: { waitUntil(promise: Promise<unknown>): void };
+  } = {},
 ): Promise<any> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -144,6 +153,8 @@ async function rpc(
       headers,
       body: JSON.stringify({ jsonrpc: "2.0", id: nextId++, method, params }),
     }),
+    undefined,
+    opts.runtimeContext,
   );
   return res;
 }
@@ -826,6 +837,92 @@ describe("server /mcp end-to-end", () => {
     ]);
     expect(payload.total).toBe(1);
   });
+
+  it.each(["search_tools", "execute_code"] as const)(
+    "threads waitUntil to stale catalog reads through %s",
+    async (surface) => {
+      vi.useFakeTimers();
+      try {
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let calls = 0;
+        const connector: Connector = {
+          id: "deferred_catalog",
+          kind: "mcp",
+          description: "Deferred catalog test",
+          async listTools() {
+            const call = ++calls;
+            if (call > 1) await gate;
+            return [
+              {
+                name: call === 1 ? "old_read" : "new_read",
+                description: "Read the deferred fixture",
+                annotations: { readOnlyHint: true },
+              },
+            ];
+          },
+          async callTool() {
+            return null;
+          },
+        };
+        const executor: Executor = {
+          async execute(_code, providers) {
+            const provider = providers.find((item) => item.name === "connecta");
+            const search = provider?.fns.search;
+            if (!search) throw new Error("connecta.search provider missing");
+            return { result: await search({ query: "read" }) };
+          },
+        };
+        const c = createTestConnecta({
+          connectors: [connector],
+          auth: bearerToken(TOKEN),
+          storage: memoryStorage(),
+          publicUrl: BASE,
+          discovery: {
+            catalogTtlSeconds: 1,
+            staleCatalogSeconds: 30,
+          },
+          executor,
+        });
+        await c.registry.getTools("deferred_catalog", BASE, {});
+        vi.advanceTimersByTime(2_000);
+        const tails: Promise<unknown>[] = [];
+        let settled = false;
+        const response = rpc(
+          c,
+          "tools/call",
+          {
+            name: surface,
+            arguments:
+              surface === "search_tools"
+                ? { query: "read" }
+                : { code: "async () => null" },
+          },
+          {
+            token: TOKEN,
+            runtimeContext: {
+              waitUntil(promise) {
+                tails.push(promise);
+              },
+            },
+          },
+        ).finally(() => {
+          settled = true;
+        });
+
+        await vi.waitFor(() => expect(calls).toBe(2));
+        await vi.waitFor(() => expect(settled).toBe(true));
+        expect((await response).status).toBe(200);
+        expect(tails).toHaveLength(1);
+        release();
+        await Promise.all(tails);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   it("search_tools ignores the private flag and includes keys with schemas", async () => {
     // The undeclared flag is still dropped at the MCP boundary. Key metadata

@@ -11,6 +11,7 @@ import {
   DiscoveryPolicyError,
   flatSearchResult,
 } from "./catalog-service.js";
+import type { DeferredWork } from "./connector-scope.js";
 import { errorResult, jsonResult, type ToolResult } from "./meta-tools.js";
 import {
   guardExecuteResultValue,
@@ -649,6 +650,8 @@ export async function buildSandboxProviders(
      * blocks nobody will ever return.
      */
     emitCollector?: EmitCollector;
+    /** Runtime-owned tail for stale catalog refreshes. */
+    defer?: DeferredWork;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
@@ -664,6 +667,7 @@ export async function buildSandboxProviders(
     ...(limits.probeTimeoutMs !== undefined
       ? { probeTimeoutMs: limits.probeTimeoutMs }
       : {}),
+    ...(limits.defer !== undefined ? { defer: limits.defer } : {}),
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -991,6 +995,7 @@ export function createExecuteTool(
     probeTimeoutMs?: number;
     maxEmittedBytes?: number;
     maxEmittedBlocks?: number;
+    defer?: DeferredWork;
   } = {},
 ) {
   return async (
@@ -1054,6 +1059,7 @@ export function createExecuteTool(
             ...(config.probeTimeoutMs !== undefined
               ? { probeTimeoutMs: config.probeTimeoutMs }
               : {}),
+            ...(config.defer !== undefined ? { defer: config.defer } : {}),
           },
         );
       } finally {
@@ -1313,6 +1319,7 @@ export function registerExecuteTool(
     maxEmittedBytes?: number;
     /** Block-count budget for connecta.emit. Default 32. */
     maxEmittedBlocks?: number;
+    defer?: DeferredWork;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -1339,6 +1346,7 @@ export function registerExecuteTool(
         : {}),
       maxEmittedBytes: emitBudgets.maxBytes,
       maxEmittedBlocks: emitBudgets.maxBlocks,
+      ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
     },
   );
   server.registerTool(

@@ -14,6 +14,7 @@ import {
   MAX_DISCOVERY_RESULT_BYTES,
   MAX_SEARCH_LIMIT,
 } from "./catalog-service.js";
+import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import type { CallErrorDetails } from "./errors.js";
 import {
@@ -1024,6 +1025,8 @@ export function createMetaTools(
     activity?: ActivityRequestContext;
     /** Inbound request cancellation shared by every call this request makes. */
     requestSignal?: AbortSignal;
+    /** Runtime-owned tail for stale catalog refreshes. */
+    defer?: DeferredWork;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -1042,6 +1045,7 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
+    ...(opts.defer ? { defer: opts.defer } : {}),
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
   });
@@ -1504,6 +1508,7 @@ export function registerMetaTools(
     discoveryConcurrency?: number;
     activity?: ActivityRequestContext;
     requestSignal?: AbortSignal;
+    defer?: DeferredWork;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
@@ -1520,6 +1525,7 @@ export function registerMetaTools(
     ...(ctx.requestSignal !== undefined
       ? { requestSignal: ctx.requestSignal }
       : {}),
+    ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
   });
 
   server.registerTool(
