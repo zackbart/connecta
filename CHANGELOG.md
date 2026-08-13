@@ -2,7 +2,37 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.16.0 — 2026-08-12
+
+This is the agent-efficiency refocus. One release, sixteen merges, and a single
+question asked of every tool description, schema, discovery result, and error
+message in the package: what does this cost the model that has to read it?
+Where operator convenience and agent cost disagreed, the agent-facing contract
+won. The work lands on two pillars — excellent curated providers, and a
+footgun-free path for everything else — plus an operator boundary that finally
+describes the surface it guards, exactly two deployment shapes instead of four,
+and an operator UI that is a component app rather than string-built HTML.
+
+What breaks, breaks loudly, and mostly at construction rather than at 2 a.m.
+`api()` now requires a `description` and an explicit
+`annotations.readOnlyHint` on every tool and refuses an `inputSchema` it cannot
+compile; `strictValidation` is gone because fail-closed is the only behavior
+left for it to switch. `linear()` requires an explicit `access` mode.
+`mixpanel()` no longer declares a call-admission budget. `cloudflare()` checks
+an overridden `baseUrl` where it is written. The Cloudflare connection ships 52
+named tools instead of 55, having been measured against its own escape hatches
+rather than assumed to beat them. And Cloudflare and Notion now refuse a
+redirect and cap the response they will read, which is visible only to a
+deployment that was downloading something enormous through a tool call. Each
+of those has a one-line migration, spelled out below.
+
+A deployment that writes no `api()` connectors and runs none of the five
+prebuilt connections can upgrade without editing anything. Nothing in the core
+runtime surface moved: the seven meta-tools, the executor contract, the storage
+interfaces, the route table, and the wire shapes are where they were. The
+tarball is half the size, the guides are all written, and `connecta init` now
+produces a project that runs under `docker compose up` without becoming a
+second project shape.
 
 `api()` stops being forgiving. A hand-written tool now declares what it does
 and whether calling it needs a human, and any `inputSchema` it ships is one
@@ -127,15 +157,53 @@ walk through the enablement.
 Finally, the tarball is half of what it was, and nothing that left it was
 reachable. `exports` resolves only into `dist/`, so the packed `src/` was
 never imported by anything — it was there to back the source and declaration
-maps, and all three went together. Out with them: the 230 KB README hero image,
-which npmjs.com renders from the repository anyway, and the four documentation
-stubs whose only advice is to consult a git history an installed package does
-not have. An install unpacks to 1.8 MB instead of 3.8 MB. The code, the types,
-the CLI, the template, the Worker example, and every written guide are exactly
-where they were.
+maps, and all three went together. Out with them, and out with the 230 KB
+README hero image, which npmjs.com renders from the repository anyway. An
+install unpacks to 1.9 MB instead of 3.8 MB. The code, the types, the CLI, the
+template, the Worker example, and every guide are exactly where they were —
+and there are four more guides than there were mid-release, because the four
+stubs `check:package` had been excluding got written instead.
+
+Which is the quiet half of this release. The five prebuilt connections used to
+encode five sets of private judgment about what a good provider surface looks
+like; that judgment is now two written convention sets, H1–H14 for hand-written
+`api()` surfaces and P1–P13 for `remoteMcp()` proxies, each rule carrying its
+reason and the agent cost it reduces. The placeholder guides in
+`documentation/` — which covered, with some irony, the load-bearing subsystems,
+while the newest features had the best docs — are written against the code as
+it is, and none is left. And the ethos bullet that promised
+"observable, never administrable" was retired for one that is true: operator
+routes manage authentication material for capabilities declared in deployment
+configuration, and a suite now snapshots every declared structure and demands
+it back byte-identical after each operator mutation.
 
 ### Added
 
+- **Two written provider convention sets.**
+  [`documentation/provider-conventions.md`](./documentation/provider-conventions.md)
+  states H1–H14 for hand-written `api()` surfaces, where Connecta owns every
+  name, schema, projection, and error, and P1–P13 for `remoteMcp()` proxies,
+  where the downstream owns the catalog and Connecta owns the endpoint,
+  credential, classification, guide, and budget. Every convention carries its
+  rule, its reason, and which of the four agent costs it reduces — discovery
+  tokens, wrong-tool selection, argument retries, result size — and names the
+  budgets at which the surface itself starts dropping characters: 160 for a
+  tool description in search, 240 in describe, 1,024 bytes per compact schema,
+  120 for a guide summary. A description longer than its budget is written for
+  nobody (#339).
+- **The core subsystem guides, written.** `architecture.md`,
+  `request-admission.md`, `call-admission.md`, and `operations.md` were
+  identical seven-line placeholders pointing at git history; they now describe
+  the code as it is — the two lifetimes, the ordered route table and why each position is
+  behavior rather than taste, the import-graph purity rule and what it actually
+  prevents, both admission pools and why `/mcp` admits before it authenticates,
+  and the connector-partitioned downstream policy. `operations.md` also carries
+  the test map AGENTS.md had been deferring since the docs restructure: all 60
+  suites plus the two browser specs, with each Node-only suite's reason for not
+  running in workerd, so "this suite exists" and "this suite is justified" are
+  one lookup. `connector-guides.md` gains the general authoring half #339 left
+  open, including the `required` flag in full. With no stubs left, the four
+  `!documentation/…` negations in `files` went too (#348).
 - **A maintainer-run provider drift check.** `npm run drift:check` diffs the
   live Linear, Stripe, and Mixpanel catalogs against their vetted manifests by
   name — added, no longer served, annotation conflicts, and schema changes — and
@@ -229,6 +297,24 @@ where they were.
 
 ### Changed
 
+- **The operator boundary is stated as authentication material.** "Observable,
+  never administrable" had stopped describing the surface — operator routes
+  rotate credentials, issue and revoke access tokens, and drive downstream
+  OAuth, each under its own accepted decision. The ethos bullet, the invariant,
+  and a new decisions row now say the true thing: operator routes may manage
+  authentication material for capabilities *declared* in deployment
+  configuration, and may never change the connector set, the declared tool
+  catalog or annotations, requested OAuth scopes, admission policy,
+  authorization rules, or caller tool scope. The word "declared" is doing work
+  twice over — a broader-scoped replacement token widens downstream reach and
+  no browser page can honestly promise otherwise, and a remote MCP server's
+  catalog is discovered rather than declared, so storing a credential can take
+  an `mcp()` connector from no tools to N. That is discovery arriving, which is
+  exactly why those routes call `invalidateStored()`.
+  `test/operator-boundary.test.ts` snapshots every declared structure, drives
+  each operator mutation route against both a static and a re-listing
+  connector, and requires the snapshot back byte-identical; a second case
+  proves the snapshot can fail. No runtime behavior changed (#338).
 - **The operator UI is a component app.** The hand-written DOM layer is gone,
   replaced by a small Preact app compiled by the same esbuild step and inlined
   into a shell that is now a mount point rather than a page. Nothing builds
@@ -369,9 +455,11 @@ where they were.
   template. `examples/` is the Worker deployment now, and the root
   `.dockerignore` that existed only for the repository-context Docker build
   went with them (#344).
-- **`src/`, `.js.map`, `.d.ts.map`, `assets/`, and the stub guides — from the
-  tarball only.** All of them are still in the repository; none of them ships.
-  The published package is 163 files and 522 KB, down from 357 and 1.1 MB.
+- **`src/`, `.js.map`, `.d.ts.map`, and `assets/` — from the tarball only.**
+  All of them are still in the repository; none of them ships. The published
+  package is 167 files and 562 KB, down from 357 and 1.1 MB. The stub guides
+  left with them and came back written (#348), which is why the file count is
+  four higher than the trim alone left it.
   Stepping into Connecta's TypeScript from an installed copy no longer works;
   the emitted JavaScript and the `.d.ts` files beside it do. `check:package`
   now fails on a packed `src/`, `.map`, or `assets/` path, derives the shipped
