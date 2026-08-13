@@ -231,7 +231,13 @@ describe.skipIf(!workerExecutor)(
         const executor = required(
           contractCase.deadline ? workerDeadlineExecutor : workerExecutor,
         );
-        const outcome = await harness.run(executor, contractCase.code);
+        const outcome = await harness.run(
+          executor,
+          contractCase.code,
+          contractCase.maxEmittedBytes === undefined
+            ? {}
+            : { maxEmittedBytes: contractCase.maxEmittedBytes },
+        );
         const follow = contractCase.follows
           ? await harness.run(executor, contractCase.follows)
           : undefined;

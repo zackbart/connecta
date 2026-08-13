@@ -219,7 +219,8 @@ const EMIT_SHAPE_HINT =
  */
 function requireEmittedBlock(raw: unknown): EmittedBlock {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `connecta.emit accepts exactly one content block: ${EMIT_SHAPE_HINT}`,
     );
   }
@@ -231,20 +232,23 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
         ? ["type", "data", "mimeType"]
         : undefined;
   if (!fields) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `connecta.emit supports content types "text", "image", and "audio"; got ${JSON.stringify(block.type)}`,
     );
   }
   for (const field of fields) {
     if (typeof block[field] !== "string") {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         `connecta.emit block field "${field}" must be a string: ${EMIT_SHAPE_HINT}`,
       );
     }
   }
   const extra = Object.keys(block).filter((key) => !fields.includes(key));
   if (extra.length > 0) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `connecta.emit block carries unsupported field(s) ${extra.map((key) => JSON.stringify(key)).join(", ")}; a "${String(block.type)}" block is exactly { ${fields.join(", ")} }`,
     );
   }
@@ -287,14 +291,17 @@ function describeUiArgument(raw: unknown): string {
  */
 function requireUiHtml(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) {
-    throw new Error(`${UI_SHAPE_HINT}; got ${describeUiArgument(raw)}`);
+    throw guestFailure(
+      "invalid_args",
+      `${UI_SHAPE_HINT}; got ${describeUiArgument(raw)}`,
+    );
   }
   return raw;
 }
 
 function requireRecord(raw: unknown, label: string): Record<string, unknown> {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`${label} must be an object`);
+    throw guestFailure("invalid_args", `${label} must be an object`);
   }
   return raw as Record<string, unknown>;
 }
@@ -306,7 +313,8 @@ function requireExactKeys(
 ): void {
   const extras = Object.keys(value).filter((key) => !allowed.includes(key));
   if (extras.length > 0) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `${label} carries unsupported field(s) ${extras.map((key) => JSON.stringify(key)).join(", ")}`,
     );
   }
@@ -319,7 +327,8 @@ function requireUiReadKey(raw: unknown, label: string): string {
     raw.length > 128 ||
     FORBIDDEN_UI_KEY.has(raw)
   ) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `${label} must be a non-empty string of at most 128 characters and cannot be __proto__, constructor, or prototype`,
     );
   }
@@ -330,14 +339,16 @@ function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
   const record = requireRecord(raw, "connecta.ui options.reads");
   const names = Object.keys(record);
   if (names.length === 0 || names.length > MAX_UI_READ_BINDINGS) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `connecta.ui options.reads must contain from 1 through ${MAX_UI_READ_BINDINGS} named bindings`,
     );
   }
   const reads = Object.create(null) as Record<string, UiReadBinding>;
   for (const name of names) {
     if (!UI_READ_NAME.test(name) || FORBIDDEN_UI_KEY.has(name)) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         `connecta.ui read binding name ${JSON.stringify(name)} must match ${UI_READ_NAME}`,
       );
     }
@@ -351,7 +362,8 @@ function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
       `connecta.ui read binding ${JSON.stringify(name)}`,
     );
     if (typeof value.address !== "string" || value.address.length === 0) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         `connecta.ui read binding ${JSON.stringify(name)} address must be a non-empty string`,
       );
     }
@@ -364,7 +376,8 @@ function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
           );
     const rawViewArgs = value.viewArgs ?? [];
     if (!Array.isArray(rawViewArgs) || rawViewArgs.length > MAX_UI_VIEW_ARGS) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         `connecta.ui read binding ${JSON.stringify(name)} viewArgs must be an array of at most ${MAX_UI_VIEW_ARGS} strings`,
       );
     }
@@ -375,13 +388,15 @@ function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
       )
     );
     if (new Set(viewArgs).size !== viewArgs.length) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         `connecta.ui read binding ${JSON.stringify(name)} viewArgs must not repeat a key`,
       );
     }
     for (const key of viewArgs) {
       if (Object.prototype.hasOwnProperty.call(fixedArgs, key)) {
-        throw new Error(
+        throw guestFailure(
+          "invalid_args",
           `connecta.ui read binding ${JSON.stringify(name)} view argument ${JSON.stringify(key)} cannot override a fixed argument`,
         );
       }
@@ -397,7 +412,8 @@ function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
 
 function requireUiPayload(values: unknown[]): UiPayload {
   if (values.length !== 1 && values.length !== 2) {
-    throw new Error(
+    throw guestFailure(
+      "invalid_args",
       `${UI_SHAPE_HINT}; got ${values.length} arguments`,
     );
   }
@@ -406,7 +422,7 @@ function requireUiPayload(values: unknown[]): UiPayload {
   const options = requireRecord(values[1], "connecta.ui options");
   requireExactKeys(options, ["reads"], "connecta.ui options");
   if (!Object.prototype.hasOwnProperty.call(options, "reads")) {
-    throw new Error("connecta.ui options must contain reads");
+    throw guestFailure("invalid_args", "connecta.ui options must contain reads");
   }
   return { html, reads: requireUiReads(options.reads) };
 }
@@ -438,13 +454,15 @@ export class EmitCollector {
   accept(raw: unknown): void {
     const block = requireEmittedBlock(raw);
     if (this.blocks.length >= this.maxBlocks) {
-      throw new Error(
+      throw guestFailure(
+        "budget_exceeded",
         `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 remaining`,
       );
     }
     const size = diagnosticsEncoder.encode(JSON.stringify(block)).byteLength;
     if (this.bytes + size > this.maxBytes) {
-      throw new Error(
+      throw guestFailure(
+        "budget_exceeded",
         `connecta.emit byte budget exceeded: block is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
       );
     }
@@ -468,7 +486,8 @@ export class EmitCollector {
    */
   acceptUi(...values: unknown[]): void {
     if (this.ui) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
       );
     }
@@ -477,7 +496,8 @@ export class EmitCollector {
 
   acceptUiPayload(payload: UiPayload): void {
     if (this.ui) {
-      throw new Error(
+      throw guestFailure(
+        "invalid_args",
         "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
       );
     }
@@ -485,11 +505,15 @@ export class EmitCollector {
     try {
       serialized = JSON.stringify(payload);
     } catch {
-      throw new Error("connecta.ui payload must be JSON-serializable");
+      throw guestFailure(
+        "invalid_args",
+        "connecta.ui payload must be JSON-serializable",
+      );
     }
     const size = diagnosticsEncoder.encode(serialized).byteLength;
     if (this.bytes + size > this.maxBytes) {
-      throw new Error(
+      throw guestFailure(
+        "budget_exceeded",
         `connecta.ui byte budget exceeded: payload is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
       );
     }
@@ -606,13 +630,43 @@ function msg(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+function guestFailure(
+  code: string,
+  message: string,
+  retryable = false,
+): InvocationFailure {
+  return new InvocationFailure({ code, message, retryable });
+}
+
+const GUEST_FAILURE_FRAME = "\u001econnecta-error:";
+const guestFailureFrames = new WeakMap<InvocationFailure, string>();
+
+/** Per-execution secret: guest prose cannot collide with this host frame. */
+function guestFailureSecret(): string {
+  const words = new Uint32Array(4);
+  crypto.getRandomValues(words);
+  return Array.from(words, (word) => word.toString(16).padStart(8, "0")).join("");
+}
+
+function framedGuestFailure(
+  secret: string,
+  failure: InvocationFailure,
+): InvocationFailure {
+  const framed = new InvocationFailure(failure.details);
+  framed.message =
+    `${GUEST_FAILURE_FRAME}${secret}:${JSON.stringify(failure.details)}`;
+  guestFailureFrames.set(failure, framed.message);
+  return framed;
+}
+
 /**
- * Installs connector shortcuts only. Do not shadow runtime globals here:
- * workerd needs its timers for awaited runs and exposes imports independently.
- * X5 contains that authority through loader-only construction instead.
+ * Rebuilds host failures as guest Error instances, then installs connector
+ * shortcuts. The random frame is hidden in this closure and Error is locked:
+ * connector prose and model code can neither collide with nor forge its frame.
  */
 function lazyNamespacePrelude(
   connectors: Array<{ id: string; namespace: string }>,
+  failureSecret: string,
 ): string {
   const declarations = connectors
     .map(
@@ -620,14 +674,48 @@ function lazyNamespacePrelude(
         `globalThis[${JSON.stringify(namespace)}] = __makeConnectaNamespace(${JSON.stringify(id)});`,
     )
     .join("\n");
-  return `(() => {
+  return `((failurePrefix) => {
+  const NativeError = globalThis.Error;
+  const startsWith = Function.prototype.call.bind(String.prototype.startsWith);
+  const slice = Function.prototype.call.bind(String.prototype.slice);
+  const parse = JSON.parse;
+  const freeze = Object.freeze;
+  const defineProperties = Object.defineProperties;
+  const construct = Reflect.construct;
+  function ConnectaError(message, options) {
+    let details;
+    if (typeof message === "string" && startsWith(message, failurePrefix)) {
+      try { details = parse(slice(message, failurePrefix.length)); } catch {}
+    }
+    const error = construct(
+      NativeError,
+      options === undefined ? [details ? details.message : message] : [details ? details.message : message, options],
+      new.target || NativeError
+    );
+    if (details) {
+      freeze(details);
+      defineProperties(error, {
+        code: { value: details.code, enumerable: true },
+        retryable: { value: details.retryable, enumerable: true },
+        details: { value: details, enumerable: true }
+      });
+    }
+    return error;
+  }
+  ConnectaError.prototype = NativeError.prototype;
+  Object.setPrototypeOf(ConnectaError, NativeError);
+  Object.defineProperty(globalThis, "Error", {
+    value: ConnectaError,
+    writable: false,
+    configurable: false
+  });
   const __makeConnectaNamespace = (connectorId) => Object.freeze(new Proxy(Object.create(null), {
     get: (_target, toolName) => typeof toolName === "string"
       ? (args) => connecta.__callNamespace(connectorId, toolName, args)
       : undefined
   }));
 ${declarations}
-})();`;
+})(${JSON.stringify(`${GUEST_FAILURE_FRAME}${failureSecret}:`)});`;
 }
 
 /**
@@ -683,6 +771,7 @@ export async function buildSandboxProviders(
     1,
     Math.trunc(limits.hostCallTimeoutMs ?? EXECUTE_HOST_CALL_TIMEOUT_MS),
   );
+  const failureSecret = guestFailureSecret();
   let hostCalls = 0;
   const connectors = registry.listConnectors();
   const namespaces: Array<{ id: string; namespace: string }> = [];
@@ -711,31 +800,23 @@ export async function buildSandboxProviders(
     beforeDispatch: () => {
       hostCalls++;
       if (hostCalls > maxHostCalls) {
-        throw new Error(
+        throw guestFailure(
+          "budget_exceeded",
           `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
         );
       }
     },
   });
   /**
-   * A discovery bound is as typed a failure as a tool call is, and a program
-   * that lets one escape deserves the same envelope: register it on the same
-   * request-local channel so an unhandled `invalid_args`/`result_too_large`
-   * reaches the model with its code instead of as prose. The guest still sees
-   * only the message — that is the bridge's limit, not a policy.
+   * Discovery policy failures use the same thrown vocabulary as calls and
+   * utilities. The transport below reconstructs their code inside the guest.
    */
   const typedDiscovery = async <T>(operation: () => Promise<T>): Promise<T> => {
     try {
       return await operation();
     } catch (err) {
       if (err instanceof DiscoveryPolicyError) {
-        limits.onInvocationFailure?.(
-          new InvocationFailure({
-            code: err.code,
-            message: err.message,
-            retryable: false,
-          }),
-        );
+        throw guestFailure(err.code, err.message);
       }
       throw err;
     }
@@ -753,7 +834,6 @@ export async function buildSandboxProviders(
     limits.diagnostics?.recordCall(diagnosticOperation, outcome);
     if (!outcome.ok) {
       const failure = new InvocationFailure(outcome.error);
-      limits.onInvocationFailure?.(failure);
       throw failure;
     }
     return outcome.value;
@@ -773,7 +853,6 @@ export async function buildSandboxProviders(
     limits.diagnostics?.recordCall("call", outcome);
     if (!outcome.ok) {
       const failure = new InvocationFailure(outcome.error);
-      limits.onInvocationFailure?.(failure);
       throw failure;
     }
     return outcome.value;
@@ -796,12 +875,15 @@ export async function buildSandboxProviders(
         limits.signal !== undefined ? { signal: limits.signal } : {},
       );
       if (!resolution.ok) {
-        throw new Error(
-          `connecta.ui read binding ${JSON.stringify(name)} could not resolve ${JSON.stringify(binding.address)}: ${resolution.error.message}`,
-        );
+        throw new InvocationFailure({
+          ...resolution.error,
+          message:
+            `connecta.ui read binding ${JSON.stringify(name)} could not resolve ${JSON.stringify(binding.address)}: ${resolution.error.message}`,
+        });
       }
       if (!isExplicitlyReadOnly(resolution.resolved.definition)) {
-        throw new Error(
+        throw guestFailure(
+          "destructive_tool_requires_approval",
           `connecta.ui read binding ${JSON.stringify(name)} refuses ${JSON.stringify(binding.address)}: the tool is not explicitly read-only`,
         );
       }
@@ -814,176 +896,193 @@ export async function buildSandboxProviders(
     return { html: payload.html, reads };
   };
 
+  const fns: ExecutorProvider["fns"] = {
+    __callNamespace: callNamespace,
+    call: (address: unknown, args: unknown) =>
+      callAddress(address, args),
+    // Emission is a provider function, never an ExecuteResult field —
+    // that is what keeps the Executor contract untouched and parity
+    // structural (M8). It spends no host-call budget (M7); its own
+    // budgets live in the collector.
+    emit: async (block: unknown) => {
+      if (!limits.emitCollector) {
+        throw guestFailure(
+          "unavailable",
+          "connecta.emit is unavailable: no emission collector was configured for this execution",
+          true,
+        );
+      }
+      limits.emitCollector.accept(block);
+    },
+    // The rendered-output channel rides the same bridge for the same
+    // reason (U7): one more provider fn, no change to ExecuteResult or
+    // the Executor contract. Delivery is the handler's job, not the
+    // guest's — nothing here becomes addressable.
+    ui: async (...values: unknown[]) => {
+      if (!limits.emitCollector) {
+        throw guestFailure(
+          "unavailable",
+          "connecta.ui is unavailable: no emission collector was configured for this execution",
+          true,
+        );
+      }
+      const payload = await validateUiReads(requireUiPayload(values));
+      limits.emitCollector.acceptUiPayload(payload);
+    },
+    batch: async (calls: unknown) => {
+      const started = Date.now();
+      const callCount = Array.isArray(calls) ? calls.length : 0;
+      try {
+        if (!Array.isArray(calls)) {
+          throw guestFailure("invalid_args", "calls must be an array");
+        }
+        if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
+          throw guestFailure(
+            "invalid_args",
+            `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
+          );
+        }
+        const result = await Promise.all(
+          calls.map(async (call) => {
+            const item = call as { address?: unknown; args?: unknown };
+            try {
+              return {
+                address: String(item.address),
+                ok: true,
+                data: await callAddress(
+                  item.address,
+                  item.args,
+                  "batch",
+                ),
+              };
+            } catch (err) {
+              const details =
+                err instanceof InvocationFailure
+                  ? err.details
+                  : classifyCallError(err, "batch_call_failed");
+              return {
+                address: String(item.address),
+                ok: false,
+                error: details.message,
+                errorDetails: details,
+              };
+            }
+          }),
+        );
+        limits.diagnostics?.recordBatch(
+          Date.now() - started,
+          true,
+          callCount,
+          result,
+        );
+        return result;
+      } catch (err) {
+        limits.diagnostics?.recordBatch(
+          Date.now() - started,
+          false,
+          callCount,
+        );
+        throw err;
+      }
+    },
+    search: async (raw: unknown) => {
+      const started = Date.now();
+      try {
+        const result = await typedDiscovery(async () => {
+          const args = (raw ?? {}) as {
+            query?: string;
+            connector?: string;
+            safety?: "readOnly" | "approvalRequired" | "all";
+            limit?: number;
+            offset?: number;
+            fullDescriptions?: boolean;
+            includeSchemas?: "compact" | "json";
+            includeSchemaKeys?: boolean;
+          };
+          const result = flatSearchResult(
+            await catalog.search({
+              ...args,
+              includeSchemaKeys: args.includeSchemaKeys !== false,
+            }),
+          );
+          boundedDiscoveryText(
+            result,
+            "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
+          );
+          return result;
+        });
+        limits.diagnostics?.recordCatalog(
+          "search",
+          Date.now() - started,
+          true,
+          result,
+        );
+        return result;
+      } catch (err) {
+        limits.diagnostics?.recordCatalog(
+          "search",
+          Date.now() - started,
+          false,
+        );
+        throw err;
+      }
+    },
+    describe: async (raw: unknown) => {
+      const started = Date.now();
+      try {
+        const result = await typedDiscovery(async () => {
+          const args = (raw ?? {}) as {
+            address?: unknown;
+            addresses?: unknown;
+            format?: "compact" | "json";
+            fullDescriptions?: boolean;
+          };
+          const result = { tools: await catalog.describe(args) };
+          boundedDiscoveryText(
+            result,
+            'Split the address list or use format: "compact".',
+          );
+          return result;
+        });
+        limits.diagnostics?.recordCatalog(
+          "describe",
+          Date.now() - started,
+          true,
+          result,
+        );
+        return result;
+      } catch (err) {
+        limits.diagnostics?.recordCatalog(
+          "describe",
+          Date.now() - started,
+          false,
+        );
+        throw err;
+      }
+    },
+  };
+  const transportedFns = Object.fromEntries(
+    Object.entries(fns).map(([name, fn]) => [
+      name,
+      async (...args: unknown[]) => {
+        try {
+          return await fn(...args);
+        } catch (err) {
+          if (err instanceof InvocationFailure) {
+            const framed = framedGuestFailure(failureSecret, err);
+            limits.onInvocationFailure?.(err);
+            throw framed;
+          }
+          throw err;
+        }
+      },
+    ]),
+  );
   return [
     {
       name: "connecta",
-      prelude: lazyNamespacePrelude(namespaces),
-      fns: {
-        __callNamespace: callNamespace,
-        call: (address: unknown, args: unknown) =>
-          callAddress(address, args),
-        // Emission is a provider function, never an ExecuteResult field —
-        // that is what keeps the Executor contract untouched and parity
-        // structural (M8). It spends no host-call budget (M7); its own
-        // budgets live in the collector.
-        emit: async (block: unknown) => {
-          if (!limits.emitCollector) {
-            throw new Error(
-              "connecta.emit is unavailable: no emission collector was configured for this execution",
-            );
-          }
-          limits.emitCollector.accept(block);
-        },
-        // The rendered-output channel rides the same bridge for the same
-        // reason (U7): one more provider fn, no change to ExecuteResult or
-        // the Executor contract. Delivery is the handler's job, not the
-        // guest's — nothing here becomes addressable.
-        ui: async (...values: unknown[]) => {
-          if (!limits.emitCollector) {
-            throw new Error(
-              "connecta.ui is unavailable: no emission collector was configured for this execution",
-            );
-          }
-          const payload = await validateUiReads(requireUiPayload(values));
-          limits.emitCollector.acceptUiPayload(payload);
-        },
-        batch: async (calls: unknown) => {
-          const started = Date.now();
-          const callCount = Array.isArray(calls) ? calls.length : 0;
-          try {
-            if (!Array.isArray(calls)) throw new Error("calls must be an array");
-            if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
-              throw new Error(
-                `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
-              );
-            }
-            const result = await Promise.all(
-              calls.map(async (call) => {
-                const item = call as { address?: unknown; args?: unknown };
-                try {
-                  return {
-                    address: String(item.address),
-                    ok: true,
-                    data: await callAddress(
-                      item.address,
-                      item.args,
-                      "batch",
-                    ),
-                  };
-                } catch (err) {
-                  // The failure shape connecta.batch reports: the message a
-                  // program can log, plus the typed details it must classify by. A
-                  // thrown host error crosses the sandbox bridge as a bare
-                  // message string in every executor, so this is the one place a
-                  // program can tell a policy refusal from a transient failure.
-                  const details =
-                    err instanceof InvocationFailure
-                      ? err.details
-                      : classifyCallError(err, "batch_call_failed");
-                  return {
-                    address: String(item.address),
-                    ok: false,
-                    error: details.message,
-                    errorDetails: details,
-                  };
-                }
-              }),
-            );
-            limits.diagnostics?.recordBatch(
-              Date.now() - started,
-              true,
-              callCount,
-              result,
-            );
-            return result;
-          } catch (err) {
-            limits.diagnostics?.recordBatch(
-              Date.now() - started,
-              false,
-              callCount,
-            );
-            throw err;
-          }
-        },
-        search: async (raw: unknown) => {
-          const started = Date.now();
-          try {
-            const result = await typedDiscovery(async () => {
-              const args = (raw ?? {}) as {
-                query?: string;
-                connector?: string;
-                safety?: "readOnly" | "approvalRequired" | "all";
-                limit?: number;
-                offset?: number;
-                fullDescriptions?: boolean;
-                includeSchemas?: "compact" | "json";
-                includeSchemaKeys?: boolean;
-              };
-              const result = flatSearchResult(
-                await catalog.search({
-                  ...args,
-                  // Key metadata rides along with schemas by default, since that
-                  // is the whole point of it in code mode. It stays opt-out
-                  // because it counts against the same discovery-byte ceiling.
-                  includeSchemaKeys: args.includeSchemaKeys !== false,
-                }),
-              );
-              boundedDiscoveryText(
-                result,
-                "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
-              );
-              return result;
-            });
-            limits.diagnostics?.recordCatalog(
-              "search",
-              Date.now() - started,
-              true,
-              result,
-            );
-            return result;
-          } catch (err) {
-            limits.diagnostics?.recordCatalog(
-              "search",
-              Date.now() - started,
-              false,
-            );
-            throw err;
-          }
-        },
-        describe: async (raw: unknown) => {
-          const started = Date.now();
-          try {
-            const result = await typedDiscovery(async () => {
-              const args = (raw ?? {}) as {
-                address?: unknown;
-                addresses?: unknown;
-                format?: "compact" | "json";
-                fullDescriptions?: boolean;
-              };
-              const result = { tools: await catalog.describe(args) };
-              boundedDiscoveryText(
-                result,
-                'Split the address list or use format: "compact".',
-              );
-              return result;
-            });
-            limits.diagnostics?.recordCatalog(
-              "describe",
-              Date.now() - started,
-              true,
-              result,
-            );
-            return result;
-          } catch (err) {
-            limits.diagnostics?.recordCatalog(
-              "describe",
-              Date.now() - started,
-              false,
-            );
-            throw err;
-          }
-        },
-      },
+      prelude: lazyNamespacePrelude(namespaces, failureSecret),
+      fns: transportedFns,
     },
   ];
 }
@@ -1155,9 +1254,15 @@ export function createExecuteTool(
       // rather than losing it to prose.
       let invocationFailure: InvocationFailure | undefined;
       for (const match of [
-        (candidate: InvocationFailure) => outcome.error === candidate.message,
         (candidate: InvocationFailure) =>
-          outcome.error?.includes(candidate.message) === true,
+          [candidate.message, guestFailureFrames.get(candidate)].includes(
+            outcome.error,
+          ),
+        (candidate: InvocationFailure) =>
+          [candidate.message, guestFailureFrames.get(candidate)].some(
+            (message) =>
+              message !== undefined && outcome.error?.includes(message) === true,
+          ),
       ]) {
         for (let i = invocationFailures.length - 1; i >= 0; i--) {
           const candidate = invocationFailures[i];
@@ -1300,7 +1405,7 @@ QuickJS blocks imports and has no fetch, process, timers, crypto, or WebSocket. 
 
 Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", safety: "readOnly", includeSchemas: "compact" }); const pick = (suffix) => { const match = tools.find((t) => t.address.endsWith(suffix)); if (!match) throw new Error("no tool for " + suffix); return match.address; }; const run = await connecta.call(pick(".get_run"), { runId: 42 }); const logs = await connecta.call(pick(".get_job_logs"), { jobId: run.failedJobId }); return [run, logs]; }
 
-Calls return plain values and throw. A thrown error is only a message; connecta.batch tells a policy refusal from a transient failure. Never retry retryable: false, or rate_limited immediately; a portable program cannot wait. Return JSON; reduce large results before they truncate.
+A caught Connecta failure keeps its message and exposes code, retryable, and details; batch uses the same fields. Branch on fields, never prose. Never retry retryable: false, or rate_limited immediately; portable code cannot wait. Return JSON; reduce large results before they truncate.
 
 Plain JS. Compact schemas are TypeScript-like: write the property names they display; never guess positions or aliases.`;
 

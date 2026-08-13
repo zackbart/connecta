@@ -27,7 +27,13 @@ describe("guest API contract (QuickJS executor)", () => {
     it(`[${contractCase.clauses}] ${contractCase.name}`, async () => {
       const harness = contractHarness();
       const chosen = contractCase.deadline ? deadlineExecutor : executor;
-      const outcome = await harness.run(chosen, contractCase.code);
+      const outcome = await harness.run(
+        chosen,
+        contractCase.code,
+        contractCase.maxEmittedBytes === undefined
+          ? {}
+          : { maxEmittedBytes: contractCase.maxEmittedBytes },
+      );
       const follow = contractCase.follows
         ? await harness.run(chosen, contractCase.follows)
         : undefined;

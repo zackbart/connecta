@@ -1949,11 +1949,10 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.inputSchema.properties.code.description).toContain(
       "So does aborting on a missing tool match or result key",
     );
-    // The reason batch exists for a caller: a thrown error is a bare message,
-    // so a program that must tell a refusal from a transient failure needs the
-    // typed entry. Compressing the clause to "use batch" loses the why (#295).
+    // The bridge gives caught and batch failures the same stable branch fields.
+    // The message remains for people, never for classification (#393).
     expect(executeTool.description).toContain(
-      "A thrown error is only a message; connecta.batch tells a policy refusal",
+      "A caught Connecta failure keeps its message and exposes code, retryable, and details",
     );
     // The eval's builds fixture must not leak into shipped text: no fixture
     // field names in the guidance prose (the dependent example is its own
