@@ -324,8 +324,16 @@ the failure message so the provider's own code number survives to the agent.
 | 401 or 403 | `auth_required`, not retryable | Stops and reports which permission is missing |
 | 400 with a credential-shaped code (1001, 6003, 6111, 9103, 9106, 9107) | `auth_required`, not retryable | Stops; the header or key is malformed, not the arguments |
 | 400, 409, 422 | `invalid_args`, not retryable | Repairs the arguments |
-| 404 | `connector_call_failed`, not retryable | Re-runs discovery for the id |
+| 404 | `not_found`, not retryable | Re-runs discovery for the id |
 | 5xx or a transport error | `unavailable`, retryable | Retries |
+
+The 404 row is the unambiguous half of the `not_found` rule
+([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)).
+Cloudflare refuses a token that may not touch a resource with 401 or 403, so a
+404 is an absence rather than a permission gap wearing a miss, and an agent can
+act on it: confirm the zone or account id with `list_zones` or `list_accounts`
+and address the right one. Notion's 404, which proves neither, stays
+`connector_call_failed`.
 
 The six credential-shaped codes deserve a caveat: Cloudflare publishes no
 official table mapping error codes to causes, so that set is assembled from

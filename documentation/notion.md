@@ -166,7 +166,7 @@ should do next, and two of Notion's are easy to mistranslate.
 | 400 (`validation_error`, `invalid_json`, `invalid_request`, `missing_version`, …) | `invalid_args` | every documented 400 is a malformed request |
 | 401 `unauthorized` | `auth_required` | the token is missing or invalid |
 | 403 `restricted_resource` | `connector_call_failed`, non-retryable | **not** `auth_required` |
-| 404 `object_not_found` | `connector_call_failed`, non-retryable | overloaded; see below |
+| 404 `object_not_found` | `connector_call_failed`, non-retryable | overloaded — deliberately **not** `not_found`; see below |
 | 409 `conflict_error` | `unavailable`, retryable | Notion says to retry |
 | 429 `rate_limited` | `rate_limited` + `retryAfterMs` | `Retry-After` seconds → ms |
 | 529 `service_overload` | `unavailable` + `retryAfterMs` | back off like a 429 |
@@ -184,7 +184,12 @@ whose message says an operator must change it in Notion.
 object that does not exist and for one that exists but has not been shared with
 the integration, and it will not say which. The message says both, because
 treating it as deletion is exactly how an agent concludes a page is gone when
-it was simply never shared.
+it was simply never shared. This is why the row above does not use `not_found`,
+which exists precisely to say "it is not there": the qualifier on that code
+([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next))
+is that the provider must tell absence apart from a permission gap, and Notion
+does not. A program that skipped this id as missing would be right about half
+the time, which is the half that matters.
 
 ## Rate limiting
 

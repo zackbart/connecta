@@ -4,10 +4,43 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-A discovery answer that told a plain lie, plus packaging housekeeping found by
-the pre-release smoke gauntlet and a rule that described itself too strictly.
-One `search_tools` guidance string changed; nothing else in the runtime moved,
-and no deployment needs to do anything.
+One code joins the failure taxonomy with a rule for when a connector may use it,
+alongside a discovery answer that told a plain lie, packaging housekeeping found
+by the pre-release smoke gauntlet, and a rule that described itself too
+strictly. No wire shape changes and no existing code is reclassified except
+Cloudflare's 404; a deployment that writes no `api()` connectors and branches on
+no error code upgrades without reading further.
+
+### Added
+
+- **`not_found`, for a downstream that answered and had nothing to give.** A
+  hand-written connector meeting a 404 had exactly one honest code,
+  `connector_call_failed`, which also means "the call blew up" — so a program
+  inside `execute_code` could not tell a clean absence from a broken connector,
+  and a loop over ids had to abort where it should have skipped one. The new
+  code earns its place the way every code has to: it changes what the caller
+  does next. You do not wait, you do not go to `authorize_connector`, you do
+  not repair the arguments — you re-address. It is non-retryable, carries no
+  recovery envelope, derives no activity friction class, and is exported from
+  the root entry as part of `ConnectorCallErrorCode`.
+
+  The qualifier is the interesting half, and it is now written down in
+  [H11](./documentation/provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next):
+  map a status to `not_found` only where the provider tells absence apart from
+  a permission gap. Cloudflare does — a token that may not touch a resource is
+  refused with 401 or 403 — so its 404 is now `not_found` instead of
+  `connector_call_failed`. Notion does not: `object_not_found` means both "it
+  is gone" and "it was never shared with this integration", so it deliberately
+  stays generic with a message that says so. The hosted-MCP proxy path mints
+  the code never, because `P1` forbids re-shaping downstream framing and
+  provider prose is never parsed to invent a classification (#373).
+
+### Changed
+
+- **Cloudflare's 404 is `not_found`.** A deployment branching on
+  `connector_call_failed` to detect an unknown zone or account id should read
+  `not_found` instead; retryability, the message, and its pointer to
+  `list_zones` / `list_accounts` are unchanged (#373).
 
 ### Fixed
 

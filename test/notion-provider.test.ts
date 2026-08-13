@@ -1001,6 +1001,10 @@ describe("notion() error mapping", () => {
       code: "object_not_found",
       message: "Could not find page.",
     });
+    // Deliberately not not_found: that code asserts the thing is not there,
+    // and Notion's 404 does not know whether it is missing or merely unshared
+    // (H11). A program that skipped the id would be wrong half the time.
+    expect(error.code).not.toBe("not_found");
     expect(error.code).toBe("connector_call_failed");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("not been shared with this integration");

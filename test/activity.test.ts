@@ -42,6 +42,10 @@ describe("activity delivery", () => {
       "result_too_large",
     );
     expect(agentFrictionForCode("connector_call_failed")).toBeUndefined();
+    // A downstream resource that is not there is not a friction class: the
+    // caller re-addresses on its own, and `tool_not_found` means connecta could
+    // not route the call at all, which is a different timeline entirely.
+    expect(agentFrictionForCode("not_found")).toBeUndefined();
   });
 
   it("attaches rejected async writes to waitUntil without throwing", async () => {

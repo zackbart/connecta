@@ -329,8 +329,7 @@ not in the always-loaded usage skill, which `test/meta-tools.test.ts` caps at
 2,500 bytes — a budget the guide already spends nearly all of, so new text there
 displaces old rather than adding to what every request pays for.
 
-**E2.** The taxonomy. `retryable` is what connecta reports; `Y3` says what a
-program may do about it.
+**E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program may do.
 
 | Code | Raised when | `retryable` |
 | --- | --- | --- |
@@ -340,6 +339,7 @@ program may do about it.
 | `destructive_tool_requires_approval` | the tool is not explicitly read-only | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
+| `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, classified off `errorDetails` per `E1` and never off a caught error, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable | true |

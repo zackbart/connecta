@@ -19,6 +19,9 @@ const ACTIVITY_CODES = [
   "destructive_tool_requires_approval",
   "auth_required",
   "invalid_args",
+  // Derives no friction on purpose: a resource that is not there is an answer
+  // the caller acts on, not a recovery class an operator reads a timeline for.
+  "not_found",
   "input_required_unsupported",
   "rate_limited",
   "unavailable",

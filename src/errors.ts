@@ -1,13 +1,41 @@
 // Typed failure contract for connector tool calls. Web-API only — no node:
 // imports here.
 
-/** Machine-readable classification of a failed connector tool call. */
+/**
+ * Machine-readable classification of a failed connector tool call.
+ *
+ * A code earns its place by changing what the caller does next, never by
+ * naming a cause — the rule provider conventions call H11.
+ */
 export type ConnectorCallErrorCode =
   | "timeout"
   | "auth_required"
   | "rate_limited"
   | "unavailable"
   | "invalid_args"
+  /**
+   * The downstream answered, and the thing addressed is not there.
+   *
+   * Its own code because the next move is none of the others': not a retry,
+   * not `authorize_connector`, not a reshaped argument object, but
+   * re-addressing — look the identifier up again, or accept the absence and
+   * carry on. Inside `execute_code` a program reads that difference off a
+   * `connecta.batch` entry's `errorDetails.code` — continue past this one,
+   * abort on `connector_call_failed` — or lets the failure escape uncaught so
+   * the model sees the typed envelope. Never off a caught error: the guest
+   * bridge reduces a rejected host call to `new Error(message)` and drops
+   * every own property, and message prose cannot be classified.
+   *
+   * Use it only where the provider distinguishes absence from a permission
+   * gap. A status that means both "it is not there" and "you cannot see it" —
+   * Notion's `object_not_found` is the worked example — stays
+   * `connector_call_failed` with a message that states the ambiguity, because
+   * inventing certainty here is how an agent concludes a page was deleted when
+   * it was simply never shared. Addresses connecta itself cannot resolve are
+   * already framed as `unknown_address` or `unknown_tool` and never reach a
+   * connector, so this code is always about a resource the downstream owns.
+   */
+  | "not_found"
   | "input_required_unsupported"
   | "connector_call_failed";
 
@@ -160,6 +188,7 @@ const RETRYABLE_BY_CODE: Record<ConnectorCallErrorCode, boolean> = {
   unavailable: true,
   auth_required: false,
   invalid_args: false,
+  not_found: false,
   input_required_unsupported: false,
   connector_call_failed: false,
 };

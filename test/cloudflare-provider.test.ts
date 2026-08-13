@@ -1410,7 +1410,11 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("81057");
   });
 
-  it("maps an unknown identifier to a non-retryable failure that names the fix", async () => {
+  it("maps an unknown identifier to not_found, naming the fix", async () => {
+    // Cloudflare refuses a token that may not touch a resource with 401 or
+    // 403, so a 404 here is an absence rather than a permission gap wearing a
+    // miss — the unambiguous case not_found exists for (H11). A program can
+    // skip this id and keep going instead of aborting the run.
     const error = await failure({
       status: 404,
       body: {
@@ -1420,7 +1424,7 @@ describe("cloudflare() typed failures", () => {
       },
       // list_zones is a stand-in; the mapping is status-driven.
     });
-    expect(error.code).toBe("connector_call_failed");
+    expect(error.code).toBe("not_found");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("list_zones");
   });
