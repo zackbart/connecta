@@ -25,7 +25,7 @@ Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), 
 
 - \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
-- Two to ten independent calls: \`connecta.batch([...])\`. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails: { code, retryable } }\` — how a program tells a policy refusal from a transient failure.
+- Caught Connecta errors have \`message\`, \`code\`, \`retryable\`, and \`details\`; branch on fields. For 2–10 independent calls, \`connecta.batch([...])\` returns success data or an \`errorDetails\` whose code and retryable flag match the throw.
 - Search inside the run; return only the reduction the answer needs, never raw payloads.
 - Only tools annotated \`readOnlyHint: true\` are reachable; the gate, credentials, and admission are enforced below the sandbox — nothing a program does widens its reach.
 

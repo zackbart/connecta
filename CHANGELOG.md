@@ -16,7 +16,8 @@ freshness behavior. This release also makes the two code sandboxes' runtime
 differences explicit. The shipped
 Worker example is already loader-only; deployments that added executor
 `bindings`, `modules`, or `globalOutbound` must remove them. Existing portable
-`execute_code` programs keep their behavior.
+`execute_code` programs keep their behavior. Programs can now classify a caught
+Connecta failure without parsing its message.
 
 ### Changed
 
@@ -33,6 +34,13 @@ Worker example is already loader-only; deployments that added executor
   read in this runtime was fresh or stale (#396).
 
 ### Fixed
+
+- **Caught `execute_code` failures now keep their machine-readable type.**
+  Calls, connector shortcuts, discovery, emitted-output and UI validation,
+  batch validation, and host-call budgets still throw with the same human
+  message, but now expose `code`, `retryable`, and full `details`. Batch entries
+  use the same codes. A per-run authenticated frame prevents connector prose or
+  guest code from forging the host transport on either executor (#393).
 
 - **`execute_code` now tells the truth about each shipped sandbox.** QuickJS
   omits runtime globals and blocks imports. Loader-only Dynamic Workers deny

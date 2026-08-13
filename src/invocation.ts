@@ -450,7 +450,11 @@ export class InvocationService {
     try {
       context.beforeDispatch?.();
     } catch (error) {
-      return failed(classifyCallError(error));
+      return failed(
+        error instanceof InvocationFailure
+          ? error.details
+          : classifyCallError(error),
+      );
     }
 
     const maxRetries = Math.min(

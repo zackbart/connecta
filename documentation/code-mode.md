@@ -241,8 +241,8 @@ can set `includeSchemaKeys: false` to buy the bytes back.
 **S3.** Discovery is bounded and the bounds throw rather than silently shrink: a
 `limit` outside 1–100 is `invalid_args`, and a page whose serialized form
 exceeds 256,000 bytes is `result_too_large`, each with a hint naming the ways to
-ask for less. As with every failure, the *thrown* error carries only the message
-(`E1`); the code appears when the failure escapes the program uncaught.
+ask for less. The thrown error carries the stable `code`, `retryable`, and
+`details` fields (`E1`).
 
 ### connecta.describe
 
@@ -296,9 +296,7 @@ order. A success is `{ address, ok: true, data }`. A failure is
 field names the host's internal batch path uses. One failing call never rejects
 the batch, and more than ten calls throws.
 
-**S8.** `connecta.batch` is the classification channel: because a thrown host
-error crosses the bridge as a bare message (`E1`), a batch of one is the supported
-way for a program to *decide* something about a failure rather than report it.
+**S8.** Batch and thrown failures share one vocabulary (`E1`): an entry's `errorDetails.code` and `retryable` equal the fields on the error the same call would throw. Use batch for independent concurrency, not to recover lost type.
 
 ### connecta.emit
 
@@ -311,24 +309,18 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 
 ## Errors
 
-**E1.** There are four error channels, and only two of them are typed.
+**E1.** There are four error channels. Connecta failures are typed whether caught or uncaught.
 
 | Channel | Shape | Typed? |
 | --- | --- | --- |
-| A throw inside the program | `Error` with `message` only | no |
+| A caught Connecta host failure | `Error` with `message`, `code`, `retryable`, and `details` | yes |
 | `connecta.batch` outcome | `{ ok: false, error, errorDetails }` | yes |
 | An uncaught **tool or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
-| Anything else that ends the run (`E5`, `E6`, a bridge bound in `L6`) | error text | no |
+| Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | error text | no |
 
-The message-only throw is a hard limit of the guest bridge: both executors reduce a rejected
-host call to `new Error(message)`, dropping every own property. A program must
-therefore never branch on an error's fields and never parse its message. To
-classify, use `errorDetails`; to hand a failure to the model with its type
-intact, let it escape uncaught — connecta re-attaches the typed details on the
-way out. The model-facing version of this lives in `execute_code`'s description,
-not in the always-loaded usage skill, which `test/meta-tools.test.ts` caps at
-2,500 bytes — a budget the guide already spends nearly all of, so new text there
-displaces old rather than adding to what every request pays for.
+Both executor bridges reduce a rejected host call to `new Error(message)`. Connecta restores the typed failure in a trusted prelude with a per-execution authenticated frame (`X11`), without turning the rejection into a returned value.
+`message` remains the human text. `code` and `retryable` are the stable branch fields; `details` is the complete host classification. This covers `call`, connector shortcuts, `search`, `describe`, `emit`, `ui`, rejected batch input, and the host-call budget.
+Program-authored errors stay untyped, and code must never parse error prose.
 
 **E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program may do.
 
@@ -340,16 +332,18 @@ displaces old rather than adding to what every request pays for.
 | `destructive_tool_requires_approval` | the tool is not explicitly read-only | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
-| `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, classified off `errorDetails` per `E1` and never off a caught error, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
+| `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable | true |
 | `timeout` | the per-call 15-second deadline expired | true |
 | `cancelled` | the run ended while this call was in flight (`E5`) | false |
-| `connector_call_failed` | anything else the connector threw, and the host-call budget (`L4`) | per message |
+| `connector_call_failed` | anything else the connector threw | per message |
 | `batch_call_failed` | a `connecta.batch` entry connecta could not even attempt | per message |
 | `catalog_lookup_failed` | the connector's catalog could not be loaded | per cause |
 | `result_processing_failed` | the result could not be prepared | per message |
+| `result_too_large` | a discovery response exceeded its byte bound | false |
+| `budget_exceeded` | the run exhausted a host-call or emitted-output budget | false |
 
 **E3.** `auth_required` carries the same recovery envelope as `call_tool`:
 `connector`, `operation`, `recovery` (`oauth`, `operator_config`, or
@@ -609,10 +603,7 @@ annotation-gated `maxRetries`; code mode fixes it at zero, so one
 `connecta.call` is exactly one downstream attempt. The program is the retry
 loop, and its budget is visible to it (`L4`).
 
-**Y2.** A program may retry a failure whose `errorDetails.retryable` is true,
-learned through `connecta.batch` (`S8`). Every attempt spends host-call budget,
-so a retry loop that ignores the budget converts a transient failure into a
-budget failure.
+**Y2.** A program may retry a caught failure whose `retryable` is true, or a batch failure whose `errorDetails.retryable` is true (`S8`). Every attempt spends host-call budget, so an unchecked loop converts a transient failure into `budget_exceeded`.
 
 **Y3.** What must never be retried automatically:
 
@@ -627,7 +618,7 @@ budget failure.
 **Y4.** Connecta's own retry machinery beneath the meta-tools honours a
 connector-reported `Retry-After` exactly or not at all, and declines windows
 longer than 10 seconds rather than shortening them. A program sees the window
-verbatim as `errorDetails.retryAfterMs`.
+verbatim as `err.details.retryAfterMs` or `errorDetails.retryAfterMs`.
 
 ## Cancellation and limits
 
@@ -657,10 +648,7 @@ because connecta enforces them above the sandbox:
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
-Exhausting the host-call budget fails that call like any other, with code
-`connector_call_failed` (`E2`) and a message naming the budget — no connector was
-reached, so nothing more specific is true. Retrying it is pointless: the budget
-does not refill inside one execution.
+Exhausting the host-call budget fails that call with non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No connector is reached, and the budget does not refill inside one execution.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -673,7 +661,7 @@ code safe to run at all.
 **L6.** A host call's serialized arguments and its serialized result are each
 bounded — QuickJS caps both at 256 KiB (`X10`) — and exceeding either fails that
 call, not the execution, so a program can catch it and ask for less. The failure
-is untyped text (`E1`). An over-bound *result* names the address the program
+is executor-owned untyped text, not a Connecta host failure (`E1`). An over-bound *result* names the address the program
 called, not the internal dispatcher behind the shortcut namespaces; an over-bound
 *argument* payload is refused before it is parsed, so it names no address at
 all — parsing it to write a better message would spend exactly the work the bound
@@ -785,10 +773,15 @@ a `process.send` with a hard ceiling. A program that returns a quarter-megabyte
 from one tool call therefore fails on Node and may succeed on Workers — reduce
 inside the program either way (`R1`).
 
+**X11. Typed host rejection.** Both executors rebuild Connecta's authenticated host-failure frame as a thrown guest `Error` (`E1`). The per-run secret stays in the trusted prelude closure, and the prelude locks `globalThis.Error`, so guest code and connector prose cannot forge the host transport frame.
+The human message is unchanged; a mismatched frame is ordinary untyped prose.
+
 ## Changes from earlier code mode
 
-Five behaviors changed with this contract, matching the changelog's Unreleased
+Six behaviors changed with this contract, matching the changelog's Unreleased
 entry. Programs that ran before still run.
+
+- **Caught Connecta failures expose their classification** (`E1`, `X11`). Their human message and thrown semantics stay unchanged; `code`, `retryable`, and `details` are additive.
 
 - **`connecta.batch` failures gained `errorDetails`** (`S7`). They carried only a
   message, which left a program unable to tell a policy refusal from a transient
@@ -845,8 +838,8 @@ the upstream `Executor` shape assignable.
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
 | `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |
-| `S8`, `E1` | `test/guest-api-contract.test.ts` (typed batch outcomes) |
-| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, batch and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, namespace, discovery, utility, batch-validation, budget, and forgery cases; typed batch equivalence) |
+| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, batch, and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
 | `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.test.ts` (mid-run shutdown) |

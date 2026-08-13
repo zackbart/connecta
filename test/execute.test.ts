@@ -306,9 +306,11 @@ describe("buildSandboxProviders", () => {
     expect(await required(connecta.fns.call)("calc.add", { a: 1, b: 1 })).toEqual({
       sum: 2,
     });
-    await expect(required(connecta.fns.call)("nope.add", {})).rejects.toThrow(
-      'Unknown address "nope.add"',
+    const failure = await required(connecta.fns.call)("nope.add", {}).then(
+      () => undefined,
+      (error: unknown) => error as InvocationFailure,
     );
+    expect(required(failure).details.message).toBe('Unknown address "nope.add"');
   });
 
   it("records health only after a broken connector is exercised", async () => {
@@ -352,7 +354,7 @@ describe("buildSandboxProviders", () => {
     );
     expect(error).toMatchObject({
       code: "auth_required",
-      message: 'Connector "expired" requires authorization',
+      details: { message: 'Connector "expired" requires authorization' },
     });
     expect(registry.healthFor("expired")?.consecutiveFailures).toBe(1);
   });
@@ -1251,7 +1253,7 @@ describe("MCP and code-mode invocation parity", () => {
       };
       const { mcpError, codeError } = await failuresFor(connector, address);
       expect(codeError.code).toBe(expectedCode);
-      expect(codeError.message).toBe(mcpError.message);
+      expect(codeError.details.message).toBe(mcpError.message);
       expect(codeError.retryable).toBe(mcpError.retryable);
     },
   );
@@ -1277,7 +1279,7 @@ describe("MCP and code-mode invocation parity", () => {
     });
     expect(result.codeError).toMatchObject({
       code: "timeout",
-      message: result.mcpError.message,
+      details: { message: result.mcpError.message },
       retryable: result.mcpError.retryable,
     });
     expect(result.mcpRegistry.healthFor("parity")).toMatchObject({
@@ -1326,7 +1328,7 @@ describe("MCP and code-mode invocation parity", () => {
     };
     const { mcpError, codeError } = await failuresFor(connector, "parity.read");
     expect(mcpError.message).toBe("Downstream tool call failed");
-    expect(codeError.message).toBe(mcpError.message);
+    expect(codeError.details.message).toBe(mcpError.message);
     expect(codeError.retryable).toBe(mcpError.retryable);
   });
 });
