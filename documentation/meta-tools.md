@@ -328,6 +328,16 @@ a tool. A read path that reaches an unannotated, write-capable, or destructive
 tool returns `nextAction` for `call_destructive_tool` with the canonical
 address. Nothing is executed by these records.
 
+`connecta.describe` keeps failures inline so one miss cannot discard the other
+schemas. Each failed entry keeps its human `error` and adds `errorDetails` with
+the equivalent invocation `code` and `retryable`. Address and tool misses use
+the same route-aware discovery action above. A close tool-name miss on a known
+connector may also carry `suggestions`: at most three deterministically ranked
+canonical addresses, with no scores or descriptions. An unknown connector
+stays unscoped and has no suggestions. A catalog-load failure carries only
+`code`, bounded `message`, `retryable`, and any `retryAfterMs`; discovery does
+not inherit later additions to the call-failure envelope.
+
 That route echoes the caller's own arguments back only while they fit a
 512-byte budget, and then whole — never clipped. An error envelope is not
 size-guarded the way a result is, so an unbounded echo would let a large
@@ -405,3 +415,6 @@ duplicate `additionalProperties` branches never reach the caller. A schema the l
 validator cannot evaluate passes through to the provider. Provider error prose
 is not parsed or guessed, so an unknown format remains
 `connector_call_failed`.
+
+Describe's nearby-address list uses the same three-item recovery bound. It
+contains addresses only; it never serializes ranking scores or result prose.

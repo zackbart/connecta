@@ -259,10 +259,13 @@ const { tools } = await connecta.describe({
 });
 ```
 
-**S4.** Returns `{ tools }` in the order asked, one entry per address. An
-address that is unknown, or whose connector's catalog could not be loaded,
-returns an entry carrying `error` — one bad address never fails the whole call.
-More than 100 addresses is `invalid_args`; the same 256,000-byte ceiling applies.
+**S4.** Returns `{ tools }` in order, one entry per address. An unknown address
+or failed catalog returns `error` plus typed `errorDetails`: `code`, `message`, and `retryable`. Misses
+carry a route-aware `nextAction`; a close miss may add three canonical `suggestions`.
+Catalog failures add only `retryAfterMs` when known. One bad address never fails the whole call. Each failed entry clamps its
+caller-authored `address` to 512 UTF-8 bytes with an `…` marker. Entry order
+correlates a clipped address with its request; successes keep canonical addresses. More than 100
+addresses is `invalid_args`; the same 256,000-byte ceiling applies.
 
 ### connecta.call
 
@@ -380,7 +383,7 @@ exactly first, by containment second — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
 type beats keeping the prose.
 
-**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. Both the message and the derived `query` clamp the address to 512 UTF-8 bytes with a `…` marker: the address is caller-authored and lands in the message, the query, the text content, and `structuredContent`, so an invented 50 KB one would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake; a short one — the common case — is exact and untagged.
+**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. The message, the derived `query`, and a failed describe entry's `address` clamp caller-authored text to 512 UTF-8 bytes with an `…` marker. Those values land in the text content and `structuredContent`, so an invented 50 KB address would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake by its position; a short one — the common case — is exact and untagged.
 
 **E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery keyed `function: "connecta.search"` like every other in-program miss. A declared property reports the schema keyword that failed, never the validator's duplicate `additionalProperties` branch; a truly undeclared property still reports `additionalProperties`. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
 
@@ -648,6 +651,8 @@ because connecta enforces them above the sandbox:
 | Deadline per host call | 15 s |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
 | `describe` addresses | ≤ 100 |
+| `describe` nearby suggestions | ≤ 3 canonical addresses per failed entry |
+| Caller text echoed by `describe` recovery | ≤ 512 UTF-8 bytes per field, plus `…` |
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
@@ -837,7 +842,7 @@ the upstream `Executor` shape assignable.
 | `A5` | verdict; `A1`–`A3` are its enforcement |
 | `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools.test.ts` (mixed complete/partial ranking and stable pagination) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
-| `S4` | `test/guest-api-contract.test.ts` (unknown address in `describe`) |
+| `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
 | `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |

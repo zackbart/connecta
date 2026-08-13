@@ -1557,7 +1557,7 @@ describe("execute_code handler", () => {
           includeSchemas: "compact",
         });
         await required(connecta.describe)({
-          addresses: ["calc.add"],
+          addresses: ["calc.add", "calc.diagnostic-secret"],
           format: "compact",
         });
         await required(connecta.call)("calc.add", {
@@ -1656,7 +1656,11 @@ describe("execute_code handler", () => {
       "batch-failure-secret",
       "calc.add",
       "calc.missing",
+      "calc.diagnostic-secret",
       "Unknown tool",
+      "unknown_tool",
+      "search_tools",
+      "connecta.search",
     ]) {
       expect(diagnosticsText).not.toContain(forbidden);
     }
