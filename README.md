@@ -98,6 +98,11 @@ activity ship as commented configuration, each one a variable and an
 uncommented block away. The generated `README.md` walks through all four, and
 the [Worker example](./examples/worker/) does the same for KV and D1.
 
+Already have a deployment on an older version? `init` deliberately refuses to
+merge into it, so bringing one current is its own procedure:
+[Upgrading an existing deployment](./documentation/upgrading.md) is the
+runbook, written for the agent working inside that project.
+
 The template refuses to merge into an existing directory, so initialization
 cannot overwrite another project. Its generated programs have no filesystem,
 environment, arbitrary network, imports, or timers; only explicitly read-only
