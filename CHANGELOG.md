@@ -2,17 +2,26 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.16.1 — 2026-08-13
 
-One code joins the failure taxonomy with a rule for when a connector may use it,
-alongside a discovery answer that told a plain lie, packaging housekeeping found
-by the pre-release smoke gauntlet, a rule that described itself too strictly,
-and one provider tool that Cloudflare deprecated out from under us. No wire
-shape changes and no existing code is reclassified except Cloudflare's 404;
-`list_zone_settings` is gone, while the per-setting operations it sat beside are
-the supported ones and are untouched. A deployment that writes no `api()`
-connectors, branches on no error code, and never asked an agent for a whole
-zone's settings in one call upgrades without reading further.
+This is the cleanup that follows 0.16.0 out the door: the packaging housekeeping
+the pre-release smoke gauntlet turned up, one provider tool Cloudflare
+deprecated out from under us, a discovery answer that told a plain lie, and the
+upgrade runbook an existing deployment never had. Nothing breaks. No wire shape
+changes, no construction contract moves, and no existing code is reclassified
+except Cloudflare's 404. A deployment that writes no `api()` connectors,
+branches on no error code, and never asked an agent for a whole zone's settings
+in one call upgrades without reading further.
+
+Three things are additions rather than repairs, and they are the reason this
+release is worth reading rather than just installing: a new
+`ConnectorCallErrorCode` member, `not_found`, with a rule for when a connector
+may mint it; a `"./package.json"` entry in the `exports` map, so the installed
+manifest resolves; and `@cloudflare/codemode` declared as an optional peer at
+`^0.4.4 || ^0.5.0`. Strict semver would read those three as a minor. This ships
+as a patch deliberately — nothing existing changes meaning, and every addition
+is opt-in at the point a deployment chooses to read it — with the one
+install-time consequence spelled out next.
 
 One thing to check before upgrading a Worker: `@cloudflare/codemode` is now a
 declared peer, so if your `package.json` holds it at a version outside
