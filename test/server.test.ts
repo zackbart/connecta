@@ -707,6 +707,12 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain(
       "Only tools annotated `readOnlyHint: true` are reachable",
     );
+    expect(skill).toContain(
+      "Both runtimes block external HTTP(S), filesystem, deployment environment/configuration, and imports",
+    );
+    expect(skill).toContain(
+      "data: fetch is local, external fetch stays blocked",
+    );
     expect(skill).toContain("2–4 distinctive action/object terms");
     expect(skill).toContain(
       '`format: "json"` only for exact constraints',
@@ -1911,6 +1917,15 @@ describe("execute_code registration (code mode)", () => {
     );
     expect(executeTool.description).toContain(
       "must be followed by selection and calls in this program",
+    );
+    expect(executeTool.description).toContain(
+      "Portable programs have no external HTTP(S), filesystem, deployment environment/configuration, or imports",
+    );
+    expect(executeTool.description).toContain(
+      "data: fetch resolves locally, external fetch stays blocked",
+    );
+    expect(executeTool.description).toContain(
+      "Do not use them; that code fails on QuickJS",
     );
     expect(executeTool.inputSchema.properties.code.description).toContain(
       "Consume search/describe results and finish the task inside it",

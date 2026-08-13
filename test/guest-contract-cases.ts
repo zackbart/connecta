@@ -45,6 +45,46 @@ export interface ContractCase {
   ): void;
 }
 
+/** One program that pins the guest capability matrix on every shipped executor. */
+export const CAPABILITY_PROBE_CODE = `async () => {
+  const fetchResult = async (url) => {
+    if (typeof fetch !== "function") return "absent";
+    try {
+      const response = await fetch(url);
+      return url.startsWith("data:") ? await response.text() : "resolved";
+    } catch {
+      return "blocked";
+    }
+  };
+  let dynamicImport = "resolved";
+  try {
+    const specifier = "node:fs";
+    await import(specifier);
+  } catch {
+    dynamicImport = "blocked";
+  }
+  return {
+    globals: {
+      fetch: typeof fetch,
+      setTimeout: typeof setTimeout,
+      clearTimeout: typeof clearTimeout,
+      process: typeof process,
+      crypto: typeof crypto,
+      WebSocket: typeof WebSocket,
+      require: typeof require,
+      Deno: typeof Deno,
+      Bun: typeof Bun
+    },
+    dataFetch: await fetchResult("data:text/plain,reachable"),
+    externalHttp: await fetchResult("http://example.invalid/"),
+    externalHttps: await fetchResult("https://example.invalid/"),
+    dynamicImport,
+    envKeys: typeof process === "object" && process && process.env
+      ? Object.keys(process.env).length
+      : 0
+  };
+}`;
+
 function readOnly(name: string, extra: Partial<ToolDef> = {}): ToolDef {
   return { name, annotations: { readOnlyHint: true }, ...extra };
 }
@@ -727,34 +767,18 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "P2, X5",
-    name: "the sandbox has no usable network and no deployment config",
-    code: `async () => {
-      const out = {
-        fetch: typeof fetch,
-        timers: typeof setTimeout,
-        requires: typeof require,
-        process: typeof process
-      };
-      if (typeof fetch === "function") {
-        try {
-          await fetch("https://example.invalid/");
-          out.egress = "resolved";
-        } catch (err) {
-          out.egress = "blocked";
-        }
-      } else {
-        out.egress = "absent";
-      }
-      out.envKeys = typeof process === "object" && process && process.env
-        ? Object.keys(process.env).length
-        : 0;
-      return out;
-    }`,
+    name: "the portable sandbox contract blocks ambient authority",
+    code: CAPABILITY_PROBE_CODE,
     check(outcome) {
       const result = record(outcome);
-      expect(result.egress).not.toBe("resolved");
+      const globals = result.globals as Record<string, string>;
+      expect(result.externalHttp).not.toBe("resolved");
+      expect(result.externalHttps).not.toBe("resolved");
+      expect(result.dynamicImport).toBe("blocked");
       expect(result.envKeys).toBe(0);
-      expect(result.requires).toBe("undefined");
+      expect(globals.require).toBe("undefined");
+      expect(globals.Deno).toBe("undefined");
+      expect(globals.Bun).toBe("undefined");
     },
   },
   {

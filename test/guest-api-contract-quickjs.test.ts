@@ -1,9 +1,13 @@
 // The QuickJS arm of the guest API contract. The same case table runs against
 // the Dynamic Worker executor in test/guest-api-contract.test.ts.
 
-import { afterAll, describe, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { quickJsExecutor } from "../src/executors/quickjs.js";
-import { CONTRACT_CASES, contractHarness } from "./guest-contract-cases.js";
+import {
+  CAPABILITY_PROBE_CODE,
+  CONTRACT_CASES,
+  contractHarness,
+} from "./guest-contract-cases.js";
 
 // A generous guest-CPU budget: these programs loop and stringify, and the
 // clause under test is never the 250ms default.
@@ -30,4 +34,28 @@ describe("guest API contract (QuickJS executor)", () => {
       contractCase.check(outcome, harness.state, follow);
     });
   }
+
+  it("[P2, X5] pins the QuickJS capability set", async () => {
+    const outcome = await contractHarness().run(executor, CAPABILITY_PROBE_CODE);
+
+    expect(outcome.isError, outcome.text).toBe(false);
+    expect(outcome.result).toEqual({
+      globals: {
+        fetch: "undefined",
+        setTimeout: "undefined",
+        clearTimeout: "undefined",
+        process: "undefined",
+        crypto: "undefined",
+        WebSocket: "undefined",
+        require: "undefined",
+        Deno: "undefined",
+        Bun: "undefined",
+      },
+      dataFetch: "absent",
+      externalHttp: "absent",
+      externalHttps: "absent",
+      dynamicImport: "blocked",
+      envKeys: 0,
+    });
+  });
 });

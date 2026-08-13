@@ -18,6 +18,7 @@ import {
 } from "../src/executor-result.js";
 import type { Connector, Executor } from "../src/types.js";
 import {
+  CAPABILITY_PROBE_CODE,
   CONTRACT_BASE,
   CONTRACT_CASES,
   contractHarness,
@@ -237,5 +238,32 @@ describe.skipIf(!workerExecutor)(
         contractCase.check(outcome, harness.state, follow);
       });
     }
+
+    it("[P2, X5] pins the Dynamic Worker capability exceptions", async () => {
+      const outcome = await contractHarness().run(
+        required(workerExecutor),
+        CAPABILITY_PROBE_CODE,
+      );
+
+      expect(outcome.isError, outcome.text).toBe(false);
+      expect(outcome.result).toEqual({
+        globals: {
+          fetch: "function",
+          setTimeout: "function",
+          clearTimeout: "function",
+          process: "object",
+          crypto: "object",
+          WebSocket: "function",
+          require: "undefined",
+          Deno: "undefined",
+          Bun: "undefined",
+        },
+        dataFetch: "reachable",
+        externalHttp: "blocked",
+        externalHttps: "blocked",
+        dynamicImport: "blocked",
+        envKeys: 0,
+      });
+    });
   },
 );
