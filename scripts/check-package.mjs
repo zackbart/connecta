@@ -347,7 +347,6 @@ if (typeof stripeProvider.stripe !== "function") {
   throw new Error("missing Stripe provider constructor");
 }
 const stripeConnection = stripeProvider.stripe("payments", {
-  mode: "sandbox",
   purpose: "package smoke",
 });
 if (stripeConnection.id !== "payments") {

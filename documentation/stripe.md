@@ -1,27 +1,25 @@
 # Stripe prebuilt connection
 
 Import `stripe()` independently from `@zackbart/connecta/providers/stripe`. It
-wraps [Stripe's hosted MCP server](https://docs.stripe.com/mcp) with a required
-production/sandbox mode, OAuth by default, a mode-scaled admission policy, a
+wraps [Stripe's hosted MCP server](https://docs.stripe.com/mcp) with OAuth by
+default, account-scoped mode guidance, a conservative admission policy, a
 task-oriented usage guide, and a vetted safety classification. It adds no
 provider dependency and is not reachable from Connecta's root entry.
 
 ```ts
 import { stripe } from "@zackbart/connecta/providers/stripe";
 
-const billing = stripe("stripe_live", {
-  mode: "production",
-  title: "Stripe (production)",
-  purpose: "Revenue, disputes, and refunds for the real business",
+const billing = stripe("stripe", {
+  purpose: "Revenue, disputes, and refunds across our Stripe organization",
   instructions: "Never refund above $500 without a human in the loop.",
 });
 ```
 
 The `id` owns the ordinary connector namespaces. Choose a connector boundary
-for its credential or OAuth session, mode, and business purpose — not
-automatically for each Stripe account. One OAuth session may cover more than
-one account in the same Stripe organization. Use separate connectors when the
-credential, production/sandbox mode, or business purpose differs.
+for its credential or OAuth session and business purpose — not automatically
+for each Stripe account. One OAuth session may cover live and sandbox accounts
+in the same Stripe organization. Use separate connectors when the credential
+or business purpose differs.
 
 `purpose` is required because it tells an agent where the deployment intends
 to route a question. The connector id, title, and purpose are configuration,
@@ -29,49 +27,37 @@ not proof of which account the authenticated Stripe session will use. Account
 `instructions` are appended to the maintained guide and cannot change the
 connector's safety classification.
 
-## Mode is required, and it is the whole point
+## OAuth mode belongs to the selected account
 
-`mode` accepts `"production"` or `"sandbox"` and has **no default**. There is no
-safe guess between an account that moves real money and one that does not, so
-the deployment has to say which it configured.
+Do not pass `mode` for OAuth. Stripe's `list_available_accounts_or_orgs` returns
+each available account with its `stripe_context` and `livemode`. The same OAuth
+session can return both `livemode: true` and `livemode: false` results.
 
-Stripe publishes exactly one endpoint — `https://mcp.stripe.com/` — and the
-environment is selected by the credential, not the URL. Connecta therefore
-cannot *route* by mode; what it can do is make the mode impossible for an agent
-to miss, and refuse a deployment whose declaration and credential disagree.
+The served guide tells agents to call that tool before each account-scoped
+operation. They select the intended result and carry its exact `stripe_context`
+and `livemode` unchanged. Connector id, title, purpose, and OAuth identity are
+routing hints. They never prove the account or mode. Ambiguity stops the call.
 
-`mode` shows up in four places an agent actually reads:
+OAuth metadata therefore stays neutral:
 
-- the default `title` (`Stripe (production)` / `Stripe (sandbox)`);
-- the `description`, which is what `search_tools` ranks and returns — production
-  reads `Stripe payments (production — live money and real customers) — …`,
-  sandbox reads `Stripe payments (sandbox — test data, no real money) — …`;
-- the first two lines of the usage guide, which state the mode and then say
-  either "every write moves real money … a refund cannot be undone" or "never
-  answer a question about live revenue, payouts, or a named customer from this
-  connector";
-- the admission policy, below.
+- the default title is `Stripe`;
+- the description says `live and sandbox accounts`;
+- the guide warns that live writes move real money and sandbox writes change
+  test data;
+- admission uses the stricter sandbox ceiling, because Connecta cannot select
+  a different connector policy after the account-scoped call begins.
 
-And one place a deployment author reads: if `auth` is a `headers` credential
-carrying a recognizable Stripe key prefix (`sk_`, `rk_`, or `pk_` with `_live_`
-or `_test_`), construction throws when the key's mode contradicts the declared
-one. That check reads nothing it cannot classify — an OAuth connector, or a
-credential shape this release does not recognize, is left alone rather than
-guessed at — and the error names only the two modes, never the key.
+`mode` remains required for `headers` auth. A restricted key has one fixed live
+or sandbox scope. Its title, description, guide, and admission policy keep the
+fixed-mode behavior. Construction still throws when a recognizable key prefix
+contradicts its declared mode.
 
-Deploy production and sandbox side by side. Two instances are isolated exactly
-like two hand-written connectors with different ids: separate addresses,
-catalogs, credentials, storage, admission counters, and health.
+For OAuth, deploy one connector for the session:
 
 ```ts
 connectors: [
-  stripe("stripe_live", {
-    mode: "production",
-    purpose: "Revenue, disputes, and refunds for the real business",
-  }),
-  stripe("stripe_sandbox", {
-    mode: "sandbox",
-    purpose: "Rehearsing billing changes before they touch production",
+  stripe("stripe", {
+    purpose: "Live and sandbox billing for our Stripe organization",
   }),
 ]
 ```
@@ -86,12 +72,9 @@ says one OAuth session can be tied to more than one account in the same Stripe
 organization. It does not say every session has multiple accounts.
 
 That scope changes what an agent must prove before an account-scoped call. It
-must resolve the intended organization account, inspect the selected tool's
-live input schema, and carry only the exact account or context field that
-schema exposes. If more than one account fits, or the live schema exposes no
-clear selection mechanism, the agent stops and asks. It never guesses from the
-connector id, title, or purpose, and it never invents an MCP argument or
-request header.
+calls `list_available_accounts_or_orgs`, resolves the intended result, and
+carries its exact `stripe_context` and `livemode`. If more than one account
+fits, the agent stops and asks.
 
 Stripe also accepts a
 [restricted API key](https://docs.stripe.com/keys#create-restricted-api-key) as
@@ -131,10 +114,8 @@ stripe("merchant_42", {
 });
 ```
 
-Administrators must enable MCP access in the Stripe Dashboard. Stripe scopes
-OAuth session management and MCP access **separately for sandbox and live
-mode**. A connector that boots but cannot list tools is usually a dashboard
-toggle, not a bad key.
+Administrators must enable MCP access in the Stripe Dashboard. A connector that
+boots but cannot list tools is usually a dashboard toggle, not a bad key.
 
 ## The eleven tools, and what they are classified as
 
@@ -189,10 +170,9 @@ prefixes (`cus_`, `sub_`, `ch_`, `pi_`, `in_`, `acct_`), a plausible-looking one
 belongs to a different object or to nobody, and the id a write takes comes from
 `stripe_api_search` or a list read rather than from a guess.
 
-Account selection comes before that object-id rule. The served guide warns
-that the connector metadata states routing intent rather than authenticated
-identity. It tells the agent to use only selectors in the live tool schema and
-to stop when the account or selection mechanism is ambiguous. It also keeps
+Account selection comes before that object-id rule. The served guide names
+`list_available_accounts_or_orgs`, `stripe_context`, and `livemode`, and tells
+the agent to stop when the account, mode, or selector is ambiguous. It keeps
 organization-account selection separate from the restricted-key-only Connect
 path, so an agent cannot repair uncertainty by fabricating `Stripe-Account` as
 a tool argument.
@@ -210,9 +190,10 @@ Stripe documents no rate limit specific to the MCP server. The connection
 therefore transcribes the account limit that MCP traffic spends
 ([rate limits](https://docs.stripe.com/rate-limits)): **100 requests per second
 in live mode, 25 in a sandbox**, and any single endpoint is capped at 25 per
-second regardless of mode, so paging one list is the real constraint. The
-`maxConcurrency` beside it — 8 for
-production, 4 for sandbox — is Connecta's own conservative choice: Stripe
+second regardless of mode. OAuth uses 25 calls per second and concurrency 4,
+the safe bound for a session that can reach either mode. Fixed live credentials
+use 100 calls per second and concurrency 8. Fixed sandbox credentials use 25
+and concurrency 4. Stripe
 documents that per-account and per-endpoint concurrency limits exist, and
 surface as `429` with a `Stripe-Rate-Limited-Reason` of `global-concurrency` or
 `endpoint-concurrency`, but publishes no number.
@@ -226,14 +207,9 @@ admission and still needs restrained use.
 
 ## What is not verified
 
-Stripe's MCP documentation is silent on two things this connection had to reason
+Stripe's MCP documentation is silent on one thing this connection had to reason
 about rather than read:
 
-- **How an OAuth session resolves to live versus sandbox at call time.** Stripe
-  says sessions are "scoped to … the current environment (live mode or a
-  sandbox)" and that dashboard access is managed separately per environment, but
-  never states the mechanism. The key-prefix check covers `headers` auth only;
-  for OAuth, `mode` is a declaration Connecta surfaces and cannot verify.
 - **Whether pagination cursors and `Idempotency-Key` are passable through
   `stripe_api_read` / `stripe_api_write`.** The conventions in the usage guide
   are Stripe's documented API conventions; how they thread through the generic
