@@ -225,33 +225,27 @@ describe("server /mcp end-to-end", () => {
     expect(res.status).toBe(200);
     const body = await readBody(res);
     expect(body.result.serverInfo.name).toBe("connecta");
-    expect(body.result.instructions).toContain(
-      "then one call_tool",
-    );
-    expect(body.result.instructions).toContain(
-      "2–4 distinctive action/object terms",
-    );
+    expect(body.result.instructions).toContain("search_tools then call_tool");
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
-      "If this routing is unfamiliar",
+      "Fetch skills",
     );
     expect(body.result.instructions).toContain(
-      "do not call top-level search_tools",
+      "use one execute_code program",
     );
     expect(body.result.instructions).toContain(
-      "never return discovery for another call",
+      "discovers, calls, and returns the reduced answer",
     );
     expect(body.result.instructions).toContain(
-      "connecta.ui(html) is a guest function inside execute_code",
+      "connecta.ui(html) exists only inside execute_code",
     );
     expect(body.result.instructions).toContain(
-      "never a connector address or search_tools result",
+      "not in connector search",
     );
-    expect(body.result.instructions).toContain("pass one HTML string");
     expect(body.result.instructions).toContain(
-      "return the same initial summary data the HTML renders",
+      "return the same summary data the HTML renders",
     );
-    expect(body.result.instructions).not.toContain("once per task");
+    expect(body.result.instructions).toContain("once");
   });
 
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
@@ -361,46 +355,19 @@ describe("server /mcp end-to-end", () => {
       "approvalRequired",
       "all",
     ]);
-    expect(byName.search_tools.description).toContain(
-      "2–4 distinctive action/object terms",
-    );
-    expect(byName.search_tools.description).toContain(
-      "omit limit initially (default 8)",
-    );
-    expect(byName.search_tools.description).toContain(
-      "Use top-level search only for exactly one unreduced read",
-    );
-    expect(byName.search_tools.description).toContain(
-      "For read-only reduction, dependent or multiple calls, never search here",
-    );
+    expect(byName.search_tools.description).toContain("2–4 action/object terms");
+    expect(byName.search_tools.description).toContain("one unknown-address read");
     // Programs admit read-only tools only, so multi-step destructive work has
     // nowhere to discover but here. Scoping the prohibition to read-only work
     // is what keeps that route open (#295).
     expect(byName.search_tools.description).toContain(
-      "for write-capable work, then call_destructive_tool",
+      "approval-required work before call_destructive_tool",
     );
     expect(byName.search_tools.description).toContain(
-      "never the first lexical match",
+      'safety="readOnly" finds direct or program calls',
     );
-    expect(byName.search_tools.description).toContain(
-      "set connector to the obvious integration id to load one catalog instead of all",
-    );
-    expect(byName.search_tools.description).toContain(
-      "the input and any declared output shape",
-    );
-    expect(byName.search_tools.description).toContain(
-      "matches also carry declared annotations",
-    );
-    expect(byName.search_tools.description).toContain(
-      'safety="readOnly" returns only calls available',
-    );
-    expect(byName.search_tools.description).toContain(
-      "filters results, not authority",
-    );
-    expect(byName.search_tools.description).toContain("connecta.describe");
-    expect(byName.execute_code.description).toContain(
-      "set connector to the obvious id to load one, otherwise it loads all",
-    );
+    expect(byName.search_tools.description).toContain("filters grant no authority");
+    expect(byName.execute_code.description).toContain('skills({ name: "usage" })');
     expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
       MAX_SEARCH_LIMIT,
     );
@@ -424,7 +391,7 @@ describe("server /mcp end-to-end", () => {
       byName.call_destructive_tool.inputSchema.properties.reason,
     ).not.toHaveProperty("minLength");
     expect(byName.call_destructive_tool.description).toContain(
-      "reason explaining the intended consequence",
+      "reason for the human reviewer",
     );
     expect(byName.skills.annotations).toMatchObject({
       readOnlyHint: true,
@@ -434,12 +401,9 @@ describe("server /mcp end-to-end", () => {
     });
     // Both halves of the routing each of these descriptions performs: where
     // the tool sends work it declines to do, and the narrow case it admits.
-    expect(byName.call_tool.description).toContain("connecta.batch");
-    expect(byName.call_tool.description).toContain(
-      "ONE tool explicitly annotated",
-    );
+    expect(byName.call_tool.description).toContain("Call one tool explicitly annotated");
     expect(byName.get_result.description).toContain(
-      "reduce it in code instead",
+      "reduce it inside execute_code",
     );
   });
 
@@ -484,26 +448,15 @@ describe("server /mcp end-to-end", () => {
       visibility: ["model"],
     });
     expect(execute.description).toContain("connecta.ui(html, options?)");
-    expect(execute.description).toContain(
-      "{ reads: { name: { address, fixedArgs?, viewArgs? } } }",
-    );
-    expect(execute.description).toContain("connecta.read(name, args)");
     // U12: the model never sees the view, so the description says what the
     // program owes it instead — a return value that mirrors what was rendered.
     // A view the return does not mirror is a view nobody can check (#282).
     expect(execute.description).toContain(
-      "the model reads the return value, not the view",
+      "return the same initial summary the HTML renders",
     );
-    expect(execute.description).toContain(
-      "return the initial summary from its variables",
-    );
-    // U2 and U4 are the two facts compression keeps eroding: a second call
-    // throws rather than quietly winning, and the payload spends the emit
-    // budget itself rather than a same-sized one of its own.
-    expect(execute.description).toContain(
-      "a second, over-budget, or invalid call throws catchably",
-    );
-    expect(execute.description).toContain("one budget, not two");
+    // #418 keeps the route and minimum call form always loaded. Detailed read
+    // binding and budget rules live in the usage skill.
+    expect(execute.description).toContain('skills({ name: "usage" })');
     expect(body.result.tools).toHaveLength(7);
     // No other tool claims a view. `call_tool` alone accepts app-originated
     // calls; every other existing model tool says model-only explicitly so
@@ -699,24 +652,58 @@ describe("server /mcp end-to-end", () => {
     const fetchedBody = await readBody(fetched);
     const skill = fetchedBody.result.content[0].text as string;
     expect(skill).toContain("# Connecta usage");
-    expect(skill).toContain("then `call_tool` once");
-    expect(skill).toContain("Anything wider — two or more calls");
+    expect(skill).toContain("always-loaded MCP instructions are authoritative");
+    expect(skill).toContain("## Discover and select");
+    expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
-      "Any unannotated, write-capable, or destructive call: `call_destructive_tool`",
+      "Only tools explicitly annotated `readOnlyHint: true` are reachable",
     );
-    expect(skill).toContain(
-      "Only tools annotated `readOnlyHint: true` are reachable",
-    );
-    expect(skill).toContain("Dynamic Workers require only `{ loader }`");
-    expect(skill).toContain("node:fs/http/https absent");
-    expect(skill).toContain("outbound fetch/WebSocket/node:net/tls denied");
-    expect(skill).toContain("Runtime builtins remain through import()");
-    expect(skill).toContain("the set can drift");
+    expect(skill).toContain("Dynamic Workers must use only `{ loader }`");
+    expect(skill).toContain("node:fs/http/https are absent");
+    expect(skill).toContain("outbound fetch, WebSocket, node:net, and node:tls are denied");
+    expect(skill).toContain("Runtime builtins remain through `import()`");
+    expect(skill).toContain("this set can drift");
     expect(skill).toContain("2–4 distinctive action/object terms");
+    // #418: top-level search defaults, paging, compact row semantics, and
+    // non-ASCII behavior moved here from the always-loaded definition.
+    expect(skill).toContain("omit `limit` initially (the default is 10)");
+    expect(skill).toContain("page with a limit up to 50");
+    expect(skill).toContain(
+      "Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`",
+    );
+    expect(skill).toContain("non-empty query with no ASCII terms returns no matches");
+    expect(skill).toContain("mixed input searches with its ASCII terms");
     expect(skill).toContain(
       '`format: "json"` only for exact constraints',
     );
-    expect(skill).not.toContain("## Examples");
+    // #418: direct-call shaping, bounded execution, retry safety, diagnostics,
+    // projection recovery, and byte-exact paging all remain model-visible.
+    expect(skill).toContain('`resultMode: "value"` unwraps the result');
+    expect(skill).toContain("`timeoutMs` sets its deadline");
+    expect(skill).toContain(
+      "`maxRetries` is honored only for safely annotated tools",
+    );
+    expect(skill).toContain("`diagnostics: true` adds timing");
+    expect(skill).toContain("Projection misses return `data` plus `$connecta` feedback");
+    expect(skill).toContain(
+      "`get_result({ id, offset?, maxBytes? })` returns `{ text, offset, nextOffset?, totalBytes }`",
+    );
+    expect(skill).toContain("`maxBytes` must be a whole number at least 1");
+    expect(skill).toContain("`offset` must be a whole number at least 0");
+    expect(skill).toContain(
+      "offset inside a multi-byte character moves back to its first byte",
+    );
+    expect(skill).toContain("unknown or expired id is an error");
+    // #418: bound reads expose their complete shape, and rendering shares the
+    // rich-output budget instead of receiving a second allowance.
+    expect(skill).toContain(
+      "{ reads: { name: { address, fixedArgs?, viewArgs? } } }",
+    );
+    expect(skill).toContain(
+      "one shared budget apply to the UI and emitted content, not separate budgets",
+    );
+    expect(skill).toContain("## Examples");
+    expect(skill).toContain("crm.get_account");
 
     const missing = await rpc(
       c,
@@ -784,17 +771,11 @@ describe("server /mcp end-to-end", () => {
         ],
       }),
     ]);
-    expect(guided.description).toContain("fetch only an exact name");
+    expect(guided.description).toContain("connector guides by exact name");
     expect(guided.usage).toContain("## Per-connector guides");
-    expect(guided.search).toContain("`guideSummary`");
-    expect(guided.search).toContain("`guideRequiredReasons`");
-    expect(guided.search).toContain("`guideRequired: true`");
-    expect(guided.destructive).toContain("fetch any connector guide");
-    expect(guided.execute).toContain("guideRequired: true = stop");
-    expect(guided.execute).toContain("Describe clears only schema_truncated");
-    expect(guided.execute).toContain("return its exact guide");
-    expect(guided.execute).toContain("fetch with top-level skills");
-    expect(guided.execute).toContain("write the informed call");
+    expect(guided.search).toContain("guideRequired: true");
+    expect(guided.destructive).toContain("exact connector guide");
+    expect(guided.execute).toContain("connector-guide rules");
     expect(guided.execute.length).toBeLessThan(4_400);
     expect(guided.usage).toBe(plain.usage);
   });
@@ -1911,85 +1892,10 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain(
       "Exactly one unknown-address read uses top-level search_tools then call_tool",
     );
-    expect(executeTool.description).toContain(
-      "For distinct operations, make separate short searches here",
-    );
-    expect(executeTool.description).toContain(
-      "must be followed by selection and calls in this program",
-    );
-    expect(executeTool.description).toContain(
-      "Portable programs use no ambient capabilities",
-    );
-    expect(executeTool.description).toContain(
-      "outbound fetch/WebSocket/node:net/tls are denied",
-    );
-    expect(executeTool.description).toContain("node:fs/http/https are absent");
-    expect(executeTool.description).toContain("the set can drift");
-    expect(executeTool.description).toContain(
-      "Avoid runtime-only capabilities; QuickJS fails",
-    );
+    expect(executeTool.description).toContain("Programs have no portable ambient capabilities");
+    expect(executeTool.description).toContain('skills({ name: "usage" })');
     expect(executeTool.inputSchema.properties.code.description).toContain(
-      "Consume search/describe results and finish the task inside it",
-    );
-    expect(executeTool.inputSchema.properties.code.description).toContain(
-      "returning catalog data for a later call spends a round trip",
-    );
-    expect(executeTool.inputSchema.properties.code.description).not.toContain(
-      "is invalid",
-    );
-    // Measured habit, not a style note: every `dependent-read` route failure in
-    // the #295 lane was a program that gave up — a regex tool pick that missed,
-    // a guessed connector id that emptied the catalog, a `||` chain over result
-    // roots that found nothing — and then threw or returned an error object so a
-    // second program could redo the work. The recovery program was always the
-    // direct one, using information the first program already had in scope. The
-    // clause lives on the `code` parameter because that is the field the model
-    // is writing when it decides to bail, and repeating it across surfaces is
-    // exactly what #295 forbids without evidence that the repetition pays.
-    expect(executeTool.inputSchema.properties.code.description).toContain(
-      "So does aborting on a missing tool match or result key",
-    );
-    // The bridge gives caught and batch failures the same stable branch fields.
-    // The message remains for people, never for classification (#393).
-    expect(executeTool.description).toContain(
-      "A caught Connecta failure keeps its message and exposes code, retryable, and details",
-    );
-    // The eval's builds fixture must not leak into shipped text: no fixture
-    // field names in the guidance prose (the dependent example is its own
-    // illustration and keeps its names).
-    expect(executeTool.description).not.toContain("failedJobId supplies jobId");
-    expect(executeTool.description).toContain('includeSchemas: "compact"');
-    expect(executeTool.description).toContain('safety: "readOnly"');
-    expect(executeTool.description).toContain(
-      "avoid advertising calls this sandbox cannot execute",
-    );
-    expect(executeTool.description).toContain("requiredInputKeys");
-    expect(executeTool.description).toContain(
-      "never take the first lexical or merely input-compatible match",
-    );
-    expect(executeTool.description).toContain(
-      "Reducers use declared outputKeys, never guessed items/results roots",
-    );
-    expect(executeTool.description).toContain(
-      "[] means no required keys, not permission to invent args",
-    );
-    expect(executeTool.description).toContain(
-      "Describe only a truncated/insufficient compact shape",
-    );
-    expect(executeTool.description).toContain(
-      "match an earlier outputKey to the later requiredInputKey",
-    );
-    expect(executeTool.description).toContain(
-      "Put every requiredInputKey in call args",
-    );
-    expect(executeTool.description).toContain(
-      "do not prefer zero required keys",
-    );
-    expect(executeTool.description).toContain(
-      "Missing outputKeys means inspect outputSchema",
-    );
-    expect(executeTool.description).toContain(
-      "do not require it to be the only match",
+      "discovers, calls, and returns the reduced answer",
     );
     // The call form itself, not just the address: a bullet that says an
     // address is "callable" without showing the parentheses teaches nothing,
@@ -1997,36 +1903,11 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain(
       "<connectorId>.<toolName>(args)",
     );
-    // The batch entry envelope rides the capabilities bullet rather than the
-    // prose three paragraphs down. Guessing `{ result }` fails silently through
-    // optional chaining — a run that succeeds and delivers nothing — so the
-    // shape belongs in the line an author actually reads (#282).
-    expect(executeTool.description).toContain(
-      "Every batch entry is { address, ok: true, data }",
-    );
-    expect(executeTool.description).toContain(
-      "top-level search_tools returns { connectors: [{ id, tools }], total, offset, limit, hasMore }",
-    );
-    expect(executeTool.description).toContain(
-      "connecta.search returns { tools, total, offset, limit, hasMore }",
-    );
-    expect(executeTool.description).toContain(
-      "connecta.describe returns { tools }",
-    );
-    // Hosts truncate long descriptions, so the bullets are a fixed budget:
-    // #282 moved weight forward instead of adding it, and this ceiling is what
-    // keeps the next clause paying for itself the same way.
-    expect(executeTool.description.length).toBeLessThan(4_400);
-    expect(executeTool.description).toContain(
-      "write the property names they display",
-    );
-    expect(executeTool.description).toContain(
-      "the second call requires a value returned by the first",
-    );
-    // The dependent example names its fields. Positional indexing into the key
-    // lists is the pattern this description must never teach: the first
-    // required key of a multi-argument tool is not the one the value belongs to.
-    expect(executeTool.description).toContain("{ jobId: run.failedJobId }");
+    // #418 deliberately replaces the former 4.4 KiB ceiling. The detailed
+    // selection rules and examples now live only in the on-demand usage skill.
+    expect(executeTool.description.length).toBeLessThan(1_800);
+    expect(executeTool.description).not.toContain("Dependent example");
+    expect(executeTool.description).not.toContain("requiredInputKeys");
     expect(executeTool.description).not.toContain("requiredInputKeys[0]");
     // The classic three-step funnel (search_tools → describe_tools → …) is
     // gone with the tool that anchored it; naming it here would teach a route

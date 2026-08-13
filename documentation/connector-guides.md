@@ -60,15 +60,12 @@ unknown name, unknown connector, connector with no guide — is an explicit
 error. Nothing silently falls back to the generic guide, because a generic
 answer to a specific question is worse than no answer.
 
-Discovery text is conditional on the deployment actually having a guide. The
-guide sentences in the `skills`, `search_tools`, `call_destructive_tool`, and
+Discovery text is conditional on the deployment actually having a guide. Short
+pointers in the `skills`, `search_tools`, `call_destructive_tool`, and
 `execute_code` descriptions appear only when at least one visible connector
-declares one — the connector set is fixed at construction, so this is stable
-per deployment, and a deployment with no guides pays no always-loaded context
-for a feature it does not use. The built-in `usage` skill is the deliberate
-exception: it stays byte-identical across every deployment, including its
-per-connector-guides section, so an agent that has read it once in a task never
-needs a deployment-local copy of it.
+declares one. The detailed selection rules live only in the built-in `usage`
+skill. That skill stays byte-identical across deployments, including its
+per-connector-guides section, so an agent reads it at most once per task.
 
 ## What belongs in a guide
 
@@ -175,5 +172,5 @@ each branch, the `guide` pointer in search output, and `guideRequired`
 appearing for connector-required conventions, approval-bound tools, and
 truncated schemas — and being absent from a search that asked for no schemas.
 `test/server.test.ts` owns the conditional half: it compares a guide-free
-deployment's four tool descriptions against a guided one's, and asserts the
-`usage` skill is byte-identical between them.
+deployment's four short pointers against a guided one's, and asserts the
+complete `usage` skill is byte-identical between them.

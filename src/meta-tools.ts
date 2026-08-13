@@ -1418,19 +1418,19 @@ export function createMetaTools(
   };
 }
 
-const SEARCH_DESC = `Use top-level search only for exactly one unreduced read, then call_tool, or for write-capable work, then call_destructive_tool. For read-only reduction, dependent or multiple calls, never search here: make one execute_code program that searches and calls. Use 2–4 distinctive action/object terms, not the full request; set connector to the obvious integration id to load one catalog instead of all; omit limit initially (default ${DEFAULT_SEARCH_LIMIT}), page to ${MAX_SEARCH_LIMIT} if needed. safety="readOnly" returns only calls available to call_tool/code; "approvalRequired" returns the rest; omitted/"all" returns all. This filters results, not authority. includeSchemas="compact" adds the input and any declared output shape, bounded; plain objects expose inputKeys, requiredInputKeys, and outputKeys; truncation flags mark incomplete shapes; matches also carry declared annotations. Require purpose/address fit plus compatible inputs, truncation, safety, and outputs — never the first lexical match. Empty or whitespace-only query browses all; non-empty input with no ASCII terms returns no match.`;
+const SEARCH_DESC = `Use top-level search for one unknown-address read before call_tool, or for approval-required work before call_destructive_tool. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds direct or program calls; "approvalRequired" finds the fail-closed complement. These filters grant no authority. For multiple, dependent, or reduced read-only calls, use one execute_code program instead. Empty query browses.`;
 const CALL_DESC =
-  'Use for ONE tool explicitly annotated readOnlyHint: true — the cheapest path for a single cold call. For two or more calls, dependent steps, loops, joins, or data reduction use execute_code, whose connecta.call and connecta.batch reach the same tools. Unannotated, write-capable, and destructive tools are refused and require call_destructive_tool. fields selects JSON dot-paths; traverse arrays with [] (for example results[].id). Misses return data plus `$connecta` feedback. resultMode "value" unwraps results, timeoutMs sets a deadline, safe maxRetries are annotation-gated, diagnostics adds timing, and large results page through get_result.';
+  'Call one tool explicitly annotated readOnlyHint: true. Use execute_code for multiple, dependent, or reduced read-only calls. Unannotated or write-capable tools fail closed to call_destructive_tool. fields projects JSON dot-paths; use [] through arrays. A truncated result carries a get_result action.';
 const CALL_DESTRUCTIVE_DESC =
-  "Invoke any tool that is not explicitly annotated readOnlyHint: true, including unannotated, write-capable, or destructive tools. Include a short reason explaining the intended consequence for the human reviewer; it grants no authority and is never passed downstream. The MCP destructiveHint on this meta-tool lets the host request human approval before execution. Use only after reviewing the downstream tool schema and consequences.";
+  "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 const GET_RESULT_DESC =
-  "Page a truncated result stashed by call_tool or call_destructive_tool; a program's oversized return is not paged, so reduce it in code instead. Input { id, offset?, maxBytes? } → { text, offset, nextOffset?, totalBytes } sliced by byte offset. maxBytes is a whole number of bytes >= 1 (omit for the deployment default) and offset a whole number of bytes >= 0; an offset inside a multi-byte character is moved back to that character's first byte and the offset served is returned. Unknown/expired id is an error.";
+  "Page a truncated direct-call result by id and byte offset. A program result is never paged; reduce it inside execute_code. Returns text, offset, nextOffset when more remains, and totalBytes.";
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =
-  'List or fetch concise guidance for choosing among Connecta meta-tools. Call skills({ name: "usage" }) once when the routing workflow is unfamiliar; do not refetch it in the same task.';
+  'List or fetch on-demand guidance. Fetch usage once per task for program syntax, selection, repair, examples, and runtime details.';
 
-const SEARCH_WITH_DESCRIBE_DESC = `${SEARCH_DESC} Expand an ambiguous compact shape, or read exact JSON constraints, with connecta.describe inside execute_code.`;
+const SEARCH_WITH_DESCRIBE_DESC = SEARCH_DESC;
 
 /**
  * Sentences appended to a meta-tool description only when this connection
@@ -1442,11 +1442,11 @@ const SEARCH_WITH_DESCRIBE_DESC = `${SEARCH_DESC} Expand an ambiguous compact sh
  */
 const GUIDE_NOTES = {
   skills:
-    " skills({}) also lists this deployment's scoped connector guides; fetch only an exact name listed there or carried by discovery, never one inferred from a connector id.",
+    " Also lists this deployment's connector guides by exact name.",
   search:
-    " A result carrying `guide` also carries a bounded `guideSummary`. `guideRequired: true` is a hard stop: fetch that exact guide before calling. `guideRequiredReasons` explains why — `connector_required` and `approval_required` stand however you expand the schema; `schema_truncated` clears once describe returns the exact one. Otherwise fetch only when the summary names a connector convention relevant to the task. A complete, unambiguous read-only schema needs no otherwise-irrelevant guide fetch.",
+    " A result with guideRequired: true requires its exact named connector guide before the call.",
   destructive:
-    " Before a consequential call, inspect the address through discovery or describe and fetch any connector guide it names.",
+    " Fetch any exact connector guide named by discovery before the call.",
 } as const;
 
 /** `base`, plus its guide note when any VISIBLE connector carries a guide. */

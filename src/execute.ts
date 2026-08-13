@@ -1392,22 +1392,14 @@ const executeDescription = (
   connectorGuides: boolean,
 ) => `Choose the route before discovery. Exactly one unknown-address read uses top-level search_tools then call_tool. execute_code is the primary surface for everything wider: make exactly one execute_code call that searches, selects, calls, and reduces. A discovery-only program wastes its round trip: finish here, don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_MAX_BATCH_CALLS} per batch, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
 
-Write an async arrow function. Portable programs use no ambient capabilities. Use only:
-- Connector globals call sanitized <connectorId>.<toolName>(args): non-identifier characters become "_"; prefix a leading digit; suffix a reserved word.
-- connecta.call(address, args) and connecta.batch(calls) use canonical addresses. Every batch entry is { address, ok: true, data } or { address, ok: false, error, errorDetails: { code, retryable } }; destructure it.
-- top-level search_tools returns { connectors: [{ id, tools }], total, offset, limit, hasMore }; connecta.search returns { tools, total, offset, limit, hasMore }; connecta.describe returns { tools }.
-- connecta.search(args) loads catalogs and must be followed by selection and calls in this program; set connector to the obvious id to load one, otherwise it loads all. For distinct operations, make separate short searches here. Check address, description, requiredInputKeys, truncation, safety, and outputs; never take the first lexical or merely input-compatible match. Select by fit; do not require it to be the only match. Missing outputKeys means inspect outputSchema, not discard the candidate. Every required key needs task or prior-result data; do not prefer zero required keys. Put every requiredInputKey in call args. For dependencies, match an earlier outputKey to the later requiredInputKey. [] means no required keys, not permission to invent args. Describe only a truncated/insufficient compact shape. Reducers use declared outputKeys, never guessed items/results roots. Describe one address or an addresses array. Use safety: "readOnly" to avoid advertising calls this sandbox cannot execute.${connectorGuides ? " guideRequired: true = stop. Describe clears only schema_truncated; otherwise return its exact guide, fetch with top-level skills, then write the informed call." : ""}
+Write one plain-JavaScript async arrow function. Use only:
+- <connectorId>.<toolName>(args) for a sanitized shortcut, or connecta.call(address, args) for a canonical address.
+- connecta.search(args), connecta.describe(args), and connecta.batch(calls) for discovery and independent read-only calls.
 - connecta.emit(block) — { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }. Success-only; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; invalid/over-budget throws.
-- connecta.ui(html, options?) — one success-only view. One arg is display-only; reads use { reads: { name: { address, fixedArgs?, viewArgs? } } } and markup calls connecta.read(name, args). Admission and one budget, not two, apply; a second, over-budget, or invalid call throws catchably; the model reads the return value, not the view; return the initial summary from its variables.
+- connecta.ui(html, options?) for one success-only view; return the same initial summary the HTML renders.
 - console.log(...) — captured.
 
-QuickJS blocks imports and has no fetch, process, timers, crypto, or WebSocket. Dynamic Workers require only { loader }; bindings/modules/globalOutbound violate the contract. Then env maps are empty; node:fs/http/https are absent; outbound fetch/WebSocket/node:net/tls are denied; DNS is unresolved. Runtime builtins remain through import() and process.getBuiltinModule(), including node:path and cloudflare:workers; the set can drift. Timers/process/crypto/WebSocket and data: fetch remain. Avoid runtime-only capabilities; QuickJS fails.
-
-Dependent example (only when the second call requires a value returned by the first): async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", safety: "readOnly", includeSchemas: "compact" }); const pick = (suffix) => { const match = tools.find((t) => t.address.endsWith(suffix)); if (!match) throw new Error("no tool for " + suffix); return match.address; }; const run = await connecta.call(pick(".get_run"), { runId: 42 }); const logs = await connecta.call(pick(".get_job_logs"), { jobId: run.failedJobId }); return [run, logs]; }
-
-A caught Connecta failure keeps its message and exposes code, retryable, and details; batch uses the same fields. Branch on fields, never prose. Never retry retryable: false, or rate_limited immediately; portable code cannot wait. Return JSON; reduce large results before they truncate.
-
-Plain JS. Compact schemas are TypeScript-like: write the property names they display; never guess positions or aliases.`;
+Programs have no portable ambient capabilities. Return JSON and reduce large results before they truncate. Fetch skills({ name: "usage" }) once for selection rules, exact result shapes, repair, examples, guide handling${connectorGuides ? ", connector-guide rules" : ""}, and runtime differences.`;
 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(
@@ -1472,7 +1464,7 @@ export function registerExecuteTool(
         code: z
           .string()
           .describe(
-            "One complete JavaScript async arrow function. Consume search/describe results and finish the task inside it; returning catalog data for a later call spends a round trip and buys nothing. So does aborting on a missing tool match or result key — re-search, describe, or read the result's actual keys here instead.",
+            "One complete JavaScript async arrow function that discovers, calls, and returns the reduced answer.",
           ),
         diagnostics: z
           .boolean()

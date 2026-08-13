@@ -146,8 +146,12 @@ the zero-tool page.
 The built-in `usage` skill is byte-identical across deployments and says to
 read it at most once per task. Connector guides remain scoped to the deployment
 that listed them, even when two deployments happen to use identical content.
-Deployments without connector guides receive none of the conditional guide
-sentences in their always-loaded tool descriptions.
+The always-loaded instructions and seven tool definitions own route selection,
+the fail-closed boundary, and the minimum guest syntax. The usage skill owns
+program selection detail, examples, runtime differences, and repair guidance.
+This split avoids two normative copies while preserving a valid first program
+for clients that never fetch the skill. Deployments without connector guides
+receive none of the short conditional guide pointers in their definitions.
 
 ## Result representation
 
