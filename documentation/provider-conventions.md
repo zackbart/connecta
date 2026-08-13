@@ -429,8 +429,8 @@ the annotation a caller gets and the verdict a check reads can never disagree.
 When the downstream changes underneath them, the correct outcome is a loud
 unclassified tool on the approval path and a maintained record of the drift —
 never a quiet re-guess. The runtime half is
-[the runtime drift policy](#the-runtime-drift-policy) below; the maintainer-run
-check is [#351](https://github.com/zackbart/connecta/issues/351).
+[the runtime drift policy](#the-runtime-drift-policy) below; the release-time
+half is [the maintainer-run drift check](#the-maintainer-run-drift-check).
 
 *Why:* an allowlist nobody can tell is stale is an allowlist that is wrong.
 *Cost:* wrong-tool selection.
@@ -452,9 +452,10 @@ reviewed it as (`read-only`, `additive`, `destructive`), and — where a release
 actually read them — a digest of that tool's input and output schemas. Today
 the three proxies ship names and verdicts and no digests, because no release
 has read a live schema and written it down, and an invented digest reports a
-change that never happened. Recording them against a real catalog is #351's
-job; until then a manifest without digests counts no schema changes, which is
-the honest answer rather than a silent zero.
+change that never happened. `npm run drift:check -- --record` reads them from a
+live catalog and prints the block a release pastes in; until a release does,
+a manifest without digests counts no schema changes, which is the honest answer
+rather than a silent zero.
 
 **What it counts.** Four categories, and only counts:
 
@@ -500,6 +501,59 @@ read `destructiveHint: true` — blocks that provider's next release until a
 human has re-reviewed the tool. Everything else enters ordinary issue triage.
 No finding changes what a caller may reach: an unclassified tool fails closed
 whether or not anybody noticed it arrived.
+
+## The maintainer-run drift check
+
+`npm run drift:check` is the other half
+([#351](https://github.com/zackbart/connecta/issues/351)): a human at a laptop,
+before a release, with local credentials and the published specifications in
+front of them. It lives in
+[`scripts/drift-check.mjs`](../scripts/drift-check.mjs) and ships nowhere —
+`scripts/` is outside the package, no runtime module imports it, and nothing it
+reads becomes a runtime input.
+
+**Hosted-MCP catalogs.** `--hosted` lists each proxy's live catalog with the
+maintainer's own key and diffs it against the same `vettedCatalog()` manifest
+the connector classifies from, reporting tools *by name*: added, no longer
+served, annotation conflicts with what the downstream actually claimed, and —
+once a manifest records schema digests — which tool's schemas moved. The names
+live here rather than in the runtime because the runtime's counts are
+payload-free by construction, and a name has no reader there anyway. It then
+compares its own totals against `detectCatalogDrift()`: two readings of one
+manifest that disagree mean one of them is lying, which is worth failing over.
+One credential per provider comes from the environment —
+`CONNECTA_DRIFT_LINEAR_KEY`, `CONNECTA_DRIFT_STRIPE_KEY`,
+`CONNECTA_DRIFT_MIXPANEL_KEY` — and a missing or dead one stops the run with a
+message naming it rather than reporting an empty catalog as mass removal.
+
+**Touched endpoints.** A hand-written provider is written against a published
+OpenAPI document and calls a few dozen of its operations, so
+[`scripts/drift/`](../scripts/drift/) commits exactly those: method, path, the
+specification revision a release reviewed the endpoint at, and a digest of that
+endpoint's contract at that revision. `--specs` fetches each provider's
+published document and reports four things per touched endpoint — the path is
+gone, the method is gone, the operation is now deprecated, or its contract
+changed since the recorded revision. Everything else in the document is
+ignored, which is the point: a Cloudflare release that rewrites 2,000
+operations connecta never calls is not news, and a revision bump that left the
+touched contracts alone reports nothing.
+
+A contract digest covers the parameters, the request body, and the success
+responses, with local `$ref`s inlined so a change inside a shared component is
+visible, and with descriptions, examples, and `x-` extensions stripped so a
+reworded document is not a finding. Two bounds are deliberate: a `$ref` cycle
+stays a reference rather than an infinite walk, and failure responses are
+excluded because an error body is H11's business, mapped from the status.
+`--record` rewrites the manifests from the documents on hand; run it when a
+finding has been reviewed, and read the diff before committing it.
+
+**What it never does.** No downstream credential reaches CI. No scheduled job,
+no background traffic in a deployment, no automatic issue filing. A finding is
+read by a human and becomes a GitHub issue they wrote, because the decision a
+finding needs — the provider moved this endpoint, or connecta has to stop
+calling it — is not one a diff can make. Published specifications remain drift
+evidence and nothing else: no tool is generated from one, which is the
+[ethos](../ethos.md)'s refusal, not a detail of this script.
 
 ## What the audit checks
 

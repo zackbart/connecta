@@ -99,8 +99,33 @@ report means that runtime has observed nothing, and the activity event is the
 durable half. A deployment can ignore all of it: an unclassified tool already
 failed closed onto `call_destructive_tool` before anyone counted it.
 
+The other half of that story is a command, not a surface. `npm run drift:check`
+is maintainer tooling — it ships nowhere, runs on a laptop before a release, and
+answers the question the runtime counts deliberately cannot: *which* tool moved.
+It diffs each hosted-MCP catalog against the same vetted manifest the connector
+classifies from, using the maintainer's own credential, and it compares the
+handful of endpoints Cloudflare and Notion actually call against those
+providers' published OpenAPI documents — reporting a gone path, a gone method, a
+new deprecation, or a changed contract, and ignoring the two thousand operations
+connecta never touches. No credential goes near CI, nothing is scheduled,
+nothing files itself, and a published specification is drift evidence only: it
+never generates a tool and never becomes a runtime input.
+
 ### Added
 
+- **A maintainer-run provider drift check.** `npm run drift:check` diffs the
+  live Linear, Stripe, and Mixpanel catalogs against their vetted manifests by
+  name — added, no longer served, annotation conflicts, and schema changes — and
+  cross-checks its totals against the runtime `detectCatalogDrift()`, because
+  two readings of one manifest that disagree mean one of them is lying. Its
+  second half compares committed touched-endpoint manifests
+  (`scripts/drift/cloudflare-endpoints.json`, `scripts/drift/notion-endpoints.json`:
+  method, path, reviewed spec revision, contract digest) with each provider's
+  published OpenAPI document, and `--record` refreshes them. A missing
+  credential or an unreachable specification stops the run and says which one.
+  Written up in
+  [`documentation/provider-conventions.md`](./documentation/provider-conventions.md#the-maintainer-run-drift-check)
+  (#351).
 - **Hosted-provider drift detection at refresh.** Linear, Stripe, and Mixpanel
   each ship a vetted manifest and compare it with the live catalog while
   serving a refresh that was going to happen anyway. `ConnectorStatus` gains

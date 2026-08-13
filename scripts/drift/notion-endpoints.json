@@ -1,0 +1,92 @@
+{
+  "provider": "notion",
+  "specification": {
+    "url": "https://developers.notion.com/openapi.json"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v1/blocks/{block_id}/children",
+      "specRevision": "1.0.0",
+      "contract": "sha256:ce60a0e9160d4aa41fb35ca71e36a795ae46a16c719a9a1bc04165f4902dff2d"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/blocks/{block_id}/children",
+      "specRevision": "1.0.0",
+      "contract": "sha256:e88adbbb5a1d9976f999712b612ca1395ea980bbcb04f98d36471f2cde5f0554"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/comments",
+      "specRevision": "1.0.0",
+      "contract": "sha256:6a5299d94a969aed198921460d5470800a813c72e777a72b5c98b5df00699234"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/comments",
+      "specRevision": "1.0.0",
+      "contract": "sha256:1e56972472054c65a2265c96355cdd9328e5cf7dd55639da20afe3af170aaa17"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/data_sources/{data_source_id}",
+      "specRevision": "1.0.0",
+      "contract": "sha256:59607008719ca48177a40a7341b8f3045455b1f1239f70a51a4613a9ac70fc92"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/data_sources/{data_source_id}/query",
+      "specRevision": "1.0.0",
+      "contract": "sha256:2d1323e215c611c4b204dc6a7098885bb275eb3e6c4a76cb2bbce9eb93b1371f"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/databases/{database_id}",
+      "specRevision": "1.0.0",
+      "contract": "sha256:18ae68f9522f103c7d5067b678cf43e7c1a40e92c6f54b88e5da979a391c5efc"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/pages",
+      "specRevision": "1.0.0",
+      "contract": "sha256:1a92b9b60f523f119f27457e251cc7b2f06b4c884864f0281c911e38c1a95f17"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/pages/{page_id}",
+      "specRevision": "1.0.0",
+      "contract": "sha256:62886b88f7123a1654b7a3e925b45e264fcf82d6f0fa4479b70b58f42be9d27e"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v1/pages/{page_id}",
+      "specRevision": "1.0.0",
+      "contract": "sha256:dd3071a82ccd2724be92315a8037e3003056f49acbf0d5cb5830fece7d5b1811"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/pages/{page_id}/properties/{property_id}",
+      "specRevision": "1.0.0",
+      "contract": "sha256:8ff6676783cec8a8425443be8b170777dbc0c28e5a26e43d16177275724fff6b"
+    },
+    {
+      "method": "POST",
+      "path": "/v1/search",
+      "specRevision": "1.0.0",
+      "contract": "sha256:ea8c49ee3c14c10d1e0cde66ba75a863fa0484f770173112a789759c0aae9b62"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users",
+      "specRevision": "1.0.0",
+      "contract": "sha256:ff63a06e141f18982bdd55b0357094a71012c2c02729d88dc1599a4d8780917e"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/users/me",
+      "specRevision": "1.0.0",
+      "contract": "sha256:2c880fea11f3a5dc77387c618f5a6a8d59d11f9b7a6fa782fb22fc3b11e35ae0"
+    }
+  ]
+}

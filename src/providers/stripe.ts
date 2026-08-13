@@ -117,10 +117,14 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
  * makes the classification the connector applies and the drift check that runs
  * beside it the same fact (P13). No schema digests yet — no release has read
  * Stripe's live schemas and written them down, and an invented digest would
- * report a change that never happened
+ * report a change that never happened. `npm run drift:check -- --record` reads
+ * them from a live account and prints the block to paste in
  * ([#351](https://github.com/zackbart/connecta/issues/351)).
+ *
+ * Exported because the maintainer-run check compares against this manifest and
+ * *names* what moved, which the runtime check deliberately cannot.
  */
-const VETTED_CATALOG = vettedCatalog({
+export const STRIPE_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,
 });
@@ -269,5 +273,5 @@ export function stripe(id: string, options: StripeOptions): Connector {
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
   });
-  return withVettedCatalog(connector, VETTED_CATALOG);
+  return withVettedCatalog(connector, STRIPE_VETTED_CATALOG);
 }

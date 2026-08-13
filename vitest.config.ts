@@ -61,6 +61,11 @@ export const NODE_ONLY_SUITES = [
     reason: "spawns the Node documentation checker against filesystem fixtures",
   },
   {
+    file: "test/drift-check.test.ts",
+    reason:
+      "spawns the Node maintainer drift checker against filesystem fixtures",
+  },
+  {
     file: "test/file-storage.test.ts",
     reason: "exercises the Node filesystem storage adapter",
   },

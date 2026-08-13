@@ -115,6 +115,13 @@ is rewritten; until then the row waits with the guide.
 - **CHANGELOG.** Each release opens with a narrative paragraph — what this
   release is, what breaks, what a deployment can ignore — then
   `### Added` / `### Changed` / `### Fixed`.
+- **Provider drift.** Before tagging a release, run `npm run drift:check` with
+  local provider credentials exported. It diffs each hosted-MCP catalog against
+  its vetted manifest and each hand-written provider's touched endpoints against
+  the provider's published OpenAPI document. Findings are read by a human and
+  become GitHub issues — no credential goes near CI, and nothing files itself.
+  See
+  [`documentation/provider-conventions.md`](./documentation/provider-conventions.md#the-maintainer-run-drift-check).
 - **Releases.** `npm run release:check`, tag `v<version>` matching
   `package.json` exactly (the publish workflow verifies this and fails
   otherwise), and publishing fires on GitHub **Release publication**, not on the

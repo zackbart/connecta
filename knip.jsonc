@@ -25,9 +25,9 @@
     "*.ts"
   ],
   "ignoreDependencies": [
-    // Loaded by the QuickJS parent when it forks a source-tree child, and the
-    // runner the Node deployment template uses locally and in its container.
-    "tsx",
+    // `tsx` needed an exemption until `drift:check` named it in a script: its
+    // other uses — the forked QuickJS child, the Node template's runner — are
+    // ones knip cannot see. Delete that script and it needs the exemption back.
     // Deployment CLI and the schema provider for examples/worker/wrangler.jsonc.
     "wrangler"
   ]
