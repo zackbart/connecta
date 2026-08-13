@@ -1011,6 +1011,9 @@ describe("status UI", () => {
     }
     const clerkTag = scriptTags.find((tag) => tag.includes("data-clerk"));
     expect(clerkTag).toContain(`nonce="${nonce}"`);
+    // The later inline bundle calls boot immediately. Keeping this loader
+    // blocking makes its success or failure settle before that check runs.
+    expect(clerkTag).not.toContain(" defer");
   });
 
   it("/ui never fetches its sign-in loader from a non-https origin", async () => {

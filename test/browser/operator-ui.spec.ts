@@ -8,6 +8,9 @@ import {
 } from "../../src/ui.js";
 
 const TOKEN = "browser-operator-token";
+const CLERK_ORIGIN = "https://clerk.example.test";
+const CLERK_LOADER =
+  `${CLERK_ORIGIN}/npm/@clerk/clerk-js@6/dist/clerk.browser.js`;
 
 interface RecordedRequest {
   method: string;
@@ -32,6 +35,8 @@ let requests: RecordedRequest[] = [];
 let faults = new Map<string, string>();
 /** A deployment that has been stood up but not yet used. */
 let emptyDeployment = false;
+let clerkLoaderFails = false;
+let clerkLoaderRequests: string[] = [];
 
 function data(): UiData {
   return {
@@ -123,6 +128,56 @@ test.beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", "http://127.0.0.1");
     const method = request.method ?? "GET";
+
+    if (method === "GET" && url.pathname === "/clerk-loader") {
+      clerkLoaderRequests.push(url.pathname);
+      if (clerkLoaderFails) {
+        response.writeHead(503, { "Content-Type": "text/plain" });
+        response.end("unavailable");
+      } else {
+        response.writeHead(302, { Location: "/clerk-loader-6.99.0" });
+        response.end();
+      }
+      return;
+    }
+    if (method === "GET" && url.pathname === "/clerk-loader-6.99.0") {
+      clerkLoaderRequests.push(url.pathname);
+      response.writeHead(200, {
+        "Content-Type": "application/javascript; charset=utf-8",
+      });
+      response.end(`
+        window.__clerkLoaderEvents = ["loader"];
+        window.Clerk = {
+          user: { id: "user_browser" },
+          session: {
+            id: "session_browser",
+            getToken: async () => ${JSON.stringify(TOKEN)},
+          },
+          load: async () => window.__clerkLoaderEvents.push("load"),
+          addListener: () => {},
+          redirectToSignIn: () => {},
+          signOut: async () => {},
+        };
+      `);
+      return;
+    }
+    if (method === "GET" && url.pathname === "/clerk") {
+      response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      // Production only permits an HTTPS Clerk origin. This HTTP-only fixture
+      // keeps the generated tag and rewrites its transport target to the local
+      // server so Chromium follows a real redirect without external network.
+      response.end(
+        renderUiHtml(
+          {
+            kind: "clerk",
+            publishableKey: "pk_test_browser",
+            frontendApiUrl: CLERK_ORIGIN,
+          },
+          `${origin}/mcp`,
+        ).replace(CLERK_LOADER, `${origin}/clerk-loader`),
+      );
+      return;
+    }
 
     const page = operatorPageForPath(url.pathname);
     if (method === "GET" && page) {
@@ -293,6 +348,8 @@ test.beforeEach(() => {
   requests = [];
   faults = new Map();
   emptyDeployment = false;
+  clerkLoaderFails = false;
+  clerkLoaderRequests = [];
 });
 
 async function openAuthenticated(
@@ -305,6 +362,34 @@ async function openAuthenticated(
   await page.goto(origin + path);
   await expect(page.locator("#app")).toBeVisible();
 }
+
+test("waits for Clerk's redirected loader before booting", async ({ page }) => {
+  await page.goto(origin + "/clerk");
+
+  expect(clerkLoaderRequests).toEqual([
+    "/clerk-loader",
+    "/clerk-loader-6.99.0",
+  ]);
+  expect(await page.evaluate("window.__clerkLoaderEvents")).toEqual([
+    "loader",
+    "load",
+  ]);
+  await expect(page.getByText("CRM")).toBeVisible();
+});
+
+test("reports a real Clerk loader failure", async ({ page }) => {
+  clerkLoaderFails = true;
+
+  await page.goto(origin + "/clerk");
+
+  await expect(page.locator("#err")).toHaveText(
+    "Clerk could not load. Check your network and try again.",
+  );
+  expect(
+    requests.filter((request) => request.path === "/ui/data"),
+  ).toHaveLength(0);
+  expect(clerkLoaderRequests).toEqual(["/clerk-loader"]);
+});
 
 test("keeps the shell open and loads private data only after authentication", async ({
   page,
