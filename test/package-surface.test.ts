@@ -18,6 +18,45 @@ const packageJson = JSON.parse(
   publishConfig?: { access?: string };
 };
 
+// Enough semver to answer "is this version inside this caret range", which is
+// the only shape the manifest's peer ranges use. Pulling `semver` in to ask a
+// one-line question would put a dependency in the gate that guards the
+// dependency list.
+function satisfiesCaretRange(version: string, range: string): boolean {
+  const parse = (value: string) => {
+    const match = /^(\d+)\.(\d+)\.(\d+)/.exec(value.trim());
+    if (!match) throw new Error(`Unparseable semver: ${value}`);
+    return [Number(match[1]), Number(match[2]), Number(match[3])] as const;
+  };
+  const compare = (left: readonly number[], right: readonly number[]) => {
+    for (let index = 0; index < 3; index += 1) {
+      if (left[index] !== right[index]) {
+        return (left[index] ?? 0) < (right[index] ?? 0) ? -1 : 1;
+      }
+    }
+    return 0;
+  };
+  const candidate = parse(version);
+  return range.split("||").some((arm) => {
+    const trimmed = arm.trim();
+    if (!trimmed.startsWith("^")) {
+      throw new Error(`Only caret ranges are supported here: ${trimmed}`);
+    }
+    const [major, minor, patch] = parse(trimmed.slice(1));
+    // Caret on a 0.x line only widens the rightmost non-zero component.
+    const ceiling =
+      major > 0
+        ? [major + 1, 0, 0]
+        : minor > 0
+          ? [0, minor + 1, 0]
+          : [0, 0, patch + 1];
+    return (
+      compare(candidate, [major, minor, patch]) >= 0 &&
+      compare(candidate, ceiling) < 0
+    );
+  });
+}
+
 describe("public package boundary", () => {
   it("is configured as a public package that ships built output", () => {
     expect(packageJson.private).not.toBe(true);
@@ -146,6 +185,51 @@ describe("public package boundary", () => {
       "quickjs-runtime.ts",
       "quickjs.ts",
     ]);
+  });
+
+  it("keeps the Workers executor an optional peer with a published range", () => {
+    // Every Cloudflare deployment installs `@cloudflare/codemode` by hand, and
+    // until #376 the only range anywhere in the artifact was a devDependency
+    // nobody who installs the package can read. A declared optional peer makes
+    // npm answer the question — silence when the version is one this release
+    // supports, an ERESOLVE the consumer can act on when it is not — while the
+    // optional flag keeps it out of a default install exactly like the other
+    // two heavyweight peers.
+    expect(packageJson.dependencies).not.toHaveProperty("@cloudflare/codemode");
+    expect(packageJson.peerDependenciesMeta?.["@cloudflare/codemode"]).toEqual({
+      optional: true,
+    });
+    const published = packageJson.peerDependencies?.["@cloudflare/codemode"];
+    expect(published).toBeTruthy();
+    // A published range the repository does not develop against is a claim
+    // nothing checks, so the dev pin must be one of the range's own arms: the
+    // two cannot drift without this line failing.
+    const arms = (published ?? "").split("||").map((arm) => arm.trim());
+    expect(arms).toContain(packageJson.devDependencies?.["@cloudflare/codemode"]);
+    // …and the version actually resolved has to sit inside it, which is the
+    // half a range string cannot state on its own.
+    const lock = JSON.parse(
+      readFileSync(join(ROOT, "package-lock.json"), "utf8"),
+    ) as { packages?: Record<string, { version?: string }> };
+    const resolved = lock.packages?.["node_modules/@cloudflare/codemode"]
+      ?.version;
+    expect(resolved, "@cloudflare/codemode is not in the lockfile").toBeTruthy();
+    expect(
+      satisfiesCaretRange(resolved ?? "", published ?? ""),
+      `locked @cloudflare/codemode ${resolved} is outside the published ` +
+        `peer range ${published}`,
+    ).toBe(true);
+    // A range in the manifest and a different one in the prose a deployment
+    // follows is the same drift one file over.
+    for (const doc of [
+      join("examples", "worker", "README.md"),
+      join("documentation", "operations.md"),
+    ]) {
+      expect(
+        readFileSync(join(ROOT, doc), "utf8"),
+        `${doc} does not state the published @cloudflare/codemode range`,
+      ).toContain(published);
+    }
   });
 
   it("publishes every provider independently from the root entry", async () => {

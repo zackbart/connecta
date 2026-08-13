@@ -60,9 +60,15 @@ things, because two of them are not part of connecta and never install with it:
 npm install @zackbart/connecta @cloudflare/codemode @clerk/backend
 ```
 
-`@cloudflare/codemode` is the executor behind `execute_code`, and
-`@clerk/backend` is the optional peer behind `@zackbart/connecta/auth/clerk` —
-which `src/index.ts` imports at the top level, so wrangler must resolve it at
+Both are optional peers of `@zackbart/connecta` — declared in its manifest,
+never installed with it, and each carrying the range this release supports.
+`@cloudflare/codemode` is the executor behind `execute_code`, published as
+`^0.4.4 || ^0.5.0`: install a version inside that and npm stays quiet, install
+one outside and npm says so at install time instead of leaving a Worker to
+discover the skew in production ([#376](https://github.com/zackbart/connecta/issues/376)).
+
+`@clerk/backend` is the peer behind `@zackbart/connecta/auth/clerk`, which
+`src/index.ts` imports at the top level, so wrangler must resolve it at
 build time. Miss it and the build stops at
 `Could not resolve "@clerk/backend"`, which is a missing peer rather than a
 broken example. Drop `clerkAuth` from `auth` if this deployment has no operator

@@ -101,6 +101,21 @@ fail-closed default and ships something quieter and wrong.
   because nothing calls the endpoint, not because a maintainer signed off on
   calling it anyway.
 
+### Added
+
+- **`@cloudflare/codemode` is a declared optional peer.** Every Workers
+  deployment installs the executor behind `execute_code` by hand, and until now
+  the only version range anywhere was a devDependency no consumer can read — a
+  fresh install resolved a minor ahead of what this repository tests, silently.
+  The manifest now publishes `^0.4.4 || ^0.5.0` for it, optional like
+  `@clerk/backend` and `quickjs-emscripten`, so a supported version installs in
+  silence and an unsupported one stops the install with something to act on
+  instead of becoming skew a Worker discovers in production. It still installs
+  with nothing: a default `npm install @zackbart/connecta` pulls no executor,
+  and the package smoke proves that, both halves of the range behavior, and
+  that the version this repository develops against stays inside the range it
+  publishes (#376).
+
 ### Fixed
 
 - **A search for a connector's own name stops claiming the deployment has no

@@ -41,13 +41,20 @@ function run(command, args, cwd, env = {}) {
   });
 }
 
-function expectFailure(command, args, cwd, expected, env = {}) {
+function expectFailure(
+  command,
+  args,
+  cwd,
+  expected,
+  env = {},
+  timeout = 10_000,
+) {
   const result = spawnSync(command, args, {
     cwd,
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     env: { ...process.env, ...env },
-    timeout: 10_000,
+    timeout,
     killSignal: "SIGKILL",
   });
   const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`;
@@ -63,6 +70,17 @@ function expectFailure(command, args, cwd, expected, env = {}) {
         `error=${String(result.error)} output=${output.slice(-2_000)}`,
     );
   }
+}
+
+// Release-order comparison over `major.minor.patch`, which is all the peer
+// ranges and the registry's version list need.
+function compareVersions(left, right) {
+  const parse = (value) => value.split("-")[0].split(".").map(Number);
+  const [a, b] = [parse(left), parse(right)];
+  for (let index = 0; index < 3; index += 1) {
+    if (a[index] !== b[index]) return a[index] < b[index] ? -1 : 1;
+  }
+  return 0;
 }
 
 async function freePort() {
@@ -799,7 +817,14 @@ try {
   if (!/^\s+executor: Executor;/m.test(publicConfig)) {
     throw new Error("Packed ConnectaConfig does not require executor");
   }
-  for (const dependency of ["@clerk/backend", "quickjs-emscripten"]) {
+  for (const dependency of [
+    "@clerk/backend",
+    // Declaring the Workers executor as an optional peer (#376) publishes a
+    // range without putting the package in anyone's install; a default
+    // install still resolves no executor at all.
+    "@cloudflare/codemode",
+    "quickjs-emscripten",
+  ]) {
     if (existsSync(join(work, "node_modules", dependency))) {
       throw new Error(`Optional peer ${dependency} was installed with core`);
     }
@@ -823,6 +848,58 @@ try {
     work,
   );
   run(process.execPath, ["optional.mjs"], work);
+
+  // A Workers deployment installs its executor by hand, so the peer range in
+  // the manifest is the only thing that can tell it whether this release
+  // supports the version it picked (#376). Prove both directions against the
+  // registry rather than trusting the declaration: an unsupported version has
+  // to stop the install, and a supported one has to install in silence.
+  const codemodeRange = rootManifest.peerDependencies?.["@cloudflare/codemode"];
+  if (!codemodeRange) {
+    throw new Error(
+      "@cloudflare/codemode is not declared as an optional peer, so a Workers " +
+        "consumer has no published range to install against",
+    );
+  }
+  const published = JSON.parse(
+    run(npm, ["view", "@cloudflare/codemode", "versions", "--json"], work),
+  );
+  const floor = codemodeRange
+    .split("||")
+    .map((arm) => arm.trim().replace(/^\^/, ""))
+    .sort(compareVersions)[0];
+  const unsupported = (Array.isArray(published) ? published : [published])
+    .filter(
+      (version) => !version.includes("-") && compareVersions(version, floor) < 0,
+    )
+    .sort(compareVersions)
+    .pop();
+  if (!unsupported) {
+    throw new Error(
+      `No published @cloudflare/codemode version sits below ${floor}, so the ` +
+        "unsupported-install half of the range check cannot run",
+    );
+  }
+  expectFailure(
+    npm,
+    ["install", "--ignore-scripts", `@cloudflare/codemode@${unsupported}`],
+    work,
+    "ERESOLVE",
+    {},
+    120_000,
+  );
+  run(
+    npm,
+    [
+      "install",
+      "--ignore-scripts",
+      `@cloudflare/codemode@${rootManifest.devDependencies["@cloudflare/codemode"]}`,
+    ],
+    work,
+  );
+  if (!existsSync(join(work, "node_modules", "@cloudflare", "codemode"))) {
+    throw new Error("A supported @cloudflare/codemode version did not install");
+  }
 
   console.log(
     `package smoke passed (${packed.entryCount} files, ${packed.size} bytes)`,
