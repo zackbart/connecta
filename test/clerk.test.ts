@@ -710,6 +710,56 @@ describe("clerkAuth inbound auth", () => {
     });
   });
 
+  // A key that cannot yield a Frontend API origin is a structural mistake, and
+  // ethos.md says those throw at construction. Before this check the failure
+  // was `atob`'s DOMException raised from inside the returned object: on the
+  // Workers shape, which builds per request, that made every route — /health
+  // included — a 500 whose stack named base64, not the misconfigured variable.
+  describe("publishableKey validation", () => {
+    const construct = (key: unknown) =>
+      clerkAuth({
+        publishableKey: key as string,
+        secretKey: "sk_test_fake",
+        publicUrl: BASE,
+      });
+
+    it.each([
+      // What examples/worker/wrangler.jsonc ships unedited.
+      ["the shipped placeholder", "pk_test_replace-me"],
+      ["an empty key", ""],
+      ["a non-string key", undefined],
+      ["a key with no pk_ prefix", btoa("clerk.example.com$")],
+      ["a key with the wrong environment prefix", "pk_dev_Y2xlcmsuZGV2JA=="],
+      ["a key whose payload is not base64", "pk_live_not base64!"],
+      // Decodable, but nothing a Frontend API could live at.
+      ["a key that decodes to a non-domain", `pk_test_${btoa("localhost$")}`],
+      ["a key that decodes to a URL", `pk_test_${btoa("https://clerk.dev/")}`],
+      // The commonest paste error of all.
+      ["a secret key in the publishable slot", "sk_test_deadbeef"],
+    ])("refuses %s at construction", (_label, key) => {
+      expect(() => construct(key)).toThrowError(
+        /^clerkAuth: `publishableKey`/,
+      );
+      // Never a DOMException, and never the value itself in the log line.
+      expect(() => construct(key)).not.toThrowError(/atob|base64-encoded data/);
+      if (typeof key === "string" && key !== "") {
+        expect(() => construct(key)).not.toThrowError(
+          new RegExp(key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")),
+        );
+      }
+    });
+
+    it("accepts both environments and pads or trims the encoded domain", () => {
+      for (const prefix of ["pk_test_", "pk_live_"]) {
+        // Clerk terminates the encoded domain with `$`; some keys omit it.
+        for (const encoded of ["clerk.example.com$", "clerk.example.com"]) {
+          const auth = construct(`${prefix}${btoa(encoded)}`);
+          expect(auth.activityActorNamespace).toBe("https://clerk.example.com");
+        }
+      }
+    });
+  });
+
   it("accepts a session token whose azp matches this deployment", async () => {
     mocks.authenticateRequest.mockResolvedValue({
       toAuth: () => ({

@@ -53,11 +53,55 @@ function tokenShape(request: Request): string {
   return "other";
 }
 
-/** Clerk Frontend API origin, derived from pk_(test|live)_<b64 domain>. */
+/**
+ * Clerk Frontend API origin, derived from pk_(test|live)_<b64 domain>.
+ *
+ * The key is operator config, and a key that cannot yield an origin is a
+ * structural mistake: it throws here, at construction, in the same voice as the
+ * `allowedDomains` checks. Left unvalidated, `atob` raises a bare
+ * `InvalidCharacterError` from inside the returned object — which, on a
+ * deployment that builds per request (the Workers shape), turns every route
+ * including `/health` into a 500 with a stack that names base64 rather than the
+ * environment variable the operator has to fix.
+ *
+ * The rejected value is never quoted back. A publishable key is public, but the
+ * commonest way to land here is pasting the *secret* key into the publishable
+ * slot, and a startup error is a log line.
+ */
 function fapiUrl(publishableKey: string): string {
-  const key = publishableKey.replace(/^pk_(test|live)_/, "");
-  const decoded = atob(key).replace(/\$$/, "");
-  return `https://${decoded}`;
+  const shape =
+    " Copy the publishable key from the Clerk dashboard: `pk_test_` or " +
+    "`pk_live_` followed by the base64-encoded Frontend API domain.";
+  if (typeof publishableKey !== "string" || publishableKey === "") {
+    throw new Error(
+      "clerkAuth: `publishableKey` is missing or not a string." + shape,
+    );
+  }
+  const encoded = /^pk_(?:test|live)_([A-Za-z0-9+/=]+)$/.exec(
+    publishableKey,
+  )?.[1];
+  if (encoded === undefined) {
+    throw new Error(
+      "clerkAuth: `publishableKey` is not a Clerk publishable key." + shape,
+    );
+  }
+  let decoded: string;
+  try {
+    decoded = atob(encoded);
+  } catch {
+    throw new Error(
+      "clerkAuth: `publishableKey` does not carry decodable base64." + shape,
+    );
+  }
+  // Clerk terminates the encoded domain with `$`; everything else is the host.
+  const domain = decoded.replace(/\$$/, "");
+  if (!isDomain(domain)) {
+    throw new Error(
+      "clerkAuth: `publishableKey` does not decode to a Frontend API domain." +
+        shape,
+    );
+  }
+  return `https://${domain}`;
 }
 
 const GATE_ALLOWED_TTL_MS = 60 * 1000;
@@ -239,6 +283,9 @@ function emailDomain(email: string): string | null {
  */
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   assertNoRetiredToolkitOptions("clerkAuth", opts);
+  // Before the Clerk client, so a malformed key fails as a connecta
+  // configuration error rather than however the SDK happens to treat it.
+  const frontendApiUrl = fapiUrl(opts.publishableKey);
   const clerk = createClerkClient({
     secretKey: opts.secretKey,
     publishableKey: opts.publishableKey,
@@ -426,12 +473,12 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
   return {
     kind: "clerk",
-    activityActorNamespace: fapiUrl(opts.publishableKey),
+    activityActorNamespace: frontendApiUrl,
     activityActorLabel: resolveActivityLabel,
     uiAuth: {
       kind: "clerk",
       publishableKey: opts.publishableKey,
-      frontendApiUrl: fapiUrl(opts.publishableKey),
+      frontendApiUrl,
       ...(opts.signInUrl ? { signInUrl: opts.signInUrl } : {}),
       ...(opts.signUpUrl ? { signUpUrl: opts.signUpUrl } : {}),
     },
@@ -452,7 +499,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
         return Response.json(
           {
             resource: `${base}/mcp`,
-            authorization_servers: [fapiUrl(opts.publishableKey)],
+            authorization_servers: [frontendApiUrl],
             bearer_methods_supported: ["header"],
             scopes_supported: scopes,
           },
@@ -463,7 +510,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       if (pathname === "/.well-known/oauth-authorization-server") {
         try {
           const upstream = await fetch(
-            `${fapiUrl(opts.publishableKey)}/.well-known/oauth-authorization-server`,
+            `${frontendApiUrl}/.well-known/oauth-authorization-server`,
           );
           if (!upstream.ok) {
             return Response.json(
