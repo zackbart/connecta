@@ -1761,32 +1761,11 @@ function buildTools(
         return args["raw"] === true ? result : projectZone(result);
       },
     },
-    {
-      name: "list_zone_settings",
-      description:
-        "List the effective settings for a zone, including each setting's current value and whether the plan allows editing it.",
-      annotations: readOnly,
-      inputSchema: {
-        type: "object",
-        properties: {
-          zoneId: scopeProperty("zoneId", scope.zoneId),
-        },
-        required: scopeRequired("zoneId", scope.zoneId),
-        additionalProperties: false,
-      },
-      outputSchema: listOutputSchema("settings", OPEN_OBJECT_OUTPUT_SCHEMA),
-      handler: async (args: JsonRecord, ctx) => {
-        const { result, resultInfo } = await callCloudflare(
-          send,
-          {
-            method: "GET",
-            path: `/zones/${encodePathSegment(zoneArg(args))}/settings`,
-          },
-          ctx,
-        );
-        return { settings: asArray(result), page: pageInfo(resultInfo) };
-      },
-    },
+    // There is deliberately no bulk zone-settings read here. Cloudflare
+    // publishes `GET /zones/{zone_id}/settings` as deprecated (#361), the
+    // per-setting operations below are not, and the tool that wrapped the bulk
+    // read projected nothing. See the Cloudflare guide's "What the named
+    // surface deliberately leaves out".
     {
       name: "get_zone_setting",
       description:
@@ -1799,7 +1778,8 @@ function buildTools(
           settingId: {
             type: "string",
             minLength: 1,
-            description: "Cloudflare zone setting id from list_zone_settings.",
+            description:
+              "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
           },
         },
         required: [...scopeRequired("zoneId", scope.zoneId), "settingId"],
@@ -1830,7 +1810,8 @@ function buildTools(
           settingId: {
             type: "string",
             minLength: 1,
-            description: "Cloudflare zone setting id from list_zone_settings.",
+            description:
+              "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
           },
           value: {
             type: ["string", "number", "boolean", "array"],
@@ -3820,7 +3801,7 @@ Account purpose: ${purpose}
 - Prefer a named tool: its schema is complete, projected, and enough to call it without provider documentation. For an operation without a named tool, use \`cloudflare_api_get\` for GET, \`cloudflare_api_mutate\` for JSON POST/PUT/PATCH/DELETE, or \`cloudflare_api_upload\` for raw and multipart content. Raw tools take a path below \`/client/v4\`; their argument schemas are complete, but endpoint-specific query, header, and body fields come from Cloudflare's API reference. Use \`headers\` for endpoint-specific controls such as \`cf-r2-jurisdiction\`, \`Range\`, \`If-None-Match\`, and Cloudflare product metadata. \`Authorization\`, \`Cookie\`, \`Host\`, \`Content-Length\`, \`Content-Type\`, and \`Transfer-Encoding\` are connector-owned and refused: authentication, host, content type, and request framing are not the caller's to set.
 - The raw tools cover the wider control plane without weakening routing: GET is explicitly read-only; every mutation and upload is destructive and must cross the host's approval boundary. The configured Cloudflare credential remains the hard provider-side permission boundary. Absolute URLs, traversal, and query strings embedded in \`path\` are refused locally.
 - Useful raw paths include \`/accounts/{accountId}/images/v1\` (Images), \`/accounts/{accountId}/stream\` (Stream), \`/zones/{zoneId}/email/routing/rules\` (Email Routing), \`/accounts/{accountId}/d1/database\` (D1), and \`/accounts/{accountId}/queues\` (Queues). On GET, use \`responseType: "text"\` or \`"base64"\` for non-JSON content. Direct-upload endpoints can issue upload URLs; \`cloudflare_api_upload\` can also send explicit text, base64 bytes, or multipart fields/files.
-- Two R2 areas are deliberately unnamed. Read a bucket's CORS policy with \`get_r2_cors\`, then change it with \`cloudflare_api_mutate\` — \`PUT\` or \`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors\`, rule fields per Cloudflare's reference — and read account storage totals with \`cloudflare_api_get\` at \`/accounts/{accountId}/r2/metrics\`.
+- Three areas are deliberately unnamed. Read a bucket's CORS policy with \`get_r2_cors\`, then change it with \`cloudflare_api_mutate\` — \`PUT\` or \`DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors\`, rule fields per Cloudflare's reference — and read account storage totals with \`cloudflare_api_get\` at \`/accounts/{accountId}/r2/metrics\`. Zone settings are read one at a time with \`get_zone_setting\`: Cloudflare deprecated the bulk \`/zones/{zoneId}/settings\` read and published no replacement for it, so reach for the whole set through \`cloudflare_api_get\` only when one setting genuinely will not do.
 - Lists paginate with \`page\` and \`perPage\` and return a \`page\` object; request the next page only when \`page.hasMore\` is true. \`list_zone_rulesets\`, \`list_r2_buckets\`, \`list_r2_objects\`, and \`list_kv_keys\` page by cursor instead: pass \`cursor\`, continue while \`nextCursor\` is present, and expect no \`page\` object. Their schemas say so too. \`list_worker_scripts\` is unpaginated.
 - Results are projected to the fields that identify and describe a resource. Pass \`raw: true\` on a read when you genuinely need a field the projection drops.
 - ${authenticationLine}

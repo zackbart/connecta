@@ -6,10 +6,13 @@ All notable changes to this package are documented here.
 
 One code joins the failure taxonomy with a rule for when a connector may use it,
 alongside a discovery answer that told a plain lie, packaging housekeeping found
-by the pre-release smoke gauntlet, and a rule that described itself too
-strictly. No wire shape changes and no existing code is reclassified except
-Cloudflare's 404; a deployment that writes no `api()` connectors and branches on
-no error code upgrades without reading further.
+by the pre-release smoke gauntlet, a rule that described itself too strictly,
+and one provider tool that Cloudflare deprecated out from under us. No wire
+shape changes and no existing code is reclassified except Cloudflare's 404;
+`list_zone_settings` is gone, while the per-setting operations it sat beside are
+the supported ones and are untouched. A deployment that writes no `api()`
+connectors, branches on no error code, and never asked an agent for a whole
+zone's settings in one call upgrades without reading further.
 
 ### Added
 
@@ -41,6 +44,20 @@ no error code upgrades without reading further.
   `connector_call_failed` to detect an unknown zone or account id should read
   `not_found` instead; retryability, the message, and its pointer to
   `list_zones` / `list_accounts` are unchanged (#373).
+- `cloudflare()` no longer names a bulk zone-settings read.
+  `GET /zones/{zoneId}/settings` and its `PATCH` sibling are published as
+  `deprecated: true`, Cloudflare offers no bulk replacement, and the tool that
+  wrapped the read projected nothing — it took a zone id and grew the payload
+  by wrapping an unpaginated array in a page object. Read one setting with
+  `get_zone_setting` and write one with `update_zone_setting`, both on the
+  supported `/zones/{zoneId}/settings/{settingId}` operations. An operator who
+  still wants the whole set can name the deprecated path explicitly through
+  `cloudflare_api_get`. The named surface is 47 tools plus the three escape
+  hatches ([#361](https://github.com/zackbart/connecta/issues/361)).
+- The Cloudflare touched-endpoint manifest drops the deprecated row with the
+  tool, so `npm run drift:check -- --specs` is quiet about zone settings
+  because nothing calls the endpoint, not because a maintainer signed off on
+  calling it anyway.
 
 ### Fixed
 

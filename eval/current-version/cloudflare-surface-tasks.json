@@ -4,7 +4,6 @@
     { "tool": "list_accounts", "query": "which cloudflare accounts can this token reach" },
     { "tool": "list_zones", "query": "find the id for the domain example.com" },
     { "tool": "get_zone", "query": "show the plan and name servers for one domain" },
-    { "tool": "list_zone_settings", "query": "what is currently configured on this domain" },
     { "tool": "get_zone_setting", "query": "is always use https turned on" },
     { "tool": "update_zone_setting", "query": "turn on always use https" },
     { "tool": "list_zone_rulesets", "query": "what waf and transform phases exist here" },
@@ -60,8 +59,9 @@
       "argsNote": "Exactly one purge variant per call, and the variant is not in the required list, so the probe picks one."
     }
   ],
-  "retiredNote": "Tasks whose tool the #350 verdicts pruned. Kept because the report has to show the task that produced the removal, not just the removal. The harness ignores them; deleting them would delete the evidence.",
+  "retiredNote": "Tasks whose tool a surface verdict pruned — the #350 verdicts, and #361 for the deprecated bulk zone-settings read. Kept because the report has to show the task that produced the removal, not just the removal. The harness ignores them; deleting them would delete the evidence.",
   "retired": [
+    { "tool": "list_zone_settings", "query": "what is currently configured on this domain" },
     { "tool": "get_r2_metrics", "query": "how much data and how many objects are in r2" },
     { "tool": "set_r2_cors", "query": "allow browser uploads from a new origin on this bucket" },
     { "tool": "delete_r2_cors", "query": "stop allowing any browser origin on this bucket" }

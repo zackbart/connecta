@@ -276,7 +276,6 @@ describe("cloudflare() tool surface", () => {
       "list_worker_deployments",
       "list_worker_scripts",
       "list_zone_rulesets",
-      "list_zone_settings",
       "list_zones",
       "purge_cache",
       "purge_pages_build_cache",
@@ -295,7 +294,6 @@ describe("cloudflare() tool surface", () => {
       "list_accounts",
       "list_zones",
       "get_zone",
-      "list_zone_settings",
       "get_zone_setting",
       "list_zone_rulesets",
       "get_zone_ruleset",
@@ -400,6 +398,36 @@ describe("cloudflare() tool surface", () => {
     expect(urlOf(0).pathname).toBe(
       "/client/v4/accounts/acct-1/r2/buckets/assets/cors",
     );
+  });
+
+  it("names no tool over Cloudflare's deprecated bulk zone-settings read", async () => {
+    // #361: Cloudflare publishes GET /zones/{zone_id}/settings as deprecated
+    // and offers no bulk replacement, so the read the tool wrapped is now only
+    // reachable by a caller who names it. Pin the absence, the supported
+    // per-setting route that survives, the guide line that says where the
+    // capability went, and — the part a rename would quietly break — that no
+    // surviving schema still points an agent at a tool that is gone.
+    const tools = await connection().listTools(contextWithToken());
+    const names = tools.map((tool) => tool.name);
+    expect(names).not.toContain("list_zone_settings");
+    expect(names).toContain("get_zone_setting");
+    for (const tool of tools) {
+      expect(
+        JSON.stringify(tool),
+        `${tool.name} still refers an agent to list_zone_settings`,
+      ).not.toContain("list_zone_settings");
+    }
+
+    const { content: guide } = connection().usageGuide as { content: string };
+    expect(guide).toContain("/zones/{zoneId}/settings");
+
+    stubFetch({ body: { success: true, result: { id: "ssl", value: "full" } } });
+    await connection().callTool(
+      "get_zone_setting",
+      { zoneId: "zone-1", settingId: "ssl" },
+      contextWithToken(),
+    );
+    expect(urlOf(0).pathname).toBe("/client/v4/zones/zone-1/settings/ssl");
   });
 
   it("hand-writes a complete schema for every tool", async () => {
