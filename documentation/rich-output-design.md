@@ -208,4 +208,4 @@ count of what was discarded (`M4`).
 
 The implementation issue carries these as acceptance criteria; the clauses
 fold into `code-mode.md` under a new "Emitted output" section when it closes,
-and the test-map row in `operations.md` lands with the suite.
+and the suite takes its row in the [test map](./operations.md#the-test-map).
