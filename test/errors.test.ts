@@ -12,9 +12,33 @@ describe("ConnectorCallError", () => {
     expect(new ConnectorCallError("unavailable", "x").retryable).toBe(true);
     expect(new ConnectorCallError("auth_required", "x").retryable).toBe(false);
     expect(new ConnectorCallError("invalid_args", "x").retryable).toBe(false);
+    expect(new ConnectorCallError("not_found", "x").retryable).toBe(false);
     expect(new ConnectorCallError("connector_call_failed", "x").retryable).toBe(
       false,
     );
+  });
+
+  it("carries not_found through classification without a recovery envelope", () => {
+    // The point of the code is that a program can branch on it: it survives
+    // classification as itself, non-retryable, with nothing for a caller to
+    // recover — the next move is re-addressing, which only the caller can do.
+    expect(
+      classifyCallError(
+        new ConnectorCallError("not_found", "Zone 4 does not exist."),
+      ),
+    ).toEqual({
+      code: "not_found",
+      message: "Zone 4 does not exist.",
+      retryable: false,
+    });
+    // And it is not something the message heuristic can mint by accident: an
+    // untyped throw whose prose says "not found" is still the generic failure,
+    // because provider prose is never parsed to invent a classification.
+    expect(classifyCallError(new Error("404 not found"))).toEqual({
+      code: "connector_call_failed",
+      message: "404 not found",
+      retryable: false,
+    });
   });
 
   it("carries an optional retryAfterMs and ignores nonsense values", () => {

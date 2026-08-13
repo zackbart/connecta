@@ -222,6 +222,35 @@ convenient reading. A call that can only fail is refused locally as
 `invalid_args` before the round trip. Provider error prose is never parsed to
 invent a classification.
 
+**A downstream 404 is `not_found` — when the provider means it.** The code
+exists because the next move is none of the others': you do not wait, you do
+not send the agent to `authorize_connector`, you do not repair the argument
+object. You re-address — look the id up again, or accept the absence and carry
+on — and a program looping over ids inside `execute_code` can continue past
+`not_found` where `connector_call_failed` would have to abort the run. That
+control-flow difference is the H11 test being met; it is not a label for the
+cause.
+
+The qualifier is the whole rule. Map a status to `not_found` only where the
+provider distinguishes absence from a permission gap. Where it does not —
+Notion returns `object_not_found` both for an object that is gone and for one
+that was never shared with the integration, and will not say which — the honest
+code stays `connector_call_failed` (or `auth_required`, where a credential
+really is the fix) and the message states the ambiguity, exactly as the
+paragraph above requires. Cloudflare is the other side of the pair: a token
+that may not touch a resource is refused with 401 or 403, so its 404 is an
+absence and maps to `not_found`. Neither connector's mapping changed shape when
+the code arrived; one of them changed codes.
+
+Two boundaries. `not_found` is about a resource the *downstream* owns: an
+address connecta cannot resolve is already framed as `unknown_address` or
+`unknown_tool` and never reaches a connector. And it never appears on the
+hosted-MCP proxy path, because `P1` forbids re-shaping downstream framing and
+prose is never parsed to invent a classification — a proxied server's own
+missing-resource error arrives as that server wrote it. The two paths do not
+diverge on the rule; they diverge on who is entitled to apply it, which is the
+same split every other code already has.
+
 *Why:* a misrouted error sends an agent down a recovery path that cannot
 succeed. *Cost:* argument retries.
 

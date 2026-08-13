@@ -344,9 +344,13 @@ function failureFor(
       `Cloudflare rejected the request (HTTP ${status}). ${detail}`,
     );
   }
+  // Cloudflare's 404 is an honest absence: a token that may not touch a
+  // resource is refused with 401 or 403 above, not hidden behind a miss, so
+  // this is the unambiguous case `not_found` exists for — re-address, do not
+  // retry and do not re-authorize.
   if (status === 404) {
     return new ConnectorCallError(
-      "connector_call_failed",
+      "not_found",
       `Cloudflare found no such resource (HTTP 404). ${detail} Confirm the zone or account id with list_zones or list_accounts.`,
     );
   }
