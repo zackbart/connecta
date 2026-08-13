@@ -529,23 +529,39 @@ message naming it rather than reporting an empty catalog as mass removal.
 **Touched endpoints.** A hand-written provider is written against a published
 OpenAPI document and calls a few dozen of its operations, so
 [`scripts/drift/`](../scripts/drift/) commits exactly those: method, path, the
-specification revision a release reviewed the endpoint at, and a digest of that
-endpoint's contract at that revision. `--specs` fetches each provider's
-published document and reports four things per touched endpoint — the path is
-gone, the method is gone, the operation is now deprecated, or its contract
-changed since the recorded revision. Everything else in the document is
-ignored, which is the point: a Cloudflare release that rewrites 2,000
-operations connecta never calls is not news, and a revision bump that left the
-touched contracts alone reports nothing.
+specification revision a release reviewed the endpoint at, whether the
+operation was deprecated at that revision, and a digest of that endpoint's
+contract. `--specs` fetches each provider's published document and reports four
+things per touched endpoint — the path is gone, the method is gone, the
+operation's deprecation changed, or its contract changed since the recorded
+revision. Everything else in the document is ignored, which is the point: a
+Cloudflare release that rewrites 2,000 operations connecta never calls is not
+news, and a revision bump that left the touched contracts alone reports
+nothing.
+
+Deprecation is reported as a *transition*, not a state: a deprecation a
+maintainer has read and recorded stops being news, and an operation that comes
+back off the deprecation list is its own finding. Without that, a single
+reviewed deprecation would fail every release forever, and the check could
+never reach the "no drift" state its exit code is for.
 
 A contract digest covers the parameters, the request body, and the success
 responses, with local `$ref`s inlined so a change inside a shared component is
 visible, and with descriptions, examples, and `x-` extensions stripped so a
-reworded document is not a finding. Two bounds are deliberate: a `$ref` cycle
-stays a reference rather than an infinite walk, and failure responses are
-excluded because an error body is H11's business, mapped from the status.
-`--record` rewrites the manifests from the documents on hand; run it when a
-finding has been reviewed, and read the diff before committing it.
+reworded document is not a finding. Inlining runs before a response's `content`
+is read, because a whole response object is often a reference itself —
+Cloudflare writes several of connecta's touched responses that way — and
+reading through the reference would digest the response contract as nothing at
+all. Two bounds are deliberate: a `$ref` cycle stays a reference rather than an
+infinite walk, and failure responses are excluded because an error body is
+H11's business, mapped from the status. `--record` rewrites the manifests from
+the documents on hand; run it when a finding has been reviewed, and read the
+diff before committing it.
+
+Narrowing is checked against the half being run: `--specs --provider linear`
+and `--hosted --provider notion` exit 2 rather than checking nothing and
+reporting no drift, because a false green from a plausible typo is the one
+failure mode a release-time exit code cannot afford.
 
 **What it never does.** No downstream credential reaches CI. No scheduled job,
 no background traffic in a deployment, no automatic issue filing. A finding is

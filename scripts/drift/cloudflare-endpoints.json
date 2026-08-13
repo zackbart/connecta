@@ -278,18 +278,19 @@
       "method": "GET",
       "path": "/zones/{zone_id}/rulesets",
       "specRevision": "4.0.0",
-      "contract": "sha256:d0233e96aaf3c5d2cc47b9e05277290195304ec4c4be4cb38a0928461a1370c8"
+      "contract": "sha256:f609a5291d8c93e924cd43380f17f4acb49de6d6f529f28db3d7025f5e85649f"
     },
     {
       "method": "GET",
       "path": "/zones/{zone_id}/rulesets/{ruleset_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:49529366c1674e2837440fc916f3f99e32b7009a00358385f0501b3c5e7274a6"
+      "contract": "sha256:c3e9c4a392c0e2697ff4542c59956b00c527758c6467e3d1c4aca1843a81070d"
     },
     {
       "method": "GET",
       "path": "/zones/{zone_id}/settings",
       "specRevision": "4.0.0",
+      "deprecated": true,
       "contract": "sha256:39b769e49810f7e38d232cd74592adf62700fc1792382a03f4b6b6176519cff6"
     },
     {

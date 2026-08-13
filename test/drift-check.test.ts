@@ -15,6 +15,7 @@ interface Endpoint {
   method: string;
   path: string;
   specRevision: string;
+  deprecated?: boolean;
   contract?: string;
 }
 
@@ -317,6 +318,147 @@ describe("maintainer drift check", () => {
       "no hosted credentials are set",
     );
   });
+
+  it("sees through a response written as a $ref into shared components", async () => {
+    const { directory, manifests, specifications } = await workspace(["notion"]);
+    const specification = specifications["notion"]!;
+    const [alpha, beta] = manifests["notion"]!.endpoints as [Endpoint, Endpoint];
+
+    // Both providers' real documents write whole response objects as
+    // references. A digest that reads `.content` off the reference itself sees
+    // nothing at all — every such endpoint digests identically, and a rewritten
+    // component is invisible. Two different components must digest differently.
+    specification["components"] = {
+      schemas: {
+        alpha: { type: "object", properties: { id: { type: "string" } } },
+        beta: { type: "object", properties: { name: { type: "string" } } },
+      },
+      responses: {
+        alpha: {
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/alpha" } },
+          },
+        },
+        beta: {
+          content: {
+            "application/json": { schema: { $ref: "#/components/schemas/beta" } },
+          },
+        },
+      },
+    };
+    for (const [endpoint, component] of [
+      [alpha, "alpha"],
+      [beta, "beta"],
+    ] as const) {
+      specification["paths"][endpoint.path][endpoint.method.toLowerCase()] = {
+        parameters: [{ name: "id", in: "path", schema: { type: "string" } }],
+        responses: { "200": { $ref: `#/components/responses/${component}` } },
+      };
+    }
+    await writeFile(
+      join(directory, "notion-spec.json"),
+      JSON.stringify(specification),
+    );
+    expect(run(directory, ["notion"], ["--record"]).status).toBe(0);
+
+    const recorded: Manifest = JSON.parse(
+      await readFile(join(directory, "notion-endpoints.json"), "utf8"),
+    );
+    const digestFor = (endpoint: Endpoint) =>
+      recorded.endpoints.find(
+        (row) => row.method === endpoint.method && row.path === endpoint.path,
+      )!.contract;
+    expect(digestFor(alpha)).not.toBe(digestFor(beta));
+
+    // A change inside the referenced schema is a change to the contract.
+    specification["components"].schemas.alpha.properties.id = { type: "number" };
+    await writeFile(
+      join(directory, "notion-spec.json"),
+      JSON.stringify(specification),
+    );
+    const result = run(directory, ["notion"], ["--json"]);
+    expect(result.status).toBe(1);
+    expect(findings(result.output, "notion")).toEqual([
+      expect.objectContaining({
+        kind: "contract-changed",
+        method: alpha.method,
+        path: alpha.path,
+      }),
+    ]);
+  });
+
+  it("acknowledges a recorded deprecation and reports the reverse", async () => {
+    const { directory, manifests, specifications } = await workspace(["notion"]);
+    const specification = specifications["notion"]!;
+    const target = manifests["notion"]!.endpoints[0]!;
+    const operationOf = () =>
+      specification["paths"][target.path][target.method.toLowerCase()];
+
+    operationOf().deprecated = true;
+    await writeFile(
+      join(directory, "notion-spec.json"),
+      JSON.stringify(specification),
+    );
+    // The first run reports it — nothing has reviewed it yet — and records it.
+    const first = run(directory, ["notion"], ["--record", "--json"]);
+    expect(first.status).toBe(1);
+    expect(findings(first.output, "notion")).toEqual([
+      expect.objectContaining({
+        kind: "deprecated",
+        method: target.method,
+        path: target.path,
+      }),
+    ]);
+
+    const recorded: Manifest = JSON.parse(
+      await readFile(join(directory, "notion-endpoints.json"), "utf8"),
+    );
+    expect(
+      recorded.endpoints.find(
+        (row) => row.method === target.method && row.path === target.path,
+      )!.deprecated,
+    ).toBe(true);
+
+    // A deprecation a maintainer has read and recorded is not news again.
+    const quiet = run(directory, ["notion"], ["--json"]);
+    expect(quiet.status).toBe(0);
+    expect(findings(quiet.output, "notion")).toEqual([]);
+
+    delete operationOf().deprecated;
+    await writeFile(
+      join(directory, "notion-spec.json"),
+      JSON.stringify(specification),
+    );
+    const reversed = run(directory, ["notion"], ["--json"]);
+    expect(reversed.status).toBe(1);
+    expect(findings(reversed.output, "notion")).toEqual([
+      expect.objectContaining({
+        kind: "undeprecated",
+        method: target.method,
+        path: target.path,
+      }),
+    ]);
+  });
+
+  it.each([
+    ["--specs", "linear", "--hosted"],
+    ["--hosted", "notion", "--specs"],
+  ])(
+    "refuses %s narrowed to %s, which only %s checks",
+    async (half, provider, other) => {
+      const result = spawnSync(
+        process.execPath,
+        [checker, half, "--provider", provider],
+        { encoding: "utf8" },
+      );
+      // Silently checking nothing and exiting 0 is the wrong failure mode for a
+      // command whose whole value is its exit code.
+      expect(result.status).toBe(2);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        `${provider} is only checked by ${other}`,
+      );
+    },
+  );
 
   it("commits one well-formed row per touched endpoint", async () => {
     for (const provider of ["cloudflare", "notion"]) {

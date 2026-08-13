@@ -59,7 +59,9 @@ const HOSTED_CREDENTIALS = {
  *
  * A reworded description is P1's business and a churning `x-fern-*` hint is
  * nobody's. What survives is the part a hand-written provider is written
- * against: what it may send and what it gets back.
+ * against: what it may send and what it gets back. `deprecated` is stripped
+ * here too, but not ignored: it is recorded as its own field on the manifest
+ * row so the check can report the transition rather than the state.
  */
 const PROSE_KEYS = new Set([
   "description",
@@ -140,8 +142,22 @@ function parseArguments(argv) {
     options.specs = true;
   }
   const known = new Set([...HOSTED_PROVIDERS, ...SPEC_PROVIDERS]);
+  // A provider only one half checks, named alongside the other half, would
+  // narrow the run to nothing — and a check whose whole value is its exit code
+  // must not print "no drift" for a run that looked at nothing.
+  const selectable = new Set([
+    ...(options.hosted ? HOSTED_PROVIDERS : []),
+    ...(options.specs ? SPEC_PROVIDERS : []),
+  ]);
   for (const provider of [...options.providers, ...options.specSources.keys()]) {
     if (!known.has(provider)) usage(`unknown provider: ${provider}`);
+    if (!selectable.has(provider)) {
+      const half = HOSTED_PROVIDERS.includes(provider) ? "--hosted" : "--specs";
+      usage(
+        `${provider} is only checked by ${half}, which this run did not select — ` +
+          "that combination would check nothing.",
+      );
+    }
   }
   return options;
 }
@@ -482,15 +498,21 @@ function canonicalize(value) {
  * Digest one operation's contract: what a caller may send, and what a
  * successful call returns. Failure responses are excluded — an error body is
  * H11's business, mapped from the status, not from a schema — and so is prose.
+ *
+ * Each response is inlined *before* its `content` is read. A whole response
+ * object is frequently a reference — Cloudflare writes several of the ones
+ * connecta touches as `{"$ref": "#/components/responses/…"}` — and a reference
+ * has no `content` key of its own, so reading through it first would digest the
+ * entire response contract as `null` and go blind to exactly what it watches.
  */
 function contractDigest(document, operation) {
   const successes = Object.fromEntries(
     Object.entries(operation.responses ?? {})
       .filter(([status]) => status.startsWith("2"))
-      .map(([status, response]) => [
-        status,
-        inline(document, response?.content ?? null),
-      ]),
+      .map(([status, response]) => {
+        const resolved = inline(document, response ?? null);
+        return [status, resolved?.content ?? null];
+      }),
   );
   const contract = canonicalize({
     parameters: inline(document, operation.parameters ?? null),
@@ -537,11 +559,18 @@ function checkSpecProvider(provider, manifest, specification) {
       continue;
     }
     const digest = contractDigest(specification.document, operation);
-    if (operation.deprecated === true) {
+    // The finding is the *transition*, not the state. A deprecation a
+    // maintainer has already read and recorded is not news on every subsequent
+    // release, and a check that can never reach its own "no drift" state is a
+    // check nobody reads. `--record` stores the flag; both directions report.
+    const deprecated = operation.deprecated === true;
+    if (deprecated !== (endpoint.deprecated === true)) {
       findings.push({
         ...row,
-        kind: "deprecated",
-        detail: "the published operation is marked deprecated",
+        kind: deprecated ? "deprecated" : "undeprecated",
+        detail: deprecated
+          ? "the published operation is newly marked deprecated"
+          : "the published operation is no longer marked deprecated",
       });
     }
     if (endpoint.contract !== undefined && endpoint.contract !== digest) {
@@ -555,6 +584,7 @@ function checkSpecProvider(provider, manifest, specification) {
       method: endpoint.method,
       path: endpoint.path,
       specRevision: revision,
+      ...(deprecated ? { deprecated: true } : {}),
       contract: digest,
     });
   }

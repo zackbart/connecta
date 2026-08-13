@@ -120,9 +120,12 @@ never generates a tool and never becomes a runtime input.
   two readings of one manifest that disagree mean one of them is lying. Its
   second half compares committed touched-endpoint manifests
   (`scripts/drift/cloudflare-endpoints.json`, `scripts/drift/notion-endpoints.json`:
-  method, path, reviewed spec revision, contract digest) with each provider's
-  published OpenAPI document, and `--record` refreshes them. A missing
-  credential or an unreachable specification stops the run and says which one.
+  method, path, reviewed spec revision, reviewed deprecation, contract digest)
+  with each provider's published OpenAPI document, and `--record` refreshes
+  them. Deprecation is reported as a transition in either direction, so a
+  reviewed one stops being news. A missing credential, an unreachable
+  specification, or a `--provider` the selected half does not check stops the
+  run and says which one.
   Written up in
   [`documentation/provider-conventions.md`](./documentation/provider-conventions.md#the-maintainer-run-drift-check)
   (#351).
