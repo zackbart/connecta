@@ -41,6 +41,7 @@ wrangler secret put SUPPORT_TOKEN                # one headless client
 wrangler secret put EXEC_TOKEN                   # another headless client
 wrangler secret put CLERK_SECRET_KEY
 wrangler secret put DOWNSTREAM_TOKEN
+wrangler secret put CREDENTIAL_ENCRYPTION_KEY   # base64 32-byte AES key
 wrangler deploy
 ```
 
@@ -52,6 +53,51 @@ DCR) so Claude/Cursor can self-register — full walkthrough in
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, named MCP access tokens are at
 `/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`.
+
+## The operator surface
+
+This example ships the whole operator feature set. Three quarters of it is on
+as deployed; the fourth needs a database, so it is commented in place.
+
+**Operator sign-in** is the `clerkAuth` entry in `src/index.ts`, alongside two
+static bearers. The split is deliberate: a bearer is a client key that may call
+tools and read connector status, while writing a credential or issuing an
+access token requires an interactive Clerk identity. Narrow who that can be
+with `allowedDomains`, or with a `gate` for anything a domain cannot express.
+
+**The credential vault** is `credentials: { encryptionKey: … }`, backed by the
+same KV namespace as everything else and encrypted with the
+`CREDENTIAL_ENCRYPTION_KEY` secret before a value reaches it. Generate one with:
+
+```sh
+node -e "console.log(crypto.randomBytes(32).toString('base64'))"
+```
+
+Leave the secret unset and the deployment still runs — `/credentials` stays
+read-only and connecta says so at startup. Keep the key in Worker secrets and
+nowhere near KV: it is the only thing that makes a copied namespace useless.
+Rotation takes effect on the next call, with no redeploy and no liveness probe,
+because credentials fail at use.
+
+**Access tokens** are `accessTokens: {}`. A signed-in operator mints named,
+revocable Bearer tokens at `/tokens` for header-capable clients that will not do
+OAuth. Secrets are shown once and only their hashes enter KV; a lost token is
+reissued, never recovered. Note the KV caveat above — revocation is visible
+everywhere only as fast as the namespace converges.
+
+**Activity** is the commented block in `src/index.ts` and the commented
+`d1_databases` binding in `wrangler.jsonc`; the section below creates the
+database and applies the schema.
+
+None of these change what agents can reach. Operator routes manage the
+authentication material behind capabilities `src/index.ts` already declares —
+never the connector set, the tool catalog, or its annotations.
+
+`connecta doctor` reports the same line here as for a deployment with none of
+this on: connector count, executor, seven tools. It carries a bearer, and a
+bearer learns the model-facing surface rather than the deployment's
+configuration topology. Confirm the operator surface by signing in at
+`<PUBLIC_URL>/` and checking that Credentials, Tokens, and Activity are live.
 
 ## Code mode
 
@@ -74,10 +120,12 @@ npm install @cloudflare/codemode
 ## Activity history (optional)
 
 `src/d1-activity.ts` is a complete `ActivityStore` over D1 — keyset paging on
-`(occurred_at_ms, id)` plus a batched retention pass — but it is **not wired
-into `src/index.ts`**, so the example deploys without a database. To enable it:
+`(occurred_at_ms, id)` plus a batched retention pass — but the wiring in
+`src/index.ts` is **commented out**, so the example deploys without a database.
+To enable it:
 
-1. Create the database and bind it in `wrangler.jsonc`:
+1. Create the database and uncomment the `d1_databases` binding in
+   `wrangler.jsonc`, pasting in the id it prints:
 
    ```sh
    wrangler d1 create connecta-activity
@@ -137,7 +185,9 @@ into `src/index.ts`**, so the example deploys without a database. To enable it:
    the failure and returns the tool result unharmed — so the symptom is not an
    error your agent sees, it is an activity log that quietly stops recording.
 
-3. Pass the store to `createConnecta`:
+3. In `src/index.ts`, uncomment the `d1ActivityStore` import, the `ACTIVITY_DB`
+   field on `Env`, and the `activity` block — the three commented fragments
+   that together read:
 
    ```ts
    import { d1ActivityStore } from "./d1-activity.js";

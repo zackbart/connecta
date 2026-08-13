@@ -33,6 +33,62 @@ So commit the `package-lock.json` that the `npm install` above wrote on this
 machine: from then on the build context carries it and every build takes the
 reproducible `npm ci` path.
 
+## Turn on the operator surface
+
+Out of the box this deployment serves the seven-tool MCP surface and a
+read-only operator UI: open `http://localhost:8787/`, paste the bearer, and you
+get Connections. The other three pages are configuration away, and each one is
+a commented block in `src/index.ts` — uncomment it, set the variables it names
+in `.env`, restart. Do them in this order; the last two lean on the first.
+
+**1. Operator sign-in (Clerk).** A bearer token is a client key. It may call
+tools and read connector status, but it may not write a credential or issue an
+access token — that would make one shared secret a deployment-admin key. An
+interactive identity is what unlocks the actionable half:
+
+```sh
+npm install @clerk/backend    # optional peer; it does not install with Connecta
+```
+
+Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, uncomment the `clerkAuth`
+import, the two `process.env.CLERK_*` reads, and the `clerkAuth({ … })` entry in
+`auth`. Enable Dynamic Client Registration on the Clerk instance (OAuth
+Applications → DCR) if MCP clients should sign in through it too, and set
+`PUBLIC_URL` first — Clerk redirects back to it.
+
+**2. Credential vault.** Uncomment `credentials` and set
+`CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
+
+```sh
+node -e "console.log(crypto.randomBytes(32).toString('base64'))"
+```
+
+Every connector that declares a `credential` slot then becomes editable at
+`/credentials`, with values encrypted in the state file. Keep the key anywhere
+except that file — it is the only thing standing between a copied state file
+and the secrets in it — and note that losing it makes stored values
+unreadable. A saved replacement takes effect on the next call; nothing
+restarts, and the deployment never probes a credential to see whether it still
+works. It fails at use, loudly, and the agent is routed to `/credentials`.
+
+**3. Access tokens.** Uncomment `accessTokens: {}`. A signed-in operator can
+then mint named, revocable Bearer tokens at `/tokens` for header-capable
+clients that will not do OAuth. Secrets are shown once and only their hashes
+are stored, so a lost token is reissued, never recovered.
+
+**4. Activity.** Uncomment the `activity` block and the `fileActivityStore`
+import. `/activity` then answers with who called what, when, how long it took,
+and whether it worked — never arguments, results, generated code, or raw error
+messages, because the store is never handed one. `src/file-activity.ts` is
+yours: it appends a line per call and keeps the newest 5,000 events, which is a
+retention policy chosen for a single container and worth revisiting for
+anything busier. In Docker the log lands on the same volume as the state file.
+
+None of this changes what agents can reach. Operator pages manage the
+authentication material behind capabilities this file already declares; the
+connector set, the tool catalog, and its annotations are `src/index.ts`'s
+business and stay that way.
+
 ## Deployment contract
 
 - Edit `src/index.ts` for connectors, auth, storage, and the public URL.
@@ -57,3 +113,16 @@ Doctor checks health, the executor, and the exact prescribed seven-tool
 model-facing surface by running a harmless sandbox program. It reads the bearer
 from `CONNECTA_TOKEN`; it never accepts the secret as a command-line argument.
 Remote URLs must use HTTPS.
+
+A fully-wired deployment reports exactly the same line as a bare one —
+connector count, QuickJS executed, seven tools, plus any catalog drift:
+
+```text
+Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed seven-tool surface.
+```
+
+That is deliberate. Doctor holds a bearer, and a bearer learns the model-facing
+surface, not the deployment's configuration topology: whether this deployment
+issues access tokens or keeps a credential vault is operator data, and a client
+key is not an operator. Confirm the operator surface the way an operator will —
+sign in at `/` and check that Credentials, Tokens, and Activity are live.

@@ -11,6 +11,16 @@ and may not change the connector set, the tool catalog or annotations, requested
 OAuth scopes, admission policy, authorization rules, or caller tool scope.**
 `test/operator-boundary.test.ts` proves it after every mutation route.
 
+Both deployment shapes ship the whole feature set behind it, because pages for
+things a deployment cannot do are worse than no pages
+([#345](https://github.com/zackbart/connecta/issues/345)). The
+[Node template](../templates/node/) carries sign-in, vault, tokens, and
+activity as commented blocks in `src/index.ts` — plus a deployment-owned
+`src/file-activity.ts` that is compiled rather than commented — and the
+[Worker example](../examples/worker/) wires the first three and comments the
+fourth, which needs a D1 database. Each README walks through its own
+enablement.
+
 ## The shape
 
 | Piece | What it owns |

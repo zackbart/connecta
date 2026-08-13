@@ -1,3 +1,4 @@
 .connecta-state.json
+.connecta-activity.jsonl
 .env
 node_modules/

@@ -57,6 +57,7 @@ Point an MCP client at `http://localhost:8787/mcp` with
 ```text
 my-connecta/
 ├── src/index.ts       # connectors, auth, storage, public URL
+├── src/file-activity.ts # deployment-owned activity store, wired on request
 ├── package.json       # exact Connecta and QuickJS versions
 ├── tsconfig.json
 ├── Dockerfile         # the same source, containerized
@@ -90,6 +91,12 @@ For an agent setting this up, the contract is:
    `CONNECTA_TOKEN=... npm run doctor`. Doctor checks health, the executor, and
    the exact seven-tool model-facing surface, then executes a harmless sandbox
    program. The bearer stays in the environment rather than command history.
+
+The operator surface is the same in both shapes and off until you say so:
+Clerk sign-in, the credential vault, access-token issuance, and payload-free
+activity ship as commented configuration, each one a variable and an
+uncommented block away. The generated `README.md` walks through all four, and
+the [Worker example](./examples/worker/) does the same for KV and D1.
 
 The template refuses to merge into an existing directory, so initialization
 cannot overwrite another project. Its generated programs have no filesystem,

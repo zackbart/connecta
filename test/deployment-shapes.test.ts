@@ -61,6 +61,77 @@ describe("deployment shapes", () => {
     expect(read("docker-compose.yml")).toContain("connecta-state:/data");
   });
 
+  // Both shapes carry the whole operator feature set — sign-in, vault, access
+  // tokens, activity — either wired or one uncommented block away (#345). A
+  // shape that quietly drops one is a deployment whose operator pages exist
+  // for things it cannot do.
+  it("offers the full operator surface in the Node template", () => {
+    const source = read("src", "index.ts");
+    for (const fragment of [
+      '// import { clerkAuth } from "@zackbart/connecta/auth/clerk";',
+      '// import { fileActivityStore } from "./file-activity.js";',
+      "// clerkAuth({",
+      "// credentials: { encryptionKey: process.env.CONNECTA_CREDENTIAL_KEY },",
+      "// accessTokens: {},",
+      "// activity: {",
+    ]) {
+      expect(source).toContain(fragment);
+    }
+    // The activity store itself is compiled, not commented: check:examples
+    // typechecks it, so the only thing an operator uncomments is the wiring.
+    expect(read("src", "file-activity.ts")).toContain(
+      "export function fileActivityStore(",
+    );
+    const env = read(".env.example");
+    for (const variable of [
+      "CLERK_PUBLISHABLE_KEY",
+      "CLERK_SECRET_KEY",
+      "CONNECTA_CREDENTIAL_KEY",
+      "CONNECTA_ACTIVITY_FILE",
+    ]) {
+      expect(env).toContain(variable);
+      // Compose passes every one through, or uncommenting a block would work
+      // from source and silently do nothing in the container.
+      expect(read("docker-compose.yml")).toContain(variable);
+    }
+    // Activity history belongs on the volume beside the state file.
+    expect(read("Dockerfile")).toContain(
+      "ENV CONNECTA_ACTIVITY_FILE=/data/connecta-activity.jsonl",
+    );
+    expect(read(".gitignore")).toContain(".connecta-activity.jsonl");
+    expect(read("README.md")).toContain("## Turn on the operator surface");
+  });
+
+  it("offers the full operator surface in the Worker example", () => {
+    const worker = readFileSync(
+      join(ROOT, "examples", "worker", "src", "index.ts"),
+      "utf8",
+    );
+    expect(worker).toContain("clerkAuth({");
+    expect(worker).toContain(
+      "credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },",
+    );
+    expect(worker).toContain("accessTokens: {},");
+    expect(worker).toContain("// activity: {");
+    expect(worker).toContain('// import { d1ActivityStore } from "./d1-activity.js";');
+    // The commented binding is what makes the commented wiring resolvable.
+    expect(
+      readFileSync(join(ROOT, "examples", "worker", "wrangler.jsonc"), "utf8"),
+    ).toContain('//     "binding": "ACTIVITY_DB",');
+    expect(
+      readFileSync(join(ROOT, "examples", "worker", "README.md"), "utf8"),
+    ).toContain("## The operator surface");
+  });
+
+  it("keeps the initializer's .gitignore in step with the template's", () => {
+    // `connecta init` writes this file itself, because npm strips .gitignore
+    // from a packed dependency. Two copies drift; this is the seam.
+    const written = readFileSync(join(ROOT, "bin", "connecta.mjs"), "utf8");
+    for (const entry of read(".gitignore").split("\n").filter(Boolean)) {
+      expect(written).toContain(entry);
+    }
+  });
+
   it("packs the container files with the template", () => {
     const manifest = JSON.parse(
       readFileSync(join(ROOT, "package.json"), "utf8"),

@@ -64,7 +64,7 @@ async function init() {
     // Restore both conventions explicitly in the generated project.
     await writeFile(
       join(stage, ".gitignore"),
-      ".connecta-state.json\n.env\nnode_modules/\n",
+      ".connecta-state.json\n.connecta-activity.jsonl\n.env\nnode_modules/\n",
     );
     await rm(join(stage, "CLAUDE.md"), { force: true });
     try {

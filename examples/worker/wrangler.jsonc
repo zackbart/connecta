@@ -7,7 +7,8 @@
   "observability": { "enabled": true },
 
   // Plain vars. Secrets (SUPPORT_TOKEN, EXEC_TOKEN, CLERK_SECRET_KEY,
-  // DOWNSTREAM_TOKEN) are set with `wrangler secret put <NAME>`, not here.
+  // CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) are set with
+  // `wrangler secret put <NAME>`, not here.
   "vars": {
     "PUBLIC_URL": "https://connecta.example.workers.dev",
     "CLERK_PUBLISHABLE_KEY": "pk_test_replace-me"
@@ -17,6 +18,18 @@
   "kv_namespaces": [
     { "binding": "CONNECTA_KV", "id": "replace-with-kv-namespace-id" }
   ],
+
+  // Activity history. Create with `wrangler d1 create connecta-activity`,
+  // paste the id, apply the schema in README.md, then uncomment the matching
+  // lines in src/index.ts. Off by default so this example deploys without a
+  // database.
+  // "d1_databases": [
+  //   {
+  //     "binding": "ACTIVITY_DB",
+  //     "database_name": "connecta-activity",
+  //     "database_id": "replace-with-d1-database-id"
+  //   }
+  // ],
 
   // Required by execute_code; Dynamic Workers use the Workers Paid plan.
   "worker_loaders": [{ "binding": "LOADER" }]

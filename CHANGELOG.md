@@ -111,6 +111,19 @@ connecta never touches. No credential goes near CI, nothing is scheduled,
 nothing files itself, and a published specification is drift evidence only: it
 never generates a tool and never becomes a runtime input.
 
+Both deployment shapes now carry the operator feature set the operator pages
+were built for. A fresh `connecta init` used to produce a deployment with a
+Credentials page and no vault, a Tokens page and no issuance, and an Activity
+page with nothing behind it — pages for things that deployment could not do.
+The Node template now ships sign-in, vault, tokens, and activity as four
+clearly-marked commented blocks in `src/index.ts`, each one an environment
+variable and an uncommented block away, plus a deployment-owned
+`src/file-activity.ts` that is compiled rather than commented. The Worker
+example wires the first three outright and comments the fourth, which needs a
+D1 database nobody can create for you. Existing deployments can ignore this
+entirely: nothing in the package's runtime surface moved, and both READMEs
+walk through the enablement.
+
 ### Added
 
 - **A maintainer-run provider drift check.** `npm run drift:check` diffs the
@@ -186,6 +199,19 @@ never generates a tool and never becomes a runtime input.
   internal this release rather than exported, and
   [`documentation/connectors.md`](./documentation/connectors.md#the-guarded-fetch-transport)
   records why (#341).
+- **The operator feature set in both deployment shapes.** The Node template
+  gains commented, documented configuration for Clerk operator sign-in, the
+  credential vault, access-token issuance, and payload-free activity, the four
+  environment variables they read (passed through Compose and defaulted in the
+  Dockerfile so the container works the moment a block is uncommented), and
+  `src/file-activity.ts` — a deployment-owned `ActivityStore` that appends one
+  JSON line per call and keeps the newest 5,000. The Worker example wires the
+  credential vault to a new `CREDENTIAL_ENCRYPTION_KEY` secret beside the Clerk
+  and access-token configuration it already had, and carries the D1 activity
+  wiring and its binding as commented lines rather than as README-only
+  instructions. Both READMEs walk through enabling each half, and both say why
+  `connecta doctor` reports none of it: doctor holds a bearer, and a client key
+  does not get to learn a deployment's configuration topology (#345).
 
 ### Changed
 

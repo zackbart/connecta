@@ -172,6 +172,7 @@ try {
     "templates/node/docker-compose.yml",
     "templates/node/package.json",
     "templates/node/src/index.ts",
+    "templates/node/src/file-activity.ts",
     "dist/index.js",
     "dist/index.d.ts",
     "dist/types.d.ts",
@@ -381,6 +382,7 @@ try {
     "AGENTS.md",
     "CLAUDE.md",
     "src/index.ts",
+    "src/file-activity.ts",
     "tsconfig.json",
   ]) {
     if (!existsSync(join(work, "generated-deployment", generated))) {
