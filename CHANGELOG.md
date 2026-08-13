@@ -2,6 +2,18 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Changed
+
+- **Stripe OAuth mode now belongs to each returned account.** OAuth-backed
+  connectors no longer accept a connector-wide `mode`. Their neutral metadata
+  and guide support mixed live and sandbox accounts, require
+  `list_available_accounts_or_orgs`, and carry its exact `stripe_context` and
+  `livemode` into each account-scoped call. They use the stricter sandbox
+  admission ceiling. Header credentials still require one fixed mode, retain
+  key-prefix contradiction checks, and keep Stripe Connect behavior (#414).
+
 ## 0.17.0 — 2026-08-13
 
 This minor release makes catalog discovery faster and its answers more exact.
