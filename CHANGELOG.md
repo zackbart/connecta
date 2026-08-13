@@ -43,6 +43,12 @@ Worker example is already loader-only; deployments that added executor
   construction, and agent guidance tells portable programs to use none of that
   Dynamic-only authority (#390).
 
+- **Clerk-authenticated operator pages now wait for ClerkJS before booting.**
+  The loader runs before the later inline operator bundle instead of deferring
+  until after parsing, so a fresh page no longer mistakes normal script order
+  for a network failure. Clerk's major-to-pinned version redirect remains
+  supported, and a real loader failure keeps the existing clear error (#403).
+
 - **Array field misses now report what happened.** A path that misses every
   element appears in `unmatchedFields` instead of returning a clean array of
   false nulls. A heterogeneous array keeps its positional result and names the

@@ -44,6 +44,14 @@ every operator-configured URL stay in `src/ui.ts`, where they are gated before
 they can become an attribute; the bundle renders everything that has a state.
 Two roots share one store: `#operatorNav` and `#operatorContent`.
 
+The Clerk loader is intentionally blocking. The inline operator bundle calls
+`boot()` as soon as the parser reaches the end of the body, so a deferred Clerk
+script would make an expected parse-time gap look like a permanent network
+failure. Blocking also preserves the existing failure path: after a real
+loader error, the parser continues and `boot()` renders the Clerk load message.
+Clerk's redirect from the major-version loader URL to its pinned asset keeps
+the same ordering.
+
 ## Rules that are not obvious
 
 - **No operator data in the shell.** Every page serves the same markup. Connector,
@@ -93,9 +101,11 @@ well as Node and there is no DOM in either:
   something calls them when the identity actually changes. It typechecks in the
   DOM-lib program (`tsconfig.operator-ui.json`) because it imports the store.
 - `test/browser/operator-ui.spec.ts` — the wiring, in a real browser:
+  Clerk loader order across its version redirect and a real load failure, plus
   credential, token, and OAuth flows end to end, including their failure and
-  empty states. Run it with `npm run test:browser` (`npm run test:browser:install`
-  once, for Chromium). It is not part of `npm run check`.
+  empty states. Run it with `npm run test:browser`
+  (`npm run test:browser:install` once, for Chromium). It is not part of
+  `npm run check`.
 
 ## Why the bundle is committed
 
