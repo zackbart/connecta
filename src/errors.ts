@@ -19,9 +19,12 @@ export type ConnectorCallErrorCode =
    * Its own code because the next move is none of the others': not a retry,
    * not `authorize_connector`, not a reshaped argument object, but
    * re-addressing — look the identifier up again, or accept the absence and
-   * carry on. A loop inside `execute_code` continues past this one and has to
-   * abort on `connector_call_failed`, and that difference cannot be recovered
-   * from message prose.
+   * carry on. Inside `execute_code` a program reads that difference off a
+   * `connecta.batch` entry's `errorDetails.code` — continue past this one,
+   * abort on `connector_call_failed` — or lets the failure escape uncaught so
+   * the model sees the typed envelope. Never off a caught error: the guest
+   * bridge reduces a rejected host call to `new Error(message)` and drops
+   * every own property, and message prose cannot be classified.
    *
    * Use it only where the provider distinguishes absence from a permission
    * gap. A status that means both "it is not there" and "you cannot see it" —

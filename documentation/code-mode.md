@@ -339,7 +339,7 @@ displaces old rather than adding to what every request pays for.
 | `destructive_tool_requires_approval` | the tool is not explicitly read-only | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
-| `not_found` | the downstream answered and the resource is not there — the one code to skip an id and keep looping, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
+| `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, classified off `errorDetails` per `E1` and never off a caught error, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable | true |
