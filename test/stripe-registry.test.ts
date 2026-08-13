@@ -47,10 +47,18 @@ function twoAccounts(storage: KVStorage) {
       stripe("stripe_live", {
         mode: "production",
         purpose: "Revenue, disputes, and refunds for the real business",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer rk_live_example" },
+        },
       }),
       stripe("stripe_sandbox", {
         mode: "sandbox",
         purpose: "Rehearsing billing changes before they touch production",
+        auth: {
+          type: "headers",
+          headers: { Authorization: "Bearer rk_test_example" },
+        },
       }),
     ],
   });
@@ -69,6 +77,28 @@ describe("stripe() inside a real deployment", () => {
 
   afterEach(() => {
     globalThis.fetch = realFetch;
+  });
+
+  it("boots one OAuth connector for mixed live and sandbox accounts", () => {
+    const connecta = createConnecta({
+      executor,
+      storage: memoryStorage(),
+      logger: silentLogger,
+      publicUrl: BASE_URL,
+      connectors: [
+        stripe("stripe", {
+          purpose: "Live and sandbox organization billing",
+        }),
+      ],
+    });
+    const connector = connecta.registry.getConnector("stripe");
+    expect(connector?.description).toContain("live and sandbox accounts");
+    expect(connector?.callAdmission?.rules[0]?.budget).toEqual({
+      kind: "rolling-window",
+      maxCalls: 25,
+      windowMs: 1_000,
+    });
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 
   it("boots a production and a sandbox account without reaching the network", () => {
