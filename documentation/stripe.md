@@ -17,9 +17,15 @@ const billing = stripe("stripe_live", {
 });
 ```
 
-The `id` owns the ordinary connector namespaces; use a different id for every
-Stripe account. `purpose` is required because an agent choosing between two
-instances needs to know which account answers the question. Account
+The `id` owns the ordinary connector namespaces. Choose a connector boundary
+for its credential or OAuth session, mode, and business purpose — not
+automatically for each Stripe account. One OAuth session may cover more than
+one account in the same Stripe organization. Use separate connectors when the
+credential, production/sandbox mode, or business purpose differs.
+
+`purpose` is required because it tells an agent where the deployment intends
+to route a question. The connector id, title, and purpose are configuration,
+not proof of which account the authenticated Stripe session will use. Account
 `instructions` are appended to the maintained guide and cannot change the
 connector's safety classification.
 
@@ -53,9 +59,9 @@ one. That check reads nothing it cannot classify — an OAuth connector, or a
 credential shape this release does not recognize, is left alone rather than
 guessed at — and the error names only the two modes, never the key.
 
-Deploy both side by side. Two instances are isolated exactly like two
-hand-written connectors with different ids: separate addresses, catalogs,
-credentials, storage, admission counters, and health.
+Deploy production and sandbox side by side. Two instances are isolated exactly
+like two hand-written connectors with different ids: separate addresses,
+catalogs, credentials, storage, admission counters, and health.
 
 ```ts
 connectors: [
@@ -74,7 +80,20 @@ connectors: [
 
 OAuth is the default and the option Stripe recommends: it supports dynamic
 client registration and PKCE, and each connector instance keeps its own flow
-and tokens in connector-scoped storage. Stripe also accepts a
+and tokens in connector-scoped storage. Stripe's current
+[session-management documentation](https://docs.stripe.com/mcp#manage-mcp-client-sessions)
+says one OAuth session can be tied to more than one account in the same Stripe
+organization. It does not say every session has multiple accounts.
+
+That scope changes what an agent must prove before an account-scoped call. It
+must resolve the intended organization account, inspect the selected tool's
+live input schema, and carry only the exact account or context field that
+schema exposes. If more than one account fits, or the live schema exposes no
+clear selection mechanism, the agent stops and asks. It never guesses from the
+connector id, title, or purpose, and it never invents an MCP argument or
+request header.
+
+Stripe also accepts a
 [restricted API key](https://docs.stripe.com/keys#create-restricted-api-key) as
 a bearer token for headless agents:
 
@@ -93,9 +112,12 @@ Use a restricted key, not a secret key, and scope it to the operations the
 agent actually needs; Stripe's own guidance is to "limit your agent's access to
 exactly the functionality it requires". Keep it in the runtime's secret store.
 
-Connect platforms can act as a connected account with `connectedAccount`, which
-adds Stripe's `Stripe-Account` header. Stripe does not support OAuth for
-connected-account calls, so this requires `headers` auth and throws otherwise:
+Organization accounts in one OAuth session are not Stripe Connect connected
+accounts. Connect platforms can act as a connected account with
+`connectedAccount`, which adds Stripe's documented `Stripe-Account` header at
+connector construction. Stripe does not support OAuth for connected-account
+calls, so this requires a restricted key through `headers` auth and throws
+otherwise:
 
 ```ts
 stripe("merchant_42", {
@@ -109,9 +131,10 @@ stripe("merchant_42", {
 });
 ```
 
-Administrators must enable MCP access in the Stripe Dashboard, and Stripe
-manages that setting **separately for sandbox and live mode**. A connector that
-boots but cannot list tools is usually a dashboard toggle, not a bad key.
+Administrators must enable MCP access in the Stripe Dashboard. Stripe scopes
+OAuth session management and MCP access **separately for sandbox and live
+mode**. A connector that boots but cannot list tools is usually a dashboard
+toggle, not a bad key.
 
 ## The eleven tools, and what they are classified as
 
@@ -158,13 +181,21 @@ serves, an unclassified and unannotated `create_customer` lands on the approval
 path. Expect the undocumented Treasury tools Stripe alludes to to arrive
 unclassified as well — annotated ones will be taken at their word.
 
-The upshot is that this account's tool list is not a fixed set, and the usage
+The upshot is that this connection's tool list is not a fixed set, and the usage
 guide tells the agent so: search this connector for what it actually exposes
 rather than assuming a documented tool is present. The guide also names the id
 discipline the downstream schemas cannot enforce — Stripe ids are typed
 prefixes (`cus_`, `sub_`, `ch_`, `pi_`, `in_`, `acct_`), a plausible-looking one
 belongs to a different object or to nobody, and the id a write takes comes from
 `stripe_api_search` or a list read rather than from a guess.
+
+Account selection comes before that object-id rule. The served guide warns
+that the connector metadata states routing intent rather than authenticated
+identity. It tells the agent to use only selectors in the live tool schema and
+to stop when the account or selection mechanism is ambiguous. It also keeps
+organization-account selection separate from the restricted-key-only Connect
+path, so an agent cannot repair uncertainty by fabricating `Stripe-Account` as
+a tool argument.
 
 Stripe publishes no stability or deprecation policy for this tool set and
 invites tool requests by email, so treat the list as unversioned. `get_balance_summary`

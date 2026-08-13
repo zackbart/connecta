@@ -27,7 +27,7 @@ export interface StripeOptions {
   mode: StripeMode;
   /** Human-readable display name; defaults to "Stripe (<mode>)". */
   title?: string;
-  /** Which business this account bills for, and what it may be asked. */
+  /** Which business purpose and Stripe context this connector is for. */
   purpose: string;
   /** OAuth by default; static headers support restricted API keys. */
   auth?: RemoteMcpAuth;
@@ -37,7 +37,7 @@ export interface StripeOptions {
    * connected-account calls, so this requires `headers` auth.
    */
   connectedAccount?: string;
-  /** Account-specific conventions appended to the maintained provider guide. */
+  /** Connector-specific conventions appended to the maintained provider guide. */
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
@@ -190,13 +190,13 @@ const MODE_COPY: Readonly<
     title: "Stripe (production)",
     blurb: "production — live money and real customers",
     warning:
-      "This is a PRODUCTION account. Every write moves real money against real customers, and a refund cannot be undone. If a request could plausibly be a rehearsal, route it to a sandbox connector instead.",
+      "This is a PRODUCTION Stripe connection. Every write moves real money against real customers, and a refund cannot be undone. If a request could plausibly be a rehearsal, route it to a sandbox connector instead.",
   },
   sandbox: {
     title: "Stripe (sandbox)",
     blurb: "sandbox — test data, no real money",
     warning:
-      "This is a SANDBOX account. Nothing here is real money and none of these objects exist in production, so never answer a question about live revenue, payouts, or a named customer from this connector.",
+      "This is a SANDBOX Stripe connection. Nothing here is real money and none of these objects exist in production, so never answer a question about live revenue, payouts, or a named customer from this connector.",
   },
 };
 
@@ -210,19 +210,22 @@ function usageGuide(
   const rate = mode === "production" ? "100" : "25";
   return `# Stripe usage
 
-Mode: ${mode}. Account purpose: ${purpose}
+Mode: ${mode}. Connector purpose: ${purpose}
 
 ${copy.warning}
 
+- One OAuth session may cover more than one account in the same Stripe organization. The connector id, title, and purpose state routing intent; they do not prove which account a call will use.
+- Before every account-scoped read or write, resolve the intended organization account. Inspect the chosen tool's live input schema and carry the exact account or context field it exposes. If the account or its supported selection mechanism is ambiguous, stop and ask; never guess from the connector metadata, invent an MCP argument, or add a request header the live contract does not expose.
+- Organization accounts are not Stripe Connect connected accounts. A Connect call requires a deployment-configured restricted key plus Stripe's documented \`Stripe-Account\` header; OAuth does not support that path. Do not try to turn an organization-account call into a Connect call inside tool arguments.
 - Four generic tools reach any Stripe API method. Find the method with \`stripe_api_search\`, read its parameters with \`stripe_api_details\`, then call \`stripe_api_read\` (GET) or \`stripe_api_write\` (POST/PATCH/PUT/DELETE). Never guess a path or a parameter name — \`stripe_api_details\` is cheaper than a rejected write.
-- Prefer a dedicated tool when one covers the task: \`get_stripe_account_info\` for which account this is, \`get_balance_summary\` for balances, \`create_refund\` for refunds, \`stripe_report\` for reports. One call instead of three, and a refund named \`create_refund\` reads far more clearly in the approval a human sees than the same refund buried in \`stripe_api_write\` arguments.
+- Prefer a dedicated tool when one covers the task: \`get_stripe_account_info\` for account information, \`get_balance_summary\` for balances, \`create_refund\` for refunds, \`stripe_report\` for reports. One call instead of three, and a refund named \`create_refund\` reads far more clearly in the approval a human sees than the same refund buried in \`stripe_api_write\` arguments.
 - \`stripe_api_write\` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; expect approval on every call.
 - Lists are cursor-paginated: \`limit\` defaults to 10 and caps at 100, \`starting_after\` and \`ending_before\` take an object id and are mutually exclusive, and \`has_more\` says whether to continue. Page inside \`execute_code\` and reduce before returning.
 - Resolve ids before acting; never guess one. Stripe ids are typed prefixes — \`cus_\` customer, \`sub_\` subscription, \`ch_\` charge, \`pi_\` payment intent, \`in_\` invoice, \`acct_\` account — and a plausible-looking id belongs to a different object or to nobody. Find the object with \`stripe_api_search\` (or a list endpoint through \`stripe_api_read\`) and carry the \`id\` it returned into the write.
-- This account's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
+- This connection's tool list is not a fixed set. Stripe gates parts of its MCP catalog by account, integration, and beta enrollment, so search this connector for what it actually exposes rather than assuming a documented tool is here.
 - Amounts are integers in the currency's minor unit: \`1099\` is 10.99 USD, and zero-decimal currencies like JPY take \`10\` for 10 JPY. Never send a decimal.
 - Send an \`Idempotency-Key\` on every write you might retry, if the tool accepts it, and reuse the same key for the retry. A retry with a fresh key is a second charge, not a second attempt.
-- Stripe answers a rate limit with \`429\` and a \`Stripe-Rate-Limited-Reason\` header; back off on that rather than retrying immediately. This account's documented ceiling is ${rate} requests per second, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
+- Stripe answers a rate limit with \`429\` and a \`Stripe-Rate-Limited-Reason\` header; back off on that rather than retrying immediately. Stripe documents an account ceiling of ${rate} requests per second, and any single endpoint is capped at 25 per second regardless of mode, so paging one list is the real constraint.
 - Use \`search_stripe_documentation\` when the shape of an object or a flow is unclear; it is a read and costs nothing but a call.
 - Treat every create, update, delete, refund, and report run as a write. Connecta routes the maintained write catalog through \`call_destructive_tool\`; newly added tools also fail closed until classified.
 - An \`auth_required\` failure means this connector's Stripe authorization is missing or expired: run \`authorize_connector\` for this connector id, then retry the same call unchanged. A rejected argument or a plan restriction comes back in Stripe's own words instead — read it rather than re-authorizing.
@@ -258,13 +261,12 @@ export function stripe(id: string, options: StripeOptions): Connector {
     usageGuide: {
       content: usageGuide(mode, purpose, options.instructions),
       // Explicit rather than derived: production versus sandbox is the fact an
-      // agent must not get wrong, and the derived summary would be the
-      // "Mode: … Account purpose: …" line with the operator's prose eating the
-      // budget ([#342](https://github.com/zackbart/connecta/issues/342)).
+      // agent must not get wrong. Multi-account OAuth also has to reach browse
+      // before connector metadata can be mistaken for authenticated identity.
       summary:
         mode === "production"
-          ? "PRODUCTION: writes move real money. Generic api tools, id prefixes, minor units, idempotency."
-          : "Sandbox: test data only, never live figures. Generic api tools, id prefixes, minor units.",
+          ? "PRODUCTION: real money. OAuth may span organization accounts; resolve the account from live schemas before acting."
+          : "Sandbox: test data only. OAuth may span organization accounts; resolve the account from live schemas before acting.",
       // Not `required`. The four generic tools are the routing decision, and
       // the mode warning already rides the title and description; a guide
       // forced into every call would pay for the same paragraph repeatedly.

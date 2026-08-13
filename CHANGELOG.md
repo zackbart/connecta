@@ -49,6 +49,12 @@ Worker example is already loader-only; deployments that added executor
   for a network failure. Clerk's major-to-pinned version redirect remains
   supported, and a real loader failure keeps the existing clear error (#403).
 
+- **Stripe's guide now treats connector identity as routing intent, not account
+  proof.** One OAuth session may cover several accounts in one organization,
+  so agents resolve the intended account through the live tool schema and stop
+  when the target or selector is ambiguous. The guide also keeps organization
+  accounts separate from the restricted-key-only Stripe Connect path (#404).
+
 - **Array field misses now report what happened.** A path that misses every
   element appears in `unmatchedFields` instead of returning a clean array of
   false nulls. A heterogeneous array keeps its positional result and names the
