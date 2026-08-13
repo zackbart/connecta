@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.17.0 — 2026-08-13
 
 This minor release makes catalog discovery faster and its answers more exact.
 Agent reads can use a verified stale catalog while one bounded refresh runs,

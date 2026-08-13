@@ -57,7 +57,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.16.1 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.17.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -106,7 +106,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.16.1
+npm pkg set dependencies.@zackbart/connecta=0.17.0
 npm install
 ```
 
@@ -130,7 +130,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.16.1 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.17.0 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -186,7 +186,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.16.1 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.17.0 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -206,6 +206,30 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.16.1 → 0.17.0
+
+Two construction rules need a deployment check.
+
+**A Dynamic Worker executor is loader-only.** The supported construction is
+exactly:
+
+```ts
+new DynamicWorkerExecutor({ loader: env.LOADER })
+```
+
+Remove `bindings`, `modules`, or `globalOutbound` from that options object.
+Those fields grant guest code ambient configuration, code, or egress. This is
+the supported sandbox boundary rather than a new Connecta-side inspection of
+the third-party executor object. The shipped Worker example was already
+loader-only, and Node deployments use `quickJsExecutor()`, so neither needs a
+change (#390).
+
+**An explicit guide summary must fit discovery.** Connecta normalizes
+whitespace in `usageGuide.summary` and refuses registry construction when the
+result is longer than 120 characters. Shorten it to 120 characters or fewer,
+or omit it and let Connecta derive a bounded summary from the guide's opening
+prose. A blank explicit summary still takes the derived-summary path (#392).
 
 ### 0.16.0 → 0.16.1
 
