@@ -6,7 +6,7 @@
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
   "license": "MIT",
   "engines": {
-    "node": ">=20.9.0"
+    "node": ">=22.0.0"
   },
   "publishConfig": {
     "access": "public"

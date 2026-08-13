@@ -183,7 +183,7 @@ Two more runners are deliberately outside `check`:
 
 - `npm run test:browser` — Playwright against a real headless Chromium
   (`npm run test:browser:install` once). It covers the embedded bundle without
-  adding a browser download to both CI Node-version jobs.
+  adding a browser download to the CI release check.
 - `npm run drift:check` — the maintainer-run provider drift check, with local
   provider credentials exported. No credential goes near CI and nothing files
   itself; findings are read by a human and become issues

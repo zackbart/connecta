@@ -6,6 +6,11 @@ All notable changes to this package are documented here.
 
 ### Changed
 
+- **Node 22 is now the minimum supported Node release.** CI and the published
+  engine range now match the Node 22 runtime used by the shipped deployment
+  template. The Worker test project continues to cover the other deployment
+  target (#422).
+
 - **Stripe OAuth mode now belongs to each returned account.** OAuth-backed
   connectors no longer accept a connector-wide `mode`. Their neutral metadata
   and guide support mixed live and sandbox accounts, require

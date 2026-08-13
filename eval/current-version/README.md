@@ -110,7 +110,7 @@ a concise Markdown qualification report:
 npm --prefix eval/current-version run audit
 ```
 
-The command runs on Node 20 and 22. It records the source commit, Node runtime,
+The command runs on Node 22. It records the source commit, Node runtime,
 tokenizer, holdout hash, task outcomes, round trips, client-observed latency,
 and exact JSON-serialized definition, request, and response token surfaces.
 The default tokenizer is `o200k_base`; override it with
@@ -119,7 +119,7 @@ The default tokenizer is `o200k_base`; override it with
 The suite measures the required isolated QuickJS executor and seven-tool
 surface. Inventory, schema description, and batching are exercised through
 `connecta.search`, `connecta.describe`, and `connecta.batch` inside
-`execute_code`. CI runs the command on Node 20 and 22.
+`execute_code`. CI runs the command on pushes to `main`.
 
 Every JSON result and Markdown report records the advertised surface, and the
 qualification gate asserts that the connected server advertises exactly the
