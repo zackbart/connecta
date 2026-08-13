@@ -2365,6 +2365,41 @@ describe("compact schema rendering", () => {
     );
   });
 
+  it("groups enum and resolved-union constraints around the whole type", () => {
+    const constrainedEnum = { enum: ["a", "bbb"], minLength: 2 };
+    expect(compactDiscoverySchema(constrainedEnum).text).toBe(
+      '("a" | "bbb") /* length >= 2 */',
+    );
+    expect(compactSchema(constrainedEnum)).toBe(
+      '("a" | "bbb") /* length >= 2 */',
+    );
+
+    const constrainedRef = {
+      $ref: "#/$defs/Value",
+      minLength: 2,
+      $defs: {
+        Value: {
+          anyOf: [{ type: "string" }, { type: "null" }],
+        },
+      },
+    };
+    expect(compactDiscoverySchema(constrainedRef).text).toBe(
+      "(string | null) /* length >= 2 */",
+    );
+    expect(compactSchema(constrainedRef)).toBe(
+      "(string | null) /* length >= 2 */",
+    );
+  });
+
+  it("does not group unconstrained array-valued type unions", () => {
+    expect(compactDiscoverySchema({ type: ["string", "null"] }).text).toBe(
+      "string | null",
+    );
+    expect(compactSchema({ type: ["string", "null"] })).toBe(
+      "string | null",
+    );
+  });
+
   it("drops constraints that push discovery over budget and flags the shape", () => {
     const schema = {
       type: "object",

@@ -536,7 +536,9 @@ function renderConstraints(
     }
     kept.push(entry);
   }
-  return kept.length === 0 ? base : `${base} /* ${kept.join("; ")} */`;
+  return kept.length === 0
+    ? base
+    : `${grouped(base)} /* ${kept.join("; ")} */`;
 }
 
 function renderSchema(
@@ -608,7 +610,7 @@ function renderSchema(
       "unknown";
     return options.renderConstraints
       ? renderConstraints(
-          constraintEntries(s).length > 0 ? grouped(rendered) : rendered,
+          rendered,
           s,
           options.constraintByteLimit,
           options.onConstraintTruncated,
@@ -701,7 +703,7 @@ function renderSchema(
     const rendered = type.join(" | ");
     return options.renderConstraints
       ? renderConstraints(
-          `(${rendered})`,
+          rendered,
           s,
           options.constraintByteLimit,
           options.onConstraintTruncated,
