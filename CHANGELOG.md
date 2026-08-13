@@ -169,9 +169,12 @@ failed closed onto `call_destructive_tool` before anyone counted it.
   still carries no operator data. Credential, token, and OAuth flows gained
   deliberate loading, error, empty, and success states — a failed save keeps
   the form and what was typed in it, a failed list offers a retry, and an empty
-  collection says what would fill it. Preact rides in as a `devDependency`
-  inlined into the committed bundle and never reaches a deployment's dependency
-  tree (#347).
+  collection says what would fill it. Each connector card also reads the drift
+  the last catalog refresh saw (#343) as four category counts, with `clean`,
+  `warning`, and "not observed in this runtime" kept as three distinct answers
+  — no tool name, schema, or payload rides that panel. Preact rides in as a
+  `devDependency` inlined into the committed bundle and never reaches a
+  deployment's dependency tree (#347).
 
 - **`api()` enforces its construction contract.** Every tool requires a
   non-empty `description` and an explicit boolean `annotations.readOnlyHint`;

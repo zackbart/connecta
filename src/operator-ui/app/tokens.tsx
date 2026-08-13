@@ -23,7 +23,11 @@ function CreateForm({ busy }: { busy: boolean }) {
       class="token-create"
       onSubmit={(event) => {
         event.preventDefault();
-        void createAccessToken(name.trim()).then(() => setName(""));
+        // Only a token that exists empties the field. A rejected POST leaves
+        // the typed client name where it was, so the retry is one click.
+        void createAccessToken(name.trim()).then((created) => {
+          if (created) setName("");
+        });
       }}
     >
       <label for="tokenName">Client name</label>

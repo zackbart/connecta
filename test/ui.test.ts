@@ -36,6 +36,10 @@ import {
   actorLabel,
   actorStableId,
   credentialUnavailableCopy,
+  driftCounts,
+  driftState,
+  driftSummary,
+  driftTotal,
   failure,
   filterActivity,
   info,
@@ -646,6 +650,91 @@ describe("operator app state", () => {
     ]) {
       expect(safeHttpHref(hostile)).toBeNull();
     }
+  });
+
+  it("reads a clean drift report as clean, with every category at zero", () => {
+    const clean = {
+      observedAt: "2026-08-12T12:00:00.000Z",
+      unclassifiedTools: 0,
+      unservedTools: 0,
+      annotationConflicts: 0,
+      schemaChanges: 0,
+    };
+    expect(driftState(clean)).toBe("clean");
+    expect(driftTotal(clean)).toBe(0);
+    expect(driftSummary(clean)).toContain("Matches the reviewed manifest");
+    // A clean report still names its four categories, so "clean" is a reading
+    // of something rather than a claim with nothing behind it.
+    expect(driftCounts(clean).map(({ label, count }) => [label, count])).toEqual(
+      [
+        ["Unclassified", 0],
+        ["Unserved", 0],
+        ["Annotation conflicts", 0],
+        ["Schema changes", 0],
+      ],
+    );
+  });
+
+  it("reads any nonzero category as a warning and counts the difference", () => {
+    const drifted = {
+      observedAt: "2026-08-12T12:00:00.000Z",
+      unclassifiedTools: 2,
+      unservedTools: 0,
+      annotationConflicts: 1,
+      schemaChanges: 3,
+    };
+    expect(driftState(drifted)).toBe("warning");
+    expect(driftTotal(drifted)).toBe(6);
+    expect(driftSummary(drifted)).toContain(
+      "6 differences from the reviewed manifest",
+    );
+    expect(driftCounts(drifted).filter(({ count }) => count > 0)).toHaveLength(
+      3,
+    );
+    // One difference reads as one, not as "1 differences".
+    expect(
+      driftSummary({
+        observedAt: "2026-08-12T12:00:00.000Z",
+        unclassifiedTools: 0,
+        unservedTools: 1,
+        annotationConflicts: 0,
+        schemaChanges: 0,
+      }),
+    ).toContain("1 difference from");
+  });
+
+  it("reads an absent drift report as unavailable rather than clean", () => {
+    // "Nothing has refreshed here" and "a refresh found nothing" are different
+    // answers; only one of them is a reason to stop looking.
+    expect(driftState(undefined)).toBe("unavailable");
+    expect(driftTotal(undefined)).toBe(0);
+    expect(driftCounts(undefined)).toEqual([]);
+    expect(driftSummary(undefined)).toBe(
+      "No catalog refresh observed yet in this runtime.",
+    );
+    expect(driftSummary(undefined)).not.toContain("Matches");
+  });
+
+  it("renders drift as counts and never as names, schemas, or payloads", () => {
+    // A report that arrived carrying more than counts — the panel reads the
+    // four categories it knows and nothing else, so extra fields cannot reach
+    // an operator's screen even if something upstream stopped bounding them.
+    const smuggled = {
+      observedAt: "2026-08-12T12:00:00.000Z",
+      unclassifiedTools: 4,
+      unservedTools: 1,
+      annotationConflicts: 0,
+      schemaChanges: 2,
+      toolNames: ["billing.delete_customer"],
+      inputSchema: { type: "object" },
+    } as unknown as Parameters<typeof driftCounts>[0];
+    const rendered = JSON.stringify(driftCounts(smuggled));
+    expect(driftCounts(smuggled).every((c) => typeof c.count === "number")).toBe(
+      true,
+    );
+    expect(rendered).not.toContain("billing.delete_customer");
+    expect(rendered).not.toContain("inputSchema");
+    expect(driftSummary(smuggled)).not.toContain("billing");
   });
 
   it("names each unavailable capability without revealing topology", () => {
@@ -2118,6 +2207,52 @@ describe("status UI", () => {
     );
     expect(byId.safe.authorizationUrl).toBe("https://provider.test/oauth?x=1");
     expect(byId.evil.authorizationUrl).toBeUndefined();
+  });
+
+  it("/ui/data carries drift counts only, and omits them until a refresh saw one", async () => {
+    const drifting: Connector = {
+      id: "drifting",
+      description: "Hosted provider",
+      catalogDrift() {
+        return {
+          observedAt: "2026-08-12T12:00:00.000Z",
+          unclassifiedTools: 2,
+          unservedTools: 0,
+          annotationConflicts: 1,
+          schemaChanges: 0,
+          // The plugin seam is open, so the payload it is not allowed to send
+          // is sent here on purpose: nothing but counts may reach an operator.
+          toolNames: ["billing.delete_customer"],
+        } as never;
+      },
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        throw new Error("n/a");
+      },
+    };
+    const c = makeConnecta([drifting]);
+    const res = await c.fetch(
+      new Request(`${BASE}/ui/data`, {
+        headers: { Authorization: `Bearer ${TOKEN}` },
+      }),
+    );
+    const body = (await res.json()) as any;
+    const byId = Object.fromEntries(
+      body.connectors.map((x: any) => [x.id, x]),
+    );
+    expect(byId.drifting.catalogDrift).toEqual({
+      observedAt: "2026-08-12T12:00:00.000Z",
+      unclassifiedTools: 2,
+      unservedTools: 0,
+      annotationConflicts: 1,
+      schemaChanges: 0,
+    });
+    expect(JSON.stringify(body)).not.toContain("billing.delete_customer");
+    // A connector that reports no observation gets no field at all, which is
+    // what the UI renders as "not observed" rather than as "clean".
+    expect(byId.calc.catalogDrift).toBeUndefined();
   });
 
   it("keeps credential controls in Credentials and secrets out of every shell", async () => {

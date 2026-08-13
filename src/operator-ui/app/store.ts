@@ -396,26 +396,35 @@ function tokenFailure(tokenNotice: Notice): Partial<OperatorState> {
   return { tokenBusy: false, tokenNotice, pendingFocus: "tokenNotice" };
 }
 
-export function createAccessToken(name: string): Promise<void> {
+/**
+ * Resolves true only when the token exists. `mutate` lands a handled failure in
+ * state and resolves like any other outcome, so a caller that clears its form on
+ * resolution would throw away what the operator typed the moment the POST
+ * failed — the dead end every other flow here avoids. The form clears on this
+ * boolean instead.
+ */
+export function createAccessToken(name: string): Promise<boolean> {
   if (!name) {
     set(tokenFailure(failure("Name the MCP client before creating a token.")));
-    return Promise.resolve();
+    return Promise.resolve(false);
   }
+  let created = false;
   return mutate({
     request: (current) =>
       operatorRequest("/ui/access-tokens", "POST", current, { name }),
     busy: { tokenBusy: true, tokenNotice: null },
     done: (payload) => {
-      const created = payload?.accessToken;
-      if (!payload?.token || !created) {
+      const issued = payload?.accessToken;
+      if (!payload?.token || !issued) {
         throw new Error("The created token was not returned.");
       }
+      created = true;
       return {
         tokenBusy: false,
         tokenPhase: "ready",
         tokens: [
-          created,
-          ...state.tokens.filter((token) => token.id !== created.id),
+          issued,
+          ...state.tokens.filter((token) => token.id !== issued.id),
         ],
         createdToken: payload.token,
         tokenNotice: info("Access token created."),
@@ -424,7 +433,7 @@ export function createAccessToken(name: string): Promise<void> {
     },
     failed: tokenFailure,
     fallback: "Access token could not be created.",
-  });
+  }).then(() => created);
 }
 
 export function dismissCreatedToken(): void {

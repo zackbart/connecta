@@ -45,7 +45,18 @@ Two roots share one store: `#operatorNav` and `#operatorContent`.
   back-forward cache — unmounts it.
 - **Every flow has four states.** Loading, error, empty, and success, with no
   dead end: a failed save keeps the form and its typed value, a failed list
-  offers a retry, and an empty collection says what would fill it.
+  offers a retry, and an empty collection says what would fill it. A mutation
+  that fails is still a resolved promise — `mutate` lands the failure in state
+  rather than rejecting — so a caller that clears a form must clear it on a
+  confirmed success, never on resolution. `createAccessToken` returns that
+  answer as a boolean for exactly this reason.
+- **Drift is counts, and absence is its own answer.** The connector card reads
+  `catalogDrift` ([#343](https://github.com/zackbart/connecta/issues/343)) as
+  four category counts and a timestamp. There is no drill-down, because a tool
+  name or a schema here would make an operator page the payload surface the
+  drift model refuses to be. A connector with no report renders as *not
+  observed*, never as clean: this runtime having seen no refresh is not the
+  same claim as a refresh having found nothing.
 
 ## Working on it
 
@@ -59,6 +70,11 @@ well as Node and there is no DOM in either:
 
 - `test/ui.test.ts` — the server shell, the `/ui/*` routes, and the app's pure
   state rules from `view.ts`.
+- `test/operator-store.test.ts` — `store.ts` itself, against a fake browser: the
+  Clerk listener, `gate()`, the generation fence, and the request path. The
+  rules in `view.ts` prove what an identity change *erases*; this suite proves
+  something calls them when the identity actually changes. It typechecks in the
+  DOM-lib program (`tsconfig.operator-ui.json`) because it imports the store.
 - `test/browser/operator-ui.spec.ts` — the wiring, in a real browser:
   credential, token, and OAuth flows end to end, including their failure and
   empty states. Run it with `npm run test:browser` (`npm run test:browser:install`

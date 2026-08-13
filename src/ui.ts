@@ -458,6 +458,11 @@ export async function buildUiData(
           : {}),
         toolCount: tools.length,
         tools,
+        // Counts only, and only when a refresh in this runtime produced them.
+        // `Registry.statusFor` already rebuilt the report through
+        // `boundedCatalogDrift`, so what lands here cannot carry a name or a
+        // schema even if the plugin seam returned one.
+        ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
         ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
         ...(credential ? { credential } : {}),
       };

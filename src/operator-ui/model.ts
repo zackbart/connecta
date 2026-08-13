@@ -1,3 +1,5 @@
+import type { CatalogDriftReport } from "../types.js";
+
 export interface UiTool {
   name: string;
   address: string;
@@ -47,6 +49,15 @@ export interface UiConnector {
   /** This connector exposes operator-managed downstream OAuth lifecycle hooks. */
   oauth?: boolean;
   credential?: UiCredential;
+  /**
+   * Drift the last catalog refresh saw *in this runtime*
+   * ([#343](https://github.com/zackbart/connecta/issues/343)). Four counts and
+   * a timestamp: no tool name, no schema, no payload ever rides this field.
+   * Absent means this process has observed no refresh — not that nothing
+   * drifted — which is why the UI renders that as its own state rather than as
+   * a clean one.
+   */
+  catalogDrift?: CatalogDriftReport;
 }
 
 export type CredentialManagementCapability =

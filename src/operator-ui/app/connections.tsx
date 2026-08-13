@@ -1,6 +1,9 @@
 import { filterUiConnectors, type UiConnector } from "../model.js";
 import {
   connectorStatusLabel,
+  driftCounts,
+  driftState,
+  driftSummary,
   safeHttpHref,
   toolCountLabel,
   type OperatorState,
@@ -8,6 +11,45 @@ import {
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
 import { CopyButton, Empty, NoticeLine, PageLink } from "./parts.js";
 import { oauthAction, setConnectorFilter } from "./store.js";
+
+const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
+  clean: "Catalog drift · none",
+  warning: "Catalog drift · review",
+  unavailable: "Catalog drift · not observed",
+};
+
+/**
+ * What the last catalog refresh saw, as counts. There is no drill-down and
+ * nothing to expand: a tool name or a schema on this panel would turn an
+ * operator page into the payload surface the drift model refuses to be
+ * ([#343](https://github.com/zackbart/connecta/issues/343)). Absence is its own
+ * state — a runtime that has refreshed nothing says so rather than showing four
+ * reassuring zeros.
+ */
+function DriftPanel({ connector }: { connector: UiConnector }) {
+  const drift = connector.catalogDrift;
+  const state = driftState(drift);
+  return (
+    <div
+      id={`drift-${connector.id}`}
+      class={`connector-drift ${state}`}
+      data-drift={state}
+    >
+      <p class="cap">{DRIFT_HEADING[state]}</p>
+      <p class="meta drift-summary">{driftSummary(drift)}</p>
+      {state === "unavailable" ? null : (
+        <ul class="drift-counts">
+          {driftCounts(drift).map(({ key, label, count }) => (
+            <li key={key} class={count > 0 ? "drift-count flagged" : "drift-count"}>
+              <span class="drift-count-value">{count}</span>
+              <span class="drift-count-label">{label}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function ConnectorCard({
   connector,
@@ -62,6 +104,7 @@ function ConnectorCard({
           )}
         </p>
       ) : null}
+      <DriftPanel connector={connector} />
       {connector.oauth && oauthManagement ? (
         <div class="credential-actions">
           <button

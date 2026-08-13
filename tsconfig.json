@@ -19,5 +19,12 @@
     "allowSyntheticDefaultImports": true
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],
-  "exclude": ["node_modules", "examples", "src/operator-ui/app"]
+  "exclude": [
+    "node_modules",
+    "examples",
+    "src/operator-ui/app",
+    // Imports the browser store, so it typechecks in the DOM-lib program
+    // (tsconfig.operator-ui.json) rather than this one.
+    "test/operator-store.test.ts"
+  ]
 }

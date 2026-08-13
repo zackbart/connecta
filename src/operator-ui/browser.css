@@ -232,6 +232,18 @@
   .connector-description { margin-top: .25rem; max-width: 40rem; }
   .connector-message,
   .connector-auth { margin-top: .75rem; }
+  .connector-drift { border-top: 1px solid var(--rule); margin-top: .75rem; padding-top: .75rem; }
+  .drift-summary { margin-top: .25rem; }
+  .drift-counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem var(--gap);
+    margin-top: .5rem;
+  }
+  .drift-count { color: var(--muted); font-size: .9em; }
+  .drift-count.flagged { color: var(--ink); }
+  .drift-count-value { font-family: var(--mono); margin-right: .35rem; }
+  .drift-count.flagged .drift-count-value { text-decoration: underline; }
   .credential-ledger { border-bottom: 1px solid var(--rule); }
   .credential-card { border-top: 1px solid var(--rule); padding-bottom: .75rem; padding-top: .75rem; }
   .credential-head {

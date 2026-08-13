@@ -59,6 +59,27 @@ function data(): UiData {
             : {}),
           testable: true,
         },
+        catalogDrift: {
+          observedAt: "2026-08-12T12:00:00.000Z",
+          unclassifiedTools: 0,
+          unservedTools: 0,
+          annotationConflicts: 0,
+          schemaChanges: 0,
+        },
+      },
+      {
+        id: "drifted",
+        title: "Hosted proxy",
+        status: "ok",
+        toolCount: 0,
+        tools: [],
+        catalogDrift: {
+          observedAt: "2026-08-12T12:00:00.000Z",
+          unclassifiedTools: 2,
+          unservedTools: 0,
+          annotationConflicts: 0,
+          schemaChanges: 1,
+        },
       },
       {
         id: "oauth",
@@ -345,6 +366,32 @@ test("adds, tests, replaces, and removes a credential", async ({ page }) => {
   ).toBe(true);
 });
 
+test("shows clean, warning, and unobserved drift without naming a tool", async ({
+  page,
+}) => {
+  await openAuthenticated(page);
+
+  const clean = page.locator("#drift-vaulted");
+  await expect(clean).toHaveAttribute("data-drift", "clean");
+  await expect(clean).toContainText("Matches the reviewed manifest");
+
+  const warning = page.locator("#drift-drifted");
+  await expect(warning).toHaveAttribute("data-drift", "warning");
+  await expect(warning).toContainText("3 differences from the reviewed manifest");
+  await expect(warning.locator(".drift-count.flagged")).toHaveCount(2);
+
+  // A connector this runtime has never refreshed says so instead of showing
+  // four reassuring zeros.
+  const unavailable = page.locator("#drift-oauth");
+  await expect(unavailable).toHaveAttribute("data-drift", "unavailable");
+  await expect(unavailable).toContainText("No catalog refresh observed yet");
+  await expect(unavailable.locator(".drift-counts")).toHaveCount(0);
+
+  // Counts and category labels only: no tool name and no schema on the page.
+  const panels = await page.locator(".connector-drift").allInnerTexts();
+  expect(panels.join(" ")).not.toMatch(/schema\s*:|inputSchema|\w+\.\w+\(/);
+});
+
 test("disconnects and restarts downstream OAuth", async ({ page }) => {
   await openAuthenticated(page);
 
@@ -506,6 +553,35 @@ test("offers a retry when the access-token list cannot be loaded", async ({
     .getByRole("button", { name: "Try loading access tokens again" })
     .click();
   await expect(page.getByText("No access tokens yet")).toBeVisible();
+});
+
+test("keeps the typed client name after a rejected token creation", async ({
+  page,
+}) => {
+  faults.set("POST /ui/access-tokens", "token store unavailable");
+  await openAuthenticated(page, "/tokens");
+
+  await page.getByLabel("Client name").fill("Claude desktop");
+  await page.getByRole("button", { name: "Create token" }).click();
+  await expect(page.locator("#tokenNotice")).toHaveText(
+    "token store unavailable",
+  );
+  // No dead end: the failure kept the name, so the retry does not ask the
+  // operator to type it again.
+  await expect(page.getByLabel("Client name")).toHaveValue("Claude desktop");
+  await expect(page.locator("#tokenReveal")).toHaveCount(0);
+
+  faults.clear();
+  await page.getByRole("button", { name: "Create token" }).click();
+  await expect(page.locator("#createdToken")).toHaveText(
+    "cta_browser_test_secret_value",
+  );
+  expect(
+    requests.filter(
+      (request) =>
+        request.method === "POST" && request.path === "/ui/access-tokens",
+    ).length,
+  ).toBe(2);
 });
 
 test("reports a failed OAuth restart and re-enables the control", async ({
