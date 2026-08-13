@@ -2,9 +2,50 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.18.0 — 2026-08-13
+
+This minor release spends fewer tokens before the first call and answers
+better when a call goes wrong. The always-loaded MCP instructions and tool
+definitions are 44.6% lighter, the `execute_code` description now names the
+deployment's configured connector IDs before the first catalog search, and a
+failed `connecta.describe` entry carries the same typed recovery as a failed
+call. The compatibility change is the floor: Node 22 is now the minimum
+supported release, matching the shipped Docker template, and CI runs one job
+per pull request against it; the Cloudflare Worker target is unchanged. Stripe
+OAuth deployments must drop the connector-wide `mode` — each returned account
+now carries its own. An evaluation of erasable TypeScript syntax in
+`execute_code` programs ended in a recorded refusal, so portable programs
+remain plain JavaScript. A deployment already on Node 22 that lets accounts
+carry their Stripe mode needs no configuration change.
+
+### Added
+
+- **`execute_code` now names the deployment's connectors up front.** Its
+  description carries a connector inventory derived only from the configured
+  registry: canonical IDs in registry order, the executable shortcut when
+  sanitization changes the ID, bounded to 256 serialized bytes with an exact
+  omitted count. A cold model can scope its first catalog search without
+  guessing, and rendering the inventory performs no catalog request and no
+  credential access (#416).
+
+- **Failed `connecta.describe` entries are now as repairable as failed calls.**
+  Each failed entry carries `errorDetails` beside the preserved human text: the
+  invocation path's stable `code` and `retryable`, a route-aware `nextAction`,
+  and up to three deterministic nearby canonical addresses when the connector
+  is known. Caller-authored addresses are clamped everywhere they echo, so
+  hostile input can no longer displace partial results (#417).
 
 ### Changed
+
+- **The always-loaded surface got 44.6% lighter.** The MCP instructions and the
+  seven tool definitions now carry route selection, the fail-closed read-only
+  boundary, and the minimum guest syntax — 6,850 bytes instead of 12,358.
+  Selection discipline, runtime differences, worked examples, direct-call
+  options, `get_result` rules, the `connecta.ui` reads-binding shape, and
+  repair guidance moved into the on-demand `usage` skill, which grew to a
+  deliberate 9,000-byte cap and stays byte-identical across deployments.
+  Clients that never fetch the skill keep correct routing from the compact
+  definitions alone (#418).
 
 - **Node 22 is now the minimum supported Node release.** CI and the published
   engine range now match the Node 22 runtime used by the shipped deployment
