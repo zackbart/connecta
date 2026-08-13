@@ -259,7 +259,8 @@ timeouts, validation, result guards, and typed failures.
 Connector usage guides are configuration too. `usageGuide` accepts the
 historical markdown string or `{ content, summary?, required? }`; the latter
 lets discovery explain what the guide covers without loading it. The summary
-is only a bounded routing hint. Mark a guide `required` only when no complete
+is a 120-character routing hint; a longer configured value refuses construction
+instead of being silently shortened. Mark a guide `required` only when no complete
 tool schema can describe correct use, such as a generic operation wrapper or a
 mandatory cross-tool sequence. Mutations and truncated compact schemas already
 produce automatic review requirements. Two deployments may reuse the same

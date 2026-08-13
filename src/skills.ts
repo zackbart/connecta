@@ -97,7 +97,8 @@ export function connectorGuide(connector: Connector): string | undefined {
   return content && content.trim() !== "" ? content : undefined;
 }
 
-const SUMMARY_LENGTH = 120;
+/** Discovery budget for one connector-guide summary, including an ellipsis. */
+export const GUIDE_SUMMARY_LENGTH = 120;
 
 /** A `---`/`***`/`___` rule, which also opens and closes YAML frontmatter. */
 const RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
@@ -105,12 +106,62 @@ const RULE_RE = /^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
 /** A fenced code block's delimiter. */
 const FENCE_RE = /^\s*(?:```|~~~)/;
 
+/** Markdown blocks that end a paragraph without a blank physical line. */
+const HEADING_RE = /^\s*#{1,6}/;
+const LIST_ITEM_RE = /^\s*(?:[-*+]\s+|\d+[.)]\s+)/;
+const SETEXT_UNDERLINE_RE = /^\s*=+\s*$/;
+const TABLE_DELIMITER_RE =
+  /^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/;
+const OPENS_CLAUSE_RE = /^(?:The|A|An)\b/u;
+const ARTICLE_RE = /^(?:the|a|an)\b/u;
+
 /**
  * Markup that carries no summary text of its own: horizontal rules, HTML
  * comments, and table rows. Skipped so a guide that opens with one is
  * summarized by its first real line instead of by punctuation.
  */
 const NOT_SUMMARY_RE = /^\s*(?:<!--|\|)|^\s*(?:-{3,}|\*{3,}|_{3,})\s*$/;
+
+/** A standard Markdown table starts with a pipe-bearing row and delimiter. */
+function startsTable(lines: string[], index: number): boolean {
+  const header = lines[index] ?? "";
+  const delimiter = lines[index + 1] ?? "";
+  return header.includes("|") && TABLE_DELIMITER_RE.test(delimiter);
+}
+
+/** True when a sentence-looking period belongs to an abbreviation. */
+function isAbbreviation(text: string, end: number): boolean {
+  const token = text.slice(0, end).match(/\S+$/u)?.[0] ?? "";
+  // These introduce an example or restatement even before a capitalized word.
+  if (/^(?:e\.g|i\.e)\.$/iu.test(token)) return true;
+  // An initial or title belongs to the proper name that follows it.
+  if (/^[A-Z]\.$/u.test(token)) return true;
+  if (/^(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St)\.$/iu.test(token)) return true;
+
+  if (
+    !/^(?:[A-Za-z]\.){2,}$/u.test(token) &&
+    !/^(?:vs|etc|approx|dept|fig|no)\.$/iu.test(token)
+  ) {
+    return false;
+  }
+
+  // Initialisms can end a sentence or extend a name ("U.S. East region").
+  // The mistakes are asymmetric: a false ending presents a fragment as a
+  // complete thought, while a missed ending gets an honest ellipsis. Count
+  // the period only with narrow evidence of a new clause: an article in one
+  // of its first two words. This is grammar evidence, not a starter-word list.
+  const following = text
+    .slice(end)
+    .match(/^[)\]}'"”’]*\s+(\S+)(?:\s+(\S+))?/u);
+  if (!following) return false;
+  const [, nextWord, afterNext] = following;
+  const startsClause =
+    nextWord !== undefined &&
+    /^\p{Lu}/u.test(nextWord) &&
+    (OPENS_CLAUSE_RE.test(nextWord) ||
+      (afterNext !== undefined && ARTICLE_RE.test(afterNext)));
+  return !startsClause;
+}
 
 /** Drop a leading YAML frontmatter block — metadata, not summary text. */
 function withoutFrontmatter(lines: string[]): string[] {
@@ -122,31 +173,105 @@ function withoutFrontmatter(lines: string[]): string[] {
   return close === -1 ? lines : lines.slice(close + 1);
 }
 
-/**
- * One line describing a guide, for the cheap list view: the guide's first
- * meaningful line (heading marks and list bullets stripped), falling back to
- * the connector's own description when the guide opens with nothing but
- * markup.
- */
-function boundedSummary(summary: string): string | undefined {
-  const line = summary.replace(/\s+/g, " ").trim();
-  if (line === "") return undefined;
-  return line.length <= SUMMARY_LENGTH
-    ? line
-    : `${line.slice(0, SUMMARY_LENGTH - 1).trimEnd()}…`;
+/** Normalize authored and derived summaries under one construction contract. */
+export function normalizeGuideSummary(summary: string): string | undefined {
+  const normalized = summary.replace(/\s+/g, " ").trim();
+  return normalized === "" ? undefined : normalized;
 }
 
+/**
+ * Shorten a normalized summary at the strongest readable boundary available.
+ * A complete sentence needs no ellipsis; clause and word cuts do, so discovery
+ * never presents an unfinished fragment as the guide's complete thought.
+ */
+function boundedSummary(summary: string): string | undefined {
+  const normalized = normalizeGuideSummary(summary);
+  if (!normalized) return undefined;
+  if (normalized.length <= GUIDE_SUMMARY_LENGTH) return normalized;
+
+  const contentBudget = GUIDE_SUMMARY_LENGTH - 1;
+  let sentenceEnd = 0;
+  const sentenceBoundary = /[.!?…。！？](?:[)\]}'"”’]+)?(?=\s|$)/gu;
+  for (const match of normalized.matchAll(sentenceBoundary)) {
+    const end = (match.index ?? 0) + match[0].length;
+    if (end > GUIDE_SUMMARY_LENGTH) break;
+    const punctuationEnd = (match.index ?? 0) + 1;
+    if (
+      match[0].startsWith(".") &&
+      isAbbreviation(normalized, punctuationEnd)
+    ) {
+      continue;
+    }
+    // Do not mistake another short fragment for a useful complete thought.
+    if (end >= 24) sentenceEnd = end;
+  }
+  if (sentenceEnd > 0) return normalized.slice(0, sentenceEnd);
+
+  const available = normalized.slice(0, contentBudget);
+  let clauseEnd = 0;
+  const clauseBoundary = /[,;:](?=\s)|\s[—–-](?=\s)/g;
+  for (const match of available.matchAll(clauseBoundary)) {
+    const end = match.index ?? 0;
+    // Prefer a clause only when it retains most of the discovery budget.
+    if (end >= 80) clauseEnd = end;
+  }
+  if (clauseEnd > 0) {
+    return `${available.slice(0, clauseEnd).trimEnd()}…`;
+  }
+
+  const wordEnd = available.search(/\s+\S*$/);
+  if (wordEnd > 0) {
+    const prefix = available
+      .slice(0, wordEnd)
+      .trimEnd()
+      .replace(/[,;:([{—–-]+$/u, "")
+      .trimEnd();
+    if (prefix !== "") return `${prefix}…`;
+  }
+
+  let hardEnd = contentBudget;
+  const code = normalized.charCodeAt(hardEnd - 1);
+  if (code >= 0xd800 && code <= 0xdbff) hardEnd--;
+  return `${normalized.slice(0, hardEnd)}…`;
+}
+
+/**
+ * One thought describing a guide for the cheap list view: the first meaningful
+ * paragraph, joined across physical lines, with headings and the connector
+ * description as fallbacks when the guide opens with markup alone.
+ */
 function summarizeGuide(connector: Connector, guide: string): string {
+  const lines = withoutFrontmatter(guide.split("\n"));
   let inFence = false;
+  let inComment = false;
   let headingFallback: string | undefined;
-  for (const raw of withoutFrontmatter(guide.split("\n"))) {
+  for (let index = 0; index < lines.length; index++) {
+    const raw = lines[index] ?? "";
+    if (inComment) {
+      if (raw.includes("-->")) inComment = false;
+      continue;
+    }
     if (FENCE_RE.test(raw)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
+    if (raw.trimStart().startsWith("<!--")) {
+      if (!raw.includes("-->")) inComment = true;
+      continue;
+    }
+    if (startsTable(lines, index)) {
+      index++;
+      while (
+        index + 1 < lines.length &&
+        (lines[index + 1] ?? "").includes("|")
+      ) {
+        index++;
+      }
+      continue;
+    }
     if (raw.trim() === "" || NOT_SUMMARY_RE.test(raw)) continue;
-    const heading = /^\s*#{1,6}/.test(raw);
+    const heading = HEADING_RE.test(raw);
     const line = raw
       // `\s*` (not `\s+`) so a bare `#` strips to nothing and is skipped, and
       // an unspaced `#Heading` is still read as a heading.
@@ -159,7 +284,26 @@ function summarizeGuide(connector: Connector, guide: string): string {
       headingFallback ??= boundedSummary(line);
       continue;
     }
-    return boundedSummary(line) ?? line;
+
+    const paragraph = [line];
+    while (index + 1 < lines.length) {
+      const next = lines[index + 1] ?? "";
+      if (
+        next.trim() === "" ||
+        startsTable(lines, index + 1) ||
+        FENCE_RE.test(next) ||
+        HEADING_RE.test(next) ||
+        LIST_ITEM_RE.test(next) ||
+        SETEXT_UNDERLINE_RE.test(next) ||
+        NOT_SUMMARY_RE.test(next)
+      ) {
+        break;
+      }
+      paragraph.push(next.trim());
+      index++;
+      if (paragraph.join(" ").length > GUIDE_SUMMARY_LENGTH) break;
+    }
+    return boundedSummary(paragraph.join(" ")) ?? line;
   }
   if (headingFallback) return headingFallback;
   const fallback = connector.description ?? `Usage guide for "${connector.id}".`;
@@ -174,6 +318,8 @@ export function connectorGuideSummary(
   if (!guide) return undefined;
   const configured =
     typeof connector.usageGuide === "object"
+      // Registry construction rejects over-budget configured summaries. Keep
+      // normalization here so direct Connector callers see the same text.
       ? boundedSummary(connector.usageGuide.summary ?? "")
       : undefined;
   return configured ?? summarizeGuide(connector, guide);

@@ -109,12 +109,13 @@ A connector may attach a deployment-owned guide as markdown, preserving the
 original `usageGuide: string` configuration, or as
 `{ content, summary?, required? }`. The structured form does not register a
 connector or create a shared runtime template. `content` remains the markdown
-returned verbatim by `skills`; `summary` is normalized and capped at 120
-characters for discovery. When it is absent, Connecta derives the same bounded
-fallback used by the skills listing: the first meaningful body line, with a
-heading used only when the guide has no body. `required: true` is reserved for generic
-API wrappers and cross-operation conventions a complete downstream schema
-cannot express.
+returned verbatim by `skills`; `summary` is normalized and refuses construction
+when it exceeds 120 characters. When it is absent, Connecta derives the same
+bounded fallback used by the skills listing: the first meaningful body
+paragraph, joined across physical Markdown line wraps and shortened at a
+sentence, clause, or word boundary, with a heading used only when the guide has
+no body. `required: true` is reserved for generic API wrappers and
+cross-operation conventions a complete downstream schema cannot express.
 
 Search and describe results keep the existing `guide: "connector:<id>"`
 pointer and add `guideSummary`. A matching tool also carries

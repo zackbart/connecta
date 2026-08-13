@@ -4,9 +4,18 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-This release repairs field projection across arrays. It changes only projections
-that previously serialized unresolved element paths as genuine `null` values;
-complete projections, genuine nulls, and empty arrays keep their prior shape.
+This release repairs field projection across arrays and makes guide discovery
+read Markdown as prose instead of physical lines. Projection changes apply only
+where unresolved element paths previously looked like genuine `null` values.
+One construction contract tightens: an explicit `usageGuide.summary` over 120
+characters now refuses to boot. Deployments whose summaries already fit, or
+which let Connecta derive them, need no configuration change.
+
+### Changed
+
+- An explicit `usageGuide.summary` longer than 120 characters after whitespace
+  normalization now throws during registry construction. Exactly 120 remains
+  valid, and a blank explicit summary still falls back to derivation (#392).
 
 ### Fixed
 
@@ -16,6 +25,10 @@ complete projections, genuine nulls, and empty arrays keep their prior shape.
   path in `partialFields`, so genuine downstream nulls remain distinguishable.
   Schema-backed misses keep the same bounded guidance through nested arrays;
   schema-free projections still report their observed misses (#394).
+- Derived guide summaries now join a hard-wrapped opening paragraph before
+  selecting a complete sentence or shortening at a clause or word boundary.
+  Frontmatter, fences, headings, rules, tables, and description fallbacks keep
+  their prior roles; multi-line HTML comments are now skipped whole (#392).
 
 - **Compact schemas now carry declared numeric and string constraints.** Search
   and compact describe show numeric bounds, multiples, string length bounds,

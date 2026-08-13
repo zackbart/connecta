@@ -357,8 +357,9 @@ export interface ConnectorUsageGuide {
   /** Markdown returned verbatim by `skills({ name: "connector:<id>" })`. */
   content: string;
   /**
-   * Bounded discovery hint describing the conventions the guide covers. When
-   * omitted, Connecta derives a summary from the guide's first meaningful line.
+   * Discovery hint describing the conventions the guide covers. Whitespace is
+   * normalized, and a value over 120 characters throws at construction. When
+   * omitted, Connecta derives a bounded summary from the first body paragraph.
    */
   summary?: string;
   /**
