@@ -92,11 +92,15 @@ describe("public package boundary", () => {
   // agent to "fix" the artifact instead of the words (#377).
   it("keeps the shipped example adapters out of the importable surface", () => {
     expect(packageJson.files).toContain("examples/worker");
-    const targets = Object.values(packageJson.exports ?? {}).flatMap((entry) =>
-      typeof entry === "string"
-        ? [entry]
-        : Object.values(entry as Record<string, string>),
-    );
+    // `./package.json` is the manifest itself — a data file, not a code path
+    // (#374) — so it is the one export that legitimately sits outside dist/.
+    const targets = Object.entries(packageJson.exports ?? {})
+      .filter(([subpath]) => subpath !== "./package.json")
+      .flatMap(([, entry]) =>
+        typeof entry === "string"
+          ? [entry]
+          : Object.values(entry as Record<string, string>),
+      );
     expect(targets.length).toBeGreaterThan(0);
     for (const target of targets) {
       expect(target, `${target} resolves outside dist/`).toMatch(/^\.\/dist\//);

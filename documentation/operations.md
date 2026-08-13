@@ -130,17 +130,23 @@ package is public.
 `npm run release:check` adds `check:security` (`npm audit --omit=dev
 --audit-level=moderate`) and `check:package`, and is what CI runs on every push
 and pull request. `check:package` packs the tarball, asserts the required files
-are in it and that no platform-specific implementation reached `dist/` and no
-unshippable path leaked in, derives the shipped guide list from which guides
-still carry a stub marker, checks that every packed doc's `documentation/` link
-resolves to something the tarball carries, and then runs `connecta init` and
-builds and runs the generated deployment's own container.
+are in it and that no unshippable path leaked in — including any
+Cloudflare-named connector or storage path (`connectors/cloudflare`,
+`storage/cloudflare`) anywhere in the artifact, `dist/` and `examples/` alike —
+derives the shipped guide list from which guides still carry a stub marker,
+checks that every packed doc's `documentation/` link resolves to something the
+tarball carries, and then runs `connecta init` and builds and runs the
+generated deployment's own container.
 
 The Worker example ships in the tarball, its Cloudflare KV and D1 adapters
 included: it is the Workers starting template a consumer copies. That is not a
 hole in the published surface, because nothing under `examples/` appears in the
 `exports` map — every export target resolves into `dist/`, so those adapters
-are reference source rather than an importable subpath.
+are reference source rather than an importable subpath. They also clear the
+platform-specific gate above on their names (`cloudflare-kv.ts`,
+`d1-activity.ts`) rather than by exemption: that gate is a blunt pattern over
+the whole artifact, so an example file renamed into `storage/cloudflare` would
+fail the pack even though nothing about the published surface had changed.
 
 Two more runners are deliberately outside `check`:
 
