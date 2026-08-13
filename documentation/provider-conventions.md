@@ -60,12 +60,14 @@ floor. From `src/catalog.ts` and `src/catalog-service.ts`:
 - **`inputKeys`, `requiredInputKeys`, and `outputKeys` come only from bounded
   plain-object schemas.** A top-level `anyOf` has no keys to list, so a caller
   learns nothing about the arguments without expanding the schema.
-- **A guide summary is capped at 120 characters**, defaulting to the guide's
-  first meaningful body line.
+- **A guide summary is bounded at 120 characters.** A configured value past
+  the bound refuses construction. An omitted one defaults to the guide's first
+  meaningful body paragraph, joined across physical line wraps and shortened
+  at a readable boundary.
 - **Search returns a connector's `id`, `title`, `guide`, and `guideSummary` —
   never its `description`.** The description reaches an agent only as the
-  fallback summary for a guide with no usable body line. Routing facts belong
-  in the title and the guide's first line; a routing fact that lives only in
+  fallback summary for a guide with no usable body paragraph. Routing facts belong
+  in the title and the guide's opening paragraph; a routing fact that lives only in
   the connector description has been written into a field the model does not
   read. Neither the `id` nor the `title` is a lexical document, so a term drawn
   from one of them is not a search hit — it is a no-match whose guidance names

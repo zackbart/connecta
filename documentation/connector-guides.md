@@ -40,13 +40,17 @@ hand-written connector. It is deployment-owned configuration like everything
 else here: an edit and a redeploy, never a runtime registration.
 
 `content` is returned byte for byte by `skills({ name: "connector:<id>" })`.
-`summary` is normalized and capped at 120 characters for discovery. Omit it and
-connecta derives the same bounded line the skills listing uses: the first
-meaningful body line, with frontmatter, fences, rules, comments, and table rows
-skipped, a heading used only when the guide has no body, and the connector's
-description as the last resort. A derived summary is usually worse than a
-written one — it was written to open a document, not to answer "is this guide
-relevant to what I am about to do".
+`summary` is normalized and must fit 120 characters. A longer configured value
+refuses construction instead of silently changing the operator's words. Omit
+it and connecta derives the same bounded summary the skills listing uses: the
+first meaningful body paragraph, joined across Markdown's physical line wraps,
+with frontmatter, fences, rules, comments, and tables skipped. When the
+paragraph does not fit, connecta keeps a useful complete sentence when one
+fits, then prefers a clause or word boundary before adding an ellipsis. A heading is used
+only when the guide has no body, and the connector's description is the last
+resort. A derived summary is usually worse than a written one — it was written
+to open a document, not to answer "is this guide relevant to what I am about
+to do".
 
 `connector:<id>` is the only address for a guide, and built-in skill names are
 bare identifiers, so a guide can never shadow or be shadowed by `usage`: a
@@ -160,15 +164,16 @@ schemas will never carry, because it cannot change them
 ## Tests that enforce this
 
 `test/meta-tools.test.ts` owns the guide behavior end to end: the skills
-listing carrying one entry per guided connector, summaries derived from the
-first meaningful line and falling back to the connector description when the
-guide is all markup, whitespace-only guides treated as no guide, content
-returned verbatim including surrounding padding, identical content in two
-deployments staying isolated, every miss erroring rather than falling back to
-the generic guide with an identically labelled skills list on each branch, the
-`guide` pointer in search output, and `guideRequired` appearing for
-connector-required conventions, approval-bound tools, and truncated schemas —
-and being absent from a search that asked for no schemas. `test/server.test.ts`
-owns the conditional half: it compares a guide-free deployment's four tool
-descriptions against a guided one's, and asserts the `usage` skill is
-byte-identical between them.
+listing carrying one entry per guided connector, summaries joining a
+hard-wrapped opening paragraph and shortening at readable boundaries,
+configured summaries refusing construction past the bound, heading and
+description fallbacks, markup skipping, whitespace-only guides treated as no
+guide, content returned verbatim including surrounding padding, identical
+content in two deployments staying isolated, every miss erroring rather than
+falling back to the generic guide with an identically labelled skills list on
+each branch, the `guide` pointer in search output, and `guideRequired`
+appearing for connector-required conventions, approval-bound tools, and
+truncated schemas — and being absent from a search that asked for no schemas.
+`test/server.test.ts` owns the conditional half: it compares a guide-free
+deployment's four tool descriptions against a guided one's, and asserts the
+`usage` skill is byte-identical between them.

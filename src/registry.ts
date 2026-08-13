@@ -34,6 +34,10 @@ import {
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
 import { mapSettledWithConcurrency } from "./concurrency.js";
+import {
+  GUIDE_SUMMARY_LENGTH,
+  normalizeGuideSummary,
+} from "./skills.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -330,6 +334,21 @@ export class Registry implements RegistryView {
       }
       if (this.connectors.has(c.id)) {
         throw new Error(`Duplicate connector id "${c.id}"`);
+      }
+      const configuredGuideSummary =
+        typeof c.usageGuide === "object"
+          ? normalizeGuideSummary(c.usageGuide.summary ?? "")
+          : undefined;
+      if (
+        configuredGuideSummary !== undefined &&
+        configuredGuideSummary.length > GUIDE_SUMMARY_LENGTH
+      ) {
+        throw new Error(
+          `Connector "${c.id}" usageGuide.summary is ` +
+            `${configuredGuideSummary.length} characters after whitespace ` +
+            `normalization; the discovery bound is ${GUIDE_SUMMARY_LENGTH}. ` +
+            "Shorten it or omit it to derive one.",
+        );
       }
       this.connectors.set(c.id, c);
       if (c.callAdmission) {

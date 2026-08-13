@@ -23,7 +23,11 @@ import {
   retryBackoffMs,
 } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
-import { USAGE_SKILL } from "../src/skills.js";
+import {
+  connectorGuideSummary,
+  GUIDE_SUMMARY_LENGTH,
+  USAGE_SKILL,
+} from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { required,
@@ -187,7 +191,7 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).not.toContain("connector:plain");
   });
 
-  it("summarizes a guide with no heading from its first meaningful line", async () => {
+  it("summarizes a guide with no heading from its first meaningful paragraph", async () => {
     const mt = createMetaTools(
       makeRegistry([guided("linear", "- Use `linear.search_issues` first.\n")]),
       BASE,
@@ -197,15 +201,62 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
+  it("joins hard-wrapped opening paragraphs into complete thoughts", async () => {
+    const cases: Array<[string, string, string]> = [
+      [
+        "vercel",
+        "Use this connector for Vercel infrastructure and deployment state, not\n" +
+          "application data or source-code changes.\n\nLater details.",
+        "Use this connector for Vercel infrastructure and deployment state, not " +
+          "application data or source-code changes.",
+      ],
+      [
+        "supabase",
+        "Use this connector for Supabase account and project administration, not routine\n" +
+          "application queries or migrations.\n\nLater details.",
+        "Use this connector for Supabase account and project administration, not routine " +
+          "application queries or migrations.",
+      ],
+    ];
+    for (const [id, guide, expected] of cases) {
+      const summary = connectorGuideSummary(guided(id, guide));
+      expect(summary, id).toBe(expected);
+      expect(summary?.length, id).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
+    }
+  });
+
   it("skips opening markup when picking the summary line", async () => {
     const cases: Array<[string, string, string]> = [
       ["fence", "```json\n{ \"a\": 1 }\n```\n\nUse `x.search`.\n", "Use `x.search`."],
+      [
+        "comment-inside-fence",
+        "```html\n<!-- example\n```\n\nUse `x.search`.\n",
+        "Use `x.search`.",
+      ],
       ["frontmatter", "---\ntitle: ignored\n---\n\n# Real heading\n", "Real heading"],
       ["bare-hash", "#\n\nUse the search tool.\n", "Use the search tool."],
       ["bare-hashes", "###\n\nUse the search tool.\n", "Use the search tool."],
       ["unspaced-heading", "#Heading text\n", "Heading text"],
-      ["html-comment", "<!-- generated -->\n\n# Real heading\n", "Real heading"],
-      ["table", "| a | b |\n| - | - |\n\n# Real heading\n", "Real heading"],
+      [
+        "html-comment",
+        "<!-- generated\nmetadata -->\n\n# Real heading\n",
+        "Real heading",
+      ],
+      [
+        "leading-pipe-table",
+        "| Column | Meaning |\n| --- | --- |\n| id | Project id |\n\n# Real heading\n",
+        "Real heading",
+      ],
+      [
+        "standard-table",
+        "Column | Meaning\n--- | ---\nid | Project id\n\nUse the project id from search.\n",
+        "Use the project id from search.",
+      ],
+      [
+        "ordinary-pipe-prose",
+        "Use `left | right` as the literal query value.\n",
+        "Use `left | right` as the literal query value.",
+      ],
       ["rule", "---\n\n", "svc connector"],
     ];
     for (const [label, guide, expected] of cases) {
@@ -223,17 +274,99 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
-  it("truncates a summary line only past 120 characters", async () => {
-    const exact = "a".repeat(120);
+  it("shortens long summaries at sentence, clause, word, then hard boundaries", async () => {
+    const exact = "a".repeat(GUIDE_SUMMARY_LENGTH);
     const over = "b".repeat(121);
-    const mt = createMetaTools(
-      makeRegistry([guided("exact", exact), guided("over", over)]),
-      BASE,
+    const completeSentence =
+      "Resolve the project identifier before any deployment lookup. " +
+      "This second sentence is deliberately long enough to exceed the discovery budget by a wide margin.";
+    const longClause =
+      "Use the reporting endpoint for deployment history and release state across every project in the account, " +
+      "then reduce each result to its identifier.";
+    const longWords = Array.from(
+      { length: 30 },
+      (_, index) => `complete${index}`,
+    ).join(" ");
+
+    expect(connectorGuideSummary(guided("exact", exact))).toBe(exact);
+    expect(connectorGuideSummary(guided("over", over))).toBe(
+      `${"b".repeat(119)}…`,
     );
-    const listed = textFrom(await mt.skills({}));
-    expect(listed).toContain(`\`connector:exact\` — ${exact}`);
-    expect(listed).toContain(`\`connector:over\` — ${"b".repeat(119)}…`);
-    expect(listed).not.toContain("b".repeat(120));
+    expect(connectorGuideSummary(guided("sentence", completeSentence))).toBe(
+      "Resolve the project identifier before any deployment lookup.",
+    );
+    expect(connectorGuideSummary(guided("clause", longClause))).toBe(
+      "Use the reporting endpoint for deployment history and release state across every project in the account…",
+    );
+    const wordSummary = connectorGuideSummary(guided("words", longWords));
+    expect(wordSummary?.endsWith("…")).toBe(true);
+    expect(longWords).toContain(`${wordSummary?.slice(0, -1)} `);
+    for (const summary of [
+      exact,
+      connectorGuideSummary(guided("over", over)),
+      connectorGuideSummary(guided("sentence", completeSentence)),
+      connectorGuideSummary(guided("clause", longClause)),
+      wordSummary,
+    ]) {
+      expect(summary?.length).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
+    }
+  });
+
+  it("does not treat common or dotted abbreviations as sentence endings", () => {
+    const cases = [
+      "Use exact identifiers, e.g. the project id from search, before making any deployment lookup across the account and its teams.",
+      "Use exact identifiers, i.e. project ids rather than names, before making any deployment lookup across the account and its teams.",
+      "Use the U.S. project region with the exact project id before making any deployment lookup across the account and its teams.",
+      "Ask Dr. Smith for the exact project id before making any deployment lookup across the account and its teams or archived workspaces.",
+    ];
+    for (const [index, guide] of cases.entries()) {
+      const summary = connectorGuideSummary(guided(`abbr${index}`, guide));
+      expect(summary, guide).not.toMatch(/(?:e\.g|i\.e|U\.S|Dr)\.$/u);
+      expect(summary, guide).toMatch(/…$/u);
+      expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
+    }
+  });
+
+  it("allows a dotted abbreviation to finish a sentence", () => {
+    const guide =
+      "This connector serves projects in the U.S. " +
+      "Use the exact project identifier before making any deployment lookup " +
+      "across the account and all its teams.";
+    expect(connectorGuideSummary(guided("terminal", guide))).toBe(
+      "This connector serves projects in the U.S.",
+    );
+  });
+
+  it("keeps a dotted initialism attached to the name it extends", () => {
+    const cases = [
+      "Use projects from the U.S. East region with the exact project id before making any deployment lookup across the account and its archived teams.",
+      "Coordinate with U.S. Army contacts for the exact project id before making any deployment lookup across the account and its teams.",
+    ];
+    for (const guide of cases) {
+      const summary = connectorGuideSummary(guided("region", guide));
+      expect(summary, guide).not.toMatch(/U\.S\.$/u);
+      expect(summary, guide).toMatch(/…$/u);
+      expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
+    }
+  });
+
+  it("uses an ellipsis when an initialism boundary lacks clause evidence", () => {
+    const guide =
+      "This connector serves projects in the U.S. Use exact project " +
+      "identifiers before making any deployment lookup across the account " +
+      "and all its teams.";
+    const summary = connectorGuideSummary(guided("ambiguous", guide));
+    expect(summary).not.toMatch(/U\.S\.$/u);
+    expect(summary).toMatch(/…$/u);
+  });
+
+  it("keeps a title abbreviation attached to the proper name", () => {
+    const guide =
+      "Ask Dr. Smith for the exact project identifier before making any " +
+      "deployment lookup across the account and all its teams or archived workspaces.";
+    const summary = connectorGuideSummary(guided("title", guide));
+    expect(summary).not.toBe("Ask Dr.");
+    expect(summary).toMatch(/…$/u);
   });
 
   it("treats a whitespace-only guide as no guide at all", async () => {
@@ -254,15 +387,13 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toBe(NOTION_GUIDE);
   });
 
-  it("uses an explicit bounded summary while returning structured guide content verbatim", async () => {
+  it("uses a normalized explicit summary while returning guide content verbatim", async () => {
     const content = "# Cloud API\n\nResolve operation aliases before calling.\n";
     const mt = createMetaTools(
       makeRegistry([
         guided("cloud", {
           content,
-          summary:
-            "  Generic API aliases, argument units, and pagination.   " +
-            "x".repeat(120),
+          summary: "  Generic API aliases, argument units, and pagination.  ",
         }),
       ]),
       BASE,
@@ -271,10 +402,41 @@ Prefer \`notion.search\` over listing databases.
     expect(listed).toContain(
       "`connector:cloud` — Generic API aliases, argument units, and pagination.",
     );
-    expect(listed).toContain("…");
     expect(textFrom(await mt.skills({ name: "connector:cloud" }))).toBe(
       content,
     );
+  });
+
+  it("rejects an explicit summary over budget at registry construction", () => {
+    expect(() =>
+      makeRegistry([
+        guided("cloud", {
+          content: "# Cloud API\n",
+          summary: "x".repeat(GUIDE_SUMMARY_LENGTH + 1),
+        }),
+      ]),
+    ).toThrow(
+      'Connector "cloud" usageGuide.summary is 121 characters after whitespace normalization; the discovery bound is 120.',
+    );
+  });
+
+  it("accepts exact and whitespace-normalized explicit summaries at budget", async () => {
+    const exact = "x".repeat(GUIDE_SUMMARY_LENGTH);
+    const normalized = `${" y".repeat(59)}  yy`;
+    const mt = createMetaTools(
+      makeRegistry([
+        guided("exact", { content: "Body.", summary: exact }),
+        guided("normalized", { content: "Body.", summary: normalized }),
+        guided("blank", { content: "Derived body.", summary: " \n " }),
+      ]),
+      BASE,
+    );
+    const listed = textFrom(await mt.skills({}));
+    expect(listed).toContain(`\`connector:exact\` — ${exact}`);
+    expect(listed).toContain(
+      `\`connector:normalized\` — ${normalized.replace(/\s+/g, " ").trim()}`,
+    );
+    expect(listed).toContain("`connector:blank` — Derived body.");
   });
 
   it("keeps duplicate guide content and deployment-specific summaries isolated", async () => {
