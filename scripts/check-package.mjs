@@ -41,6 +41,43 @@ function run(command, args, cwd, env = {}) {
   });
 }
 
+async function assertInstallScriptsApproved(directory, manifest) {
+  const lock = JSON.parse(
+    await readFile(join(directory, "package-lock.json"), "utf8"),
+  );
+  const approvals = manifest.allowScripts ?? {};
+  const unapproved = [];
+  for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+    if (!path || !entry?.hasInstallScript) continue;
+    const installedManifestPath = join(directory, path, "package.json");
+    // Lockfiles retain optional packages for every platform. A package npm did
+    // not install here cannot run a script here and has no manifest to inspect.
+    if (!existsSync(installedManifestPath)) continue;
+    const installedManifest = JSON.parse(
+      await readFile(installedManifestPath, "utf8"),
+    );
+    const declaresInstallScript = ["preinstall", "install", "postinstall"].some(
+      (name) => typeof installedManifest.scripts?.[name] === "string",
+    );
+    if (!declaresInstallScript) continue;
+    const marker = "node_modules/";
+    const offset = path.lastIndexOf(marker);
+    if (offset < 0 || typeof entry.version !== "string") {
+      unapproved.push(path);
+      continue;
+    }
+    const name = path.slice(offset + marker.length);
+    if (approvals[`${name}@${entry.version}`] !== true) {
+      unapproved.push(`${name}@${entry.version}`);
+    }
+  }
+  if (unapproved.length) {
+    throw new Error(
+      `Node template has unapproved install scripts: ${unapproved.join(", ")}`,
+    );
+  }
+}
+
 function expectFailure(
   command,
   args,
@@ -498,6 +535,7 @@ try {
   );
   const generatedRoot = join(work, "generated-deployment");
   run(npm, ["install", "--ignore-scripts"], generatedRoot);
+  await assertInstallScriptsApproved(generatedRoot, generatedPackage);
   run(npm, ["run", "typecheck"], generatedRoot);
   const generatedTsx = join(
     generatedRoot,

@@ -95,6 +95,18 @@ describe("documentation link checker", () => {
     });
   });
 
+  it("ignores agent-owned nested worktrees", async () => {
+    const root = await fixture({
+      "README.md": "# Current checkout\n",
+      ".claude/worktrees/old/README.md": "[stale](./missing.md)\n",
+    });
+
+    expect(check(root)).toMatchObject({
+      status: 0,
+      output: expect.stringContaining("documentation check passed"),
+    });
+  });
+
   it("holds repository URLs, raw image forms included, to the checkout", async () => {
     const root = await fixture({
       "README.md": [

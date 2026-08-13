@@ -51,9 +51,12 @@ describe("deployment shapes", () => {
 
   it("runs the same source locally and in the container", () => {
     const dockerfile = read("Dockerfile");
+    const manifest = JSON.parse(read("package.json"));
     expect(dockerfile).toContain("src/index.ts");
-    expect(JSON.parse(read("package.json")).scripts.start).toBe(
-      "tsx src/index.ts",
+    expect(manifest.scripts.start).toBe("tsx src/index.ts");
+    expect(manifest.allowScripts).toEqual({ "esbuild@0.28.2": true });
+    expect(read("README.md")).toContain(
+      "do not replace the pinned entry with a broad\npackage-name approval",
     );
     // No lockfile ships with the template — init rewrites the version pin, so
     // a committed lockfile would disagree with it on the first build.

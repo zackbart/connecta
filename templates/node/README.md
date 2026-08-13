@@ -8,6 +8,13 @@ npm install
 CONNECTA_TOKEN=dev-token npm start
 ```
 
+The manifest approves only `esbuild@0.28.2` to run its install script. `tsx`
+uses esbuild to run this TypeScript source, so that script is part of the
+prescribed runtime path. npm 11 therefore installs without an unreviewed-script
+warning, and npm 12 does not block the script. A later esbuild version needs a
+new explicit review and approval; do not replace the pinned entry with a broad
+package-name approval.
+
 Then point an MCP client at `http://localhost:8787/mcp` with
 `Authorization: Bearer dev-token`.
 

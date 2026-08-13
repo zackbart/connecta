@@ -14,6 +14,18 @@ All notable changes to this package are documented here.
   admission ceiling. Header credentials still require one fixed mode, retain
   key-prefix contradiction checks, and keep Stripe Connect behavior (#414).
 
+### Fixed
+
+- **The Node template now declares its one reviewed install script.** npm 11 no
+  longer warns that esbuild's install is unreviewed, and npm 12 will not block
+  it. The approval is pinned to `esbuild@0.28.2`; the package smoke reads the
+  generated lockfile and fails if any resolved dependency has an unapproved
+  install script, including a future esbuild version. Local and container
+  installs keep the same `tsx` runtime path (#375).
+
+- The documentation gate now ignores `.claude`, whose nested agent worktrees
+  are separate historical checkouts rather than source in the current tree.
+
 ## 0.17.0 — 2026-08-13
 
 This minor release makes catalog discovery faster and its answers more exact.
