@@ -544,7 +544,7 @@ whether or not anybody noticed it arrived.
 ([#351](https://github.com/zackbart/connecta/issues/351)): a human at a laptop,
 before a release, with local credentials and the published specifications in
 front of them. It lives in
-[`scripts/drift-check.mjs`](../scripts/drift-check.mjs) and ships nowhere —
+[`scripts/drift-check.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/drift-check.mjs) and ships nowhere —
 `scripts/` is outside the package, no runtime module imports it, and nothing it
 reads becomes a runtime input.
 
@@ -564,7 +564,7 @@ message naming it rather than reporting an empty catalog as mass removal.
 
 **Touched endpoints.** A hand-written provider is written against a published
 OpenAPI document and calls a few dozen of its operations, so
-[`scripts/drift/`](../scripts/drift/) commits exactly those: method, path, the
+[`scripts/drift/`](https://github.com/zackbart/connecta/tree/main/scripts/drift) commits exactly those: method, path, the
 specification revision a release reviewed the endpoint at, whether the
 operation was deprecated at that revision, and a digest of that endpoint's
 contract. `--specs` fetches each provider's published document and reports four
@@ -616,7 +616,7 @@ the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
 Its five reports live in [provider-audit.md](./provider-audit.md), and the
 mechanically checkable half of the hand-written bar runs on every test run in
-[`test/provider-conventions.test.ts`](../test/provider-conventions.test.ts) —
+[`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts) —
 so a convention that was met once stays met, or fails loudly.
 
 Hand-written providers are audited against H1–H14; hosted-MCP proxies against
@@ -656,7 +656,7 @@ beats the escape hatch — is a reading, and the audit reports it as one. The
 Cloudflare keep/prune half of that judgment was made in
 [#350](https://github.com/zackbart/connecta/issues/350): 30 keep, 18 improve,
 3 prune, measured per tool in
-[`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md).
+[`eval/current-version/results/issue-350-evidence.md`](https://github.com/zackbart/connecta/blob/main/eval/current-version/results/issue-350-evidence.md).
 Its eighteen `improve` rows are H8 and H9 misses on tools that clearly earn
 their place, so they are this audit's work, not a second removal argument.
 

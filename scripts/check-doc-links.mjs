@@ -1,6 +1,11 @@
 import { readFile, readdir, stat } from "node:fs/promises";
 import { dirname, extname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  activeLines,
+  markdownLinks,
+  unescapeTarget,
+} from "./markdown-links.mjs";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const ignoredDirectories = new Set([
@@ -78,30 +83,6 @@ function lineCount(source) {
   return source.replace(/\r?\n$/, "").split(/\r?\n/).length;
 }
 
-function activeLines(source) {
-  const lines = source.split(/\r?\n/);
-  const active = [];
-  let fence;
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const marker = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
-    if (marker) {
-      if (!fence) {
-        fence = { character: marker[1][0], length: marker[1].length };
-      } else if (
-        marker[1][0] === fence.character &&
-        marker[1].length >= fence.length &&
-        marker[2].trim() === ""
-      ) {
-        fence = undefined;
-      }
-      continue;
-    }
-    if (!fence) active.push({ number: index + 1, text: line });
-  }
-  return active;
-}
-
 function headingSlug(text) {
   return text
     .replace(/<[^>]*>/g, "")
@@ -139,55 +120,6 @@ function headingsFor(source) {
   });
 }
 
-function markdownTargets(line) {
-  const targets = [];
-  const definition = line.match(
-    /^\s{0,3}\[[^\]]+\]:\s*(?:<([^>]+)>|(\S+))/,
-  );
-  if (definition) {
-    targets.push(definition[1] ?? definition[2]);
-  }
-
-  let cursor = 0;
-  while (cursor < line.length) {
-    const open = line.indexOf("](", cursor);
-    if (open < 0) break;
-    let index = open + 2;
-    while (/\s/.test(line[index] ?? "")) index += 1;
-    if (line[index] === "<") {
-      const close = line.indexOf(">", index + 1);
-      if (close >= 0) {
-        targets.push(line.slice(index + 1, close));
-        cursor = close + 1;
-        continue;
-      }
-    }
-
-    const start = index;
-    let depth = 0;
-    let escaped = false;
-    while (index < line.length) {
-      const character = line[index];
-      if (escaped) {
-        escaped = false;
-      } else if (character === "\\") {
-        escaped = true;
-      } else if (character === "(") {
-        depth += 1;
-      } else if (character === ")") {
-        if (depth === 0) break;
-        depth -= 1;
-      } else if (/\s/.test(character) && depth === 0) {
-        break;
-      }
-      index += 1;
-    }
-    if (index > start) targets.push(line.slice(start, index));
-    cursor = Math.max(index + 1, open + 2);
-  }
-  return targets;
-}
-
 function decodeTargetPart(value) {
   try {
     return decodeURIComponent(value);
@@ -196,8 +128,25 @@ function decodeTargetPart(value) {
   }
 }
 
+// A link into the repository on github.com is how packed Markdown points at a
+// path the tarball does not ship (#378), so it is a local target wearing a URL:
+// resolve it back to the checkout and hold it to the same existence check a
+// relative link gets. `raw.` and `/raw/` are the image forms — the README hero
+// is served from one — and resolve to the same file.
+function repositoryPathFor(url) {
+  if (url.hostname === "github.com") {
+    return url.pathname.match(
+      /^\/zackbart\/connecta\/(?:blob|tree|raw)\/main\/(.+)$/,
+    )?.[1];
+  }
+  if (url.hostname === "raw.githubusercontent.com") {
+    return url.pathname.match(/^\/zackbart\/connecta\/main\/(.+)$/)?.[1];
+  }
+  return undefined;
+}
+
 function resolveLocalTarget(root, sourcePath, rawTarget) {
-  const target = rawTarget.replace(/\\([\\()])/g, "$1");
+  const target = unescapeTarget(rawTarget);
   if (
     target.startsWith("mailto:") ||
     target.startsWith("data:") ||
@@ -213,12 +162,9 @@ function resolveLocalTarget(root, sourcePath, rawTarget) {
     } catch {
       return { malformed: true };
     }
-    if (url.hostname !== "github.com") return { external: true };
-    const match = url.pathname.match(
-      /^\/zackbart\/connecta\/(?:blob|tree)\/main\/(.+)$/,
-    );
-    if (!match) return { external: true };
-    const decodedPath = decodeTargetPart(match[1]);
+    const repositoryPath = repositoryPathFor(url);
+    if (repositoryPath === undefined) return { external: true };
+    const decodedPath = decodeTargetPart(repositoryPath);
     const decodedFragment = decodeTargetPart(url.hash.slice(1));
     if (decodedPath === undefined || decodedFragment === undefined) {
       return { malformed: true };
@@ -296,16 +242,9 @@ async function checkLinks(root, markdownPaths, markdownCache, errors) {
       source = await readFile(path, "utf8");
       markdownCache.set(path, source);
     }
-    for (const { number, text } of activeLines(source)) {
-      for (const target of markdownTargets(text)) {
-        const message = await localTargetError(
-          root,
-          path,
-          target,
-          markdownCache,
-        );
-        if (message) addError(errors, root, path, number, message);
-      }
+    for (const { line, target } of markdownLinks(source)) {
+      const message = await localTargetError(root, path, target, markdownCache);
+      if (message) addError(errors, root, path, line, message);
     }
   }
 }

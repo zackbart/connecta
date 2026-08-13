@@ -95,6 +95,29 @@ describe("documentation link checker", () => {
     });
   });
 
+  it("holds repository URLs, raw image forms included, to the checkout", async () => {
+    const root = await fixture({
+      "README.md": [
+        "![hero](https://raw.githubusercontent.com/zackbart/connecta/main/assets/hero.png)",
+        "[script](https://github.com/zackbart/connecta/blob/main/scripts/tool.mjs)",
+        "[elsewhere](https://raw.githubusercontent.com/someone/else/main/gone.png)",
+        "[moved](https://raw.githubusercontent.com/zackbart/connecta/main/assets/gone.png)",
+        "",
+      ].join("\n"),
+      "assets/hero.png": "not really a png\n",
+      "scripts/tool.mjs": "export {};\n",
+    });
+    const result = check(root);
+
+    expect(result.status).toBe(1);
+    expect(result.output).toContain(
+      'README.md:4: missing local target ' +
+        '"https://raw.githubusercontent.com/zackbart/connecta/main/assets/gone.png"',
+    );
+    expect(result.output).not.toContain("hero.png");
+    expect(result.output).not.toContain("someone/else");
+  });
+
   it("reports a broken fragment with its source line and target", async () => {
     const root = await fixture({
       "README.md": "[missing](./guide.md#absent)\n",

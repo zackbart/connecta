@@ -289,37 +289,24 @@ try {
   // Deriving the shipped set from the stub markers says which guides ship, not
   // whether the ones that ship point somewhere a consumer can follow. A packed
   // doc linking an excluded guide is the same defect one indirection out — the
-  // reader clicks and lands nowhere (#346). Scoped to `documentation/` targets:
-  // that is the set this exclusion list moves, and the pointers into `eval/`,
-  // `test/`, and `scripts/` are repository references that predate it.
-  for (const packedPath of paths) {
-    if (!packedPath.endsWith(".md")) continue;
-    // Release notes quote the paths that existed when they shipped; they are a
-    // record, not a live pointer, which is why `check:docs` exempts them too.
-    if (packedPath === "CHANGELOG.md") continue;
-    const source = await readFile(join(root, packedPath), "utf8");
-    const from = dirname(packedPath);
-    for (const [, target] of source.matchAll(/\]\(([^)\s]+)\)/g)) {
-      if (/^[a-z][a-z0-9+.-]*:/i.test(target) || target.startsWith("/")) {
-        continue;
-      }
-      const [relativePath] = target.split("#");
-      if (!relativePath) continue;
-      const resolved = join(from, relativePath).split("\\").join("/");
-      if (!resolved.startsWith("documentation/")) continue;
-      // A trailing slash points at the directory, which the tarball carries so
-      // long as anything under it ships.
-      const carried = resolved.endsWith("/")
-        ? [...paths].some((candidate) => candidate.startsWith(resolved))
-        : paths.has(resolved);
-      if (!carried) {
-        throw new Error(
-          `Packed ${packedPath} links "${target}", which resolves to ` +
-            `${resolved} — a path the tarball does not carry`,
-        );
-      }
-    }
-  }
+  // reader clicks and lands nowhere (#346), and so does one linking `eval/`,
+  // `test/`, `scripts/`, or the README hero, none of which the tarball carries
+  // (#378). The rule those all answer to lives in scripts/check-packed-links.mjs
+  // and reads the same packed list this pack just produced; a link the tarball
+  // cannot satisfy either ships its target or becomes a github.com URL.
+  const packedManifest = join(work, "packed-paths.txt");
+  await writeFile(packedManifest, [...paths].join("\n"));
+  run(
+    process.execPath,
+    [
+      join(root, "scripts", "check-packed-links.mjs"),
+      "--root",
+      root,
+      "--files",
+      packedManifest,
+    ],
+    root,
+  );
   await writeFile(
     join(work, "package.json"),
     JSON.stringify({ private: true, type: "module" }),

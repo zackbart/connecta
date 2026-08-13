@@ -131,7 +131,7 @@ though this package is public.
 
 | Script | What it gates |
 | --- | --- |
-| `check:docs` | local Markdown targets and fragments, guide and ethos size caps, duplicate heading anchors, a resurrected `docs/`, stale manual references |
+| `check:docs` | local Markdown targets and fragments — including the `github.com` and `raw.githubusercontent.com` URLs that point back into this repository — guide and ethos size caps, duplicate heading anchors, a resurrected `docs/`, stale manual references |
 | `check:operator-ui` | the committed browser bundle matches its source, byte for byte |
 | `check:lint` | Oxlint's correctness category only — style is authored, not enforced |
 | `check:unused` | Knip's unused-export and dependency gate |
@@ -147,9 +147,24 @@ are in it and that no unshippable path leaked in — including any
 Cloudflare-named connector or storage path (`connectors/cloudflare`,
 `storage/cloudflare`) anywhere in the artifact, `dist/` and `examples/` alike —
 derives the shipped guide list from which guides still carry a stub marker,
-checks that every packed doc's `documentation/` link resolves to something the
-tarball carries, and then runs `connecta init` and builds and runs the
-generated deployment's own container.
+hands the packed path list to `scripts/check-packed-links.mjs`, and then runs
+`connecta init` and builds and runs the generated deployment's own container.
+
+That last step enforces the packed-link policy, which is one sentence: **every
+relative link in shipped Markdown must resolve to a path the tarball carries,
+and a target that is repository-only is cited as an absolute
+`https://github.com/zackbart/connecta/blob/main/...` URL** (the
+`raw.githubusercontent.com` form for an image, which is how the README hero
+still renders on npmjs.com). The tarball is built output, not a checkout: it
+carries no `eval/`, `test/`, `scripts/`, or `assets/`, so a relative pointer
+into any of them is a dead end for the reader who installed the package, and
+the fix is never to ship those directories — that would undo the trim of
+[#346](https://github.com/zackbart/connecta/issues/346). A repository URL keeps
+the citation verifiable in both directions: an outside reader can follow it, and
+`check:docs` resolves it back to the checkout and fails when the cited file
+moves ([#378](https://github.com/zackbart/connecta/issues/378)). `CHANGELOG.md`
+is exempt from both gates, because release notes quote the paths that existed
+when they shipped.
 
 The Worker example ships in the tarball, its Cloudflare KV and D1 adapters
 included: it is the Workers starting template a consumer copies. That is not a
@@ -246,12 +261,13 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | Suite | Covers | Why Node |
 | --- | --- | --- |
 | `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
-| `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
+| `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `doctor-cli.test.ts` | `connecta doctor`'s executor line end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, and a hostile name is bounded and stripped before it reaches a terminal | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the maintainer drift checker — recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
 | `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor | runs the contract cases on the Node QuickJS executor |
 | `node.test.ts` | the `listen()` adapter propagating an HTTP client disconnect through the Web `Request` and the MCP handler into a program's connector call, releasing both admission permits | exercises the Node HTTP adapter over real TCP sockets |
+| `packed-links.test.ts` | the packed-link gate itself — shipped targets and repository URLs accepted, relative links into unshipped paths and directories rejected with the citation to write instead, reference definitions seen, fenced examples ignored, the changelog exempt | spawns the Node packed-link gate against filesystem fixtures |
 | `package-surface.test.ts` | the published boundary — built output shipped, the `exports` map carrying exactly the documented subpaths plus `./package.json`, only generic factories, platform storage kept in examples, Clerk and QuickJS behind optional subpaths, every provider independently importable, and the Cloudflare provider free of bare specifiers | walks the package tree with Node filesystem APIs |
 | `purity.test.ts` | the import-graph guardrail ([architecture](./architecture.md#import-graph-purity)) — the core stays Workers-clean | walks the source import graph with Node filesystem APIs |
 | `quickjs-child-entry.test.ts` | a missing QuickJS child entry failing before `fork()`, with the expected path and the bundler-externalization constraint | mocks Node child-process and filesystem APIs |

@@ -13,7 +13,7 @@
 >   constraint below was dropped.** The owner decided the default directly on
 >   2026-07-30 and [#224](https://github.com/zackbart/connecta/issues/224)
 >   shipped it; the ethos records the eval-as-gate as `removed` and
->   [`eval/code-first-gate`](../eval/code-first-gate/README.md) continues as
+>   [`eval/code-first-gate`](https://github.com/zackbart/connecta/blob/main/eval/code-first-gate/README.md) continues as
 >   measurement that nothing waits on.
 
 ## Executive summary
@@ -227,7 +227,7 @@ changing the default surface. Run at least 20 independent samples per task and
 model, with prompt variation.
 
 That suite was built under
-[`eval/code-first-gate`](../eval/code-first-gate/README.md). Its recorded results
+[`eval/code-first-gate`](https://github.com/zackbart/connecta/blob/main/eval/code-first-gate/README.md). Its recorded results
 remain as measurement history; the runnable comparison was retired when #273
 removed the alternate deployment shapes.
 

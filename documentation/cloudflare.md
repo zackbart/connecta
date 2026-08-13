@@ -158,7 +158,7 @@ asserts those properties rather than leaving them as a claim.
 A named tool is a permanent line item in every deployment's catalog, so the
 surface was measured against the escape hatches rather than assumed to beat
 them ([#350](https://github.com/zackbart/connecta/issues/350), evidence in
-[`eval/current-version/results/issue-350-evidence.md`](../eval/current-version/results/issue-350-evidence.md)).
+[`eval/current-version/results/issue-350-evidence.md`](https://github.com/zackbart/connecta/blob/main/eval/current-version/results/issue-350-evidence.md)).
 Two named tools lost that comparison, a third followed one of them off the
 surface to keep a policy pair on one route, and a fourth left because
 Cloudflare deprecated the only endpoint it could call:

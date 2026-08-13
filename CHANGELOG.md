@@ -135,6 +135,20 @@ fail-closed default and ships something quieter and wrong.
   a scoped browse. A term that matches nothing in the deployment still gets the
   original sentence, unchanged. One `queryAnalysis.guidance` string differs; no
   ranking, result, or field changed (#372).
+- **Every relative link in the shipped Markdown resolves for the reader who
+  installed the package.** Ten of them pointed at `eval/`, `test/`, `scripts/`,
+  and the README hero — repository paths the tarball has never carried and, per
+  #346, should not start carrying. The link gate could not see any of them: it
+  read only `documentation/` targets, so the whole class was invisible and grew
+  with every trim. The policy is now stated once in the operations guide and
+  enforced over *every* relative link in packed Markdown: it either resolves
+  inside the tarball or it is cited as an absolute
+  `https://github.com/zackbart/connecta/blob/main/...` URL, which an outside
+  reader can follow and which `check:docs` resolves back to the checkout, so a
+  citation still fails when the file it names moves. The ten links were
+  rewritten that way, the README hero now loads from
+  `raw.githubusercontent.com` and still renders on npmjs.com, and the
+  repository reader loses no citation (#378).
 - **`@zackbart/connecta/package.json` resolves.** The `exports` map listed
   every code subpath and nothing else, so a bundler plugin, framework build
   step, or version probe reaching for the installed manifest — a thing the
