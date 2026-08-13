@@ -907,14 +907,15 @@ export const CONTRACT_CASES: ContractCase[] = [
     name: "describe answers per address and reports bad ones inline",
     code: `async () => {
       const described = await connecta.describe({
-        addresses: ["reader.read", "nope.read", "reader.nope"]
+        addresses: ["reader.read", "nope.read", "reader.raed", "badcatalog.read"]
       });
       return {
         envelopeKeys: Object.keys(described).sort(),
         tools: described.tools.map((tool) => ({
           address: tool.address,
           hasSchema: tool.inputSchema !== undefined,
-          error: tool.error
+          error: tool.error,
+          errorDetails: tool.errorDetails
         }))
       };
     }`,
@@ -923,14 +924,47 @@ export const CONTRACT_CASES: ContractCase[] = [
       const result = record(outcome);
       expect(result.envelopeKeys).toEqual(["tools"]);
       const tools = result.tools as Array<Record<string, unknown>>;
-      expect(tools).toHaveLength(3);
+      expect(tools).toHaveLength(4);
       expect(required(tools[0])).toMatchObject({
         address: "reader.read",
         hasSchema: true,
       });
       expect(required(tools[0]).error).toBeUndefined();
       expect(String(required(tools[1]).error)).toContain("Unknown address");
+      expect(required(tools[1]).errorDetails).toEqual({
+        code: "unknown_address",
+        message: 'Unknown address "nope.read"',
+        retryable: false,
+        nextAction: {
+          function: "connecta.search",
+          arguments: {
+            query: "read",
+            includeSchemas: "compact",
+          },
+          purpose: "Find the configured canonical address before retrying.",
+        },
+      });
       expect(String(required(tools[2]).error)).toContain("Unknown tool");
+      expect(required(tools[2]).errorDetails).toEqual({
+        code: "unknown_tool",
+        message: 'Unknown tool "raed" on connector "reader"',
+        retryable: false,
+        nextAction: {
+          function: "connecta.search",
+          arguments: {
+            query: "raed",
+            connector: "reader",
+            includeSchemas: "compact",
+          },
+          purpose: "Find the connector's current canonical tool address.",
+        },
+        suggestions: ["reader.read"],
+      });
+      expect(required(tools[3]).errorDetails).toEqual({
+        code: "catalog_lookup_failed",
+        message: "catalog is unreachable",
+        retryable: false,
+      });
     },
   },
   {

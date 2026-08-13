@@ -56,6 +56,7 @@ const MAX_QUERY_TERM_LENGTH = 64;
  * of the deployment.
  */
 const MAX_IDENTITY_CONNECTORS = 3;
+const MAX_DESCRIBE_SUGGESTIONS = 3;
 
 const encoder = new TextEncoder();
 
@@ -152,6 +153,55 @@ function recoveryQuery(address: string): string {
   return boundedEchoText(
     candidate.replaceAll(/[._-]+/g, " ").trim() || address,
   );
+}
+
+function editDistance(left: string, right: string): number {
+  let previous = Array.from({ length: right.length + 1 }, (_, index) => index);
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex += 1) {
+    const current = [leftIndex + 1];
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex += 1) {
+      current.push(
+        Math.min(
+          previous[rightIndex + 1]! + 1,
+          current[rightIndex]! + 1,
+          previous[rightIndex]! +
+            (left[leftIndex] === right[rightIndex] ? 0 : 1),
+        ),
+      );
+    }
+    previous = current;
+  }
+  return previous[right.length]!;
+}
+
+/** Nearby names only; descriptions never influence describe-miss recovery. */
+function describeSuggestions(
+  connectorId: string,
+  attemptedName: string,
+  tools: ToolDef[],
+): string[] {
+  const attempted = attemptedName.toLowerCase();
+  return tools
+    .map((tool, order) => {
+      const name = tool.name.toLowerCase();
+      return { tool, order, distance: editDistance(attempted, name) };
+    })
+    .filter(({ tool, distance }) => {
+      const longest = Math.max(attempted.length, tool.name.length);
+      return (
+        attempted.includes(tool.name.toLowerCase()) ||
+        tool.name.toLowerCase().includes(attempted) ||
+        distance <= Math.max(2, Math.floor(longest * 0.4))
+      );
+    })
+    .sort((left, right) =>
+      left.distance - right.distance || left.order - right.order,
+    )
+    .map(({ tool }) => `${connectorId}.${tool.name}`)
+    // A clipped address would no longer be canonical. Omit an implausibly
+    // large catalog name instead of letting one suggestion erase the page.
+    .filter((address) => boundedEchoText(address) === address)
+    .slice(0, MAX_DESCRIBE_SUGGESTIONS);
 }
 
 /** Serialize once and count the exact bytes the MCP adapter would emit. */
@@ -307,6 +357,12 @@ interface CatalogFailureDetail {
   retryAfterMs?: number;
 }
 
+interface CatalogDescriptionFailureDetail extends CatalogFailureDetail {
+  nextAction?: NonNullable<CallErrorDetails["nextAction"]>;
+  /** Nearby canonical addresses, ranked deterministically by tool name. */
+  suggestions?: string[];
+}
+
 export interface CatalogSearchPage {
   entries: CatalogSearchEntry[];
   total: number;
@@ -345,6 +401,7 @@ export interface CatalogDescription {
   outputSchema?: unknown;
   annotations?: ToolDef["annotations"];
   error?: string;
+  errorDetails?: CatalogDescriptionFailureDetail;
 }
 
 export interface ResolvedCatalogTool {
@@ -1108,19 +1165,63 @@ export class CatalogService {
     });
     return resolved.map(({ address, resolved: addressResolution }) => {
       if (!addressResolution) {
-        return { address, error: `Unknown address "${address}"` };
+        const message = `Unknown address "${boundedEchoText(address)}"`;
+        return {
+          address: boundedEchoText(address),
+          error: message,
+          errorDetails: {
+            ...framingError("unknown_address", message),
+            nextAction: this.searchRecovery(
+              { query: recoveryQuery(address) },
+              "Find the configured canonical address before retrying.",
+            ),
+          },
+        };
       }
       const catalog = catalogs.get(addressResolution.connector.id);
       if (catalog instanceof Error) {
-        return { address, error: catalog.message };
+        const classified = classifyCallError(
+          catalog,
+          "catalog_lookup_failed",
+        );
+        const message = boundedEchoText(classified.message);
+        return {
+          address: boundedEchoText(address),
+          error: message,
+          errorDetails: {
+            code: classified.code,
+            message,
+            retryable: classified.retryable,
+            ...(classified.retryAfterMs === undefined
+              ? {}
+              : { retryAfterMs: classified.retryAfterMs }),
+          },
+        };
       }
       const tool = catalog?.find(
         (item) => item.name === addressResolution.toolName,
       );
       if (!tool) {
+        const message = `Unknown tool "${boundedEchoText(addressResolution.toolName)}" on connector "${addressResolution.connector.id}"`;
+        const suggestions = describeSuggestions(
+          addressResolution.connector.id,
+          addressResolution.toolName,
+          catalog ?? [],
+        );
         return {
-          address,
-          error: `Unknown tool "${addressResolution.toolName}" on connector "${addressResolution.connector.id}"`,
+          address: boundedEchoText(address),
+          error: message,
+          errorDetails: {
+            ...framingError("unknown_tool", message),
+            nextAction: this.searchRecovery(
+              {
+                query: recoveryQuery(addressResolution.toolName),
+                connector: addressResolution.connector.id,
+              },
+              "Find the connector's current canonical tool address.",
+            ),
+            ...(suggestions.length > 0 ? { suggestions } : {}),
+          },
         };
       }
       const input = tool.inputSchema ?? { type: "object" };

@@ -117,6 +117,123 @@ describe("structured result compatibility", () => {
   });
 });
 
+describe("describe recovery", () => {
+  it("returns route-aware typed misses and bounded canonical suggestions", async () => {
+    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
+    const described = await service.describe({
+      addresses: ["ghost.ad", "calc.ad", "calc.completely_different"],
+    });
+
+    expect(required(described[0]).errorDetails).toEqual({
+      code: "unknown_address",
+      message: 'Unknown address "ghost.ad"',
+      retryable: false,
+      nextAction: {
+        tool: "search_tools",
+        arguments: { query: "ad", includeSchemas: "compact" },
+        purpose: "Find the configured canonical address before retrying.",
+      },
+    });
+    expect(required(described[1]).errorDetails).toEqual({
+      code: "unknown_tool",
+      message: 'Unknown tool "ad" on connector "calc"',
+      retryable: false,
+      nextAction: {
+        tool: "search_tools",
+        arguments: {
+          query: "ad",
+          connector: "calc",
+          includeSchemas: "compact",
+        },
+        purpose: "Find the connector's current canonical tool address.",
+      },
+      suggestions: ["calc.add"],
+    });
+    expect(required(required(described[2]).errorDetails).suggestions).toBeUndefined();
+  });
+
+  it("classifies and bounds catalog failures without call-path detail", async () => {
+    const unavailable: Connector = {
+      id: "billing",
+      kind: "api",
+      async listTools() {
+        throw new ConnectorCallError(
+          "unavailable",
+          `Upstream unavailable. ${"x".repeat(1_000)}`,
+          { retryAfterMs: 30_000 },
+        );
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const [entry] = await new CatalogService(
+      makeRegistry([unavailable]),
+      BASE,
+    ).describe({ addresses: ["billing.read"] });
+    const details = required(required(entry).errorDetails);
+    expect(details).toMatchObject({
+      code: "unavailable",
+      retryable: true,
+      retryAfterMs: 30_000,
+    });
+    expect(Object.keys(details).sort()).toEqual([
+      "code",
+      "message",
+      "retryAfterMs",
+      "retryable",
+    ]);
+    expect(Buffer.byteLength(details.message)).toBeLessThanOrEqual(515);
+    expect(required(entry).error).toBe(details.message);
+  });
+
+  it("clamps several hostile misses without discarding successful descriptions", async () => {
+    const unavailable: Connector = {
+      id: "billing",
+      kind: "api",
+      async listTools() {
+        throw new Error("catalog is unreachable");
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const hostile = Array.from(
+      { length: 6 },
+      (_, index) =>
+        index < 2
+          ? `ghost${index}.${"x".repeat(50_000)}`
+          : index < 4
+            ? `calc.${"y".repeat(50_000)}${index}`
+            : `billing.${"z".repeat(50_000)}${index}`,
+    );
+    const addresses = [hostile[0]!, "calc.add", ...hostile.slice(1), "calc.add"];
+    const described = await new CatalogService(
+      makeRegistry([calcConnector, unavailable]),
+      BASE,
+    ).describe({ addresses });
+
+    expect(described).toHaveLength(addresses.length);
+    expect(required(described[1])).toMatchObject({
+      address: "calc.add",
+      name: "add",
+    });
+    expect(required(described[1]).inputSchema).toBeDefined();
+    expect(required(described[7])).toEqual(required(described[1]));
+    for (const index of [0, 2, 3, 4, 5, 6]) {
+      const failure = required(described[index]);
+      expect(failure.address).not.toBe(addresses[index]);
+      expect(failure.address.endsWith("…")).toBe(true);
+      expect(Buffer.byteLength(failure.address)).toBeLessThanOrEqual(515);
+      expect(Buffer.byteLength(required(failure.error))).toBeLessThanOrEqual(560);
+      expect(Buffer.byteLength(required(failure.errorDetails).message)).toBeLessThanOrEqual(560);
+    }
+    expect(Buffer.byteLength(JSON.stringify(described))).toBeLessThan(
+      MAX_DISCOVERY_RESULT_BYTES,
+    );
+  });
+});
+
 describe("skills", () => {
   const NOTION_GUIDE = `# Notion usage
 
