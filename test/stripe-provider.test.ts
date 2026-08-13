@@ -72,7 +72,7 @@ describe("stripe()", () => {
       }),
     );
     expect(guideOf(connector)).toContain("Mode: production");
-    expect(guideOf(connector)).toContain("PRODUCTION account");
+    expect(guideOf(connector)).toContain("PRODUCTION Stripe connection");
     expect(guideOf(connector)).toContain("stripe_api_details");
     // The dedicated tools must stay named: a refund routed through the generic
     // `stripe_api_write` degrades the approval prompt a human actually reads.
@@ -103,7 +103,7 @@ describe("stripe()", () => {
       }),
     );
     expect(guideOf(connector)).toContain("Mode: sandbox");
-    expect(guideOf(connector)).toContain("SANDBOX account");
+    expect(guideOf(connector)).toContain("SANDBOX Stripe connection");
     expect(guideOf(connector)).toContain("never answer a question about live");
     expect(guideOf(connector)).toContain("25 requests per second");
   });
@@ -142,6 +142,46 @@ describe("stripe()", () => {
     expect(guide).toContain("stripe_api_search");
     expect(guide).toContain("not a fixed set");
     expect(guide).toContain("authorize_connector");
+  });
+
+  it("warns that OAuth can span organization accounts without trusting connector metadata", () => {
+    const connector = stripe("organization_billing", {
+      mode: "production",
+      title: "Primary Stripe account",
+      purpose: "Billing for the primary organization account",
+    });
+    const guide = guideOf(connector);
+
+    expect(guide).toContain(
+      "One OAuth session may cover more than one account in the same Stripe organization.",
+    );
+    expect(guide).toContain(
+      "The connector id, title, and purpose state routing intent; they do not prove which account a call will use.",
+    );
+    expect(connectorGuideSummary(connector)).toContain(
+      "OAuth may span organization accounts",
+    );
+  });
+
+  it("requires live-schema account selection and stops instead of inventing it", () => {
+    const connector = stripe("organization_billing", {
+      mode: "production",
+      purpose: "Organization billing",
+    });
+    const guide = guideOf(connector);
+
+    expect(guide).toContain("Inspect the chosen tool's live input schema");
+    expect(guide).toContain("the exact account or context field it exposes");
+    expect(guide).toContain(
+      "If the account or its supported selection mechanism is ambiguous, stop and ask",
+    );
+    expect(guide).toContain("never guess from the connector metadata");
+    expect(guide).toContain("invent an MCP argument");
+    expect(guide).toContain(
+      "Organization accounts are not Stripe Connect connected accounts.",
+    );
+    expect(guide).toContain("restricted key plus Stripe's documented");
+    expect(guide).toContain("OAuth does not support that path");
   });
 
   it("scales the admission budget to the mode's documented rate", () => {
