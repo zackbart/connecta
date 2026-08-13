@@ -292,6 +292,37 @@ export function isAdmittingExecutor(
   );
 }
 
+/** Terminal- and JSON-safe upper bound for an executor's self-reported name. */
+const MAX_EXECUTOR_NAME_LENGTH = 40;
+
+/**
+ * Best-effort name for the configured sandbox, for `/health` and through it
+ * `connecta doctor` — which otherwise has to guess, and guessed QuickJS at
+ * every deployment including the Workers one ([#368]). The executor seam is
+ * structural, so this reads what is already there: an explicit `name`, else
+ * the constructor name a class-shaped executor carries for free. The value is
+ * a stranger's string bound for a public response body and an operator's
+ * terminal, so it is sanitized rather than trusted; nothing identifiable
+ * reports nothing, and doctor says so instead of naming a sandbox.
+ */
+export function executorName(executor: Executor): string | undefined {
+  const declared = (executor as { name?: unknown }).name;
+  const ctor = (executor as { constructor?: { name?: unknown } }).constructor;
+  const raw =
+    typeof declared === "string" && declared.trim()
+      ? declared
+      : typeof ctor?.name === "string" && ctor.name !== "Object"
+        ? ctor.name
+        : "";
+  const cleaned = raw
+    .replace(/[^\w .+-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, MAX_EXECUTOR_NAME_LENGTH)
+    .trim();
+  return cleaned || undefined;
+}
+
 /**
  * Give a structurally-compatible but otherwise unbounded executor the same
  * admission contract as the built-in Node executor. The wrapper owns only the

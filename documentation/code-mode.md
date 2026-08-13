@@ -113,11 +113,11 @@ Connecta passes exactly one provider, named `connecta`. An executor must:
 
 Optionally implement `AdmittingExecutor` (`acquire()` returning a lease whose
 `execute` runs once) for bounded admission (`L7`) and `close()` for shutdown;
-connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise.
+connecta wraps a plain `Executor` with `withExecutorAdmission` otherwise. An
+optional `name` is what [`/health` and `doctor`](./operations.md#the-cli) report.
 
-Note what is *not* on this list: [emitted output](#emitted-output) asks
-nothing of an executor — `connecta.emit` is just another provider function
-(`M8`).
+Note what is *not* on this list: [emitted output](#emitted-output) asks nothing
+of an executor — `connecta.emit` is just another provider function (`M8`).
 
 ## The program
 

@@ -47,7 +47,7 @@ read top to bottom.
 | 1 | `/ui/access-tokens[/<id>]`, `/ui/credentials/<id>[/<action>]`, `/ui/oauth/<id>` | Private mutation routes, matched **first** so nothing can shadow them and so they own their own `OPTIONS` — they answer it with a refusal rather than inheriting the wildcard CORS preflight. |
 | 2 | `OPTIONS` | Each auth provider's `handleMetadata` gets a chance (CORS preflight for browser MCP clients); otherwise 204 with MCP CORS. |
 | 3 | `/.well-known/*` | Auth providers' `handleMetadata`, open. 404 when none handles it. |
-| 4 | `/health` | Open JSON: status, connector count, `serverInfo`, catalog-drift counts, admission snapshots, reserved route names, and `deployment` when `deploymentInfo` is set. Payload-free by construction, and it never joins the MCP queue. |
+| 4 | `/health` | Open JSON: status, connector count, `serverInfo`, the configured executor's sanitized name when it has one, catalog-drift counts, admission snapshots, reserved route names, and `deployment` when `deploymentInfo` is set. Payload-free by construction, and it never joins the MCP queue. |
 | 5 | `/oauth/callback/<connectorId>` | Downstream-OAuth completion, open, `verifyState` before `finishAuth`. |
 | 6 | `/favicon.*`, `/ui` → `/`, the operator shells, `/ui/data` | The operator surface ([operator UI](./operator-ui.md)). The shells are open and data-free; `/ui/data` behind them is gated. Built-ins are matched before connector routes, so a connector cannot shadow a page. |
 | 7 | `/ui/activity` | Gated, plus the optional `activity.readGate`. `GET` only; 404 with no `activity.store.list`. |

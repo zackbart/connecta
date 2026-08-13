@@ -80,6 +80,10 @@ describe("normalizeCode", () => {
 });
 
 describe("quickJsExecutor", () => {
+  it("identifies itself as QuickJS for /health and doctor (#368)", () => {
+    expect((quickJsExecutor() as { name?: string }).name).toBe("QuickJS");
+  });
+
   it("runs plain code and returns the value", async () => {
     const ex = quickJsExecutor();
     const out = await ex.execute("async () => 1 + 1", []);

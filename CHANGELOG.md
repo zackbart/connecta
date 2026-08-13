@@ -297,6 +297,17 @@ where they were.
 
 ### Fixed
 
+- **`connecta doctor` names the sandbox that actually ran the program.** It
+  printed "QuickJS executed" at every deployment it had ever checked, including
+  the Worker example, whose sandbox is a Dynamic Worker — the one field the
+  Worker README says doctor confirms, reported wrong. The deployment now says
+  what its executor is: `/health` carries the configured executor's name when
+  it has one (an explicit `name`, else a class-shaped executor's constructor
+  name), sanitized and bounded because it lands in a public response body and
+  an operator's terminal. Doctor reports that name, and a deployment whose
+  executor identifies as nothing gets `code executed` rather than a guess. The
+  Node template still reads `QuickJS executed`; the Worker example now reads
+  `DynamicWorkerExecutor executed` (#368).
 - **The Node template's `.env.example` ships an empty `CONNECTA_TOKEN`.**
   `docker-compose.yml` has always promised to refuse a deployment with no
   inbound auth, but its `${CONNECTA_TOKEN:?…}` guard only fires on unset or

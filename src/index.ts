@@ -11,6 +11,7 @@ import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import {
   AdmissionController,
+  executorName,
   isAdmittingExecutor,
   withExecutorAdmission,
 } from "./executor-admission.js";
@@ -531,6 +532,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   );
   let codeAdmission: AdmissionController | undefined;
   let executor = config.executor;
+  // Read the identity off the configured executor, before any wrapper hides
+  // it behind an anonymous object literal.
+  const configuredExecutorName = executorName(executor);
   if (!isAdmittingExecutor(executor)) {
     codeAdmission = configuredCodeAdmission;
     executor = withExecutorAdmission(executor, codeAdmission);
@@ -557,6 +561,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       ? { activityDeploymentId: config.activity.deploymentId }
       : {}),
     executor,
+    ...(configuredExecutorName !== undefined
+      ? { executorName: configuredExecutorName }
+      : {}),
     requestAdmission,
     ...(config.calls?.defaultTimeoutMs !== undefined
       ? { defaultToolTimeoutMs: config.calls.defaultTimeoutMs }

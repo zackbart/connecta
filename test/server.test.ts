@@ -1646,6 +1646,46 @@ describe("server open routes", () => {
     });
   });
 
+  it("/health reports the configured sandbox, sanitized and bounded", async () => {
+    class DynamicWorkerExecutor {
+      async execute() {
+        return { result: null };
+      }
+    }
+    const named = createTestConnecta({
+      connectors: [calc()],
+      executor: new DynamicWorkerExecutor(),
+    });
+    const namedBody = (await (
+      await named.fetch(new Request(`${BASE}/health`))
+    ).json()) as any;
+    expect(namedBody.executor).toEqual({ name: "DynamicWorkerExecutor" });
+
+    const hostile = createTestConnecta({
+      connectors: [calc()],
+      executor: {
+        name: "bad\nname " + "y".repeat(80),
+        execute: async () => ({ result: null }),
+      } as any,
+    });
+    const hostileBody = (await (
+      await hostile.fetch(new Request(`${BASE}/health`))
+    ).json()) as any;
+    expect(hostileBody.executor.name).toMatch(/^bad name y+$/);
+    expect(hostileBody.executor.name.length).toBeLessThanOrEqual(40);
+
+    // An anonymous object literal identifies nothing, so /health claims
+    // nothing and `connecta doctor` names no sandbox (#368).
+    const anonymous = createTestConnecta({
+      connectors: [calc()],
+      executor: { execute: async () => ({ result: null }) },
+    });
+    const anonymousBody = (await (
+      await anonymous.fetch(new Request(`${BASE}/health`))
+    ).json()) as any;
+    expect(anonymousBody).not.toHaveProperty("executor");
+  });
+
   it("OPTIONS returns a CORS preflight 204", async () => {
     const c = makeConnecta();
     const res = await c.fetch(

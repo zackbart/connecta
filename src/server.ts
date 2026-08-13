@@ -132,6 +132,13 @@ export function createFetchHandler(
           status: "ok",
           connectors: registry.listConnectors().length,
           server: opts.serverInfo,
+          // Which sandbox, not how it is tuned: `connecta doctor` reports the
+          // executor it just exercised rather than assuming one, and a
+          // deployment whose executor identifies as nothing omits the key
+          // instead of inviting a guess (#368).
+          ...(opts.executorName !== undefined
+            ? { executor: { name: opts.executorName } }
+            : {}),
           // Counts only, from refreshes that already happened — the endpoint
           // asks no downstream anything, and `connecta doctor` reads it to
           // report a stale allowlist without a probe of its own (#343).
