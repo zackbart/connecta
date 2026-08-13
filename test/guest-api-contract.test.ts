@@ -246,6 +246,8 @@ describe.skipIf(!workerExecutor)(
       );
 
       expect(outcome.isError, outcome.text).toBe(false);
+      const outboundDenied =
+        "Error: This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world.";
       expect(outcome.result).toEqual({
         globals: {
           fetch: "function",
@@ -259,10 +261,32 @@ describe.skipIf(!workerExecutor)(
           Bun: "undefined",
         },
         dataFetch: "reachable",
-        externalHttp: "blocked",
-        externalHttps: "blocked",
-        dynamicImport: "blocked",
-        envKeys: 0,
+        externalHttp: outboundDenied,
+        externalHttps: outboundDenied,
+        webSocket: outboundDenied,
+        netConnect: outboundDenied,
+        imports: {
+          fs: "blocked",
+          path: "available",
+          crypto: "available",
+          net: "available",
+          module: "available",
+          workers: "available",
+        },
+        builtins: {
+          fs: "undefined",
+          path: "object",
+          crypto: "object",
+          net: "object",
+          module: "function",
+          workers: "object",
+        },
+        env: {
+          entrypoint: { type: "object", keys: 0 },
+          global: { type: "undefined", keys: 0 },
+          process: { type: "object", keys: 0 },
+          workers: { type: "object", keys: 0 },
+        },
       });
     });
   },

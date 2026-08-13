@@ -18,7 +18,8 @@ rather than serving a smaller surface
 ([#273](https://github.com/zackbart/connecta/issues/273)): Node uses
 `quickJsExecutor()` from `@zackbart/connecta/quickjs`, Workers use
 `new DynamicWorkerExecutor({ loader: env.LOADER })` from
-`@cloudflare/codemode`.
+`@cloudflare/codemode`. The Worker executor must stay loader-only: `bindings`,
+`modules`, and `globalOutbound` grant ambient guest authority.
 
 Both executor packages are optional peers: they never install with connecta,
 and a deployment installs the one its runtime needs. The manifest publishes the
@@ -236,7 +237,7 @@ in.
 | `execute-ui.test.ts` | `connecta.ui` (U1–U9) — validation, multiplicity and budget, the provider, `_meta` delivery, and the Apps shell |
 | `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
-| `guest-api-contract.test.ts` | the executor-independent half of the guest API contract cases, plus the real Dynamic Worker capability matrix — local `data:` fetch, blocked external HTTP(S), empty environment, blocked imports, and the globals it leaves present |
+| `guest-api-contract.test.ts` | the executor-independent half of the guest API contract cases, plus the real Dynamic Worker capability matrix — local `data:` fetch, exact outbound denial for fetch, WebSocket, and `node:net`, empty environment paths, unavailable `node:fs`, and the runtime globals and imports it leaves present |
 | `linear-provider.test.ts` / `linear-registry.test.ts` | the Linear proxy's construction, classification, and guide; then the same connector inside a real deployment |
 | `meta-tools.test.ts` | the registry-backed meta-tools: bounded discovery with page and address maxima, concise and full descriptions, compact and JSON schemas with numeric and string constraints, structured errors, `skills` and connector-guide selection including paragraph-aware summaries and configured-summary construction bounds, stored-credential drift, catalog-lookup health accounting, `fields` selection including total and partial misses below nested arrays, truncation and `get_result` offset validation and character alignment, per-connector `maxResultBytes`, probe timeouts, and empty-query browse of an unavailable or unconfigured catalog |
 | `mixpanel-provider.test.ts` / `mixpanel-registry.test.ts` | the Mixpanel proxy, its conditional-input guide and complete reviewed schema-digest manifest, then the same connector inside a real deployment |
@@ -262,12 +263,12 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 
 | Suite | Covers | Why Node |
 | --- | --- | --- |
-| `deployment-shapes.test.ts` | the Worker as the only example, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
+| `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, one Node template that is also its own container, the same source running locally and in the container, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `doctor-cli.test.ts` | `connecta doctor`'s executor line end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, and a hostile name is bounded and stripped before it reaches a terminal | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the maintainer drift checker — hosted-provider credential framing, recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
-| `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor, including its exact absent-global capability set | runs the contract cases on the Node QuickJS executor |
+| `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor, including its exact absent globals and blocked runtime imports | runs the contract cases on the Node QuickJS executor |
 | `node.test.ts` | the `listen()` adapter propagating an HTTP client disconnect through the Web `Request` and the MCP handler into a program's connector call, releasing both admission permits | exercises the Node HTTP adapter over real TCP sockets |
 | `packed-links.test.ts` | the packed-link gate itself — shipped targets and repository URLs accepted, relative links into unshipped paths and directories rejected with the citation to write instead, reference definitions seen, fenced examples ignored, the changelog exempt | spawns the Node packed-link gate against filesystem fixtures |
 | `package-surface.test.ts` | the published boundary — built output shipped, the `exports` map carrying exactly the documented subpaths plus `./package.json`, only generic factories, platform storage kept in examples, Clerk and QuickJS behind optional subpaths, every provider independently importable, and the Cloudflare provider free of bare specifiers | walks the package tree with Node filesystem APIs |

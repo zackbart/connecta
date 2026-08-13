@@ -148,7 +148,7 @@ describe("the advertised surface", () => {
       'pass `connector: "<id>"` when obvious to load one',
     );
     expect(servedSkill).toContain(
-      "Do not use them; that code fails on QuickJS",
+      "Avoid them; QuickJS fails",
     );
 
     const advertised = [

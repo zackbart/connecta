@@ -13,7 +13,10 @@ contract tightens: an explicit `usageGuide.summary` over 120 characters now
 refuses to boot. Deployments whose summaries fit, or which let Connecta derive
 them, need no configuration change. Operator catalog reads retain their blocking
 freshness behavior. This release also makes the two code sandboxes' runtime
-differences explicit; existing `execute_code` programs keep their behavior.
+differences explicit. The shipped
+Worker example is already loader-only; deployments that added executor
+`bindings`, `modules`, or `globalOutbound` must remove them. Existing portable
+`execute_code` programs keep their behavior.
 
 ### Changed
 
@@ -32,12 +35,12 @@ differences explicit; existing `execute_code` programs keep their behavior.
 ### Fixed
 
 - **`execute_code` now tells the truth about each shipped sandbox.** QuickJS
-  omits fetch, process, timers, crypto, and WebSocket. Dynamic Workers expose
-  those globals: `data:` fetch resolves locally, external HTTP(S) remains
-  blocked, `process.env` is empty, timers work, and crypto and WebSocket exist.
-  The tool description, served usage guide, annotations, normative contract,
-  and shared executor tests now agree; portable programs use none of those
-  runtime-specific globals (#390).
+  omits runtime globals and blocks imports. Loader-only Dynamic Workers deny
+  outbound fetch, WebSocket, and `node:net`; expose no environment bindings or
+  `node:fs`; but retain local `data:` fetch, timers, crypto, process, WebSocket,
+  and selected runtime imports. The example pins the required loader-only
+  construction, and agent guidance tells portable programs to use none of that
+  Dynamic-only authority (#390).
 
 - **Array field misses now report what happened.** A path that misses every
   element appears in `unmatchedFields` instead of returning a clean array of

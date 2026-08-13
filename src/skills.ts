@@ -21,7 +21,7 @@ Use exact addresses from discovery; never invent one. Search 2–4 distinctive a
 
 ## Inside a program
 
-One async arrow function. Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. Both runtimes block external HTTP(S), filesystem, deployment environment/configuration, and imports. QuickJS has no fetch, process, timers, crypto, or WebSocket. Dynamic Workers expose them: data: fetch is local, external fetch stays blocked, process.env is empty, timers work, and crypto and WebSocket exist. Do not use them; that code fails on QuickJS.
+Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch/process/timers/crypto/WebSocket. Dynamic Workers require only \`{ loader }\`; bindings/modules/globalOutbound violate it. With that: env maps empty; node:fs absent; outbound fetch/WebSocket/node:net denied. Timers/process/crypto/WebSocket, data: fetch, and node:path/crypto/net/module/cloudflare:workers imports remain. Avoid them; QuickJS fails.
 
 - \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.

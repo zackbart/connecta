@@ -54,8 +54,30 @@ describe("guest API contract (QuickJS executor)", () => {
       dataFetch: "absent",
       externalHttp: "absent",
       externalHttps: "absent",
-      dynamicImport: "blocked",
-      envKeys: 0,
+      webSocket: "absent",
+      netConnect: "import blocked",
+      imports: {
+        fs: "blocked",
+        path: "blocked",
+        crypto: "blocked",
+        net: "blocked",
+        module: "blocked",
+        workers: "blocked",
+      },
+      builtins: {
+        fs: "process absent",
+        path: "process absent",
+        crypto: "process absent",
+        net: "process absent",
+        module: "process absent",
+        workers: "process absent",
+      },
+      env: {
+        entrypoint: { type: "undefined", keys: 0 },
+        global: { type: "undefined", keys: 0 },
+        process: { type: "undefined", keys: 0 },
+        workers: { type: "undefined", keys: 0 },
+      },
     });
   });
 });

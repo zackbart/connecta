@@ -47,22 +47,41 @@ export interface ContractCase {
 
 /** One program that pins the guest capability matrix on every shipped executor. */
 export const CAPABILITY_PROBE_CODE = `async () => {
-  const fetchResult = async (url) => {
-    if (typeof fetch !== "function") return "absent";
-    try {
-      const response = await fetch(url);
-      return url.startsWith("data:") ? await response.text() : "resolved";
-    } catch {
-      return "blocked";
-    }
+  const attempt = async (fn) => {
+    try { await fn(); return "resolved"; }
+    catch (error) { return String(error); }
   };
-  let dynamicImport = "resolved";
-  try {
-    const specifier = "node:fs";
-    await import(specifier);
-  } catch {
-    dynamicImport = "blocked";
-  }
+  const importStatus = async (specifier) => {
+    try { await import(specifier); return "available"; }
+    catch { return "blocked"; }
+  };
+  const builtinType = (specifier) => {
+    if (typeof process !== "object" || !process || typeof process.getBuiltinModule !== "function") return "process absent";
+    try { return typeof process.getBuiltinModule(specifier); }
+    catch (error) { return String(error); }
+  };
+  const envShape = (value) => ({
+    type: value === null ? "null" : typeof value,
+    keys: value && typeof value === "object" ? Object.keys(value).length : 0
+  });
+  let workerModule;
+  try { workerModule = await import("cloudflare:workers"); }
+  catch {}
+  const dataFetch = typeof fetch === "function"
+    ? await (await fetch("data:text/plain,reachable")).text()
+    : "absent";
+  const netConnect = await (async () => {
+    try {
+      const net = await import("node:net");
+      return await new Promise((resolve) => {
+        try {
+          const socket = net.connect(80, "example.com");
+          socket.once("connect", () => { socket.destroy(); resolve("resolved"); });
+          socket.once("error", (error) => resolve(String(error)));
+        } catch (error) { resolve(String(error)); }
+      });
+    } catch { return "import blocked"; }
+  })();
   return {
     globals: {
       fetch: typeof fetch,
@@ -75,13 +94,39 @@ export const CAPABILITY_PROBE_CODE = `async () => {
       Deno: typeof Deno,
       Bun: typeof Bun
     },
-    dataFetch: await fetchResult("data:text/plain,reachable"),
-    externalHttp: await fetchResult("http://example.invalid/"),
-    externalHttps: await fetchResult("https://example.invalid/"),
-    dynamicImport,
-    envKeys: typeof process === "object" && process && process.env
-      ? Object.keys(process.env).length
-      : 0
+    dataFetch,
+    externalHttp: typeof fetch === "function"
+      ? await attempt(() => fetch("http://example.com/"))
+      : "absent",
+    externalHttps: typeof fetch === "function"
+      ? await attempt(() => fetch("https://example.com/"))
+      : "absent",
+    webSocket: typeof WebSocket === "function"
+      ? await attempt(() => new WebSocket("wss://example.com/"))
+      : "absent",
+    netConnect,
+    imports: {
+      fs: await importStatus("node:fs"),
+      path: await importStatus("node:path"),
+      crypto: await importStatus("node:crypto"),
+      net: await importStatus("node:net"),
+      module: await importStatus("node:module"),
+      workers: await importStatus("cloudflare:workers")
+    },
+    builtins: {
+      fs: builtinType("node:fs"),
+      path: builtinType("node:path"),
+      crypto: builtinType("node:crypto"),
+      net: builtinType("node:net"),
+      module: builtinType("node:module"),
+      workers: builtinType("cloudflare:workers")
+    },
+    env: {
+      entrypoint: envShape(typeof this === "object" && this ? this.env : undefined),
+      global: envShape(globalThis.env),
+      process: envShape(typeof process === "object" && process ? process.env : undefined),
+      workers: envShape(workerModule ? workerModule.env : undefined)
+    }
   };
 }`;
 
@@ -767,15 +812,19 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "P2, X5",
-    name: "the portable sandbox contract blocks ambient authority",
+    name: "the portable program boundary excludes ambient authority",
     code: CAPABILITY_PROBE_CODE,
     check(outcome) {
       const result = record(outcome);
       const globals = result.globals as Record<string, string>;
+      const imports = result.imports as Record<string, string>;
+      const env = result.env as Record<string, { keys: number }>;
       expect(result.externalHttp).not.toBe("resolved");
       expect(result.externalHttps).not.toBe("resolved");
-      expect(result.dynamicImport).toBe("blocked");
-      expect(result.envKeys).toBe(0);
+      expect(result.webSocket).not.toBe("resolved");
+      expect(result.netConnect).not.toBe("resolved");
+      expect(imports.fs).toBe("blocked");
+      expect(Object.values(env).every((shape) => shape.keys === 0)).toBe(true);
       expect(globals.require).toBe("undefined");
       expect(globals.Deno).toBe("undefined");
       expect(globals.Bun).toBe("undefined");
