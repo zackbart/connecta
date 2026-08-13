@@ -23,7 +23,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { classifyCallError } from "./errors.js";
+import { boundedEchoText, classifyCallError } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -41,6 +41,8 @@ import type {
 const EXECUTE_MAX_HOST_CALLS = 20;
 export const EXECUTE_MAX_BATCH_CALLS = 10;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
+/** Complete entries plus an exact omission count, all inside this byte cap. */
+export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
 /**
  * Default budgets for `connecta.emit`. The byte budget is a transport bound,
  * not a context bound — emitted image/audio blocks reach the model as media,
@@ -1387,10 +1389,44 @@ function discardedEmitsText(emitted: EmitCollector): string {
   return lines.length > 0 ? `\n\n${lines.join("\n")}` : "";
 }
 
+function connectorInventory(
+  connectors: ReturnType<RegistryView["listConnectors"]>,
+): string {
+  const prefix = "Connectors: ";
+  if (connectors.length === 0) return `${prefix}none.`;
+  const entries = connectors.map((connector) => {
+    const shortcut = sanitizeIdentifier(connector.id);
+    return shortcut === connector.id
+      ? connector.id
+      : `${connector.id} (shortcut ${shortcut})`;
+  });
+  const shown: string[] = [];
+  for (let index = 0; index < entries.length; index++) {
+    const entry = entries[index];
+    if (entry === undefined) break;
+    const candidate = [...shown, entry].join(", ");
+    const omitted = entries.length - index - 1;
+    const suffix = omitted > 0 ? `; +${omitted} more.` : ".";
+    const serialized = prefix + candidate + suffix;
+    if (
+      boundedEchoText(serialized, CONNECTOR_INVENTORY_MAX_BYTES) !== serialized
+    ) {
+      break;
+    }
+    shown.push(entry);
+  }
+  const omitted = entries.length - shown.length;
+  if (omitted === 0) return `${prefix}${shown.join(", ")}.`;
+  return `${prefix}${shown.join(", ")}${shown.length > 0 ? "; " : ""}+${omitted} more.`;
+}
+
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   connectorGuides: boolean,
+  connectors: ReturnType<RegistryView["listConnectors"]>,
 ) => `Choose the route before discovery. Exactly one unknown-address read uses top-level search_tools then call_tool. execute_code is the primary surface for everything wider: make exactly one execute_code call that searches, selects, calls, and reduces. A discovery-only program wastes its round trip: finish here, don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_MAX_BATCH_CALLS} per batch, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
+
+${connectorInventory(connectors)}
 
 Write one plain-JavaScript async arrow function. Use only:
 - <connectorId>.<toolName>(args) for a sanitized shortcut, or connecta.call(address, args) for a canonical address.
@@ -1435,6 +1471,7 @@ export function registerExecuteTool(
       EXECUTE_MAX_EMITTED_BLOCKS,
     ),
   };
+  const connectors = registry.listConnectors();
   const handler = createExecuteTool(
     registry,
     ctx.baseUrl,
@@ -1458,7 +1495,8 @@ export function registerExecuteTool(
     {
       description: executeDescription(
         emitBudgets,
-        hasConnectorGuides(registry.listConnectors()),
+        hasConnectorGuides(connectors),
+        connectors,
       ),
       inputSchema: z.object({
         code: z

@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
+import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 import {
   MCP_APPS_EXTENSION,
   PROGRAM_UI_MIME_TYPE,
@@ -776,8 +777,65 @@ describe("server /mcp end-to-end", () => {
     expect(guided.search).toContain("guideRequired: true");
     expect(guided.destructive).toContain("exact connector guide");
     expect(guided.execute).toContain("connector-guide rules");
-    expect(guided.execute.length).toBeLessThan(4_400);
+    // The deployment inventory may spend at most 256 bytes inside #418's
+    // always-loaded execute definition; this cap must not drift around it.
+    expect(guided.execute.length).toBeLessThan(1_800);
     expect(guided.usage).toBe(plain.usage);
+  });
+
+  it("shows a bounded, deterministic live connector inventory without loading a catalog", async () => {
+    const listTools = vi.fn(async () => {
+      throw new Error("inventory must not load a catalog");
+    });
+    const callTool = vi.fn(async () => {
+      throw new Error("inventory must not call a connector");
+    });
+    const connector = (id: string): Connector => ({
+      id,
+      description: id,
+      listTools,
+      callTool,
+    });
+    async function executeDescription(ids: string[]) {
+      const c = createTestConnecta({
+        connectors: ids.map(connector),
+        auth: bearerToken(TOKEN),
+        storage: memoryStorage(),
+        publicUrl: BASE,
+      });
+      const listed = await readBody(
+        await rpc(c, "tools/list", {}, { token: TOKEN }),
+      );
+      const execute = listed.result.tools.find(
+        (tool: { name: string }) => tool.name === "execute_code",
+      ) as { description: string };
+      await c.close();
+      return execute.description;
+    }
+    async function inventory(ids: string[]) {
+      return (await executeDescription(ids)).match(/^Connectors: .*$/m)?.[0];
+    }
+
+    expect(await inventory([])).toBe("Connectors: none.");
+    expect(await inventory(["calc", "my-service", "email_api"])).toBe(
+      "Connectors: calc, my-service (shortcut my_service), email_api.",
+    );
+    const ids = Array.from(
+      { length: 104 },
+      (_, index) =>
+        `connector-${String(index).padStart(3, "0")}-xxxxxxxx`,
+    );
+    ids[2] = `${ids[2]}y`;
+    const first = await inventory(ids);
+    const second = await inventory(ids);
+    expect(first).toBe(second);
+    expect(first).toMatch(/; \+100 more\.$/);
+    expect(new TextEncoder().encode(first).length).toBe(
+      CONNECTOR_INVENTORY_MAX_BYTES,
+    );
+    expect((await executeDescription(ids)).length).toBeLessThan(1_800);
+    expect(listTools).not.toHaveBeenCalled();
+    expect(callTool).not.toHaveBeenCalled();
   });
 
   it("tools/call search_tools returns its grouped discovery envelope", async () => {
