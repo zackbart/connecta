@@ -1,0 +1,309 @@
+{
+  "provider": "cloudflare",
+  "specification": {
+    "url": "https://raw.githubusercontent.com/cloudflare/api-schemas/main/openapi.json"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/accounts",
+      "specRevision": "4.0.0",
+      "contract": "sha256:ec0b83af0687d33f021ed8a06d919b8e334bbc791c4db3968636c8a2b025f5e2"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/pages/projects",
+      "specRevision": "4.0.0",
+      "contract": "sha256:e450381e91312fe6d13c9858e4e66b74f731c10a9180632f144a76ab8bb51aa1"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:d96918b0b57da1907c6e1cfab4fc5dffc4c067ded985e7b605b3c49c3947862a"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:a6066a15d870966dd9126f6d87f6ee6bc74891e5aac627fd068d67283cd06a1a"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/deployments",
+      "specRevision": "4.0.0",
+      "contract": "sha256:4046a7bd2111c7cd02dc29bf80f44797f2287dbb84700a2e002226aefe2e33f6"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:ac41a8bd1ad5bc22c4940fc909533414cfd2df1c1dad1957f7a954d82ae2e671"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:108285dd47f2564283303bb188532b9f922cd9ce21e5050593bc8b53db064500"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/retry",
+      "specRevision": "4.0.0",
+      "contract": "sha256:108285dd47f2564283303bb188532b9f922cd9ce21e5050593bc8b53db064500"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/deployments/{deployment_id}/rollback",
+      "specRevision": "4.0.0",
+      "contract": "sha256:108285dd47f2564283303bb188532b9f922cd9ce21e5050593bc8b53db064500"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/domains",
+      "specRevision": "4.0.0",
+      "contract": "sha256:c6594ac7461ad5fe22a55c1b00fb0b6916da15e16e9120c7abcfa29323407c81"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/domains",
+      "specRevision": "4.0.0",
+      "contract": "sha256:1383eb05116e1f2570a8c9417ba128b57630dd87caa2ec373a365ccd388be53a"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/domains/{domain_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:678372e33ac9dfded34a32aa14fe50a79c2115c89c57406e99fe2152d4a869df"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/pages/projects/{project_name}/purge_build_cache",
+      "specRevision": "4.0.0",
+      "contract": "sha256:d96918b0b57da1907c6e1cfab4fc5dffc4c067ded985e7b605b3c49c3947862a"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/r2/buckets",
+      "specRevision": "4.0.0",
+      "contract": "sha256:8376d08dc65c17c49b1040b06cc365b3bff0b55bc468bcd043d4143ee4c1bcbb"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/r2/buckets",
+      "specRevision": "4.0.0",
+      "contract": "sha256:29a76da91395c0a21b811155d719b93528f0b0e3e47488afa1f04c793d26ceb6"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:dffb4cdc5f3739c23912af8703d8f355c4512752dee70bae05726a51028a1143"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:4b1a77b7d42eb1d47691538fdc2f3b8167152abef7ffdb913e20048a4bc415cc"
+    },
+    {
+      "method": "PATCH",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:b173764b9d6984b335f014bac5abd0ccd1184ed647bf30e3c1b8c1698ecef89a"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/cors",
+      "specRevision": "4.0.0",
+      "contract": "sha256:f26ae4d8ec27c0c5962c2279f52c4160935c654452ebf8a27b80ae2a8bc30bb1"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/objects",
+      "specRevision": "4.0.0",
+      "contract": "sha256:80890469a7825f81f38eefb9a22cf28b19b7c8ed9692f43761fedb9829d1ecf4"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{object_key}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:e6e98b73430075b7e468924df625d8912151f759fdf73c9aad7f770f889cfb76"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/storage/kv/namespaces",
+      "specRevision": "4.0.0",
+      "contract": "sha256:d6f21875cba5f0b1b4e8eee7bf3a5e5f61a1651bc05925cbde8fe5d0c704c0a5"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/storage/kv/namespaces",
+      "specRevision": "4.0.0",
+      "contract": "sha256:8fbbb8d5f79d53213bfe01552b3dbad3fc86fbe2f7f97f224d405fb1d9a7c103"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:767702ec1d4436d51ef4116676203c5f928c7b0a0bb2f945c377b940560bc55d"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:7ba8192512693b8f9185dfcdda22814d4d6295203971a02c7fdb60999d55a42c"
+    },
+    {
+      "method": "PUT",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:650659b74a8e792d94d6ba0332f0fff0cc8063a217a5af78299ab00813793269"
+    },
+    {
+      "method": "PUT",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk",
+      "specRevision": "4.0.0",
+      "contract": "sha256:90b888706e5235d55a60c848672de347e6b68728c3525a818936d027c7e0281d"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk/delete",
+      "specRevision": "4.0.0",
+      "contract": "sha256:511865ab33597f3effa82a513e01fa6fad33141c1b3a73434aaaf5a8eb07c43e"
+    },
+    {
+      "method": "POST",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk/get",
+      "specRevision": "4.0.0",
+      "contract": "sha256:5df0f5d47a64c672f018258a3d6429ebed14b21b680dcb06023ee72d06955dec"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/keys",
+      "specRevision": "4.0.0",
+      "contract": "sha256:29d7fe745c02c7d86a4161a0d2b5e07707738c78fead67a66d838f9f4645e254"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/workers/scripts",
+      "specRevision": "4.0.0",
+      "contract": "sha256:b47fe32cb84845716df6c81b857c6b590555dd9ca06a8c92906275901fdddf7d"
+    },
+    {
+      "method": "DELETE",
+      "path": "/accounts/{account_id}/workers/scripts/{script_name}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:04b2adec28494a7531b4ded74ceb33c4ee3334eb90aca0c9eee4330bf1460bc7"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/workers/scripts/{script_name}/deployments",
+      "specRevision": "4.0.0",
+      "contract": "sha256:1c6dd5893a9c87e074bd13562c16dbb87e91ea82ed7647a9320dc357cd0c9002"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/workers/scripts/{script_name}/deployments/{deployment_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:7bcdf710a213a336d1b0fcfa6b2460ba5a05cdaf05e37aecb711d706b5a0f6eb"
+    },
+    {
+      "method": "GET",
+      "path": "/accounts/{account_id}/workers/scripts/{script_name}/settings",
+      "specRevision": "4.0.0",
+      "contract": "sha256:c56f81067cb2713dc16ad689bc447675fa3d2a4a67ae32f223cf686a27645844"
+    },
+    {
+      "method": "GET",
+      "path": "/user",
+      "specRevision": "4.0.0",
+      "contract": "sha256:4013fe94d367e1e0978222668fca83e9dba80e9a7bb564da9be8c65334a8daa0"
+    },
+    {
+      "method": "GET",
+      "path": "/user/tokens/verify",
+      "specRevision": "4.0.0",
+      "contract": "sha256:8690e21cbdf6a0e495838404098cf89f586aedf334d2db5872ec3c55374a7666"
+    },
+    {
+      "method": "GET",
+      "path": "/zones",
+      "specRevision": "4.0.0",
+      "contract": "sha256:922f843eedbfb58765917a7ed56f43c1142368c78a87072135415b4779d2f2a6"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:d50268cfbaeb1bc4fbde7e73ffc911808dc62f9b4384371b07ceb85cc696d31a"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/dns_records",
+      "specRevision": "4.0.0",
+      "contract": "sha256:33c20281764d610942b40846d1063f8d17028454a5180856ce8ea14078d3910a"
+    },
+    {
+      "method": "POST",
+      "path": "/zones/{zone_id}/dns_records",
+      "specRevision": "4.0.0",
+      "contract": "sha256:974d2c4be27789f16226a70e7f3fe2238df962b71d5276a1b532d68e870b2c0d"
+    },
+    {
+      "method": "DELETE",
+      "path": "/zones/{zone_id}/dns_records/{dns_record_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:dcfc37b161cd868159bee40d959fd6f1dcaae24c4caa6b3f1367318ea4d2aaf8"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/dns_records/{dns_record_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:ba711f9c28f8a29ed76ebd7071a41b8df7c2b6e9a5645c89b7cf5b1185888f9d"
+    },
+    {
+      "method": "PATCH",
+      "path": "/zones/{zone_id}/dns_records/{dns_record_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:98cfb4d7aa72e96191ecf312b7a4ba0d8d81b749e7061436ba1c3a7dbdaa74f9"
+    },
+    {
+      "method": "POST",
+      "path": "/zones/{zone_id}/purge_cache",
+      "specRevision": "4.0.0",
+      "contract": "sha256:8d59773bbaab80bc84fed0f7b004a772d3036fc14906be9466cdb92168126574"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/rulesets",
+      "specRevision": "4.0.0",
+      "contract": "sha256:f609a5291d8c93e924cd43380f17f4acb49de6d6f529f28db3d7025f5e85649f"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/rulesets/{ruleset_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:c3e9c4a392c0e2697ff4542c59956b00c527758c6467e3d1c4aca1843a81070d"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/settings",
+      "specRevision": "4.0.0",
+      "deprecated": true,
+      "contract": "sha256:39b769e49810f7e38d232cd74592adf62700fc1792382a03f4b6b6176519cff6"
+    },
+    {
+      "method": "GET",
+      "path": "/zones/{zone_id}/settings/{setting_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:d40d6e69038efbcb47a4e211d4e2c293c557a943fb383975c838245ee9c96888"
+    },
+    {
+      "method": "PATCH",
+      "path": "/zones/{zone_id}/settings/{setting_id}",
+      "specRevision": "4.0.0",
+      "contract": "sha256:131e78bf0692cc655846a3ab748ca1738522244117eb3733c75d7032847a6512"
+    }
+  ]
+}
