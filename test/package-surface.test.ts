@@ -33,8 +33,10 @@ describe("public package boundary", () => {
         "LICENSE",
       ]),
     );
-    // Nothing in `exports` resolves outside dist/, so src/ only ever fed the
-    // source and declaration maps — and both were retired with it (#346).
+    // No code export resolves outside dist/ — the manifest data export
+    // (`./package.json`, #374) is the one exception, and it ships anyway — so
+    // src/ only ever fed the source and declaration maps, and both were
+    // retired with it (#346).
     // assets/ is the README hero image, which npmjs.com renders straight from
     // the repository. Neither belongs in every install.
     expect(packageJson.files).not.toContain("src");
