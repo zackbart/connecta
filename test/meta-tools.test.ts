@@ -1596,6 +1596,95 @@ describe("search_tools", () => {
     });
   });
 
+  it("names the connector a no-match query already identified", async () => {
+    const inventory: Connector = {
+      id: "inventory",
+      title: "Warehouse stock",
+      staticTools: [
+        {
+          name: "list_skus",
+          description: "List every stock-keeping unit and its bin",
+        },
+        {
+          name: "get_sku",
+          description: "Get one stock-keeping unit by code",
+        },
+      ],
+      async listTools() {
+        return [];
+      },
+      async callTool() {
+        return null;
+      },
+    };
+    const mt = createMetaTools(makeRegistry([inventory]), BASE);
+
+    const byId = textOf(
+      await mt.searchTools({ query: "inventory" }),
+    ) as SearchResult;
+    expect(byId.total).toBe(0);
+    const byIdGuidance = required(required(byId.queryAnalysis).guidance);
+    expect(byIdGuidance).not.toContain("is configured in this deployment");
+    expect(byIdGuidance).toContain('connector "inventory"');
+    expect(byIdGuidance).toContain("browse with an empty query");
+
+    // A title word is displayed, never indexed, so it must reach the same
+    // correction rather than the false negative.
+    const byTitle = textOf(
+      await mt.searchTools({ query: "warehouse" }),
+    ) as SearchResult;
+    expect(byTitle.total).toBe(0);
+    expect(
+      required(required(byTitle.queryAnalysis).guidance),
+    ).toContain('connector "inventory"');
+
+    // A term the deployment really does not have keeps the stronger claim.
+    const absent = textOf(
+      await mt.searchTools({ query: "calendar" }),
+    ) as SearchResult;
+    expect(absent.total).toBe(0);
+    expect(required(required(absent.queryAnalysis).guidance)).toContain(
+      "No matching capability is configured in this deployment",
+    );
+
+    // The term cap on the serialized analysis fields is not a cap on the
+    // search: ranking reads every term, so a connector named past the eighth
+    // one must be named back rather than denied.
+    const lateId = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta inventory",
+      }),
+    ) as SearchResult;
+    expect(lateId.total).toBe(0);
+    expect(required(required(lateId.queryAnalysis).guidance)).toContain(
+      'connector "inventory"',
+    );
+
+    const lateTitle = textOf(
+      await mt.searchTools({
+        query: "alpha beta gamma delta epsilon zeta eta theta warehouse",
+      }),
+    ) as SearchResult;
+    expect(lateTitle.total).toBe(0);
+    expect(required(required(lateTitle.queryAnalysis).guidance)).toContain(
+      'connector "inventory"',
+    );
+
+    // Identity never enters ranking: a query that matches tools is answered
+    // by the same tools, in the same order, with no identity advice.
+    const matched = textOf(
+      await mt.searchTools({ query: "inventory sku" }),
+    ) as SearchResult;
+    expect(
+      matched.connectors.flatMap((group) =>
+        group.tools.map((tool) => tool.address),
+      ),
+    ).toEqual(["inventory.get_sku", "inventory.list_skus"]);
+    expect(
+      required(required(matched.queryAnalysis).guidance),
+    ).toContain("Split distinct intents");
+  });
+
   it("bounds query analysis independently of long search input", async () => {
     const query = Array.from(
       { length: 20 },

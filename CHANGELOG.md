@@ -4,12 +4,25 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
-Packaging housekeeping found by the pre-release smoke gauntlet, plus a rule that
-described itself too strictly. Nothing in the runtime moved, and no deployment
-needs to do anything.
+A discovery answer that told a plain lie, plus packaging housekeeping found by
+the pre-release smoke gauntlet and a rule that described itself too strictly.
+One `search_tools` guidance string changed; nothing else in the runtime moved,
+and no deployment needs to do anything.
 
 ### Fixed
 
+- **A search for a connector's own name stops claiming the deployment has no
+  such capability.** A connector's `id` — the address prefix an agent already
+  holds — and its `title` are displayed, never indexed, so `search_tools({
+  query: "inventory" })` against a connector called `inventory` matched no tool
+  and was answered with "No matching capability is configured in this
+  deployment", which was plainly false. Connector identity stays out of the
+  lexical index, because putting it in would move ranking for every query that
+  already matches tools; instead an unscoped miss whose terms name configured
+  connectors says so, names up to three of them by ID, and sends the caller to
+  a scoped browse. A term that matches nothing in the deployment still gets the
+  original sentence, unchanged. One `queryAnalysis.guidance` string differs; no
+  ranking, result, or field changed (#372).
 - **`@zackbart/connecta/package.json` resolves.** The `exports` map listed
   every code subpath and nothing else, so a bundler plugin, framework build
   step, or version probe reaching for the installed manifest — a thing the

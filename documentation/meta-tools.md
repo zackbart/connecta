@@ -229,7 +229,13 @@ results explain that no single tool covered every term and recommend splitting
 distinct intents. A true negative says that no matching capability is
 configured and recommends refining, connector-scoping, or browsing; when a
 connector catalog was unavailable, the response includes
-`unavailableConnectorCount` instead of making that stronger claim. A search
+`unavailableConnectorCount` instead of making that stronger claim. A no-match
+query whose terms name a configured connector's `id` or `title` never makes it
+either: connector identity is not in the lexical index — indexing it would move
+ranking for every query that already matches tools — so instead the guidance on
+an unscoped miss names up to three such connectors by ID and sends the caller
+to a scoped browse. Identity affects that one sentence and nothing else: no
+ranking, no result, and no new field. A search
 explicitly scoped to that unavailable connector also receives `catalogError` —
 the bounded classified failure (`code`, `message`, `retryable`, and any
 `retryAfterMs`) so the caller can tell a transient outage from one a deployment

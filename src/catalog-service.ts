@@ -4,6 +4,7 @@ import {
   lexicalCorpusStatistics,
   lexicalQueryTerms,
   lexicalSearchQuery,
+  matchesLexicalTerm,
   rankTools,
   schemaObjectKeys,
   summarizeDiscoveryDescription,
@@ -47,6 +48,12 @@ export const MAX_DESCRIBE_ADDRESSES = 100;
 export const MAX_DISCOVERY_RESULT_BYTES = 256_000;
 const MAX_QUERY_TERMS = 8;
 const MAX_QUERY_TERM_LENGTH = 64;
+/**
+ * Connector IDs a no-match search will name back. Three is enough to point at
+ * the connector the query already named without turning a miss into a listing
+ * of the deployment.
+ */
+const MAX_IDENTITY_CONNECTORS = 3;
 
 const encoder = new TextEncoder();
 
@@ -896,6 +903,50 @@ export class CatalogService {
             required: connectorGuideRequired(scopedConnector),
           }
         : undefined;
+    // A connector's own id — the address prefix the caller already has — and
+    // the title it is displayed under are the most natural first query terms,
+    // and neither is a document in the lexical index. Indexing them would move
+    // ranking for every query that already matches tools, so instead a search
+    // that matched nothing asks the same lexical question of connector
+    // identity and corrects its own sentence: the deployment plainly has this
+    // capability, and one scoped browse away are its tools. Unscoped only —
+    // guidance for an explicit scope already names that connector rather than
+    // claiming the deployment has nothing.
+    const identityConnectorIds =
+      matches.length === 0 && !isBrowse && !unsearchableQuery && !scopedConnector
+        ? connectors
+            // The full query, not `analyzedTerms`: that cap exists to bound
+            // the serialized term fields, and ranking already reads every
+            // term. A ninth term is a real search term, and a search that
+            // ranked against it must not deny the connector it names.
+            .filter((connector) =>
+              queryTerms.some(
+                (term) =>
+                  matchesLexicalTerm(connector.id, term) ||
+                  (connector.title !== undefined &&
+                    matchesLexicalTerm(connector.title, term)),
+              ),
+            )
+            .map((connector) => connector.id)
+        : [];
+    const namedIdentityConnectors = identityConnectorIds
+      .slice(0, MAX_IDENTITY_CONNECTORS)
+      .map((id) => `"${id}"`)
+      .join(", ");
+    const unnamedIdentityConnectors =
+      identityConnectorIds.length - MAX_IDENTITY_CONNECTORS;
+    const identityGuidance =
+      identityConnectorIds.length === 0
+        ? undefined
+        : `No matching ${safetyLabel}capability was found${
+            unavailableCatalogs === 0 ? "" : " in the catalogs that answered"
+          }, but the query names configured connector${
+            identityConnectorIds.length === 1 ? "" : "s"
+          } ${namedIdentityConnectors}${
+            unnamedIdentityConnectors > 0
+              ? ` and ${unnamedIdentityConnectors} more`
+              : ""
+          }. Scope by connector and browse with an empty query to list the tools there.${filterRecovery}`;
     // A scope that resolved to nothing is the same silence one step earlier in
     // the lookup: no connector resolved, so no catalog was even attempted, so
     // no catalog failed and the unavailable path below never fires. Echo only
@@ -942,9 +993,10 @@ export class CatalogService {
                 : scopedGuide?.required
                   ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
                   : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
-              : unavailableCatalogs === 0
-                ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
-                : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`))
+              : (identityGuidance ??
+                (unavailableCatalogs === 0
+                  ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
+                  : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`))))
           : matchMode === "partial"
             ? scopedConnector
               ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`
