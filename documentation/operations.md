@@ -130,11 +130,17 @@ package is public.
 `npm run release:check` adds `check:security` (`npm audit --omit=dev
 --audit-level=moderate`) and `check:package`, and is what CI runs on every push
 and pull request. `check:package` packs the tarball, asserts the required files
-are in it and that no platform-specific implementation or unshippable path
-leaked in, derives the shipped guide list from which guides still carry a stub
-marker, checks that every packed doc's `documentation/` link resolves to
-something the tarball carries, and then runs `connecta init` and builds and
-runs the generated deployment's own container.
+are in it and that no platform-specific implementation reached `dist/` and no
+unshippable path leaked in, derives the shipped guide list from which guides
+still carry a stub marker, checks that every packed doc's `documentation/` link
+resolves to something the tarball carries, and then runs `connecta init` and
+builds and runs the generated deployment's own container.
+
+The Worker example ships in the tarball, its Cloudflare KV and D1 adapters
+included: it is the Workers starting template a consumer copies. That is not a
+hole in the published surface, because nothing under `examples/` appears in the
+`exports` map — every export target resolves into `dist/`, so those adapters
+are reference source rather than an importable subpath.
 
 Two more runners are deliberately outside `check`:
 

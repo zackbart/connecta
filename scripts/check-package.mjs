@@ -225,6 +225,11 @@ try {
     ) {
       throw new Error(`Redundant deployment scaffold leaked into ${path}`);
     }
+    // A platform-bound adapter belongs to a deployment, never to the package's
+    // importable surface: the rule is about `dist/`, not about the artifact.
+    // The Worker example's own KV and D1 adapters ship on purpose — nothing
+    // under examples/ is in `exports`, so they are reference source a consumer
+    // copies, not a subpath anyone can import (#377).
     if (
       path.includes("connectors/cloudflare") ||
       path.includes("storage/cloudflare")

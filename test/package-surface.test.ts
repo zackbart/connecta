@@ -84,6 +84,33 @@ describe("public package boundary", () => {
     ]);
   });
 
+  // The rule is about the exports map, not the tarball: `examples/worker`
+  // ships — Cloudflare KV and D1 adapters included — because it is the Workers
+  // starting template a consumer copies, and nothing under examples/ is
+  // importable from the package. AGENTS.md is the canonical instruction file,
+  // so a sentence there that reads stricter than the artifact invites the next
+  // agent to "fix" the artifact instead of the words (#377).
+  it("keeps the shipped example adapters out of the importable surface", () => {
+    expect(packageJson.files).toContain("examples/worker");
+    const targets = Object.values(packageJson.exports ?? {}).flatMap((entry) =>
+      typeof entry === "string"
+        ? [entry]
+        : Object.values(entry as Record<string, string>),
+    );
+    expect(targets.length).toBeGreaterThan(0);
+    for (const target of targets) {
+      expect(target, `${target} resolves outside dist/`).toMatch(/^\.\/dist\//);
+    }
+    const rule = readFileSync(join(ROOT, "AGENTS.md"), "utf8")
+      .split("\n- **")
+      .find((bullet) => bullet.startsWith("The published surface."));
+    expect(rule).toBeDefined();
+    expect(rule).toContain("examples/worker");
+    expect(rule).toContain("exports");
+    // The adapters are unimportable reference source, not an absent file.
+    expect(rule).not.toMatch(/not the package/);
+  });
+
   it("keeps Clerk behind an optional adapter subpath", () => {
     expect(packageJson.dependencies).not.toHaveProperty("@clerk/backend");
     expect(packageJson.peerDependencies).toHaveProperty(
