@@ -21,7 +21,7 @@ Use exact addresses from discovery; never invent one. Search 2–4 distinctive a
 
 ## Inside a program
 
-Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch/process/timers/crypto/WebSocket. Dynamic Workers require only \`{ loader }\`; bindings/modules/globalOutbound violate it. With that: env maps empty; node:fs absent; outbound fetch/WebSocket/node:net denied. Timers/process/crypto/WebSocket, data: fetch, and node:path/crypto/net/module/cloudflare:workers imports remain. Avoid them; QuickJS fails.
+Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch/process/timers/crypto/WebSocket. Dynamic Workers require only \`{ loader }\`; bindings/modules/globalOutbound violate it. Then env maps are empty; node:fs/http/https absent; outbound fetch/WebSocket/node:net/tls denied; DNS unresolved. Runtime builtins remain through import() and process.getBuiltinModule(), including node:path and cloudflare:workers; the set can drift. Timers/process/crypto/WebSocket and data: fetch remain. Avoid them; QuickJS fails.
 
 - \`connecta.search({})\` loads all catalogs; pass \`connector: "<id>"\` when obvious to load one. \`safety: "readOnly"\` keeps executable calls. Neither grants authority. Matches carry \`address\` and annotations.
 - Exact schemas: \`connecta.describe({ address: "connector.tool" })\` for one, \`{ addresses: [...] }\` for many; \`format: "json"\` only for exact constraints.
@@ -39,7 +39,7 @@ Portable code uses only connector globals (\`<connectorId>.<toolName>(args)\`), 
 const CONNECTOR_GUIDES_SECTION = `
 ## Per-connector guides
 
-When a connector ships a deployment-scoped guide, \`skills({})\` and discovery return its exact \`guide\` name plus a bounded \`guideSummary\`. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop. \`guideRequiredReasons\` says why — \`connector_required\` and \`approval_required\` stand however you expand the schema; \`schema_truncated\` clears once describe returns the exact one. Otherwise fetch when the summary names a relevant connector-specific sequence, unit, pagination rule, alias, or generic API convention. A read-only call with a complete, unambiguous compact schema may skip an irrelevant guide. Connector guides never apply to another deployment implicitly.
+Connector guides appear in \`skills({})\` and discovery with an exact \`guide\` name and bounded \`guideSummary\`. Fetch only a listed or carried name with \`skills({ name: <guide> })\`; never infer one from a connector id. \`guideRequired: true\` is a hard stop. \`guideRequiredReasons\` says why: \`connector_required\` and \`approval_required\` stand after schema expansion; \`schema_truncated\` clears after exact describe. Otherwise fetch for a relevant sequence, unit, pagination rule, alias, or API convention. A read-only call with a complete compact schema may skip an irrelevant guide. Connector guides never apply to another deployment.
 `;
 
 /** Shared Connecta routing guidance, byte-identical across deployments. */

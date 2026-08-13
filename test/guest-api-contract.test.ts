@@ -265,21 +265,17 @@ describe.skipIf(!workerExecutor)(
         externalHttps: outboundDenied,
         webSocket: outboundDenied,
         netConnect: outboundDenied,
-        imports: {
+        tlsConnect: outboundDenied,
+        dnsLookup: "Error [ENOTFOUND]: queryA ENOTFOUND example.com",
+        unavailableImports: {
           fs: "blocked",
-          path: "available",
-          crypto: "available",
-          net: "available",
-          module: "available",
-          workers: "available",
+          http: "blocked",
+          https: "blocked",
         },
-        builtins: {
+        unavailableBuiltins: {
           fs: "undefined",
-          path: "object",
-          crypto: "object",
-          net: "object",
-          module: "function",
-          workers: "object",
+          http: "undefined",
+          https: "undefined",
         },
         env: {
           entrypoint: { type: "object", keys: 0 },

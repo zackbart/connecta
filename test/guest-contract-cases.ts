@@ -82,6 +82,25 @@ export const CAPABILITY_PROBE_CODE = `async () => {
       });
     } catch { return "import blocked"; }
   })();
+  const tlsConnect = await (async () => {
+    try {
+      const tls = await import("node:tls");
+      return await new Promise((resolve) => {
+        try {
+          const socket = tls.connect({ host: "example.com", port: 443 });
+          socket.once("secureConnect", () => { socket.destroy(); resolve("resolved"); });
+          socket.once("error", (error) => resolve(String(error)));
+        } catch (error) { resolve(String(error)); }
+      });
+    } catch { return "import blocked"; }
+  })();
+  const dnsLookup = await (async () => {
+    try {
+      const dns = await import("node:dns");
+      try { await dns.promises.lookup("example.com"); return "resolved"; }
+      catch (error) { return String(error); }
+    } catch { return "import blocked"; }
+  })();
   return {
     globals: {
       fetch: typeof fetch,
@@ -105,21 +124,17 @@ export const CAPABILITY_PROBE_CODE = `async () => {
       ? await attempt(() => new WebSocket("wss://example.com/"))
       : "absent",
     netConnect,
-    imports: {
+    tlsConnect,
+    dnsLookup,
+    unavailableImports: {
       fs: await importStatus("node:fs"),
-      path: await importStatus("node:path"),
-      crypto: await importStatus("node:crypto"),
-      net: await importStatus("node:net"),
-      module: await importStatus("node:module"),
-      workers: await importStatus("cloudflare:workers")
+      http: await importStatus("node:http"),
+      https: await importStatus("node:https")
     },
-    builtins: {
+    unavailableBuiltins: {
       fs: builtinType("node:fs"),
-      path: builtinType("node:path"),
-      crypto: builtinType("node:crypto"),
-      net: builtinType("node:net"),
-      module: builtinType("node:module"),
-      workers: builtinType("cloudflare:workers")
+      http: builtinType("node:http"),
+      https: builtinType("node:https")
     },
     env: {
       entrypoint: envShape(typeof this === "object" && this ? this.env : undefined),
@@ -812,18 +827,27 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "P2, X5",
-    name: "the portable program boundary excludes ambient authority",
+    name: "pins the portable ambient-authority boundary",
     code: CAPABILITY_PROBE_CODE,
     check(outcome) {
       const result = record(outcome);
       const globals = result.globals as Record<string, string>;
-      const imports = result.imports as Record<string, string>;
+      const unavailableImports = result.unavailableImports as Record<
+        string,
+        string
+      >;
       const env = result.env as Record<string, { keys: number }>;
       expect(result.externalHttp).not.toBe("resolved");
       expect(result.externalHttps).not.toBe("resolved");
       expect(result.webSocket).not.toBe("resolved");
       expect(result.netConnect).not.toBe("resolved");
-      expect(imports.fs).toBe("blocked");
+      expect(result.tlsConnect).not.toBe("resolved");
+      expect(result.dnsLookup).not.toBe("resolved");
+      expect(
+        Object.values(unavailableImports).every(
+          (status) => status === "blocked",
+        ),
+      ).toBe(true);
       expect(Object.values(env).every((shape) => shape.keys === 0)).toBe(true);
       expect(globals.require).toBe("undefined");
       expect(globals.Deno).toBe("undefined");

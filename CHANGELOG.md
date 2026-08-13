@@ -36,9 +36,10 @@ Worker example is already loader-only; deployments that added executor
 
 - **`execute_code` now tells the truth about each shipped sandbox.** QuickJS
   omits runtime globals and blocks imports. Loader-only Dynamic Workers deny
-  outbound fetch, WebSocket, and `node:net`; expose no environment bindings or
-  `node:fs`; but retain local `data:` fetch, timers, crypto, process, WebSocket,
-  and selected runtime imports. The example pins the required loader-only
+  outbound fetch, WebSocket, `node:net`, and `node:tls`; leave DNS unresolved;
+  expose no environment bindings or filesystem/HTTP builtins; but retain local
+  `data:` fetch, runtime globals, and a non-contract builtin set that can drift.
+  The example pins the required loader-only
   construction, and agent guidance tells portable programs to use none of that
   Dynamic-only authority (#390).
 

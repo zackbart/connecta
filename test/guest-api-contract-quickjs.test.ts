@@ -56,21 +56,17 @@ describe("guest API contract (QuickJS executor)", () => {
       externalHttps: "absent",
       webSocket: "absent",
       netConnect: "import blocked",
-      imports: {
+      tlsConnect: "import blocked",
+      dnsLookup: "import blocked",
+      unavailableImports: {
         fs: "blocked",
-        path: "blocked",
-        crypto: "blocked",
-        net: "blocked",
-        module: "blocked",
-        workers: "blocked",
+        http: "blocked",
+        https: "blocked",
       },
-      builtins: {
+      unavailableBuiltins: {
         fs: "process absent",
-        path: "process absent",
-        crypto: "process absent",
-        net: "process absent",
-        module: "process absent",
-        workers: "process absent",
+        http: "process absent",
+        https: "process absent",
       },
       env: {
         entrypoint: { type: "undefined", keys: 0 },

@@ -708,10 +708,10 @@ describe("server /mcp end-to-end", () => {
       "Only tools annotated `readOnlyHint: true` are reachable",
     );
     expect(skill).toContain("Dynamic Workers require only `{ loader }`");
-    expect(skill).toContain(
-      "outbound fetch/WebSocket/node:net denied",
-    );
-    expect(skill).toContain("node:path/crypto/net/module/cloudflare:workers imports");
+    expect(skill).toContain("node:fs/http/https absent");
+    expect(skill).toContain("outbound fetch/WebSocket/node:net/tls denied");
+    expect(skill).toContain("Runtime builtins remain through import()");
+    expect(skill).toContain("the set can drift");
     expect(skill).toContain("2–4 distinctive action/object terms");
     expect(skill).toContain(
       '`format: "json"` only for exact constraints',
@@ -1921,11 +1921,12 @@ describe("execute_code registration (code mode)", () => {
       "Portable programs use no ambient capabilities",
     );
     expect(executeTool.description).toContain(
-      "external fetch, WebSocket, and node:net are denied",
+      "outbound fetch/WebSocket/node:net/tls are denied",
     );
-    expect(executeTool.description).toContain("imports for node:path/crypto/net/module");
+    expect(executeTool.description).toContain("node:fs/http/https are absent");
+    expect(executeTool.description).toContain("the set can drift");
     expect(executeTool.description).toContain(
-      "Do not use runtime-only capabilities; that code fails on QuickJS",
+      "Avoid runtime-only capabilities; QuickJS fails",
     );
     expect(executeTool.inputSchema.properties.code.description).toContain(
       "Consume search/describe results and finish the task inside it",
