@@ -567,6 +567,11 @@ One credential per provider comes from the environment —
 `CONNECTA_DRIFT_LINEAR_KEY`, `CONNECTA_DRIFT_STRIPE_KEY`,
 `CONNECTA_DRIFT_MIXPANEL_KEY` — and a missing or dead one stops the run with a
 message naming it rather than reporting an empty catalog as mass removal.
+Linear and bare Stripe values use their documented bearer or Basic framing.
+Mixpanel's beta service-account form is provider-specific:
+`user:secret` becomes `Bearer Basic <base64(user:secret)>`, exactly as its MCP
+documentation requires. A value that already includes whitespace is treated
+as a complete Authorization value and passes through unchanged.
 
 **Touched endpoints.** A hand-written provider is written against a published
 OpenAPI document and calls a few dozen of its operations, so

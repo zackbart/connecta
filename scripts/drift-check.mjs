@@ -26,6 +26,7 @@ import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { dirname, resolve as resolvePath } from "node:path";
 import { fileURLToPath } from "node:url";
+import { hostedAuthorizationHeader } from "./drift/hosted-auth.mjs";
 
 const repositoryRoot = resolvePath(
   dirname(fileURLToPath(import.meta.url)),
@@ -95,7 +96,8 @@ function usage(message) {
       ),
       "",
       "A value containing a space is sent as the Authorization header verbatim,",
-      "one containing a colon as Basic credentials, anything else as a Bearer token.",
+      "one containing a colon as Basic credentials (Mixpanel: Bearer Basic),",
+      "and anything else as a Bearer token.",
     ].join("\n"),
   );
   process.exit(2);
@@ -173,22 +175,6 @@ class UnavailableError extends Error {}
 // ---------------------------------------------------------------------------
 // Hosted-MCP catalogs
 // ---------------------------------------------------------------------------
-
-/**
- * Build one Authorization header from whatever the maintainer exported.
- *
- * Three provider conventions, one variable each, and no parsing of the secret
- * beyond the shape needed to frame it: a value that already names its scheme is
- * passed through untouched, `user:secret` is Basic, and a bare token is Bearer.
- */
-function authorizationHeader(value) {
-  const credential = value.trim();
-  if (/\s/.test(credential)) return credential;
-  if (credential.includes(":")) {
-    return `Basic ${Buffer.from(credential, "utf8").toString("base64")}`;
-  }
-  return `Bearer ${credential}`;
-}
 
 function maintainerContext() {
   const store = new Map();
@@ -306,7 +292,7 @@ async function checkHostedProvider(provider, runtime, options) {
     url: runtime.endpoints[provider],
     auth: {
       type: "headers",
-      headers: { Authorization: authorizationHeader(secret) },
+      headers: { Authorization: hostedAuthorizationHeader(provider, secret) },
     },
     requireHttps: true,
   });

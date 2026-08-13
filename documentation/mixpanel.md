@@ -50,6 +50,26 @@ password, not ordinary configuration. Mixpanel currently labels service-account
 MCP authentication beta. Prefer OAuth unless the deployment is intentionally
 headless.
 
+## Conditional input contracts
+
+Mixpanel's hosted descriptions enforce three cross-field conditions that its
+input schemas do not encode. Connecta preserves those schemas unchanged under
+[P1](./provider-conventions.md#p1--normalize-by-adding-never-by-rewriting), so
+the maintained guide carries the missing call guidance:
+
+- `Get-Business-Context` requires `project_id` or `organization_id`.
+- `Get-Property-Values` requires `properties` or the deprecated `property`
+  alias. Event property values also require `event`.
+- `List-Properties` accepts `names` or `query`, never both.
+
+A read-only live audit on 2026-08-13 confirmed all three refusals against the
+US hosted endpoint. They are reported upstream as
+[`mixpanel/mixpanel-headless#202`](https://github.com/mixpanel/mixpanel-headless/issues/202).
+The vetted catalog records the same audit's schema digests for all 63 tools,
+so a later schema correction or regression appears by tool name in the
+maintainer drift check. The guide can then shrink when the downstream schema
+becomes complete; Connecta does not absorb the defect permanently.
+
 The wrapper classifies the documented observational tools as reads and the
 documented create, update, edit, merge, dismiss, duplicate, and delete tools as
 writes. An unfamiliar tool the downstream leaves unannotated fails closed onto

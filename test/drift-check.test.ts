@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { hostedAuthorizationHeader } from "../scripts/drift/hosted-auth.mjs";
 
 const checker = fileURLToPath(
   new URL("../scripts/drift-check.mjs", import.meta.url),
@@ -158,6 +159,21 @@ afterEach(async () => {
 });
 
 describe("maintainer drift check", () => {
+  it("frames each hosted provider's documented credential shape", () => {
+    expect(hostedAuthorizationHeader("linear", "lin_api_key")).toBe(
+      "Bearer lin_api_key",
+    );
+    expect(hostedAuthorizationHeader("stripe", "user:secret")).toBe(
+      `Basic ${Buffer.from("user:secret").toString("base64")}`,
+    );
+    expect(hostedAuthorizationHeader("mixpanel", "user:secret")).toBe(
+      `Bearer Basic ${Buffer.from("user:secret").toString("base64")}`,
+    );
+    expect(hostedAuthorizationHeader("mixpanel", "Bearer Basic encoded")).toBe(
+      "Bearer Basic encoded",
+    );
+  });
+
   it("records the touched endpoints and then reports no drift against them", async () => {
     const { directory } = await workspace(["cloudflare", "notion"]);
     const recorded = run(directory, ["cloudflare", "notion"], ["--record"]);
