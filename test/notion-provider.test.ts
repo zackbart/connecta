@@ -1146,6 +1146,21 @@ describe("notion() writes", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("keeps reviewed create-page expansions outside the maintained tool", () => {
+    const properties = build().staticTools?.find(
+      (tool) => tool.name === "create_page",
+    )?.inputSchema?.["properties"];
+    for (const declined of [
+      "workspace",
+      "template",
+      "position",
+      "cover",
+      "file_upload",
+    ]) {
+      expect(properties).not.toHaveProperty(declined);
+    }
+  });
+
   it("turns plain text into paragraph blocks and honours position", async () => {
     queue({
       body: {
@@ -1212,6 +1227,12 @@ describe("notion() writes", () => {
         (tool) => tool.name === "update_page_properties",
       )?.inputSchema?.["properties"],
     ).not.toHaveProperty("in_trash");
+    const properties = build().staticTools?.find(
+      (tool) => tool.name === "update_page_properties",
+    )?.inputSchema?.["properties"];
+    expect(properties).not.toHaveProperty("is_locked");
+    expect(properties).not.toHaveProperty("template");
+    expect(properties).not.toHaveProperty("erase_content");
 
     const empty = await call(build(), "update_page_properties", {
       page_id: "page-1",

@@ -237,6 +237,23 @@ and all deliberately absent: this is a deliberate tool surface, not a mirror of
 the API. Anything missing is reachable through a custom `api()` connector
 beside this one, which remains a first-class path.
 
+The 2026-03-11 contract also offers more fields on create and update. They were
+reviewed after the 0.17.0 drift check and remain deliberately absent:
+
+- `create_page` does not create workspace-private pages, apply templates,
+  choose page placement, or accept expanded icon and cover forms. Those change
+  ownership, start asynchronous content work, control ordering, or depend on
+  file surfaces. They are not extensions of the maintained page/row authoring
+  contract (#408).
+- `update_page_properties` does not lock pages, apply templates, or erase page
+  content. Locking is coordination state, templates finish asynchronously, and
+  `erase_content` permanently deletes every child block through the API. None
+  belongs under an approval named for property replacement (#409).
+
+`trash_page` stays separate and reversible. The current `create_page`,
+`update_page_properties`, and `trash_page` request subsets remain valid against
+the expanded published contract.
+
 There is also **no guarded raw-REST escape hatch** — no `notion_api_get`, no
 `notion_api_mutate`. The convention that permits one
 ([H14](./provider-conventions.md#h14--a-named-tool-must-beat-the-escape-hatch-and-the-escape-hatch-splits-by-safety))

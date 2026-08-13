@@ -81,6 +81,14 @@ deliberate surface.
 | H13 guide | meets | structured, declared summary, `required: true` with a stated reason — the database→data-source lookup is a sequence no complete schema can express |
 | H14 hatch | **missed → fixed** | Notion has no guarded raw-REST tool, which H14 explicitly permits for a finite surface — provided it says so. It did not. The guide now names the absence, so an agent does not spend a search proving there is no `notion_api_get` |
 
+The 0.17.0 drift review also considered Notion's expanded create and update
+contracts. Workspace-private creation, templates, placement, richer media,
+locking, and irreversible content erasure stay outside the maintained surface.
+They are separate ownership, ordering, asynchronous, coordination, file, or
+deletion workflows rather than missing fields on the five existing writes
+([#408](https://github.com/zackbart/connecta/issues/408),
+[#409](https://github.com/zackbart/connecta/issues/409)).
+
 ## Linear — hosted-MCP proxy
 
 | Convention | Verdict | Notes |

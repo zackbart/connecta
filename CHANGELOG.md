@@ -14,6 +14,14 @@ All notable changes to this package are documented here.
   admission ceiling. Header credentials still require one fixed mode, retain
   key-prefix contradiction checks, and keep Stripe Connect behavior (#414).
 
+- **The reviewed Notion writes stay narrow.** Newly published workspace-private
+  creation, templates, placement, richer media, locking, and irreversible
+  content erasure do not join the maintained surface. They are distinct
+  ownership, asynchronous, ordering, file, coordination, or deletion workflows,
+  not extra fields on `create_page` or `update_page_properties`. The existing
+  request subsets remain valid, and `trash_page` stays isolated and reversible
+  (#408, #409).
+
 ### Fixed
 
 - **The Node template now declares its one reviewed install script.** npm 11 no
