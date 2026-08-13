@@ -185,7 +185,7 @@ src/
 | The core imports no `node:` builtin and reaches no Node-only module | `test/purity.test.ts` |
 | The published surface matches the same boundary | `test/package-surface.test.ts`, `scripts/check-package.mjs` |
 | Route order, per-route auth, and byte-exact refusals | `test/server-route-contracts.test.ts` |
-| `/mcp` end to end, the open routes, exactly seven tools | `test/server.test.ts`, `test/code-first-surface.test.ts` |
+| `/mcp` end to end, the open routes, exactly seven tools, bounded connector orientation | `test/server.test.ts`, `test/code-first-surface.test.ts` |
 | Construction-time refusals and the grouped config boundary | `test/config.test.ts`, `test/registry.test.ts` |
 | Program and top-level calls take the same enforced path | `test/execute.test.ts` |
 | Both deployment shapes still compile and configure the real thing | `test/deployment-shapes.test.ts`, `npm run check:examples` |

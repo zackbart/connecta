@@ -173,7 +173,10 @@ global whose properties are its tools, so `<connectorId>.<toolName>(args)` works
 with both parts sanitized into JavaScript identifiers — characters outside
 `[A-Za-z0-9_$]` become `_`, a leading digit gets `_` prefixed, and a reserved
 word gets `_` appended (`my-service.get.thing` → `my_service.get_thing`). The
-globals are lazy: no catalog is fetched until a program touches one.
+globals are lazy: no catalog is fetched until a program touches one. The
+bounded deployment inventory in the `execute_code` description shows each
+canonical connector id and labels the shortcut only when it differs; the
+[discovery guide](./meta-tools.md#discovery-context) defines that bound.
 
 **A3.** A shortcut that resolves to more than one tool fails closed with
 `ambiguous_tool_alias`, naming the colliding tool names and pointing at
@@ -828,7 +831,7 @@ the upstream `Executor` shape assignable.
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
-| `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing) |
+| `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing), `test/server.test.ts` (bounded live connector inventory) |
 | `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
 | `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
 | `A5` | verdict; `A1`–`A3` are its enforcement |

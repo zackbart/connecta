@@ -60,6 +60,14 @@ their smallest successful one-tool shapes:
 
 ## Discovery context
 
+The deployment-derived `execute_code` description includes a live connector
+inventory before any catalog search. It preserves registry order and uses each
+canonical id, adding `shortcut <name>` only when the program namespace differs.
+The complete inventory line is capped at 256 UTF-8 bytes. Entries stay whole,
+and a truncated line ends with the exact `+N more` count. This reads only the
+configured registry: it loads no catalog, probes no credential, grants no
+capability, and does not replace canonical discovery or addressing.
+
 Start an unknown-address lookup with two to four distinctive action/object
 terms, not the full request, and omit `limit` so the default eight-result page
 stays small. When the integration is obvious, set `connector` to its id: a
