@@ -14,7 +14,7 @@
 import { describe, expect, it } from "vitest";
 import {
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
-  compactSchema,
+  compactDiscoverySchema,
 } from "../src/catalog.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
@@ -263,11 +263,11 @@ describe.each(providers)(
           ["output", tool.outputSchema],
         ] as const) {
           if (!schema) continue;
-          const rendered = compactSchema(schema);
-          const bytes = utf8Length(rendered);
+          const rendered = compactDiscoverySchema(schema);
+          const bytes = utf8Length(rendered.text);
           if (
             bytes > MAX_COMPACT_DISCOVERY_SCHEMA_BYTES ||
-            rendered.includes("/* truncated */")
+            rendered.truncated
           ) {
             oversized.push(`${tool.name} ${kind}: ${bytes} bytes`);
           }

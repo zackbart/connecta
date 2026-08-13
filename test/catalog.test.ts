@@ -197,7 +197,8 @@ describe("compactSchema allOf", () => {
     // real connector it measured *longer* than the raw schema.
     expect(rendered.length).toBeLessThan(JSON.stringify(schema).length / 2);
     expect(rendered).toBe(
-      "{ id: string, createdAt?: string } & { name: string, tags?: string[] }",
+      '{ id: string, createdAt?: string /* format "date-time" */ } & ' +
+        "{ name: string, tags?: string[] }",
     );
   });
 

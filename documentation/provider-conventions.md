@@ -50,10 +50,13 @@ floor. From `src/catalog.ts` and `src/catalog-service.ts`:
   `fullDescriptions: true`. Prose past those points reaches an agent only when
   it pays for the expansion.
 - **A compact schema renders into at most 1,024 UTF-8 bytes**, and any single
-  enum node into at most 256. Past either cap the renderer keeps what fits and
-  degrades the rest — a prefix of the enum plus `unknown`, a required-first
-  object with `unknown` types, or `unknown /* truncated */` — and flags the
-  match, which costs a describe round trip to recover.
+  enum or constraint annotation into at most 256. Numeric bounds, string
+  length bounds, patterns, and formats ride beside their TypeScript-like type.
+  Past a cap the renderer keeps what fits and degrades the rest — a prefix of
+  the enum plus `unknown`, a shape without the constraints that did not fit, a
+  required-first object with `unknown` types, or
+  `unknown /* truncated */` — and flags the match, which costs a describe
+  round trip to recover.
 - **`inputKeys`, `requiredInputKeys`, and `outputKeys` come only from bounded
   plain-object schemas.** A top-level `anyOf` has no keys to list, so a caller
   learns nothing about the arguments without expanding the schema.
@@ -141,7 +144,8 @@ wrong-tool selection.
 Every tool carries a hand-written `inputSchema`: a plain object at the top
 level, `additionalProperties: false`, an accurate `required` list, an `enum` on
 every constrained field, explicit numeric bounds on every page size and count,
-and a description on every property — nested objects and array items included,
+explicit string bounds where length or shape is constrained, and a description
+on every property — nested objects and array items included,
 because a caller composing an array element is reading that element's fields,
 not the parent's prose. `api()` enforces the enforceability half for free since
 [#340](https://github.com/zackbart/connecta/issues/340): a schema the validator
@@ -165,10 +169,12 @@ argument retries.
 ### H7 — Schemas fit the compact renderer, or selection does not depend on the part that is cut
 
 Keep the common path's compact input and output shapes inside 1,024 bytes and
-each enum node inside 256. Where a legitimate enum genuinely cannot fit — 21
-DNS record types — the truncation is acceptable only if the tool's name and
-description already carry enough for selection, so the caller expands the
-schema to *call*, not to *choose*.
+each enum or constraint annotation inside 256. Numeric and string constraints
+render when they fit. Search drops complete constraints that do not fit and
+sets the existing truncation flag; compact describe keeps them. Where a
+legitimate enum genuinely cannot fit — 21 DNS record types — the truncation is
+acceptable only if the tool's name and description already carry enough for
+selection, so the caller expands the schema to *call*, not to *choose*.
 
 *Why:* a truncated compact shape costs a describe round trip. *Cost:* discovery
 tokens.

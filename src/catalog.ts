@@ -5,6 +5,8 @@ const DISCOVERY_DESCRIPTION_LENGTH = 160;
 export const MAX_COMPACT_DISCOVERY_SCHEMA_BYTES = 1_024;
 const MAX_COMPACT_DISCOVERY_ENUM_BYTES =
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
+const MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES =
+  MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
 const schemaEncoder = new TextEncoder();
 const COMPACT_DISCOVERY_TRUNCATION = " /* truncated */";
 
@@ -427,7 +429,8 @@ function declaresShape(s: Record<string, unknown>): boolean {
     s.const !== undefined ||
     s.items !== undefined ||
     s.properties !== undefined ||
-    s.type !== undefined
+    s.type !== undefined ||
+    constraintEntries(s).length > 0
   );
 }
 
@@ -477,6 +480,67 @@ function renderEnum(
   return rendered;
 }
 
+function safeConstraintValue(value: string): string {
+  return JSON.stringify(value).replaceAll("*/", "*\\/");
+}
+
+function constraintEntries(schema: Record<string, unknown>): string[] {
+  const entries: string[] = [];
+  const number = (keyword: string, label: string) => {
+    const value = schema[keyword];
+    if (typeof value === "number" && Number.isFinite(value)) {
+      entries.push(`${label} ${value}`);
+    }
+  };
+  const integer = (keyword: string, label: string) => {
+    const value = schema[keyword];
+    if (typeof value === "number" && Number.isInteger(value) && value >= 0) {
+      entries.push(`${label} ${value}`);
+    }
+  };
+
+  number("minimum", ">=");
+  number("exclusiveMinimum", ">");
+  number("maximum", "<=");
+  number("exclusiveMaximum", "<");
+  number("multipleOf", "multiple of");
+  integer("minLength", "length >=");
+  integer("maxLength", "length <=");
+  if (typeof schema.format === "string") {
+    entries.push(`format ${safeConstraintValue(schema.format)}`);
+  }
+  if (typeof schema.pattern === "string") {
+    entries.push(`pattern ${safeConstraintValue(schema.pattern)}`);
+  }
+  return entries;
+}
+
+function renderConstraints(
+  base: string,
+  schema: Record<string, unknown>,
+  byteLimit: number | undefined,
+  onTruncated: (() => void) | undefined,
+): string {
+  const entries = constraintEntries(schema);
+  if (entries.length === 0) return base;
+
+  const kept: string[] = [];
+  for (const entry of entries) {
+    const candidate = ` /* ${[...kept, entry].join("; ")} */`;
+    if (
+      byteLimit !== undefined &&
+      schemaEncoder.encode(candidate).length > byteLimit
+    ) {
+      onTruncated?.();
+      continue;
+    }
+    kept.push(entry);
+  }
+  return kept.length === 0
+    ? base
+    : `${grouped(base)} /* ${kept.join("; ")} */`;
+}
+
 function renderSchema(
   schema: unknown,
   defs: Record<string, unknown>,
@@ -487,6 +551,9 @@ function renderSchema(
     requiredFirst: boolean;
     enumByteLimit?: number;
     onEnumTruncated?: () => void;
+    renderConstraints: boolean;
+    constraintByteLimit?: number;
+    onConstraintTruncated?: () => void;
   },
 ): string {
   if (depth > 4) return "…";
@@ -524,26 +591,62 @@ function renderSchema(
     seen.add(name);
     const rendered = renderSchema(target, defs, seen, depth, options);
     seen.delete(name);
-    return rendered;
+    return options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
   }
 
   const union = (s.oneOf ?? s.anyOf) as unknown[] | undefined;
   if (Array.isArray(union)) {
-    return (
+    const rendered =
       union
         .map((u) => renderSchema(u, defs, seen, depth + 1, options))
         .join(" | ") ||
-      "unknown"
-    );
+      "unknown";
+    return options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
   }
   if (Array.isArray(s.enum)) {
-    return renderEnum(s.enum, options.enumByteLimit, options.onEnumTruncated);
+    const rendered = renderEnum(
+      s.enum,
+      options.enumByteLimit,
+      options.onEnumTruncated,
+    );
+    return options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
   }
   // Checked before type/properties so a discriminator like
   // { type: "string", const: "emoji" } renders as "emoji" rather than string.
   // JSON.stringify(undefined) returns undefined (not a string), so an explicit
   // `const: undefined` must fall through to the regular type rendering.
-  if (s.const !== undefined) return JSON.stringify(s.const);
+  if (s.const !== undefined) {
+    const rendered = JSON.stringify(s.const);
+    return options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
+  }
 
   const type = s.type;
   if (type === "array" || s.items) {
@@ -586,8 +689,35 @@ function renderSchema(
       })
       .join(", ")} }`;
   }
-  if (typeof type === "string") return type;
-  if (Array.isArray(type)) return type.join(" | ");
+  if (typeof type === "string") {
+    return options.renderConstraints
+      ? renderConstraints(
+          type,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : type;
+  }
+  if (Array.isArray(type)) {
+    const rendered = type.join(" | ");
+    return options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
+  }
+  if (options.renderConstraints && constraintEntries(s).length > 0) {
+    return renderConstraints(
+      "unknown",
+      s,
+      options.constraintByteLimit,
+      options.onConstraintTruncated,
+    );
+  }
   return JSON.stringify(schema);
 }
 
@@ -606,6 +736,7 @@ export function compactSchema(schema: JsonSchema): string {
     rendered = renderSchema(schema, defs, new Set(), 0, {
       propertyDescriptions: true,
       requiredFirst: false,
+      renderConstraints: true,
     });
   } catch {
     rendered = JSON.stringify(schema);
@@ -677,6 +808,7 @@ export function compactDiscoverySchema(
   };
   let rendered: string;
   let enumTruncated = false;
+  let constraintTruncated = false;
   try {
     rendered = renderSchema(schema, defs, new Set(), 0, {
       propertyDescriptions: false,
@@ -688,14 +820,41 @@ export function compactDiscoverySchema(
       onEnumTruncated: () => {
         enumTruncated = true;
       },
+      renderConstraints: true,
+      constraintByteLimit: MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES,
+      onConstraintTruncated: () => {
+        constraintTruncated = true;
+      },
     });
   } catch {
     rendered = JSON.stringify(schema);
   }
+  if (
+    schemaEncoder.encode(rendered).length >
+    MAX_COMPACT_DISCOVERY_SCHEMA_BYTES
+  ) {
+    try {
+      rendered = renderSchema(schema, defs, new Set(), 0, {
+        propertyDescriptions: false,
+        requiredFirst: true,
+        enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
+        onEnumTruncated: () => {
+          enumTruncated = true;
+        },
+        renderConstraints: false,
+      });
+      constraintTruncated = true;
+    } catch {
+      rendered = JSON.stringify(schema);
+    }
+  }
   const bytes = schemaEncoder.encode(rendered);
   let result: CompactDiscoverySchema;
   if (bytes.length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {
-    result = { text: rendered, truncated: enumTruncated };
+    result = {
+      text: rendered,
+      truncated: enumTruncated || constraintTruncated,
+    };
   } else {
     result = {
       text: truncatedDiscoverySchema(schema),

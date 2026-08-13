@@ -5,6 +5,7 @@
 // accounts in one deployment share nothing. Construction touches no network:
 // fetch throws for the whole file.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { CatalogService } from "../src/catalog-service.js";
 import { createConnecta } from "../src/index.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -89,6 +90,30 @@ describe("cloudflare() inside a real deployment", () => {
     expect(tools.filter((tool) => tool.annotations?.readOnlyHint === true))
       .toHaveLength(27);
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("carries Cloudflare page bounds in search and compact describe", async () => {
+    const { registry } = twoAccounts(memoryStorage());
+    const catalog = new CatalogService(registry, BASE_URL);
+    const search = await catalog.search({
+      connector: "cloudflare_prod",
+      query: "list zones",
+      includeSchemas: "compact",
+    });
+    const match = search.entries.find(
+      (entry) => entry.tool.name === "list_zones",
+    );
+    expect(match?.tool.inputSchema).toContain(
+      "perPage?: integer /* >= 5; <= 50 */",
+    );
+
+    const described = await catalog.describe({
+      addresses: ["cloudflare_prod.list_zones"],
+      format: "compact",
+    });
+    expect(described[0]?.inputSchema).toContain(
+      "perPage?: integer /* >= 5; <= 50 */",
+    );
   });
 
   it("gives each account its own address namespace", () => {
