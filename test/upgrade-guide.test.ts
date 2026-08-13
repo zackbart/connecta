@@ -91,6 +91,38 @@ describe("the upgrade guide", () => {
     }
   });
 
+  it("dates every removed option to the release that removed it", () => {
+    // A reader on 0.9.x cannot check this table against anything. Dating a
+    // removal to the wrong release tells them a construction throw belongs to
+    // a boundary they have already crossed, so each row's release must exist
+    // and must be the section that names the row's issue.
+    const changelog = read("CHANGELOG.md");
+    const sections = new Map(
+      [...changelog.matchAll(/\n## (\d+\.\d+\.\d+) — [^\n]*\n([\s\S]*?)(?=\n## |$)/g)].map(
+        ([, version, body]) => [version ?? "", body ?? ""],
+      ),
+    );
+    const rows = [
+      ...guide.matchAll(/^\| [^|]+ \| (\d+\.\d+\.[\dx]+)(?: \(#(\d+)\))? \|/gm),
+    ];
+    expect(rows.length).toBeGreaterThan(0);
+    for (const [row, version, issue] of rows) {
+      // An `0.10.x`-shaped cell is not a released version and is exactly how a
+      // removal ends up dated to the wrong boundary, so it fails here too.
+      const body = sections.get(version ?? "");
+      expect(
+        body,
+        `the guide dates a removal to ${version}; CHANGELOG.md has no such release\n${row}`,
+      ).toBeTypeOf("string");
+      if (issue === undefined) continue;
+      expect(
+        body,
+        `the guide says #${issue} was removed in ${version}, but that release ` +
+          `never mentions the issue\n${row}`,
+      ).toContain(`#${issue}`);
+    }
+  });
+
   it("tells a reader to bump to the version this package is", () => {
     const { version } = JSON.parse(read("package.json")) as { version: string };
     const pinned = [

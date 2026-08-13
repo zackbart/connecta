@@ -64,8 +64,9 @@ fail-closed default and ships something quieter and wrong.
   the `linear()`, `mixpanel()`, and Cloudflare provider changes, redirect
   refusal and the response ceilings, and the fail-closed shipped defaults; then
   0.14's annotation-precedence change, 0.13's rewritten guide summaries, the
-  0.11.0 executor requirement, and every removed option that throws with its
-  migration. It closes with five refusals, because each is somebody's plausible
+  0.11.0 executor requirement, 0.7.0's `verifyState` requirement and
+  core-owned routes for the pre-template deployments that still have to cross
+  them, and every removed option that throws with its migration. It closes with five refusals, because each is somebody's plausible
   shortcut: no re-init over the top, no weakening a fail-closed default to get
   green, no pinning back, no vendored internals, no second project shape.
   Reachable from the README, from `operations.md`, and — absolutely, because
@@ -74,9 +75,9 @@ fail-closed default and ships something quieter and wrong.
 - **A suite that keeps the guide honest.** `test/upgrade-guide.test.ts` pins
   every claim its reader cannot check: the generated file inventory against
   `templates/node/`, the seven tool names against the CLI's own list, each
-  named version boundary against a release that shipped, the bump target
-  against this package's version, and the three places the guide is linked
-  from. A template that gains a file now fails `npm run check` rather than
+  named version boundary against a release that shipped, each removed option
+  against the release section that names its issue, the bump target against
+  this package's version, and the three places the guide is linked from. A template that gains a file now fails `npm run check` rather than
   leaving an agent to guess which of the two is wrong (#380).
 
 ### Changed

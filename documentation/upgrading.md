@@ -72,14 +72,16 @@ pins from the CLI package's version, so an old CLI reproduces its own
 generation byte for byte:
 
 ```sh
-cd "$(mktemp -d)"
-npx @zackbart/connecta@0.15.1 init base    # ← the pin you read in step 1
+SCRATCH=$(mktemp -d)                                        # keep this shell
+(cd "$SCRATCH" && npx @zackbart/connecta@0.15.1 init base)  # ← the pin from step 1
 ```
 
-Then, back in the deployment:
+`$SCRATCH` is the one scratch path for the whole upgrade — the reconcile step
+below generates the current template into it too, and every later command
+resolves against it. Run the rest from the deployment root:
 
 ```sh
-diff -ru /tmp/…/base . --exclude node_modules --exclude package-lock.json
+diff -ru "$SCRATCH/base" . --exclude node_modules --exclude package-lock.json
 ```
 
 Everything that differs is deployment-owned and survives this upgrade
@@ -124,32 +126,35 @@ both the new package and the new scaffolding.
 
 ### Reconcile the scaffolding
 
-Generate the *current* template beside the base you already made:
+Generate the *current* template beside the base you already made, into the same
+`$SCRATCH`:
 
 ```sh
-cd "$(mktemp -d)"
-npx @zackbart/connecta@0.16.0 init current
+(cd "$SCRATCH" && npx @zackbart/connecta@0.16.0 init current)
 ```
 
-You now have a three-way merge with a real base: `base/` is what this
-deployment started as, `current/` is what `init` produces today, and the
+You now have a three-way merge with a real base: `$SCRATCH/base` is what this
+deployment started as, `$SCRATCH/current` is what `init` produces today, and the
 deployment is the third leg. For every file:
 
 | base vs current | deployment vs base | Do |
 | --- | --- | --- |
 | unchanged | unchanged | nothing |
 | unchanged | changed | keep the deployment's version |
-| changed | unchanged | take `current/`'s version |
+| changed | unchanged | take `$SCRATCH/current`'s version |
 | changed | changed | merge by hand — this is the only file class that needs judgment |
 
-`diff3` or `git merge-file` will do the mechanical part:
+`diff3` or `git merge-file` will do the mechanical part. From the deployment
+root, with the deployment's file first, the base second, and the current
+template third:
 
 ```sh
-git merge-file -p deployment/src/index.ts base/src/index.ts current/src/index.ts > merged.ts
+git merge-file -p src/index.ts "$SCRATCH/base/src/index.ts" \
+  "$SCRATCH/current/src/index.ts" > "$SCRATCH/merged-index.ts"
 ```
 
-New files in `current/` that exist in neither base nor deployment are pure
-additions — copy them in. For generation A that is the entire container story
+New files in `$SCRATCH/current` that exist in neither base nor deployment are
+pure additions — copy them in. For generation A that is the entire container story
 (`Dockerfile`, `docker-compose.yml`, `.dockerignore`) plus
 `src/file-activity.ts`.
 
@@ -163,12 +168,12 @@ Two things are worth knowing before you accept the merge:
   deployment's own variables underneath is the merge; restoring a placeholder
   bearer is not.
 - **`src/index.ts` is a merge, not a takeover.** What you are adopting from
-  `current/` is the environment reading (`PUBLIC_URL`, `CONNECTA_STATE_FILE`,
+  `$SCRATCH/current` is the environment reading (`PUBLIC_URL`, `CONNECTA_STATE_FILE`,
   treating empty as unset — that is what lets one source serve both `npm start`
   and the container) and the commented operator blocks. What you are keeping is
   every connector, every credential slot, every handler, and every operator
   block this deployment had already uncommented. If a block is live here and
-  commented in `current/`, live wins.
+  commented in the current template, live wins.
 
 `AGENTS.md` (and the `CLAUDE.md` symlink beside it) is the deployment's
 instruction file for the next agent. Take the current one, then re-append
@@ -180,8 +185,10 @@ local content in it.
 A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
-1. `npx @zackbart/connecta@0.16.0 init current` in a scratch directory.
-2. Copy `current/` into the deployment file by file, **skipping
+1. `SCRATCH=$(mktemp -d)`, then
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.16.0 init current)` — there is no
+   `base` leg here, only the current template to read from.
+2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
 3. Port the deployment's existing configuration into the new `src/index.ts` by
    hand, one connector at a time, reading each version boundary below as you
@@ -195,8 +202,10 @@ contract, so it needs a read anyway.
 
 Only what breaks an existing deployment is listed. Everything else in
 [`CHANGELOG.md`](../CHANGELOG.md) is additive, and a boundary absent from this
-list is a boundary you can cross with a version bump. Cross them in order —
-each one assumes the previous ones are done.
+list is a boundary you can cross with a version bump. The sections run newest
+first, so cross them bottom-up: start at the oldest one still above this
+deployment's pin and work back up the page, because each boundary assumes the
+older ones are already done.
 
 ### 0.15.x → 0.16.0
 
@@ -312,6 +321,32 @@ those three by name — a client config, a prompt, a script — is what actually
 breaks here; the deployment file itself only has to gain the executor and drop
 `surface`.
 
+### 0.6.x → 0.7.0
+
+Only a pre-template deployment is still down here; every generation A project
+was born above this line. Three breaks, and the config one is in the table
+below.
+
+**A connector implementing `finishAuth` without `verifyState` can no longer
+complete OAuth** (#62). The callback refuses with the same opaque 400 as every
+other refusal, exchanges no code, and logs one operator-grade line naming the
+connector and the missing hook. `verifyState` is optional in the type system and
+required in practice wherever `finishAuth` is present, so nothing throws at
+construction — the flow simply stops completing, which is the one item in this
+guide you find by reading rather than by building. It reaches hand-written
+connectors only: the shipped `remoteMcp` OAuth provider has always implemented
+it. The old behavior was exchanging an authorization code with no CSRF guard at
+all, so this is not a hook to stub out with `() => true`.
+
+**`/`, `/credentials`, and `/activity` are core-owned routes** (#57). They
+previously fell through to connector `handleRequest` and then to a 404, so a
+connector that served any of the three is now shadowed without warning. `GET /`
+returns the operator shell where 0.6.1 returned 404, and a non-GET on those
+routes or on `/ui` returns 405 instead of falling through. Move such a handler
+to a path the core does not own: `handleRequest` still runs for everything the
+built-in routes miss, so it can add a route and never shadow one
+([architecture](./architecture.md)).
+
 ### Removed options that throw
 
 These fail at construction with their migration named rather than falling back
@@ -320,8 +355,8 @@ ends up running a policy its config file says it has:
 
 | Option | Removed in | Do |
 | --- | --- | --- |
-| `toolkits`, `unscoped` | 0.10.x (#178) | delete; deploy one instance per audience |
-| `credentials.health`, `credentialHealth` | 0.10.x (#179) | delete; credentials fail at use |
+| `toolkits`, `unscoped` | 0.8.1 (#178) | delete; deploy one instance per audience |
+| `credentials.health`, `credentialHealth` | 0.8.1 (#179) | delete; credentials fail at use |
 | `surface` | 0.11.0 (#273) | delete; there is one seven-tool surface |
 | `calls.maxBatchResultBytes` | 0.11.0 (#273) | delete; program batching is bounded by `execute_code`'s own limits |
 | flat v0.6 config paths | 0.7.0 | move into their groups — one complete migration error lists them ([operations](./operations.md#configuration)) |
