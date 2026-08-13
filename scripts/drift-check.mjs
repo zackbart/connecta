@@ -96,7 +96,8 @@ function usage(message) {
       ),
       "",
       "A value containing a space is sent as the Authorization header verbatim,",
-      "one containing a colon as Basic credentials, anything else as a Bearer token.",
+      "one containing a colon as Basic credentials (Mixpanel: Bearer Basic),",
+      "and anything else as a Bearer token.",
     ].join("\n"),
   );
   process.exit(2);

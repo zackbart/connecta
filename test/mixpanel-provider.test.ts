@@ -85,7 +85,8 @@ describe("mixpanel()", () => {
       "`Get-Business-Context` requires either `project_id` or `organization_id`",
     );
     expect(guideOf(connector)).toContain(
-      "`Get-Property-Values` requires `properties`",
+      "`Get-Property-Values` requires `properties` or the deprecated `property` alias. " +
+        "Event property values also require `event`",
     );
     expect(guideOf(connector)).toContain(
       "`List-Properties` accepts `names` or `query`, never both",
