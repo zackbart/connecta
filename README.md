@@ -2,133 +2,77 @@
 
 ![A monochrome clay Connecta hub joining many tools](https://raw.githubusercontent.com/zackbart/connecta/main/assets/connecta-clay-hero.png)
 
-One place for AI agents to connect to the tools you choose.
+One MCP endpoint. The integrations you chose. Your agent reaches them by
+writing code instead of loading a thousand tool definitions.
 
-Connecta gives an agent a single MCP endpoint instead of making it connect to
-every service separately. You decide which integrations are available and
-Connecta holds their credentials, and the agent mostly works by writing
-ordinary JavaScript that Connecta runs in a sandbox next to them — with a few
-explicit tools for the jobs a program is the wrong shape for, destructive calls
-among them.
+## The mental model
 
-```mermaid
-flowchart LR
-    Agent["AI agent"]
-    Integrations["The integrations you chose"]
+You ask your agent a question that touches a service — Linear, Stripe, an
+internal API, anything you have connected. Here is what happens:
 
-    subgraph Connecta["Connecta: one MCP endpoint; credentials stay here"]
-        Sandbox["execute_code<br/>server-side sandbox"]
-        Explicit["Explicit tools<br/>destructive calls, search, auth"]
-    end
+1. The agent talks to one endpoint, yours, and sees seven tools. Always seven,
+   no matter how many services sit behind it.
+2. It writes a short JavaScript program. Connecta runs it in a sandbox next to
+   your integrations. The program can search for tools, call them, chain the
+   calls, and shape the result.
+3. Only the answer comes back into the agent's context — not raw pages of
+   API output.
+4. If the agent wants to change something — create, update, delete — it
+   cannot do that from a program. It makes one explicit call, and your MCP
+   client can put that call in front of you first.
 
-    Agent -->|"writes a program"| Sandbox
-    Agent -->|"one deliberate call"| Explicit
-    Sandbox --> Integrations
-    Explicit --> Integrations
+Credentials never leave the server. The program never sees them, and neither
+does the agent.
+
+This is the kind of thing the agent writes, not you:
+
+```js
+async () => {
+  const { nodes } = await tracker.list_issues({ state: "started" });
+  const byOwner = {};
+  for (const issue of nodes) {
+    (byOwner[issue.assignee?.name ?? "unassigned"] ??= []).push(issue.identifier);
+  }
+  return byOwner;
+}
 ```
 
-## Why Connecta
+Fifty issues in, one small object out. Your context window notices.
 
-- **One connection.** Configure clients once, even as integrations change.
-- **Seven tools, not seven hundred.** A program can search the catalog, chain
-  calls, and trim the results before the agent ever sees them — so nothing has
-  to be loaded up front.
-- **Safer access.** Credentials stay server-side — the program never sees them
-  — and consequential actions remain explicit and individual.
-- **Named client access.** A Clerk operator can issue and revoke one-time,
-  hashed Bearer tokens for MCP clients that support header authentication.
-- **Your deployment.** Connecta runs on Node, Docker, or Cloudflare Workers,
-  with configuration you can review and version.
+## What you can do with it
 
-## Start here
+- **Put every MCP server you use behind one connection.** Add or remove
+  services in a config file; your client never changes.
+- **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
+  generated tool sprawl is the problem, not the fix.
+- **Use maintained connections** for Cloudflare, Linear, Mixpanel, Notion, and
+  Stripe — known endpoints, auth defaults, and vetted read/write
+  classifications, imported one at a time.
+- **Let the agent work in code.** Search, chain, filter, join, and reduce
+  inside the sandbox instead of round-tripping every call through the model.
+- **Keep writes deliberate.** Only tools marked read-only run in a program.
+  Everything else is a separate, visible call your client can gate.
+- **Run it where you like.** Node, a Docker container, or a Cloudflare Worker,
+  from the same small deployment file.
 
-Create the prescribed Node deployment:
+There is also an operator surface, off until you turn it on: sign-in, an
+encrypted credential vault with rotation, revocable per-client tokens, and a
+payload-free activity log.
 
-```sh
-npx @zackbart/connecta init my-connecta
-cd my-connecta
-npm install
-CONNECTA_TOKEN=dev-token npm start
-```
+Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
+service. Those are decisions, and the [ethos](./ethos.md) records each one
+and why.
 
-Point an MCP client at `http://localhost:8787/mcp` with
-`Authorization: Bearer dev-token`. The generated project is deliberately small:
+## Getting started
 
-```text
-my-connecta/
-├── src/index.ts       # connectors, auth, storage, public URL
-├── src/file-activity.ts # deployment-owned activity store, wired on request
-├── package.json       # exact Connecta and QuickJS versions
-├── tsconfig.json
-├── Dockerfile         # the same source, containerized
-├── docker-compose.yml # one service, state on a named volume
-├── .dockerignore
-├── .env.example
-├── .gitignore
-├── AGENTS.md
-├── CLAUDE.md -> AGENTS.md
-└── README.md
-```
+Setup is written for an agent. Point yours at [`AGENTS.md`](./AGENTS.md) and
+ask it to set up a Connecta deployment; the
+[documentation](./documentation/) covers every subsystem if you want to go
+deeper, and [upgrading](./documentation/upgrading.md) an existing deployment
+is its own runbook.
 
-The same project runs as a long-lived container without changing a line of it:
+## Status
 
-```sh
-cp .env.example .env    # set CONNECTA_TOKEN
-docker compose up -d --build
-```
-
-For an agent setting this up, the contract is:
-
-1. Edit `src/index.ts`; do not copy Connecta internals into the deployment.
-2. Keep the required `executor: quickJsExecutor()` configuration; without an
-   executor the deployment refuses to boot.
-3. Keep secrets in environment variables or a secret store, never source.
-4. Add connectors explicitly: import a maintained prebuilt provider
-   constructor when one exists, otherwise write a deliberate `remoteMcp()` or
-   `api()` connector. There is no registry to browse and nothing registers
-   itself.
-5. Run `npm run typecheck`, start the server, and run
-   `CONNECTA_TOKEN=... npm run doctor`. Doctor checks health, the executor, and
-   the exact seven-tool model-facing surface, then executes a harmless sandbox
-   program. The bearer stays in the environment rather than command history.
-
-The operator surface is the same in both shapes and off until you say so:
-Clerk sign-in, the credential vault, access-token issuance, and payload-free
-activity ship as commented configuration, each one a variable and an
-uncommented block away. The generated `README.md` walks through all four, and
-the [Worker example](./examples/worker/) does the same for KV and D1.
-
-Already have a deployment on an older version? `init` deliberately refuses to
-merge into it, so bringing one current is its own procedure:
-[Upgrading an existing deployment](./documentation/upgrading.md) is the
-runbook, written for the agent working inside that project.
-
-The template refuses to merge into an existing directory, so initialization
-cannot overwrite another project. Its generated programs have no filesystem,
-environment, arbitrary network, imports, or timers; only explicitly read-only
-connector tools are reachable. Unannotated or write-capable calls stay
-individual and cross `call_destructive_tool`, where the MCP host can ask the
-operator for approval.
-
-The Node template also pins its one approved dependency install script:
-esbuild, which `tsx` needs to run the deployment source. A dependency update
-that adds or changes an install script fails the package smoke until reviewed.
-
-There are two deployment shapes and no others:
-
-- [Node, local or Docker](./templates/node/) — what `init` copies
-- [Cloudflare Worker deployment](./examples/worker/)
-- [Subsystem documentation](./documentation/)
-
-Every deployment configures a sandbox: QuickJS on Node or a Dynamic Worker on
-Cloudflare. Construction fails with an actionable error when the executor is
-missing, so the model-facing interface is always the same seven tools.
-
-## Project status
-
-Connecta is built for its author's deployments first and is still evolving.
-Breaking changes are expected before 1.0.
-
-Read the [ethos](./ethos.md) for the product's principles, the
-[changelog](./CHANGELOG.md) for releases, and [security policy](./SECURITY.md)
-for vulnerability reporting.
+Built for its author's deployments first and published openly. Breaking
+changes are expected before 1.0. See the [changelog](./CHANGELOG.md) and
+[security policy](./SECURITY.md).
