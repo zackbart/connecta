@@ -24,6 +24,23 @@ internal API, anything you have connected. Here is what happens:
 Credentials never leave the server. The program never sees them, and neither
 does the agent.
 
+```mermaid
+flowchart TB
+    Client["Your MCP client<br/>Claude, Cursor, …"]
+
+    subgraph Connecta["Connecta — one endpoint, seven tools, your credentials"]
+        Sandbox["execute_code<br/>the agent's program runs here<br/>read-only tools only"]
+        Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
+    end
+
+    Integrations["The integrations you chose<br/>Linear · Stripe · Notion · your HTTP API · any MCP server"]
+
+    Client -->|"one connection"| Sandbox
+    Client --> Explicit
+    Sandbox -->|"reads"| Integrations
+    Explicit -->|"writes"| Integrations
+```
+
 This is the kind of thing the agent writes, not you:
 
 ```js
