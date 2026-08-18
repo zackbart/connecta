@@ -19,3 +19,4 @@ eval/current-version/results/*.json
 # above.
 !eval/current-version/results/current-agent-performance.json
 !eval/current-version/results/issue-322-preregistered-provenance.json
+assets/icon-options/
