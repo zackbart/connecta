@@ -170,6 +170,13 @@ prefixes (`cus_`, `sub_`, `ch_`, `pi_`, `in_`, `acct_`), a plausible-looking one
 belongs to a different object or to nobody, and the id a write takes comes from
 `stripe_api_search` or a list read rather than from a guess.
 
+Account selection comes before that object-id rule. The served guide names
+`list_available_accounts_or_orgs`, `stripe_context`, and `livemode`, and tells
+the agent to stop when the account, mode, or selector is ambiguous. It keeps
+organization-account selection separate from the restricted-key-only Connect
+path, so an agent cannot repair uncertainty by fabricating `Stripe-Account` as
+a tool argument.
+
 The guide also carries the reduction advice the generic schemas cannot (P7):
 a list or search read that returns full objects belongs inside `execute_code`,
 projected to the fields the question needs before `return`, because an
@@ -179,13 +186,6 @@ has no `payment_intent` field, so the path is the PaymentIntent's
 `latest_charge` — and the account → search → details → read sequence as one
 program rather than four turns, and it names `outcome`, `failure_code`, and
 `failure_message` on the charge as the answer to "why did this payment fail".
-
-Account selection comes before that object-id rule. The served guide names
-`list_available_accounts_or_orgs`, `stripe_context`, and `livemode`, and tells
-the agent to stop when the account, mode, or selector is ambiguous. It keeps
-organization-account selection separate from the restricted-key-only Connect
-path, so an agent cannot repair uncertainty by fabricating `Stripe-Account` as
-a tool argument.
 
 Stripe publishes no stability or deprecation policy for this tool set and
 invites tool requests by email, so treat the list as unversioned. `get_balance_summary`

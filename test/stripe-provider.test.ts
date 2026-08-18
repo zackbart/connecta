@@ -186,7 +186,7 @@ describe("stripe()", () => {
         "belongs inside `execute_code`, projected to the fields the question needs before `return`",
       );
       expect(guide).toContain("Neither `limit` nor `expand` substitutes");
-      expect(guide).toContain("privacy boundary as much as the size fix");
+      expect(guide).toContain("out of the transcript");
       expect(guide).toContain("there is no `payment_intent` field");
       expect(guide).toContain("`latest_charge`");
       expect(guide).toContain("is one program, not four turns");
