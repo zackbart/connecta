@@ -62,8 +62,8 @@ Fifty issues in, one small object out. Your context window notices.
   services in a config file; your client never changes.
 - **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
   generated tool sprawl is the problem, not the fix.
-- **Use maintained connections** for Cloudflare, Linear, Mixpanel, Notion, and
-  Stripe — known endpoints, auth defaults, and vetted read/write
+- **Use maintained connections** for Cloudflare, Linear, Mixpanel, Notion,
+  RevenueCat, and Stripe — known endpoints, auth defaults, and vetted read/write
   classifications, imported one at a time.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.

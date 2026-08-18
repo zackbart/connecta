@@ -122,6 +122,7 @@ Maintained provider guides:
 - [Linear](./linear.md)
 - [Mixpanel](./mixpanel.md)
 - [Notion](./notion.md)
+- [RevenueCat](./revenuecat.md)
 - [Stripe](./stripe.md)
 
 ## The `api()` construction contract

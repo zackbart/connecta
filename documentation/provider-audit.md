@@ -1,7 +1,7 @@
 # Provider audit
 
 [`provider-conventions.md`](./provider-conventions.md) wrote the bar down. This
-document runs it against the five maintained prebuilt connections and returns a
+document runs it against the six maintained prebuilt connections and returns a
 verdict for every applicable convention: **meets**, **misses** (with the fix),
 or **n/a** (with the reason). A convention is never quietly skipped, and an
 accepted miss is recorded as a provider-specific exception with its argument
@@ -147,6 +147,28 @@ Linear's reasoning.
 | P12 admission budget | **missed → fixed** | the connection hardcoded a 600-call hourly budget transcribed from a limit Mixpanel meters **per user**. P12 names this case exactly: a per-runtime counter cannot approximate a per-user quota in either direction — one runtime serving several users under-counts, several isolates sharing one credential each admit a full budget. The default is removed; `callAdmission` is now an operator option with a documented example, matching Linear |
 | P13 drift visible | meets | both lists are module-level constants in one file, and are the manifest the refresh-time drift check compares against ([#343](https://github.com/zackbart/connecta/issues/343)) |
 
+## RevenueCat — hosted-MCP proxy
+
+Written after the conventions existed, so it has no misses to record — only two
+places where the honest answer departs from the obvious one, both argued below.
+Ninety-five documented tools, ninety-four classified, one deliberately not.
+
+| Convention | Verdict | Notes |
+| --- | --- | --- |
+| P1 add, never rewrite | meets | `listTools` maps annotations and returns every other field untouched |
+| P2 identity | meets | required `purpose` (blank throws), `instructions` appended under `## Project instructions`, and appended text cannot reach the classification |
+| P3 routing fact | meets, with the fact split in two | the routing fact is scope, and it has two halves. The *shape* — one project versus every project the account can reach — is knowable at construction and rides the default title (`RevenueCat (single project)` versus `RevenueCat`). *Which* project a key opens is not knowable without calling something, which P10 forbids, so it rides the guide's first line and the declared summary, built from the operator's `purpose`. That makes this the one maintained proxy with a purpose-bearing summary rather than a static one, and the reason is P3's own cost: two `sk_` connectors share a title, an endpoint, and a catalog, so a static summary would leave them indistinguishable in the only field search returns |
+| P4 endpoint default | n/a — one endpoint, and the scope rides the credential | RevenueCat publishes a single MCP endpoint, so there is nothing to select between. The scope difference comes from the credential shape itself, which the constructor reads rather than asks for: `auth.type === "headers"` *is* the single-project declaration. There is no mode to default and no mode to contradict, so the P4 machinery Stripe needs has nothing to do here |
+| P5 classification | meets | 50 reads, 15 additive writes, 29 destructive writes named; `render-paywall-screenshot` is on neither list because RevenueCat's reference gives it no access column, and it fails closed. Nine borderline verdicts are argued beside the rows they decide, and asserted in the suite so a silent flip fails |
+| P6 catalog varies | meets | the guide names paywall AI editing, benchmarks, experiments, virtual currencies, and account billing as the plan-, platform-, and beta-gated areas where absence is expected, and separately names the unclassified tool so its approval prompt does not read as a bug |
+| P7 reduction advice | meets | structured guide, declared summary, cursor-then-reduce advice aimed at the two objects that are actually large here (customers and their event history). `required` stays unset: the project-resolution sequence is worth reading before a run, not before every call |
+| P8 identity resolution | meets | the guide names the whole chain — `list-projects` for the `project_id` every project-scoped call takes, then `list-apps`, `list-products`, `list-entitlements`, `list-offerings`, `list-paywalls`, `list-audiences`, and `list-customers` for the ids their `get-`, `update-`, `archive-`, and `delete-` counterparts expect — and says a plausible-looking id belongs to another project or to nobody. For OAuth it also says to stop and ask when more than one project fits |
+| P9 authentication | meets | OAuth default, `requireHttps`, the API v2 secret key documented as a secret and paired with the narrowest scope RevenueCat offers (one project). The guide names the `auth_required` → `authorize_connector` route, and separately says that a read-only key's refusal is RevenueCat's own words rather than an authorization gap connecta can repair |
+| P10 no credential test | meets | no `credential`, `testCredential`, or `testCredentials`. This is also where the constructor's most tempting option was refused: a `project?: string` checked against `list-projects` at construction is a credential test wearing a configuration hat, so the operator's stated purpose carries the claim and the agent confirms it on first use. There is no recognizable-credential contradiction to throw on either — an `sk_` key encodes no project — so the construction-time half of P10 has nothing to check here, exactly as it has nothing to check for Mixpanel's region |
+| P11 transport vs tool error | meets | inherited whole from `remoteMcp()`; the wrapper adds no error handling and reads no downstream prose. The guide says a rejected argument, a permission gap, and a plan restriction all arrive in RevenueCat's own words |
+| P12 admission budget | meets, by declining a number that exists | RevenueCat does publish limits, which is why this row needed an argument rather than a shrug. It meters per domain — 480/min for customer information, virtual currencies, and refunds; 60 for project configuration and audiences; 25 for charts and metrics — and a `ConnectorCallAdmissionPolicy` carries exactly one rule. Picking 25 throttles a customer read loop to a nineteenth of its allowance; picking 480 leaves a chart sweep unprotected; neither is the provider's limit. The metering scope repeats the point: developer-level keys are metered per developer, which a per-runtime counter cannot approximate. So the guide states RevenueCat's own numbers and the `429` / `Retry-After` / `backoff_ms` signals, and `callAdmission` stays an operator option with a documented example |
+| P13 drift visible | meets | both lists are module-level constants in one file and *are* the manifest the wrapper classifies from, compared against the live catalog on every refresh ([#343](https://github.com/zackbart/connecta/issues/343)). The maintainer-run check accepts `revenuecat` with `CONNECTA_DRIFT_REVENUECAT_KEY`. No schema digests are recorded, and the manifest says so rather than shipping invented ones |
+
 ## Scoreboard
 
 | Provider | Meets | Missed and fixed | Recorded exception | Open |
@@ -156,8 +178,9 @@ Linear's reasoning.
 | Linear | 11 | 2 | P4 departs from the letter | — |
 | Stripe | 10 | 3 | — | — |
 | Mixpanel | 7 | 5 | P10 half n/a | — |
+| RevenueCat | 12 | 0 | P4 n/a (one endpoint); P3 met with a purpose-bearing summary | — |
 
-Nineteen misses, nineteen fixes, four recorded exceptions, one judgment left to
+Nineteen misses, nineteen fixes, six recorded exceptions, one judgment left to
 the issue that owns it. The pattern in the misses is worth naming: sixteen of
 the nineteen are a guide, a title, or a schema description failing to *say*
 something the implementation already did correctly. Only three changed what a
@@ -166,3 +189,10 @@ access declaration, Mixpanel dropping a budget it could not honestly compute.
 The conventions are mostly not asking for different behavior. They are asking
 for the behavior to reach the agent, which is a different problem and, on this
 evidence, the one the providers were losing.
+
+RevenueCat is the first connection written *after* the conventions and adds no
+misses to those nineteen, which is the least interesting thing about its row.
+The interesting part is that two conventions came out somewhere other than
+their obvious reading — P4 has no endpoint to select and P12 declines a number
+the provider actually publishes — and both had to be argued rather than
+skipped. A convention that only ever returns "meets" is not being applied.
