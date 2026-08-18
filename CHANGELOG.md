@@ -2,6 +2,59 @@
 
 All notable changes to this package are documented here.
 
+## 0.18.2 — 2026-08-18
+
+This patch closes the gap the RevenueCat rollout exposed on the same day 0.18.1
+shipped: a hosted-MCP connection could authenticate with OAuth from the
+Connections page or with a header literal baked into the deployment file, but
+never with a key an operator pastes on `/credentials` the way every `api()`
+connector already can. Now it can. Nothing breaks, no constructor changes, and a
+deployment that keeps its static keys in runtime secrets can ignore this release.
+Two things are worth reading before adopting the new shape: the operator vault
+(`credentials.encryptionKey`) must be configured, and a key pasted with a
+wrapped newline is refused before it is framed rather than echoed back by the
+runtime that rejects it.
+
+### Added
+
+- **`auth: { type: "credential" }` for `remoteMcp()` and every maintained
+  hosted connection.** The connector declares an operator credential slot on
+  `/credentials` (label and guidance from the provider, overridable), reads the
+  stored value on every request before trusting a cached client, and frames it
+  as `Authorization: Bearer <value>` by default — `header` and `scheme` are
+  configurable, `scheme: null` sends the value bare, and a scheme ending in
+  `Basic` base64-encodes it, which is how Mixpanel's documented
+  `Bearer Basic <base64(user:secret)>` is spelled. A missing or empty value is
+  `auth_required`, and `authorize_connector` returns the operator handoff to
+  `/credentials`; a deployment without a vault warns at construction and answers
+  `recovery: "unavailable"` at use. Rotation on `/credentials` takes effect on
+  the next call: a SHA-256 digest of the connected value is compared per
+  request (including against an in-flight connect) and a differing digest
+  closes the old client. The `/credentials` Test action connects with the
+  candidate and counts the catalog, and only when an operator presses it — the
+  #179 refusal of proactive probing stands, now written into P10. Provider
+  defaults: Stripe (requires `mode`, refuses `connectedAccount`), Linear
+  (Bearer, per Linear's MCP docs), Mixpanel (`Bearer Basic`, service account),
+  RevenueCat (single-project branch, "API v2 secret key") (#439).
+
+### Changed
+
+- **A stored credential never reaches an agent or operator surface, even
+  malformed.** The value is refused before framing if it carries a control
+  character (the wrapped-newline paste), with a message that names the problem
+  and not the value; behind that, any error whose message or `cause` chain
+  quotes the raw or framed value is replaced whole rather than redacted. Both
+  layers are tested independently (#439).
+
+- **Provider conventions P9 and P10 say what is now true.** P9 names both
+  headless shapes and requires the framing to match the provider's published
+  MCP contract; P10 is retitled to allow an operator-requested credential test
+  while forbidding any unasked probe (#439).
+
+- **Linear's headers example uses `Bearer`.** Linear's MCP server documents
+  `Authorization: Bearer <token>` for API keys; the bare form is its GraphQL
+  convention. Existing `headers` connectors are untouched (#439).
+
 ## 0.18.1 — 2026-08-18
 
 This patch is the response to one long investigation run against a live
