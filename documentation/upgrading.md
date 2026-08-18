@@ -57,7 +57,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.18.1 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.18.2 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -106,7 +106,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.18.1
+npm pkg set dependencies.@zackbart/connecta=0.18.2
 npm install
 ```
 
@@ -130,7 +130,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.18.1 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.18.2 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -186,7 +186,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.18.1 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.18.2 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -206,6 +206,23 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.18.1 → 0.18.2
+
+Nothing throws for an existing deployment, and the version bump alone crosses
+it. The release adds a third `auth` shape to `remoteMcp()` and every maintained
+hosted connection — `{ type: "credential" }` — under which the connector
+declares an operator slot on `/credentials` and reads the pasted value on each
+request. A deployment carrying a static key as a runtime secret
+(`auth: { type: "headers", headers: { Authorization: env.KEY } }`) keeps
+working unchanged; moving it behind `/credentials` is an edit to the connector's
+`auth` and one paste on the operator page, and needs `credentials.encryptionKey`
+configured — a deployment without a vault gets a startup warning and
+`recovery: "unavailable"` at use for that connector, not a boot failure. Two
+Linear notes: the `headers` example in `documentation/linear.md` now shows
+`Bearer ${key}` (Linear's MCP server documents that framing), and the credential
+shape sends `Bearer` by default; a `headers` connector already sending a bare
+key is untouched.
 
 ### 0.18.0 → 0.18.1
 
