@@ -52,8 +52,8 @@ interface RemoteMcpCredentialAuth {
   header?: string;
   /**
    * Framing token placed before the value. Defaults to `"Bearer"`. `null` (or
-   * an empty string) sends the stored value verbatim, which is what Linear's
-   * personal API keys expect. A scheme whose last token is `Basic` declares
+   * an empty string) sends the stored value verbatim, for an endpoint that
+   * reads a bare key. A scheme whose last token is `Basic` declares
    * HTTP Basic credentials: the stored `user:secret` is base64-encoded first,
    * so `"Basic"` produces `Basic <base64>` and Mixpanel's documented
    * `"Bearer Basic"` produces `Bearer Basic <base64>`.
@@ -372,6 +372,31 @@ function credentialHeaderValue(scheme: string | null, value: string): string {
     : `${scheme} ${value}`;
 }
 
+/**
+ * True when a stored credential carries a character a header cannot.
+ *
+ * The fetch specification refuses NUL, CR, and LF outright, and the runtime
+ * that refuses them says so in a `TypeError` that quotes the whole offending
+ * value — a message that would otherwise travel to the agent. The remaining C0
+ * controls and DEL are refused here too: no real API key contains one, and a
+ * paste that picked one up is a paste to redo rather than a request to send.
+ * Leading and trailing whitespace is already gone by the time this runs.
+ *
+ * A scan rather than a regular expression, because a character class over the
+ * control range is exactly what `no-control-regex` exists to flag, and the
+ * suppression would be less readable than the loop it suppressed.
+ */
+function carriesIllegalHeaderChar(value: string): boolean {
+  for (let index = 0; index < value.length; index++) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1f || code === 0x7f) return true;
+  }
+  return false;
+}
+
+/** RFC 9110 field-name token, checked once at construction. */
+const HEADER_NAME_TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 function isLoopbackHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -520,11 +545,15 @@ interface ConnectionState {
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
   /**
-   * Digest of the operator-managed credential the cached client connected
-   * with, or null for every other auth shape. The value itself is never held
-   * here: it lives in the connect attempt's local scope and nowhere else.
+   * Digest of the operator-managed credential this scope's client is bound to
+   * — or, while a connect is still in flight, the one that attempt is using.
+   * Null for every other auth shape. Set when the attempt starts rather than
+   * when it succeeds, so a rotation that lands mid-connect is seen by the
+   * waiter that would otherwise ride the rotated-away key. The value itself is
+   * never held here: it lives in the connect attempt's local scope and nowhere
+   * else.
    */
-  connectedCredentialDigest: string | null;
+  credentialDigest: string | null;
   /**
    * One-way latch: set by closeScope and never cleared, so neither a late
    * connect nor a `reset()` can cache a client into a scope that is already
@@ -567,9 +596,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     label: "API key",
   };
   const credentialHeader = credentialAuth?.header?.trim() || "Authorization";
+  // A structural mistake in the deployment file, beside the `fields` refusal
+  // above: an unsendable header name is not worth discovering on the first
+  // request, where only a runtime error can report it.
+  if (credentialAuth && !HEADER_NAME_TOKEN.test(credentialHeader)) {
+    throw new Error(
+      `[connecta] connector "${id}" credential auth declares header ` +
+        `"${credentialHeader}", which is not a valid HTTP field name.`,
+    );
+  }
   // `undefined` means "not stated" and takes the bearer default; `null` and
-  // `""` both mean "send the stored value verbatim", which is the shape a
-  // provider like Linear expects.
+  // `""` both mean "send the stored value verbatim", which some providers
+  // require for a bare API key.
   const credentialScheme =
     credentialAuth === undefined || credentialAuth.scheme === undefined
       ? "Bearer"
@@ -652,7 +690,54 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           "operator handoff it returns.",
       );
     }
+    // Refuse a value a header cannot carry BEFORE anything frames it. A
+    // wrapped newline in a pasted key is the ordinary way this happens, and
+    // the runtime that rejects the header quotes the whole value back in its
+    // TypeError — a message that travels to status, to the activity log, and
+    // to the agent. So the check lives here, and says only what is wrong.
+    if (carriesIllegalHeaderChar(value)) {
+      throw new CredentialRequiredError(
+        `Connector "${id}"'s stored credential contains a character a header ` +
+          "cannot carry (a line break or other control character) — re-enter " +
+          "it on /credentials. The value is not shown or logged.",
+      );
+    }
     return value;
+  };
+
+  /**
+   * Replace, never edit.
+   *
+   * Any error whose message quotes the credential — the raw value or the
+   * framed header it becomes — is discarded whole and replaced with a fixed
+   * sentence. Nothing is substringed, masked, or truncated out of the original:
+   * a redaction that keeps part of a secret is still a leak, and the original
+   * error is not worth one. This is defense in depth behind the validation
+   * above, which is what keeps an unsendable value from reaching a transport
+   * at all.
+   */
+  const withoutCredential = (
+    err: unknown,
+    ...secrets: (string | null)[]
+  ): unknown => {
+    const quoted = secrets.filter(
+      (secret): secret is string => typeof secret === "string" && secret !== "",
+    );
+    if (quoted.length === 0) return err;
+    const seen = new Set<unknown>();
+    let current: unknown = err;
+    while (current instanceof Error && !seen.has(current)) {
+      seen.add(current);
+      if (quoted.some((secret) => current instanceof Error && current.message.includes(secret))) {
+        return new CredentialRequiredError(
+          `Connector "${id}" could not send its stored credential as a ` +
+            "header — re-enter it on /credentials. The value is not shown or " +
+            "logged.",
+        );
+      }
+      current = current.cause;
+    }
+    return err;
   };
 
   const scopeEndedError = () =>
@@ -707,7 +792,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
-        connectedCredentialDigest: null,
+        credentialDigest: null,
         closed: false,
       };
       states.set(scope, state);
@@ -737,8 +822,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const buildTransport = (
     ctx: ConnectorContext,
     provider: KvOAuthProvider | null,
-    /** This attempt's vault value, for credential auth only. Never retained. */
-    credentialValue: string | null = null,
+    /**
+     * This attempt's assembled header value, for credential auth only — framed
+     * by the caller so the raw secret is not passed around twice. Never
+     * retained past the transport it configures.
+     */
+    credentialFramed: string | null = null,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
@@ -752,13 +841,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const headers =
       opts.auth?.type === "headers"
         ? opts.auth.headers
-        : credentialAuth && credentialValue !== null
-          ? {
-              [credentialHeader]: credentialHeaderValue(
-                credentialScheme,
-                credentialValue,
-              ),
-            }
+        : credentialAuth && credentialFramed !== null
+          ? { [credentialHeader]: credentialFramed }
           : undefined;
     return new StreamableHTTPClientTransport(url, {
       ...(headers ? { requestInit: { headers } } : {}),
@@ -774,7 +858,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.authRequired = false;
     state.provider = null;
     state.connectedGeneration = null;
-    state.connectedCredentialDigest = null;
+    state.credentialDigest = null;
     // `closed` is deliberately not cleared — see ConnectionState.
   };
 
@@ -828,14 +912,23 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // next call rather than the next deploy. Compared by digest — the
     // plaintext lives in this function's scope and never reaches `state`.
     let credentialValue: string | null = null;
+    let credentialFramed: string | null = null;
     let credentialDigest: string | null = null;
     if (credentialAuth) {
       credentialValue = await readCredential(ctx);
+      credentialFramed = credentialHeaderValue(
+        credentialScheme,
+        credentialValue,
+      );
       credentialDigest = await digestOf(credentialValue);
+      // Gated on a connect in flight as well as a cached client, exactly like
+      // the epoch read above: a rotation that lands while the first caller is
+      // still connecting must not let the second one ride the key the vault
+      // has already replaced.
       if (
-        state.client &&
-        state.connectedCredentialDigest !== null &&
-        state.connectedCredentialDigest !== credentialDigest
+        (state.client || state.connecting) &&
+        state.credentialDigest !== null &&
+        state.credentialDigest !== credentialDigest
       ) {
         if (state.closed) throw scopeEndedError();
         const connecting = state.connecting;
@@ -894,7 +987,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             inputRequired: { autoFulfill: false },
           },
         );
-        const t = buildTransport(ctx, provider, credentialValue);
+        const t = buildTransport(ctx, provider, credentialFramed);
         if (!ownsAttempt()) await abandon(t);
         state.transport = t;
         try {
@@ -927,7 +1020,6 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (!ownsAttempt()) await abandon(c);
           state.client = c;
           state.connectedGeneration = genAtStart;
-          state.connectedCredentialDigest = credentialDigest;
           state.authRequired = false;
         } catch (err) {
           // Only a real 401/UnauthorizedError means auth is the problem — a
@@ -939,7 +1031,11 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (err instanceof UnauthorizedError) {
             throw authRequiredError(err);
           }
-          throw err;
+          // Defense in depth for the one error class that can quote the
+          // credential: a runtime refusing the assembled header. `readCredential`
+          // already rejects a value that cannot ride one, so reaching this is a
+          // gap in that check rather than a routine outcome.
+          throw withoutCredential(err, credentialValue, credentialFramed);
         } finally {
           // Force reset may have abandoned this attempt and installed a new one
           // in the same request scope. An old completion must not erase the new
@@ -948,6 +1044,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
       })();
       state.connecting = attempt;
+      // Published with the attempt, not with its result: a rotation that lands
+      // while this connect is in flight has to be visible to the next caller,
+      // which would otherwise wait on a client bound to the older key.
+      state.credentialDigest = credentialDigest;
     }
     return state.connecting;
   };
@@ -1010,10 +1110,27 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
            * and mode are the provider's answer, not ours.
            */
           testCredential: async (
-            _value: string,
+            value: string,
             ctx: ConnectorContext,
           ): Promise<CredentialTestResult> => {
             try {
+              // The connect below reads the vault itself — the header is
+              // assembled deep inside `ensureConnected`, and handing a
+              // candidate down that path would mean threading a second secret
+              // through the whole connection state. `/ui/credentials/<id>/test`
+              // reads the stored value and passes it here, so today the two are
+              // the same string. Check rather than assume: a route that later
+              // tested an unsaved candidate would otherwise silently report on
+              // the old value, which is the one answer worse than refusing.
+              const stored = (await ctx.credential?.get())?.trim();
+              if (stored !== value.trim()) {
+                return {
+                  ok: false,
+                  message:
+                    "This connector tests the credential that is currently " +
+                    "saved. Save the value first, then test it.",
+                };
+              }
               const tools = await connector.listTools(ctx);
               return {
                 ok: true,
@@ -1229,7 +1346,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.connecting = null;
       state.authRequired = false;
       state.connectedGeneration = null;
-      state.connectedCredentialDigest = null;
+      state.credentialDigest = null;
 
       // Ask the downstream to drop its session first — closing only aborts our
       // side, and the DELETE that frees the server's rides on the very

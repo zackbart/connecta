@@ -65,9 +65,12 @@ connection; it now answers 404.
 ## Authentication
 
 OAuth 2.1 with dynamic client registration is the default and keeps each
-connector instance's flow and tokens in its connector-scoped storage. Linear
-also accepts a bearer token or a personal API key passed directly in the
-`Authorization` header, which suits a headless deployment:
+connector instance's flow and tokens in its connector-scoped storage. Linear's
+MCP server also "supports passing OAuth token and API keys directly in the
+`Authorization: Bearer <yourtoken>` header instead of using the interactive
+authentication flow" ([Linear MCP docs](https://linear.app/docs/mcp)), which
+suits a headless deployment. Note the framing: the bare-`Authorization`
+convention is Linear's *GraphQL* API, and this endpoint is not that.
 
 ```ts
 linear("automation_tracker", {
@@ -75,7 +78,7 @@ linear("automation_tracker", {
   access: "read-only",
   auth: {
     type: "headers",
-    headers: { Authorization: env.LINEAR_API_KEY },
+    headers: { Authorization: `Bearer ${env.LINEAR_API_KEY}` },
   },
 });
 ```
@@ -97,10 +100,10 @@ linear("automation_tracker", {
 });
 ```
 
-The slot renders as "Personal API key" and Connecta sends the stored value bare
-in `Authorization`, the way Linear reads one; pass `credential` or `scheme` to
-override either. Until the operator saves a value the connector is present and
-reports `auth_required`. See
+The slot renders as "Personal API key" and Connecta sends the stored value as
+`Authorization: Bearer <key>`, the framing Linear's MCP page documents; pass
+`credential` or `scheme` to override either. Until the operator saves a value
+the connector is present and reports `auth_required`. See
 [storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
 
 ## Safety classification

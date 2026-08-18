@@ -48,8 +48,10 @@ export interface LinearOptions {
   access: LinearAccess;
   /**
    * OAuth by default. A Linear personal API key works either as a literal
-   * header or as an operator-managed credential (`{ type: "credential" }`),
-   * which Linear expects bare — no `Bearer` framing — in `Authorization`.
+   * header or as an operator-managed credential (`{ type: "credential" }`).
+   * Linear's MCP documentation asks for `Authorization: Bearer <yourtoken>`
+   * for both API keys and OAuth tokens (https://linear.app/docs/mcp), which is
+   * the framing default, so the credential shape needs no `scheme` of its own.
    */
   auth?: RemoteMcpAuth;
   /** Workspace-specific conventions appended to the maintained provider guide. */
@@ -261,9 +263,10 @@ export function linear(id: string, options: LinearOptions): Connector {
       access === "read-only"
         ? `Linear issue tracking and project planning (read-only) — ${purpose}`
         : `Linear issue tracking and project planning — ${purpose}`,
-    // Linear reads a personal API key straight out of `Authorization` with no
-    // scheme token in front of it, so credential auth defaults to `null`
-    // framing rather than the bearer form every other provider here uses.
+    // Linear's MCP endpoint takes an API key the same way it takes an OAuth
+    // token — `Authorization: Bearer <yourtoken>` — so only the slot copy is
+    // provider-specific and the bearer framing default stands. The bare-header
+    // convention belongs to Linear's GraphQL API, not to this endpoint.
     auth: withCredentialDefaults(options.auth ?? { type: "oauth" }, {
       credential: {
         label: "Personal API key",
@@ -271,7 +274,6 @@ export function linear(id: string, options: LinearOptions): Connector {
           "A Linear personal API key. It carries the issuing user's full workspace access and is stored encrypted; the read-only endpoint still limits what it can reach.",
         placeholder: "lin_api_…",
       },
-      scheme: null,
     }),
     requireHttps: true,
     usageGuide: {

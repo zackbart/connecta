@@ -59,6 +59,16 @@ the stored `user:secret` is base64-encoded first — `"Basic"` produces
 `Bearer Basic <base64>`. There is one reserved `value` field and no multi-field
 header composition: named `credential.fields` are refused at construction.
 
+A stored value is checked before anything frames it: a line break or other
+control character — what a key pasted across two lines leaves behind — is
+refused as `auth_required` with a message naming the problem and never the
+value. That check exists because the runtime that rejects such a header quotes
+the whole offending value back in its `TypeError`, and that message would
+otherwise reach the agent, the operator page, and the activity log. Behind it,
+any error whose message quotes the credential or the header it became is
+discarded whole and replaced; nothing is masked or truncated, because a
+redaction that keeps part of a secret is still a leak.
+
 An empty slot is not a boot failure and not a silently absent connector. The
 connector is present, its status reads `auth_required`, calls fail with the same
 typed error a missing OAuth grant produces, and `authorize_connector` returns

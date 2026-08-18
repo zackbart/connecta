@@ -517,7 +517,7 @@ describe("stripe()", () => {
         },
       }),
     ).toThrow(
-      'stripe("billing") with headers auth requires mode "production" or "sandbox".',
+      'stripe("billing") with headers or credential auth requires mode "production" or "sandbox".',
     );
   });
 
@@ -551,7 +551,7 @@ describe("stripe()", () => {
         auth: { type: "credential" },
       } as unknown as Parameters<typeof stripe>[1]),
     ).toThrow(
-      'stripe("billing") with headers auth requires mode "production" or "sandbox".',
+      'stripe("billing") with headers or credential auth requires mode "production" or "sandbox".',
     );
   });
 

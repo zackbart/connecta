@@ -182,7 +182,7 @@ describe("linear()", () => {
     expect(guideOf(readWrite)).toContain("Read-write connection");
   });
 
-  it("frames an operator-managed API key the way Linear reads one", () => {
+  it("frames an operator-managed API key the way Linear's MCP docs ask", () => {
     const connector = linear("automation_tracker", {
       purpose: "Headless release reporting",
       access: "read-only",
@@ -193,11 +193,12 @@ describe("linear()", () => {
       "automation_tracker",
       expect.objectContaining({
         url: LINEAR_MCP_ENDPOINTS["read-only"],
-        // A Linear personal API key rides `Authorization` bare — no `Bearer`.
+        // `Authorization: Bearer <yourtoken>` per https://linear.app/docs/mcp,
+        // which is the framing default — so the provider states no scheme and
+        // the bare form belongs to Linear's GraphQL API, not this endpoint.
         auth: {
           type: "credential",
           credential: expect.objectContaining({ label: "Personal API key" }),
-          scheme: null,
         },
       }),
     );
@@ -213,7 +214,7 @@ describe("linear()", () => {
       auth: {
         type: "credential",
         credential: { label: "Workspace key" },
-        scheme: "Bearer",
+        scheme: null,
       },
     });
 
@@ -223,7 +224,7 @@ describe("linear()", () => {
         auth: {
           type: "credential",
           credential: { label: "Workspace key" },
-          scheme: "Bearer",
+          scheme: null,
         },
       }),
     );

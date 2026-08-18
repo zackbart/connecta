@@ -62,8 +62,11 @@ mixpanel("automation_analytics", {
 
 The slot renders as "Service account" and takes `username:secret`. Connecta
 base64-encodes it and sends Mixpanel's documented `Bearer Basic` framing, so the
-operator never has to encode anything by hand. Until a value is saved the
-connector is present and reports `auth_required`. See
+operator never has to encode anything by hand. **The two paths take different
+strings:** the `headers` example above wants the already-encoded blob
+(`echo -n "username:secret" | base64`), and this one wants the plaintext pair.
+Migrating from one to the other means decoding, not copying. Until a value is
+saved the connector is present and reports `auth_required`. See
 [storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
 
 ## Conditional input contracts

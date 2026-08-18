@@ -304,7 +304,8 @@ export function stripe(id: string, options: StripeOptions): Connector {
   }
   if (auth.type !== "oauth" && mode !== "production" && mode !== "sandbox") {
     throw new Error(
-      `stripe("${id}") with headers auth requires mode "production" or "sandbox".`,
+      `stripe("${id}") with headers or credential auth requires mode ` +
+        `"production" or "sandbox".`,
     );
   }
   // Only a literal header can be inspected. An operator-managed credential is

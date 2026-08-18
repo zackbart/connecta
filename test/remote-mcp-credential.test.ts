@@ -380,34 +380,215 @@ describe("remoteMcp() credential auth — rotation", () => {
     expect(JSON.stringify(status)).not.toContain("do-not-leak-this");
     expect(String((err as Error).message)).not.toContain("do-not-leak-this");
   });
+
+  it("reconnects when the value rotates while the first connect is in flight", async () => {
+    const captured = serveDownstream();
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    let stored = "first-secret";
+    const ctx = credentialCtx(() => stored);
+
+    // A starts connecting on V1 and does not finish before B enters.
+    const first = connector.listTools(ctx);
+    stored = "second-secret";
+    const second = connector.listTools(ctx);
+    await Promise.allSettled([first, second]);
+    await connector.closeScope?.(ctx);
+
+    // B must not have ridden A's client: the rotated-away key is abandoned and
+    // a second session opens on the replacement.
+    expect(sessionOpenAuthorizations(captured)).toContain(
+      "Bearer second-secret",
+    );
+  });
+});
+
+describe("remoteMcp() credential auth — a value a header cannot carry", () => {
+  const MALFORMED = "sk_live_TOPSECRET\nmore\r";
+
+  /** Every fragment of the stored value that must appear on no surface. */
+  function assertNoLeak(text: string): void {
+    expect(text).not.toContain("TOPSECRET");
+    expect(text).not.toContain("sk_live_");
+    expect(text).not.toContain(MALFORMED.trim());
+  }
+
+  it("refuses it before framing, and says so without quoting it", async () => {
+    const captured = serveDownstream();
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    const ctx = credentialCtx(() => MALFORMED);
+
+    const err = await connector
+      .listTools(ctx)
+      .then(() => null, (error: unknown) => error);
+
+    expect(err).toMatchObject({ code: "auth_required" });
+    expect((err as Error).message).toContain("re-enter it on /credentials");
+    assertNoLeak((err as Error).message);
+    // Nothing reached the downstream: the check runs before any transport.
+    expect(captured).toHaveLength(0);
+  });
+
+  it("keeps it out of every surface an agent or operator can read", async () => {
+    serveDownstream();
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    const storage = memoryStorage();
+    const vault = new CredentialVault(storage, CREDENTIAL_KEY);
+    await vault.set("down", MALFORMED, "user_1");
+    const registry = makeRegistry([connector], {
+      storage,
+      credentialVault: vault,
+    });
+
+    // 1. The call_tool result — the one that leaves the host for the model.
+    const result = await createMetaTools(registry, BASE).callTool({
+      address: "down.echo",
+      args: { text: "hi" },
+    });
+    expect(result.isError).toBe(true);
+    assertNoLeak(JSON.stringify(result));
+
+    // 2. Connector status, which the operator page renders.
+    assertNoLeak(JSON.stringify(await registry.statusFor("down", BASE)));
+
+    // 3. The /credentials Test result.
+    assertNoLeak(
+      JSON.stringify(
+        await connector.testCredential!(
+          MALFORMED,
+          registry.contextFor("down", BASE),
+        ),
+      ),
+    );
+
+    // 4. The health log's lastError, which /health and /activity read.
+    registry.recordFailure(
+      "down",
+      1,
+      await connector
+        .listTools(registry.contextFor("down", BASE))
+        .then(() => null, (error: unknown) => error),
+    );
+    assertNoLeak(String(registry.healthFor("down")?.lastError));
+
+    // 5. The thrown error itself, whatever catches it next.
+    const err = await connector
+      .callTool("echo", { text: "hi" }, registry.contextFor("down", BASE))
+      .then(() => null, (error: unknown) => error);
+    assertNoLeak(`${(err as Error).message}${(err as Error).stack ?? ""}`);
+  });
+
+  it("refuses an interior control character in any framing", async () => {
+    serveDownstream();
+    for (const scheme of [null, "Bearer", "Basic", "Bearer Basic"] as const) {
+      const connector = remoteMcp("down", {
+        url: URL_UNDER_TEST,
+        auth: { type: "credential", scheme },
+      });
+      // Base64 would launder the newline for the Basic framings; the value is
+      // still a paste to redo, so the refusal does not depend on the framing.
+      await expect(
+        connector.listTools(credentialCtx(() => MALFORMED)),
+      ).rejects.toMatchObject({ code: "auth_required" });
+    }
+  });
+
+  it("refuses a header name that is not a field token, at construction", () => {
+    expect(() =>
+      remoteMcp("down", {
+        url: URL_UNDER_TEST,
+        auth: { type: "credential", header: "X Bad" },
+      }),
+    ).toThrow("not a valid HTTP field name");
+  });
 });
 
 describe("remoteMcp() credential auth — the Test action", () => {
-  it("reports the catalog the stored credential reaches", async () => {
+  it("reports the catalog the stored credential reaches, and closes its scope", async () => {
+    serveDownstream();
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    const ctx = credentialCtx(() => "stored-secret");
+
+    await expect(
+      connector.testCredential!("stored-secret", ctx),
+    ).resolves.toEqual({
+      ok: true,
+      message: "Connected — the downstream served 1 tool.",
+    });
+    // The scope is closed, not merely abandoned: reusing it is refused, which
+    // is what closeScope's tombstone does and nothing else does.
+    await expect(connector.listTools(ctx)).rejects.toThrow("scope ended");
+  });
+
+  it("reports a downstream that will not answer, and still closes its scope", async () => {
+    vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+    });
+    const ctx = credentialCtx(() => "stored-secret");
+
+    await expect(
+      connector.testCredential!("stored-secret", ctx),
+    ).resolves.toMatchObject({ ok: false });
+    await expect(connector.listTools(ctx)).rejects.toThrow("scope ended");
+  });
+
+  it("refuses to report on a candidate that is not what is saved", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,
       auth: { type: "credential" },
     });
 
+    // The route hands this hook the stored value, so the connect below tests
+    // the same string. A future route testing an unsaved candidate must be
+    // told no rather than quietly graded on the old value.
     await expect(
-      connector.testCredential!("stored-secret", credentialCtx(() => "stored-secret")),
+      connector.testCredential!("a-candidate", credentialCtx(() => "what-is-saved")),
     ).resolves.toEqual({
-      ok: true,
-      message: "Connected — the downstream served 1 tool.",
+      ok: false,
+      message:
+        "This connector tests the credential that is currently saved. Save " +
+        "the value first, then test it.",
     });
   });
+});
 
-  it("reports a downstream that will not answer", async () => {
-    vi.stubGlobal("fetch", async () => new Response("nope", { status: 500 }));
-    const connector = remoteMcp("down", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-    });
+describe("remoteMcp() unauthenticated status for a non-OAuth connector", () => {
+  it.each([
+    ["credential", { type: "credential" } as const],
+    [
+      "headers",
+      { type: "headers", headers: { Authorization: "Bearer stale" } } as const,
+    ],
+  ])("never offers a consent URL for %s auth", async (_shape, auth) => {
+    vi.stubGlobal("fetch", async () => new Response("no", { status: 401 }));
+    const connector = remoteMcp("down", { url: URL_UNDER_TEST, auth });
+    const ctx =
+      auth.type === "credential"
+        ? credentialCtx(() => "stored-secret")
+        : vaultlessCtx();
 
-    await expect(
-      connector.testCredential!("stored-secret", credentialCtx(() => "stored-secret")),
-    ).resolves.toMatchObject({ ok: false });
+    // A downstream 401 without an auth provider is an SDK HTTP failure, not an
+    // `UnauthorizedError`, so neither shape reaches the authRequired latch at
+    // all — and neither may hand back a URL to open, which is what the
+    // OAuth-only guard in `status()` protects if one ever does.
+    const status = await connector.status!(ctx);
+    expect(status).not.toHaveProperty("authorizationUrl");
+    expect(JSON.stringify(status)).not.toContain("stored-secret");
+    await connector.closeScope?.(ctx);
   });
 });
 
@@ -452,7 +633,11 @@ describe("remoteMcp() credential auth — cleartext destination", () => {
 });
 
 describe("remoteMcp() credential auth — through the deployment", () => {
-  it("reads the vault the registry hands it, and follows a rotation there", async () => {
+  // Each call builds a fresh context, so each gets its own request scope and
+  // its own connect — the digest path is not what reconnects here. What this
+  // asserts is that the registry hands the vault through, and that a value
+  // saved between two requests is the one the next request sends.
+  it("hands the vault through, so each request sends what is saved now", async () => {
     const captured = serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,
