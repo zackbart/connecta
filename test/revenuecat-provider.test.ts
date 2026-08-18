@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
   remoteMcp: vi.fn(),
 }));
 
-vi.mock("../src/connectors/remote-mcp.js", () => ({
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the constructor is stubbed. `withCredentialDefaults` is pure option
+  // shaping — part of what these tests assert the provider resolved — so it
+  // stays real.
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
   remoteMcp: mocks.remoteMcp,
 }));
 
@@ -162,6 +166,58 @@ describe("revenuecat()", () => {
     );
     expect(guide).toContain(
       "An empty or unexpected result means wrong connector, not missing data.",
+    );
+  });
+
+  it("takes the same single-project scope from an operator-managed key", () => {
+    const connector = revenuecat("bepresent_ios", {
+      purpose: "Subscription state for the BePresent iOS project",
+      auth: { type: "credential" },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "bepresent_ios",
+      expect.objectContaining({
+        title: "RevenueCat (single project)",
+        description:
+          "RevenueCat subscriptions and revenue (one project, static key) — Subscription state for the BePresent iOS project",
+        // The provider names the key; `Bearer sk_…` is RevenueCat's own form,
+        // so the framing default stands.
+        auth: {
+          type: "credential",
+          credential: expect.objectContaining({ label: "API v2 secret key" }),
+        },
+      }),
+    );
+    // Where the key came from changes nothing about scope, so the guide is the
+    // single-project one, not the account-wide one.
+    expect(guideOf(connector)).toContain(
+      "`list-projects` returns the one project this key can see",
+    );
+    expect(connectorGuideSummary(connector)).toBe(
+      "One project only: Subscription state for the BePresent iOS project",
+    );
+  });
+
+  it("lets a deployment override the slot copy it renders", () => {
+    revenuecat("bepresent_ios", {
+      purpose: "Subscription state for the BePresent iOS project",
+      auth: {
+        type: "credential",
+        credential: { label: "iOS project key" },
+        scheme: "Bearer",
+      },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "bepresent_ios",
+      expect.objectContaining({
+        auth: {
+          type: "credential",
+          credential: { label: "iOS project key" },
+          scheme: "Bearer",
+        },
+      }),
     );
   });
 

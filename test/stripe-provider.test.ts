@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
   remoteMcp: vi.fn(),
 }));
 
-vi.mock("../src/connectors/remote-mcp.js", () => ({
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the constructor is stubbed. `withCredentialDefaults` is pure option
+  // shaping — part of what these tests assert the provider resolved — so it
+  // stays real.
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
   remoteMcp: mocks.remoteMcp,
 }));
 
@@ -515,6 +519,64 @@ describe("stripe()", () => {
     ).toThrow(
       'stripe("billing") with headers auth requires mode "production" or "sandbox".',
     );
+  });
+
+  it("takes an operator-managed key and still requires a declared mode", () => {
+    const connector = stripe("billing", {
+      mode: "production",
+      purpose: "Organization billing",
+      auth: { type: "credential" },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "billing",
+      expect.objectContaining({
+        title: "Stripe (production)",
+        auth: {
+          type: "credential",
+          credential: expect.objectContaining({
+            label: "Secret or restricted API key",
+          }),
+        },
+      }),
+    );
+    // A static credential has one mode whether it came from the deployment or
+    // from /credentials, so it gets the fixed-mode guide, not the OAuth one.
+    expect(guideOf(connector)).toContain("Mode: production");
+    expect(guideOf(connector)).toContain("This is a PRODUCTION Stripe connection.");
+
+    expect(() =>
+      stripe("billing", {
+        purpose: "Organization billing",
+        auth: { type: "credential" },
+      } as unknown as Parameters<typeof stripe>[1]),
+    ).toThrow(
+      'stripe("billing") with headers auth requires mode "production" or "sandbox".',
+    );
+  });
+
+  it("cannot check a mode against a key it will never see", () => {
+    // The literal-header path asserts the key's prefix. An operator-managed
+    // credential has nothing to read at construction, so the declared mode
+    // stands alone rather than being guessed at or refused.
+    expect(() =>
+      stripe("sandboxed", {
+        mode: "sandbox",
+        purpose: "Rehearsal",
+        auth: { type: "credential" },
+      }),
+    ).not.toThrow();
+  });
+
+  it("refuses a connected account it cannot add a second header for", () => {
+    expect(() =>
+      stripe("connected", {
+        mode: "production",
+        purpose: "Connect platform billing",
+        connectedAccount: "acct_123",
+        auth: { type: "credential" },
+      }),
+    ).toThrow("Stripe-Account is a second static header");
   });
 
   it("rejects a connector-wide mode for OAuth at runtime", () => {

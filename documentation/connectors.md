@@ -294,3 +294,28 @@ server issuer discovered and validated by the SDK; see
 [storage and credentials](./storage-and-credentials.md#downstream-oauth).
 The callback route validates `state` before passing the complete callback query
 to the SDK so RFC 9207 `iss` validation is not lost.
+
+A remote MCP connector that authenticates with a static key has two ways to
+receive one. `{ type: "headers", headers }` bakes the literal value into the
+deployment file, which suits a secret the runtime already holds.
+`{ type: "credential" }` declares the slot instead and lets an operator paste
+the key at `/credentials`, where it is encrypted at rest and rotatable without
+a redeploy:
+
+```ts
+remoteMcp("revenuecat_bepresent", {
+  url: "https://mcp.revenuecat.ai/mcp",
+  auth: {
+    type: "credential",
+    credential: { label: "API v2 secret key" },
+  },
+});
+```
+
+Header name and framing are configurable — `header` defaults to
+`Authorization`, `scheme` to `Bearer`, `scheme: null` sends the value bare, and
+a `Basic` framing base64-encodes a `user:secret` pair. Every maintained hosted
+connection takes the shape through its existing `auth` option and fills in its
+own label and framing. The full behavior, including rotation and the empty-slot
+state, is in
+[storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).

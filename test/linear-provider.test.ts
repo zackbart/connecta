@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
   remoteMcp: vi.fn(),
 }));
 
-vi.mock("../src/connectors/remote-mcp.js", () => ({
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the constructor is stubbed. `withCredentialDefaults` is pure option
+  // shaping — part of what these tests assert the provider resolved — so it
+  // stays real.
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
   remoteMcp: mocks.remoteMcp,
 }));
 
@@ -176,6 +180,53 @@ describe("linear()", () => {
     }
     expect(guideOf(readOnly)).toContain("Read-only connection");
     expect(guideOf(readWrite)).toContain("Read-write connection");
+  });
+
+  it("frames an operator-managed API key the way Linear reads one", () => {
+    const connector = linear("automation_tracker", {
+      purpose: "Headless release reporting",
+      access: "read-only",
+      auth: { type: "credential" },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "automation_tracker",
+      expect.objectContaining({
+        url: LINEAR_MCP_ENDPOINTS["read-only"],
+        // A Linear personal API key rides `Authorization` bare — no `Bearer`.
+        auth: {
+          type: "credential",
+          credential: expect.objectContaining({ label: "Personal API key" }),
+          scheme: null,
+        },
+      }),
+    );
+    // The endpoint is what limits reach; the credential's provenance is not a
+    // routing fact, so the read-only guide is unchanged.
+    expect(guideOf(connector)).toContain("Read-only connection");
+  });
+
+  it("lets a deployment override the framing and the slot copy", () => {
+    linear("automation_tracker", {
+      purpose: "Headless release reporting",
+      access: "read-write",
+      auth: {
+        type: "credential",
+        credential: { label: "Workspace key" },
+        scheme: "Bearer",
+      },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "automation_tracker",
+      expect.objectContaining({
+        auth: {
+          type: "credential",
+          credential: { label: "Workspace key" },
+          scheme: "Bearer",
+        },
+      }),
+    );
   });
 
   it("supports API-key header auth and operator-supplied limits", () => {

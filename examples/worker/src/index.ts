@@ -123,6 +123,11 @@ function build(env: Env) {
         auth: {
           type: "headers",
           headers: { Authorization: `Bearer ${env.DOWNSTREAM_TOKEN}` },
+          // The vault-backed alternative for a downstream that authenticates
+          // with a static key: the operator pastes it at /credentials and
+          // rotates it there, so no Worker secret holds it.
+          //   type: "credential",
+          //   credential: { label: "Notion internal integration token" },
         },
       }),
       api("echo", {

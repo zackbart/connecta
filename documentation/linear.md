@@ -85,6 +85,24 @@ configuration. A personal API key carries the acting user's full workspace
 permissions, so pair it with `access: "read-only"` unless the deployment
 genuinely writes.
 
+The same key can arrive from `/credentials` instead, which is what a deployment
+with no secret store — or an operator who rotates keys without a redeploy —
+wants:
+
+```ts
+linear("automation_tracker", {
+  purpose: "Headless release reporting",
+  access: "read-only",
+  auth: { type: "credential" },
+});
+```
+
+The slot renders as "Personal API key" and Connecta sends the stored value bare
+in `Authorization`, the way Linear reads one; pass `credential` or `scheme` to
+override either. Until the operator saves a value the connector is present and
+reports `auth_required`. See
+[storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
+
 ## Safety classification
 
 The wrapper classifies Linear's documented `list_*`, `get_*`, and

@@ -20,15 +20,78 @@ import type {
   Connector,
   ConnectorCallAdmissionPolicy,
   ConnectorContext,
+  ConnectorCredentialConfig,
   ConnectorStatus,
   ConnectorUsageGuide,
+  CredentialTestResult,
   Logger,
   ToolDef,
 } from "../types.js";
 
+/**
+ * A static downstream credential the operator supplies at `/credentials`
+ * rather than the deployment baking into its source.
+ *
+ * The connector, its endpoint, and the credential *slot* stay declared in
+ * code; only the secret arrives through the operator route, exactly as for
+ * `api()`. One reserved `value` field, deliberately: a header is assembled
+ * from a name, a framing scheme, and one secret, and anything that needs two
+ * secrets composed into one header is a provider integration, not a proxy
+ * config ([#439](https://github.com/zackbart/connecta/issues/439)).
+ */
+interface RemoteMcpCredentialAuth {
+  type: "credential";
+  /**
+   * Operator-facing slot description rendered on `/credentials`. Defaults to
+   * `{ label: "API key" }`; a maintained provider passes the name the provider
+   * itself uses. Named `fields` are refused — this shape reads the reserved
+   * `value` field only.
+   */
+  credential?: ConnectorCredentialConfig;
+  /** Header the credential rides. Defaults to `Authorization`. */
+  header?: string;
+  /**
+   * Framing token placed before the value. Defaults to `"Bearer"`. `null` (or
+   * an empty string) sends the stored value verbatim, which is what Linear's
+   * personal API keys expect. A scheme whose last token is `Basic` declares
+   * HTTP Basic credentials: the stored `user:secret` is base64-encoded first,
+   * so `"Basic"` produces `Basic <base64>` and Mixpanel's documented
+   * `"Bearer Basic"` produces `Bearer Basic <base64>`.
+   */
+  scheme?: string | null;
+}
+
 export type RemoteMcpAuth =
   | { type: "headers"; headers: Record<string, string> }
+  | RemoteMcpCredentialAuth
   | { type: "oauth" };
+
+/**
+ * Apply a maintained provider's slot copy and header framing to credential
+ * auth the deployment left bare.
+ *
+ * A provider knows what its own key is called and how the endpoint expects it
+ * framed; a deployment that states either one keeps its answer. Every other
+ * auth shape passes through untouched, so a provider can hand this its whole
+ * `auth` option without branching first.
+ */
+export function withCredentialDefaults(
+  auth: RemoteMcpAuth,
+  defaults: {
+    credential: ConnectorCredentialConfig;
+    /** Provider framing; omit to leave the `Bearer` default in place. */
+    scheme?: string | null;
+  },
+): RemoteMcpAuth {
+  if (auth.type !== "credential") return auth;
+  return {
+    ...auth,
+    credential: auth.credential ?? defaults.credential,
+    ...(auth.scheme === undefined && defaults.scheme !== undefined
+      ? { scheme: defaults.scheme }
+      : {}),
+  };
+}
 
 export type RemoteMcpRedirectPolicy = "none" | "same-origin";
 
@@ -270,6 +333,45 @@ async function terminateSession(
   });
 }
 
+const encoder = new TextEncoder();
+
+/** Base64 of a UTF-8 string, Web-API only so the core still runs on workerd. */
+function base64Utf8(value: string): string {
+  let binary = "";
+  for (const byte of encoder.encode(value)) {
+    binary += String.fromCharCode(byte);
+  }
+  return btoa(binary);
+}
+
+/**
+ * Hex SHA-256 of a credential, used only to notice that a cached client
+ * connected with a value the vault no longer holds. WebCrypto rather than a
+ * `node:` hash: the whole core has to keep running unchanged on Workers.
+ */
+async function digestOf(value: string): Promise<string> {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", encoder.encode(value)),
+  );
+  let hex = "";
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
+ * Assemble the one header a credential-auth connector sends.
+ *
+ * A scheme ending in `Basic` names HTTP Basic credentials wherever a provider
+ * nests it, so the `user:secret` it frames is base64-encoded — that is what
+ * makes plain `Basic` and Mixpanel's `Bearer Basic` one rule instead of two.
+ */
+function credentialHeaderValue(scheme: string | null, value: string): string {
+  if (scheme === null) return value;
+  return /(?:^|\s)basic$/i.test(scheme)
+    ? `${scheme} ${base64Utf8(value)}`
+    : `${scheme} ${value}`;
+}
+
 function isLoopbackHost(hostname: string): boolean {
   return (
     hostname === "localhost" ||
@@ -418,6 +520,12 @@ interface ConnectionState {
   provider: KvOAuthProvider | null;
   connectedGeneration: string | null;
   /**
+   * Digest of the operator-managed credential the cached client connected
+   * with, or null for every other auth shape. The value itself is never held
+   * here: it lives in the connect attempt's local scope and nowhere else.
+   */
+  connectedCredentialDigest: string | null;
+  /**
    * One-way latch: set by closeScope and never cleared, so neither a late
    * connect nor a `reset()` can cache a client into a scope that is already
    * gone — that client would have no owner left to close it.
@@ -446,6 +554,27 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const isOauth = opts.auth?.type === "oauth";
   const logger = opts.logger ?? console;
 
+  const credentialAuth =
+    opts.auth?.type === "credential" ? opts.auth : undefined;
+  if (credentialAuth?.credential?.fields?.length) {
+    throw new Error(
+      `[connecta] connector "${id}" credential auth declares named fields; ` +
+        "this shape sends one secret in one header and reads the reserved " +
+        "`value` field only.",
+    );
+  }
+  const credentialConfig: ConnectorCredentialConfig = credentialAuth?.credential ?? {
+    label: "API key",
+  };
+  const credentialHeader = credentialAuth?.header?.trim() || "Authorization";
+  // `undefined` means "not stated" and takes the bearer default; `null` and
+  // `""` both mean "send the stored value verbatim", which is the shape a
+  // provider like Linear expects.
+  const credentialScheme =
+    credentialAuth === undefined || credentialAuth.scheme === undefined
+      ? "Bearer"
+      : (credentialAuth.scheme?.trim() ?? "") || null;
+
   // Check the destination scheme once at construction: buildTransport (and the
   // SDK's fetch) attach any static credentials to every request, so an http://
   // endpoint sends bearer tokens / API keys in cleartext. Loopback is exempt
@@ -459,7 +588,10 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         `[connecta] connector "${id}" url ${opts.url} is not https:// (and not loopback) — refusing to connect (requireHttps).`,
       );
     }
-    if (opts.auth?.type === "headers") {
+    // Both static shapes send a secret on every request; that an operator
+    // typed one into /credentials rather than a deployment file changes who
+    // owns it, not whether the wire carries it in the clear.
+    if (opts.auth?.type === "headers" || credentialAuth) {
       logger.warn(
         `[connecta] connector "${id}" sends static credentials to ${opts.url} over a non-https:// connection — those tokens will be transmitted in cleartext.`,
       );
@@ -483,6 +615,45 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
   }
   const operatorDisconnectedError = () => new OperatorDisconnectedError();
+
+  /**
+   * The credential slot is declared but the vault has nothing in it (or has no
+   * key to read it with). Deliberately the same `auth_required` code an absent
+   * OAuth grant produces: the agent's next move is `authorize_connector`
+   * either way, and that tool reads `connector.credential` to hand the
+   * operator `/credentials` instead of a consent URL.
+   */
+  class CredentialRequiredError extends ConnectorCallError {
+    constructor(message: string) {
+      super("auth_required", message);
+    }
+  }
+
+  /**
+   * Read this request's credential. Called before every connect and before
+   * trusting any cached client, so an operator's replacement is picked up
+   * without a redeploy. The value stays in the caller's local scope.
+   */
+  const readCredential = async (ctx: ConnectorContext): Promise<string> => {
+    if (!ctx.credential) {
+      throw new CredentialRequiredError(
+        `Connector "${id}" needs an operator-managed credential, but ` +
+          "credential storage is not configured. Set " +
+          "credentials.encryptionKey and redeploy.",
+      );
+    }
+    // A stored-shape mismatch already arrives as a typed auth_required from
+    // the registry's accessor; nothing to reclassify here.
+    const value = (await ctx.credential.get())?.trim();
+    if (!value) {
+      throw new CredentialRequiredError(
+        `Connector "${id}" has no stored credential — call ` +
+          `authorize_connector({ connector: "${id}" }) and follow the ` +
+          "operator handoff it returns.",
+      );
+    }
+    return value;
+  };
 
   const scopeEndedError = () =>
     new Error(`Connector "${id}" scope ended during connection.`);
@@ -536,6 +707,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authRequired: false,
         provider: null,
         connectedGeneration: null,
+        connectedCredentialDigest: null,
         closed: false,
       };
       states.set(scope, state);
@@ -565,6 +737,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   const buildTransport = (
     ctx: ConnectorContext,
     provider: KvOAuthProvider | null,
+    /** This attempt's vault value, for credential auth only. Never retained. */
+    credentialValue: string | null = null,
   ): Transport => {
     if (opts._transportFactory) return opts._transportFactory(ctx);
     const url = new URL(opts.url);
@@ -576,7 +750,16 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       });
     }
     const headers =
-      opts.auth?.type === "headers" ? opts.auth.headers : undefined;
+      opts.auth?.type === "headers"
+        ? opts.auth.headers
+        : credentialAuth && credentialValue !== null
+          ? {
+              [credentialHeader]: credentialHeaderValue(
+                credentialScheme,
+                credentialValue,
+              ),
+            }
+          : undefined;
     return new StreamableHTTPClientTransport(url, {
       ...(headers ? { requestInit: { headers } } : {}),
       fetch: guardedFetch,
@@ -591,6 +774,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state.authRequired = false;
     state.provider = null;
     state.connectedGeneration = null;
+    state.connectedCredentialDigest = null;
     // `closed` is deliberately not cleared — see ConnectionState.
   };
 
@@ -638,6 +822,35 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         reset(state);
       }
     }
+    // The static-credential counterpart of the epoch read above, and
+    // deliberately beside it: the vault is read before any cached client is
+    // trusted, so an operator's rotation on /credentials takes effect on the
+    // next call rather than the next deploy. Compared by digest — the
+    // plaintext lives in this function's scope and never reaches `state`.
+    let credentialValue: string | null = null;
+    let credentialDigest: string | null = null;
+    if (credentialAuth) {
+      credentialValue = await readCredential(ctx);
+      credentialDigest = await digestOf(credentialValue);
+      if (
+        state.client &&
+        state.connectedCredentialDigest !== null &&
+        state.connectedCredentialDigest !== credentialDigest
+      ) {
+        if (state.closed) throw scopeEndedError();
+        const connecting = state.connecting;
+        const client = state.client;
+        const transport = state.transport;
+        reset(state);
+        void connecting?.catch(() => {});
+        try {
+          if (client) await client.close();
+          else await transport?.close();
+        } catch {
+          // The rotated-away client is discarded either way.
+        }
+      }
+    }
     if (state.closed) throw scopeEndedError();
     if (state.client) return;
     if (!state.connecting) {
@@ -681,7 +894,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             inputRequired: { autoFulfill: false },
           },
         );
-        const t = buildTransport(ctx, provider);
+        const t = buildTransport(ctx, provider, credentialValue);
         if (!ownsAttempt()) await abandon(t);
         state.transport = t;
         try {
@@ -714,6 +927,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (!ownsAttempt()) await abandon(c);
           state.client = c;
           state.connectedGeneration = genAtStart;
+          state.connectedCredentialDigest = credentialDigest;
           state.authRequired = false;
         } catch (err) {
           // Only a real 401/UnauthorizedError means auth is the problem — a
@@ -782,6 +996,39 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ? { callAdmission: opts.callAdmission }
       : {}),
     ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
+    // Declaring the slot is what makes the rest of the operator surface work:
+    // /credentials renders it, the shape check compares against it, and
+    // authorize_connector reads it to return the operator handoff rather than
+    // an OAuth URL this connector has none of.
+    ...(credentialAuth
+      ? {
+          credential: credentialConfig,
+          /**
+           * The honest test for a proxy is the catalog: connect with the
+           * stored value and count what the downstream serves. Nothing else
+           * here is connecta's to verify — the credential's scope, project,
+           * and mode are the provider's answer, not ours.
+           */
+          testCredential: async (
+            _value: string,
+            ctx: ConnectorContext,
+          ): Promise<CredentialTestResult> => {
+            try {
+              const tools = await connector.listTools(ctx);
+              return {
+                ok: true,
+                message: `Connected — the downstream served ${tools.length} tool${tools.length === 1 ? "" : "s"}.`,
+              };
+            } catch (err) {
+              return { ok: false, message: msg(err) };
+            } finally {
+              // A test owns the scope it just opened; leaving the session for
+              // the downstream to age out is not this button's to spend.
+              await connector.closeScope?.(ctx);
+            }
+          },
+        }
+      : {}),
 
     // `tools/list` is cursor-paginated: the server chooses the page size and
     // signals "there is more" with a `nextCursor`, which the SDK's
@@ -982,6 +1229,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.connecting = null;
       state.authRequired = false;
       state.connectedGeneration = null;
+      state.connectedCredentialDigest = null;
 
       // Ask the downstream to drop its session first — closing only aborts our
       // side, and the DELETE that frees the server's rides on the very
@@ -1004,12 +1252,25 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         await ensureConnected(ctx, state);
         return { state: "ok" };
       } catch (err) {
+        // An empty slot, or one with no vault behind it, is reported the way a
+        // missing grant is: present, unauthenticated, and repairable — never a
+        // boot failure and never a silently absent connector.
+        if (err instanceof CredentialRequiredError) {
+          return { state: "auth_required", message: err.message };
+        }
         if (state.authRequired) {
-          const url = await getProvider(ctx, state).pendingAuthorizationUrl();
+          // Only an OAuth connector has a pending consent URL to offer. A
+          // credential connector's downstream 401 is repaired on /credentials,
+          // so do not reach into OAuth storage to look for one.
+          const url = isOauth
+            ? await getProvider(ctx, state).pendingAuthorizationUrl()
+            : undefined;
           return {
             state: "auth_required",
             ...(url !== undefined ? { authorizationUrl: url } : {}),
-            message: "Authorization required — open the URL to connect.",
+            message: credentialAuth
+              ? "Authorization required — the downstream rejected this connector's stored credential."
+              : "Authorization required — open the URL to connect.",
           };
         }
         if (err instanceof OperatorDisconnectedError) {

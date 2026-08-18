@@ -310,6 +310,11 @@ handoff:
   declared credential label and field names/guidance; or
 - `unavailable`: an honest deployment/configuration message.
 
+The class follows what the connector declares, not how it was authored: a
+`remoteMcp()` connection using `auth: { type: "credential" }` declares a slot
+and no OAuth flow, so it lands in `operator_config` beside every `api()`
+credential.
+
 The tool accepts no secret. `force` applies only to OAuth and may discard its
 stored grant before restarting consent. Static credential values are written
 only through the same-origin, Clerk-operator credential route. After OAuth
