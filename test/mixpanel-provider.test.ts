@@ -100,9 +100,19 @@ describe("mixpanel()", () => {
     expect(guideOf(connector)).toContain(
       "Insights, funnels, and retention answer aggregate questions",
     );
-    expect(guideOf(connector)).toContain("no per-`distinct_id` activity tool");
+    expect(guideOf(connector)).toContain("no per-`distinct_id` event timeline");
+    expect(guideOf(connector)).toContain("`Get-User-Replays-Data` covers");
+    expect(guideOf(connector)).toContain(
+      "tell the user the question is out of reach here",
+    );
     expect(guideOf(connector)).toContain(
       "`false` on a boolean property may be an absent property",
+    );
+    expect(guideOf(connector)).toContain(
+      "Confirm the property is present with `List-Properties` or `Get-Property-Values`",
+    );
+    expect(guideOf(connector)).toContain(
+      "say when a conclusion rests on that ambiguity",
     );
     expect(guideOf(connector)).toContain(
       "Flatten to one row per complete breakdown combination inside `execute_code`",
