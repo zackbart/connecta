@@ -1,5 +1,6 @@
 import {
   remoteMcp,
+  withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
@@ -34,7 +35,11 @@ export interface MixpanelOptions {
    * rather than a convenient one.
    */
   region?: MixpanelRegion;
-  /** OAuth by default; static headers support Mixpanel service accounts. */
+  /**
+   * OAuth by default; static headers support Mixpanel service accounts, and
+   * `{ type: "credential" }` takes the same service account as an
+   * operator-managed `username:secret` that Connecta frames for the endpoint.
+   */
   auth?: RemoteMcpAuth;
   /** Account-specific conventions appended to the maintained provider guide. */
   instructions?: string;
@@ -273,7 +278,19 @@ export function mixpanel(id: string, options: MixpanelOptions): Connector {
     // an agent must not get wrong between two Mixpanel connections.
     title: options.title ?? `Mixpanel (${region})`,
     description: `Mixpanel product analytics (${REGION_COPY[region]} residency) — ${purpose}`,
-    auth: options.auth ?? { type: "oauth" },
+    // Mixpanel's beta service-account scheme is deliberately not ordinary HTTP
+    // Basic: the endpoint wants `Bearer Basic <base64(user:secret)>`. The
+    // operator therefore pastes the pair, not an encoded blob, and Connecta
+    // does the framing — the same shaping the maintainer drift check applies.
+    auth: withCredentialDefaults(options.auth ?? { type: "oauth" }, {
+      credential: {
+        label: "Service account",
+        description:
+          "A Mixpanel service account as `username:secret`. Connecta encodes and frames it the way the hosted endpoint requires; it is stored encrypted and never displayed.",
+        placeholder: "username:secret",
+      },
+      scheme: "Bearer Basic",
+    }),
     requireHttps: true,
     usageGuide: {
       content: usageGuide(purpose, region, options.instructions),

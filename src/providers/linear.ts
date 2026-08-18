@@ -1,5 +1,6 @@
 import {
   remoteMcp,
+  withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
@@ -45,7 +46,13 @@ export interface LinearOptions {
    * ([#342](https://github.com/zackbart/connecta/issues/342)).
    */
   access: LinearAccess;
-  /** OAuth by default; static headers support a Linear personal API key. */
+  /**
+   * OAuth by default. A Linear personal API key works either as a literal
+   * header or as an operator-managed credential (`{ type: "credential" }`).
+   * Linear's MCP documentation asks for `Authorization: Bearer <yourtoken>`
+   * for both API keys and OAuth tokens (https://linear.app/docs/mcp), which is
+   * the framing default, so the credential shape needs no `scheme` of its own.
+   */
   auth?: RemoteMcpAuth;
   /** Workspace-specific conventions appended to the maintained provider guide. */
   instructions?: string;
@@ -256,7 +263,18 @@ export function linear(id: string, options: LinearOptions): Connector {
       access === "read-only"
         ? `Linear issue tracking and project planning (read-only) — ${purpose}`
         : `Linear issue tracking and project planning — ${purpose}`,
-    auth: options.auth ?? { type: "oauth" },
+    // Linear's MCP endpoint takes an API key the same way it takes an OAuth
+    // token — `Authorization: Bearer <yourtoken>` — so only the slot copy is
+    // provider-specific and the bearer framing default stands. The bare-header
+    // convention belongs to Linear's GraphQL API, not to this endpoint.
+    auth: withCredentialDefaults(options.auth ?? { type: "oauth" }, {
+      credential: {
+        label: "Personal API key",
+        description:
+          "A Linear personal API key. It carries the issuing user's full workspace access and is stored encrypted; the read-only endpoint still limits what it can reach.",
+        placeholder: "lin_api_…",
+      },
+    }),
     requireHttps: true,
     usageGuide: {
       content: usageGuide(purpose, access, options.instructions),

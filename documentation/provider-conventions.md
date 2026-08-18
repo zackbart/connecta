@@ -412,33 +412,49 @@ retries.
 
 OAuth per connector instance, stored in connector-scoped storage, is the
 default. The provider's own headless credential — a personal API key, a
-restricted key, a service account — is supported through explicit `headers`
-auth, documented as a secret rather than configuration, and paired with the
-narrowest mode the deployment can use. `requireHttps` is set. Recovery from an
-expired authorization is the ordinary `auth_required` → `authorize_connector`
-route.
+restricted key, a service account — is supported two ways: explicit `headers`
+auth, documented as a secret rather than configuration, and `{ type:
+"credential" }`, which declares an operator slot and takes the same secret from
+`/credentials` instead. Either way it is paired with the narrowest mode the
+deployment can use, and the framing matches the provider's *published* contract
+for the MCP endpoint — not a convention borrowed from that provider's other
+APIs, and not this repository's earlier example, which is the same claim wearing
+a circle. `requireHttps` is set. Recovery from an expired authorization is the
+ordinary `auth_required` → `authorize_connector` route, which returns the
+consent URL for OAuth and the `/credentials` handoff for a declared slot.
 
 *Why:* one route back from an expired credential is what keeps a failed call
 from becoming an abandoned task. *Cost:* wrong-tool selection.
 
-### P10 — There is no credential test; the equivalent check happens at construction
+### P10 — Nothing probes a credential unasked; a declared slot may be tested on request
 
-A proxy declares no operator credential slot and implements neither
-`testCredential` nor `testCredentials`. `remoteMcp()` has no `credential`
-option, and neither shape of proxy credential is vault-managed: OAuth lives in
+A proxy declares an operator credential slot exactly when its auth is `{ type:
+"credential" }`, and then it inherits H12 whole
+([#439](https://github.com/zackbart/connecta/issues/439)). The other two shapes
+declare no slot and hold nothing for the credentials page: OAuth lives in
 connector-scoped storage and is exercised by the authorization flow itself,
-while a headless key arrives as deployment configuration in `headers`, so there
-is nothing for the operator credentials page to hold or test. H12's guarantee is
-still owed, and a proxy pays it in two other places: construction throws when a
-recognizable credential contradicts the declared mode (P4), and a dead or
-revoked credential fails loudly at use as `auth_required` with the
-`authorize_connector` route attached (P9). Connecta never probes a downstream to
-see whether a credential is still alive — that shape is `removed` in the ethos
-([#179](https://github.com/zackbart/connecta/issues/179)). A provider that later
-does take a vault-managed secret inherits H12 whole.
+while a `headers` key arrives as deployment configuration. H12 is owed in every
+shape, and a proxy pays it in two places that do not depend on a slot:
+construction throws when a recognizable credential contradicts the declared mode
+(P4) — a check a vault-managed key cannot get, because there is nothing in the
+deployment file to read — and a dead, revoked, or absent credential fails loudly
+at use as `auth_required` with the `authorize_connector` route attached (P9).
+
+`testCredential` exists only behind the operator-pressed Test action on
+`/credentials`, and only for a declared slot. It connects with the stored value
+and reports how many tools the downstream served, which is the whole honest
+check for a proxy: which account, project, or mode a key reaches is the
+provider's answer, not Connecta's. That is not the shape
+[#179](https://github.com/zackbart/connecta/issues/179) removed. What was
+removed is the *unasked* probe — a liveness call every deployment pays on a
+schedule or at startup to answer a question only a misconfigured one has. A
+human clicking Test has asked, `api()` has had that button since the vault
+existed, and nothing here probes on its own: no timer, no warmup, no check on
+the read path.
 
 *Why:* an unasked-for liveness probe spends a call on every deployment to answer
-a question only a misconfigured one has. *Cost:* result size.
+a question only a misconfigured one has; a requested one spends a call the
+person requesting it chose. *Cost:* result size.
 
 ### P11 — Connecta classifies the transport; the downstream owns the tool error
 
@@ -666,8 +682,8 @@ than by reading:
 | P4 | endpoint or mode option exists, with the documented default (or no default, where none is safe) |
 | P5 | reads and writes are named lists; an unlisted tool resolves to not-read-only; a reviewed destructive name beats a contradictory `readOnlyHint: true` |
 | P6, P8 | the guide contains the catalog-varies note and the id-resolution rule |
-| P9 | `auth` defaults to OAuth and `requireHttps` is set |
-| P10 | no `credential`, `testCredential`, or `testCredentials` on the wrapper; the mode/key contradiction throws at construction instead |
+| P9 | `auth` defaults to OAuth and `requireHttps` is set; a credential-auth shape frames the key the way the provider's MCP documentation does |
+| P10 | a `credential` slot exactly when auth is `{ type: "credential" }`; `testCredential` runs only from the operator's Test action, never on a timer or a read path; the mode/key contradiction still throws at construction |
 | P11 | an authorization failure surfaces as `auth_required`; a downstream tool error is returned unchanged, with no code chosen from its prose |
 | P12 | a declared budget matches a citable documented limit, or the absence is justified in the guide |
 | P13 | classification lists are maintained in one place per provider and built into the manifest the wrapper classifies from, so the drift check compares against the same fact the caller is served |

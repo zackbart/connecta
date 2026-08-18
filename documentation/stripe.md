@@ -95,12 +95,32 @@ Use a restricted key, not a secret key, and scope it to the operations the
 agent actually needs; Stripe's own guidance is to "limit your agent's access to
 exactly the functionality it requires". Keep it in the runtime's secret store.
 
+The same key can come from `/credentials` instead:
+
+```ts
+stripe("stripe_sandbox", {
+  mode: "sandbox",
+  purpose: "Automated billing rehearsal",
+  auth: { type: "credential" },
+});
+```
+
+`mode` is required either way — a static key answers for exactly one
+environment and cannot report which. The literal-header form is checked against
+the key's `_live_`/`_test_` prefix at construction; an operator-managed key is
+not in the deployment file to read, so the declared mode stands alone and a key
+pointed at the other environment fails at Stripe. Declare the mode carefully:
+that check is the one guard Connecta can offer, and this shape does not get it.
+See
+[storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
+
 Organization accounts in one OAuth session are not Stripe Connect connected
 accounts. Connect platforms can act as a connected account with
 `connectedAccount`, which adds Stripe's documented `Stripe-Account` header at
 connector construction. Stripe does not support OAuth for connected-account
-calls, so this requires a restricted key through `headers` auth and throws
-otherwise:
+calls, and `Stripe-Account` is a second header beside the credential's own,
+which the operator-managed shape does not assemble — so this requires a
+restricted key through `headers` auth and throws otherwise:
 
 ```ts
 stripe("merchant_42", {

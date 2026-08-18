@@ -80,6 +80,26 @@ connectors: [
 ]
 ```
 
+Neither key has to be a runtime secret. Declare the slot instead and each
+connector's key is pasted, tested, and rotated on `/credentials`:
+
+```ts
+connectors: [
+  revenuecat("bepresent_ios", {
+    purpose: "Subscription state for the BePresent iOS project",
+    auth: { type: "credential", credential: { label: "API v2 secret key" } },
+  }),
+  revenuecat("biblescroll", {
+    purpose: "Subscription state for the BibleScroll project",
+    auth: { type: "credential", credential: { label: "API v2 secret key" } },
+  }),
+]
+```
+
+Two ids, two slots, two single-project catalogs — the `credential` option is
+optional, and omitting it gives the same "API v2 secret key" label. See
+[storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
+
 That is config-as-code doing what an account model would otherwise do: one
 credential per connector, each with its own catalog, storage namespace, health,
 and admission counters. The two share a title, because Connecta cannot know
@@ -116,7 +136,9 @@ Keys are prefixed `sk_`, are issued read-only or write-enabled, and can be
 revoked at any time by a project Admin. RevenueCat's setup guidance is to "use
 a write-enabled key if you plan to create/modify resources"; "a read-only key
 works if you only need to view data". Keep the key in the runtime's secret
-store, never in the deployment file.
+store, never in the deployment file — or declare
+`auth: { type: "credential" }` and let the operator hold it in the vault
+instead, which is the shape the two-project example above uses.
 
 **Connecta does not filter writes for a read-only key.** It has no way to tell
 which kind a key is without spending a call, so every write in the catalog is

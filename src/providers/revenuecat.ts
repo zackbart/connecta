@@ -1,5 +1,6 @@
 import {
   remoteMcp,
+  withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
@@ -30,7 +31,9 @@ export interface RevenueCatOptions {
   purpose: string;
   /**
    * OAuth by default; static headers support a RevenueCat API v2 secret key
-   * as `Authorization: Bearer sk_…`.
+   * as `Authorization: Bearer sk_…`. `{ type: "credential" }` is the same
+   * single-project scope with the key pasted at `/credentials` instead — which
+   * is what two projects on two keys wants, since each is its own connector.
    */
   auth?: RemoteMcpAuth;
   /** Project-specific conventions appended to the maintained provider guide. */
@@ -362,8 +365,18 @@ export function revenuecat(id: string, options: RevenueCatOptions): Connector {
   if (!purpose) {
     throw new Error("revenuecat() requires a non-empty project purpose.");
   }
-  const auth = options.auth ?? { type: "oauth" };
-  const scoped = auth.type === "headers";
+  const auth = withCredentialDefaults(options.auth ?? { type: "oauth" }, {
+    credential: {
+      label: "API v2 secret key",
+      description:
+        "A RevenueCat API v2 secret key. It reaches exactly one project, which is why two projects are two connectors; it is stored encrypted and never displayed.",
+      placeholder: "sk_…",
+    },
+  });
+  // Both static shapes reach one project. Where the key came from — the
+  // deployment file or the operator page — changes nothing an agent must know
+  // about scope, so the title, description, and guide follow the scope alone.
+  const scoped = auth.type !== "oauth";
   const connector = remoteMcp(id, {
     url: REVENUECAT_MCP_ENDPOINT,
     // The scope shape rides the title because browse-time discovery renders

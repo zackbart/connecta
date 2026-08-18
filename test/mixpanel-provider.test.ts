@@ -6,7 +6,11 @@ const mocks = vi.hoisted(() => ({
   remoteMcp: vi.fn(),
 }));
 
-vi.mock("../src/connectors/remote-mcp.js", () => ({
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  // Only the constructor is stubbed. `withCredentialDefaults` is pure option
+  // shaping — part of what these tests assert the provider resolved — so it
+  // stays real.
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
   remoteMcp: mocks.remoteMcp,
 }));
 
@@ -123,6 +127,31 @@ describe("mixpanel()", () => {
     expect(guideOf(connector)).not.toContain("+## Account instructions");
     expect(guideOf(connector)).toContain(
       "Use project 42 unless the request names another project.",
+    );
+  });
+
+  it("frames an operator-managed service account as Mixpanel documents it", () => {
+    mixpanel("eu_analytics", {
+      purpose: "EU product reporting",
+      region: "eu",
+      auth: { type: "credential" },
+    });
+
+    expect(mocks.remoteMcp).toHaveBeenCalledWith(
+      "eu_analytics",
+      expect.objectContaining({
+        url: MIXPANEL_MCP_ENDPOINTS.eu,
+        // The operator pastes `username:secret`; Connecta encodes it and sends
+        // the beta scheme's `Bearer Basic` framing.
+        auth: {
+          type: "credential",
+          credential: expect.objectContaining({
+            label: "Service account",
+            placeholder: "username:secret",
+          }),
+          scheme: "Bearer Basic",
+        },
+      }),
     );
   });
 

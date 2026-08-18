@@ -50,6 +50,25 @@ password, not ordinary configuration. Mixpanel currently labels service-account
 MCP authentication beta. Prefer OAuth unless the deployment is intentionally
 headless.
 
+The same service account can arrive from `/credentials` instead, and there the
+operator pastes the readable pair rather than an encoded blob:
+
+```ts
+mixpanel("automation_analytics", {
+  purpose: "Headless release-health reporting",
+  auth: { type: "credential" },
+});
+```
+
+The slot renders as "Service account" and takes `username:secret`. Connecta
+base64-encodes it and sends Mixpanel's documented `Bearer Basic` framing, so the
+operator never has to encode anything by hand. **The two paths take different
+strings:** the `headers` example above wants the already-encoded blob
+(`echo -n "username:secret" | base64`), and this one wants the plaintext pair.
+Migrating from one to the other means decoding, not copying. Until a value is
+saved the connector is present and reports `auth_required`. See
+[storage and credentials](./storage-and-credentials.md#a-remote-mcp-connectors-static-credential).
+
 ## Conditional input contracts
 
 Mixpanel's hosted descriptions enforce three cross-field conditions that its

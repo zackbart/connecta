@@ -1,5 +1,6 @@
 import {
   remoteMcp,
+  withCredentialDefaults,
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
@@ -32,9 +33,15 @@ export interface StripeOAuthOptions extends StripeCommonOptions {
   connectedAccount?: never;
 }
 
-/** Static credentials have one fixed mode, including Stripe Connect calls. */
+/**
+ * Static credentials have one fixed mode, including Stripe Connect calls.
+ *
+ * Both static shapes belong here: a key the deployment supplies as a literal
+ * header, and one the operator pastes at `/credentials`. Neither can discover
+ * its own mode — a restricted key answers for exactly one — so both declare it.
+ */
 export interface StripeHeaderOptions extends StripeCommonOptions {
-  auth: Extract<RemoteMcpAuth, { type: "headers" }>;
+  auth: Exclude<RemoteMcpAuth, { type: "oauth" }>;
   mode: StripeMode;
   /** Act as one Connect account by sending Stripe's `Stripe-Account` header. */
   connectedAccount?: string;
@@ -162,7 +169,14 @@ function assertModeMatchesKey(
 }
 
 function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
-  const auth = options.auth ?? { type: "oauth" };
+  const auth = withCredentialDefaults(options.auth ?? { type: "oauth" }, {
+    credential: {
+      label: "Secret or restricted API key",
+      description:
+        "A Stripe secret or restricted API key for this connector's declared mode. Stripe sends it as a bearer token; it is stored encrypted and never displayed.",
+      placeholder: "sk_… or rk_…",
+    },
+  });
   const connectedAccount = options.connectedAccount?.trim();
   if (connectedAccount === undefined || connectedAccount === "") return auth;
   if (!connectedAccount.startsWith("acct_")) {
@@ -170,10 +184,20 @@ function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
       `stripe("${id}") connectedAccount must be a Stripe account id ("acct_...").`,
     );
   }
-  if (auth.type !== "headers") {
+  if (auth.type === "oauth") {
     throw new Error(
       `stripe("${id}") cannot reach a connected account over OAuth; Stripe ` +
         `requires a restricted API key for Stripe-Account calls.`,
+    );
+  }
+  if (auth.type === "credential") {
+    // `Stripe-Account` is a second header beside the credential's own, and the
+    // credential shape assembles exactly one. A Connect connector therefore
+    // still takes its restricted key as a literal header.
+    throw new Error(
+      `stripe("${id}") cannot reach a connected account with an ` +
+        `operator-managed credential; Stripe-Account is a second static ` +
+        `header, so declare auth: { type: "headers" } for this connector.`,
     );
   }
   return {
@@ -278,11 +302,16 @@ export function stripe(id: string, options: StripeOptions): Connector {
       `stripe("${id}") cannot declare a connector-wide mode for OAuth; Stripe returns mode with each account.`,
     );
   }
-  if (auth.type === "headers" && mode !== "production" && mode !== "sandbox") {
+  if (auth.type !== "oauth" && mode !== "production" && mode !== "sandbox") {
     throw new Error(
-      `stripe("${id}") with headers auth requires mode "production" or "sandbox".`,
+      `stripe("${id}") with headers or credential auth requires mode ` +
+        `"production" or "sandbox".`,
     );
   }
+  // Only a literal header can be inspected. An operator-managed credential is
+  // not readable at construction — there is nothing in the deployment file to
+  // read — so the declared mode stands alone, and a key pointed at the other
+  // one is Stripe's own refusal to report.
   if (auth.type === "headers") {
     assertModeMatchesKey(id, mode as StripeMode, auth);
   }
