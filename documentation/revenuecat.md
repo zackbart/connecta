@@ -135,8 +135,8 @@ authorization problem.
 RevenueCat's
 [tool reference](https://www.revenuecat.com/docs/tools/mcp/tools-reference),
 read on **2026-08-18**, documents ninety-five tools in a Read/Write table.
-Ninety-four carry an access column and are classified here: **50 read-only, 16
-additive writes, 28 destructive writes.**
+Ninety-four carry an access column and are classified here: **50 read-only, 15
+additive writes, 29 destructive writes.**
 
 Reads are every `Read` row, verbatim — the nine project and app reads, the four
 product reads, the entitlement, offering, targeting, paywall, customer, virtual
@@ -166,9 +166,11 @@ beside the row:
 | `create-paywall-ai` | additive | starts an async task that creates a paywall; every existing one is left alone |
 | `edit-paywall-ai` | destructive | starts an async task that rewrites a draft that already exists |
 
-`create-webhook-integration` deserves a sentence too: it "starts delivering
-events", which sounds consequential, but no existing integration changes and
-`delete-webhook-integration` is the destructive half. Additive.
+`create-webhook-integration` deserves a sentence too. No existing integration
+changes, so the verb reads additive — but with filters omitted the new one
+"starts delivering" every customer event in the project to a URL the caller
+typed. Customer data leaving the account is the `create_refund` argument again:
+filed destructive on consequence, so the approval copy says what is at stake.
 
 **`render-paywall-screenshot` is deliberately unclassified.** RevenueCat's
 reference gives it no access column at all, so no release has reviewed what it

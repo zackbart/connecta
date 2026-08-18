@@ -228,7 +228,14 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["publish-paywall", "destructive"],
   ["unpublish-paywall", "destructive"],
 
-  // Customers and subscriptions
+  // Customers and subscriptions. Neither verb is in the mass rule and neither
+  // removes anything, so the file's own criterion would read them additive.
+  // They are destructive on consequence, the way `create_refund` is in
+  // `stripe.ts`: `assign-customer-offering` overrides which offering a live
+  // customer's app serves, and `grant-customer-entitlement` opens paid access
+  // to a real person without a store purchase (the promotional subscription it
+  // creates is the mechanism, not the point). Both change what a customer
+  // gets today, and both deserve the destructive approval copy.
   ["assign-customer-offering", "destructive"],
   ["grant-customer-entitlement", "destructive"],
 
@@ -239,9 +246,13 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["update-virtual-currency", "destructive"],
 
   // Integrations and webhooks
-  // A new integration that "starts delivering events" is still a new object:
-  // no existing integration changes, and deleting it is the destructive half.
-  ["create-webhook-integration", "additive"],
+  // A new integration is a new object, but one that "starts delivering
+  // RevenueCat events to the given url" — with filters omitted, every customer
+  // event in the project, to a URL the caller typed. That is customer data
+  // leaving the account on consequence, which is the `create_refund` argument
+  // again: the verb says additive, the effect says destructive, and the
+  // approval copy should say the latter.
+  ["create-webhook-integration", "destructive"],
   ["delete-webhook-integration", "destructive"],
   ["update-webhook-integration", "destructive"],
 
@@ -275,7 +286,7 @@ export const REVENUECAT_VETTED_CATALOG = vettedCatalog({
   writes: WRITE_TOOLS,
 });
 
-/** The catalog's summary bound; a longer declared value throws (`src/skills.ts`). */
+/** The catalog's summary bound; a longer declared value throws (`src/registry.ts`). */
 const SUMMARY_BUDGET = 120;
 
 /**
@@ -298,6 +309,7 @@ function sharedUsageGuide(): string {
 - Resolve ids before acting; never guess one. \`list-projects\` yields the \`project_id\` every project-scoped call takes. \`list-apps\`, \`list-products\`, \`list-entitlements\`, \`list-offerings\`, \`list-paywalls\`, \`list-audiences\`, and \`list-customers\` yield the ids their \`get-\`, \`update-\`, \`archive-\`, and \`delete-\` counterparts expect. A plausible-looking id belongs to another project or to nobody.
 - Customers are addressed by the app user id your SDK set, not by an internal key. Find one with \`list-customers\` before \`get-customer\`, and carry the id it returned unchanged.
 - Customer and subscription objects are large, and a customer's history is larger. Page with the cursor the list returned rather than raising the page size, and reduce inside \`execute_code\` — select the fields the question needs and return those, not the whole object.
+- Whether a customer should have access is \`gives_access\` on each subscription from \`list-subscriptions\`, which RevenueCat calls the authoritative flag. \`status\` and \`expires_date\` describe the store-side state and disagree with it during grace periods, billing retries, and promotional grants — answer access questions from \`gives_access\` and say which subscription it came from.
 - \`get-chart-data\` is the metrics path: read \`get-chart-options-schema\` for the chart you want before calling it, rather than guessing an option name. \`get-overview-metrics\` and \`get-revenue-metric\` answer the summary questions in one call.
 - \`create-paywall-ai\`, \`edit-paywall-ai\`, and \`set-product-store-state\` are asynchronous. They return a task or operation id; poll it with \`get-paywall-ai-task\` or \`get-product-store-state-operation\` rather than assuming the work finished when the call returned.
 - This connection's tool list is not a fixed set. RevenueCat gates parts of its MCP catalog by plan, platform, and beta enrollment — paywall AI editing, benchmarks, experiments, virtual currencies, and the account-billing tools are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.

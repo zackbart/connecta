@@ -221,6 +221,8 @@ describe("revenuecat()", () => {
     );
     expect(guide).toContain("not a fixed set");
     expect(guide).toContain("reduce inside `execute_code`");
+    expect(guide).toContain("`gives_access` on each subscription");
+    expect(guide).toContain("answer access questions from `gives_access`");
     expect(guide).toContain("Page with the cursor the list returned");
     expect(guide).toContain("get-paywall-ai-task");
     expect(guide).toContain("get-product-store-state-operation");
@@ -268,8 +270,8 @@ describe("revenuecat()", () => {
     // which 94 carry an access column.
     expect(counts).toEqual({
       "read-only": 50,
-      additive: 16,
-      destructive: 28,
+      additive: 15,
+      destructive: 29,
     });
     expect(verdicts.size).toBe(94);
     expect(verdicts.has("render-paywall-screenshot")).toBe(false);
@@ -290,10 +292,14 @@ describe("revenuecat()", () => {
     expect(verdictFor("attach-products-to-package")).toBe("additive");
     expect(verdictFor("duplicate-paywall")).toBe("additive");
     expect(verdictFor("create-paywall-ai")).toBe("additive");
-    expect(verdictFor("create-webhook-integration")).toBe("additive");
     // Destructive despite the verb: each overwrites state that already exists.
     expect(verdictFor("create-product-prices")).toBe("destructive");
     expect(verdictFor("edit-paywall-ai")).toBe("destructive");
+    // Destructive on consequence, not on the verb: customer data to a typed URL,
+    // and paid access or a served offering changed for a live customer.
+    expect(verdictFor("create-webhook-integration")).toBe("destructive");
+    expect(verdictFor("grant-customer-entitlement")).toBe("destructive");
+    expect(verdictFor("assign-customer-offering")).toBe("destructive");
     expect(verdictFor("unarchive-product")).toBe("destructive");
     // Their counterparts, so the pair stays legible in the approval copy.
     expect(verdictFor("detach-products-from-entitlement")).toBe("destructive");
