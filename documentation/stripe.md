@@ -177,6 +177,16 @@ organization-account selection separate from the restricted-key-only Connect
 path, so an agent cannot repair uncertainty by fabricating `Stripe-Account` as
 a tool argument.
 
+The guide also carries the reduction advice the generic schemas cannot (P7):
+a list or search read that returns full objects belongs inside `execute_code`,
+projected to the fields the question needs before `return`, because an
+unprojected list truncates and a projected one keeps customer PII out of the
+transcript. It names Stripe search's per-resource field set — charges search
+has no `payment_intent` field, so the path is the PaymentIntent's
+`latest_charge` — and the account → search → details → read sequence as one
+program rather than four turns, and it names `outcome`, `failure_code`, and
+`failure_message` on the charge as the answer to "why did this payment fail".
+
 Stripe publishes no stability or deprecation policy for this tool set and
 invites tool requests by email, so treat the list as unversioned. `get_balance_summary`
 is Treasury, which Stripe labels public preview and gates behind an access
