@@ -172,6 +172,28 @@ describe("stripe()", () => {
     expect(guide).toContain("authorize_connector");
   });
 
+  it("tells the guide to project reads in the sandbox and to follow references search cannot filter (P7)", () => {
+    for (const connector of [
+      stripe("oauth", { purpose: "Billing operations" }),
+      stripe("fixed", {
+        mode: "sandbox",
+        purpose: "Test billing",
+        auth: { type: "headers", headers: { Authorization: "Bearer rk_test_example" } },
+      }),
+    ]) {
+      const guide = guideOf(connector);
+      expect(guide).toContain(
+        "belongs inside `execute_code`, projected to the fields the question needs before `return`",
+      );
+      expect(guide).toContain("Neither `limit` nor `expand` substitutes");
+      expect(guide).toContain("privacy boundary as much as the size fix");
+      expect(guide).toContain("there is no `payment_intent` field");
+      expect(guide).toContain("`latest_charge`");
+      expect(guide).toContain("is one program, not four turns");
+      expect(guide).toContain("`outcome`, `failure_code`, `failure_message`");
+    }
+  });
+
   it("warns that OAuth can span organization accounts without trusting connector metadata", () => {
     const connector = stripe("organization_billing", {
       title: "Primary Stripe account",
