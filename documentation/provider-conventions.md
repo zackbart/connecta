@@ -386,11 +386,18 @@ complete spends calls proving it is not. *Cost:* wrong-tool selection.
 
 A proxy cannot project a downstream result, so the guide tells the agent to
 page with the cursor rather than raising the page size, and to reduce inside
-`execute_code` before returning anything. Structured form, explicit `summary`,
-`required: true` only for a genuine cross-tool sequence or a generic wrapper.
+`execute_code` before returning anything — and, where a value's rendering is
+the provider's rule rather than the schema's, what that value means: Mixpanel
+renders an absent boolean property as `false` in a breakdown, so the guide
+says to confirm presence before reading `false` as a signal
+([#430](https://github.com/zackbart/connecta/issues/430)). Structured form,
+explicit `summary`, `required: true` only for a genuine cross-tool sequence or
+a generic wrapper.
 
-*Why:* the only projection available is the one the program writes. *Cost:*
-result size.
+*Why:* the only projection available is the one the program writes, and a
+value the schema types correctly can still mislead without the provider's
+rendering rule beside it — the agent then re-queries to explain a signal that
+was never there. *Cost:* result size.
 
 ### P8 — Identity resolution comes before action
 
