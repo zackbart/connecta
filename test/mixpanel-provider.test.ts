@@ -91,6 +91,23 @@ describe("mixpanel()", () => {
     expect(guideOf(connector)).toContain(
       "`List-Properties` accepts `names` or `query`, never both",
     );
+    // What Insights cannot answer and where its values lie (#430): the four
+    // reduction bullets the schemas cannot carry.
+    expect(guideOf(connector)).toContain(
+      "One analysis is one `execute_code` program: fetch `Get-Query-Schema` once",
+    );
+    expect(guideOf(connector)).toContain("Never return raw `Run-Query` output.");
+    expect(guideOf(connector)).toContain(
+      "Insights, funnels, and retention answer aggregate questions",
+    );
+    expect(guideOf(connector)).toContain("no per-`distinct_id` activity tool");
+    expect(guideOf(connector)).toContain(
+      "`false` on a boolean property may be an absent property",
+    );
+    expect(guideOf(connector)).toContain(
+      "Flatten to one row per complete breakdown combination inside `execute_code`",
+    );
+    expect(guideOf(connector)).toContain("drop `$overall`");
     // Real markdown, not a diff hunk: agents read this string verbatim.
     expect(guideOf(connector)).toContain("## Account instructions");
     expect(guideOf(connector)).not.toContain("+## Account instructions");
