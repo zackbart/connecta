@@ -1,6 +1,6 @@
 # Provider conventions
 
-The five maintained prebuilt connections grew one at a time, and until now
+The six maintained prebuilt connections grew one at a time, and until now
 "excellent provider" meant whatever the last author thought. This document
 writes the judgment down so it can be argued with, audited, and reused.
 
@@ -11,7 +11,7 @@ cannot honestly cover both:
   tool name, schema, projection, and error. Today: Cloudflare, Notion.
 - **Hosted-MCP proxies** — `remoteMcp()` wrappers around a server somebody else
   operates, where the names, schemas, results, and error prose arrive as they
-  are. Today: Linear, Stripe, Mixpanel.
+  are. Today: Linear, Stripe, Mixpanel, RevenueCat.
 
 The governing principle for every convention below is the same: **keep the
 model that interacts with connecta as efficient as possible.** A convention
@@ -501,8 +501,8 @@ is the shape that does not become it.
 **What a manifest holds.** Every tool name a release reviewed, the verdict it
 reviewed it as (`read-only`, `additive`, `destructive`), and — where a release
 actually read them — a digest of that tool's input and output schemas. Today
-the three proxies ship names and verdicts and no digests, because no release
-has read a live schema and written it down, and an invented digest reports a
+three of the four proxies ship names and verdicts and no digests, because no
+release has read a live schema and written it down, and an invented digest reports a
 change that never happened. `npm run drift:check -- --record` reads them from a
 live catalog and prints the block a release pastes in; until a release does,
 a manifest without digests counts no schema changes, which is the honest answer
@@ -574,9 +574,10 @@ compares its own totals against `detectCatalogDrift()`: two readings of one
 manifest that disagree mean one of them is lying, which is worth failing over.
 One credential per provider comes from the environment —
 `CONNECTA_DRIFT_LINEAR_KEY`, `CONNECTA_DRIFT_STRIPE_KEY`,
-`CONNECTA_DRIFT_MIXPANEL_KEY` — and a missing or dead one stops the run with a
-message naming it rather than reporting an empty catalog as mass removal.
-Linear and bare Stripe values use their documented bearer or Basic framing.
+`CONNECTA_DRIFT_MIXPANEL_KEY`, `CONNECTA_DRIFT_REVENUECAT_KEY` — and a missing
+or dead one stops the run with a message naming it rather than reporting an
+empty catalog as mass removal. Linear, bare Stripe, and RevenueCat `sk_` values
+use their documented bearer or Basic framing.
 Mixpanel's beta service-account form is provider-specific:
 `user:secret` becomes `Bearer Basic <base64(user:secret)>`, exactly as its MCP
 documentation requires. A value that already includes whitespace is treated
@@ -630,11 +631,11 @@ evidence and nothing else: no tool is generated from one, which is the
 ## What the audit checks
 
 The provider audit ([#342](https://github.com/zackbart/connecta/issues/342))
-runs this document against each of the five providers and returns a verdict per
+runs this document against each of the six providers and returns a verdict per
 convention: **meets**, **misses** (with the fix), or **not applicable** (with
 the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
-Its five reports live in [provider-audit.md](./provider-audit.md), and the
+Its six reports live in [provider-audit.md](./provider-audit.md), and the
 mechanically checkable half of the hand-written bar runs on every test run in
 [`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts) —
 so a convention that was met once stays met, or fails loudly.
@@ -682,6 +683,7 @@ their place, so they are this audit's work, not a second removal argument.
 
 Each provider's own guide ([Cloudflare](./cloudflare.md),
 [Linear](./linear.md), [Mixpanel](./mixpanel.md), [Notion](./notion.md),
-[Stripe](./stripe.md)) is part of the audited surface: documentation moves with
+[RevenueCat](./revenuecat.md), [Stripe](./stripe.md)) is part of the audited
+surface: documentation moves with
 the work, and a guide describing a surface that shipped differently is itself a
 miss.

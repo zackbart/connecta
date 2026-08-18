@@ -75,6 +75,10 @@
       "types": "./dist/providers/mixpanel.d.ts",
       "import": "./dist/providers/mixpanel.js"
     },
+    "./providers/revenuecat": {
+      "types": "./dist/providers/revenuecat.d.ts",
+      "import": "./dist/providers/revenuecat.js"
+    },
     "./providers/notion": {
       "types": "./dist/providers/notion.d.ts",
       "import": "./dist/providers/notion.js"

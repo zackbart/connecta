@@ -240,6 +240,8 @@ try {
     "dist/executors/quickjs-runtime.js",
     "dist/providers/mixpanel.js",
     "dist/providers/mixpanel.d.ts",
+    "dist/providers/revenuecat.js",
+    "dist/providers/revenuecat.d.ts",
     "dist/providers/linear.js",
     "dist/providers/linear.d.ts",
     "dist/providers/notion.js",
@@ -408,6 +410,23 @@ if (
 ) {
   throw new Error("Linear read-only endpoint drifted");
 }
+const revenuecatProvider = await import(
+  "@zackbart/connecta/providers/revenuecat"
+);
+if (typeof revenuecatProvider.revenuecat !== "function") {
+  throw new Error("missing RevenueCat provider constructor");
+}
+const revenuecatConnection = revenuecatProvider.revenuecat("subscriptions", {
+  purpose: "package smoke",
+});
+if (revenuecatConnection.id !== "subscriptions") {
+  throw new Error("RevenueCat provider did not return a connector");
+}
+if (
+  revenuecatProvider.REVENUECAT_MCP_ENDPOINT !== "https://mcp.revenuecat.ai/mcp"
+) {
+  throw new Error("RevenueCat endpoint drifted");
+}
 const notionProvider = await import("@zackbart/connecta/providers/notion");
 if (typeof notionProvider.notion !== "function") {
   throw new Error("missing Notion provider constructor");
@@ -448,6 +467,8 @@ for (const name of [
   "STRIPE_MCP_ENDPOINT",
   "linear",
   "LINEAR_MCP_ENDPOINTS",
+  "revenuecat",
+  "REVENUECAT_MCP_ENDPOINT",
   "notion",
   "NOTION_API_VERSION",
   "NOTION_API_BASE_URL",

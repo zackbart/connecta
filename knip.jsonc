@@ -11,6 +11,7 @@
     "src/providers/linear.ts",
     "src/providers/mixpanel.ts",
     "src/providers/notion.ts",
+    "src/providers/revenuecat.ts",
     "src/providers/stripe.ts",
     "src/operator-ui/app/main.tsx",
     "examples/*/src/index.ts",

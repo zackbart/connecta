@@ -35,7 +35,7 @@ const repositoryRoot = resolvePath(
 const defaultManifestDirectory = resolvePath(repositoryRoot, "scripts/drift");
 
 /** Hosted-MCP proxies: a live catalog, read with the maintainer's own key. */
-const HOSTED_PROVIDERS = ["linear", "stripe", "mixpanel"];
+const HOSTED_PROVIDERS = ["linear", "stripe", "mixpanel", "revenuecat"];
 /** Hand-written HTTP providers: a published specification, read as evidence. */
 const SPEC_PROVIDERS = ["cloudflare", "notion"];
 
@@ -52,6 +52,10 @@ const HOSTED_CREDENTIALS = {
   mixpanel: {
     variable: "CONNECTA_DRIFT_MIXPANEL_KEY",
     hint: "a Mixpanel service account as user:secret",
+  },
+  revenuecat: {
+    variable: "CONNECTA_DRIFT_REVENUECAT_KEY",
+    hint: "a RevenueCat API v2 secret key",
   },
 };
 
@@ -216,13 +220,15 @@ function maintainerContext() {
  */
 async function loadHostedProviders() {
   try {
-    const [drift, remote, linear, stripe, mixpanel] = await Promise.all([
-      import("../src/catalog-drift.ts"),
-      import("../src/connectors/remote-mcp.ts"),
-      import("../src/providers/linear.ts"),
-      import("../src/providers/stripe.ts"),
-      import("../src/providers/mixpanel.ts"),
-    ]);
+    const [drift, remote, linear, stripe, mixpanel, revenuecat] =
+      await Promise.all([
+        import("../src/catalog-drift.ts"),
+        import("../src/connectors/remote-mcp.ts"),
+        import("../src/providers/linear.ts"),
+        import("../src/providers/stripe.ts"),
+        import("../src/providers/mixpanel.ts"),
+        import("../src/providers/revenuecat.ts"),
+      ]);
     return {
       detectCatalogDrift: drift.detectCatalogDrift,
       vettedSchemaDigest: drift.vettedSchemaDigest,
@@ -235,11 +241,16 @@ async function loadHostedProviders() {
         stripe: stripe.STRIPE_MCP_ENDPOINT,
         // Region shapes residency, not the catalog; US is the provider default.
         mixpanel: mixpanel.MIXPANEL_MCP_ENDPOINTS.us,
+        revenuecat: revenuecat.REVENUECAT_MCP_ENDPOINT,
       },
       catalogs: {
         linear: linear.LINEAR_VETTED_CATALOG,
         stripe: stripe.STRIPE_VETTED_CATALOG,
         mixpanel: mixpanel.MIXPANEL_VETTED_CATALOG,
+        // Names and verdicts only: no release has read a live RevenueCat
+        // schema, so this manifest records no digests and the check honestly
+        // counts zero schema changes rather than reporting an invented one.
+        revenuecat: revenuecat.REVENUECAT_VETTED_CATALOG,
       },
     };
   } catch (error) {
