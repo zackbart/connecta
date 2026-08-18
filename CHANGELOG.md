@@ -2,6 +2,61 @@
 
 All notable changes to this package are documented here.
 
+## 0.18.1 — 2026-08-18
+
+This patch is the response to one long investigation run against a live
+deployment: a Mixpanel-and-Stripe user-journey reconstruction that rated the
+connectors trustworthy and the ceremony too high. Nothing breaks and no
+constructor changes. The two maintained guides now say the things that
+investigation had to discover the hard way — which questions Insights cannot
+answer, when Mixpanel's `false` is an absent property, which Stripe reads must
+be projected inside the sandbox and why that is a privacy boundary as much as
+a size one, and which fields Stripe search will not filter on. Beside them, a
+new maintained RevenueCat connection lands, with the fact that decides its
+deployment shape stated up front: a RevenueCat secret key reaches exactly one
+project, so several projects are several connectors. A deployment that
+constructs none of the three connections can ignore this release entirely.
+
+### Added
+
+- **`revenuecat()` — a maintained RevenueCat hosted-MCP connection** at
+  `@zackbart/connecta/providers/revenuecat`. OAuth by default (account-scoped:
+  the guide requires `list-projects` first and carries `project_id` into every
+  project-scoped call, stopping on ambiguity); an API v2 secret key as the
+  headless alternative, which binds the connector to one project — the guide's
+  first line names it, and a second project is a second connector with its own
+  key. All 95 documented tools are classified from RevenueCat's tools reference
+  (50 read-only, 15 additive, 29 destructive); `render-paywall-screenshot`
+  carries no access column there and fails closed. Borderline verdicts are
+  argued beside the rows they decide: `create-webhook-integration`,
+  `grant-customer-entitlement`, and `assign-customer-offering` are destructive
+  on consequence, not on verb. RevenueCat publishes six per-domain rate limits
+  and one admission rule cannot honestly cover 95 tools, so `callAdmission`
+  stays with the operator and the guide states the numbers. The maintainer-run
+  drift check accepts `revenuecat` behind `CONNECTA_DRIFT_REVENUECAT_KEY`; no
+  schema digests are recorded until a maintainer runs `--record` against a live
+  project (#433).
+
+### Changed
+
+- **The Mixpanel guide says what Insights cannot answer.** One analysis is one
+  `execute_code` program with one `Get-Query-Schema` fetch; per-user event
+  timelines and sequence questions are out of reach through `Run-Query`
+  (`Get-User-Replays-Data` covers one user only where session replay is on);
+  `false` on a boolean property may be an absent one and must be confirmed with
+  `List-Properties` before it becomes a signal; breakdown responses are
+  flattened one row per combination inside the program with `$overall`
+  dropped. Convention P7 gains the rendering-rule clause this rests on (#430).
+
+- **The Stripe guide names the reads that must be projected and the fields
+  search cannot filter.** Any `stripe_api_read` list or `stripe_api_search`
+  that returns full objects belongs inside `execute_code`, projected before
+  `return` — the reduction keeps customer PII out of the transcript, not only
+  bytes. Charges search takes a documented field set with no `payment_intent`;
+  follow the PaymentIntent's `latest_charge` instead. The account → search →
+  details → read sequence is one program, and decline outcomes are `outcome`,
+  `failure_code`, `failure_message` on the charge (#431).
+
 ## 0.18.0 — 2026-08-13
 
 This minor release spends fewer tokens before the first call and answers
