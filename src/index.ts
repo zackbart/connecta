@@ -25,6 +25,9 @@ import type {
   Logger,
 } from "./types.js";
 
+// Configuration defaults and operator-facing meanings are canonical in
+// documentation/operations.md#configuration; these types only define intake.
+
 /** Payload-free activity storage and operator-read policy. */
 export interface ConnectaActivityConfig {
   /**

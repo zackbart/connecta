@@ -126,15 +126,6 @@ interface CatalogRefreshFlight {
   deferredTail?: Promise<void>;
 }
 
-interface LegacyPersistedCatalog {
-  tools: ToolDef[];
-  /** Optional only for catalogs written before fingerprints were introduced. */
-  fingerprint?: string;
-  fetchedAt: number;
-  expiresAt: number;
-  staleUntil: number;
-}
-
 interface PersistedCatalogManifest {
   version: 2;
   revision: string;
@@ -155,49 +146,6 @@ interface PersistedCatalog {
 }
 
 const CATALOG_CHUNK_IO_CONCURRENCY = 4;
-
-export interface HealthObservation {
-  lastSuccessAt?: string;
-  lastFailureAt?: string;
-  lastLatencyMs?: number;
-  consecutiveFailures: number;
-  lastError?: string;
-}
-
-/**
- * Recent real-call outcomes per connector.
- */
-class HealthLog {
-  private readonly observations = new Map<string, HealthObservation>();
-
-  recordSuccess(id: string, latencyMs: number): void {
-    const previous = this.observations.get(id);
-    const observation: HealthObservation = {
-      ...previous,
-      lastSuccessAt: new Date().toISOString(),
-      lastLatencyMs: latencyMs,
-      consecutiveFailures: 0,
-    };
-    delete observation.lastError;
-    this.observations.set(id, observation);
-  }
-
-  recordFailure(id: string, latencyMs: number, error: unknown): void {
-    const previous = this.observations.get(id);
-    this.observations.set(id, {
-      ...previous,
-      lastFailureAt: new Date().toISOString(),
-      lastLatencyMs: latencyMs,
-      consecutiveFailures: (previous?.consecutiveFailures ?? 0) + 1,
-      lastError: msg(error),
-    });
-  }
-
-  get(id: string): HealthObservation | undefined {
-    const observation = this.observations.get(id);
-    return observation ? { ...observation } : undefined;
-  }
-}
 
 export interface RegistryOptions {
   storage: KVStorage;
@@ -266,13 +214,6 @@ export interface RegistryView {
     callOptions?: ConnectorOperationOptions,
     readOptions?: CatalogReadOptions,
   ): Promise<ToolDef[]>;
-  refreshTools(
-    id: string,
-    baseUrl: string,
-    requestScope?: object,
-    callOptions?: ConnectorOperationOptions,
-  ): Promise<ToolDef[]>;
-  peekTools(id: string): ToolDef[] | undefined;
   contextFor(
     id: string,
     baseUrl: string,
@@ -285,11 +226,6 @@ export interface RegistryView {
     input: { toolName: string; args: unknown; signal?: AbortSignal },
   ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
-  recordSuccess(id: string, latencyMs: number): void;
-  recordFailure(id: string, latencyMs: number, error: unknown): void;
-  healthFor(id: string): HealthObservation | undefined;
-  hasObservedSuccess(id: string): boolean;
-  observedSuccessAt(id: string): string | undefined;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
@@ -329,7 +265,8 @@ export class Registry implements RegistryView {
   private readonly catalogGenerations = new Map<string, number>();
   /** Serialize persisted catalog set/delete operations within this isolate. */
   private readonly catalogMutations = new Map<string, Promise<void>>();
-  /** Same-request cold loads share one promise without retaining the request. */
+  /** Same-request cold loads share one promise without retaining the request.
+   * See documentation/architecture.md#the-two-lifetimes. */
   private readonly requestCatalogLoads = new WeakMap<
     object,
     Map<string, Promise<ToolDef[]>>
@@ -344,8 +281,6 @@ export class Registry implements RegistryView {
     string,
     CatalogAccessObservation
   >();
-  /** Deployment-wide observations — every call, whatever view made it. */
-  private readonly health = new HealthLog();
   /** Last drift counts reported to activity, per connector, in this runtime. */
   private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
   private readonly observedOutputSchemas: ObservedOutputSchemas;
@@ -646,23 +581,6 @@ export class Registry implements RegistryView {
     return `${this.catalogKey(id)}:chunk:${revision}:${index}`;
   }
 
-  private validLegacyCatalog(value: unknown): LegacyPersistedCatalog | null {
-    if (!value || typeof value !== "object") return null;
-    const catalog = value as Partial<LegacyPersistedCatalog>;
-    if (
-      !Array.isArray(catalog.tools) ||
-      typeof catalog.fetchedAt !== "number" ||
-      typeof catalog.expiresAt !== "number" ||
-      typeof catalog.staleUntil !== "number" ||
-      (catalog.fingerprint !== undefined &&
-        typeof catalog.fingerprint !== "string") ||
-      !this.validCatalogTools(catalog.tools)
-    ) {
-      return null;
-    }
-    return catalog as LegacyPersistedCatalog;
-  }
-
   private validCatalogTools(value: unknown[]): value is ToolDef[] {
     return value.every(
       (tool) =>
@@ -752,34 +670,6 @@ export class Registry implements RegistryView {
       parsed = JSON.parse(raw);
     } catch {
       return null;
-    }
-
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      (parsed as { version?: unknown }).version !== 2
-    ) {
-      const legacy = this.validLegacyCatalog(parsed);
-      if (!legacy || legacy.staleUntil <= now) return null;
-      const snapshot = await snapshotCatalog(legacy.tools);
-      if (
-        legacy.tools.length > MAX_CATALOG_TOOLS ||
-        snapshot.serializedBytes.byteLength > MAX_SERIALIZED_CATALOG_BYTES ||
-        (legacy.fingerprint !== undefined &&
-          legacy.fingerprint !== snapshot.fingerprint)
-      ) {
-        this.opts.logger.warn(
-          `[connecta] connector "${id}" legacy catalog is oversized or has a fingerprint mismatch; ignoring persisted catalog.`,
-        );
-        return null;
-      }
-      return {
-        tools: legacy.tools,
-        fingerprint: snapshot.fingerprint,
-        fetchedAt: legacy.fetchedAt,
-        expiresAt: legacy.expiresAt,
-        staleUntil: legacy.staleUntil,
-      };
     }
 
     const manifest = this.validCatalogManifest(parsed);
@@ -1084,7 +974,7 @@ export class Registry implements RegistryView {
   }
 
   /** Force a live listTools refresh and replace both catalog cache layers. */
-  async refreshTools(
+  private async refreshTools(
     id: string,
     baseUrl: string,
     requestScope?: object,
@@ -1367,36 +1257,6 @@ export class Registry implements RegistryView {
       if (loads.get(id) === loading) loads.delete(id);
       if (loads.size === 0) this.requestCatalogLoads.delete(requestScope);
     }
-  }
-
-  /** Return a cached catalog without performing storage or network I/O. */
-  peekTools(id: string): ToolDef[] | undefined {
-    const connector = this.connectors.get(id);
-    if (connector?.staticTools) return connector.staticTools;
-    const hit = this.cache.get(id);
-    return hit && hit.staleUntil > Date.now() ? hit.tools : undefined;
-  }
-
-  recordSuccess(id: string, latencyMs: number): void {
-    this.health.recordSuccess(id, latencyMs);
-  }
-
-  recordFailure(id: string, latencyMs: number, error: unknown): void {
-    this.health.recordFailure(id, latencyMs, error);
-  }
-
-  healthFor(id: string): HealthObservation | undefined {
-    return this.health.get(id);
-  }
-
-  /** Whether this deployment has seen a successful call to `id`. */
-  hasObservedSuccess(id: string): boolean {
-    return this.observedSuccessAt(id) !== undefined;
-  }
-
-  /** The timestamp behind `hasObservedSuccess`. */
-  observedSuccessAt(id: string): string | undefined {
-    return this.health.get(id)?.lastSuccessAt;
   }
 
   async credentialDriftFor(id: string): Promise<string | undefined> {

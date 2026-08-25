@@ -5,7 +5,15 @@ import {
 } from "../src/index.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { CredentialVault } from "../src/credentials.js";
+import type {
+  ActivityRequestContext,
+  ToolCallActivityEvent,
+} from "../src/activity.js";
 import type { Connector, Executor, KVStorage, Logger } from "../src/types.js";
+import { snapshotCatalog } from "../src/catalog-fingerprint.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
+import type { RegistryView } from "../src/registry.js";
 
 /** Minimal executor for server tests that do not exercise generated code. */
 const stubExecutor: Executor = {
@@ -35,6 +43,74 @@ export const silentLogger: Logger = {
   warn: () => {},
   error: () => {},
 };
+
+export function activitySink(requestId = "test-request"): {
+  activity: ActivityRequestContext;
+  events: ToolCallActivityEvent[];
+} {
+  const events: ToolCallActivityEvent[] = [];
+  return {
+    events,
+    activity: {
+      sink: { record: (event) => { events.push(event); } },
+      actor: { kind: "test" },
+      requestId,
+      serverInfo: { name: "connecta-test", version: "0" },
+      logger: silentLogger,
+    },
+  };
+}
+
+export function activityFor(
+  events: ToolCallActivityEvent[],
+  connectorId: string,
+): ToolCallActivityEvent | undefined {
+  return [...events].reverse().find((event) => event.connectorId === connectorId);
+}
+
+export async function invokeTestCall(
+  registry: RegistryView,
+  target: ReturnType<typeof activitySink>,
+  address: string,
+): Promise<void> {
+  await new InvocationService(
+    registry,
+    new CatalogService(registry, "https://connecta.example"),
+    target.activity,
+  ).invoke(address, {}, {
+    source: "call_tool",
+    allowDestructive: true,
+  });
+}
+
+export async function seedCatalog(
+  storage: KVStorage,
+  id: string,
+  toolName: string,
+): Promise<void> {
+  const now = Date.now();
+  const snapshot = await snapshotCatalog([
+    { name: toolName, annotations: { readOnlyHint: true } },
+  ]);
+  const serialized = new TextDecoder().decode(snapshot.serializedBytes);
+  await storage.set(
+    `catalog:${id}:chunk:${snapshot.fingerprint}:0`,
+    serialized,
+  );
+  await storage.set(
+    `catalog:${id}`,
+    JSON.stringify({
+      version: 2,
+      revision: snapshot.fingerprint,
+      toolCount: 1,
+      byteCount: snapshot.serializedBytes.byteLength,
+      chunkCount: 1,
+      fetchedAt: now,
+      expiresAt: now + 600_000,
+      staleUntil: now + 1_200_000,
+    }),
+  );
+}
 
 /**
  * Return an expected test fixture value or fail with a useful message.

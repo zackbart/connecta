@@ -9,7 +9,7 @@ import { CatalogService } from "../src/catalog-service.js";
 import { createConnecta } from "../src/index.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
 import type { KVStorage } from "../src/types.js";
 
 const BASE_URL = "https://connecta.example";
@@ -19,23 +19,6 @@ const executor = { execute: async () => ({ result: null }) };
  * Seed one connector's persisted catalog so `getTools` resolves from storage.
  * The key (`catalog:<id>`) is the namespace under test.
  */
-async function seedCatalog(
-  storage: KVStorage,
-  id: string,
-  toolName: string,
-): Promise<void> {
-  const now = Date.now();
-  await storage.set(
-    `catalog:${id}`,
-    JSON.stringify({
-      tools: [{ name: toolName, annotations: { readOnlyHint: true } }],
-      fetchedAt: now,
-      expiresAt: now + 600_000,
-      staleUntil: now + 1_200_000,
-    }),
-  );
-}
-
 function twoAccounts(storage: KVStorage) {
   return createConnecta({
     executor,
@@ -168,9 +151,10 @@ describe("cloudflare() inside a real deployment", () => {
     expect(budgets["cloudflare_prod"]?.totals.admitted).toBe(1);
     expect(budgets["cloudflare_staging"]?.totals.admitted).toBe(0);
 
-    registry.recordFailure("cloudflare_prod", 5, new Error("boom"));
-    expect(registry.healthFor("cloudflare_prod")?.consecutiveFailures).toBe(1);
-    expect(registry.healthFor("cloudflare_staging")).toBeUndefined();
+    const activity = activitySink();
+    await invokeTestCall(registry, activity, "cloudflare_prod.list_zones");
+    expect(activityFor(activity.events, "cloudflare_prod")?.outcome).toBe("error");
+    expect(activityFor(activity.events, "cloudflare_staging")).toBeUndefined();
   });
 
   it("scopes each account's defaults to its own tool schemas", async () => {

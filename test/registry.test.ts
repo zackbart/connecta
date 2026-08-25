@@ -463,7 +463,6 @@ describe("tool cache TTL", () => {
     release();
 
     expect(required((await oldRefresh)[0]).name).toBe("old_credential_tool");
-    expect(registry.peekTools("racing")).toBeUndefined();
     expect(await storage.get("catalog:racing")).toBeNull();
 
     expect(required((await registry.getTools("racing", BASE))[0]).name).toBe(
@@ -748,7 +747,6 @@ describe("tool cache TTL", () => {
     await expect(cold.getTools("torn", BASE)).rejects.toThrow(
       "live unavailable",
     );
-    expect(cold.peekTools("torn")).toBeUndefined();
     expect(
       warnings.some((warning) => warning.includes("chunk 2/2 is missing")),
     ).toBe(true);
@@ -792,7 +790,6 @@ describe("tool cache TTL", () => {
     await expect(cold.getTools("mismatch", BASE)).rejects.toThrow(
       "live unavailable",
     );
-    expect(cold.peekTools("mismatch")).toBeUndefined();
     expect(
       warnings.some((warning) => warning.includes("fingerprint mismatch")),
     ).toBe(true);
@@ -836,122 +833,12 @@ describe("tool cache TTL", () => {
     await expect(registry.getTools("too_large", BASE)).rejects.toThrow(
       `${MAX_SERIALIZED_CATALOG_BYTES}-byte ceiling`,
     );
-    expect(registry.peekTools("too_many")).toBeUndefined();
-    expect(registry.peekTools("too_large")).toBeUndefined();
     expect(
       warnings.filter((warning) => warning.includes("catalog ceiling")),
     ).toHaveLength(1);
     expect(
       warnings.filter((warning) => warning.includes("serialized catalog")),
     ).toHaveLength(1);
-  });
-
-  it("reads legacy single-value catalogs and retires them on invalidation", async () => {
-    const storage = memoryStorage();
-    const now = Date.now();
-    await storage.set(
-      "catalog:legacy",
-      JSON.stringify({
-        tools: [{ name: "old" }],
-        fetchedAt: now,
-        expiresAt: now + 60_000,
-        staleUntil: now + 120_000,
-      }),
-    );
-    let calls = 0;
-    const connector: Connector = {
-      id: "legacy",
-      kind: "mcp",
-      async listTools() {
-        calls++;
-        return [{ name: "new" }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const registry = new Registry([connector], {
-      storage,
-      logger: silentLogger,
-    });
-
-    await expect(registry.getTools("legacy", BASE)).resolves.toEqual([
-      { name: "old" },
-    ]);
-    expect(calls).toBe(0);
-    await registry.invalidateStored("legacy");
-    await expect(registry.getTools("legacy", BASE)).resolves.toEqual([
-      { name: "new" },
-    ]);
-    expect(calls).toBe(1);
-    expect(await readPersistedTools(storage, "legacy")).toEqual([
-      { name: "new" },
-    ]);
-  });
-
-  it("does not resurrect a legacy read across a generation change", async () => {
-    const backing = memoryStorage();
-    const now = Date.now();
-    await backing.set(
-      "catalog:legacy_race",
-      JSON.stringify({
-        tools: [{ name: "old" }],
-        fetchedAt: now,
-        expiresAt: now + 60_000,
-        staleUntil: now + 120_000,
-      }),
-    );
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    let reached!: () => void;
-    const started = new Promise<void>((resolve) => {
-      reached = resolve;
-    });
-    let firstRootRead = true;
-    const storage: KVStorage = {
-      async get(key) {
-        if (key === "catalog:legacy_race" && firstRootRead) {
-          firstRootRead = false;
-          const value = await backing.get(key);
-          reached();
-          await gate;
-          return value;
-        }
-        return backing.get(key);
-      },
-      set: (key, value, options) => backing.set(key, value, options),
-      delete: (key) => backing.delete(key),
-    };
-    let calls = 0;
-    const connector: Connector = {
-      id: "legacy_race",
-      kind: "mcp",
-      async listTools() {
-        calls++;
-        return [{ name: "new" }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const registry = new Registry([connector], {
-      storage,
-      logger: silentLogger,
-    });
-
-    const pending = registry.getTools("legacy_race", BASE);
-    await started;
-    await registry.invalidateStored("legacy_race");
-    release();
-
-    await expect(pending).resolves.toEqual([{ name: "new" }]);
-    expect(calls).toBe(1);
-    expect(registry.peekTools("legacy_race")).toEqual([{ name: "new" }]);
-    expect(await readPersistedTools(storage, "legacy_race")).toEqual([
-      { name: "new" },
-    ]);
   });
 
   it("persists only when the complete catalog fingerprint changes", async () => {
@@ -986,10 +873,15 @@ describe("tool cache TTL", () => {
       storage,
       logger: silentLogger,
     });
+    const refreshTools = (
+      registry as unknown as {
+        refreshTools(id: string, baseUrl: string): Promise<ToolDef[]>;
+      }
+    ).refreshTools.bind(registry);
 
-    await registry.refreshTools("fingerprinted", BASE);
+    await refreshTools("fingerprinted", BASE);
     expect(manifestWrites).toBe(1);
-    await registry.refreshTools("fingerprinted", BASE);
+    await refreshTools("fingerprinted", BASE);
     expect(manifestWrites).toBe(1);
 
     const mutations: ToolDef[][] = [
@@ -1001,7 +893,7 @@ describe("tool cache TTL", () => {
     ];
     for (const mutation of mutations) {
       tools = mutation;
-      await registry.refreshTools("fingerprinted", BASE);
+      await refreshTools("fingerprinted", BASE);
       expect(manifestWrites).toBeGreaterThan(1);
       const persisted = await readManifest(backing, "fingerprinted");
       expect(persisted.revision).toMatch(/^sha256:/);
@@ -1032,7 +924,7 @@ describe("tool cache TTL", () => {
       },
     };
     const registry = makeRegistry([connector]);
-    await registry.refreshTools("serialize_once", BASE);
+    await registry.getTools("serialize_once", BASE);
     expect(serializations).toBe(1);
   });
 
@@ -1207,7 +1099,9 @@ describe("catalog stale-while-revalidate", () => {
       gate.resolve();
       await Promise.all(tails.slice(0, 2));
       expect(closed).toEqual([contexts[1]]);
-      expect(registry.peekTools("swr")).toEqual([{ name: "new" }]);
+      await expect(registry.getTools("swr", BASE)).resolves.toEqual([
+        { name: "new" },
+      ]);
       await expect(registry.statusFor("swr", BASE)).resolves.toMatchObject({
         state: "ok",
         catalogAccess: { state: "stale" },
@@ -1263,7 +1157,7 @@ describe("catalog stale-while-revalidate", () => {
 
       gate.resolve();
       await expect(operator).resolves.toMatchObject({ state: "ok" });
-      expect(registry.peekTools("agent_then_operator")).toEqual([
+      await expect(registry.getTools("agent_then_operator", BASE)).resolves.toEqual([
         { name: "new" },
       ]);
       await Promise.all(tails);
@@ -1319,7 +1213,7 @@ describe("catalog stale-while-revalidate", () => {
 
       gate.resolve();
       await expect(operator).resolves.toMatchObject({ state: "ok" });
-      expect(registry.peekTools("operator_then_agent")).toEqual([
+      await expect(registry.getTools("operator_then_agent", BASE)).resolves.toEqual([
         { name: "new" },
       ]);
       await Promise.all(tails);
@@ -1427,7 +1321,7 @@ describe("catalog stale-while-revalidate", () => {
         signal: inbound.signal,
       }),
     ).resolves.toEqual([{ name: "complete" }]);
-    expect(registry.peekTools("blocking_abort")).toEqual([
+    await expect(registry.getTools("blocking_abort", BASE)).resolves.toEqual([
       { name: "complete" },
     ]);
     expect(registry.catalogDriftSnapshot().blocking_abort).toMatchObject({
@@ -1531,12 +1425,16 @@ describe("catalog stale-while-revalidate", () => {
         }).loadConnector("swr_timeout"),
       ).resolves.toEqual([{ name: "old" }]);
       await Promise.all(secondTails);
-      expect(registry.peekTools("swr_timeout")).toEqual([{ name: "new" }]);
+      await expect(registry.getTools("swr_timeout", BASE)).resolves.toEqual([
+        { name: "new" },
+      ]);
 
       zombie.resolve();
       await Promise.resolve();
       await Promise.resolve();
-      expect(registry.peekTools("swr_timeout")).toEqual([{ name: "new" }]);
+      await expect(registry.getTools("swr_timeout", BASE)).resolves.toEqual([
+        { name: "new" },
+      ]);
       expect(calls).toBe(3);
     } finally {
       vi.useRealTimers();
@@ -1720,13 +1618,14 @@ describe("catalog stale-while-revalidate", () => {
       }).loadConnector("swr_storage_race");
       await manifestRead.promise;
 
-      await expect(
-        cold.refreshTools("swr_storage_race", BASE, {}),
-      ).resolves.toEqual([{ name: "live_new" }]);
+      await cold.invalidateStored("swr_storage_race");
+      await expect(cold.getTools("swr_storage_race", BASE, {})).resolves.toEqual([
+        { name: "live_new" },
+      ]);
       releaseManifest.resolve();
 
       await expect(pending).resolves.toEqual([{ name: "live_new" }]);
-      expect(cold.peekTools("swr_storage_race")).toEqual([
+      await expect(cold.getTools("swr_storage_race", BASE)).resolves.toEqual([
         { name: "live_new" },
       ]);
       expect(tails).toEqual([]);

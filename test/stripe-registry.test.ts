@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConnecta } from "../src/index.js";
 import { stripe } from "../src/providers/stripe.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
 import type { KVStorage } from "../src/types.js";
 
 // Unmocked on purpose. test/stripe-provider.test.ts stubs remote-mcp to
@@ -19,23 +19,6 @@ const executor = { execute: async () => ({ result: null }) };
  * Seed one connector's persisted catalog so `getTools` resolves from storage.
  * The key (`catalog:<id>`) is the namespace under test.
  */
-async function seedCatalog(
-  storage: KVStorage,
-  id: string,
-  toolName: string,
-): Promise<void> {
-  const now = Date.now();
-  await storage.set(
-    `catalog:${id}`,
-    JSON.stringify({
-      tools: [{ name: toolName, annotations: { readOnlyHint: true } }],
-      fetchedAt: now,
-      expiresAt: now + 600_000,
-      staleUntil: now + 1_200_000,
-    }),
-  );
-}
-
 function twoAccounts(storage: KVStorage) {
   return createConnecta({
     executor,
@@ -166,7 +149,9 @@ describe("stripe() inside a real deployment", () => {
   });
 
   it("meters and observes each account separately", async () => {
-    const connecta = twoAccounts(memoryStorage());
+    const storage = memoryStorage();
+    await seedCatalog(storage, "stripe_live", "stripe_api_read");
+    const connecta = twoAccounts(storage);
     expect(Object.keys(connecta.registry.callAdmissionSnapshot()).sort()).toEqual(
       ["stripe_live", "stripe_sandbox"],
     );
@@ -181,11 +166,13 @@ describe("stripe() inside a real deployment", () => {
     expect(budgets["stripe_live"]?.totals.admitted).toBe(1);
     expect(budgets["stripe_sandbox"]?.totals.admitted).toBe(0);
 
-    // Health and activity are keyed by connector id the same way.
-    connecta.registry.recordFailure("stripe_live", 5, new Error("boom"));
-    expect(
-      connecta.registry.healthFor("stripe_live")?.consecutiveFailures,
-    ).toBe(1);
-    expect(connecta.registry.healthFor("stripe_sandbox")).toBeUndefined();
+    const activity = activitySink();
+    await invokeTestCall(
+      connecta.registry,
+      activity,
+      "stripe_live.stripe_api_read",
+    );
+    expect(activityFor(activity.events, "stripe_live")?.outcome).toBe("error");
+    expect(activityFor(activity.events, "stripe_sandbox")).toBeUndefined();
   });
 });

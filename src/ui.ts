@@ -154,14 +154,17 @@ export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
  * their `authorizationUrl`, so a hostile/misconfigured one could hand back a
  * `javascript:` (or other) scheme; gate it before it can become an href.
  */
-export function isSafeHttpUrl(url: unknown): boolean {
+function safeUrl(url: unknown, schemes: string[]): boolean {
   if (typeof url !== "string") return false;
   try {
-    const scheme = new URL(url).protocol;
-    return scheme === "http:" || scheme === "https:";
+    return schemes.includes(new URL(url).protocol);
   } catch {
     return false;
   }
+}
+
+export function isSafeHttpUrl(url: unknown): boolean {
+  return safeUrl(url, ["http:", "https:"]);
 }
 
 /**
@@ -206,33 +209,9 @@ export function isSafeIconHref(href: unknown): boolean {
   }
 }
 
-/**
- * True only for an absolute `https:` URL — the gate every `uiAuth` URL passes:
- * `frontendApiUrl`, which becomes the operator shell's sign-in loader source,
- * and `signInUrl`/`signUpUrl`, which ClerkJS uses as *navigation targets* when
- * the operator signs in. With those three gated, no operator-config value
- * reaches the browser in a URL position — attribute or navigation — without
- * validation, and there is no exception left to remember.
- *
- * Stricter than `isSafeHttpUrl` on purpose: no `http:` carve-out, no loopback
- * carve-out, and no relative form. Nobody types `frontendApiUrl` — the shipped
- * Clerk adapter derives it from the publishable key, and Clerk's Frontend API is
- * always https — and a cleartext script source on an operator page would be a
- * downgrade even where a browser's mixed-content rules had not already blocked
- * it. `signInUrl`/`signUpUrl` *are* typed by the operator, but what belongs
- * there is a hosted Account Portal address (`https://accounts.<domain>` or
- * `https://<slug>.accounts.dev`), which is https as well; `http:` would carry a
- * sign-in over cleartext, and a path relative to this origin is meaningless
- * because this server hosts no sign-in page of its own. So the looser gate would
- * buy nothing real, and the same strictness holds for all three.
- */
+/** Absolute HTTPS gate for the `UiAuthConfig` URL fields documented in types.ts. */
 export function isSafeHttpsUrl(url: unknown): boolean {
-  if (typeof url !== "string") return false;
-  try {
-    return new URL(url).protocol === "https:";
-  } catch {
-    return false;
-  }
+  return safeUrl(url, ["https:"]);
 }
 
 /**
@@ -387,6 +366,15 @@ export async function buildUiData(
                 : {}),
             };
           });
+        const credentialCard = {
+          label: c.credential.label,
+          ...(c.credential.description
+            ? { description: c.credential.description }
+            : {}),
+          ...(c.credential.placeholder
+            ? { placeholder: c.credential.placeholder }
+            : {}),
+        };
         try {
           const metadata = await credentialVault.metadata(c.id);
           const fields = credentialFields(metadata);
@@ -395,13 +383,7 @@ export async function buildUiData(
             metadata?.fields ?? null,
           );
           credential = {
-            label: c.credential.label,
-            ...(c.credential.description
-              ? { description: c.credential.description }
-              : {}),
-            ...(c.credential.placeholder
-              ? { placeholder: c.credential.placeholder }
-              : {}),
+            ...credentialCard,
             ...(fields?.length ? { fields } : {}),
             configured: shape.state === "valid",
             removable: Boolean(metadata),
@@ -430,13 +412,7 @@ export async function buildUiData(
         } catch {
           const fields = credentialFields();
           credential = {
-            label: c.credential.label,
-            ...(c.credential.description
-              ? { description: c.credential.description }
-              : {}),
-            ...(c.credential.placeholder
-              ? { placeholder: c.credential.placeholder }
-              : {}),
+            ...credentialCard,
             ...(fields?.length ? { fields } : {}),
             configured: false,
             removable: true,

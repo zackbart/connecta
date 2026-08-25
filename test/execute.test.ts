@@ -279,7 +279,13 @@ describe("buildSandboxProviders", () => {
     const registry = makeRegistry(
       [calcConnector, remoteConnector, brokenConnector].map(counted),
     );
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
+    const observed = activityRecorder("lazy-request");
+    const providers = await buildSandboxProviders(
+      registry,
+      BASE,
+      silentLogger,
+      observed.activity,
+    );
     expect(providers.map((provider) => provider.name)).toEqual(["connecta"]);
     expect(catalogCalls.size).toBe(0);
     expect(required(providers[0]).prelude).toContain('globalThis["calc"]');
@@ -289,7 +295,7 @@ describe("buildSandboxProviders", () => {
       { sum: 5 },
     );
     expect(catalogCalls).toEqual(new Map([["calc", 1]]));
-    expect(registry.healthFor("broken")).toBeUndefined();
+    expect(observed.events.some((event) => event.connectorId === "broken")).toBe(false);
 
     // MCP results are still unwrapped to plain values for sandbox code.
     expect(
@@ -315,17 +321,24 @@ describe("buildSandboxProviders", () => {
 
   it("records health only after a broken connector is exercised", async () => {
     const registry = makeRegistry([calcConnector, brokenConnector]);
-    const providers = await buildSandboxProviders(registry, BASE, silentLogger);
-    expect(registry.healthFor("broken")).toBeUndefined();
+    const observed = activityRecorder("broken-request");
+    const providers = await buildSandboxProviders(
+      registry,
+      BASE,
+      silentLogger,
+      observed.activity,
+    );
+    expect(observed.events).toHaveLength(0);
     await expect(
       callNamespace(providers, "broken", "anything"),
     ).rejects.toThrow("boom");
-    expect(registry.healthFor("broken")).toMatchObject({
-      consecutiveFailures: 1,
-      lastError: "boom",
-    });
+    expect(observed.events).toContainEqual(expect.objectContaining({
+      connectorId: "broken",
+      outcome: "error",
+      errorCode: "catalog_lookup_failed",
+    }));
     // A catalog that loaded is not a success signal of its own.
-    expect(registry.healthFor("calc")).toBeUndefined();
+    expect(observed.events.some((event) => event.connectorId === "calc")).toBe(false);
   });
 
   it("keeps a typed auth_required's code when the lazy namespace is used", async () => {
@@ -343,10 +356,12 @@ describe("buildSandboxProviders", () => {
       },
     };
     const registry = makeRegistry([expired]);
+    const observed = activityRecorder("expired-request");
     const providers = await buildSandboxProviders(
       registry,
       BASE,
       silentLogger,
+      observed.activity,
     );
     const error = await callNamespace(providers, "expired", "read").then(
       () => undefined,
@@ -356,7 +371,11 @@ describe("buildSandboxProviders", () => {
       code: "auth_required",
       details: { message: 'Connector "expired" requires authorization' },
     });
-    expect(registry.healthFor("expired")?.consecutiveFailures).toBe(1);
+    expect(observed.events[0]).toMatchObject({
+      connectorId: "expired",
+      outcome: "error",
+      errorCode: "auth_required",
+    });
   });
 
   it("does not expose or execute tools annotated destructive", async () => {
@@ -1258,7 +1277,7 @@ describe("MCP and code-mode invocation parity", () => {
     },
   );
 
-  it("classifies timeouts and records matching health and activity fields", async () => {
+  it("classifies timeouts and records matching activity fields", async () => {
     const connector: Connector = {
       id: "parity",
       kind: "api",
@@ -1281,14 +1300,6 @@ describe("MCP and code-mode invocation parity", () => {
       code: "timeout",
       details: { message: result.mcpError.message },
       retryable: result.mcpError.retryable,
-    });
-    expect(result.mcpRegistry.healthFor("parity")).toMatchObject({
-      consecutiveFailures: 1,
-      lastError: result.mcpError.message,
-    });
-    expect(result.codeRegistry.healthFor("parity")).toMatchObject({
-      consecutiveFailures: 1,
-      lastError: result.mcpError.message,
     });
     const sharedFields = {
       connectorId: "parity",
@@ -1504,11 +1515,13 @@ describe("execute_code handler", () => {
     };
     const controller = new AbortController();
     const registry = makeRegistry([connector]);
+    const observed = activityRecorder("catalog-cancelled");
     const pending = createExecuteTool(
       registry,
       BASE,
       executor,
       silentLogger,
+      observed.activity,
     )(
       { code: "async () => null" },
       { signal: controller.signal },
@@ -1520,7 +1533,13 @@ describe("execute_code handler", () => {
     expect(catalogSignal?.aborted).toBe(true);
     expect(execute).toHaveBeenCalledOnce();
     expect(release).toHaveBeenCalledOnce();
-    expect(registry.healthFor("catalog")).toBeUndefined();
+    expect(observed.events).toContainEqual(expect.objectContaining({
+      connectorId: "catalog",
+      toolName: "read",
+      source: "execute_code",
+      outcome: "cancelled",
+      errorCode: "cancelled",
+    }));
   });
 
   it("passes code + providers to the executor and wraps the result", async () => {

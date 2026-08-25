@@ -7,7 +7,7 @@ import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext, Logger } from "../src/types.js";
-import { makeRegistry, required, silentLogger } from "./helpers.js";
+import { activitySink, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const URL_UNDER_TEST = "https://downstream.test/mcp";
@@ -449,7 +449,10 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
     });
 
     // 1. The call_tool result — the one that leaves the host for the model.
-    const result = await createMetaTools(registry, BASE).callTool({
+    const activity = activitySink();
+    const result = await createMetaTools(registry, BASE, {
+      activity: activity.activity,
+    }).callTool({
       address: "down.echo",
       args: { text: "hi" },
     });
@@ -469,15 +472,8 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
       ),
     );
 
-    // 4. The health log's lastError, which /health and /activity read.
-    registry.recordFailure(
-      "down",
-      1,
-      await connector
-        .listTools(registry.contextFor("down", BASE))
-        .then(() => null, (error: unknown) => error),
-    );
-    assertNoLeak(String(registry.healthFor("down")?.lastError));
+    // 4. The payload-free activity event.
+    assertNoLeak(JSON.stringify(activity.events));
 
     // 5. The thrown error itself, whatever catches it next.
     const err = await connector

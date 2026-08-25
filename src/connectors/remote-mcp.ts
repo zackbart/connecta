@@ -166,28 +166,6 @@ export interface RemoteMcpOptions {
 const TERMINATE_SESSION_BUDGET_MS = 1_000;
 
 /**
- * Ceiling on the tools one catalog refresh will accumulate while walking
- * `tools/list`.
- *
- * This is the bound that matters, and pages are the wrong dimension to put it
- * in: the *server* picks the page size, so a page ceiling is a tool ceiling
- * multiplied by a number connecta can neither observe in advance nor control.
- * At ten tools a page, 100 pages is 1,000 tools; at a hundred, 10,000 — and
- * connecta's own large-catalog envelope is benchmarked to 100,000 (issue #82).
- * A page ceiling low enough to be a real defense therefore sits *inside* the
- * catalog sizes this product exists to serve. Worse, the common conformant
- * idiom is to advertise a `nextCursor` whenever a page came back full and then
- * serve one empty page to terminate, so a perfectly well-behaved 10,000-tool
- * server paging at 100 spends 101 requests: bound the pages and its entire
- * catalog fails, for doing nothing wrong.
- *
- * So the ceiling goes on accumulated tools — the thing actually held in memory
- * — and it sits at the top of the benchmarked envelope rather than below it.
- * Deliberately the same philosophy as issue #82's discovery-response bounds:
- * cap the bytes a caller can be made to hold, not the number of round trips it
- * took to get them.
- */
-/**
  * Absolute backstop on `tools/list` pages in one refresh — a runaway guard, not
  * the primary defense.
  *
@@ -275,6 +253,8 @@ async function terminateSession(
   logger: Logger,
   connectorId: string,
 ): Promise<void> {
+  // See documentation/connectors.md#mcp-version-skew for the legacy DELETE
+  // that Client.close() does not send.
   const terminate = (
     transport as Transport & { terminateSession?: () => Promise<void> }
   ).terminateSession;
@@ -796,24 +776,19 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     return state;
   };
 
-  const getProvider = (
+  const newProvider = (
     ctx: ConnectorContext,
-    state: ConnectionState,
+    state?: ConnectionState,
   ): KvOAuthProvider => {
-    state.provider ??= new KvOAuthProvider(
+    if (state?.provider) return state.provider;
+    const provider = new KvOAuthProvider(
       id,
       ctx.storage,
       `${ctx.baseUrl}/oauth/callback/${id}`,
     );
-    return state.provider;
+    if (state) state.provider = provider;
+    return provider;
   };
-
-  const newProvider = (ctx: ConnectorContext): KvOAuthProvider =>
-    new KvOAuthProvider(
-      id,
-      ctx.storage,
-      `${ctx.baseUrl}/oauth/callback/${id}`,
-    );
 
   const buildTransport = (
     ctx: ConnectorContext,
@@ -858,6 +833,18 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // `closed` is deliberately not cleared — see ConnectionState.
   };
 
+  const closeHalf = async (state: ConnectionState): Promise<void> => {
+    const client = state.client;
+    const transport = state.transport;
+    reset(state);
+    try {
+      if (client) await client.close();
+      else await transport?.close();
+    } catch {
+      // The discarded state remains authoritative if local close fails.
+    }
+  };
+
   const ensureConnected = async (
     ctx: ConnectorContext,
     state: ConnectionState,
@@ -876,20 +863,12 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // turn it back into a pending consent flow.
     let oauthGeneration: string | undefined;
     if (isOauth && (state.client || state.connecting)) {
-      const provider = getProvider(ctx, state);
+      const provider = newProvider(ctx, state);
       oauthGeneration = await provider.generation();
       if (provider.isOperatorDisconnectedGeneration(oauthGeneration)) {
         const connecting = state.connecting;
-        const client = state.client;
-        const transport = state.transport;
-        reset(state);
         void connecting?.catch(() => {});
-        try {
-          if (client) await client.close();
-          else await transport?.close();
-        } catch {
-          // The disconnected epoch is authoritative even if local close fails.
-        }
+        await closeHalf(state);
         throw operatorDisconnectedError();
       }
     }
@@ -928,16 +907,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ) {
         if (state.closed) throw scopeEndedError();
         const connecting = state.connecting;
-        const client = state.client;
-        const transport = state.transport;
-        reset(state);
         void connecting?.catch(() => {});
-        try {
-          if (client) await client.close();
-          else await transport?.close();
-        } catch {
-          // The rotated-away client is discarded either way.
-        }
+        await closeHalf(state);
       }
     }
     if (state.closed) throw scopeEndedError();
@@ -1053,7 +1024,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     state: ConnectionState,
     operatorDisconnected = false,
   ): Promise<void> => {
-    const provider = getProvider(ctx, state);
+    const provider = newProvider(ctx, state);
     // Publish the replacement epoch before waiting on or closing any
     // request-local transport. A hung connect therefore cannot delay the
     // fence, and every late OAuth write stays in the older namespace.
@@ -1065,16 +1036,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // client/transport exists. Reset is unconditional because KV may already
       // be fenced behind a newer epoch after a cleanup error.
       void connecting?.catch(() => {});
-      try {
-        if (state.client) {
-          await state.client.close();
-        } else {
-          await state.transport?.close();
-        }
-      } catch {
-        // best-effort; the state is discarded either way
-      }
-      reset(state);
+      await closeHalf(state);
     }
   };
 
@@ -1154,6 +1116,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // the accumulator is returned rather than stored: a cursor is opaque and
     // session-bound, so nothing here may outlive this call.
     async listTools(ctx) {
+      // The complete-catalog rule is documented at
+      // documentation/connectors.md#catalog-contract.
       const state = stateFor(ctx);
       await ensureConnected(ctx, state);
       // Bind the client once so the whole walk provably rides one session — a
@@ -1336,13 +1300,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       state.closed = true;
       const client = state.client;
       const transport = state.transport;
-      state.client = null;
-      state.transport = null;
-      state.toolDefinitions.clear();
-      state.connecting = null;
-      state.authRequired = false;
-      state.connectedGeneration = null;
-      state.credentialDigest = null;
+      reset(state);
 
       // Ask the downstream to drop its session first — closing only aborts our
       // side, and the DELETE that frees the server's rides on the very
@@ -1376,7 +1334,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // credential connector's downstream 401 is repaired on /credentials,
           // so do not reach into OAuth storage to look for one.
           const url = isOauth
-            ? await getProvider(ctx, state).pendingAuthorizationUrl()
+            ? await newProvider(ctx, state).pendingAuthorizationUrl()
             : undefined;
           return {
             state: "auth_required",
@@ -1395,7 +1353,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     async finishAuth(code, ctx, callbackParams) {
       const state = stateFor(ctx);
-      const provider = getProvider(ctx, state);
+      const provider = newProvider(ctx, state);
       // verifyState ran on this request-scoped provider first and captured the
       // pending flow's generation. If force reset races the exchange, any late
       // token write remains tagged with that older generation and is unreadable.
@@ -1415,7 +1373,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   if (opts.auth?.type === "oauth") {
     connector.verifyState = async (oauthState, ctx) => {
       const state = stateFor(ctx);
-      return getProvider(ctx, state).verifyState(oauthState);
+      return newProvider(ctx, state).verifyState(oauthState);
     };
 
     connector.disconnectAuth = async (ctx) => {
@@ -1424,7 +1382,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
 
     connector.startAuth = async (ctx, startOpts) => {
       const state = stateFor(ctx);
-      const p = getProvider(ctx, state);
+      const p = newProvider(ctx, state);
       if (startOpts?.force || (await p.operatorDisconnected())) {
         await disconnectAuthorization(ctx, state);
       } else {

@@ -30,7 +30,9 @@ import {
 } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
+import type { ToolCallActivityEvent } from "../src/activity.js";
 import { required,
+  activitySink,
   authConnector,
   brokenConnector,
   calcConnector,
@@ -987,20 +989,22 @@ interface ObservedConnector {
  * derived state below is the one every consumer of it has to compute.
  */
 function observe(
-  registry: ReturnType<typeof makeRegistry>,
+  events: ToolCallActivityEvent[],
   id: string,
 ): ObservedConnector {
-  const health = registry.healthFor(id);
+  const observed = events.filter((event) => event.connectorId === id);
+  const last = observed.at(-1);
+  const failures = [...observed].reverse().findIndex((event) => event.outcome === "success");
+  const consecutiveFailures = last?.outcome === "success"
+    ? 0
+    : failures < 0
+      ? observed.length
+      : failures;
   return {
-    status:
-      health?.consecutiveFailures && health.consecutiveFailures > 0
-        ? "error"
-        : registry.hasObservedSuccess(id)
-          ? "ok"
-          : "unknown",
-    ...(health?.lastError ? { message: health.lastError } : {}),
-    ...(health?.lastSuccessAt ? { lastSuccessAt: health.lastSuccessAt } : {}),
-    consecutiveFailures: health?.consecutiveFailures ?? 0,
+    status: !last ? "unknown" : last.outcome === "success" ? "ok" : "error",
+    ...(last?.errorCode ? { message: last.errorCode } : {}),
+    ...(last?.outcome === "success" ? { lastSuccessAt: last.occurredAt } : {}),
+    consecutiveFailures,
   };
 }
 
@@ -1037,18 +1041,19 @@ describe("catalog-lookup health accounting", () => {
       },
     };
     const registry = makeRegistry([catalogFlaky(state), executionBroken]);
-    const mt = createMetaTools(registry, BASE);
+    const activity = activitySink();
+    const mt = createMetaTools(registry, BASE, { activity: activity.activity });
     for (let i = 0; i < 2; i++) {
       await mt.callTool({ address: "catalog.read", resultMode: "value" });
       await mt.callTool({ address: "execution.read", resultMode: "value" });
     }
-    const catalog = observe(registry, "catalog");
+    const catalog = observe(activity.events, "catalog");
     expect(catalog.consecutiveFailures).toBe(
-      observe(registry, "execution").consecutiveFailures,
+      observe(activity.events, "execution").consecutiveFailures,
     );
     expect(catalog.consecutiveFailures).toBe(2);
     expect(catalog.status).toBe("error");
-    expect(catalog.message).toContain("catalog unavailable");
+    expect(catalog.message).toBe("catalog_lookup_failed");
   });
 
   it("records a typed auth_required from the catalog without changing its code", async () => {
@@ -1066,8 +1071,9 @@ describe("catalog-lookup health accounting", () => {
       },
     };
     const registry = makeRegistry([expired]);
+    const activity = activitySink();
     const parsed = textOf(
-      await createMetaTools(registry, BASE).callTool({
+      await createMetaTools(registry, BASE, { activity: activity.activity }).callTool({
         address: "expired.read",
         resultMode: "value",
       }),
@@ -1075,7 +1081,7 @@ describe("catalog-lookup health accounting", () => {
     expect(parsed.ok).toBe(false);
     expect(parsed.error.code).toBe("auth_required");
     expect(parsed.error.message).toContain("authorize_connector");
-    expect(observe(registry, "expired")).toMatchObject({
+    expect(observe(activity.events, "expired")).toMatchObject({
       status: "error",
       consecutiveFailures: 1,
     });
@@ -1084,16 +1090,17 @@ describe("catalog-lookup health accounting", () => {
   it("returns to healthy once the catalog answers again", async () => {
     const state = { failing: true, listCalls: 0 };
     const registry = makeRegistry([catalogFlaky(state)]);
-    const mt = createMetaTools(registry, BASE);
+    const activity = activitySink();
+    const mt = createMetaTools(registry, BASE, { activity: activity.activity });
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
-    expect(observe(registry, "catalog").status).toBe("error");
+    expect(observe(activity.events, "catalog").status).toBe("error");
 
     state.failing = false;
     const parsed = textOf(
       await mt.callTool({ address: "catalog.read", resultMode: "value" }),
     ) as { ok: boolean };
     expect(parsed.ok).toBe(true);
-    const recovered = observe(registry, "catalog");
+    const recovered = observe(activity.events, "catalog");
     expect(recovered.status).toBe("ok");
     expect(recovered.consecutiveFailures).toBe(0);
     expect(recovered.lastSuccessAt).toBeTruthy();
@@ -1102,7 +1109,8 @@ describe("catalog-lookup health accounting", () => {
   it("leaves health alone for static catalogs and warm-cache hits", async () => {
     const state = { failing: false, listCalls: 0 };
     const registry = makeRegistry([catalogFlaky(state), calcConnector]);
-    const mt = createMetaTools(registry, BASE);
+    const activity = activitySink();
+    const mt = createMetaTools(registry, BASE, { activity: activity.activity });
     await mt.callTool({ address: "catalog.read", resultMode: "value" });
     // The cache is warm now, so a catalog that starts failing is never asked
     // again — and a cache hit is neither a failure nor evidence of health.
@@ -1114,11 +1122,11 @@ describe("catalog-lookup health accounting", () => {
     expect(state.listCalls).toBe(1);
 
     await mt.callTool({ address: "calc.add", args: { a: 1, b: 2 } });
-    expect(observe(registry, "catalog")).toMatchObject({
+    expect(observe(activity.events, "catalog")).toMatchObject({
       status: "ok",
       consecutiveFailures: 0,
     });
-    expect(observe(registry, "calc")).toMatchObject({
+    expect(observe(activity.events, "calc")).toMatchObject({
       status: "ok",
       consecutiveFailures: 0,
     });
@@ -1126,11 +1134,12 @@ describe("catalog-lookup health accounting", () => {
 
   it("reports health observed from real generic tool calls", async () => {
     const registry = makeRegistry([calcConnector]);
-    await createMetaTools(registry, BASE).callTool({
+    const activity = activitySink();
+    await createMetaTools(registry, BASE, { activity: activity.activity }).callTool({
       address: "calc.add",
       args: { a: 1, b: 2 },
     });
-    const observed = observe(registry, "calc");
+    const observed = observe(activity.events, "calc");
     expect(observed.status).toBe("ok");
     expect(observed.lastSuccessAt).toBeTruthy();
     expect(observed.consecutiveFailures).toBe(0);

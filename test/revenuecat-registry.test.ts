@@ -3,7 +3,7 @@ import { createConnecta } from "../src/index.js";
 import { revenuecat } from "../src/providers/revenuecat.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { connectorGuideSummary } from "../src/skills.js";
-import { silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
 import type { KVStorage } from "../src/types.js";
 
 // Unmocked on purpose. test/revenuecat-provider.test.ts stubs remote-mcp to
@@ -20,23 +20,6 @@ const executor = { execute: async () => ({ result: null }) };
  * Seed one connector's persisted catalog so `getTools` resolves from storage.
  * The key (`catalog:<id>`) is the namespace under test.
  */
-async function seedCatalog(
-  storage: KVStorage,
-  id: string,
-  toolName: string,
-): Promise<void> {
-  const now = Date.now();
-  await storage.set(
-    `catalog:${id}`,
-    JSON.stringify({
-      tools: [{ name: toolName, annotations: { readOnlyHint: true } }],
-      fetchedAt: now,
-      expiresAt: now + 600_000,
-      staleUntil: now + 1_200_000,
-    }),
-  );
-}
-
 /** The documented multi-project shape: one connector per project key. */
 function twoProjects(storage: KVStorage) {
   return createConnecta({
@@ -167,6 +150,8 @@ describe("revenuecat() inside a real deployment", () => {
   });
 
   it("meters and observes each project separately when an operator declares a budget", async () => {
+    const storage = memoryStorage();
+    await seedCatalog(storage, "bepresent_ios", "list-customers");
     const budget = {
       rules: [
         {
@@ -181,7 +166,7 @@ describe("revenuecat() inside a real deployment", () => {
     };
     const connecta = createConnecta({
       executor,
-      storage: memoryStorage(),
+      storage,
       logger: silentLogger,
       publicUrl: BASE_URL,
       connectors: [
@@ -216,11 +201,13 @@ describe("revenuecat() inside a real deployment", () => {
     expect(budgets["bepresent_ios"]?.totals.admitted).toBe(1);
     expect(budgets["biblescroll"]?.totals.admitted).toBe(0);
 
-    // Health and activity are keyed by connector id the same way.
-    connecta.registry.recordFailure("bepresent_ios", 5, new Error("boom"));
-    expect(
-      connecta.registry.healthFor("bepresent_ios")?.consecutiveFailures,
-    ).toBe(1);
-    expect(connecta.registry.healthFor("biblescroll")).toBeUndefined();
+    const activity = activitySink();
+    await invokeTestCall(
+      connecta.registry,
+      activity,
+      "bepresent_ios.list-customers",
+    );
+    expect(activityFor(activity.events, "bepresent_ios")?.outcome).toBe("error");
+    expect(activityFor(activity.events, "biblescroll")).toBeUndefined();
   });
 });

@@ -29,6 +29,13 @@ one or several real results from masquerading as a provider contract.
   live deployment audits: BePresent had 246/378 tools without output schemas,
   while OneMany's maintained connectors declared all 90 (#442).
 
+### Changed
+
+- Removed the write-only per-connector call health log. Payload-free call
+  outcomes remain available through the activity sink.
+- Persisted catalog reads now require the version 2 manifest-and-chunks shape;
+  version 1 single-value catalogs are ignored and refreshed.
+
 ## 0.18.2 — 2026-08-18
 
 This patch closes the gap the RevenueCat rollout exposed on the same day 0.18.1

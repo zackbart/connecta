@@ -929,10 +929,6 @@ describe("paginated catalogs through the discovery path", () => {
     try {
       const served = await pending;
       expect(served.map((t) => t.name)).toEqual(["alpha", "beta"]);
-      expect(registry.peekTools("paged")?.map((t) => t.name)).toEqual([
-        "alpha",
-        "beta",
-      ]);
       expect(cursors).toEqual([undefined, "p2", undefined, "p2"]);
       expect(
         logger.warnings.some((warning) =>
@@ -972,7 +968,6 @@ describe("paginated catalogs through the discovery path", () => {
     await expect(registry.getTools("paged", BASE, {})).rejects.toMatchObject({
       code: "auth_required",
     });
-    expect(registry.peekTools("paged")).toBeUndefined();
 
     // An agent meets it as a call failure carrying the route to the URL: the
     // catalog is unreachable, so the recovery is authorize_connector, and that
@@ -997,7 +992,7 @@ describe("paginated catalogs through the discovery path", () => {
   });
 
   it("keeps a later-page non-auth failure classified as error", async () => {
-    const { connector } = fixture(threePages(), {
+    const { connector, cursors } = fixture(threePages(), {
       sendFault: (message) =>
         isLaterPageRequest(message)
           ? new Error("page two transport failed")
@@ -1013,11 +1008,14 @@ describe("paginated catalogs through the discovery path", () => {
     // auth_required code and no recovery URL to open.
     expect((failure as Error).message).toContain("page two transport failed");
     expect((failure as { code?: string }).code).not.toBe("auth_required");
-    expect(registry.peekTools("paged")).toBeUndefined();
+    await expect(registry.getTools("paged", BASE, {})).rejects.toThrow(
+      "page two transport failed",
+    );
+    expect(cursors).toEqual([undefined, undefined]);
   });
 
   it("surfaces a non-terminating downstream as a connector error, not a truncated catalog", async () => {
-    const { connector } = fixture((_cursor, call) => ({
+    const { connector, cursors } = fixture((_cursor, call) => ({
       tools: [tool(`t${call}`)],
       nextCursor: "same",
     }));
@@ -1028,6 +1026,9 @@ describe("paginated catalogs through the discovery path", () => {
     );
     // A truncated catalog is worse than none: nothing is cached for the next
     // reader to mistake for the connector's real tool list.
-    expect(registry.peekTools("paged")).toBeUndefined();
+    await expect(registry.getTools("paged", BASE, {})).rejects.toThrow(
+      /pagination chain loops/,
+    );
+    expect(cursors).toEqual([undefined, "same", undefined, "same"]);
   });
 });

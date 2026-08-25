@@ -5,7 +5,7 @@ import { msg } from "./errors.js";
 const MAX_EXECUTE_RESULT_CHARS = 24_000;
 export const MAX_EXECUTE_LOG_CHARS = 4_000;
 
-function serializeExecuteValue(value: unknown): string {
+export function serializeResultText(value: unknown): string {
   const serialized = JSON.stringify(value);
   return serialized === undefined ? String(value) : serialized;
 }
@@ -55,7 +55,7 @@ function truncationEnvelope(text: string): {
 }
 
 export function guardExecuteResultValue(value: unknown): unknown {
-  const text = serializeExecuteValue(value);
+  const text = serializeResultText(value);
   if (text.length <= MAX_EXECUTE_RESULT_CHARS) return value;
   return truncationEnvelope(text);
 }

@@ -409,25 +409,8 @@ export class InvocationService {
           toolName: resolution.toolName,
         };
       }
-      if (resolution.cause && resolution.connector) {
-        if (context.requestSignal?.aborted) {
-          return failed(callerCancelledDetails());
-        }
-        // A connector whose catalog cannot be fetched is as unusable as one
-        // whose execution fails, so it feeds health accounting the same way the
-        // attempt catch below does — otherwise a connector every call fails
-        // against (a revoked downstream grant, say) still reads clean in the
-        // deployment's health log.
-        //
-        // Recorded HERE rather than inside the registry's catalog fetch because
-        // a cache hit that avoids a live listTools call records nothing — it is
-        // not evidence of health. Success stays what it has always been: an
-        // actual downstream call that returned.
-        this.registry.recordFailure(
-          resolution.connector.id,
-          Date.now() - started,
-          resolution.cause,
-        );
+      if (resolution.cause && context.requestSignal?.aborted) {
+        return failed(callerCancelledDetails());
       }
       return failed(resolution.error);
     }
@@ -579,19 +562,11 @@ export class InvocationService {
           // synchronous request for. Fall through to failure with
           // retryAfterMs reported verbatim so the agent can re-issue.
         }
-        if (!callerCancelled && !isCallAdmissionError(attemptError)) {
-          this.registry.recordFailure(
-            resolved.connector.id,
-            Date.now() - started,
-            attemptError,
-          );
-        }
         return failed(details);
       }
       break;
     }
 
-    this.registry.recordSuccess(resolved.connector.id, Date.now() - started);
     try {
       const value = await timed(
         (elapsed) => { resultProcessingMs += elapsed; },
