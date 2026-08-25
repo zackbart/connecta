@@ -444,7 +444,7 @@ function warnInsecureConfig(
 
 export function createConnecta(config: ConnectaConfig): Connecta {
   assertNoLegacyConfig(config);
-  if (Object.prototype.hasOwnProperty.call(config, "surface")) {
+  if (hasOwn(config, "surface")) {
     throw new Error(
       "ConnectaConfig.surface was removed in issue #273. Remove it; connecta " +
         "now serves one seven-tool surface.",
@@ -493,30 +493,20 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const registry = new Registry(config.connectors, {
     storage,
     logger,
-    ...(credentialVault !== undefined ? { credentialVault } : {}),
-    ...(config.activity?.store !== undefined
+    credentialVault,
+    catalogDriftActivity: config.activity?.store
       ? {
-          catalogDriftActivity: {
-            sink: config.activity.store,
-            serverInfo,
-            ...(config.activity.deploymentId !== undefined
-              ? { deploymentId: config.activity.deploymentId }
-              : {}),
-          },
+          sink: config.activity.store,
+          serverInfo,
+          ...(config.activity.deploymentId !== undefined
+            ? { deploymentId: config.activity.deploymentId }
+            : {}),
         }
-      : {}),
-    ...(config.discovery?.catalogTtlSeconds !== undefined
-      ? { toolCacheTtlSeconds: config.discovery.catalogTtlSeconds }
-      : {}),
-    ...(config.discovery?.persistCatalog !== undefined
-      ? { persistToolCatalog: config.discovery.persistCatalog }
-      : {}),
-    ...(config.discovery?.staleCatalogSeconds !== undefined
-      ? { toolCatalogStaleSeconds: config.discovery.staleCatalogSeconds }
-      : {}),
-    ...(config.calls?.maxResultBytes !== undefined
-      ? { maxResultBytes: config.calls.maxResultBytes }
-      : {}),
+      : undefined,
+    toolCacheTtlSeconds: config.discovery?.catalogTtlSeconds,
+    persistToolCatalog: config.discovery?.persistCatalog,
+    toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
+    maxResultBytes: config.calls?.maxResultBytes,
   });
   const inboundAuth = normalizeAuth(
     accessTokens ? [accessTokens.auth, ...configuredAuth] : configuredAuth,
@@ -548,44 +538,24 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,
-    ...(config.publicUrl !== undefined ? { publicUrl: config.publicUrl } : {}),
+    publicUrl: config.publicUrl,
     serverInfo,
     logger,
-    ...(config.activity?.store !== undefined
-      ? { activity: config.activity.store }
-      : {}),
-    ...(config.activity?.readGate !== undefined
-      ? { activityReadGate: config.activity.readGate }
-      : {}),
-    ...(config.activity?.deploymentId !== undefined
-      ? { activityDeploymentId: config.activity.deploymentId }
-      : {}),
+    activity: config.activity?.store,
+    activityReadGate: config.activity?.readGate,
+    activityDeploymentId: config.activity?.deploymentId,
     executor,
-    ...(configuredExecutorName !== undefined
-      ? { executorName: configuredExecutorName }
-      : {}),
+    executorName: configuredExecutorName,
     requestAdmission,
-    ...(config.calls?.defaultTimeoutMs !== undefined
-      ? { defaultToolTimeoutMs: config.calls.defaultTimeoutMs }
-      : {}),
-    ...(config.discovery?.probeTimeoutMs !== undefined
-      ? { probeTimeoutMs: config.discovery.probeTimeoutMs }
-      : {}),
-    ...(config.discovery?.concurrency !== undefined
-      ? { discoveryConcurrency: config.discovery.concurrency }
-      : {}),
-    ...(config.execute?.maxEmittedBytes !== undefined
-      ? { maxEmittedBytes: config.execute.maxEmittedBytes }
-      : {}),
-    ...(config.execute?.maxEmittedBlocks !== undefined
-      ? { maxEmittedBlocks: config.execute.maxEmittedBlocks }
-      : {}),
-    ...(credentialVault !== undefined ? { credentialVault } : {}),
-    ...(accessTokens !== undefined ? { accessTokens } : {}),
-    ...(config.deploymentInfo !== undefined
-      ? { deploymentInfo: config.deploymentInfo }
-      : {}),
-    ...(config.branding !== undefined ? { branding: config.branding } : {}),
+    defaultToolTimeoutMs: config.calls?.defaultTimeoutMs,
+    probeTimeoutMs: config.discovery?.probeTimeoutMs,
+    discoveryConcurrency: config.discovery?.concurrency,
+    maxEmittedBytes: config.execute?.maxEmittedBytes,
+    maxEmittedBlocks: config.execute?.maxEmittedBlocks,
+    credentialVault,
+    accessTokens,
+    deploymentInfo: config.deploymentInfo,
+    branding: config.branding,
   });
   let closePromise: Promise<void> | undefined;
   return {

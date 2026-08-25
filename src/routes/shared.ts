@@ -16,37 +16,37 @@ import { operatorPageForPath } from "../ui.js";
 export interface ServerOptions {
   registry: Registry;
   auth: InboundAuth[];
-  publicUrl?: string;
+  publicUrl?: string | undefined;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.
   serverInfo: Implementation;
   logger: Logger;
-  activity?: ActivityStore;
-  activityReadGate?: ActivityReadGate;
-  activityDeploymentId?: string;
-  deploymentInfo?: Record<string, unknown>;
+  activity?: ActivityStore | undefined;
+  activityReadGate?: ActivityReadGate | undefined;
+  activityDeploymentId?: string | undefined;
+  deploymentInfo?: Record<string, unknown> | undefined;
   /** Deadline for call_tool/call_destructive_tool calls that pass no timeoutMs. Off when unset. */
-  defaultToolTimeoutMs?: number;
+  defaultToolTimeoutMs?: number | undefined;
   /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
-  probeTimeoutMs?: number;
+  probeTimeoutMs?: number | undefined;
   /** Maximum simultaneous connector discovery operations. Default 4. */
-  discoveryConcurrency?: number;
+  discoveryConcurrency?: number | undefined;
   /** Aggregate serialized-byte budget for connecta.emit per run. Default 4_000_000. */
-  maxEmittedBytes?: number;
+  maxEmittedBytes?: number | undefined;
   /** Block-count budget for connecta.emit per run. Default 32. */
-  maxEmittedBlocks?: number;
+  maxEmittedBlocks?: number | undefined;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */
-  executorName?: string;
+  executorName?: string | undefined;
   /** Global FIFO boundary for all non-preflight `/mcp` requests. */
   requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */
-  credentialVault?: CredentialVault;
+  credentialVault?: CredentialVault | undefined;
   /** Hashed deployment access tokens backing MCP admission and the Tokens page. */
-  accessTokens?: AccessTokenManager;
+  accessTokens?: AccessTokenManager | undefined;
   /** Optional browser UI and OAuth result-page labels. */
-  branding?: ConnectaBranding;
+  branding?: ConnectaBranding | undefined;
 }
 
 export interface RuntimeExecutionContext {

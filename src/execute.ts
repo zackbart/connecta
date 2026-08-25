@@ -731,22 +731,22 @@ export async function buildSandboxProviders(
   logger: Logger,
   activity?: ActivityRequestContext,
   limits: {
-    signal?: AbortSignal;
-    maxHostCalls?: number;
-    hostCallTimeoutMs?: number;
-    discoveryConcurrency?: number;
+    signal?: AbortSignal | undefined;
+    maxHostCalls?: number | undefined;
+    hostCallTimeoutMs?: number | undefined;
+    discoveryConcurrency?: number | undefined;
     /** Per-connector deadline for in-program catalog probes. Default 30_000. */
-    probeTimeoutMs?: number;
-    onInvocationFailure?: (failure: InvocationFailure) => void;
-    diagnostics?: ExecuteDiagnostics;
+    probeTimeoutMs?: number | undefined;
+    onInvocationFailure?: ((failure: InvocationFailure) => void) | undefined;
+    diagnostics?: ExecuteDiagnostics | undefined;
     /**
      * Where `connecta.emit` collects. The handler that will deliver the
      * blocks owns it; without one, emit fails loudly rather than accept
      * blocks nobody will ever return.
      */
-    emitCollector?: EmitCollector;
+    emitCollector?: EmitCollector | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
-    defer?: DeferredWork;
+    defer?: DeferredWork | undefined;
   } = {},
 ): Promise<ExecutorProvider[]> {
   // All host calls made by one execute_code invocation share a downstream
@@ -756,13 +756,9 @@ export async function buildSandboxProviders(
     requestScope,
     // A program that just missed an address cannot call search_tools.
     searchRoute: "connecta.search",
-    ...(limits.discoveryConcurrency !== undefined
-      ? { concurrency: limits.discoveryConcurrency }
-      : {}),
-    ...(limits.probeTimeoutMs !== undefined
-      ? { probeTimeoutMs: limits.probeTimeoutMs }
-      : {}),
-    ...(limits.defer !== undefined ? { defer: limits.defer } : {}),
+    concurrency: limits.discoveryConcurrency,
+    probeTimeoutMs: limits.probeTimeoutMs,
+    defer: limits.defer,
   });
   const invocation = new InvocationService(registry, catalog, activity);
   const maxHostCalls = Math.max(
@@ -1097,11 +1093,11 @@ export function createExecuteTool(
   logger: Logger,
   activity?: ActivityRequestContext,
   config: {
-    discoveryConcurrency?: number;
-    probeTimeoutMs?: number;
-    maxEmittedBytes?: number;
-    maxEmittedBlocks?: number;
-    defer?: DeferredWork;
+    discoveryConcurrency?: number | undefined;
+    probeTimeoutMs?: number | undefined;
+    maxEmittedBytes?: number | undefined;
+    maxEmittedBlocks?: number | undefined;
+    defer?: DeferredWork | undefined;
   } = {},
 ) {
   return async (
@@ -1159,13 +1155,9 @@ export function createExecuteTool(
             },
             emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
-            ...(config.discoveryConcurrency !== undefined
-              ? { discoveryConcurrency: config.discoveryConcurrency }
-              : {}),
-            ...(config.probeTimeoutMs !== undefined
-              ? { probeTimeoutMs: config.probeTimeoutMs }
-              : {}),
-            ...(config.defer !== undefined ? { defer: config.defer } : {}),
+            discoveryConcurrency: config.discoveryConcurrency,
+            probeTimeoutMs: config.probeTimeoutMs,
+            defer: config.defer,
           },
         );
       } finally {
@@ -1445,21 +1437,21 @@ export function registerExecuteTool(
     baseUrl: string;
     executor: Executor;
     logger: Logger;
-    activity?: ActivityRequestContext;
-    requestSignal?: AbortSignal;
-    discoveryConcurrency?: number;
+    activity?: ActivityRequestContext | undefined;
+    requestSignal?: AbortSignal | undefined;
+    discoveryConcurrency?: number | undefined;
     /**
      * The deployment's configured per-connector probe deadline. Programs probe
      * the same downstream catalogs the top-level tools do, so an operator who
      * tightened `discovery.probeTimeoutMs` gets it honored inside the sandbox
      * too rather than silently falling back to the 30s default.
      */
-    probeTimeoutMs?: number;
+    probeTimeoutMs?: number | undefined;
     /** Aggregate serialized-byte budget for connecta.emit. Default 4_000_000. */
-    maxEmittedBytes?: number;
+    maxEmittedBytes?: number | undefined;
     /** Block-count budget for connecta.emit. Default 32. */
-    maxEmittedBlocks?: number;
-    defer?: DeferredWork;
+    maxEmittedBlocks?: number | undefined;
+    defer?: DeferredWork | undefined;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
@@ -1479,15 +1471,11 @@ export function registerExecuteTool(
     ctx.logger,
     ctx.activity,
     {
-      ...(ctx.discoveryConcurrency !== undefined
-        ? { discoveryConcurrency: ctx.discoveryConcurrency }
-        : {}),
-      ...(ctx.probeTimeoutMs !== undefined
-        ? { probeTimeoutMs: ctx.probeTimeoutMs }
-        : {}),
+      discoveryConcurrency: ctx.discoveryConcurrency,
+      probeTimeoutMs: ctx.probeTimeoutMs,
       maxEmittedBytes: emitBudgets.maxBytes,
       maxEmittedBlocks: emitBudgets.maxBlocks,
-      ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
+      defer: ctx.defer,
     },
   );
   server.registerTool(
