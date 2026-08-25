@@ -16,7 +16,7 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import type { CallErrorDetails } from "./errors.js";
+import { msg, type CallErrorDetails } from "./errors.js";
 import {
   InvocationService,
   MAX_RETRY_BACKOFF_MS,
@@ -74,10 +74,6 @@ export function jsonResult(obj: unknown): ToolResult {
 
 export function errorResult(message: string): ToolResult {
   return { content: [{ type: "text", text: message }], isError: true };
-}
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function discoveryErrorResult(error: DiscoveryPolicyError): ToolResult {

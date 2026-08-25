@@ -21,7 +21,7 @@ import {
   storedCredentialShape,
   type CredentialVault,
 } from "./credentials.js";
-import { ConnectorCallError } from "./errors.js";
+import { ConnectorCallError, msg } from "./errors.js";
 import {
   ConnectorCallAdmissionController,
   type CallAdmissionPermit,
@@ -44,7 +44,7 @@ import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
 } from "./skills.js";
-import { withAbortableTimeout } from "./timeout.js";
+import { withDeadline } from "./timeout.js";
 
 const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
@@ -228,10 +228,6 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     set: (k, v, o) => storage.set(prefix + k, v, o),
     delete: (k) => storage.delete(prefix + k),
   };
-}
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export type ConnectorOperationOptions = Pick<
@@ -1134,7 +1130,7 @@ export class Registry implements RegistryView {
         id,
         expectedGeneration,
         () =>
-          withAbortableTimeout(
+          withDeadline(
             (signal) => {
               const current = this.cache.get(id);
               if (current && current.exp > Date.now()) {
@@ -1156,8 +1152,12 @@ export class Registry implements RegistryView {
               });
               return this.refreshToolsWithContext(id, connector, ctx, true);
             },
-            options.refreshTimeoutMs,
-            `deferred catalog refresh of "${id}"`,
+            {
+              timeoutMs: options.refreshTimeoutMs,
+              timeoutError: new Error(
+                `deferred catalog refresh of "${id}" timed out after ${options.refreshTimeoutMs}ms`,
+              ),
+            },
           ),
         async () => {
           if (ctx) await closeConnectorScope(connector, ctx, options.defer);

@@ -13,26 +13,8 @@ export type ConnectorCallErrorCode =
   | "rate_limited"
   | "unavailable"
   | "invalid_args"
-  /**
-   * The downstream answered, and the thing addressed is not there.
-   *
-   * Its own code because the next move is none of the others': not a retry,
-   * not `authorize_connector`, not a reshaped argument object, but
-   * re-addressing — look the identifier up again, or accept the absence and
-   * carry on. Inside `execute_code` a program reads that difference from a
-   * caught error's `code` or a `connecta.batch` entry's `errorDetails.code` —
-   * continue past this one, abort on `connector_call_failed`. Message prose
-   * cannot be classified.
-   *
-   * Use it only where the provider distinguishes absence from a permission
-   * gap. A status that means both "it is not there" and "you cannot see it" —
-   * Notion's `object_not_found` is the worked example — stays
-   * `connector_call_failed` with a message that states the ambiguity, because
-   * inventing certainty here is how an agent concludes a page was deleted when
-   * it was simply never shared. Addresses connecta itself cannot resolve are
-   * already framed as `unknown_address` or `unknown_tool` and never reach a
-   * connector, so this code is always about a resource the downstream owns.
-   */
+  /** Provider-owned absence; see provider-conventions.md H11 for the rule and
+   * the permission-ambiguity exception. */
   | "not_found"
   | "input_required_unsupported"
   | "connector_call_failed";
@@ -77,7 +59,8 @@ function boundedIssueText(
  * the payload lands in both the text content and `structuredContent`. The agent
  * already holds what it sent; the echo is a convenience, never the record.
  */
-const MAX_ECHOED_ARGS_BYTES = 512;
+// Shared by argument and text echoes; see meta-tools.md lines 360-372.
+const MAX_ECHOED_BYTES = 512;
 
 /**
  * The same budget spent on caller-authored *text* — the address it mistyped,
@@ -95,8 +78,6 @@ const MAX_ECHOED_ARGS_BYTES = 512;
  * `structuredContent`), so an unbounded address turned a 50 KB typo into a
  * 200 KB refusal against a deployment that capped results at 1 KB.
  */
-const MAX_ECHOED_TEXT_BYTES = 512;
-
 const echoEncoder = new TextEncoder();
 const echoDecoder = new TextDecoder();
 
@@ -107,7 +88,7 @@ const echoDecoder = new TextDecoder();
  */
 export function boundedEchoText(
   value: string,
-  maxBytes: number = MAX_ECHOED_TEXT_BYTES,
+  maxBytes: number = MAX_ECHOED_BYTES,
 ): string {
   const bytes = echoEncoder.encode(value);
   if (bytes.length <= maxBytes) return value;
@@ -119,7 +100,7 @@ export function boundedEchoText(
 }
 
 /**
- * `{ args }` when the caller's arguments fit {@link MAX_ECHOED_ARGS_BYTES},
+ * `{ args }` when the caller's arguments fit the shared echo budget,
  * `{}` when they do not. All or nothing: a clipped echo would be a *different*
  * call than the one that was refused, and the routes this feeds end at a human
  * approving one. Unserializable arguments are treated the same way as oversized
@@ -134,7 +115,7 @@ export function echoedCallArgs(args: unknown): { args?: unknown } {
     return {};
   }
   if (text === undefined) return {};
-  return echoEncoder.encode(text).length <= MAX_ECHOED_ARGS_BYTES
+  return echoEncoder.encode(text).length <= MAX_ECHOED_BYTES
     ? { args }
     : {};
 }
@@ -253,11 +234,7 @@ export interface CallErrorDetails {
   code: string;
   message: string;
   retryable: boolean;
-  /**
-   * Connector-reported wait window in ms, when known. Reported verbatim — the
-   * engine bounds how long it will itself wait, but the caller sees the real
-   * window so it can schedule a re-issue.
-   */
+  /** Connector-known wait window; see {@link ConnectorCallError.retryAfterMs}. */
   retryAfterMs?: number;
   /** Bounded input-schema findings; paths and expectations, never values. */
   validation?: ArgumentValidationDetails;
@@ -286,7 +263,7 @@ export interface CallErrorDetails {
       address: string;
       /**
        * The caller's own arguments, echoed only when they fit
-       * {@link MAX_ECHOED_ARGS_BYTES} — and then whole, never clipped. Absent
+       * the shared echo budget — and then whole, never clipped. Absent
        * means "re-send exactly what you sent": a half-copied argument object
        * routed into a human approval prompt would describe a call nobody made.
        */
@@ -388,4 +365,8 @@ export function classifyCallError(
     message,
     retryable: RETRYABLE_MESSAGE_RE.test(message),
   };
+}
+
+export function msg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
 }

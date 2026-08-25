@@ -7,7 +7,7 @@ import {
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
 } from "../src/credentials.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withTimeout } from "../src/timeout.js";
+import { withAbortableTimeout } from "../src/timeout.js";
 import {
   buildUiData,
   CONNECTA_FAVICON_SVG,
@@ -1562,8 +1562,8 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
 
-    const res = await withTimeout(
-      c.fetch(
+    const res = await withAbortableTimeout(
+      () => c.fetch(
         new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
@@ -1606,8 +1606,8 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
 
-    const res = await withTimeout(
-      c.fetch(
+    const res = await withAbortableTimeout(
+      () => c.fetch(
         new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),

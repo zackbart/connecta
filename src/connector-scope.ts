@@ -1,4 +1,5 @@
 import type { Connector, ConnectorContext } from "./types.js";
+import { sleep } from "./timeout.js";
 
 /** Enough for local transport abort/close without letting cleanup own latency. */
 const CONNECTOR_SCOPE_CLOSE_BUDGET_MS = 100;
@@ -18,13 +19,7 @@ export type DeferredWork = (promise: Promise<unknown>) => void;
 
 /** Resolve when `work` settles or `budgetMs` expires; never reject. */
 function waitAtMost(work: Promise<void>, budgetMs: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, budgetMs);
-    work.then(() => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+  return Promise.race([work, sleep(budgetMs)]).then(() => {});
 }
 
 /**

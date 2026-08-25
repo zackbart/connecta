@@ -35,7 +35,7 @@ import {
 import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
-  withAbortableTimeout,
+  withDeadline,
 } from "./timeout.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
@@ -538,14 +538,16 @@ export class CatalogService {
   }
 
   private loadForDiscovery(id: string, label: string): Promise<ToolDef[]> {
-    return withAbortableTimeout(
+    return withDeadline(
       (signal) =>
         this.loadConnector(id, {
           signal,
           timeoutMs: this.probeTimeoutMs,
         }),
-      this.probeTimeoutMs,
-      label,
+      {
+        timeoutMs: this.probeTimeoutMs,
+        timeoutError: new Error(`${label} timed out after ${this.probeTimeoutMs}ms`),
+      },
     );
   }
 

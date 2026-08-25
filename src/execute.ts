@@ -23,7 +23,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { boundedEchoText, classifyCallError } from "./errors.js";
+import { boundedEchoText, classifyCallError, msg } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -627,10 +627,6 @@ const SANDBOX_RESERVED_NAMES = new Set([
   "__stringifyForCodemode",
   "__parseForCodemode",
 ]);
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function guestFailure(
   code: string,

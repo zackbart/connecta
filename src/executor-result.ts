@@ -1,12 +1,9 @@
 import type { ExecuteResult } from "./types.js";
+import { msg } from "./errors.js";
 
 /** ~6k tokens. Sandbox code should filter data down before returning. */
 const MAX_EXECUTE_RESULT_CHARS = 24_000;
 export const MAX_EXECUTE_LOG_CHARS = 4_000;
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function serializeExecuteValue(value: unknown): string {
   const serialized = JSON.stringify(value);
@@ -54,12 +51,7 @@ function truncationEnvelope(text: string): {
       Math.floor(budget * (MAX_EXECUTE_RESULT_CHARS / size)) - 8,
     );
   }
-  // The loop shrinks monotonically, so this is unreachable in practice — but an
-  // unchecked slice is exactly how a "bounded" envelope stops being bounded.
-  const clamped = { ...base, preview: text.slice(0, Math.max(0, budget)) };
-  return JSON.stringify(clamped).length <= MAX_EXECUTE_RESULT_CHARS
-    ? clamped
-    : { ...base, preview: "" };
+  return { ...base, preview: text.slice(0, budget) };
 }
 
 export function guardExecuteResultValue(value: unknown): unknown {
