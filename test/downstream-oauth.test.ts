@@ -1121,6 +1121,104 @@ describe("remoteMcp() startAuth", () => {
     expect(status.state).toBe("error");
     expect(status.message).toContain("ECONNREFUSED");
   });
+  it("non-force re-issues an outstanding consent URL without touching the verifier", async () => {
+    const storage = memoryStorage();
+    const c = remoteMcp("oauthed", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      // Must not connect while a URL is pending — the pending short-circuit
+      // fires first, so this factory should never run.
+      _transportFactory: () => {
+        throw new Error("should not connect while a consent URL is pending");
+      },
+    });
+    const url = "https://auth.example/authorize?code_challenge=abc";
+    await storage.set("oauth:pending", url);
+    await storage.set("oauth:verifier", "verifier-123");
+    const context = ctx(storage);
+
+    const first = await c.startAuth!(context, {});
+    const second = await c.startAuth!(context, {});
+
+    expect(first.state).toBe("auth_required");
+    expect(first.authorizationUrl).toBe(url);
+    expect(second.authorizationUrl).toBe(first.authorizationUrl);
+    // The verifier the operator's URL is bound to must survive both touches.
+    expect(await storage.get("oauth:verifier")).toBe("verifier-123");
+  });
+
+  it("force with a live client closes it, wipes creds, and reconnects", async () => {
+    const s1 = await connectServer();
+    const s2 = await connectServer();
+    closer = async () => {
+      await s1.server.close();
+      await s2.server.close();
+    };
+    let closedFirst = false;
+    const origClose = s1.clientTransport.close.bind(s1.clientTransport);
+    s1.clientTransport.close = async () => {
+      closedFirst = true;
+      return origClose();
+    };
+    const transports = [s1.clientTransport, s2.clientTransport];
+    const storage = memoryStorage();
+    const c = remoteMcp("oauthed", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: () => transports.shift()!,
+    });
+    const context = ctx(storage);
+
+    // First connect → live client on transport #1.
+    await c.listTools(context);
+    await storage.set("oauth:pending", "x");
+    await storage.set("oauth:verifier", "v");
+    await storage.set("oauth:tokens", "tok");
+    await storage.set("oauth:client", "cli");
+
+    const result = await c.startAuth!(context, { force: true });
+
+    expect(closedFirst).toBe(true);
+    // Reconnected cleanly via transport #2 → healthy again.
+    expect(result.state).toBe("ok");
+    expect(await storage.get("oauth:pending")).toBeNull();
+    expect(await storage.get("oauth:verifier")).toBeNull();
+    expect(await storage.get("oauth:tokens")).toBeNull();
+    expect(await storage.get("oauth:client")).toBeNull();
+  });
+
+  it("force fences an in-flight connect before wiping", async () => {
+    const storage = memoryStorage();
+    let started = 0;
+    // A transport whose start() rejects after a tick, standing in for a slow
+    // connect that is still in flight when force lands.
+    const slowFailing = (): Transport => ({
+      async start() {
+        started++;
+        await new Promise((r) => setTimeout(r, 5));
+        throw new Error("ECONNREFUSED");
+      },
+      async send() {},
+      async close() {},
+    });
+    const c = remoteMcp("oauthed", {
+      url: "https://unused.example/mcp",
+      auth: { type: "oauth" },
+      _transportFactory: slowFailing,
+    });
+    const context = ctx(storage);
+
+    // Kick a connect without awaiting so it is in flight when force runs.
+    const inflight = c.listTools(context).catch(() => {});
+    const result = await c.startAuth!(context, { force: true });
+    await inflight;
+
+    // force awaited the in-flight connect (fence) then ran its own connect.
+    expect(started).toBe(2);
+    // Network failure on an oauth connector surfaces as error, not auth_required.
+    expect(result.state).toBe("error");
+    expect(result.message).toContain("ECONNREFUSED");
+  });
 });
 
 describe("remoteMcp() finishAuth", () => {
