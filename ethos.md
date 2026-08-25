@@ -111,11 +111,11 @@ proposing one without a new argument is not.
 | View-initiated read calls from program UI | accepted | named bindings materially improve refresh, cursor pagination, and drill-down without persistence or a new tool; the trusted shell delegates only to the existing fail-closed `call_tool`, and the one-string UI remains display-only ([evidence](./documentation/program-ui-read-calls.md), [#287](https://github.com/zackbart/connecta/issues/287), [#289](https://github.com/zackbart/connecta/issues/289)) |
 | View-initiated mutation calls from program UI | gated | live-read utility says nothing about write consent: a click is not approval, stale/replayed effects need a host-tested story, and the ordinary destructive path keeps the action in the transcript ([#287](https://github.com/zackbart/connecta/issues/287)) |
 | Result sampling on the catalog surface (`sample` / `dryRun`) | refused | sampling is execution and cannot ride a catalog read; most tools carry required arguments no sampler can invent, and undeclared `outputSchema` (measured 0/30 and 3/30 on real deployments) is a real gap that is not a sampleable one — a program that checks the shape before rendering already hands back the first record inside the run it was going to make anyway, at zero new surface ([#282](https://github.com/zackbart/connecta/issues/282)) |
+| Passive observed output schemas | accepted | the sampling refusal stands: discovery originates no call and invents no arguments; instead, a successful explicitly read-only call whose provider declared no `outputSchema` records field names and broad JSON types only, under strict depth, breadth, property-name, node, and byte bounds, then merges that open optional-field shape in a 256-entry process-local cache for 24 hours; property names may be user-authored, search and describe label the shape `outputSchemaSource: "observed"`, a materially changed tool definition cannot inherit it, a provider declaration always wins, and no argument, scalar value, raw result, code, credential, or error is retained; this is new evidence rather than a rewrite of #282's facts: Blacksmith measured a value-free warm shape cache cutting one Linear code-mode task from 116.6 s / $1.91 to 56.6 s / $1.06, while live Connecta catalogs measured 246/378 missing on BePresent and 0/90 missing on OneMany ([study](https://www.blacksmith.sh/blog/code-smith-code-mode), [#442](https://github.com/zackbart/connecta/issues/442)) |
 | Legacy embedded `UIResource` delivery | refused | superseded upstream and rendered by none of the clients connecta faces; per-request minted URIs also fight the caching the Apps spec assumes ([#266](https://github.com/zackbart/connecta/issues/266)) |
 ## Invariants
 
-One line each; the enforcing tests live beside the subsystem documentation.
-Breaking one is not a bug fix — it is a design change wearing a disguise.
+One line each; the enforcing tests live beside the subsystem documentation. Breaking one is not a bug fix — it is a design change wearing a disguise.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation
   never gets the benefit of the doubt.
@@ -131,6 +131,7 @@ Breaking one is not a bug fix — it is a design change wearing a disguise.
   is never cached, persisted, or served as if it were small.
 - **Activity is payload-free by construction.** The event type has nowhere to
   put arguments, results, code, or raw error text.
+- **An observed shape is never a declaration.** It contains field names and broad JSON types only, remains open and optional, is labeled on discovery, and disappears behind any provider-declared output schema.
 - **Credentials never leave the host.** Encrypted at rest, readable only by
   the owning connector, never rendered by any surface.
 - **Import-graph purity.** Nothing reachable from the root entry imports a
@@ -145,5 +146,4 @@ Breaking one is not a bug fix — it is a design change wearing a disguise.
 - **Structural mistakes throw at construction.** A deployment that boots into
   the wrong shape is worse than one that refuses to boot.
 
----
 Connecta began as a radical simplification of [executor](https://github.com/UsefulSoftwareCo/executor); the table above is the record of that simplification holding.

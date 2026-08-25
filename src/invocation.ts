@@ -462,6 +462,7 @@ export class InvocationService {
       Math.max(0, Math.trunc(context.maxRetries ?? 0)),
     );
     let result: unknown;
+    let observedResult: unknown;
     while (true) {
       attempts++;
       let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
@@ -553,9 +554,8 @@ export class InvocationService {
           // reports the same downstream-failure wording, and the throw lands
           // inside the attempt where it stays retry-eligible and feeds health.
           assertRawMcpSuccess(resolved.connector.kind, raw);
-          result = context.unwrapResult
-            ? unwrapMcpResult(resolved.connector.kind, raw)
-            : raw;
+          observedResult = unwrapMcpResult(resolved.connector.kind, raw);
+          result = context.unwrapResult ? observedResult : raw;
         } finally {
           connectorMs += Date.now() - connectorStarted;
         }
@@ -634,6 +634,15 @@ export class InvocationService {
       const value = context.processResult
         ? await context.processResult(result, resolved)
         : (result as T);
+      try {
+        this.registry.observeOutputShape(
+          resolved.connector.id,
+          resolved.definition,
+          observedResult,
+        );
+      } catch {
+        // Shape learning is advisory. It cannot change a completed call.
+      }
       resultProcessingMs += Date.now() - processingStarted;
       const diagnostics = timing();
       const friction = context.activityFriction?.(value);

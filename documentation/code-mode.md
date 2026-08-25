@@ -149,10 +149,7 @@ a cycle, a `BigInt`, a function, a class instance — never round-trips: it eith
 ends the run with an error or is converted lossily, executor's choice (`X9`).
 Return JSON-shaped data and the question does not arise.
 
-**P4.** Nothing survives an execution. There is no module scope, cache, or
-scratch storage carried to the next program, and no request-bound object outlives
-the request that created it. Within one execution, host calls share one
-downstream request scope.
+**P4.** Nothing survives an execution. There is no module scope, cache, or scratch storage carried to the next program, and no request-bound object outlives the request that created it. Within one execution, host calls share one downstream request scope. `S9`'s host-owned output observation is catalog metadata, not guest memory: a later program receives no prior value or object, only a labeled field/type schema through discovery.
 
 **P5.** Plain JavaScript only. TypeScript syntax is a syntax error. Portable code
 does not import: QuickJS blocks imports, while Dynamic Workers expose the `X5`
@@ -223,7 +220,7 @@ const page = await connecta.search({
 });
 ```
 
-**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Top-level `search_tools` is different: it returns `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. Tool rows expose neither lexical scores nor per-result coverage. An empty or whitespace-only query browses. Non-empty input with no ASCII lexical terms returns no tools and bounded no-match analysis; mixed input searches with its ASCII terms. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes. Each enum node gets 256 of those bytes. About three near-cap enum nodes can therefore coexist while leaving the final quarter for surrounding syntax; the unchanged global fallback still applies above 1,024 bytes. A capped enum preserves whole values before `unknown` and an exact omitted-value count, while an empty enum renders as `never`. Either cap carries `inputSchemaTruncated` or `outputSchemaTruncated`; a shape-wide cap remains structurally valid with `unknown` types plus `/* truncated */`. Small enums remain complete. Use `connecta.describe` (or JSON search) for omitted exact constraints.
+**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Top-level `search_tools` is different: it returns `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. An output shape learned under `S9` also carries `outputSchemaSource: "observed"`; provider declarations carry no source marker. Tool rows expose neither lexical scores nor per-result coverage. An empty or whitespace-only query browses. Non-empty input with no ASCII lexical terms returns no tools and bounded no-match analysis; mixed input searches with its ASCII terms. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes. Each enum node gets 256 of those bytes. About three near-cap enum nodes can therefore coexist while leaving the final quarter for surrounding syntax; the unchanged global fallback still applies above 1,024 bytes. A capped enum preserves whole values before `unknown` and an exact omitted-value count, while an empty enum renders as `never`. Either cap carries `inputSchemaTruncated` or `outputSchemaTruncated`; a shape-wide cap remains structurally valid with `unknown` types plus `/* truncated */`. Small enums remain complete. Use `connecta.describe` (or JSON search) for omitted exact constraints.
 
 **S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`, connector shortcuts, and `connecta.batch`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
 
@@ -265,7 +262,7 @@ carry a route-aware `nextAction`; a close miss may add three canonical `suggesti
 Catalog failures add only `retryAfterMs` when known. One bad address never fails the whole call. Each failed entry clamps its
 caller-authored `address` to 512 UTF-8 bytes with an `…` marker. Entry order
 correlates a clipped address with its request; successes keep canonical addresses. More than 100
-addresses is `invalid_args`; the same 256,000-byte ceiling applies.
+addresses is `invalid_args`; the same 256,000-byte ceiling applies. A success whose output shape came from `S9` carries `outputSchemaSource: "observed"` beside the rendered schema.
 
 ### connecta.call
 
@@ -303,6 +300,8 @@ field names the host's internal batch path uses. One failing call never rejects
 the batch, and more than ten calls throws.
 
 **S8.** Batch and thrown failures share one vocabulary (`E1`): an entry's `errorDetails.code` and `retryable` equal the fields on the error the same call would throw. Use batch for independent concurrency, not to recover lost type.
+
+**S9.** A successful explicitly read-only call whose provider declared no `outputSchema` passively learns one from the unwrapped result. The observation retains field names and broad JSON types only: no arguments, scalar values, raw results, code, credentials, or errors. Property names may be user-authored. Objects stay open, every field stays optional, and search or describe labels the shape `outputSchemaSource: "observed"` so a model cannot mistake runtime evidence for a provider contract. Later observations merge fields and types in a process-local 256-entry LRU; a provider declaration always wins. Inference stops at depth 6, 128 schema nodes, 48 properties per object, 32 inspected array items, and 128 UTF-8 bytes per property name; `__proto__`, `constructor`, and `prototype` names are discarded. A tool definition over 64 KiB or an observed schema over 16 KiB is ignored. An entry expires after 24 hours and carries the exact serialized tool definition, so a changed catalog entry, process restart, or Worker isolate eviction starts cold. A failed call or failed result-processing step learns nothing, and any observation failure is discarded without changing a successful call. No discovery read, timer, refresh, background job, or storage adapter executes or persists work for this cache: the result-sampling refusal in [#282](https://github.com/zackbart/connecta/issues/282) stands.
 
 ### connecta.emit
 
@@ -847,6 +846,7 @@ the upstream `Executor` shape assignable.
 | `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
 | `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |
 | `S8`, `E1`, `X11` | both guest-contract executors (caught call, namespace, discovery, utility, batch-validation, budget, and forgery cases; typed batch equivalence) |
+| `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, and failure isolation) |
 | `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, batch, and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
 | `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
