@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import {
   MAX_CATALOG_CHUNK_BYTES,
   MAX_CATALOG_TOOLS,
@@ -80,15 +81,11 @@ describe("startup convention warnings", () => {
 
   it("warns on a connector with no description", () => {
     const { logger, warnings } = spyLogger();
-    const noDesc: Connector = {
+    const noDesc: Connector = connectorWith({
       id: "nodesc",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     new Registry([noDesc], { storage: memoryStorage(), logger });
     expect(
       warnings.some((w) =>
@@ -102,18 +99,14 @@ describe("startup convention warnings", () => {
     // Hand-rolled rather than api(): api() now refuses a description-less
     // tool outright, so this warning covers the connectors that implement the
     // interface themselves and still publish `staticTools`.
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "bare",
       kind: "api",
       description: "Bare — demo",
       staticTools: [{ name: "go" }],
-      async listTools() {
-        return [{ name: "go" }];
-      },
-      async callTool() {
-        return {};
-      },
-    };
+      tools: [{ name: "go" }],
+      call: async () => ({}),
+    });
     new Registry([conn], { storage: memoryStorage(), logger });
     expect(
       warnings.some((w) => w.includes('tool "bare.go" has no description')),
@@ -274,19 +267,17 @@ describe("tool cache TTL", () => {
       started = resolve;
     });
     let catalogLoads = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "coalesced",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         catalogLoads++;
         started();
         await gate;
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -312,19 +303,17 @@ describe("tool cache TTL", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "request_bound",
       kind: "mcp",
-      async listTools(ctx) {
+      tools: async (ctx) => {
         catalogLoads++;
         usedScopes.push(ctx.requestScope!);
         await gate;
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
@@ -346,18 +335,16 @@ describe("tool cache TTL", () => {
 
   it("removes a failed request-local load so the same request can retry", async () => {
     let catalogLoads = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "retry_load",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         catalogLoads++;
         if (catalogLoads === 1) throw new Error("temporary failure");
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
@@ -375,17 +362,15 @@ describe("tool cache TTL", () => {
 
   it("caches within the TTL and refetches after it expires", async () => {
     let calls = 0;
-    const counting: Connector = {
+    const counting: Connector = connectorWith({
       id: "counter",
       kind: "api",
-      async listTools(): Promise<ToolDef[]> {
+      tools: async (): Promise<ToolDef[]> => {
         calls++;
         return [{ name: "ping" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([counting], {
       storage: memoryStorage(),
       logger: silentLogger,
@@ -408,16 +393,14 @@ describe("tool cache TTL", () => {
 
   it("invalidate() forces a refetch", async () => {
     let calls = 0;
-    const counting: Connector = {
+    const counting: Connector = connectorWith({
       id: "counter2",
-      async listTools() {
+      tools: async () => {
         calls++;
         return [];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = makeRegistry([counting]);
     await registry.getTools("counter2", BASE);
     registry.invalidate("counter2");
@@ -436,10 +419,10 @@ describe("tool cache TTL", () => {
       reached = resolve;
     });
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "racing",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         calls++;
         if (calls === 1) {
           reached();
@@ -448,10 +431,8 @@ describe("tool cache TTL", () => {
         }
         return [{ name: "new_credential_tool" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -476,10 +457,10 @@ describe("tool cache TTL", () => {
   it("reuses a persisted serializable catalog in a cold registry", async () => {
     const storage = memoryStorage();
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "persisted",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         calls++;
         return [
           {
@@ -490,10 +471,8 @@ describe("tool cache TTL", () => {
           },
         ];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const first = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -523,17 +502,15 @@ describe("tool cache TTL", () => {
       },
       { name: "tail", description: "complete" },
     ];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "chunked",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         calls++;
         return tools;
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const first = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -572,17 +549,15 @@ describe("tool cache TTL", () => {
       },
     ];
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "bounded_reads",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         calls++;
         return tools;
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const first = new Registry([connector], {
       storage: backing,
       logger: silentLogger,
@@ -664,21 +639,17 @@ describe("tool cache TTL", () => {
       delete: (key) => backing.delete(key),
     };
     const warnings: string[] = [];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "parallel_write_failure",
       kind: "mcp",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "large",
             description: "x".repeat(MAX_CATALOG_CHUNK_BYTES * 2),
           },
-        ];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+        ],
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage,
       logger: {
@@ -715,17 +686,15 @@ describe("tool cache TTL", () => {
     const storage = memoryStorage();
     const warnings: string[] = [];
     let fail = false;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "torn",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         if (fail) throw new Error("live unavailable");
         return [{ name: "large", description: "x".repeat(1_100_000) }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const first = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -756,17 +725,15 @@ describe("tool cache TTL", () => {
     const storage = memoryStorage();
     const warnings: string[] = [];
     let fail = false;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "mismatch",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         if (fail) throw new Error("live unavailable");
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const first = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -801,26 +768,18 @@ describe("tool cache TTL", () => {
       ...silentLogger,
       warn: (...args: unknown[]) => warnings.push(String(args[0])),
     };
-    const tooMany: Connector = {
+    const tooMany: Connector = connectorWith({
       id: "too_many",
       kind: "mcp",
-      async listTools() {
-        return Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[];
-      },
-      async callTool() {
-        return null;
-      },
-    };
-    const tooLarge: Connector = {
+      tools: Array(MAX_CATALOG_TOOLS + 1).fill({ name: "same" }) as ToolDef[],
+      call: async () => null,
+    });
+    const tooLarge: Connector = connectorWith({
       id: "too_large",
       kind: "mcp",
-      async listTools() {
-        return [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [{ name: "x".repeat(MAX_SERIALIZED_CATALOG_BYTES) }],
+      call: async () => null,
+    });
     const registry = new Registry([tooMany, tooLarge], {
       storage: memoryStorage(),
       logger,
@@ -859,16 +818,12 @@ describe("tool cache TTL", () => {
         annotations: { readOnlyHint: true },
       },
     ];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "fingerprinted",
       kind: "mcp",
-      async listTools() {
-        return tools;
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: async () => tools,
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -913,16 +868,12 @@ describe("tool cache TTL", () => {
         return { name: "read", annotations: { readOnlyHint: true } };
       },
     } as unknown as ToolDef;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "serialize_once",
       kind: "mcp",
-      async listTools() {
-        return [serializable];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [serializable],
+      call: async () => null,
+    });
     const registry = makeRegistry([connector]);
     await registry.getTools("serialize_once", BASE);
     expect(serializations).toBe(1);
@@ -931,17 +882,15 @@ describe("tool cache TTL", () => {
   it("falls back to a stale persisted catalog when live refresh fails", async () => {
     const storage = memoryStorage();
     let fail = false;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "stale",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         if (fail) throw new Error("temporary outage");
         return [{ name: "still_here" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage,
       logger: silentLogger,
@@ -977,17 +926,15 @@ describe("tool cache TTL", () => {
       },
     };
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "resilient",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         calls++;
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage: unavailableStorage,
       logger: {
@@ -1050,22 +997,20 @@ describe("catalog stale-while-revalidate", () => {
       const contexts: object[] = [];
       const closed: object[] = [];
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr",
         kind: "mcp",
-        async listTools(ctx) {
+        tools: async (ctx) => {
           calls++;
           contexts.push(ctx.requestScope!);
           if (calls > 1) await gate.promise;
           return [{ name: calls > 1 ? "new" : "old" }];
         },
-        async callTool() {
-          return null;
-        },
+        call: async () => null,
         async closeScope(ctx) {
           closed.push(ctx.requestScope!);
         },
-      };
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,
@@ -1116,18 +1061,16 @@ describe("catalog stale-while-revalidate", () => {
     try {
       const gate = deferred<void>();
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "agent_then_operator",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           const call = ++calls;
           if (call > 1) await gate.promise;
           return [{ name: call === 1 ? "old" : "new" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,
@@ -1172,18 +1115,16 @@ describe("catalog stale-while-revalidate", () => {
     try {
       const gate = deferred<void>();
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "operator_then_agent",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           const call = ++calls;
           if (call > 1) await gate.promise;
           return [{ name: call === 1 ? "old" : "new" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,
@@ -1231,22 +1172,20 @@ describe("catalog stale-while-revalidate", () => {
       const contexts: Parameters<Connector["listTools"]>[0][] = [];
       const closed: Parameters<NonNullable<Connector["closeScope"]>>[0][] = [];
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "bounded_swr",
         kind: "mcp",
-        async listTools(ctx) {
+        tools: async (ctx) => {
           calls++;
           contexts.push(ctx);
           if (calls > 1) throw new Error("refresh broke");
           return [{ name: "old" }];
         },
-        async callTool() {
-          return null;
-        },
+        call: async () => null,
         async closeScope(ctx) {
           closed.push(ctx);
         },
-      };
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: {
@@ -1288,10 +1227,10 @@ describe("catalog stale-while-revalidate", () => {
   it("keeps blocking publication and drift when an inbound abort races completion", async () => {
     const inbound = new AbortController();
     let observed = false;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "blocking_abort",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         observed = true;
         inbound.abort(new Error("caller left after listing"));
         return [{ name: "complete" }];
@@ -1307,10 +1246,8 @@ describe("catalog stale-while-revalidate", () => {
             }
           : undefined;
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
@@ -1334,17 +1271,15 @@ describe("catalog stale-while-revalidate", () => {
     vi.useFakeTimers();
     try {
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr_generation",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           calls++;
           return [{ name: calls === 1 ? "old" : `live_${calls}` }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,
@@ -1378,10 +1313,10 @@ describe("catalog stale-while-revalidate", () => {
       const contexts: Parameters<Connector["listTools"]>[0][] = [];
       const closed: Parameters<NonNullable<Connector["closeScope"]>>[0][] = [];
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr_timeout",
         kind: "mcp",
-        async listTools(ctx) {
+        tools: async (ctx) => {
           calls++;
           contexts.push(ctx);
           if (calls === 2) {
@@ -1390,13 +1325,11 @@ describe("catalog stale-while-revalidate", () => {
           }
           return [{ name: calls === 1 ? "old" : "new" }];
         },
-        async callTool() {
-          return null;
-        },
+        call: async () => null,
         async closeScope(ctx) {
           closed.push(ctx);
         },
-      };
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,
@@ -1447,18 +1380,16 @@ describe("catalog stale-while-revalidate", () => {
       const storage = memoryStorage();
       let calls = 0;
       const gate = deferred<void>();
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr_fingerprint",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           calls++;
           if (calls > 1) await gate.promise;
           return [{ name: calls > 1 ? "live" : "stored" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const first = new Registry([connector], {
         storage,
         logger: silentLogger,
@@ -1513,17 +1444,15 @@ describe("catalog stale-while-revalidate", () => {
     try {
       const backing = memoryStorage();
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr_deadline",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           calls++;
           return [{ name: calls === 1 ? "stored" : "live" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const first = new Registry([connector], {
         storage: backing,
         logger: silentLogger,
@@ -1570,17 +1499,15 @@ describe("catalog stale-while-revalidate", () => {
     try {
       const backing = memoryStorage();
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "swr_storage_race",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           calls++;
           return [{ name: calls === 1 ? "persisted_old" : "live_new" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const first = new Registry([connector], {
         storage: backing,
         logger: silentLogger,
@@ -1640,18 +1567,16 @@ describe("catalog stale-while-revalidate", () => {
     try {
       const gate = deferred<void>();
       let calls = 0;
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "diagnostic_refresh",
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           calls++;
           if (calls > 1) await gate.promise;
           return [{ name: calls > 1 ? "fresh" : "old" }];
         },
-        async callTool() {
-          return null;
-        },
-      };
+        call: async () => null,
+      });
       const registry = new Registry([connector], {
         storage: memoryStorage(),
         logger: silentLogger,

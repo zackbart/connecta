@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import { createConnecta, CONNECTA_VERSION } from "../src/index.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -60,17 +61,15 @@ function proxy(
   catalog = reviewed(),
 ): { connector: Connector; listings: () => number } {
   let listings = 0;
-  const downstream: Connector = {
+  const downstream: Connector = connectorWith({
     id,
     kind: "mcp",
-    async listTools() {
+    tools: async () => {
       listings += 1;
       return served();
     },
-    async callTool() {
-      return null;
-    },
-  };
+    call: async () => null,
+  });
   return {
     connector: withVettedCatalog(downstream, catalog),
     listings: () => listings,
@@ -296,15 +295,11 @@ describe("drift on the registry surface", () => {
   });
 
   it("leaves status alone for a connector with no vetted manifest", async () => {
-    const plain: Connector = {
+    const plain: Connector = connectorWith({
       id: "plain",
-      async listTools() {
-        return [tool("list_issues", { readOnlyHint: true })];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [tool("list_issues", { readOnlyHint: true })],
+      call: async () => null,
+    });
     const registry = new Registry([plain], {
       storage: memoryStorage(),
       logger: silentLogger,
@@ -412,14 +407,10 @@ describe("drift on the registry surface", () => {
 
 describe("/health", () => {
   it("carries observed drift counts for connecta doctor", async () => {
-    const observed: Connector = {
+    const observed: Connector = connectorWith({
       id: "linear_test",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
+      tools: [],
+      call: async () => null,
       catalogDrift() {
         return {
           observedAt: "2026-08-12T00:00:00.000Z",
@@ -429,16 +420,12 @@ describe("/health", () => {
           schemaChanges: 0,
         };
       },
-    };
-    const quiet: Connector = {
+    });
+    const quiet: Connector = connectorWith({
       id: "quiet",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const connecta = createConnecta({
       executor: { execute: async () => ({ result: null }) },
       storage: memoryStorage(),
@@ -469,14 +456,10 @@ describe("the connector seam is projected, not echoed", () => {
    * enumerable property nor the length of `observedAt` at runtime.
    */
   const leaky = (): Connector =>
-    ({
+    (connectorWith({
       id: "leaky",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
+      tools: [],
+      call: async () => null,
       catalogDrift() {
         return {
           observedAt: `2026-08-12T00:00:00.000Z${"x".repeat(500)}`,
@@ -488,7 +471,7 @@ describe("the connector seam is projected, not echoed", () => {
           downstreamError: "prose from a downstream",
         };
       },
-    }) as unknown as Connector;
+    })) as unknown as Connector;
 
   const REPORT_KEYS = [
     "annotationConflicts",

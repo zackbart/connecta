@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import {
   CallAdmissionError,
   ConnectorCallAdmissionController,
@@ -298,23 +299,21 @@ describe("connector call admission integration", () => {
     let active = 0;
     let maxActive = 0;
     const releases: Array<() => void> = [];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
       staticTools: [READ_TOOL],
       callAdmission: policy({ maxConcurrency: 2, maxQueueSize: 4 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool(_name, args) {
+      tools: [READ_TOOL],
+      call: async (_name, args) => {
         active++;
         maxActive = Math.max(maxActive, active);
         await new Promise<void>((resolve) => releases.push(resolve));
         active--;
         return { index: (args as { index: number }).index };
       },
-    };
+    });
     const registry = makeRegistry([connector]);
     const providers = await buildSandboxProviders(
       registry,
@@ -350,23 +349,21 @@ describe("connector call admission integration", () => {
     let active = 0;
     let maxActive = 0;
     const releases: Array<() => void> = [];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
       staticTools: [READ_TOOL],
       callAdmission: policy({ maxConcurrency: 1, maxQueueSize: 2 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool(_name, args) {
+      tools: [READ_TOOL],
+      call: async (_name, args) => {
         active++;
         maxActive = Math.max(maxActive, active);
         await new Promise<void>((resolve) => releases.push(resolve));
         active--;
         return args;
       },
-    };
+    });
     const registry = makeRegistry([connector]);
     const direct = createMetaTools(registry, BASE).callTool({
       address: "limited.read",
@@ -399,22 +396,20 @@ describe("connector call admission integration", () => {
 
   it("threads direct-call cancellation into the shared admission queue", async () => {
     let release!: () => void;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
       staticTools: [READ_TOOL],
       callAdmission: policy({ maxConcurrency: 1, maxQueueSize: 1 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool() {
+      tools: [READ_TOOL],
+      call: async () => {
         await new Promise<void>((resolve) => {
           release = resolve;
         });
         return {};
       },
-    };
+    });
     const registry = makeRegistry([connector]);
     const active = createMetaTools(registry, BASE).callTool({
       address: "limited.read",
@@ -456,16 +451,14 @@ describe("connector call admission integration", () => {
       attempts: number;
       errorCode?: string;
     }> = [];
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
       staticTools: [READ_TOOL],
       callAdmission: policy({ maxConcurrency: 1 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool(_name, _args, ctx) {
+      tools: [READ_TOOL],
+      call: async (_name, _args, ctx) => {
         calls++;
         connectorSignal = ctx.signal;
         await new Promise<never>((_, reject) => {
@@ -475,7 +468,7 @@ describe("connector call admission integration", () => {
           if (ctx.signal?.aborted) cancelled();
         });
       },
-    };
+    });
     const registry = makeRegistry([connector]);
     const activity = {
       sink: {
@@ -524,20 +517,18 @@ describe("connector call admission integration", () => {
 
   it("refuses an already-cancelled call before connector dispatch", async () => {
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
       staticTools: [READ_TOOL],
       callAdmission: policy({ maxConcurrency: 1 }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool() {
+      tools: [READ_TOOL],
+      call: async () => {
         calls++;
         return {};
       },
-    };
+    });
     const registry = makeRegistry([connector]);
     const observed = activitySink();
     const controller = new AbortController();
@@ -565,7 +556,7 @@ describe("connector call admission integration", () => {
   });
 
   it("exposes payload-free connector aggregates on health", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "limited",
       kind: "api",
       description: "Limited",
@@ -574,13 +565,9 @@ describe("connector call admission integration", () => {
         maxConcurrency: 1,
         partitionKey: () => "tenant-visible-only-inside-the-limiter",
       }),
-      async listTools() {
-        return [READ_TOOL];
-      },
-      async callTool() {
-        return {};
-      },
-    };
+      tools: [READ_TOOL],
+      call: async () => ({}),
+    });
     const connecta = createTestConnecta({
       connectors: [connector],
       logger: silentLogger,
@@ -626,7 +613,7 @@ describe("connector call admission integration", () => {
       let calls = 0;
       const events: Array<{ outcome: string; attempts: number; errorCode?: string }> =
         [];
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "budgeted",
         kind: "api",
         description: "Budgeted",
@@ -638,14 +625,12 @@ describe("connector call admission integration", () => {
             windowMs: 50,
           },
         }),
-        async listTools() {
-          return [READ_TOOL];
-        },
-        async callTool() {
+        tools: [READ_TOOL],
+        call: async () => {
           calls++;
           return { calls };
         },
-      };
+      });
       const registry = makeRegistry([connector]);
       const activity = {
         sink: {

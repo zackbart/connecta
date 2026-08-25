@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import { createTestConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import type { Connector, InboundAuth, Logger } from "../src/types.js";
@@ -23,58 +24,42 @@ function warnings(logger: Logger): string {
 }
 
 /** A plain connector with neither credentials nor downstream OAuth. */
-const plainConnector: Connector = {
+const plainConnector: Connector = connectorWith({
   id: "plain",
   kind: "api",
-  async listTools() {
-    return [];
-  },
-  async callTool() {
-    return {};
-  },
-};
+  tools: [],
+  call: async () => ({}),
+});
 
 /** Downstream-OAuth connector WITHOUT a state/CSRF check. */
-const oauthNoState: Connector = {
+const oauthNoState: Connector = connectorWith({
   id: "oauth",
   kind: "mcp",
-  async listTools() {
-    return [];
-  },
-  async callTool() {
-    return {};
-  },
+  tools: [],
+  call: async () => ({}),
   async finishAuth() {},
-};
+});
 
 /** Downstream-OAuth connector WITH a state/CSRF check. */
-const oauthWithState: Connector = {
+const oauthWithState: Connector = connectorWith({
   id: "oauthsafe",
   kind: "mcp",
-  async listTools() {
-    return [];
-  },
-  async callTool() {
-    return {};
-  },
+  tools: [],
+  call: async () => ({}),
   async verifyState() {
     return true;
   },
   async finishAuth() {},
-};
+});
 
 /** Connector declaring an operator-managed credential slot. */
-const credentialConnector: Connector = {
+const credentialConnector: Connector = connectorWith({
   id: "vaulted",
   kind: "api",
   credential: { label: "API token" },
-  async listTools() {
-    return [];
-  },
-  async callTool() {
-    return {};
-  },
-};
+  tools: [],
+  call: async () => ({}),
+});
 
 describe("open-mode credential-exposure warning", () => {
   it("warns when open mode has an OAuth-capable connector", () => {

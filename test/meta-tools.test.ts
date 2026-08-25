@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
 import {
@@ -155,20 +156,18 @@ describe("describe recovery", () => {
   });
 
   it("classifies and bounds catalog failures without call-path detail", async () => {
-    const unavailable: Connector = {
+    const unavailable: Connector = connectorWith({
       id: "billing",
       kind: "api",
-      async listTools() {
+      tools: async () => {
         throw new ConnectorCallError(
           "unavailable",
           `Upstream unavailable. ${"x".repeat(1_000)}`,
           { retryAfterMs: 30_000 },
         );
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const [entry] = await new CatalogService(
       makeRegistry([unavailable]),
       BASE,
@@ -190,16 +189,14 @@ describe("describe recovery", () => {
   });
 
   it("clamps several hostile misses without discarding successful descriptions", async () => {
-    const unavailable: Connector = {
+    const unavailable: Connector = connectorWith({
       id: "billing",
       kind: "api",
-      async listTools() {
+      tools: async () => {
         throw new Error("catalog is unreachable");
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const hostile = Array.from(
       { length: 6 },
       (_, index) =>
@@ -916,7 +913,7 @@ Prefer \`notion.search\` over listing databases.
 describe("stored credential drift", () => {
   it("refuses drifted credential reads", async () => {
     let tests = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "drift",
       kind: "api",
       description: "Drifted credential",
@@ -931,19 +928,15 @@ describe("stored credential drift", () => {
         tests++;
         return { ok: true };
       },
-      async listTools() {
-        return [
+      tools: [
           {
             name: "read",
             annotations: { readOnlyHint: true },
             inputSchema: { type: "object" },
           },
-        ];
-      },
-      async callTool(_name, _args, ctx) {
-        return ctx.credential!.getAll();
-      },
-    };
+        ],
+      call: async (_name, _args, ctx) => ctx.credential!.getAll(),
+    });
     const storage = memoryStorage();
     const vault = new CredentialVault(storage, CREDENTIAL_KEY);
     await vault.setAll("drift", { apiKey: "old-key" }, "user_1");
@@ -1014,32 +1007,28 @@ describe("catalog-lookup health accounting", () => {
     failing: boolean;
     listCalls: number;
   }): Connector {
-    return {
+    return connectorWith({
       id: "catalog",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         state.listCalls++;
         if (state.failing) throw new Error("catalog unavailable");
         return [{ name: "read", annotations: { readOnlyHint: true } }];
       },
-      async callTool() {
-        return { content: [{ type: "text", text: "read" }] };
-      },
-    };
+      call: async () => ({ content: [{ type: "text", text: "read" }] }),
+    });
   }
 
   it("counts a failing catalog like a failing execution, call for call", async () => {
     const state = { failing: true, listCalls: 0 };
-    const executionBroken: Connector = {
+    const executionBroken: Connector = connectorWith({
       id: "execution",
       kind: "mcp",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => {
         throw new Error("downstream exploded");
       },
-    };
+    });
     const registry = makeRegistry([catalogFlaky(state), executionBroken]);
     const activity = activitySink();
     const mt = createMetaTools(registry, BASE, { activity: activity.activity });
@@ -1057,19 +1046,17 @@ describe("catalog-lookup health accounting", () => {
   });
 
   it("records a typed auth_required from the catalog without changing its code", async () => {
-    const expired: Connector = {
+    const expired: Connector = connectorWith({
       id: "expired",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         throw new ConnectorCallError(
           "auth_required",
           'Connector "expired" requires authorization — call authorize_connector({ connector: "expired" }).',
         );
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = makeRegistry([expired]);
     const activity = activitySink();
     const parsed = textOf(
@@ -1191,11 +1178,11 @@ describe("search_tools", () => {
     let maxActive = 0;
     const connectors = Array.from(
       { length: 9 },
-      (_, index): Connector => ({
+      (_, index): Connector => (connectorWith({
         id: `search_${index}`,
         kind: "mcp",
         description: `Search ${index}`,
-        async listTools() {
+        tools: async () => {
           active++;
           maxActive = Math.max(maxActive, active);
           await new Promise((resolve) => setTimeout(resolve, 5));
@@ -1207,10 +1194,8 @@ describe("search_tools", () => {
             },
           ];
         },
-        async callTool() {
-          return null;
-        },
-      }),
+        call: async () => null,
+      })),
     );
     const result = textOf(
       await createMetaTools(makeRegistry(connectors), BASE).searchTools({
@@ -1317,7 +1302,7 @@ describe("search_tools", () => {
   });
 
   it("filters discovery with the same fail-closed safety classification as invocation", async () => {
-    const classified: Connector = {
+    const classified: Connector = connectorWith({
       id: "classified",
       kind: "api",
       staticTools: [
@@ -1339,13 +1324,9 @@ describe("search_tools", () => {
           annotations: { readOnlyHint: true, destructiveHint: true },
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool(name) {
-        return name;
-      },
-    };
+      tools: [],
+      call: async (name) => name,
+    });
     const mt = createMetaTools(makeRegistry([classified]), BASE);
     const addresses = async (
       safety?: "readOnly" | "approvalRequired" | "all",
@@ -1383,16 +1364,12 @@ describe("search_tools", () => {
   });
 
   it("explains an empty safety-filtered result without hiding the complete catalog", async () => {
-    const writeOnly: Connector = {
+    const writeOnly: Connector = connectorWith({
       id: "write_only",
       staticTools: [{ name: "create", annotations: { readOnlyHint: false } }],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return {};
-      },
-    };
+      tools: [],
+      call: async () => ({}),
+    });
     const mt = createMetaTools(makeRegistry([writeOnly]), BASE);
     const filtered = textOf(
       await mt.searchTools({
@@ -1429,17 +1406,15 @@ describe("search_tools", () => {
 
   it("does not load unrelated catalogs for a connector-scoped search", async () => {
     const loads = { wanted: 0, unrelated: 0 };
-    const dynamic = (id: keyof typeof loads): Connector => ({
+    const dynamic = (id: keyof typeof loads): Connector => (connectorWith({
       id,
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         loads[id]++;
         return [{ name: "read", description: `Read ${id} data` }];
       },
-      async callTool() {
-        return null;
-      },
-    });
+      call: async () => null,
+    }));
     const mt = createMetaTools(
       makeRegistry([dynamic("wanted"), dynamic("unrelated")]),
       BASE,
@@ -1475,19 +1450,15 @@ describe("search_tools", () => {
   });
 
   it("defaults to eight results and preserves the remaining page", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "default_page",
       staticTools: Array.from({ length: 12 }, (_, index) => ({
         name: `read_${String(index).padStart(2, "0")}`,
         description: "Read a deterministic item",
       })),
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const first = textOf(await mt.searchTools({})) as SearchResult;
 
@@ -1512,16 +1483,14 @@ describe("search_tools", () => {
     const tools = Array.from({ length: MAX_SEARCH_LIMIT }, (_, i) => ({
       name: `tool-${i}`,
     }));
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "large",
-      async listTools() {
+      tools: async () => {
         loads++;
         return tools;
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
 
     for (const limit of [MAX_SEARCH_LIMIT - 1, MAX_SEARCH_LIMIT]) {
@@ -1553,19 +1522,15 @@ describe("search_tools", () => {
       { length: 8 },
       (_, index) => `${index}${"x".repeat(79)}`,
     );
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "coverage_budget",
       staticTools: Array.from({ length: MAX_SEARCH_LIMIT }, (_, index) => ({
         name: `read_${String(index).padStart(3, "0")}`,
         description: terms.join(" "),
       })),
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     for (const limit of [undefined, MAX_SEARCH_LIMIT]) {
       const result = await mt.searchTools({
@@ -1590,18 +1555,16 @@ describe("search_tools", () => {
 
   it("keeps 100,000-tool pagination exact at the first, middle, and final page", async () => {
     const total = 100_000;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "huge",
       staticTools: Array.from({ length: total }, (_, i) => ({
         name: `tool-${String(i).padStart(6, "0")}`,
       })),
-      async listTools() {
+      tools: async () => {
         throw new Error("static catalog should not load");
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const seen = new Set<string>();
     for (const offset of [0, 50_000, total - MAX_SEARCH_LIMIT]) {
@@ -1620,7 +1583,7 @@ describe("search_tools", () => {
   });
 
   it("rejects an oversized multibyte search result with a paging hint", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "verbose",
       staticTools: [
         {
@@ -1628,13 +1591,9 @@ describe("search_tools", () => {
           description: "界".repeat(MAX_DISCOVERY_RESULT_BYTES),
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const result = await createMetaTools(
       makeRegistry([connector]),
       BASE,
@@ -1653,11 +1612,10 @@ describe("search_tools", () => {
   });
 
   it("ranks tool-name matches above incidental description matches", async () => {
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "knowledge",
       description: "Knowledge base",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "article-search",
             description:
@@ -1667,12 +1625,9 @@ describe("search_tools", () => {
             name: "article-fetch",
             description: "Fetch an article document by URL or ID.",
           },
-        ];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+        ],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
     const parsed = textOf(
       await mt.searchTools({ query: "fetch article document" }),
@@ -1686,7 +1641,7 @@ describe("search_tools", () => {
   });
 
   it("removes conversational framing before the all-term decision", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "conversation",
       staticTools: [
         {
@@ -1698,13 +1653,9 @@ describe("search_tools", () => {
           description: "Expand a compressed archive",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([connector]),
@@ -1724,7 +1675,7 @@ describe("search_tools", () => {
   });
 
   it("keeps action terms and returns every relevant multi-intent match", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "files",
       staticTools: [
         {
@@ -1740,13 +1691,9 @@ describe("search_tools", () => {
           description: "List child folders",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([connector]),
@@ -1767,7 +1714,7 @@ describe("search_tools", () => {
   });
 
   it("explains supported, mixed, partial, and absent lexical intents", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "projects",
       staticTools: [
         {
@@ -1783,13 +1730,9 @@ describe("search_tools", () => {
           description: "Get one software project by ID",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
 
     const supported = textOf(
@@ -1893,7 +1836,7 @@ describe("search_tools", () => {
   });
 
   it("names the connector a no-match query already identified", async () => {
-    const inventory: Connector = {
+    const inventory: Connector = connectorWith({
       id: "inventory",
       title: "Warehouse stock",
       staticTools: [
@@ -1906,13 +1849,9 @@ describe("search_tools", () => {
           description: "Get one stock-keeping unit by code",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([inventory]), BASE);
 
     const byId = textOf(
@@ -2002,7 +1941,7 @@ describe("search_tools", () => {
   });
 
   it("does not let short function words force incidental partial matches", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "messages",
       staticTools: [
         {
@@ -2014,13 +1953,9 @@ describe("search_tools", () => {
           description: "List the people in a channel",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([connector]),
@@ -2039,7 +1974,7 @@ describe("search_tools", () => {
   });
 
   it("falls back to the original query when cleanup removes every term", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "framing",
       staticTools: [
         {
@@ -2051,13 +1986,9 @@ describe("search_tools", () => {
           description: "Unrelated record",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([connector]),
@@ -2076,7 +2007,7 @@ describe("search_tools", () => {
   });
 
   it("returns no false positive when only a framing word overlaps", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "archives",
       staticTools: [
         {
@@ -2084,13 +2015,9 @@ describe("search_tools", () => {
           description: "Expand a compressed archive",
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([connector]),
@@ -2110,7 +2037,7 @@ describe("search_tools", () => {
     // sealed discovery holdout stays unchanged; these synthetic descriptions
     // model broad business-context tools that happen to repeat every query
     // term and used to hide the exact action/object tool entirely.
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "analytics",
       staticTools: [
         {
@@ -2134,13 +2061,9 @@ describe("search_tools", () => {
           description: "Inspect one project note",
         })),
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const first = textOf(
       await mt.searchTools({
@@ -2211,11 +2134,10 @@ describe("search_tools", () => {
   });
 
   it("uses deterministic partial-term ranking when no all-term match exists", async () => {
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "experiments",
       description: "Experiment service",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "list_experiments",
             description: "List experiments and their configuration.",
@@ -2229,12 +2151,9 @@ describe("search_tools", () => {
             name: "get_results",
             description: "Get experiment results.",
           },
-        ];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+        ],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
     const query =
       "get experiment details metrics variants results configuration";
@@ -2280,15 +2199,11 @@ describe("search_tools", () => {
   });
 
   it("keeps partial fallback connector-scoped and returns no mode without overlap", async () => {
-    const connector = (id: string, name: string): Connector => ({
+    const connector = (id: string, name: string): Connector => (connectorWith({
       id,
-      async listTools() {
-        return [{ name, description: `${name} records` }];
-      },
-      async callTool() {
-        return null;
-      },
-    });
+      tools: [{ name, description: `${name} records` }],
+      call: async () => null,
+    }));
     const mt = createMetaTools(
       makeRegistry([
         connector("wanted", "get_experiment"),
@@ -2317,16 +2232,12 @@ describe("search_tools", () => {
 
   it("returns concise descriptions by default and full text on request", async () => {
     const longDescription = `A tool ${"with extensive documentation ".repeat(20)}`;
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "docs",
       description: "Docs",
-      async listTools() {
-        return [{ name: "read", description: longDescription }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [{ name: "read", description: longDescription }],
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([conn]), BASE);
     const concise = textOf(await mt.searchTools({})) as SearchResult;
     const full = textOf(
@@ -2356,7 +2267,7 @@ describe("search_tools", () => {
       ]),
       required: ["recordId"],
     };
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "context_budget",
       description: `connector-prose-${"background ".repeat(100)}`,
       staticTools: Array.from({ length: 8 }, (_, index) => ({
@@ -2365,16 +2276,12 @@ describe("search_tools", () => {
         inputSchema,
         annotations: { readOnlyHint: true },
       })),
-      async listTools() {
-        return [];
-      },
-      async callTool(name, args) {
-        return {
+      tools: [],
+      call: async (name, args) => ({
           name,
           recordId: (args as Record<string, unknown>).recordId,
-        };
-      },
-    };
+        }),
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const compactResult = await mt.searchTools({
       includeSchemas: "compact",
@@ -2458,11 +2365,10 @@ describe("search_tools", () => {
         },
       ],
     });
-    const mcpConnector: Connector = {
+    const mcpConnector: Connector = connectorWith({
       id: "crm",
       kind: "mcp",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "lookup",
             inputSchema: {
@@ -2472,12 +2378,9 @@ describe("search_tools", () => {
             },
             annotations: { readOnlyHint: true, openWorldHint: false },
           },
-        ];
-      },
-      async callTool() {
-        return { content: [{ type: "text", text: "{}" }] };
-      },
-    };
+        ],
+      call: async () => ({ content: [{ type: "text", text: "{}" }] }),
+    });
     const parsed = textOf(
       await createMetaTools(
         makeRegistry([apiConnector, mcpConnector]),
@@ -2549,19 +2452,17 @@ describe("search_tools", () => {
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const connector = (id: string): Connector => ({
+    const connector = (id: string): Connector => (connectorWith({
       id,
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         started++;
         if (started === 2) release();
         await gate;
         return [{ name: "read" }];
       },
-      async callTool() {
-        return null;
-      },
-    });
+      call: async () => null,
+    }));
     const search = createMetaTools(
       makeRegistry([connector("first"), connector("second")]),
       BASE,
@@ -2583,17 +2484,13 @@ describe("search_tools", () => {
 
 describe("compact schema rendering", () => {
   async function shapeOf(schema: any): Promise<string> {
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "shape",
       kind: "api",
       description: "Shapes",
-      async listTools() {
-        return [{ name: "t", description: "t", inputSchema: schema }];
-      },
-      async callTool() {
-        return {};
-      },
-    };
+      tools: [{ name: "t", description: "t", inputSchema: schema }],
+      call: async () => ({}),
+    });
     // The describe renderer, read at the layer that owns it: `connecta.describe`
     // inside execute_code is the only surface that reaches it now, and it
     // renders property descriptions where search's bounded compact schema
@@ -2814,16 +2711,12 @@ describe("compact schema rendering", () => {
       type: "object",
       properties: { state: { enum: values } },
     };
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "enum_exact",
       kind: "mcp",
-      async listTools() {
-        return [{ name: "read", description: "Read state", inputSchema: schema }];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [{ name: "read", description: "Read state", inputSchema: schema }],
+      call: async () => null,
+    });
     const registry = makeRegistry([conn]);
     const search = textOf(
       await createMetaTools(registry, BASE).searchTools({
@@ -3171,18 +3064,16 @@ describe("call_tool", () => {
     // An unannotated tool no longer comes from api() — it refuses to
     // construct one — so it arrives the way it does in production: from a
     // catalog somebody else annotated, or forgot to.
-    const silent: Connector = {
+    const silent: Connector = connectorWith({
       id: "silent",
       kind: "mcp",
       description: "A downstream that annotates nothing",
-      async listTools() {
-        return [{ name: "unannotated", description: "Who knows" }];
-      },
-      async callTool() {
+      tools: [{ name: "unannotated", description: "Who knows" }],
+      call: async () => {
         calls.push("unannotated");
         return { ok: true };
       },
-    };
+    });
     const ambiguous = api("ambiguous", {
       tools: [
         {
@@ -3220,10 +3111,10 @@ describe("call_tool", () => {
 
   it("deduplicates concurrent request-local catalog loads", async () => {
     let catalogLoads = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "shared",
       kind: "api",
-      async listTools() {
+      tools: async () => {
         catalogLoads++;
         await Promise.resolve();
         return [
@@ -3233,10 +3124,8 @@ describe("call_tool", () => {
           },
         ];
       },
-      async callTool() {
-        return { ok: true };
-      },
-    };
+      call: async () => ({ ok: true }),
+    });
     // One meta-tool set is one inbound request, so its two concurrent calls
     // share the request-local catalog rather than each loading their own.
     const mt = createMetaTools(
@@ -3253,10 +3142,10 @@ describe("call_tool", () => {
 
   it("does not retain failed request-local catalog loads", async () => {
     let catalogLoads = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "recovering",
       kind: "api",
-      async listTools() {
+      tools: async () => {
         catalogLoads++;
         if (catalogLoads === 1) throw new Error("catalog temporarily down");
         return [
@@ -3266,10 +3155,8 @@ describe("call_tool", () => {
           },
         ];
       },
-      async callTool() {
-        return { ok: true };
-      },
-    };
+      call: async () => ({ ok: true }),
+    });
     const mt = createMetaTools(
       makeRegistry([connector], { toolCacheTtlSeconds: 0 }),
       BASE,
@@ -3900,10 +3787,10 @@ describe("call_tool", () => {
 
   it("classifies remote schema mismatches consistently without provider prose", async () => {
     let calls = 0;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "remote_strict",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         const inputSchema = {
           type: "object" as const,
           properties: {
@@ -3937,7 +3824,7 @@ describe("call_tool", () => {
           },
         ];
       },
-      async callTool(name) {
+      call: async (name) => {
         calls++;
         if (name === "provider_only") {
           throw new Error(
@@ -3946,7 +3833,7 @@ describe("call_tool", () => {
         }
         return { content: [{ type: "text", text: "unexpected dispatch" }] };
       },
-    };
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     const args = {
       options: { enabled: "submitted-secret" },
@@ -4017,12 +3904,11 @@ describe("call_tool", () => {
 });
 
 // A connector returning a rich nested payload (for fields) and a big blob.
-const dataConnector: Connector = {
+const dataConnector: Connector = connectorWith({
   id: "data",
   kind: "api",
   description: "Data",
-  async listTools() {
-    return [
+  tools: [
       {
         name: "get",
         description: "Get a nested record",
@@ -4095,9 +3981,8 @@ const dataConnector: Connector = {
           properties: { title: { type: "string" } },
         },
       },
-    ];
-  },
-  async callTool(name) {
+    ],
+  call: async (name) => {
     if (name === "get") {
       return {
         user: { name: "Ada", address: { city: "London" } },
@@ -4119,15 +4004,14 @@ const dataConnector: Connector = {
     if (name === "empty") return {};
     throw new Error(`Unknown tool "${name}" on connector "data"`);
   },
-};
+});
 
 // An mcp connector whose text block is JSON (for fields over content).
-const jsonMcpConnector: Connector = {
+const jsonMcpConnector: Connector = connectorWith({
   id: "jm",
   kind: "mcp",
   description: "JSON mcp",
-  async listTools() {
-    return [
+  tools: [
       {
         name: "rec",
         description: "record",
@@ -4143,14 +4027,11 @@ const jsonMcpConnector: Connector = {
         description: "record without an output schema",
         annotations: { readOnlyHint: true },
       },
-    ];
-  },
-  async callTool() {
-    return {
+    ],
+  call: async () => ({
       content: [{ type: "text", text: JSON.stringify({ a: 1, b: 2 }) }],
-    };
-  },
-};
+    }),
+});
 
 function deepProjectionSchema(): Record<string, unknown> {
   let nested: Record<string, unknown> = { type: "string" };
@@ -4164,12 +4045,11 @@ function deepProjectionSchema(): Record<string, unknown> {
   return nested;
 }
 
-const projectionSchemaConnector: Connector = {
+const projectionSchemaConnector: Connector = connectorWith({
   id: "projection-schemas",
   kind: "api",
   description: "Projection schema edge cases",
-  async listTools() {
-    return [
+  tools: [
       {
         name: "ref",
         annotations: { readOnlyHint: true },
@@ -4305,9 +4185,8 @@ const projectionSchemaConnector: Connector = {
         name: "collision",
         annotations: { readOnlyHint: true },
       },
-    ];
-  },
-  async callTool(name) {
+    ],
+  call: async (name) => {
     if (name === "tuple") return [];
     if (name === "collision") {
       return {
@@ -4318,7 +4197,7 @@ const projectionSchemaConnector: Connector = {
     }
     return {};
   },
-};
+});
 
 describe("call_tool fields selection", () => {
   it("keeps all-valid nested and array-map projections flat", async () => {
@@ -4454,13 +4333,12 @@ describe("call_tool fields selection", () => {
   });
 
   it("keeps an empty array traversal as a clean match", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       ...dataConnector,
       id: "empty-array",
-      async callTool() {
-        return { results: [] };
-      },
-    };
+      tools: dataConnector.listTools,
+      call: async () => ({ results: [] }),
+    });
     const mt = createMetaTools(makeRegistry([connector]), BASE);
     expect(
       textOf(
@@ -4899,23 +4777,19 @@ describe("call_tool size guard + get_result", () => {
     // "aa😀bb" — the emoji is 4 UTF-8 bytes, so a 4-byte page ending at byte 4
     // lands mid-codepoint. Reassembly must equal the original with no U+FFFD.
     const original = JSON.stringify({ v: "aa😀bb界🎉cc" });
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "mb",
       kind: "api",
       description: "Multibyte",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "get",
             description: "unicode",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return JSON.parse(original);
-      },
-    };
+        ],
+      call: async () => JSON.parse(original),
+    });
     // cap of 4 forces truncation and 4-byte pages that split codepoints.
     const mt = createMetaTools(
       makeRegistry([conn], { maxResultBytes: 4 }),
@@ -4942,23 +4816,19 @@ describe("call_tool size guard + get_result", () => {
 
   it("guardText's truncated head never ends in a replacement char", async () => {
     // Emoji straddles the cap boundary; the head must stop before it.
-    const conn: Connector = {
+    const conn: Connector = connectorWith({
       id: "mb2",
       kind: "api",
       description: "Multibyte head",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "get",
             description: "unicode",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return "abc😀defghijklmnop";
-      },
-    };
+        ],
+      call: async () => "abc😀defghijklmnop",
+    });
     const mt = createMetaTools(
       makeRegistry([conn], { maxResultBytes: 5 }),
       BASE,
@@ -4980,24 +4850,20 @@ describe("per-connector maxResultBytes override", () => {
 
   /** An api connector returning PAYLOAD, optionally under its own byte cap. */
   function capped(id: string, maxResultBytes?: number): Connector {
-    return {
+    return connectorWith({
       id,
       kind: "api",
       description: "Capped",
       ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
-      async listTools() {
-        return [
+      tools: [
           {
             name: "big",
             description: "Return a large blob",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return PAYLOAD;
-      },
-    };
+        ],
+      call: async () => PAYLOAD,
+    });
   }
 
   interface Notice {
@@ -5144,24 +5010,20 @@ describe("maxResultBytes validation", () => {
   const BAD_CAPS = [0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
 
   function capped(id: string, maxResultBytes?: number): Connector {
-    return {
+    return connectorWith({
       id,
       kind: "api",
       description: "Capped",
       ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
-      async listTools() {
-        return [
+      tools: [
           {
             name: "big",
             description: "Return a large blob",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return PAYLOAD;
-      },
-    };
+        ],
+      call: async () => PAYLOAD,
+    });
   }
 
   /** Stash an oversized result and hand back its page id. */
@@ -5419,23 +5281,19 @@ describe("handler returns JSON cannot represent", () => {
 describe("mcp-mode content size guard", () => {
   /** A kind:"mcp" connector whose one tool returns `content` verbatim. */
   function downstream(content: unknown[]): Connector {
-    return {
+    return connectorWith({
       id: "down",
       kind: "mcp",
       description: "Downstream MCP",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "fetch",
             description: "Return canned content",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return { content };
-      },
-    };
+        ],
+      call: async () => ({ content }),
+    });
   }
 
   function metaTools(content: unknown[], maxResultBytes?: number) {
@@ -5852,19 +5710,19 @@ describe("authorize_connector", () => {
   });
 
   it("errors when startAuth reports auth_required without a URL", async () => {
-    const noUrl: Connector = {
+    const noUrl: Connector = connectorWith({
       id: "nourl",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         throw new Error("unauthorized");
       },
-      async callTool() {
+      call: async () => {
         throw new Error("unauthorized");
       },
       async startAuth() {
         return { state: "auth_required" };
       },
-    };
+    });
     const mt = createMetaTools(makeRegistry([noUrl]), BASE);
     const result = await mt.authorizeConnector({ connector: "nourl" });
     expect(result.isError).toBe(true);
@@ -5872,19 +5730,19 @@ describe("authorize_connector", () => {
   });
 
   it("surfaces a startAuth error state as a structured error status (not isError)", async () => {
-    const errConn: Connector = {
+    const errConn: Connector = connectorWith({
       id: "erroauth",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         throw new Error("x");
       },
-      async callTool() {
+      call: async () => {
         throw new Error("x");
       },
       async startAuth() {
         return { state: "error", message: "connect ECONNREFUSED" };
       },
-    };
+    });
     const mt = createMetaTools(makeRegistry([errConn]), BASE);
     const result = await mt.authorizeConnector({ connector: "erroauth" });
     expect(result.isError).toBeFalsy();
@@ -5897,19 +5755,19 @@ describe("authorize_connector", () => {
   });
 
   it("invalidates the tool cache even when startAuth throws", async () => {
-    const throwConn: Connector = {
+    const throwConn: Connector = connectorWith({
       id: "throws",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         throw new Error("x");
       },
-      async callTool() {
+      call: async () => {
         throw new Error("x");
       },
       async startAuth() {
         throw new Error("boom during force");
       },
-    };
+    });
     const reg = makeRegistry([throwConn]);
     let invalidated = 0;
     const origInvalidateStored = reg.invalidateStored.bind(reg);
@@ -5934,18 +5792,14 @@ describe("authorize_connector", () => {
     const vaultStorage = memoryStorage();
     const configured = createMetaTools(
       makeRegistry([
-        {
+        connectorWith({
           id: "vaulted",
           kind: "api",
           description: "Operator credential",
           credential: { label: "API key" },
-          async listTools() {
-            return [];
-          },
-          async callTool() {
-            return null;
-          },
-        },
+          tools: [],
+          call: async () => null,
+        }),
       ], {
         storage: vaultStorage,
         credentialVault: new CredentialVault(vaultStorage, CREDENTIAL_KEY),
@@ -5980,17 +5834,15 @@ describe("authorize_connector", () => {
 
 describe("probe timeout", () => {
   /** A connector whose downstream tool listing never resolves. */
-  const hangingConnector: Connector = {
+  const hangingConnector: Connector = connectorWith({
     id: "hang",
     kind: "mcp",
     description: "Never resolves",
-    listTools() {
-      return new Promise<never>(() => {});
-    },
-    async callTool() {
+    tools: async () => new Promise<never>(() => {}),
+    call: async () => {
       throw new Error("n/a");
     },
-  };
+  });
 
   it("search_tools degrades a hung connector to unavailable within the timeout", async () => {
     const mt = createMetaTools(makeRegistry([hangingConnector, calcConnector]), BASE, {
@@ -6035,20 +5887,18 @@ describe("probe timeout", () => {
   });
 
   it("returns a bounded typed catalog failure only for an explicit connector scope", async () => {
-    const typed: Connector = {
+    const typed: Connector = connectorWith({
       id: "billing",
       kind: "api",
-      async listTools() {
+      tools: async () => {
         throw new ConnectorCallError(
           "unavailable",
           `Upstream returned 503. Operator must restore access. ${"x".repeat(1_000)}`,
           { retryAfterMs: 30_000 },
         );
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const mt = createMetaTools(makeRegistry([typed, calcConnector]), BASE);
     const scoped = textOf(
       await mt.searchTools({
@@ -6090,7 +5940,7 @@ describe("probe timeout", () => {
 
 describe("empty-query browse of an unavailable catalog", () => {
   /** A connector with a guide whose catalog never resolves. */
-  const unavailable = (): Connector => ({
+  const unavailable = (): Connector => (connectorWith({
     id: "billing",
     kind: "api",
     usageGuide: {
@@ -6098,29 +5948,23 @@ describe("empty-query browse of an unavailable catalog", () => {
       summary: "Invoice ids are prefixed.",
       required: true,
     },
-    async listTools() {
+    tools: async () => {
       throw new ConnectorCallError(
         "unavailable",
         "Upstream returned 503. Operator must restore access.",
         { retryAfterMs: 30_000 },
       );
     },
-    async callTool() {
-      return null;
-    },
-  });
+    call: async () => null,
+  }));
 
   /** A connector that answers, correctly, with nothing. */
-  const barren: Connector = {
+  const barren: Connector = connectorWith({
     id: "barren",
     kind: "api",
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      return null;
-    },
-  };
+    tools: [],
+    call: async () => null,
+  });
 
   it("reports the failure and its recovery detail for a scoped browse", async () => {
     const mt = createMetaTools(
@@ -6214,16 +6058,12 @@ describe("empty-query browse of an unavailable catalog", () => {
 
 describe("empty-query browse of an unconfigured connector", () => {
   /** A configured connector that answers, correctly, with nothing. */
-  const barren: Connector = {
+  const barren: Connector = connectorWith({
     id: "barren",
     kind: "api",
-    async listTools() {
-      return [];
-    },
-    async callTool() {
-      return null;
-    },
-  };
+    tools: [],
+    call: async () => null,
+  });
 
   it("names the unknown id and the way out on a scoped browse", async () => {
     const mt = createMetaTools(makeRegistry([calcConnector]), BASE);
