@@ -4,6 +4,7 @@ import {
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
+import { defined } from "../connectors/api.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -49,16 +50,7 @@ export interface StripeHeaderOptions extends StripeCommonOptions {
 
 export type StripeOptions = StripeOAuthOptions | StripeHeaderOptions;
 
-/**
- * Stripe documents no MCP-specific rate limit, so this transcribes the account
- * limit the MCP server spends: 100 requests per second in live mode, 25 in a
- * sandbox (https://docs.stripe.com/rate-limits). The concurrency bound is
- * connecta's own conservative choice — Stripe documents that per-account and
- * per-endpoint concurrency limits exist and surface as `429` with a
- * `Stripe-Rate-Limited-Reason` of `global-concurrency` or
- * `endpoint-concurrency`, but publishes no number. Declaring `maxConcurrency`
- * is also what earns the right to the queue settings beside it.
- */
+/** Account limits and local concurrency rationale: `documentation/stripe.md`. */
 const STRIPE_ADMISSION: Readonly<
   Record<StripeMode, ConnectorCallAdmissionPolicy>
 > = {
@@ -101,16 +93,7 @@ const READ_ONLY_TOOLS = new Set([
   "stripe_implementation_planner",
 ]);
 
-/**
- * The maintained write catalog. `"destructive"` tools modify or remove state
- * that already exists; `"additive"` ones only bring something new into being.
- * Both leave the read-only path — the distinction only decides whether the
- * connection asserts `destructiveHint`, which shapes the host's approval copy.
- *
- * `create_refund` is filed destructive despite its name: it reverses a
- * settled charge and moves money back out, which is a mutation of something
- * that already exists, not a fresh object appearing beside it.
- */
+/** Reviewed writes, including refund rationale: `documentation/stripe.md`. */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["stripe_api_write", "destructive"],
   ["create_refund", "destructive"],
@@ -118,18 +101,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["send_stripe_mcp_feedback", "additive"],
 ]);
 
-/**
- * The manifest this release reviewed: both lists in one place, which is what
- * makes the classification the connector applies and the drift check that runs
- * beside it the same fact (P13). No schema digests yet — no release has read
- * Stripe's live schemas and written them down, and an invented digest would
- * report a change that never happened. `npm run drift:check -- --record` reads
- * them from a live account and prints the block to paste in
- * ([#351](https://github.com/zackbart/connecta/issues/351)).
- *
- * Exported because the maintainer-run check compares against this manifest and
- * *names* what moved, which the runtime check deliberately cannot.
- */
+/** Release-reviewed manifest; see provider conventions P5 and P13. */
 export const STRIPE_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,
@@ -139,14 +111,7 @@ export const STRIPE_VETTED_CATALOG = vettedCatalog({
 const LIVE_KEY = /\b(?:sk|rk|pk)_live_/;
 const TEST_KEY = /\b(?:sk|rk|pk)_test_/;
 
-/**
- * Refuse a deployment whose declared mode and supplied key disagree.
- *
- * This is the one half of production/sandbox routing connecta can actually
- * enforce. Nothing here reads or reports key material: an unrecognizable key
- * shape is left alone rather than guessed at, and a mismatch names only the
- * two modes.
- */
+/** Refuse a recognizable key/mode mismatch; see `documentation/stripe.md`. */
 function assertModeMatchesKey(
   id: string,
   mode: StripeMode,
@@ -205,8 +170,6 @@ function resolveAuth(id: string, options: StripeOptions): RemoteMcpAuth {
     headers: { ...auth.headers, "Stripe-Account": connectedAccount },
   };
 }
-
-const OAUTH_ADMISSION = STRIPE_ADMISSION.sandbox;
 
 function oauthUsageGuide(
   purpose: string,
@@ -325,7 +288,7 @@ export function stripe(id: string, options: StripeOptions): Connector {
         : `Stripe payments (${copy?.blurb}) — ${purpose}`,
     auth,
     requireHttps: true,
-    callAdmission: mode === undefined ? OAUTH_ADMISSION : STRIPE_ADMISSION[mode],
+    callAdmission: STRIPE_ADMISSION[mode ?? "sandbox"],
     usageGuide: {
       content:
         mode === undefined
@@ -342,9 +305,7 @@ export function stripe(id: string, options: StripeOptions): Connector {
       // Not `required`. The four generic tools are the routing decision; a
       // guide forced into every call would pay for the same prose repeatedly.
     },
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...defined({ maxResultBytes: options.maxResultBytes }),
   });
   return withVettedCatalog(connector, STRIPE_VETTED_CATALOG);
 }

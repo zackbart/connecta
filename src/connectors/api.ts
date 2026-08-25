@@ -12,6 +12,14 @@ import type {
   ToolDef,
 } from "../types.js";
 
+export function defined<T extends object>(
+  value: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, item]) => item !== undefined),
+  ) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
 export interface ApiTool {
   name: string;
   /**
@@ -82,16 +90,7 @@ export interface ApiOptions {
   tools: ApiTool[];
 }
 
-/**
- * Enforce the construction contract for one hand-written tool.
- *
- * Everything here is something only the author can supply and no runtime can
- * guess: what the tool does, and whether calling it needs a human's blessing.
- * Guessing either one is how a deployment boots into the wrong shape, so this
- * throws instead. Note what it does *not* do — it never reads a name, verb, or
- * HTTP method to infer a safety class. An unclassified tool is a bug in the
- * deployment, not a puzzle for connecta to solve.
- */
+/** Enforce provider conventions' two construction-time checks. */
 function checkToolContract(id: string, tool: ApiTool): void {
   const address = `${id}.${tool.name}`;
   if (typeof tool.description !== "string" || tool.description.trim() === "") {
@@ -112,54 +111,33 @@ function checkToolContract(id: string, tool: ApiTool): void {
   if (tool.inputSchema) compileValidator(tool.inputSchema, { address });
 }
 
-/**
- * A connector defined entirely in code: static tool defs + fetch handlers.
- * Tool inputs are plain JSON Schema objects (bring your own zod-to-json-schema
- * conversion if you prefer zod). call_tool JSON-wraps the handler's return.
- *
- * Every tool declares a description and an explicit `annotations.readOnlyHint`,
- * and any `inputSchema` it carries must compile — a tool that fails the
- * contract throws here rather than reaching a catalog. Arguments are then
- * validated against `inputSchema` before the handler runs (disable with
- * `validateArgs: false`, which opts out of enforcement, not out of the schema
- * being real), and a schema that only reveals itself as unenforceable on first
- * use — an unresolvable `$ref`, say — fails the call rather than passing raw
- * arguments through. Remote MCP inputs are also validated, but in the shared
- * invocation path against the request-local downstream catalog, where a
- * downstream's schema is its own affair and stays fail-open.
- */
+/** A static connector; see provider conventions' two construction-time checks. */
 export function api(id: string, opts: ApiOptions): Connector {
   for (const t of opts.tools) checkToolContract(id, t);
   const defs: ToolDef[] = opts.tools.map((t) => ({
     name: t.name,
     description: t.description,
-    ...(t.inputSchema !== undefined ? { inputSchema: t.inputSchema } : {}),
-    ...(t.outputSchema !== undefined ? { outputSchema: t.outputSchema } : {}),
+    ...defined({
+      inputSchema: t.inputSchema,
+      outputSchema: t.outputSchema,
+    }),
     annotations: t.annotations,
   }));
   const byName = new Map(opts.tools.map((t) => [t.name, t]));
   const validateArgs = opts.validateArgs ?? true;
   return {
     id,
-    ...(opts.title !== undefined ? { title: opts.title } : {}),
+    ...defined({ title: opts.title }),
     kind: "api",
-    ...(opts.description !== undefined
-      ? { description: opts.description }
-      : {}),
-    ...(opts.maxResultBytes !== undefined
-      ? { maxResultBytes: opts.maxResultBytes }
-      : {}),
-    ...(opts.callAdmission !== undefined
-      ? { callAdmission: opts.callAdmission }
-      : {}),
-    ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
-    ...(opts.credential !== undefined ? { credential: opts.credential } : {}),
-    ...(opts.testCredential !== undefined
-      ? { testCredential: opts.testCredential }
-      : {}),
-    ...(opts.testCredentials !== undefined
-      ? { testCredentials: opts.testCredentials }
-      : {}),
+    ...defined({
+      description: opts.description,
+      maxResultBytes: opts.maxResultBytes,
+      callAdmission: opts.callAdmission,
+      usageGuide: opts.usageGuide,
+      credential: opts.credential,
+      testCredential: opts.testCredential,
+      testCredentials: opts.testCredentials,
+    }),
     staticTools: defs,
     async listTools() {
       return defs;

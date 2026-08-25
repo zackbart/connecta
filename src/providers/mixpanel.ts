@@ -4,6 +4,7 @@ import {
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
+import { defined } from "../connectors/api.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -28,12 +29,7 @@ export interface MixpanelOptions {
   title?: string;
   /** Who should use this account and for what decisions. */
   purpose: string;
-  /**
-   * Mixpanel data residency region. Defaults to `"us"`, which is where a
-   * project lives unless it was explicitly created in the EU or India
-   * residency — the other two are opt-in, so `"us"` is the honest default
-   * rather than a convenient one.
-   */
+  /** Data residency region; see `documentation/mixpanel.md`. */
   region?: MixpanelRegion;
   /**
    * OAuth by default; static headers support Mixpanel service accounts, and
@@ -45,15 +41,7 @@ export interface MixpanelOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
-  /**
-   * Optional per-runtime call-admission policy. Deliberately not defaulted:
-   * Mixpanel meters its MCP server per user per hour, and a per-runtime
-   * counter cannot approximate a per-user quota — one runtime serving several
-   * users under-counts, and several runtimes sharing one user over-counts.
-   * A hardcoded ceiling would therefore either throttle a healthy deployment
-   * or fail to protect a busy one, so the number stays with the operator who
-   * knows the account.
-   */
+  /** Optional per-runtime policy; see `documentation/mixpanel.md#rate-limits`. */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
@@ -96,12 +84,7 @@ const READ_ONLY_TOOLS = new Set([
   "Get-Feature-Flag-Lifecycle-Guidance",
 ]);
 
-/**
- * The maintained write catalog. `"destructive"` tools modify or remove state
- * that already exists; `"additive"` ones only bring something new into being.
- * Both leave the read-only path — the distinction only decides whether the
- * connection asserts `destructiveHint`, which shapes the host's approval copy.
- */
+/** Reviewed writes; see provider convention P5. */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["Create-Dashboard", "additive"],
   ["Update-Dashboard", "destructive"],
@@ -200,16 +183,7 @@ const MIXPANEL_SCHEMA_DIGESTS = {
   "Update-Metric": "sha256:739bb6abdab19282afd4a6644a96183daabe9098a5322c44a77b840608a5ee9d",
 } as const;
 
-/**
- * The manifest this release reviewed: both lists in one place, which is what
- * makes the classification the connector applies and the drift check that runs
- * beside it the same fact (P13). The 2026-08-13 read-only audit recorded all
- * 63 live US schemas, so a later change is named by the maintainer-run drift
- * check rather than rediscovered in production (#395).
- *
- * Exported because the maintainer-run check compares against this manifest and
- * *names* what moved, which the runtime check deliberately cannot.
- */
+/** Release-reviewed manifest; see provider conventions P5 and P13. */
 export const MIXPANEL_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,
@@ -302,12 +276,10 @@ export function mixpanel(id: string, options: MixpanelOptions): Connector {
       // carries the project-then-context sequence, which is worth reading
       // before an analysis rather than before every call.
     },
-    ...(options.callAdmission !== undefined
-      ? { callAdmission: options.callAdmission }
-      : {}),
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...defined({
+      callAdmission: options.callAdmission,
+      maxResultBytes: options.maxResultBytes,
+    }),
   });
   return withVettedCatalog(connector, MIXPANEL_VETTED_CATALOG);
 }
