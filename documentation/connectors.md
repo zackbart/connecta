@@ -212,7 +212,7 @@ supplies the third caller that would settle it.
 ## MCP version skew
 
 Connecta deliberately sits between protocol generations
-([full revision inventory](./mcp-2026-07-28.md)):
+([full revision inventory](https://github.com/zackbart/connecta/blob/main/records/mcp-2026-07-28.md)):
 
 - **Inbound:** `/mcp` serves both the 2026-07-28 revision and legacy 2025
   clients. Modern clients negotiate with `server/discover` and do not send

@@ -7,7 +7,7 @@ images, audio — instead of only a single JSON return value. The verdicts live 
 precisely enough to implement, and the shapes that were considered and refused.
 The implementation landed via
 [#270](https://github.com/zackbart/connecta/issues/270): the contract clauses
-below (`M1`–`M10`) are now normative in [`code-mode.md`](./code-mode.md)'s
+below (`M1`–`M10`) are now normative in [`code-mode.md`](../documentation/code-mode.md)'s
 "Emitted output" section, which wins where the two disagree. This document
 remains the argument and the record of rejected shapes.
 
@@ -208,4 +208,4 @@ count of what was discarded (`M4`).
 
 The implementation issue carries these as acceptance criteria; the clauses
 fold into `code-mode.md` under a new "Emitted output" section when it closes,
-and the suite takes its row in the [test map](./operations.md#the-test-map).
+and the suite takes its row in the [test map](../documentation/operations.md#the-test-map).

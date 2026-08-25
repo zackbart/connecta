@@ -11,12 +11,12 @@ gated.
 It extends the [rich-output design record](./rich-output-design.md)
 ([#267](https://github.com/zackbart/connecta/issues/267)) rather than restating
 it. That record's contract clauses (`M1`–`M10`, now normative in
-[`code-mode.md`](./code-mode.md)'s "Emitted output" section) are cited here,
+[`code-mode.md`](../documentation/code-mode.md)'s "Emitted output" section) are cited here,
 not repeated; where the two overlap — provider-bridge delivery, budgets,
 success-only delivery, payload-free diagnostics — this record follows the
 precedent instead of inventing a parallel one. The implementation landed via
 [#277](https://github.com/zackbart/connecta/issues/277): the clauses below
-(`U1`–`U11`) are now normative in [`code-mode.md`](./code-mode.md)'s "Rendered
+(`U1`–`U11`) are now normative in [`code-mode.md`](../documentation/code-mode.md)'s "Rendered
 output" section, which wins where the two disagree. This document remains the
 argument and the record of rejected shapes.
 
@@ -325,7 +325,7 @@ refresh, pagination, and drill-down reads are accepted through named bindings
 and the existing `call_tool`; mutations remain gated. The evidence, threat
 trace, and boundary between live reads and Executor's artifact product live in
 [`program-ui-read-calls.md`](./program-ui-read-calls.md). The normative contract
-is `V1`–`V8` in [`code-mode.md`](./code-mode.md); it supersedes this record's
+is `V1`–`V8` in [`code-mode.md`](../documentation/code-mode.md); it supersedes this record's
 display-only clauses where they disagree.
 
 **Downstream MCP Apps template passthrough** (downstream connectors declaring
@@ -376,7 +376,7 @@ buy a guarantee the protocol already gives away.
   message-forwarding path from the inner frame to the host.
 - `U1`–`U11` fold into `code-mode.md`, the `execute_code` description documents
   `connecta.ui`, and the suite takes its row in the
-  [test map](./operations.md#the-test-map).
+  [test map](../documentation/operations.md#the-test-map).
 - `npm run check` passes.
 
 The implementation issue (#277) carries these as acceptance criteria.
