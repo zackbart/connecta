@@ -23,8 +23,10 @@ const staleReferenceAllowlist = new Set(["CHANGELOG.md"]);
 const historicalLinkAllowlist = new Set(["CHANGELOG.md"]);
 const staleReferenceDirectoryPrefixes = ["src/", "documentation/", "examples/"];
 
-// The ethos is deliberately terse — the cap is the point, not a formality.
-const ethosLineLimit = 150;
+// The ethos is deliberately terse — the cap is the point, not a formality. It
+// is a word cap, not a line cap: a line cap measured newlines while the file
+// grew sideways into 1,300-character table rows (#469).
+const ethosWordLimit = 1200;
 // Raised from 700 when code-mode.md gained the emitted-output clauses (#270),
 // and again from 800 when it gained the rendered-output clauses (#277): the
 // contract grew two real surfaces, not prose. The pressure stays — a guide
@@ -361,13 +363,14 @@ async function checkStructure(root, markdownCache, errors) {
 
   const ethosPath = resolve(root, "ethos.md");
   const ethos = markdownCache.get(ethosPath);
-  if (ethos !== undefined && lineCount(ethos) >= ethosLineLimit) {
+  const ethosWords = ethos === undefined ? 0 : ethos.split(/\s+/).filter(Boolean).length;
+  if (ethos !== undefined && ethosWords > ethosWordLimit) {
     addError(
       errors,
       root,
       ethosPath,
       1,
-      `ethos.md has ${lineCount(ethos)} lines; expected fewer than ${ethosLineLimit} — terseness is the point`,
+      `ethos.md has ${ethosWords} words; expected at most ${ethosWordLimit} — terseness is the point`,
     );
   }
 

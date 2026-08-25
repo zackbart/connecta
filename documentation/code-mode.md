@@ -173,7 +173,7 @@ word gets `_` appended (`my-service.get.thing` → `my_service.get_thing`). The
 globals are lazy: no catalog is fetched until a program touches one. The
 bounded deployment inventory in the `execute_code` description shows each
 canonical connector id and labels the shortcut only when it differs; the
-[discovery guide](./meta-tools.md#discovery-context) defines that bound.
+[discovery guide](./meta-tools.md#discovery-context) defines that bound. The sugar is frozen: every expansion invents a collision class `A1` already solves ([#223](https://github.com/zackbart/connecta/issues/223)).
 
 **A3.** A shortcut that resolves to more than one tool fails closed with
 `ambiguous_tool_alias`, naming the colliding tool names and pointing at
@@ -426,7 +426,7 @@ on data nobody asked for.
 
 **R5.** `console.log`, `console.warn`, and `console.error` are captured in call order and returned as a single `logs` string, capped at 4,000 characters with a truncation marker. Logs survive failure — they ride along with the error result, which is what makes them worth writing. How a non-string argument renders is not contract (`X4`).
 
-**R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; a program that emitted adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are byte-for-byte the ordinary response path.
+**R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; a program that emitted adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are byte-for-byte the ordinary response path. Diagnostics exist so catalog, connector, and executor costs are distinguishable without persisting payloads or charging normal responses ([#247](https://github.com/zackbart/connecta/issues/247)).
 
 **R7.** Timing separates admission, provider setup, total executor wall time, catalog work, and connector work. Catalog and connector values are cumulative, so parallel work can exceed executor wall time. Each used operation kind (`search`, `describe`, `call`, `batch`) gets one aggregate with count, failures, duration, returned serialized bytes, and catalog/connector time; batch adds only its total child count.
 
