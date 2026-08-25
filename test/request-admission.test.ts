@@ -1,33 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Executor, InboundAuth } from "../src/types.js";
 import { calcConnector, createTestConnecta, silentLogger } from "./helpers.js";
+import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
-
-function mcpRequest(
-  signal?: AbortSignal,
-  name = "tools/list",
-  args: Record<string, unknown> = {},
-): Request {
-  return new Request(`${BASE}/mcp`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json, text/event-stream",
-    },
-    body: JSON.stringify(
-      name === "tools/list"
-        ? { jsonrpc: "2.0", id: 1, method: name, params: args }
-        : {
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: { name, arguments: args },
-          },
-    ),
-    ...(signal !== undefined ? { signal } : {}),
-  });
-}
 
 function blockingAuth() {
   let release!: () => void;
@@ -78,16 +54,16 @@ describe("request admission", () => {
       },
     });
 
-    const first = connecta.fetch(mcpRequest());
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await waitFor(() => gate.calls() === 1);
-    const second = connecta.fetch(mcpRequest());
+    const second = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await waitFor(async () => {
       const health = await connecta.fetch(new Request(`${BASE}/health`));
       const body = (await health.json()) as any;
       return body.admission.requests.queued === 1;
     });
 
-    const overloaded = await connecta.fetch(mcpRequest());
+    const overloaded = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     expect(overloaded.status).toBe(503);
     expect(overloaded.headers.get("Retry-After")).toBe("1");
     expect(overloaded.headers.get("Access-Control-Allow-Origin")).toBe("*");
@@ -159,10 +135,10 @@ describe("request admission", () => {
         },
       },
     });
-    const first = connecta.fetch(mcpRequest());
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await waitFor(() => gate.calls() === 1);
     const controller = new AbortController();
-    const cancelled = connecta.fetch(mcpRequest(controller.signal));
+    const cancelled = connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
     await new Promise((resolve) => setTimeout(resolve, 0));
     controller.abort(new Error("caller left"));
     await expect(cancelled).rejects.toThrow("caller left");
@@ -213,7 +189,7 @@ describe("request admission", () => {
       },
     });
     const controller = new AbortController();
-    await connecta.fetch(mcpRequest(controller.signal));
+    await connecta.fetch(mcpRpc("tools/list", {}, { id: 1, signal: controller.signal }));
     controller.abort(new Error("caller left"));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -244,14 +220,14 @@ describe("request admission", () => {
         },
       },
     });
-    const first = connecta.fetch(mcpRequest());
+    const first = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await waitFor(() => gate.calls() === 1);
-    const queued = connecta.fetch(mcpRequest());
+    const queued = connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     await connecta.close();
     const queuedResponse = await queued;
-    const futureResponse = await connecta.fetch(mcpRequest());
+    const futureResponse = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     for (const response of [queuedResponse, futureResponse]) {
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({
@@ -294,15 +270,24 @@ describe("request admission", () => {
     });
 
     const first = connecta.fetch(
-      mcpRequest(undefined, "execute_code", { code: "() => 1" }),
+      mcpRpc("tools/call", {
+        name: "execute_code",
+        arguments: { code: "() => 1" },
+      }, { id: 1 }),
     );
     await waitFor(() => started === 1);
     const second = connecta.fetch(
-      mcpRequest(undefined, "execute_code", { code: "() => 2" }),
+      mcpRpc("tools/call", {
+        name: "execute_code",
+        arguments: { code: "() => 2" },
+      }, { id: 1 }),
     );
     await new Promise((resolve) => setTimeout(resolve, 0));
     const third = await connecta.fetch(
-      mcpRequest(undefined, "execute_code", { code: "() => 3" }),
+      mcpRpc("tools/call", {
+        name: "execute_code",
+        arguments: { code: "() => 3" },
+      }, { id: 1 }),
     );
     const thirdBody = (await third.json()) as any;
     const error = JSON.parse(thirdBody.result.content[0].text);

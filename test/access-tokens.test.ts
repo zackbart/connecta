@@ -6,7 +6,8 @@ import type {
   ActivityPage,
   ActivityStore,
 } from "../src/activity.js";
-import type { InboundAuth, KVStorage } from "../src/types.js";
+import type { KVStorage } from "../src/types.js";
+import { fakeClerkAuth } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 
@@ -14,28 +15,6 @@ function request(token?: string): Request {
   return new Request(`${BASE}/mcp`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-}
-
-function fakeClerk(): InboundAuth {
-  return {
-    kind: "clerk",
-    uiAuth: {
-      kind: "clerk",
-      publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.test",
-    },
-    authorize(request) {
-      return request.headers.get("authorization") === "Bearer clerk-operator"
-        ? { ok: true, userId: "user_operator" }
-        : {
-            ok: false,
-            response: new Response("unauthorized", {
-              status: 401,
-              headers: { "WWW-Authenticate": "Bearer" },
-            }),
-          };
-    },
-  };
 }
 
 describe("AccessTokenManager", () => {
@@ -117,7 +96,7 @@ describe("managed access token routes", () => {
   it("reveals token configuration only to an eligible Clerk operator", async () => {
     const connecta = createTestConnecta({
       connectors: [],
-      auth: [fakeClerk()],
+      auth: [fakeClerkAuth({ unauthorized: () => new Response("unauthorized", { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) })],
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -134,7 +113,7 @@ describe("managed access token routes", () => {
   it("creates with Clerk, admits MCP reads, renames, and revokes", async () => {
     const connecta = createTestConnecta({
       connectors: [],
-      auth: [fakeClerk()],
+      auth: [fakeClerkAuth({ unauthorized: () => new Response("unauthorized", { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) })],
       storage: memoryStorage(),
       accessTokens: {},
       publicUrl: BASE,
@@ -244,7 +223,7 @@ describe("managed access token routes", () => {
     };
     const connecta = createTestConnecta({
       connectors: [],
-      auth: [fakeClerk()],
+      auth: [fakeClerkAuth({ unauthorized: () => new Response("unauthorized", { status: 401, headers: { "WWW-Authenticate": "Bearer" } }) })],
       storage: memoryStorage(),
       accessTokens: {},
       activity: { store: activity },

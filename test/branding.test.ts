@@ -1,10 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createTestConnecta } from "./helpers.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { api } from "../src/connectors/api.js";
 import { resolveBranding } from "../src/ui.js";
 import type { ConnectaBranding, Logger } from "../src/types.js";
+import { calcApi, makeDeployment } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 
@@ -16,15 +15,18 @@ const PAGES = [
   "/oauth/callback/unknown-connector",
 ];
 
-function make(branding?: ConnectaBranding, extra?: { logger?: Logger }) {
-  return createTestConnecta({
-    connectors: [api("calc", { description: "Calculator", tools: [] })],
+function brandingConfig(
+  branding?: ConnectaBranding,
+  extra?: { logger?: Logger },
+) {
+  return {
+    connectors: [calcApi({ empty: true })],
     auth: bearerToken("test-token-123"),
     storage: memoryStorage(),
     publicUrl: BASE,
     ...(branding ? { branding } : {}),
     ...extra,
-  });
+  };
 }
 
 function spyLogger(): Logger {
@@ -134,12 +136,12 @@ describe("branding defaults", () => {
 
 describe("branding in served pages", () => {
   it("renames the page and drops every default Connecta label", async () => {
-    const res = await make({
+    const res = await makeDeployment(brandingConfig({
       productName: "Acme MCP",
       ownerName: "Acme Inc",
       ownerUrl: "https://acme.example",
       themeColor: "#101010",
-    }).fetch(new Request(`${BASE}/`));
+    })).fetch(new Request(`${BASE}/`));
     const body = await res.text();
     expect(body).toContain(
       "<title>Connections — Acme MCP — Acme Inc</title>",
@@ -151,10 +153,10 @@ describe("branding in served pages", () => {
 
   it("links the product label when only productUrl is set", async () => {
     const body = await (
-      await make({
+      await makeDeployment(brandingConfig({
         productName: "Acme MCP",
         productUrl: "https://acme.example/docs",
-      }).fetch(new Request(`${BASE}/`))
+      })).fetch(new Request(`${BASE}/`))
     ).text();
     expect(body).toContain(
       '<a class="brand navlink" href="https://acme.example/docs">Acme MCP</a>',
@@ -164,10 +166,10 @@ describe("branding in served pages", () => {
   it("serves a custom favicon and points the page at a custom href", async () => {
     const svg = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>';
     const ico = new Uint8Array([0, 0, 1, 0]);
-    const c = make({
+    const c = makeDeployment(brandingConfig({
       productName: "Acme MCP",
       favicon: { svg, ico, href: "https://cdn.acme.example/icon.svg" },
-    });
+    }));
     expect(await (await c.fetch(new Request(`${BASE}/favicon.svg`))).text()).toBe(
       svg,
     );
@@ -179,7 +181,7 @@ describe("branding in served pages", () => {
 
   it("renders an accepted favicon href on both branded surfaces", async () => {
     for (const href of ["https://cdn.acme.example/icon.svg", "/assets/acme.svg"]) {
-      const c = make({ productName: "Acme MCP", favicon: { href } });
+      const c = makeDeployment(brandingConfig({ productName: "Acme MCP", favicon: { href } }));
       for (const path of PAGES) {
         const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
         expect(iconHref(body)).toBe(href);
@@ -188,7 +190,7 @@ describe("branding in served pages", () => {
   });
 
   it("keeps the default mark for a format the deployment does not override", async () => {
-    const c = make({ favicon: { svg: "<svg/>" } });
+    const c = makeDeployment(brandingConfig({ favicon: { svg: "<svg/>" } }));
     const icoRes = await c.fetch(new Request(`${BASE}/favicon.ico`));
     expect(icoRes.status).toBe(200);
     expect((await icoRes.arrayBuffer()).byteLength).toBeGreaterThan(0);
@@ -196,7 +198,7 @@ describe("branding in served pages", () => {
 
   it("brands the OAuth result page too", async () => {
     const body = await (
-      await make({ productName: "Acme MCP" }).fetch(
+      await makeDeployment(brandingConfig({ productName: "Acme MCP" })).fetch(
         new Request(`${BASE}/oauth/callback/unknown-connector`),
       )
     ).text();
@@ -208,7 +210,7 @@ describe("branding in served pages", () => {
 describe("branding is not an injection vector", () => {
   it("cannot break out of the dashboard's script block", async () => {
     const body = await (
-      await make({ productName: '</script><img src=x onerror=alert(1)>' }).fetch(
+      await makeDeployment(brandingConfig({ productName: '</script><img src=x onerror=alert(1)>' })).fetch(
         new Request(`${BASE}/`),
       )
     ).text();
@@ -217,10 +219,10 @@ describe("branding is not an injection vector", () => {
   });
 
   it("never renders a javascript: favicon href on either page", async () => {
-    const c = make({
+    const c = makeDeployment(brandingConfig({
       productName: "Acme MCP",
       favicon: { href: "javascript:alert(1)" },
-    });
+    }));
     for (const path of PAGES) {
       const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
       expect(iconHref(body)).toBe("/favicon.svg");
@@ -228,12 +230,12 @@ describe("branding is not an injection vector", () => {
   });
 
   it("never renders a javascript: product or owner link", async () => {
-    const c = make({
+    const c = makeDeployment(brandingConfig({
       productName: "Acme MCP",
       productUrl: "javascript:alert(1)",
       ownerName: "Acme Inc",
       ownerUrl: "javascript:alert(2)",
-    });
+    }));
     for (const path of PAGES) {
       const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
       expect(
@@ -252,7 +254,7 @@ describe("branding is not an injection vector", () => {
       "//user@connecta.invalid/x",
       "//evil.example/icon.svg",
     ]) {
-      const c = make({ favicon: { href } });
+      const c = makeDeployment(brandingConfig({ favicon: { href } }));
       for (const path of PAGES) {
         const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
         expect(iconHref(body)).toBe("/favicon.svg");
@@ -262,10 +264,10 @@ describe("branding is not an injection vector", () => {
 
   it("survives a non-string favicon href instead of failing construction", async () => {
     const logger = spyLogger();
-    const c = make(
+    const c = makeDeployment(brandingConfig(
       { favicon: { href: 42 as unknown as string } },
       { logger },
-    );
+    ));
     for (const path of PAGES) {
       const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
       expect(iconHref(body)).toBe("/favicon.svg");
@@ -279,7 +281,7 @@ describe("branding is not an injection vector", () => {
       "<script>alert(1)</script>" +
       '<foreignObject><iframe src="https://evil.example"></iframe></foreignObject>' +
       "</svg>";
-    const res = await make({ favicon: { svg: hostile } }).fetch(
+    const res = await makeDeployment(brandingConfig({ favicon: { svg: hostile } })).fetch(
       new Request(`${BASE}/favicon.svg`),
     );
     const csp = res.headers.get("content-security-policy") ?? "";
@@ -298,10 +300,10 @@ describe("branding is not an injection vector", () => {
 
   it("escapes branding in HTML attribute and text positions", async () => {
     const body = await (
-      await make({
+      await makeDeployment(brandingConfig({
         productName: 'Acme" onload="alert(1)',
         ownerName: "<b>owner</b>",
-      }).fetch(new Request(`${BASE}/`))
+      })).fetch(new Request(`${BASE}/`))
     ).text();
     expect(body).not.toContain('onload="alert(1)"');
     expect(body).not.toContain("<b>owner</b>");
