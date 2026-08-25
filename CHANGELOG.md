@@ -2,6 +2,33 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This change gives code mode memory where downstream MCP catalogs are usually
+silent: after a successful call with no declared output schema, Connecta keeps
+only the result's field names and broad JSON types and shows that open shape on
+later discovery. Nothing breaks, no deployment option changes, and providers
+that already declare outputs are untouched. The bounded cache lives only in the
+current process or Worker isolate and forgets each shape after 24 hours.
+Discovery still never executes a tool, and
+the new `outputSchemaSource: "observed"` marker is the warning label that keeps
+one or several real results from masquerading as a provider contract.
+
+### Added
+
+- **Passive observed output schemas.** Successful explicitly read-only calls
+  whose provider declared no `outputSchema` infer and merge an open
+  optional-field schema of names and broad JSON types. The inference retains no
+  arguments, scalar values, raw results, code, credentials, or errors. Property
+  names may be user-authored. It bounds depth, breadth, names, nodes, definition
+  size, and schema bytes; keeps at most 256 runtime entries; ties each entry to
+  the exact tool definition; and expires it after 24 hours.
+  Search and describe return it with `outputSchemaSource: "observed"`; a
+  declared schema always wins. Observation is synchronous, storage-free, and
+  unable to fail the call. The design follows new warm-cache evidence and two
+  live deployment audits: BePresent had 246/378 tools without output schemas,
+  while OneMany's maintained connectors declared all 90 (#442).
+
 ## 0.18.2 — 2026-08-18
 
 This patch closes the gap the RevenueCat rollout exposed on the same day 0.18.1

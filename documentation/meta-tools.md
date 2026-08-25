@@ -78,20 +78,34 @@ headed to `call_tool` or generated code; `safety: "approvalRequired"` finds the
 complementary set that must cross `call_destructive_tool`. Omitting `safety`,
 or setting it to `"all"`, preserves the complete configured catalog. This is
 only a discovery filter: it neither grants authority nor changes invocation admission.
-`includeSchemas: "compact"` adds each match's input and any declared output
-shape. Bounded plain-object schemas also expose `inputKeys`,
+`includeSchemas: "compact"` adds each match's input and any provider-declared
+output shape. When the provider declared none but an earlier successful call
+learned one, the same field carries the open observed schema beside
+`outputSchemaSource: "observed"`. That marker matters: observed fields and broad
+JSON types are routing evidence, not a provider contract, and every object field
+remains optional and open to unseen names. A provider declaration always wins.
+Bounded plain-object schemas also expose `inputKeys`,
 `requiredInputKeys`, and `outputKeys`; a zero-input object keeps
 `requiredInputKeys: []`, while an output object with no declared properties
 omits `outputKeys`. A truncated shape omits its corresponding list rather than
 repeating a large partial inventory. Matches carry declared
 behavior annotations. Lexical rank is only one signal: select a candidate whose
 required inputs are available, whose schema is complete enough for the call,
-and whose safety and declared outputs fit the work. A reducer uses `outputKeys`
+and whose safety and available outputs fit the work. A reducer uses `outputKeys`
 before inspecting the value; it does not assume a collection is named `items`
 or `results`. When that shape is sufficient, call the returned address directly. Reserve schema
 expansion through `connecta.describe` for a search without schemas, an
 ambiguous compact shape, or exact
 constraints that require `format: "json"`.
+
+Observed schemas originate no provider traffic. A successful explicitly
+read-only call the user already made contributes names and broad types after
+Connecta unwraps the result. Arguments, scalar values, raw results, code,
+credentials, and errors are not retained, though property names may themselves
+be user-authored. Shapes merge in a 256-entry runtime cache for 24 hours under
+the exact tool definition that produced them. A changed definition, process
+restart, or Worker isolate eviction starts cold. Observation cannot fail the
+call, and the declared catalog remains the fallback.
 
 Compact search is deliberately a routing view, not a second copy of connector
 documentation. Tool purposes are capped at 160 characters, connector

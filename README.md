@@ -67,6 +67,10 @@ Fifty issues in, one small object out. Your context window notices.
   classifications, imported one at a time.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
+- **Teach undeclared result shapes by using them.** Successful read-only calls
+  retain field names and broad types in bounded runtime memory, never scalar
+  values, so later programs can project a remote MCP result its provider never
+  documented.
 - **Keep writes deliberate.** Only tools marked read-only run in a program.
   Everything else is a separate, visible call your client can gate.
 - **Run it where you like.** Node, a Docker container, or a Cloudflare Worker,

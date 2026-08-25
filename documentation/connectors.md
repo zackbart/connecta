@@ -268,6 +268,16 @@ Tool calls must use the shared invocation path. That keeps direct calls, batch
 children, and code-mode host calls aligned on safety, retries, admission,
 timeouts, validation, result guards, and typed failures.
 
+That path also learns an observed output schema after a successful explicitly
+read-only call when the catalog declared none. The observation retains field
+names and broad JSON types rather than a result. Object fields stay optional,
+additional fields stay allowed, discovery labels the source `observed`, and any
+later provider declaration wins. Property names can be user-authored data, so
+the bounded cache stays in this process or Worker isolate and expires entries
+after 24 hours. An exact tool-definition comparison rejects stale shapes. This
+does not weaken the catalog completeness rule or the refusal of result sampling:
+no catalog read executes a tool.
+
 Connector usage guides are configuration too. `usageGuide` accepts the
 historical markdown string or `{ content, summary?, required? }`; the latter
 lets discovery explain what the guide covers without loading it. The summary

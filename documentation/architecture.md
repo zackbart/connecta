@@ -14,8 +14,9 @@ stating before anything else.
 
 **Per isolate, built once.** `createConnecta(config)` returns
 `{ fetch, registry, close }`. The `Registry` owns the connector set, address
-resolution, catalog caches, connector health, and the per-connector call
-limiters. It is constructed once and lives as long as the isolate or process —
+resolution, catalog caches, observed output schemas, connector health, and the
+per-connector call limiters. It is constructed once and lives as long as the
+isolate or process —
 on Workers that means a lazy module-scope singleton, which is why both
 deployment shapes build it outside the request handler.
 
@@ -94,6 +95,7 @@ owns or hands out, and a change usually belongs in exactly one of them:
 | `src/catalog-service.ts` | Request-local tool listing, search, and describe. It coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, per-attempt timeout, retry with the connector's own `Retry-After` honoured exactly or declined, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
+| `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
 
 `src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same
 three services. That is the point: a program's `connecta.call` and a top-level
@@ -142,6 +144,7 @@ src/
   registry.ts         connector set, addresses, health, call limiters
   catalog-service.ts  request-local catalog access, search, and describe
   catalog.ts          ranking, summaries, compact schema rendering
+  result-shapes.ts    passive runtime-only observed output schemas
   invocation.ts       one tool call, end to end
   catalog-drift.ts    vetted manifests and the counts a refresh produces
   credentials.ts      the AES-GCM connector vault over KVStorage

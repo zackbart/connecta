@@ -39,6 +39,7 @@ import {
   MAX_SERIALIZED_CATALOG_BYTES,
 } from "./catalog-limits.js";
 import { mapSettledWithConcurrency } from "./concurrency.js";
+import { ObservedOutputSchemas } from "./result-shapes.js";
 import {
   GUIDE_SUMMARY_LENGTH,
   normalizeGuideSummary,
@@ -293,6 +294,17 @@ export interface RegistryView {
   observedSuccessAt(id: string): string | undefined;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
+  /** Value-free shape learned from successful calls, never a provider declaration. */
+  observedOutputSchema(
+    connectorId: string,
+    definition: ToolDef,
+  ): ToolDef["outputSchema"] | undefined;
+  /** Passively learn one successful unwrapped result; failures stay isolated. */
+  observeOutputShape(
+    connectorId: string,
+    definition: ToolDef,
+    value: unknown,
+  ): void;
   statusFor(
     id: string,
     baseUrl: string,
@@ -338,6 +350,7 @@ export class Registry implements RegistryView {
   private readonly health = new HealthLog();
   /** Last drift counts reported to activity, per connector, in this runtime. */
   private readonly reportedDrift = new Map<string, CatalogDriftCounts>();
+  private readonly observedOutputSchemas: ObservedOutputSchemas;
   private readonly ttlMs: number;
   private readonly staleMs: number;
   private readonly persistToolCatalog: boolean;
@@ -348,6 +361,7 @@ export class Registry implements RegistryView {
     connectors: Connector[],
     private readonly opts: RegistryOptions,
   ) {
+    this.observedOutputSchemas = new ObservedOutputSchemas();
     this.ttlMs =
       (opts.toolCacheTtlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
     this.staleMs =
@@ -598,6 +612,21 @@ export class Registry implements RegistryView {
    */
   resultsStorage(): KVStorage {
     return namespaced(this.opts.storage, "results:");
+  }
+
+  observedOutputSchema(
+    connectorId: string,
+    definition: ToolDef,
+  ): ToolDef["outputSchema"] | undefined {
+    return this.observedOutputSchemas.get(connectorId, definition);
+  }
+
+  observeOutputShape(
+    connectorId: string,
+    definition: ToolDef,
+    value: unknown,
+  ): void {
+    this.observedOutputSchemas.observe(connectorId, definition, value);
   }
 
   /** Resolve "<connectorId>.<toolName>" → connector + tool name. */

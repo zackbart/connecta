@@ -282,6 +282,7 @@ interface CatalogSearchEntry {
     description?: string;
     inputSchema?: unknown;
     outputSchema?: unknown;
+    outputSchemaSource?: "observed";
     inputSchemaTruncated?: true;
     outputSchemaTruncated?: true;
     inputKeys?: string[];
@@ -399,6 +400,7 @@ export interface CatalogDescription {
   guideRequiredReasons?: GuideRequiredReason[];
   inputSchema?: unknown;
   outputSchema?: unknown;
+  outputSchemaSource?: "observed";
   annotations?: ToolDef["annotations"];
   error?: string;
   errorDetails?: CatalogDescriptionFailureDetail;
@@ -408,6 +410,11 @@ export interface ResolvedCatalogTool {
   connector: Connector;
   toolName: string;
   definition: ToolDef;
+}
+
+interface OutputSchemaResolution {
+  schema?: JsonSchema;
+  source?: "observed";
 }
 
 export type CatalogResolution =
@@ -540,6 +547,20 @@ export class CatalogService {
       this.probeTimeoutMs,
       label,
     );
+  }
+
+  private outputSchema(
+    connectorId: string,
+    tool: ToolDef,
+  ): OutputSchemaResolution {
+    if (tool.outputSchema) return { schema: tool.outputSchema };
+    const observed = this.registry.observedOutputSchema(
+      connectorId,
+      tool,
+    );
+    return observed
+      ? { schema: observed, source: "observed" }
+      : {};
   }
 
   async resolveTool(
@@ -839,17 +860,20 @@ export class CatalogService {
     });
     const pageMatches = matches.slice(offset, offset + limit);
     const entries = pageMatches.map((match) => {
+      const output = args.includeSchemas
+        ? this.outputSchema(match.connector.id, match.tool)
+        : {};
       const input = match.tool.inputSchema ?? { type: "object" };
       const renderedInput = args.includeSchemas
         ? renderSearchSchema(input, args.includeSchemas)
         : undefined;
       const renderedOutput =
-        args.includeSchemas && match.tool.outputSchema
-          ? renderSearchSchema(match.tool.outputSchema, args.includeSchemas)
+        args.includeSchemas && output.schema
+          ? renderSearchSchema(output.schema, args.includeSchemas)
           : undefined;
       const schemaKeys =
         args.includeSchemas && args.includeSchemaKeys
-          ? schemaKeyMetadata(input, match.tool.outputSchema)
+          ? schemaKeyMetadata(input, output.schema)
           : undefined;
       const description = summarizeDiscoveryDescription(
         match.tool.description,
@@ -881,10 +905,13 @@ export class CatalogService {
           ...(renderedInput?.truncated
             ? { inputSchemaTruncated: true as const }
             : {}),
-          ...(args.includeSchemas && match.tool.outputSchema
+          ...(args.includeSchemas && output.schema
             ? {
                 outputSchema: renderedOutput?.schema,
               }
+            : {}),
+          ...(args.includeSchemas && output.source
+            ? { outputSchemaSource: output.source }
             : {}),
           ...(renderedOutput?.truncated
             ? { outputSchemaTruncated: true as const }
@@ -1225,6 +1252,7 @@ export class CatalogService {
         };
       }
       const input = tool.inputSchema ?? { type: "object" };
+      const output = this.outputSchema(addressResolution.connector.id, tool);
       const description = summarizeDescription(
         tool.description,
         args.fullDescriptions === true,
@@ -1252,11 +1280,12 @@ export class CatalogService {
             }
           : {}),
         inputSchema: renderSchema(input, format),
-        ...(tool.outputSchema
+        ...(output.schema
           ? {
-              outputSchema: renderSchema(tool.outputSchema, format),
+              outputSchema: renderSchema(output.schema, format),
             }
           : {}),
+        ...(output.source ? { outputSchemaSource: output.source } : {}),
         ...(tool.annotations ? { annotations: tool.annotations } : {}),
       };
     });
