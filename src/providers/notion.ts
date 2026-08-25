@@ -1,5 +1,9 @@
 import { api, type ApiTool } from "../connectors/api.js";
-import { guardedFetch } from "../connectors/guarded-fetch.js";
+import {
+  guardedFetch,
+  retryAfterMs,
+  type GuardedRequest,
+} from "../connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../errors.js";
 import type {
   Connector,
@@ -11,21 +15,7 @@ import type {
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
 
-/**
- * The API version this connection is written against, pinned deliberately.
- *
- * Notion's versions are date-named and old ones keep working indefinitely, so
- * a version override would look harmless. It is not: `2026-03-11` is the
- * version in which databases split into data sources, `archived` became
- * `in_trash`, and block append took a `position` object instead of `after`.
- * Every projection and every write body below assumes those shapes. A
- * deployment that pinned an older version would get silently wrong results
- * rather than a loud failure, so the option does not exist.
- *
- * Notion also ships additive changes to *every* version at once, which is why
- * the projections below degrade gracefully on unknown property and block types
- * rather than switching exhaustively.
- */
+/** See documentation/notion.md#the-pinned-api-version. */
 export const NOTION_API_VERSION = "2026-03-11";
 
 /** Notion's hard cap on `page_size` for every paginated endpoint. */
@@ -37,15 +27,7 @@ const DEFAULT_PAGE_SIZE = 25;
 /** Notion's cap on `children` per append, and on blocks per page create. */
 const MAX_CHILDREN_PER_REQUEST = 100;
 
-/**
- * Ceiling on downstream requests inside one `get_page_content` call.
- *
- * Recursive block traversal is the one tool here that can turn a single agent
- * call into unbounded provider traffic, and call admission meters *tool calls*,
- * not the fetches inside them. A depth-2 walk of a large page would otherwise
- * spend the whole rate-limit budget without ever being rejected. When the walk
- * hits this ceiling it stops and says so in `truncated`.
- */
+/** See documentation/notion.md#rate-limiting. */
 const MAX_CONTENT_REQUESTS = 20;
 
 /**
@@ -58,24 +40,7 @@ const MAX_CONTENT_REQUESTS = 20;
  */
 const NOTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-/**
- * Approximates Notion's documented limit: "an average of three requests per
- * second, with some bursts beyond the average allowed" — expressed as a
- * rolling minute so short bursts pass and a sustained loop does not.
- *
- * `maxConcurrency` is the load-bearing half. A budget alone is an average, and
- * an averaged budget cannot stop a program from firing forty calls in the same
- * tick; the concurrency cap keeps a burst shaped roughly like the one Notion
- * documents. Neither half is a guarantee: admission meters *tool calls*, and
- * one admitted `get_page_content` can spend up to `MAX_CONTENT_REQUESTS`
- * fetches, so this bounds tool calls rather than requests. Declaring the cap is
- * also what makes the queue settings legal — the admission controller refuses
- * queue settings without a queue at construction.
- *
- * Per-runtime, like every connector budget: N Worker isolates or Node
- * processes serving one deployment each keep their own counter. This
- * approximates the provider's limit; it does not enforce it.
- */
+/** See documentation/notion.md#rate-limiting. */
 const NOTION_ADMISSION: ConnectorCallAdmissionPolicy = {
   rules: [
     {
@@ -110,49 +75,23 @@ export interface NotionOptions {
 // Transport and typed failures
 // ---------------------------------------------------------------------------
 
-interface NotionRequest {
-  method: "GET" | "POST" | "PATCH";
-  path: string;
-  query?: Record<string, string | number | undefined>;
-  body?: Record<string, unknown>;
-}
+type NotionRequest = Pick<
+  GuardedRequest,
+  "method" | "path" | "query" | "body"
+>;
 
-/** `Retry-After` is documented as an integer number of seconds, in decimal. */
-function parseRetryAfterMs(header: string | null): number | undefined {
-  if (!header) return undefined;
-  const seconds = Number(header.trim());
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return Math.trunc(seconds * 1000);
-}
-
-/**
- * Map one Notion error response onto connecta's typed failures.
- *
- * The mapping is deliberately not one-to-one. Notion's `code` values describe
- * what its API thinks happened; connecta's codes describe what the *caller*
- * should do next, and two of Notion's are easy to mistranslate:
- *
- * - `restricted_resource` (403) is not `auth_required`. The token is fine; the
- *   integration lacks a capability or was never shared this object. Routing it
- *   to `auth_required` would send an agent to `authorize_connector`, which
- *   cannot fix it. It is a non-retryable call failure with instructions.
- * - `object_not_found` (404) is overloaded by Notion itself — it means "no
- *   such object" *or* "not shared with this integration", and the API will not
- *   say which. The message says both, because treating it as definitive
- *   absence is how an agent concludes a page was deleted when it simply was
- *   never shared.
- */
+/** See documentation/notion.md#typed-failures. */
 function notionFailure(
   status: number,
   body: Record<string, unknown> | undefined,
-  retryAfterHeader: string | null,
+  headers: Headers,
 ): ConnectorCallError {
   const code = typeof body?.["code"] === "string" ? body["code"] : undefined;
   const detail =
     typeof body?.["message"] === "string" && body["message"].trim()
       ? body["message"].trim()
       : `Notion returned HTTP ${status}.`;
-  const retryAfterMs = parseRetryAfterMs(retryAfterHeader);
+  const retryAfter = retryAfterMs(headers);
   const labelled = code ? `Notion ${code}: ${detail}` : detail;
 
   if (status === 429) {
@@ -166,7 +105,7 @@ function notionFailure(
       `${labelled}${
         typeof reason === "string" ? ` (limit: ${reason})` : ""
       } Notion allows roughly three requests per second per integration.`,
-      { retryAfterMs: retryAfterMs ?? 1_000 },
+      { retryAfterMs: retryAfter ?? 1_000 },
     );
   }
   if (status === 529) {
@@ -174,7 +113,7 @@ function notionFailure(
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion is overloaded; retry after the reported window.`,
-      { retryAfterMs: retryAfterMs ?? 5_000 },
+      { retryAfterMs: retryAfter ?? 5_000 },
     );
   }
   if (status === 401) {
@@ -207,14 +146,14 @@ function notionFailure(
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion reported a write conflict; this is safe to retry.`,
-      { retryAfterMs: retryAfterMs ?? 1_000 },
+      { retryAfterMs: retryAfter ?? 1_000 },
     );
   }
   if (status >= 500) {
     return new ConnectorCallError(
       "unavailable",
       `${labelled} Notion is failing upstream.`,
-      retryAfterMs !== undefined ? { retryAfterMs } : {},
+      retryAfter !== undefined ? { retryAfterMs: retryAfter } : {},
     );
   }
   return new ConnectorCallError("connector_call_failed", labelled, {
@@ -222,16 +161,7 @@ function notionFailure(
   });
 }
 
-/**
- * The one transport every Notion tool goes through.
- *
- * URL confinement, `ctx.signal`, redirect refusal, bounded reads, and the
- * "could not reach the provider" normalization live in the shared helper. The
- * two things that cannot be shared stay here: the integration token becomes
- * the headers Notion accepts, and `notionFailure` decides what a status means
- * — which is the whole reason a generic HTTP client is the wrong shape, given
- * that Notion's 403 and 404 both mean something no status table would guess.
- */
+/** See documentation/connectors.md#the-guarded-fetch-transport. */
 const send = guardedFetch({
   provider: "Notion",
   baseUrl: NOTION_API_BASE_URL,
@@ -254,39 +184,23 @@ async function notionRequest(
   request: NotionRequest,
 ): Promise<any> {
   return await send(request, ctx, async (response) => {
-    let payload: Record<string, unknown> | undefined;
-    try {
-      // Notion answers a delete with an empty body and a gateway answers with
-      // HTML; neither is a payload, and neither is worth a different failure.
-      payload = (await response.json()) as Record<string, unknown> | undefined;
-    } catch (cause) {
-      // A transport failure is not a parse failure. The connector's byte
-      // ceiling fires from inside this read, and swallowing it would report an
-      // oversized response as an empty success on a 2xx.
-      if (cause instanceof ConnectorCallError) throw cause;
-      payload = undefined;
-    }
+    const parsed = await response.jsonResult();
+    const payload =
+      "value" in parsed
+        ? (parsed.value as Record<string, unknown> | undefined)
+        : undefined;
     if (!response.ok) {
       throw notionFailure(
         response.status,
         payload,
-        response.headers.get("Retry-After"),
+        response.headers,
       );
     }
     return payload ?? {};
   });
 }
 
-// ---------------------------------------------------------------------------
-// Projections
-//
-// Notion's payloads are the reason this connection is hand-written. A single
-// page carries every property as a discriminated wrapper object, every string
-// as an array of rich-text runs each with its own annotations block, and every
-// user reference as a nested object. The projections below reduce that to what
-// an agent reasons about — ids, plain text, and flattened values — and each
-// tool that can lose information this way takes `raw: true` to opt out.
-// ---------------------------------------------------------------------------
+// Projections: documentation/notion.md#lean-projections-and-the-raw-escape-hatch.
 
 /** Concatenate a rich-text array to its plain text. Safe for every variant. */
 function plainText(value: unknown): string {
@@ -419,14 +333,7 @@ interface TruncatedProperty {
 
 interface ProjectedProperties {
   properties: Record<string, unknown>;
-  /**
-   * Properties Notion truncated. `GET /v1/pages/{id}` returns at most 25
-   * entries for each of its four paginated types — `title`, `rich_text`,
-   * `relation`, and `people` — and says so only with a `has_more` flag on the
-   * property itself. Surfacing them is what lets an agent know to call
-   * `get_page_property` instead of quietly reasoning about 25 of 300, and the
-   * `id` travels with the name because that tool addresses properties by id.
-   */
+  /** See documentation/notion.md#lean-projections-and-the-raw-escape-hatch. */
   truncated: TruncatedProperty[];
 }
 
@@ -494,14 +401,7 @@ function projectPage(page: any, select?: string[]): Record<string, unknown> {
   };
 }
 
-/**
- * Search returns pages and data sources; both get the identity fields only.
- *
- * Deliberately omits `properties`. A 25-result search over a populated
- * database would otherwise return several hundred flattened property values
- * for results the agent is about to discard — the exact bloat this connection
- * exists to remove. `get_page` fetches properties for the one that matched.
- */
+/** See documentation/notion.md#lean-projections-and-the-raw-escape-hatch. */
 function projectSearchHit(hit: any): Record<string, unknown> {
   if (hit?.object === "data_source") {
     return {
@@ -570,12 +470,7 @@ function projectBlock(block: any, depth: number): Record<string, unknown> {
       projected["icon"] = iconRef(payload?.icon);
       break;
     default:
-      // Notion adds block types to every API version at once, so an unhandled
-      // type is expected rather than exceptional — `meeting_notes` shipped in
-      // the very version pinned above. A payload built around `rich_text` is
-      // already fully represented by `text`; one that is not would otherwise
-      // project to an empty string and lose its entire body, so it keeps the
-      // payload verbatim. `color` alone is presentation, not content.
+      // Rationale: documentation/notion.md#lean-projections-and-the-raw-escape-hatch.
       if (carriesUnprojectedContent(payload)) projected["raw"] = payload;
       break;
   }
@@ -829,6 +724,23 @@ function listEnvelope(
   };
 }
 
+function mappedListEnvelope(
+  payload: any,
+  project: (item: any) => unknown,
+): Record<string, unknown> {
+  return listEnvelope(payload, (payload?.results ?? []).map(project));
+}
+
+function pagination(
+  args: Record<string, any>,
+  defaultPageSize: number,
+): { page_size: number; start_cursor?: string } {
+  return {
+    page_size: resolvePageSize(args.page_size, defaultPageSize),
+    ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
+  };
+}
+
 /** Exactly-one-of validation, phrased so the agent knows what to send next. */
 function requireExactlyOne(
   provided: Array<[string, unknown]>,
@@ -899,11 +811,8 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         required: ["id", "object", "title"],
       }),
       handler: async (args, ctx) => {
-        const body: Record<string, unknown> = {
-          page_size: resolvePageSize(args.page_size, defaultPageSize),
-        };
+        const body: Record<string, unknown> = pagination(args, defaultPageSize);
         if (args.query) body["query"] = args.query;
-        if (args.start_cursor) body["start_cursor"] = args.start_cursor;
         if (args.object_type) {
           body["filter"] = { property: "object", value: args.object_type };
         }
@@ -921,10 +830,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           body,
         });
         if (args.raw) return payload;
-        return listEnvelope(
-          payload,
-          (payload?.results ?? []).map(projectSearchHit),
-        );
+        return mappedListEnvelope(payload, projectSearchHit);
       },
     },
     {
@@ -986,14 +892,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         additionalProperties: false,
       },
       outputSchema: {
-        type: "object",
+        ...listOutputSchema(BLOCK_OUTPUT_SCHEMA),
         properties: {
-          results: { type: "array", items: BLOCK_OUTPUT_SCHEMA },
-          has_more: {
-            type: "boolean",
-            description: "True when the top level has another page of blocks.",
-          },
-          next_cursor: { type: ["string", "null"] },
+          ...(listOutputSchema(BLOCK_OUTPUT_SCHEMA)["properties"] as Record<
+            string,
+            JsonSchema
+          >),
           truncated: {
             type: "boolean",
             description:
@@ -1007,10 +911,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         const top = await notionRequest(ctx, {
           method: "GET",
           path: `/v1/blocks/${encodeURIComponent(args.block_id)}/children`,
-          query: {
-            page_size: pageSize,
-            ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
-          },
+          query: pagination(args, pageSize),
         });
         if (args.raw) return top;
 
@@ -1094,10 +995,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           path: `/v1/pages/${encodeURIComponent(
             args.page_id,
           )}/properties/${encodeURIComponent(args.property_id)}`,
-          query: {
-            page_size: resolvePageSize(args.page_size, defaultPageSize),
-            ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
-          },
+          query: pagination(args, defaultPageSize),
         });
         if (args.raw) return payload;
         if (payload?.object === "list") {
@@ -1105,10 +1003,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
             // A list envelope's own `type` is the literal "property_item";
             // the property's real type sits one level down.
             type: payload?.property_item?.type ?? payload?.type ?? null,
-            ...listEnvelope(
-              payload,
-              (payload?.results ?? []).map(projectPropertyItem),
-            ),
+            ...mappedListEnvelope(payload, projectPropertyItem),
           };
         }
         return {
@@ -1282,12 +1177,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
       },
       outputSchema: listOutputSchema(PAGE_OUTPUT_SCHEMA),
       handler: async (args, ctx) => {
-        const body: Record<string, unknown> = {
-          page_size: resolvePageSize(args.page_size, defaultPageSize),
-        };
+        const body: Record<string, unknown> = pagination(args, defaultPageSize);
         if (args.filter) body["filter"] = args.filter;
         if (args.sorts) body["sorts"] = args.sorts;
-        if (args.start_cursor) body["start_cursor"] = args.start_cursor;
         const payload = await notionRequest(ctx, {
           method: "POST",
           path: `/v1/data_sources/${encodeURIComponent(
@@ -1296,11 +1188,8 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           body,
         });
         if (args.raw) return payload;
-        return listEnvelope(
-          payload,
-          (payload?.results ?? []).map((row: any) =>
-            projectPage(row, args.properties),
-          ),
+        return mappedListEnvelope(payload, (row: any) =>
+          projectPage(row, args.properties),
         );
       },
     },
@@ -1323,12 +1212,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         const payload = await notionRequest(ctx, {
           method: "GET",
           path: "/v1/users",
-          query: {
-            page_size: resolvePageSize(args.page_size, defaultPageSize),
-            ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
-          },
+          query: pagination(args, defaultPageSize),
         });
-        return listEnvelope(payload, (payload?.results ?? []).map(projectUser));
+        return mappedListEnvelope(payload, projectUser);
       },
     },
     {
@@ -1389,15 +1275,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
           path: "/v1/comments",
           query: {
             block_id: args.block_id,
-            page_size: resolvePageSize(args.page_size, defaultPageSize),
-            ...(args.start_cursor ? { start_cursor: args.start_cursor } : {}),
+            ...pagination(args, defaultPageSize),
           },
         });
         if (args.raw) return payload;
-        return listEnvelope(
-          payload,
-          (payload?.results ?? []).map(projectComment),
-        );
+        return mappedListEnvelope(payload, projectComment);
       },
     },
 
@@ -1408,12 +1290,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         "Create a page, either as a child of another page or as a row in a data source. Notion has no idempotency key: a retried create makes a second page, so confirm with search before repeating one.",
       annotations: { readOnlyHint: false },
       inputSchema: {
-        // Empty rather than absent: a parent is required, but *which* parent is
-        // an exclusive choice a plain-object `required` list cannot express,
-        // and the top-level `anyOf` that could would cost the tool its
-        // `inputKeys` in discovery. The choice is stated in both parent
-        // descriptions and enforced locally as `invalid_args` before any round
-        // trip ([#342](https://github.com/zackbart/connecta/issues/342)).
+        // See documentation/notion.md#what-this-connection-does-not-do.
         required: [],
         type: "object",
         properties: {
@@ -1756,13 +1633,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
 // Guide and constructor
 // ---------------------------------------------------------------------------
 
-/**
- * Only what the schemas cannot carry.
- *
- * Marked `required` because the database/data-source split is a mandatory
- * cross-tool sequence, not advice: a caller who reaches for `query_data_source`
- * with the id in a Notion URL gets a failure no schema warned it about.
- */
+/** See documentation/notion.md#databases-contain-data-sources. */
 function usageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Notion usage

@@ -1,25 +1,4 @@
-/**
- * The mechanical half of a hand-written connector's HTTP transport.
- *
- * Every `api()` surface that speaks HTTP re-derives the same handful of safety
- * properties: the request lands inside the base URL and nowhere else, the
- * credential rides exactly one origin, an unreachable provider becomes a typed
- * failure instead of a raw `TypeError`, and the response is read with a
- * ceiling on it. Cloudflare and Notion each grew a private copy of that
- * machinery, subtly different in ways neither author intended, and a third
- * author would have grown a third.
- *
- * What this deliberately does not own is *meaning*. It never reads a status
- * code, never decides a 403 is recoverable, and never invents an
- * authentication scheme: `authenticate` supplies the headers, and the caller's
- * mapper reads the response. That split is not fastidiousness — Notion's 403
- * (a capability the integration was never granted, which re-authorizing cannot
- * fix) and Cloudflare's 403 (a token scope) want opposite next moves, and no
- * shared helper can tell them apart without provider knowledge it has no
- * business holding.
- *
- * Web APIs only: this is reachable from the root entry and stays that way.
- */
+/** See documentation/connectors.md#the-guarded-fetch-transport. Web APIs only. */
 import { ConnectorCallError } from "../errors.js";
 import type { ConnectorContext } from "../types.js";
 
@@ -76,6 +55,17 @@ interface GuardedResponse {
   text(): Promise<string>;
   /** The body parsed as JSON; `undefined` for an empty body, throws on junk. */
   json(): Promise<unknown>;
+  /** Parse JSON while distinguishing malformed content from transport failure. */
+  jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
+}
+
+/** Parse a decimal `Retry-After` header in seconds into milliseconds. */
+export function retryAfterMs(headers: Headers): number | undefined {
+  const raw = headers.get("retry-after");
+  if (!raw) return undefined;
+  const seconds = Number(raw.trim());
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.trunc(seconds * 1000);
 }
 
 /**
@@ -271,34 +261,22 @@ async function drain(
   return body;
 }
 
-/**
- * Wrap a `Response` in the bounded read surface.
- *
- * Three paths, for one honest reason. A status the spec says carries no body
- * is answered as empty without touching the response at all. Otherwise, when
- * the runtime hands back a readable body — every real response on Node and on
- * Workers — the ceiling is enforced *while* reading, so an oversized payload
- * is abandoned rather than buffered. When it does not, there is nothing to
- * meter mid-flight: `bytes()` and `text()` read the body whole and check the
- * ceiling against what came back, and `json()` — with no bytes of its own to
- * count — takes the stand-in at its word. That last path is the weaker
- * guarantee and says so, but a real `fetch` Response with a body always
- * streams, so it is not a path a provider takes in production; it is what a
- * hand-built test double gets.
- */
+/** See documentation/connectors.md#the-guarded-fetch-transport. */
 function boundedResponse(
   provider: string,
   response: Response,
   limit: number,
 ): GuardedResponse {
   if (BODILESS_STATUSES.has(response.status)) {
+    const emptyJson = async (): Promise<unknown> => undefined;
     return {
       status: response.status,
       ok: response.ok,
       headers: response.headers,
       bytes: async () => new Uint8Array(),
       text: async () => "",
-      json: async () => undefined,
+      json: emptyJson,
+      jsonResult: () => jsonResult(emptyJson),
     };
   }
   const stream = readableBody(response);
@@ -314,6 +292,14 @@ function boundedResponse(
         });
     return read;
   };
+  const json = async (): Promise<unknown> => {
+    // No stream means no bytes to count: a stand-in that answers `json()`
+    // directly is taken at its word, which is the one accessor on the one
+    // path where the ceiling cannot be applied.
+    if (!stream) return await response.json();
+    const body = decoder.decode(await bytes());
+    return body.trim() === "" ? undefined : JSON.parse(body);
+  };
   return {
     status: response.status,
     ok: response.ok,
@@ -326,40 +312,23 @@ function boundedResponse(
       if (size > limit) throw oversized(provider, limit, `${size} bytes`);
       return body;
     },
-    async json() {
-      // No stream means no bytes to count: a stand-in that answers `json()`
-      // directly is taken at its word, which is the one accessor on the one
-      // path where the ceiling cannot be applied.
-      if (!stream) return await response.json();
-      const body = decoder.decode(await bytes());
-      return body.trim() === "" ? undefined : JSON.parse(body);
-    },
+    json,
+    jsonResult: () => jsonResult(json),
   };
 }
 
-/**
- * Build the guarded transport one hand-written connector sends every request
- * through.
- *
- * ```ts
- * const send = guardedFetch({
- *   provider: "Billing",
- *   baseUrl: "https://billing.internal.example/v1",
- *   maxResponseBytes: 4 * 1024 * 1024,
- *   headers: { Accept: "application/json" },
- *   authenticate: async (ctx) => {
- *     const token = await ctx.credential?.get();
- *     if (!token) throw new ConnectorCallError("auth_required", "…");
- *     return { Authorization: `Bearer ${token}` };
- *   },
- * });
- *
- * const invoice = await send({ method: "GET", path: `/invoices/${id}` }, ctx, (response) => {
- *   if (!response.ok) throw billingFailure(response.status);
- *   return response.json();
- * });
- * ```
- */
+async function jsonResult(
+  read: () => Promise<unknown>,
+): Promise<{ value: unknown } | { parseError: unknown }> {
+  try {
+    return { value: await read() };
+  } catch (cause) {
+    if (cause instanceof ConnectorCallError) throw cause;
+    return { parseError: cause };
+  }
+}
+
+/** Build the guarded transport described in documentation/connectors.md. */
 export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const { provider, maxResponseBytes: limit } = options;
   if (!Number.isInteger(limit) || limit < 1) {
@@ -411,12 +380,7 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           : request.rawBody !== undefined
             ? { body: request.rawBody }
             : {}),
-        // Never follow a redirect. A 3xx is an instruction to re-send the
-        // connector's credential to whatever origin the Location names, and a
-        // confinement a redirect can undo was never a confinement. There is no
-        // ambient credential to omit besides that — neither runtime's `fetch`
-        // keeps a cookie jar — so the headers `authenticate` returned are the
-        // only authority the request carries.
+        // Rationale: documentation/connectors.md#the-guarded-fetch-transport.
         redirect: "manual",
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
