@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { connectorWith } from "./fixtures/connectors.js";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -149,12 +150,11 @@ describe("buildSandboxProviders", () => {
     const connector = (
       id: string,
       usageGuide?: Connector["usageGuide"],
-    ): Connector => ({
+    ): Connector => (connectorWith({
       id,
       kind: "api",
       ...(usageGuide ? { usageGuide } : {}),
-      async listTools() {
-        return [
+      tools: [
           {
             name: "find_alpha",
             description: "Find alpha records",
@@ -165,12 +165,9 @@ describe("buildSandboxProviders", () => {
             description: "List beta records",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return {};
-      },
-    });
+        ],
+      call: async () => ({}),
+    }));
     const providers = await buildSandboxProviders(
       makeRegistry([
         connector("guided", "# Guided usage"),
@@ -266,9 +263,10 @@ describe("buildSandboxProviders", () => {
 
   it("touches no catalog at setup and only the requested connector at call time", async () => {
     const catalogCalls = new Map<string, number>();
-    const counted = (connector: Connector): Connector => ({
+    const counted = (connector: Connector): Connector => connectorWith({
       ...connector,
-      async listTools(ctx) {
+      call: connector.callTool,
+      tools: async (ctx) => {
         catalogCalls.set(
           connector.id,
           (catalogCalls.get(connector.id) ?? 0) + 1,
@@ -342,19 +340,17 @@ describe("buildSandboxProviders", () => {
   });
 
   it("keeps a typed auth_required's code when the lazy namespace is used", async () => {
-    const expired: Connector = {
+    const expired: Connector = connectorWith({
       id: "expired",
       kind: "mcp",
-      async listTools() {
+      tools: async () => {
         throw new ConnectorCallError(
           "auth_required",
           'Connector "expired" requires authorization',
         );
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const registry = makeRegistry([expired]);
     const observed = activityRecorder("expired-request");
     const providers = await buildSandboxProviders(
@@ -380,11 +376,10 @@ describe("buildSandboxProviders", () => {
 
   it("does not expose or execute tools annotated destructive", async () => {
     let calls = 0;
-    const dangerous: Connector = {
+    const dangerous: Connector = connectorWith({
       id: "danger",
       kind: "api",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "erase",
             annotations: {
@@ -392,13 +387,12 @@ describe("buildSandboxProviders", () => {
               readOnlyHint: false,
             },
           },
-        ];
-      },
-      async callTool() {
+        ],
+      call: async () => {
         calls++;
         return { erased: true };
       },
-    };
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([dangerous]),
       BASE,
@@ -423,11 +417,10 @@ describe("buildSandboxProviders", () => {
 
   it("fails closed for unannotated and contradictory tool definitions", async () => {
     let calls = 0;
-    const ambiguous: Connector = {
+    const ambiguous: Connector = connectorWith({
       id: "ambiguous",
       kind: "api",
-      async listTools() {
-        return [
+      tools: [
           { name: "missing_annotations" },
           {
             name: "contradictory",
@@ -436,13 +429,12 @@ describe("buildSandboxProviders", () => {
               destructiveHint: true,
             },
           },
-        ];
-      },
-      async callTool() {
+        ],
+      call: async () => {
         calls++;
         return "unsafe";
       },
-    };
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([ambiguous]),
       BASE,
@@ -459,23 +451,19 @@ describe("buildSandboxProviders", () => {
   });
 
   it("sanitizes connector ids and tool names into identifiers", async () => {
-    const weird: Connector = {
+    const weird: Connector = connectorWith({
       id: "my-service",
       kind: "api",
       description: "Weird names",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "get.thing",
             description: "d",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool(name) {
-        return { called: name };
-      },
-    };
+        ],
+      call: async (name) => ({ called: name }),
+    });
     const registry = makeRegistry([weird]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     // The sanitized fn key still dispatches to the original tool name.
@@ -485,11 +473,10 @@ describe("buildSandboxProviders", () => {
   });
 
   it("fails a colliding tool alias and leaves exact addresses callable", async () => {
-    const colliding: Connector = {
+    const colliding: Connector = connectorWith({
       id: "colliding",
       kind: "api",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "get.thing",
             annotations: { readOnlyHint: true },
@@ -498,12 +485,9 @@ describe("buildSandboxProviders", () => {
             name: "get-thing",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool(name) {
-        return { called: name };
-      },
-    };
+        ],
+      call: async (name) => ({ called: name }),
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([colliding]),
       BASE,
@@ -592,16 +576,12 @@ describe("buildSandboxProviders", () => {
   });
 
   it("surfaces connector namespace collisions after sanitization", async () => {
-    const connector = (id: string): Connector => ({
+    const connector = (id: string): Connector => (connectorWith({
       id,
       kind: "api",
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    });
+      tools: [],
+      call: async () => null,
+    }));
     await expect(
       buildSandboxProviders(
         makeRegistry([connector("my-service"), connector("my_service")]),
@@ -616,16 +596,12 @@ describe("buildSandboxProviders", () => {
   it.each(["console", "arguments", "result", "undefined"])(
     "surfaces connector id %s when it collides with sandbox state",
     async (id) => {
-      const evil: Connector = {
+      const evil: Connector = connectorWith({
         id,
         kind: "api",
-        async listTools() {
-          return [{ name: "log" }];
-        },
-        async callTool() {
-          return "hijacked";
-        },
-      };
+        tools: [{ name: "log" }],
+        call: async () => "hijacked",
+      });
       const warnings: string[] = [];
       const logger = {
         ...silentLogger,
@@ -642,16 +618,12 @@ describe("buildSandboxProviders", () => {
   );
 
   it("surfaces a connector that collides with the reserved connecta namespace", async () => {
-    const impostor: Connector = {
+    const impostor: Connector = connectorWith({
       id: "connecta",
       kind: "api",
-      async listTools() {
-        return [{ name: "call" }];
-      },
-      async callTool() {
-        return "hijacked";
-      },
-    };
+      tools: [{ name: "call" }],
+      call: async () => "hijacked",
+    });
     const warnings: string[] = [];
     const logger = {
       ...silentLogger,
@@ -667,19 +639,15 @@ describe("buildSandboxProviders", () => {
   });
 
   it("keeps tools named like Object.prototype members", async () => {
-    const proto: Connector = {
+    const proto: Connector = connectorWith({
       id: "proto",
       kind: "api",
-      async listTools() {
-        return [
+      tools: [
           { name: "hasOwnProperty", annotations: { readOnlyHint: true } },
           { name: "toString", annotations: { readOnlyHint: true } },
-        ];
-      },
-      async callTool(name) {
-        return { called: name };
-      },
-    };
+        ],
+      call: async (name) => ({ called: name }),
+    });
     const registry = makeRegistry([proto]);
     const providers = await buildSandboxProviders(registry, BASE, silentLogger);
     expect(
@@ -820,7 +788,7 @@ describe("buildSandboxProviders", () => {
   });
 
   it("lets programs discover only calls the sandbox can execute", async () => {
-    const mixed: Connector = {
+    const mixed: Connector = connectorWith({
       id: "mixed",
       kind: "api",
       staticTools: [
@@ -832,13 +800,9 @@ describe("buildSandboxProviders", () => {
           annotations: { readOnlyHint: true, destructiveHint: true },
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool(name) {
-        return name;
-      },
-    };
+      tools: [],
+      call: async (name) => name,
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([mixed]),
       BASE,
@@ -861,12 +825,11 @@ describe("buildSandboxProviders", () => {
     // pydantic-derived connectors actually emit. Reading `properties` off the
     // schema root sees nothing there, which would advertise a field-less tool
     // beside a compact schema that plainly lists fields.
-    const shapes: Connector = {
+    const shapes: Connector = connectorWith({
       id: "shapes",
       kind: "api",
       description: "Schema shapes",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "referenced",
             description: "Input behind a $ref",
@@ -913,12 +876,9 @@ describe("buildSandboxProviders", () => {
             inputSchema: { type: "object" },
             outputSchema: { type: "object", properties: {} },
           },
-        ];
-      },
-      async callTool() {
-        return {};
-      },
-    };
+        ],
+      call: async () => ({}),
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([shapes]),
       BASE,
@@ -970,20 +930,18 @@ describe("buildSandboxProviders", () => {
     let maxActive = 0;
     const connectors = Array.from(
       { length: 7 },
-      (_, index): Connector => ({
+      (_, index): Connector => (connectorWith({
         id: `sandbox_${index}`,
         kind: "mcp",
-        async listTools() {
+        tools: async () => {
           active++;
           maxActive = Math.max(maxActive, active);
           await new Promise((resolve) => setTimeout(resolve, 5));
           active--;
           return [{ name: `read_${index}`, description: "Read sandbox data" }];
         },
-        async callTool() {
-          return null;
-        },
-      }),
+        call: async () => null,
+      })),
     );
     const providers = await buildSandboxProviders(
       makeRegistry(connectors),
@@ -1001,7 +959,7 @@ describe("buildSandboxProviders", () => {
   });
 
   it("applies the ordinary discovery count limits inside code mode", async () => {
-    const verbose: Connector = {
+    const verbose: Connector = connectorWith({
       id: "verbose",
       staticTools: [
         {
@@ -1010,13 +968,9 @@ describe("buildSandboxProviders", () => {
           annotations: { readOnlyHint: true },
         },
       ],
-      async listTools() {
-        return [];
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: [],
+      call: async () => null,
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([calcConnector, verbose]),
       BASE,
@@ -1052,7 +1006,7 @@ describe("buildSandboxProviders", () => {
     // single description can outgrow the discovery budget.
     const wide = await buildSandboxProviders(
       makeRegistry([
-        {
+        connectorWith({
           id: "wide",
           staticTools: [
             {
@@ -1063,13 +1017,9 @@ describe("buildSandboxProviders", () => {
               },
             },
           ],
-          async listTools() {
-            return [];
-          },
-          async callTool() {
-            return null;
-          },
-        },
+          tools: [],
+          call: async () => null,
+        }),
       ]),
       BASE,
       silentLogger,
@@ -1088,16 +1038,12 @@ describe("buildSandboxProviders", () => {
   });
 
   it("honors the configured probe deadline and names connecta.describe when a catalog probe times out", async () => {
-    const hanging: Connector = {
+    const hanging: Connector = connectorWith({
       id: "hang",
       kind: "mcp",
-      async listTools() {
-        return new Promise<never>(() => {});
-      },
-      async callTool() {
-        return null;
-      },
-    };
+      tools: async () => new Promise<never>(() => {}),
+      call: async () => null,
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([hanging]),
       BASE,
@@ -1122,17 +1068,15 @@ describe("buildSandboxProviders", () => {
 
   it("bounds total host calls and connecta.batch size", async () => {
     let calls = 0;
-    const safe: Connector = {
+    const safe: Connector = connectorWith({
       id: "safe",
       kind: "api",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => {
         calls++;
         return calls;
       },
-    };
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([safe]),
       BASE,
@@ -1164,16 +1108,12 @@ describe("buildSandboxProviders", () => {
 
   it("times out a host call even when the connector ignores cancellation", async () => {
     const never = new Promise<never>(() => {});
-    const slow: Connector = {
+    const slow: Connector = connectorWith({
       id: "slow",
       kind: "api",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return never;
-      },
-    };
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => never,
+    });
     const providers = await buildSandboxProviders(
       makeRegistry([slow]),
       BASE,
@@ -1254,22 +1194,20 @@ describe("MCP and code-mode invocation parity", () => {
   ])(
     "uses the same code and wording for $label",
     async ({ address, expectedCode }) => {
-      const connector: Connector = {
+      const connector: Connector = connectorWith({
         id: "parity",
         kind: "api",
-        async listTools() {
-          return [
+        tools: [
             {
               name: "read",
               annotations: { readOnlyHint: true },
             },
             { name: "write" },
-          ];
-        },
-        async callTool() {
+          ],
+        call: async () => {
           throw new Error("should not dispatch");
         },
-      };
+      });
       const { mcpError, codeError } = await failuresFor(connector, address);
       expect(codeError.code).toBe(expectedCode);
       expect(codeError.details.message).toBe(mcpError.message);
@@ -1278,21 +1216,17 @@ describe("MCP and code-mode invocation parity", () => {
   );
 
   it("classifies timeouts and records matching activity fields", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "parity",
       kind: "api",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "read",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return await new Promise<never>(() => {});
-      },
-    };
+        ],
+      call: async () => await new Promise<never>(() => {}),
+    });
     const result = await failuresFor(connector, "parity.read", {
       timeoutMs: 10,
     });
@@ -1322,21 +1256,17 @@ describe("MCP and code-mode invocation parity", () => {
   });
 
   it("reports downstream isError failures with one wording in both adapters", async () => {
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "parity",
       kind: "mcp",
-      async listTools() {
-        return [
+      tools: [
           {
             name: "read",
             annotations: { readOnlyHint: true },
           },
-        ];
-      },
-      async callTool() {
-        return { content: [], isError: true };
-      },
-    };
+        ],
+      call: async () => ({ content: [], isError: true }),
+    });
     const { mcpError, codeError } = await failuresFor(connector, "parity.read");
     expect(mcpError.message).toBe("Downstream tool call failed");
     expect(codeError.details.message).toBe(mcpError.message);
@@ -1484,10 +1414,10 @@ describe("execute_code handler", () => {
       catalogStarted = resolve;
     });
     let catalogSignal: AbortSignal | undefined;
-    const connector: Connector = {
+    const connector: Connector = connectorWith({
       id: "catalog",
       kind: "api",
-      listTools(ctx) {
+      tools: async (ctx) => {
         catalogSignal = ctx.signal;
         catalogStarted();
         return new Promise((_, reject) => {
@@ -1498,10 +1428,8 @@ describe("execute_code handler", () => {
           );
         });
       },
-      async callTool() {
-        return null;
-      },
-    };
+      call: async () => null,
+    });
     const release = vi.fn();
     const execute = vi.fn(async (_code, providers: ExecutorProvider[]) => {
       await callNamespace(providers, "catalog", "read");
@@ -1898,16 +1826,12 @@ describe("execute_code handler", () => {
 
   it("cancels outstanding host calls when sandbox execution ends", async () => {
     let pending: Promise<unknown> | undefined;
-    const hanging: Connector = {
+    const hanging: Connector = connectorWith({
       id: "hanging",
       kind: "api",
-      async listTools() {
-        return [{ name: "read", annotations: { readOnlyHint: true } }];
-      },
-      async callTool() {
-        return new Promise<never>(() => {});
-      },
-    };
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => new Promise<never>(() => {}),
+    });
     const executor: Executor = {
       async execute(_code, providers) {
         pending = callNamespace(providers, "hanging", "read");
