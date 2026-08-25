@@ -145,6 +145,13 @@ describe("the upgrade guide", () => {
     }
   });
 
+  it("opens the boundary list with this release", () => {
+    const { version } = JSON.parse(read("package.json")) as { version: string };
+    const first = guide.match(/^### (\d+\.\d+\.\d+) → (\d+\.\d+\.\d+)$/m);
+    expect(first?.slice(1)).toEqual(["0.18.3", version]);
+    expect(guide).toContain(`| **B** | 0.16.0 – ${version} |`);
+  });
+
   it("is reachable from where a reader starts", () => {
     expect(read("README.md")).toContain("./documentation/upgrading.md");
     expect(read("documentation", "operations.md")).toContain("./upgrading.md");

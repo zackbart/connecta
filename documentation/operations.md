@@ -286,8 +286,8 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | `quickjs-log-limits.test.ts` | bounded `console.*` capture — per-entry cut, cumulative character and transport budgets, escape-heavy floods preserving the guest result | runs the Node QuickJS child-process executor |
 | `suite-partition.test.ts` | this partition, including itself: every `*.test.ts` in exactly one list, stale entries and empty reasons refused | walks the test directory to guard the partition |
 | `template-file-activity.test.ts` | the Node template's own activity store — persistence across restart, torn-line repair, newest-first paging, and compaction past the slack window | runs it against real files |
-| `upgrade-guide.test.ts` | the [upgrade guide](./upgrading.md)'s claims about somebody else's deployment — the generated file inventory, the seven tool names doctor demands, version boundaries that actually shipped, a bump target that is this release, and the three places a reader finds it | reads the guide, the template tree, and the CLI with Node filesystem APIs |
-| `version.test.ts` | `CONNECTA_VERSION` matching `package.json` | reads `package.json` with Node filesystem APIs |
+| `upgrade-guide.test.ts` | the [upgrade guide](./upgrading.md)'s claims about somebody else's deployment — the generated file inventory, the seven tool names doctor demands, version boundaries that actually shipped, the exact newest boundary and generation B endpoint matching this release, a bump target that is this release, and the three places a reader finds it | reads the guide, the template tree, and the CLI with Node filesystem APIs |
+| `version.test.ts` | `CONNECTA_VERSION` matching `package.json` and the Node template's exact dependency pin | reads both package manifests with Node filesystem APIs |
 
 ### Outside `npm run check`
 
