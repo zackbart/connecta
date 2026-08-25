@@ -338,23 +338,11 @@ interface CloudflareResponse {
   resultInfo: CloudflareResultInfo | undefined;
 }
 
-const AUTHENTICATION_CONTEXT = Symbol("cloudflareAuthentication");
-
-type CloudflareContext = ConnectorContext & {
-  [AUTHENTICATION_CONTEXT]?: CloudflareAuthentication;
-};
-
-function withAuthentication(
+async function readAuthenticationHeaders(
   ctx: ConnectorContext,
   authentication: CloudflareAuthentication,
-): CloudflareContext {
-  return { ...ctx, [AUTHENTICATION_CONTEXT]: authentication };
-}
-
-async function readAuthenticationHeaders(
-  ctx: CloudflareContext,
 ): Promise<Record<string, string>> {
-  if (ctx[AUTHENTICATION_CONTEXT] === "globalApiKey") {
+  if (authentication === "globalApiKey") {
     const values = await ctx.credential?.getAll();
     const email = values?.["email"];
     const apiKey = values?.["apiKey"];
@@ -385,13 +373,16 @@ async function readAuthenticationHeaders(
  * What stays here is what only Cloudflare knows: which headers prove identity,
  * and what a status code means once it arrives.
  */
-function cloudflareTransport(baseUrl: string): GuardedTransport {
+function cloudflareTransport(
+  baseUrl: string,
+  authentication: CloudflareAuthentication,
+): GuardedTransport {
   return guardedFetch({
     provider: "Cloudflare",
     baseUrl,
     headers: { Accept: "application/json" },
     maxResponseBytes: CLOUDFLARE_MAX_RESPONSE_BYTES,
-    authenticate: (ctx) => readAuthenticationHeaders(ctx as CloudflareContext),
+    authenticate: (ctx) => readAuthenticationHeaders(ctx, authentication),
   });
 }
 
@@ -443,6 +434,23 @@ async function callCloudflare(
       resultInfo: isV4Envelope ? envelope.result_info : undefined,
     };
   });
+}
+
+async function testCloudflareCredential(
+  send: GuardedTransport,
+  spec: GuardedRequest,
+  ctx: ConnectorContext,
+  success: (result: unknown) => { ok: boolean; message: string },
+): Promise<{ ok: boolean; message: string }> {
+  try {
+    const { result } = await callCloudflare(send, spec, ctx);
+    return success(result);
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 function base64FromBytes(bytes: Uint8Array): string {
@@ -524,6 +532,26 @@ function pageInfo(info: CloudflareResultInfo | undefined): PageInfo | undefined 
     totalPages,
     hasMore: totalPages !== undefined ? page < totalPages : false,
   }) as unknown as PageInfo;
+}
+
+function pagedList(
+  key: string,
+  project: (value: unknown) => unknown,
+): (
+  result: unknown,
+  resultInfo: CloudflareResultInfo | undefined,
+  raw: boolean,
+) => JsonRecord {
+  return (result, resultInfo, raw) => ({
+    [key]: raw ? result : asArray(result).map(project),
+    page: pageInfo(resultInfo),
+  });
+}
+
+function cursorResult(cursor: unknown): { nextCursor?: string } {
+  return typeof cursor === "string" && cursor !== ""
+    ? { nextCursor: cursor }
+    : {};
 }
 
 function projectAccount(value: unknown): JsonRecord {
@@ -913,10 +941,6 @@ function optionalNumber(args: JsonRecord, key: string): number | undefined {
   return typeof value === "number" ? value : undefined;
 }
 
-function optionalBoolean(args: JsonRecord, key: string): boolean | undefined {
-  const value = args[key];
-  return typeof value === "boolean" ? value : undefined;
-}
 
 function requireString(args: JsonRecord, key: string): string {
   const value = optionalString(args, key);
@@ -924,9 +948,6 @@ function requireString(args: JsonRecord, key: string): string {
   throw new ConnectorCallError("invalid_args", `${key} must not be blank.`);
 }
 
-function encodePathSegment(value: string): string {
-  return encodeURIComponent(value);
-}
 
 function encodeObjectKey(value: string): string {
   return value
@@ -1039,6 +1060,16 @@ function headersFromArgs(value: unknown): Record<string, string> | undefined {
     headers[name] = String(entry["value"]);
   }
   return headers;
+}
+
+function rawSpec(
+  args: JsonRecord,
+): Pick<GuardedRequest, "path" | "query" | "headers"> {
+  return compact({
+    path: cloudflareApiPath(args["path"]),
+    query: queryFromArgs(args["query"]),
+    headers: headersFromArgs(args["headers"]),
+  }) as Pick<GuardedRequest, "path" | "query" | "headers">;
 }
 
 function r2Headers(args: JsonRecord): Record<string, string | undefined> {
@@ -1171,6 +1202,78 @@ const R2_BUCKET_NAME_PROPERTY: JsonSchema = {
   description: "R2 bucket name.",
 };
 
+const SCRIPT_NAME_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Worker script name from list_worker_scripts.",
+};
+
+const NAMESPACE_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "KV namespace id from list_kv_namespaces.",
+};
+
+const PROJECT_NAME_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Pages project name from list_pages_projects.",
+};
+
+const PAGES_PROJECT_NAME_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Pages project name.",
+};
+
+const DEPLOYMENT_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Deployment id from list_pages_deployments.",
+};
+
+const WORKER_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Deployment id from list_worker_deployments.",
+};
+
+const RETRY_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Deployment id to retry.",
+};
+
+const ROLLBACK_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Previous deployment id to promote.",
+};
+
+const DELETE_DEPLOYMENT_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Deployment id to delete.",
+};
+
+const DELETE_PROJECT_NAME_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description: "Pages project name to delete.",
+};
+
+const SETTING_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  minLength: 1,
+  description:
+    "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
+};
+
+const RECORD_ID_PROPERTY: JsonSchema = {
+  type: "string",
+  description: "DNS record id, from list_dns_records.",
+};
+
 const R2_BUCKET_SCHEMA: JsonSchema = {
   type: "object",
   properties: {
@@ -1227,6 +1330,30 @@ function cfTool(
     },
     outputSchema,
     handler,
+  };
+}
+
+function getResult(
+  send: GuardedTransport,
+  request: (args: JsonRecord) => GuardedRequest,
+  project: (result: unknown, args: JsonRecord) => unknown = (result) => result,
+): ApiTool["handler"] {
+  return async (args, ctx) => {
+    const { result } = await callCloudflare(send, request(args), ctx);
+    return project(result, args);
+  };
+}
+
+function deleteAck(
+  send: GuardedTransport,
+  key: string,
+  value: (args: JsonRecord) => string,
+  request: (args: JsonRecord, value: string) => GuardedRequest,
+): ApiTool["handler"] {
+  return async (args, ctx) => {
+    const id = value(args);
+    await callCloudflare(send, request(args, id), ctx);
+    return { deleted: true, [key]: id };
   };
 }
 
@@ -1352,14 +1479,11 @@ function buildTools(
               required: [],
             },
       async (args: JsonRecord, ctx) => {
-              const query = queryFromArgs(args["query"]);
-              const headers = headersFromArgs(args["headers"]);
+              const raw = rawSpec(args);
               const responseType = optionalString(args, "responseType") ?? "json";
               const spec = compact({
                 method: "GET",
-                path: cloudflareApiPath(args["path"]),
-                query,
-                headers,
+                ...raw,
               }) as unknown as GuardedRequest;
               if (responseType === "text" || responseType === "base64") {
                 return await callCloudflareContent(send, spec, ctx, responseType);
@@ -1418,15 +1542,12 @@ function buildTools(
             },
       async (args: JsonRecord, ctx) => {
               const method = String(args["method"]) as GuardedRequest["method"];
-              const query = queryFromArgs(args["query"]);
-              const headers = headersFromArgs(args["headers"]);
+              const spec = rawSpec(args);
               const { result, resultInfo } = await callCloudflare(
                 send,
                 compact({
                   method,
-                  path: cloudflareApiPath(args["path"]),
-                  query,
-                  headers,
+                  ...spec,
                   body: args["body"],
                 }) as unknown as GuardedRequest,
                 ctx,
@@ -1515,18 +1636,16 @@ function buildTools(
               required: ["result"],
             },
       async (args: JsonRecord, ctx) => {
-              const query = queryFromArgs(args["query"]);
-              const headers = headersFromArgs(args["headers"]);
+              const spec = rawSpec(args);
               const upload = uploadBody(args);
               const { result } = await callCloudflare(
                 send,
                 compact({
                   method: String(args["method"]) as "POST" | "PUT",
-                  path: cloudflareApiPath(args["path"]),
-                  query,
+                  ...spec,
                   headers:
-                    headers !== undefined || upload.headers !== undefined
-                      ? { ...headers, ...upload.headers }
+                    spec.headers !== undefined || upload.headers !== undefined
+                      ? { ...spec.headers, ...upload.headers }
                       : undefined,
                   rawBody: upload.rawBody,
                 }) as unknown as GuardedRequest,
@@ -1565,11 +1684,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true) return { accounts: result, page: pageInfo(resultInfo) };
-              return {
-                accounts: asArray(result).map(projectAccount),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("accounts", projectAccount)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -1615,11 +1730,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true) return { zones: result, page: pageInfo(resultInfo) };
-              return {
-                zones: asArray(result).map(projectZone),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("zones", projectZone)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -1633,14 +1744,11 @@ function buildTools(
             },
       [],
       ZONE_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                { method: "GET", path: `/zones/${encodeURIComponent(zoneArg(args))}` },
-                ctx,
-              );
-              return args["raw"] === true ? result : projectZone(result);
-            },
+      getResult(
+        send,
+        (args) => ({ method: "GET", path: `/zones/${encodeURIComponent(zoneArg(args))}` }),
+        (result, args) => args["raw"] === true ? result : projectZone(result),
+      ),
     ),
     // Removed tools: documentation/cloudflare.md#what-the-named-surface-deliberately-leaves-out.
     cfTool(
@@ -1650,26 +1758,17 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              settingId: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
-                }
+              settingId: SETTING_ID_PROPERTY
             },
       ["settingId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/zones/${encodePathSegment(zoneArg(args))}/settings/${encodePathSegment(requireString(args, "settingId"))}`,
-                },
-                ctx,
-              );
-              return result;
-            },
+                  path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
+                }),
+      ),
     ),
     cfTool(
       "update_zone_setting",
@@ -1678,12 +1777,7 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              settingId: {
-                  type: "string",
-                  minLength: 1,
-                  description:
-                    "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
-                },
+              settingId: SETTING_ID_PROPERTY,
                 value: {
                   type: ["string", "number", "boolean", "array"],
                   description:
@@ -1698,7 +1792,7 @@ function buildTools(
                 send,
                 {
                   method: "PATCH",
-                  path: `/zones/${encodePathSegment(zoneArg(args))}/settings/${encodePathSegment(requireString(args, "settingId"))}`,
+                  path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
                   body: { value: args["value"] },
                 },
                 ctx,
@@ -1735,7 +1829,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/zones/${encodePathSegment(zoneArg(args))}/rulesets`,
+                  path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets`,
                   query: {
                     per_page: optionalNumber(args, "perPage"),
                     cursor: optionalString(args, "cursor"),
@@ -1746,9 +1840,7 @@ function buildTools(
               const cursor = resultInfo?.cursors?.after;
               return {
                 rulesets: asArray(result).map(projectRuleset),
-                ...(typeof cursor === "string" && cursor !== ""
-                  ? { nextCursor: cursor }
-                  : {}),
+                ...cursorResult(cursor),
               };
             },
     ),
@@ -1767,17 +1859,14 @@ function buildTools(
             },
       ["rulesetId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/zones/${encodePathSegment(zoneArg(args))}/rulesets/${encodePathSegment(requireString(args, "rulesetId"))}`,
-                },
-                ctx,
-              );
-              return projectRuleset(result);
-            },
+                  path: `/zones/${encodeURIComponent(zoneArg(args))}/rulesets/${encodeURIComponent(requireString(args, "rulesetId"))}`,
+                }),
+        projectRuleset,
+      ),
     ),
     cfTool(
       "list_dns_records",
@@ -1839,12 +1928,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true)
-                return { records: result, page: pageInfo(resultInfo) };
-              return {
-                records: asArray(result).map(projectDnsRecord),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("records", projectDnsRecord)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -1854,27 +1938,21 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              recordId: {
-                  type: "string",
-                  description: "DNS record id, from list_dns_records.",
-                },
+              recordId: RECORD_ID_PROPERTY,
                 raw: RAW_INPUT_PROPERTY
             },
       ["recordId"],
       DNS_RECORD_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
                   path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(
                     String(args["recordId"]),
                   )}`,
-                },
-                ctx,
-              );
-              return args["raw"] === true ? result : projectDnsRecord(result);
-            },
+                }),
+        (result, args) => args["raw"] === true ? result : projectDnsRecord(result),
+      ),
     ),
     cfTool(
       "list_worker_scripts",
@@ -1905,12 +1983,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true)
-                return { scripts: result, page: pageInfo(resultInfo) };
-              return {
-                scripts: asArray(result).map(projectWorkerScript),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("scripts", projectWorkerScript)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -1920,25 +1993,17 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Worker script name from list_worker_scripts.",
-                }
+              scriptName: SCRIPT_NAME_PROPERTY
             },
       ["scriptName"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/settings`,
-                },
-                ctx,
-              );
-              return result;
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/settings`,
+                }),
+      ),
     ),
     cfTool(
       "list_worker_deployments",
@@ -1947,11 +2012,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Worker script name from list_worker_scripts.",
-                }
+              scriptName: SCRIPT_NAME_PROPERTY
             },
       ["scriptName"],
       listOutputSchema("deployments", OPEN_OBJECT_OUTPUT_SCHEMA),
@@ -1960,7 +2021,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/deployments`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments`,
                 },
                 ctx,
               );
@@ -1978,30 +2039,19 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Worker script name from list_worker_scripts.",
-                },
-                deploymentId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Deployment id from list_worker_deployments.",
-                }
+              scriptName: SCRIPT_NAME_PROPERTY,
+                deploymentId: WORKER_DEPLOYMENT_ID_PROPERTY
             },
       ["scriptName", "deploymentId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(requireString(args, "scriptName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}`,
-                },
-                ctx,
-              );
-              return projectWorkerDeployment(result);
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
+                }),
+        projectWorkerDeployment,
+      ),
     ),
     cfTool(
       "delete_worker_script",
@@ -2010,11 +2060,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Worker script name from list_worker_scripts.",
-                },
+              scriptName: SCRIPT_NAME_PROPERTY,
                 force: {
                   type: "boolean",
                   description:
@@ -2030,19 +2076,16 @@ function buildTools(
               },
               required: ["deleted", "scriptName"],
             },
-      async (args: JsonRecord, ctx) => {
-              const scriptName = requireString(args, "scriptName");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "scriptName",
+        (args) => requireString(args, "scriptName"),
+        (args, scriptName) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/workers/scripts/${encodePathSegment(scriptName)}`,
-                  query: { force: optionalBoolean(args, "force") },
-                },
-                ctx,
-              );
-              return { deleted: true, scriptName };
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(scriptName)}`,
+                  query: { force: typeof args["force"] === "boolean" ? args["force"] : undefined },
+                }),
+      ),
     ),
     cfTool(
       "list_kv_namespaces",
@@ -2077,12 +2120,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true)
-                return { namespaces: result, page: pageInfo(resultInfo) };
-              return {
-                namespaces: asArray(result).map(projectKvNamespace),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("namespaces", projectKvNamespace)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -2092,25 +2130,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                }
+              namespaceId: NAMESPACE_ID_PROPERTY
             },
       ["namespaceId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}`,
-                },
-                ctx,
-              );
-              return projectKvNamespace(result);
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
+                }),
+        projectKvNamespace,
+      ),
     ),
     cfTool(
       "create_kv_namespace",
@@ -2133,7 +2164,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
                   body: { title: requireString(args, "title") },
                 },
                 ctx,
@@ -2148,11 +2179,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                },
+              namespaceId: NAMESPACE_ID_PROPERTY,
                 title: {
                   type: "string",
                   minLength: 1,
@@ -2167,7 +2194,7 @@ function buildTools(
                 send,
                 {
                   method: "PUT",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}`,
                   body: { title: requireString(args, "title") },
                 },
                 ctx,
@@ -2182,11 +2209,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                }
+              namespaceId: NAMESPACE_ID_PROPERTY
             },
       ["namespaceId"],
       {
@@ -2197,18 +2220,15 @@ function buildTools(
               },
               required: ["deleted", "namespaceId"],
             },
-      async (args: JsonRecord, ctx) => {
-              const namespaceId = requireString(args, "namespaceId");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "namespaceId",
+        (args) => requireString(args, "namespaceId"),
+        (args, namespaceId) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(namespaceId)}`,
-                },
-                ctx,
-              );
-              return { deleted: true, namespaceId };
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(namespaceId)}`,
+                }),
+      ),
     ),
     cfTool(
       "list_kv_keys",
@@ -2217,11 +2237,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                },
+              namespaceId: NAMESPACE_ID_PROPERTY,
                 prefix: {
                   type: "string",
                   description: "Return only keys beginning with this prefix.",
@@ -2248,7 +2264,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/keys`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/keys`,
                   query: {
                     prefix: optionalString(args, "prefix"),
                     limit: optionalNumber(args, "limit"),
@@ -2260,9 +2276,7 @@ function buildTools(
               const cursor = resultInfo?.cursor;
               return {
                 keys: asArray(result).map(projectKvKey),
-                ...(typeof cursor === "string" && cursor !== ""
-                  ? { nextCursor: cursor }
-                  : {}),
+                ...cursorResult(cursor),
               };
             },
     ),
@@ -2273,11 +2287,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                },
+              namespaceId: NAMESPACE_ID_PROPERTY,
                 keys: {
                   type: "array",
                   minItems: 1,
@@ -2302,7 +2312,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk/get`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk/get`,
                   body: compact({
                     keys: args["keys"],
                     withMetadata: args["withMetadata"],
@@ -2321,11 +2331,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                },
+              namespaceId: NAMESPACE_ID_PROPERTY,
                 entries: {
                   type: "array",
                   minItems: 1,
@@ -2375,7 +2381,7 @@ function buildTools(
                 send,
                 {
                   method: "PUT",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk`,
                   body: args["entries"],
                 },
                 ctx,
@@ -2390,11 +2396,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              namespaceId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "KV namespace id from list_kv_namespaces.",
-                },
+              namespaceId: NAMESPACE_ID_PROPERTY,
                 keys: {
                   type: "array",
                   minItems: 1,
@@ -2410,7 +2412,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/storage/kv/namespaces/${encodePathSegment(requireString(args, "namespaceId"))}/bulk/delete`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces/${encodeURIComponent(requireString(args, "namespaceId"))}/bulk/delete`,
                   body: args["keys"],
                 },
                 ctx,
@@ -2445,17 +2447,7 @@ function buildTools(
               properties: {
                 buckets: {
                   type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      name: { type: "string" },
-                      location: { type: "string" },
-                      storageClass: { type: "string" },
-                      jurisdiction: { type: "string" },
-                      creationDate: { type: "string" },
-                    },
-                    required: ["name"],
-                  },
+                  items: R2_BUCKET_SCHEMA,
                 },
                 nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
               },
@@ -2479,10 +2471,7 @@ function buildTools(
               // R2 nests its list under `buckets` rather than returning a bare array,
               // and its result_info carries a cursor instead of page counters.
               const cursor = resultInfo?.cursor;
-              const next =
-                typeof cursor === "string" && cursor !== ""
-                  ? { nextCursor: cursor }
-                  : {};
+              const next = cursorResult(cursor);
               if (args["raw"] === true) return { buckets: result, ...next };
               return {
                 buckets: asArray(asRecord(result)["buckets"]).map(projectR2Bucket),
@@ -2502,18 +2491,15 @@ function buildTools(
             },
       ["bucketName"],
       R2_BUCKET_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}`,
                   headers: r2Headers(args),
-                },
-                ctx,
-              );
-              return projectR2Bucket(result);
-            },
+                }),
+        projectR2Bucket,
+      ),
     ),
     cfTool(
       "create_r2_bucket",
@@ -2542,7 +2528,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets`,
                   headers: r2Headers(args),
                   body: compact({
                     name: requireString(args, "bucketName"),
@@ -2577,7 +2563,7 @@ function buildTools(
                 send,
                 {
                   method: "PATCH",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}`,
                   headers: {
                     ...r2Headers(args),
                     "cf-r2-storage-class": String(args["storageClass"]),
@@ -2607,19 +2593,16 @@ function buildTools(
               },
               required: ["deleted", "bucketName"],
             },
-      async (args: JsonRecord, ctx) => {
-              const bucketName = requireString(args, "bucketName");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "bucketName",
+        (args) => requireString(args, "bucketName"),
+        (args, bucketName) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(bucketName)}`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(bucketName)}`,
                   headers: r2Headers(args),
-                },
-                ctx,
-              );
-              return { deleted: true, bucketName };
-            },
+                }),
+      ),
     ),
     cfTool(
       "list_r2_objects",
@@ -2668,7 +2651,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/objects`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/objects`,
                   headers: r2Headers(args),
                   query: {
                     prefix: optionalString(args, "prefix"),
@@ -2686,9 +2669,7 @@ function buildTools(
                 ...(Array.isArray(resultInfo?.delimited)
                   ? { commonPrefixes: resultInfo.delimited }
                   : {}),
-                ...(typeof cursor === "string" && cursor !== ""
-                  ? { nextCursor: cursor }
-                  : {}),
+                ...cursorResult(cursor),
                 truncated: resultInfo?.is_truncated === true,
               };
             },
@@ -2717,19 +2698,16 @@ function buildTools(
               },
               required: ["deleted", "objectKey"],
             },
-      async (args: JsonRecord, ctx) => {
-              const objectKey = requireString(args, "objectKey");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "objectKey",
+        (args) => requireString(args, "objectKey"),
+        (args, objectKey) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/objects/${encodeObjectKey(objectKey)}`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/objects/${encodeObjectKey(objectKey)}`,
                   headers: r2Headers(args),
-                },
-                ctx,
-              );
-              return { deleted: true, objectKey };
-            },
+                }),
+      ),
     ),
     // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` on purpose (#350) —
     // see documentation/cloudflare.md#what-the-named-surface-deliberately-leaves-out.
@@ -2745,18 +2723,15 @@ function buildTools(
             },
       ["bucketName"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/r2/buckets/${encodePathSegment(requireString(args, "bucketName"))}/cors`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/cors`,
                   headers: r2Headers(args),
-                },
-                ctx,
-              );
-              return asRecord(result);
-            },
+                }),
+        asRecord,
+      ),
     ),
     cfTool(
       "list_pages_projects",
@@ -2802,12 +2777,7 @@ function buildTools(
                 },
                 ctx,
               );
-              if (args["raw"] === true)
-                return { projects: result, page: pageInfo(resultInfo) };
-              return {
-                projects: asArray(result).map(projectPagesProject),
-                page: pageInfo(resultInfo),
-              };
+              return pagedList("projects", projectPagesProject)(result, resultInfo, args["raw"] === true);
             },
     ),
     cfTool(
@@ -2817,26 +2787,19 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Pages project name from list_pages_projects.",
-                },
+              projectName: PROJECT_NAME_PROPERTY,
                 raw: RAW_INPUT_PROPERTY
             },
       ["projectName"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}`,
-                },
-                ctx,
-              );
-              return args["raw"] === true ? result : projectPagesProject(result);
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}`,
+                }),
+        (result, args) => args["raw"] === true ? result : projectPagesProject(result),
+      ),
     ),
     cfTool(
       "list_pages_deployments",
@@ -2845,11 +2808,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Pages project name from list_pages_projects.",
-                },
+              projectName: PROJECT_NAME_PROPERTY,
                 env: {
                   type: "string",
                   enum: ["production", "preview"],
@@ -2864,7 +2823,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments`,
                   query: {
                     env: optionalString(args, "env"),
                     page: optionalNumber(args, "page"),
@@ -2886,31 +2845,20 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Pages project name from list_pages_projects.",
-                },
-                deploymentId: {
-                  type: "string",
-                  minLength: 1,
-                  description: "Deployment id from list_pages_deployments.",
-                },
+              projectName: PROJECT_NAME_PROPERTY,
+                deploymentId: DEPLOYMENT_ID_PROPERTY,
                 raw: RAW_INPUT_PROPERTY
             },
       ["projectName", "deploymentId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
-      async (args: JsonRecord, ctx) => {
-              const { result } = await callCloudflare(
-                send,
-                {
+      getResult(
+        send,
+        (args) => ({
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}`,
-                },
-                ctx,
-              );
-              return args["raw"] === true ? result : projectPagesDeployment(result);
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}`,
+                }),
+        (result, args) => args["raw"] === true ? result : projectPagesDeployment(result),
+      ),
     ),
     cfTool(
       "retry_pages_deployment",
@@ -2919,8 +2867,8 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." },
-                deploymentId: { type: "string", minLength: 1, description: "Deployment id to retry." }
+              projectName: PAGES_PROJECT_NAME_PROPERTY,
+                deploymentId: RETRY_DEPLOYMENT_ID_PROPERTY
             },
       ["projectName", "deploymentId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
@@ -2929,7 +2877,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}/retry`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}/retry`,
                 },
                 ctx,
               );
@@ -2943,8 +2891,8 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." },
-                deploymentId: { type: "string", minLength: 1, description: "Previous deployment id to promote." }
+              projectName: PAGES_PROJECT_NAME_PROPERTY,
+                deploymentId: ROLLBACK_DEPLOYMENT_ID_PROPERTY
             },
       ["projectName", "deploymentId"],
       OPEN_OBJECT_OUTPUT_SCHEMA,
@@ -2953,7 +2901,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(requireString(args, "deploymentId"))}/rollback`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(requireString(args, "deploymentId"))}/rollback`,
                 },
                 ctx,
               );
@@ -2967,23 +2915,20 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." },
-                deploymentId: { type: "string", minLength: 1, description: "Deployment id to delete." }
+              projectName: PAGES_PROJECT_NAME_PROPERTY,
+                deploymentId: DELETE_DEPLOYMENT_ID_PROPERTY
             },
       ["projectName", "deploymentId"],
       { type: "object", properties: { deleted: { type: "boolean" }, deploymentId: { type: "string" } }, required: ["deleted", "deploymentId"] },
-      async (args: JsonRecord, ctx) => {
-              const deploymentId = requireString(args, "deploymentId");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "deploymentId",
+        (args) => requireString(args, "deploymentId"),
+        (args, deploymentId) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/deployments/${encodePathSegment(deploymentId)}`,
-                },
-                ctx,
-              );
-              return { deleted: true, deploymentId };
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/deployments/${encodeURIComponent(deploymentId)}`,
+                }),
+      ),
     ),
     cfTool(
       "list_pages_domains",
@@ -2992,7 +2937,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." }
+              projectName: PAGES_PROJECT_NAME_PROPERTY
             },
       ["projectName"],
       listOutputSchema("domains", OPEN_OBJECT_OUTPUT_SCHEMA),
@@ -3001,7 +2946,7 @@ function buildTools(
                 send,
                 {
                   method: "GET",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains`,
                 },
                 ctx,
               );
@@ -3015,7 +2960,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." },
+              projectName: PAGES_PROJECT_NAME_PROPERTY,
                 domain: { type: "string", minLength: 1, description: "Fully qualified custom domain to attach." }
             },
       ["projectName", "domain"],
@@ -3025,7 +2970,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains`,
                   body: { name: requireString(args, "domain") },
                 },
                 ctx,
@@ -3040,23 +2985,20 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." },
+              projectName: PAGES_PROJECT_NAME_PROPERTY,
                 domain: { type: "string", minLength: 1, description: "Custom domain to detach." }
             },
       ["projectName", "domain"],
       { type: "object", properties: { deleted: { type: "boolean" }, domain: { type: "string" } }, required: ["deleted", "domain"] },
-      async (args: JsonRecord, ctx) => {
-              const domain = requireString(args, "domain");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "domain",
+        (args) => requireString(args, "domain"),
+        (args, domain) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/domains/${encodePathSegment(domain)}`,
-                },
-                ctx,
-              );
-              return { deleted: true, domain };
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/domains/${encodeURIComponent(domain)}`,
+                }),
+      ),
     ),
     cfTool(
       "purge_pages_build_cache",
@@ -3065,7 +3007,7 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name." }
+              projectName: PAGES_PROJECT_NAME_PROPERTY
             },
       ["projectName"],
       { type: "object", properties: { purged: { type: "boolean" } }, required: ["purged"] },
@@ -3074,7 +3016,7 @@ function buildTools(
                 send,
                 {
                   method: "POST",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(requireString(args, "projectName"))}/purge_build_cache`,
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(requireString(args, "projectName"))}/purge_build_cache`,
                 },
                 ctx,
               );
@@ -3088,22 +3030,19 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              projectName: { type: "string", minLength: 1, description: "Pages project name to delete." }
+              projectName: DELETE_PROJECT_NAME_PROPERTY
             },
       ["projectName"],
       { type: "object", properties: { deleted: { type: "boolean" }, projectName: { type: "string" } }, required: ["deleted", "projectName"] },
-      async (args: JsonRecord, ctx) => {
-              const projectName = requireString(args, "projectName");
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "projectName",
+        (args) => requireString(args, "projectName"),
+        (args, projectName) => ({
                   method: "DELETE",
-                  path: `/accounts/${encodePathSegment(accountArg(args))}/pages/projects/${encodePathSegment(projectName)}`,
-                },
-                ctx,
-              );
-              return { deleted: true, projectName };
-            },
+                  path: `/accounts/${encodeURIComponent(accountArg(args))}/pages/projects/${encodeURIComponent(projectName)}`,
+                }),
+      ),
     ),
     cfTool(
       // Additive: brings a record into being and destroys nothing, so
@@ -3190,10 +3129,7 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              recordId: {
-                  type: "string",
-                  description: "DNS record id, from list_dns_records.",
-                },
+              recordId: RECORD_ID_PROPERTY,
                 type: {
                   type: "string",
                   enum: [...CLOUDFLARE_CONTENT_DNS_RECORD_TYPES],
@@ -3286,10 +3222,7 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              recordId: {
-                  type: "string",
-                  description: "DNS record id, from list_dns_records.",
-                }
+              recordId: RECORD_ID_PROPERTY
             },
       ["recordId"],
       {
@@ -3300,20 +3233,15 @@ function buildTools(
               },
               required: ["deleted", "recordId"],
             },
-      async (args: JsonRecord, ctx) => {
-              const recordId = String(args["recordId"]);
-              await callCloudflare(
-                send,
-                {
+      deleteAck(
+        send,
+        "recordId",
+        (args) => String(args["recordId"]),
+        (args, recordId) => ({
                   method: "DELETE",
                   path: `/zones/${encodeURIComponent(zoneArg(args))}/dns_records/${encodeURIComponent(recordId)}`,
-                },
-                ctx,
-              );
-              // Cloudflare answers a delete with `{ "result": { "id": ... } }` and
-              // nothing else; the useful acknowledgement is the boolean.
-              return { deleted: true, recordId };
-            },
+                }),
+      ),
     ),
     cfTool(
       "purge_cache",
@@ -3434,11 +3362,7 @@ function buildTools(
             },
     ),
   ];
-  return tools.map((tool) => ({
-    ...tool,
-    handler: (args, ctx) =>
-      tool.handler(args, withAuthentication(ctx, authentication)),
-  }));
+  return tools;
 }
 
 function usageGuide(
@@ -3497,7 +3421,10 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     );
   }
   const scope: Scoping = {
-    send: cloudflareTransport(options.baseUrl?.trim() || CLOUDFLARE_API_BASE),
+    send: cloudflareTransport(
+      options.baseUrl?.trim() || CLOUDFLARE_API_BASE,
+      authentication,
+    ),
     accountId: options.accountId?.trim() || undefined,
     zoneId: options.zoneId?.trim() || undefined,
   };
@@ -3526,31 +3453,23 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     ...(authentication === "apiToken"
       ? {
           async testCredential(value: string, ctx: ConnectorContext) {
-            try {
-              const { result } = await callCloudflare(
-                scope.send,
-                { method: "GET", path: "/user/tokens/verify" },
-                withAuthentication(
-                  {
-                    ...ctx,
-                    credential: {
-                      get: async () => value,
-                      getAll: async () => ({ value }),
-                    },
-                  },
-                  authentication,
-                ),
-              );
+            return await testCloudflareCredential(
+              scope.send,
+              { method: "GET", path: "/user/tokens/verify" },
+              {
+                ...ctx,
+                credential: {
+                  get: async () => value,
+                  getAll: async () => ({ value }),
+                },
+              },
+              (result) => {
               const status = asRecord(result)["status"];
               return status === "active"
                 ? { ok: true, message: "Token verified: active." }
                 : { ok: false, message: `Token status is "${String(status)}".` };
-            } catch (error) {
-              return {
-                ok: false,
-                message: error instanceof Error ? error.message : String(error),
-              };
-            }
+              },
+            );
           },
         }
       : {
@@ -3558,33 +3477,22 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
             values: Record<string, string>,
             ctx: ConnectorContext,
           ) {
-            try {
-              const { result } = await callCloudflare(
-                scope.send,
-                { method: "GET", path: "/user" },
-                withAuthentication(
-                  {
-                    ...ctx,
-                    credential: {
-                      get: async (field?: string) =>
-                        field ? values[field] ?? null : null,
-                      getAll: async () => values,
-                    },
-                  },
-                  authentication,
-                ),
-              );
-              const email = asRecord(result)["email"];
-              return {
+            return await testCloudflareCredential(
+              scope.send,
+              { method: "GET", path: "/user" },
+              {
+                ...ctx,
+                credential: {
+                  get: async (field?: string) =>
+                    field ? values[field] ?? null : null,
+                  getAll: async () => values,
+                },
+              },
+              (result) => ({
                 ok: true,
-                message: `Global API Key verified for ${String(email)}.`,
-              };
-            } catch (error) {
-              return {
-                ok: false,
-                message: error instanceof Error ? error.message : String(error),
-              };
-            }
+                message: `Global API Key verified for ${String(asRecord(result)["email"])}.`,
+              }),
+            );
           },
         }),
   });
