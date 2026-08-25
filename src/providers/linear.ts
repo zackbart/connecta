@@ -4,6 +4,7 @@ import {
   type RemoteMcpAuth,
 } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
+import { defined } from "../connectors/api.js";
 import type {
   Connector,
   ConnectorCallAdmissionPolicy,
@@ -31,54 +32,19 @@ export interface LinearOptions {
   title?: string;
   /** Which workspace this is and what decisions it answers. */
   purpose: string;
-  /**
-   * Endpoint selection. Required, and deliberately undefaulted.
-   *
-   * `"read-only"` binds the connection to Linear's read-only endpoint, whose
-   * token is scope-limited downstream — a stronger guarantee than any
-   * annotation Connecta applies. `"read-write"` reaches the full API.
-   *
-   * Neither is a safe default. Defaulting to `"read-write"` hands a deployment
-   * write access it never asked for, and defaulting to `"read-only"` turns a
-   * deployment that does write into one whose every write fails at Linear —
-   * at runtime, where no agent can repair it. So the operator declares it, and
-   * a deployment that forgot fails here instead
-   * ([#342](https://github.com/zackbart/connecta/issues/342)).
-   */
+  /** Required endpoint selection; see `documentation/linear.md`. */
   access: LinearAccess;
-  /**
-   * OAuth by default. A Linear personal API key works either as a literal
-   * header or as an operator-managed credential (`{ type: "credential" }`).
-   * Linear's MCP documentation asks for `Authorization: Bearer <yourtoken>`
-   * for both API keys and OAuth tokens (https://linear.app/docs/mcp), which is
-   * the framing default, so the credential shape needs no `scheme` of its own.
-   */
+  /** OAuth or a personal API key; see `documentation/linear.md`. */
   auth?: RemoteMcpAuth;
   /** Workspace-specific conventions appended to the maintained provider guide. */
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
-  /**
-   * Optional per-runtime call-admission policy. Deliberately not defaulted:
-   * Linear documents no MCP-specific limit, and the underlying API limit is
-   * per user per hour, varies by credential type, and is raised dynamically
-   * for workspace-level OAuth apps. A hardcoded per-runtime ceiling would
-   * either throttle a healthy deployment or fail to protect a busy one, so
-   * the number stays with the operator who knows the workspace.
-   */
+  /** Optional per-runtime policy; see `documentation/linear.md#rate-limits`. */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
-/**
- * Tools whose contract is observational rather than mutating.
- *
- * Linear's hosted catalog is not a fixed set — it varies by workspace plan and
- * enabled features (customer requests, releases, and code review are gated),
- * so this list is a superset of what any one workspace lists. A name here that
- * the workspace never returns costs nothing; a real read missing from it merely
- * fails closed. Only a write mistakenly listed here would be a safety bug,
- * which is why ambiguous helpers stay out.
- */
+/** Reviewed reads; see `documentation/linear.md` and provider convention P5. */
 const READ_ONLY_TOOLS = new Set([
   // Issues
   "list_issues",
@@ -137,17 +103,7 @@ const READ_ONLY_TOOLS = new Set([
   "extract_images",
 ]);
 
-/**
- * The maintained write catalog. `"destructive"` tools modify or remove state
- * that already exists; `"additive"` ones only bring something new into being.
- * Both leave the read-only path — the distinction only decides whether the
- * connection asserts `destructiveHint`, which shapes the host's approval copy.
- *
- * Linear's `save_*` tools are upserts: passing an existing record's id updates
- * it in place. An upsert can therefore overwrite, so every `save_*` is
- * destructive even though some calls only create. The `create_*_label` tools
- * are the genuine creates.
- */
+/** Reviewed writes; `save_*` upsert rationale lives in `documentation/linear.md`. */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   // Issues
   ["save_issue", "destructive"],
@@ -188,18 +144,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["delete_customer_need", "destructive"],
 ]);
 
-/**
- * The manifest this release reviewed: both lists in one place, which is what
- * makes the classification the connector applies and the drift check that runs
- * beside it the same fact (P13). No schema digests yet — no release has read
- * Linear's live schemas and written them down, and an invented digest would
- * report a change that never happened. `npm run drift:check -- --record` reads
- * them from a live workspace and prints the block to paste in
- * ([#351](https://github.com/zackbart/connecta/issues/351)).
- *
- * Exported because the maintainer-run check compares against this manifest and
- * *names* what moved, which the runtime check deliberately cannot.
- */
+/** Release-reviewed manifest; see provider conventions P5 and P13. */
 export const LINEAR_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,
@@ -290,12 +235,10 @@ export function linear(id: string, options: LinearOptions): Connector {
       // guide adds cross-tool sequence advice that is worth reading before a
       // write, not worth loading before every read.
     },
-    ...(options.callAdmission !== undefined
-      ? { callAdmission: options.callAdmission }
-      : {}),
-    ...(options.maxResultBytes !== undefined
-      ? { maxResultBytes: options.maxResultBytes }
-      : {}),
+    ...defined({
+      callAdmission: options.callAdmission,
+      maxResultBytes: options.maxResultBytes,
+    }),
   });
   return withVettedCatalog(connector, LINEAR_VETTED_CATALOG);
 }
