@@ -5,10 +5,6 @@ import type {
   OAuthTokens,
   Transport,
 } from "@modelcontextprotocol/client";
-import {
-  InMemoryTransport,
-  McpServer,
-} from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -26,13 +22,11 @@ import type {
   Logger,
 } from "../src/types.js";
 import { createTestConnecta, required, silentLogger } from "./helpers.js";
+import { inMemoryDownstream, throwingTransport } from "./fixtures/downstream-mcp.js";
+import { connectorContext as ctx, deferred } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
 const REDIRECT = `${BASE}/oauth/callback/svc`;
-
-function ctx(storage = memoryStorage()): ConnectorContext {
-  return { storage, logger: silentLogger, baseUrl: BASE };
-}
 
 async function storeCurrentOAuthValue(
   storage: KVStorage,
@@ -410,14 +404,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
 
   it("rejects a stale token write that lands after reset completed", async () => {
     const backing = memoryStorage();
-    let reachedWrite!: () => void;
-    const writing = new Promise<void>((resolve) => {
-      reachedWrite = resolve;
-    });
-    let releaseWrite!: () => void;
-    const writeGate = new Promise<void>((resolve) => {
-      releaseWrite = resolve;
-    });
+    const { promise: writing, resolve: reachedWrite } = deferred<void>();
+    const { promise: writeGate, resolve: releaseWrite } = deferred<void>();
     const storage: KVStorage = {
       get: (key) => backing.get(key),
       async set(key, value, opts) {
@@ -497,14 +485,8 @@ describe("KvOAuthProvider over memoryStorage", () => {
 
   it("concurrent resets cannot finalize over a newer epoch", async () => {
     const backing = memoryStorage();
-    let firstCleanupReached!: () => void;
-    const firstCleanup = new Promise<void>((resolve) => {
-      firstCleanupReached = resolve;
-    });
-    let releaseFirstCleanup!: () => void;
-    const firstCleanupGate = new Promise<void>((resolve) => {
-      releaseFirstCleanup = resolve;
-    });
+    const { promise: firstCleanup, resolve: firstCleanupReached } = deferred<void>();
+    const { promise: firstCleanupGate, resolve: releaseFirstCleanup } = deferred<void>();
     let heldFirstCleanup = false;
     let secondGeneration: string | null = null;
     const storage: KVStorage = {
@@ -582,22 +564,10 @@ describe("KvOAuthProvider over memoryStorage", () => {
 
   it("keeps lineage while a late stale-write cleanup races the next reset", async () => {
     const backing = memoryStorage();
-    let staleSetReached!: () => void;
-    const atStaleSet = new Promise<void>((resolve) => {
-      staleSetReached = resolve;
-    });
-    let releaseStaleSet!: () => void;
-    const staleSetGate = new Promise<void>((resolve) => {
-      releaseStaleSet = resolve;
-    });
-    let rememberReadReached!: () => void;
-    const atRememberRead = new Promise<void>((resolve) => {
-      rememberReadReached = resolve;
-    });
-    let releaseRememberRead!: () => void;
-    const rememberReadGate = new Promise<void>((resolve) => {
-      releaseRememberRead = resolve;
-    });
+    const { promise: atStaleSet, resolve: staleSetReached } = deferred<void>();
+    const { promise: staleSetGate, resolve: releaseStaleSet } = deferred<void>();
+    const { promise: atRememberRead, resolve: rememberReadReached } = deferred<void>();
+    const { promise: rememberReadGate, resolve: releaseRememberRead } = deferred<void>();
     let activeManifest = "";
     let gatedRememberRead = false;
     let failLateDelete = false;
@@ -772,33 +742,15 @@ describe("KvOAuthProvider over memoryStorage", () => {
 // remoteMcp() oauth-mode status via the _transportFactory seam.
 // ---------------------------------------------------------------------------
 
-/** Minimal fake transport whose start() runs onStart then throws. */
-function throwingTransport(
-  err: Error,
-  onStart?: () => Promise<void> | void,
-): Transport {
-  return {
-    async start() {
-      await onStart?.();
-      throw err;
-    },
-    async send() {},
-    async close() {},
-  } as unknown as Transport;
-}
-
 /** A downstream MCP server exposing a single tool, wired in-process. */
 async function connectServer() {
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const server = new McpServer({ name: "downstream", version: "1.0.0" });
-  server.registerTool(
-    "ping",
-    { description: "Ping", inputSchema: z.object({}) },
-    async () => ({ content: [{ type: "text", text: "pong" }] }),
-  );
-  await server.connect(serverTransport);
-  return { server, clientTransport };
+  return inMemoryDownstream((server) => {
+    server.registerTool(
+      "ping",
+      { description: "Ping", inputSchema: z.object({}) },
+      async () => ({ content: [{ type: "text", text: "pong" }] }),
+    );
+  });
 }
 
 let closer: (() => Promise<void>) | null = null;
@@ -1071,11 +1023,8 @@ describe("remoteMcp() startAuth", () => {
   it("force fences and replaces a connect that never settles on its own", async () => {
     const storage = memoryStorage();
     const c = ctx(storage);
-    let reachedStart!: () => void;
-    const started = new Promise<void>((resolve) => {
-      reachedStart = resolve;
-    });
-    let rejectStart!: (error: Error) => void;
+    const { promise: started, resolve: reachedStart } = deferred<void>();
+    const pendingStart = deferred<void>();
     let builds = 0;
     const freshUrl = "https://auth.example/recovered";
     const connector = remoteMcp("svc", {
@@ -1087,13 +1036,11 @@ describe("remoteMcp() startAuth", () => {
           return {
             start() {
               reachedStart();
-              return new Promise<void>((_resolve, reject) => {
-                rejectStart = reject;
-              });
+              return pendingStart.promise;
             },
             async send() {},
             async close() {
-              rejectStart(new Error("abandoned by force reset"));
+              pendingStart.reject(new Error("abandoned by force reset"));
             },
           } as unknown as Transport;
         }
@@ -1124,11 +1071,8 @@ describe("remoteMcp() startAuth", () => {
   it("an abandoned Unauthorized completion cannot poison its healthy replacement", async () => {
     const storage = memoryStorage();
     const c = ctx(storage);
-    let reachedStart!: () => void;
-    const started = new Promise<void>((resolve) => {
-      reachedStart = resolve;
-    });
-    let rejectOld!: (error: Error) => void;
+    const { promise: started, resolve: reachedStart } = deferred<void>();
+    const oldStart = deferred<void>();
     let builds = 0;
     const healthy = await connectServer();
     closer = () => healthy.server.close();
@@ -1141,9 +1085,7 @@ describe("remoteMcp() startAuth", () => {
           return {
             start() {
               reachedStart();
-              return new Promise<void>((_resolve, reject) => {
-                rejectOld = reject;
-              });
+              return oldStart.promise;
             },
             async send() {},
             async close() {
@@ -1160,7 +1102,7 @@ describe("remoteMcp() startAuth", () => {
     await expect(connector.startAuth!(c, { force: true })).resolves.toMatchObject({
       state: "ok",
     });
-    rejectOld(new UnauthorizedError("late 401"));
+    oldStart.reject(new UnauthorizedError("late 401"));
     await expect(abandoned).resolves.toMatchObject({ state: "error" });
 
     expect(await connector.status!(c)).toMatchObject({ state: "ok" });

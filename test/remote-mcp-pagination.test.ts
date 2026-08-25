@@ -16,8 +16,8 @@ import { buildSandboxProviders } from "../src/execute.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectorContext, KVStorage, Logger } from "../src/types.js";
 import { required, makeRegistry, silentLogger } from "./helpers.js";
+import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 
 const BASE = "https://connecta.test";
 
@@ -44,22 +44,6 @@ const EMPTY_CURSOR = "";
  */
 const MAX_TOOLS = 100_000;
 const MAX_TOOL_PAGES = 10_000;
-
-function ctx(storage: KVStorage = memoryStorage()): ConnectorContext {
-  return { storage, logger: silentLogger, baseUrl: BASE };
-}
-
-/** A logger that keeps its warnings so a test can assert one was emitted. */
-function recordingLogger(): Logger & { warnings: string[] } {
-  const warnings: string[] = [];
-  return {
-    ...silentLogger,
-    warnings,
-    warn: (...args: unknown[]) => {
-      warnings.push(args.map(String).join(" "));
-    },
-  };
-}
 
 function tool(name: string, extra: Partial<Tool> = {}): Tool {
   return {
@@ -375,14 +359,8 @@ describe("remoteMcp() tools/list pagination", () => {
   });
 
   it("stops paging when the scope ends mid-chain instead of running on detached", async () => {
-    let reachedPageTwo!: () => void;
-    const atPageTwo = new Promise<void>((resolve) => {
-      reachedPageTwo = resolve;
-    });
-    let releasePageTwo!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releasePageTwo = resolve;
-    });
+    const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
+    const { promise: gate, resolve: releasePageTwo } = deferred<void>();
     const { connector, cursors } = fixture(async (_cursor, call) => {
       if (call === 1) return { tools: [tool("alpha")], nextCursor: "p2" };
       reachedPageTwo();
@@ -436,14 +414,8 @@ describe("remoteMcp() tools/list pagination", () => {
   });
 
   it("stops a stalled catalog walk at the configured probe deadline", async () => {
-    let reachedPageTwo!: () => void;
-    const atPageTwo = new Promise<void>((resolve) => {
-      reachedPageTwo = resolve;
-    });
-    let releasePageTwo!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releasePageTwo = resolve;
-    });
+    const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
+    const { promise: gate, resolve: releasePageTwo } = deferred<void>();
     const { connector, cursors } = fixture(async (cursor) => {
       if (cursor === undefined) {
         return { tools: [tool("alpha")], nextCursor: "p2" };
@@ -851,7 +823,7 @@ describe("paginated catalogs through the discovery path", () => {
           ? new Error("page two never landed")
           : undefined,
     });
-    const logger = recordingLogger();
+    const { logger, warnings } = spyLogger();
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger,
@@ -873,11 +845,11 @@ describe("paginated catalogs through the discovery path", () => {
     // The same list either way, so the list alone cannot tell "stale fallback
     // served" from "the fault never fired". The warning can.
     expect(
-      logger.warnings.some((w) =>
+      warnings().some((w) =>
         /catalog refresh failed; serving stale catalog/.test(w),
       ),
     ).toBe(true);
-    expect(logger.warnings.some((w) => /page two never landed/.test(w))).toBe(
+    expect(warnings().some((w) => /page two never landed/.test(w))).toBe(
       true,
     );
 
@@ -886,14 +858,8 @@ describe("paginated catalogs through the discovery path", () => {
 
   it("serves the last complete catalog when a deadline cuts a refresh short", async () => {
     let stall = false;
-    let reachedPageTwo!: () => void;
-    const atPageTwo = new Promise<void>((resolve) => {
-      reachedPageTwo = resolve;
-    });
-    let releasePageTwo!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      releasePageTwo = resolve;
-    });
+    const { promise: atPageTwo, resolve: reachedPageTwo } = deferred<void>();
+    const { promise: gate, resolve: releasePageTwo } = deferred<void>();
     const { connector, cursors } = fixture(async (cursor) => {
       if (cursor === undefined) {
         return { tools: [tool("alpha")], nextCursor: "p2" };
@@ -905,7 +871,7 @@ describe("paginated catalogs through the discovery path", () => {
       }
       return { tools: [tool("beta")] };
     });
-    const logger = recordingLogger();
+    const { logger, warnings } = spyLogger();
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger,
@@ -931,7 +897,7 @@ describe("paginated catalogs through the discovery path", () => {
       expect(served.map((t) => t.name)).toEqual(["alpha", "beta"]);
       expect(cursors).toEqual([undefined, "p2", undefined, "p2"]);
       expect(
-        logger.warnings.some((warning) =>
+        warnings().some((warning) =>
           /catalog refresh failed; serving stale catalog/.test(warning),
         ),
       ).toBe(true);

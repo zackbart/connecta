@@ -1,4 +1,3 @@
-import { createMcpHandler, McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -6,7 +5,9 @@ import { CredentialVault } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import type { ConnectorContext, Logger } from "../src/types.js";
+import type { ConnectorContext } from "../src/types.js";
+import { connectorContext, spyLogger } from "./fixtures/misc.js";
+import { httpDownstream } from "./fixtures/downstream-mcp.js";
 import { activitySink, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
@@ -29,8 +30,9 @@ interface Captured {
  * seam bypasses exactly the header assembly under test.
  */
 function serveDownstream(): Captured[] {
-  const handler = createMcpHandler(() => {
-    const server = new McpServer({ name: "downstream", version: "1.0.0" });
+  const captured: Captured[] = [];
+  const downstream = httpDownstream(
+    (server) => {
     server.registerTool(
       "echo",
       {
@@ -40,20 +42,19 @@ function serveDownstream(): Captured[] {
       },
       async ({ text }) => ({ content: [{ type: "text", text }] }),
     );
-    return server;
-  });
-  const captured: Captured[] = [];
+    },
+    {
+      capture: async (request) => {
+        captured.push({
+          headers: new Headers(request.headers),
+          body: request.method === "POST" ? await request.text() : "",
+        });
+      },
+    },
+  );
   vi.stubGlobal(
     "fetch",
-    async (input: string | URL | Request, init: RequestInit = {}) => {
-      const request = new Request(input as string | URL, init);
-      const clone = request.clone();
-      captured.push({
-        headers: new Headers(request.headers),
-        body: request.method === "POST" ? await clone.text() : "",
-      });
-      return handler.fetch(request);
-    },
+    downstream.fetch,
   );
   return captured;
 }
@@ -91,12 +92,7 @@ function credentialCtx(read: () => string | null): ConnectorContext {
 
 /** A context with no vault behind it — `credentials.encryptionKey` unset. */
 function vaultlessCtx(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: BASE };
-}
-
-function loggerSpy(): { logger: Logger; warn: ReturnType<typeof vi.fn> } {
-  const warn = vi.fn();
-  return { logger: { ...silentLogger, warn }, warn };
+  return connectorContext();
 }
 
 afterEach(() => {
@@ -590,7 +586,7 @@ describe("remoteMcp() unauthenticated status for a non-OAuth connector", () => {
 
 describe("remoteMcp() credential auth — cleartext destination", () => {
   it("warns when an operator-managed credential would travel over http://", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("down", {
       url: "http://downstream.test/mcp",
       auth: { type: "credential" },
@@ -602,7 +598,7 @@ describe("remoteMcp() credential auth — cleartext destination", () => {
   });
 
   it("does not warn over https:// or loopback", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("secure", {
       url: URL_UNDER_TEST,
       auth: { type: "credential" },

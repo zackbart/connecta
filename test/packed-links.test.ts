@@ -1,15 +1,11 @@
-import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { spawnChecker, tempFixture } from "./fixtures/node.js";
 
 const checker = fileURLToPath(
   new URL("../scripts/check-doc-links.mjs", import.meta.url),
 );
-const fixtures: string[] = [];
-
 /**
  * A checkout on disk plus the subset of it that `npm pack` would carry — the
  * two inputs the gate takes, kept separate on purpose: the defect it exists
@@ -19,31 +15,17 @@ async function fixture(
   files: Record<string, string>,
   packed: string[],
 ): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "connecta-packed-links-"));
-  fixtures.push(root);
-  for (const [path, contents] of Object.entries(files)) {
-    const destination = join(root, path);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, contents);
-  }
-  await writeFile(join(root, "packed-paths.txt"), packed.join("\n"));
-  return root;
+  return tempFixture("connecta-packed-links-", {
+    ...files,
+    "packed-paths.txt": packed.join("\n"),
+  });
 }
 
 function check(root: string) {
-  const result = spawnSync(
-    process.execPath,
-    [checker, "--packed", "--root", root, "--files", join(root, "packed-paths.txt")],
-    { encoding: "utf8" },
-  );
-  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+  return spawnChecker(checker, [
+    "--packed", "--root", root, "--files", join(root, "packed-paths.txt"),
+  ]);
 }
-
-afterEach(async () => {
-  await Promise.all(
-    fixtures.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("packed Markdown link gate", () => {
   it("accepts shipped targets, repository URLs, fragments, and examples", async () => {

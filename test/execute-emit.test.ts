@@ -13,36 +13,11 @@ import {
   EXECUTE_MAX_EMITTED_BYTES,
 } from "../src/execute.js";
 import { jsonResult } from "../src/meta-tools.js";
-import type { Executor, ExecutorProvider } from "../src/types.js";
+import type { Executor } from "../src/types.js";
+import { scriptedExecutor } from "./fixtures/misc.js";
 import { calcConnector, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
-
-/**
- * Runs a closure against the connecta provider fns the way a bridged program
- * would: a return value becomes `result`, an uncaught throw becomes the bare
- * `error` message every executor reduces one to (E1).
- */
-function scriptedExecutor(
-  run: (
-    fns: Record<string, (...args: unknown[]) => Promise<unknown>>,
-  ) => Promise<unknown>,
-): Executor {
-  return {
-    async execute(_code, providers: ExecutorProvider[]) {
-      const connecta = providers.find((p) => p.name === "connecta");
-      if (!connecta) throw new Error("no connecta provider");
-      try {
-        return { result: await run(connecta.fns) };
-      } catch (err) {
-        return {
-          result: undefined,
-          error: err instanceof Error ? err.message : String(err),
-        };
-      }
-    },
-  };
-}
 
 function emitHandler(
   executor: Executor,

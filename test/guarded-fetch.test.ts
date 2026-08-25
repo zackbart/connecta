@@ -7,15 +7,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { guardedFetch } from "../src/connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
 import type { ConnectorContext } from "../src/types.js";
+import { connectorContext } from "./fixtures/misc.js";
 
 const BASE = "https://api.example.com/v2";
 
 function context(overrides: Partial<ConnectorContext> = {}): ConnectorContext {
   return {
-    storage: memoryStorage(),
-    logger: silentLogger,
+    ...connectorContext(memoryStorage()),
     baseUrl: "https://connecta.example",
     ...overrides,
   };

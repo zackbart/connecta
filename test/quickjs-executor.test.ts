@@ -1,37 +1,16 @@
 import { spawnSync } from "node:child_process";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
+import { normalizeCode } from "../src/executors/quickjs.js";
+import type { Connector, ExecutorProvider } from "../src/types.js";
 import {
-  normalizeCode,
-  quickJsExecutor as createQuickJsExecutor,
-  type QuickJsExecutorOptions,
-} from "../src/executors/quickjs.js";
-import type {
-  AdmittingExecutor,
-  Connector,
-  ExecutorProvider,
-} from "../src/types.js";
-import { required,
+  required,
   calcConnector,
   makeRegistry,
   silentLogger,
 } from "./helpers.js";
-
-const executors: AdmittingExecutor[] = [];
-
-function quickJsExecutor(
-  options?: QuickJsExecutorOptions,
-): AdmittingExecutor {
-  const executor = createQuickJsExecutor(options);
-  executors.push(executor);
-  return executor;
-}
-
-afterEach(async () => {
-  await Promise.allSettled(
-    executors.splice(0).map(async (executor) => executor.close?.()),
-  );
-});
+import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
+import { deferred, waitFor } from "./fixtures/misc.js";
 
 function providers(): ExecutorProvider[] {
   return [
@@ -699,7 +678,7 @@ describe("quickJsExecutor", () => {
     const closed = expect(running).rejects.toMatchObject({
       code: "executor_closed",
     });
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await waitFor(() => (ex.admissionSnapshot?.().active ?? 0) > 0);
     await ex.close?.();
     await closed;
     await expect(ex.execute("async () => 1", [])).rejects.toMatchObject({
@@ -708,10 +687,7 @@ describe("quickJsExecutor", () => {
   });
 
   it("reports emitted blocks and UI discarded by mid-run shutdown", async () => {
-    let callStarted!: () => void;
-    const started = new Promise<void>((resolve) => {
-      callStarted = resolve;
-    });
+    const { promise: started, resolve: callStarted } = deferred<void>();
     const connector: Connector = {
       id: "blocking",
       kind: "api",

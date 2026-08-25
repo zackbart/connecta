@@ -8,7 +8,6 @@ import type {
   Transport,
 } from "@modelcontextprotocol/client";
 import {
-  createMcpHandler,
   inputRequired,
   McpServer,
 } from "@modelcontextprotocol/server";
@@ -31,25 +30,19 @@ import { memoryStorage } from "../src/storage/memory.js";
 import { withAbortableTimeout } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type {
-  ConnectorContext,
   Executor,
   KVStorage,
-  Logger,
 } from "../src/types.js";
+import { connectorContext as ctx, deferred, spyLogger } from "./fixtures/misc.js";
 import { required, makeRegistry, silentLogger } from "./helpers.js";
+import { httpDownstream, inMemoryDownstream } from "./fixtures/downstream-mcp.js";
 
 const BASE = "https://connecta.test";
 
-function ctx(storage: KVStorage = memoryStorage()): ConnectorContext {
-  return { storage, logger: silentLogger, baseUrl: BASE };
-}
-
 /** Build a downstream MCP server exposing echo + fail tools, wired in-process. */
 async function connectServer() {
-  const [clientTransport, serverTransport] =
-    InMemoryTransport.createLinkedPair();
-  const server = new McpServer({ name: "downstream", version: "1.0.0" });
-  server.registerTool(
+  return inMemoryDownstream((server) => {
+    server.registerTool(
     "echo",
     {
       description: "Echo text back",
@@ -62,7 +55,7 @@ async function connectServer() {
       structuredContent: { echoed: text },
     }),
   );
-  server.registerTool(
+    server.registerTool(
     "fail",
     { description: "Always fails", inputSchema: z.object({}) },
     async () => ({
@@ -70,8 +63,7 @@ async function connectServer() {
       isError: true,
     }),
   );
-  await server.connect(serverTransport);
-  return { server, clientTransport };
+  });
 }
 
 let closer: (() => Promise<void>) | null = null;
@@ -93,11 +85,7 @@ async function makeConnector() {
 
 async function makeInputRequiredConnector() {
   const url = "https://mrtr-downstream.test/mcp";
-  const handler = createMcpHandler(() => {
-    const server = new McpServer({
-      name: "mrtr-downstream",
-      version: "1.0.0",
-    });
+  const downstream = httpDownstream((server) => {
     server.registerTool(
       "needs_input",
       {
@@ -107,16 +95,11 @@ async function makeInputRequiredConnector() {
       },
       async () => inputRequired({ requestState: "opaque-resume-state" }),
     );
-    return server;
-  });
+  }, { url });
   return remoteMcp("mrtr", {
     url,
     description: "MRTR downstream",
-    _transportFactory: () =>
-      new StreamableHTTPClientTransport(new URL(url), {
-        fetch: async (input, init) =>
-          handler.fetch(new Request(input, init)),
-      }) as unknown as Transport,
+    _transportFactory: downstream.transport,
   });
 }
 
@@ -621,14 +604,8 @@ describe("remoteMcp() connector", () => {
   it("discards a client when its scope closes during the post-connect generation read", async () => {
     const backing = memoryStorage();
     let generationReads = 0;
-    let reachedSecondRead!: () => void;
-    const secondRead = new Promise<void>((resolve) => {
-      reachedSecondRead = resolve;
-    });
-    let releaseSecondRead!: () => void;
-    const generationGate = new Promise<void>((resolve) => {
-      releaseSecondRead = resolve;
-    });
+    const { promise: secondRead, resolve: reachedSecondRead } = deferred<void>();
+    const { promise: generationGate, resolve: releaseSecondRead } = deferred<void>();
     const storage: KVStorage = {
       async get(key) {
         if (key === "oauth:generation" && ++generationReads === 2) {
@@ -851,13 +828,8 @@ describe("downstream session termination", () => {
 });
 
 describe("remoteMcp() destination guard", () => {
-  function loggerSpy(): { logger: Logger; warn: ReturnType<typeof vi.fn> } {
-    const warn = vi.fn();
-    return { logger: { ...silentLogger, warn }, warn };
-  }
-
   it("warns when static headers auth would travel over http://", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("cleartext", {
       url: "http://example.com/mcp",
       auth: { type: "headers", headers: { authorization: "Bearer secret" } },
@@ -869,7 +841,7 @@ describe("remoteMcp() destination guard", () => {
   });
 
   it("does not warn for headers auth over https://", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("secure", {
       url: "https://example.com/mcp",
       auth: { type: "headers", headers: { authorization: "Bearer secret" } },
@@ -879,7 +851,7 @@ describe("remoteMcp() destination guard", () => {
   });
 
   it("does not warn for headers auth over http://localhost", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("local", {
       url: "http://localhost:8787/mcp",
       auth: { type: "headers", headers: { authorization: "Bearer secret" } },
@@ -889,7 +861,7 @@ describe("remoteMcp() destination guard", () => {
   });
 
   it("does not warn when there is no static headers auth, even over http://", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     remoteMcp("noauth", { url: "http://example.com/mcp", logger });
     expect(warn).not.toHaveBeenCalled();
   });
@@ -904,7 +876,7 @@ describe("remoteMcp() destination guard", () => {
   });
 
   it("requireHttps allows https:// and loopback without throwing", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     expect(() =>
       remoteMcp("tls", {
         url: "https://example.com/mcp",
