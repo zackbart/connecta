@@ -248,7 +248,7 @@ describe("documentation link checker", () => {
   it("enforces the ethos and guide length limits", async () => {
     const root = await fixture({
       "README.md": "# Fixture\n",
-      "ethos.md": Array(150).fill("ethos line").join("\n"),
+      "ethos.md": Array(1201).fill("ethos word").join(" "),
       "documentation/architecture.md": Array(900)
         .fill("architecture line")
         .join("\n"),
@@ -257,7 +257,7 @@ describe("documentation link checker", () => {
 
     expect(result.status).toBe(1);
     expect(result.output).toContain(
-      "ethos.md:1: ethos.md has 150 lines; expected fewer than 150 — terseness is the point",
+      "ethos.md:1: ethos.md has 2402 words; expected at most 1200 — terseness is the point",
     );
     expect(result.output).toContain(
       "documentation/architecture.md:1: guide has 900 lines; expected fewer than 900",
