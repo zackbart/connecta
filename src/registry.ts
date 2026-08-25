@@ -202,22 +202,24 @@ class HealthLog {
 export interface RegistryOptions {
   storage: KVStorage;
   logger: Logger;
-  credentialVault?: CredentialVault;
-  toolCacheTtlSeconds?: number;
-  persistToolCatalog?: boolean;
-  toolCatalogStaleSeconds?: number;
+  credentialVault?: CredentialVault | undefined;
+  toolCacheTtlSeconds?: number | undefined;
+  persistToolCatalog?: boolean | undefined;
+  toolCatalogStaleSeconds?: number | undefined;
   /**
    * Cap on inline result size before truncation + get_result paging. Must be a
    * whole number of bytes >= 1; anything else warns at startup and falls back
    * to the default 50_000.
    */
-  maxResultBytes?: number;
+  maxResultBytes?: number | undefined;
   /**
    * Where payload-free catalog-drift observations go. Present only when the
    * deployment configured an activity store; drift is reported through
    * connector status either way.
    */
-  catalogDriftActivity?: Omit<CatalogDriftActivityContext, "logger">;
+  catalogDriftActivity?:
+    | Omit<CatalogDriftActivityContext, "logger">
+    | undefined;
 }
 
 function namespaced(storage: KVStorage, prefix: string): KVStorage {

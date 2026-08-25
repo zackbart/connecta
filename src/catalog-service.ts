@@ -463,13 +463,13 @@ export class CatalogService {
     private readonly registry: RegistryView,
     readonly baseUrl: string,
     options: {
-      requestScope?: object;
-      probeTimeoutMs?: number;
-      concurrency?: number;
+      requestScope?: object | undefined;
+      probeTimeoutMs?: number | undefined;
+      concurrency?: number | undefined;
       /** The discovery route recovery records name. Default `search_tools`. */
-      searchRoute?: SearchRoute;
+      searchRoute?: SearchRoute | undefined;
       /** Runtime-owned tail for stale-while-revalidate catalog reads. */
-      defer?: DeferredWork;
+      defer?: DeferredWork | undefined;
     } = {},
   ) {
     this.requestScope = options.requestScope ?? {};

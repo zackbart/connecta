@@ -1017,16 +1017,16 @@ export function createMetaTools(
   baseUrl: string,
   opts: {
     /** Deadline applied when a call passes no `timeoutMs`. Off when unset. */
-    defaultToolTimeoutMs?: number;
+    defaultToolTimeoutMs?: number | undefined;
     /** Per-connector deadline for the search/describe probe fan-out. Default 30_000. */
-    probeTimeoutMs?: number;
+    probeTimeoutMs?: number | undefined;
     /** Maximum simultaneous connector discovery operations. Default 4. */
-    discoveryConcurrency?: number;
-    activity?: ActivityRequestContext;
+    discoveryConcurrency?: number | undefined;
+    activity?: ActivityRequestContext | undefined;
     /** Inbound request cancellation shared by every call this request makes. */
-    requestSignal?: AbortSignal;
+    requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
-    defer?: DeferredWork;
+    defer?: DeferredWork | undefined;
   } = {},
 ) {
   // Already normalized and warned about at registry construction.
@@ -1045,7 +1045,7 @@ export function createMetaTools(
     requestScope,
     probeTimeoutMs,
     concurrency: discoveryConcurrency,
-    ...(opts.defer ? { defer: opts.defer } : {}),
+    defer: opts.defer,
     // searchRoute keeps its top-level default. In-program callers use a
     // separate CatalogService configured for connecta.search.
   });
@@ -1503,29 +1503,21 @@ export function registerMetaTools(
   registry: RegistryView,
   ctx: {
     baseUrl: string;
-    defaultToolTimeoutMs?: number;
-    probeTimeoutMs?: number;
-    discoveryConcurrency?: number;
-    activity?: ActivityRequestContext;
-    requestSignal?: AbortSignal;
-    defer?: DeferredWork;
+    defaultToolTimeoutMs?: number | undefined;
+    probeTimeoutMs?: number | undefined;
+    discoveryConcurrency?: number | undefined;
+    activity?: ActivityRequestContext | undefined;
+    requestSignal?: AbortSignal | undefined;
+    defer?: DeferredWork | undefined;
   },
 ): void {
   const mt = createMetaTools(registry, ctx.baseUrl, {
-    ...(ctx.defaultToolTimeoutMs !== undefined
-      ? { defaultToolTimeoutMs: ctx.defaultToolTimeoutMs }
-      : {}),
-    ...(ctx.probeTimeoutMs !== undefined
-      ? { probeTimeoutMs: ctx.probeTimeoutMs }
-      : {}),
-    ...(ctx.discoveryConcurrency !== undefined
-      ? { discoveryConcurrency: ctx.discoveryConcurrency }
-      : {}),
-    ...(ctx.activity !== undefined ? { activity: ctx.activity } : {}),
-    ...(ctx.requestSignal !== undefined
-      ? { requestSignal: ctx.requestSignal }
-      : {}),
-    ...(ctx.defer !== undefined ? { defer: ctx.defer } : {}),
+    defaultToolTimeoutMs: ctx.defaultToolTimeoutMs,
+    probeTimeoutMs: ctx.probeTimeoutMs,
+    discoveryConcurrency: ctx.discoveryConcurrency,
+    activity: ctx.activity,
+    requestSignal: ctx.requestSignal,
+    defer: ctx.defer,
   });
 
   server.registerTool(
