@@ -2,6 +2,67 @@
 
 All notable changes to this package are documented here.
 
+## 0.19.0 — 2026-08-25
+
+This release is a smaller, simpler package with no behavioral change for a
+deployment. A deployment can ignore everything here. The one packaging change
+is to maintainer history: six finished design records now live in the repository
+at their GitHub URLs instead of shipping in the npm package, cutting 91 KB from
+the package. The constitution is a fifth of its former size and keeps the same
+decisions. The core shrank from 28,756 to 27,417 lines and the tests from 42,341
+to 40,375 before the final pure-suite splits, which landed about 60 lines back
+to keep the Node and Workers runs honest. Two dead paths finally left with the
+rest: write-only health accessors on `RegistryView`, residue from #179, and the
+v1 persisted-catalog reader, unreachable since 2026-07-28.
+
+### Changed
+
+- **Providers.** Every Cloudflare tool is built through `cfTool()` and
+  `compact()`, so the repeated schema headers, scope properties, and
+  conditional-spread projections are written once; the paged-list, delete-ack,
+  and passthrough handlers are shared while every tool keeps its own literal
+  name, description, annotations, and schemas; the authentication `Symbol` is
+  gone because the scheme is fixed per connector (#465, #467). Cloudflare and
+  Notion share one Retry-After parser and one guarded JSON accessor, and
+  `callCloudflareContent` still classifies an unreadable error body by status
+  (#468). The hosted providers' comment blocks point at their guides instead of
+  restating them, and `api()` omits undefined options once (#463).
+- **Core.** Internal option types accept `undefined`, so `createConnecta` and
+  the registration helpers forward configuration directly (#462). One deadline,
+  sleep, and message helper serve the whole call path; `invocation.ts` lost its
+  hand-rolled controller, timer, and listener choreography with Retry-After,
+  per-phase timing, and health exclusion unchanged (#466). The catalog,
+  execution, remote-MCP, and operator-data paths share their failure envelopes,
+  close helpers, and result shapers (#472).
+- **Package and docs.** Six finished design records moved to
+  [`records/`](https://github.com/zackbart/connecta/tree/main/records), outside
+  the published files, and packed-link validation folded into the documentation
+  checker: −1,342 shipped lines, −91 KB (#464). `ethos.md` is the constitution
+  again — refusals, invariants, and what this is, at 1,188 words instead of
+  3,174, with every decision intact and a word cap replacing the line cap
+  (#471).
+- **Tests.** Shared fixtures replace 122 hand-rolled connector literals, five
+  fake downstream MCP servers, four fake Clerk auths, and the per-suite JSON-RPC
+  readers, deferreds, and logger spies (#473, #474, #475); the six
+  provider-registry suites are one `describe.each` and the provider error
+  mappings are tables (#476); repeated cases are `it.each` tables and the
+  duplicated assertion layers are gone (#477); the two largest suites are split
+  by subject (#460). Every `it()` and `expect()` that pins behavior survived —
+  3,400 fewer lines, no assertion dropped.
+- **Declined with numbers**, so nobody re-runs the experiment: a shared bounded
+  queue under both admission controllers measured −17 lines for a
+  hook-parameterised abstraction (#453); Effect as the core effect system
+  measured −4% of the core for +75 KB gzip and a second async paradigm (#470).
+
+### Removed
+
+- The write-only `HealthLog` and its `RegistryView` accessors: `healthFor`,
+  `hasObservedSuccess`, `observedSuccessAt`, and `peekTools`. `refreshTools` is
+  now private. This was residue from the removed proactive credential-liveness
+  design (#179).
+- The v1 persisted-catalog reader, unreachable since 2026-07-28. Its fixtures
+  now use the v2 manifest-and-chunks format.
+
 ## 0.18.3 — 2026-08-25
 
 This change gives code mode memory where downstream MCP catalogs are usually

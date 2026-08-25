@@ -16,4 +16,11 @@ describe("version constant", () => {
     ) as { version: string };
     expect(CONNECTA_VERSION).toBe(pkg.version);
   });
+
+  it("matches the Node template's exact pin", () => {
+    const template = JSON.parse(
+      readFileSync(join(ROOT, "templates", "node", "package.json"), "utf8"),
+    ) as { dependencies: { "@zackbart/connecta": string } };
+    expect(template.dependencies["@zackbart/connecta"]).toBe(CONNECTA_VERSION);
+  });
 });
