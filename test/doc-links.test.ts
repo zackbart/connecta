@@ -1,43 +1,21 @@
-import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
+import { spawnChecker, tempFixture } from "./fixtures/node.js";
 
 const checker = fileURLToPath(
   new URL("../scripts/check-doc-links.mjs", import.meta.url),
 );
-const fixtures: string[] = [];
-
 async function fixture(files: Record<string, string>): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), "connecta-doc-links-"));
-  fixtures.push(root);
-  for (const [path, contents] of Object.entries(files)) {
-    const destination = join(root, path);
-    await mkdir(dirname(destination), { recursive: true });
-    await writeFile(destination, contents);
-  }
-  return root;
+  return tempFixture("connecta-doc-links-", files);
 }
 
 function check(root: string, structure = false) {
-  const result = spawnSync(
-    process.execPath,
-    [checker, "--root", root, ...(structure ? [] : ["--skip-structure"])],
-    { encoding: "utf8" },
-  );
-  return {
-    status: result.status,
-    output: `${result.stdout}${result.stderr}`,
-  };
+  return spawnChecker(checker, [
+    "--root",
+    root,
+    ...(structure ? [] : ["--skip-structure"]),
+  ]);
 }
-
-afterEach(async () => {
-  await Promise.all(
-    fixtures.splice(0).map((path) => rm(path, { recursive: true, force: true })),
-  );
-});
 
 describe("documentation link checker", () => {
   it("accepts local files, GitHub-style fragments, and fenced examples", async () => {

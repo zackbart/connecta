@@ -1,30 +1,10 @@
 import { required } from "./helpers.js";
-import { afterEach, describe, expect, it } from "vitest";
-import {
-  quickJsExecutor as createQuickJsExecutor,
-  type QuickJsExecutorOptions,
-} from "../src/executors/quickjs.js";
+import { describe, expect, it } from "vitest";
 import {
   MAX_QUICKJS_LOG_TRANSPORT_BYTES,
   serializedBytes,
 } from "../src/executors/quickjs-protocol.js";
-import type { AdmittingExecutor } from "../src/types.js";
-
-const executors: AdmittingExecutor[] = [];
-
-function quickJsExecutor(
-  options?: QuickJsExecutorOptions,
-): AdmittingExecutor {
-  const executor = createQuickJsExecutor(options);
-  executors.push(executor);
-  return executor;
-}
-
-afterEach(async () => {
-  await Promise.allSettled(
-    executors.splice(0).map(async (executor) => executor.close?.()),
-  );
-});
+import { trackedQuickJs as quickJsExecutor } from "./fixtures/node.js";
 
 // The sandbox runs untrusted model-written code, so each captured log entry
 // and the cumulative log buffer must be bounded at capture time — a guest

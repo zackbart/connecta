@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import { compileValidator, validateToolInput } from "../src/validate.js";
-import type { JsonSchema, Logger } from "../src/types.js";
+import type { JsonSchema } from "../src/types.js";
+import { spyLogger } from "./fixtures/misc.js";
 import { required, silentLogger } from "./helpers.js";
 
 const OPTS = { address: "acme.create_note", logger: silentLogger };
-
-function loggerSpy(): { logger: Logger; warn: ReturnType<typeof vi.fn> } {
-  const warn = vi.fn();
-  return { logger: { ...silentLogger, warn }, warn };
-}
 
 describe("validateToolInput", () => {
   it("returns null for input that matches the schema", () => {
@@ -301,7 +297,7 @@ describe("validateToolInput", () => {
   });
 
   it("a schema the validator cannot compile warns once and passes through", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     const schema: JsonSchema = {
       $id: "urn:connecta-test:dup",
       type: "object",
@@ -315,7 +311,7 @@ describe("validateToolInput", () => {
   });
 
   it("a schema that only fails on first validate warns once and passes through", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     // Unresolvable $ref — @cfworker/json-schema surfaces this on the first
     // validate() call, not at construction.
     const schema: JsonSchema = {
@@ -381,7 +377,7 @@ describe("validateToolInput", () => {
   });
 
   it("fail-closed: a schema that cannot compile yields invalid_args", () => {
-    const { logger } = loggerSpy();
+    const { logger } = spyLogger();
     const schema: JsonSchema = {
       $id: "urn:connecta-test:failclosed-compile",
       type: "object",
@@ -400,7 +396,7 @@ describe("validateToolInput", () => {
   });
 
   it("fail-closed: a schema that only fails on first validate yields invalid_args", () => {
-    const { logger } = loggerSpy();
+    const { logger } = spyLogger();
     const schema: JsonSchema = {
       type: "object",
       properties: { x: { $ref: "#/definitions/missing" } },
@@ -459,7 +455,7 @@ describe("compileValidator", () => {
   });
 
   it("refuses a schema an earlier call already found unusable", () => {
-    const { logger, warn } = loggerSpy();
+    const { logger, warn } = spyLogger();
     // Unresolvable $ref: it compiles, then blows up on first validate, which
     // is where the fail-open proxy path disables it.
     const schema: JsonSchema = {

@@ -1,15 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
-import type { ConnectorContext, Logger } from "../src/types.js";
-import { memoryStorage } from "../src/storage/memory.js";
+import type { Logger } from "../src/types.js";
+import { connectorContext as ctx } from "./fixtures/misc.js";
 import { required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
-
-function ctx(): ConnectorContext {
-  return { storage: memoryStorage(), logger: silentLogger, baseUrl: BASE };
-}
 
 function makeApi() {
   return api("resend", {

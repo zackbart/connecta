@@ -17,6 +17,7 @@ import {
   prepareExecuteResultForTransport,
 } from "../src/executor-result.js";
 import type { Connector, Executor } from "../src/types.js";
+import { fakeExecutor } from "./fixtures/misc.js";
 import {
   CAPABILITY_PROBE_CODE,
   CONTRACT_BASE,
@@ -65,23 +66,6 @@ const inWorkerd = await (async () => {
     return false;
   }
 })();
-
-/** Returns a canned outcome; records what it was handed. */
-function fakeExecutor(outcome: {
-  result?: unknown;
-  error?: string;
-  logs?: string[];
-}): Executor {
-  return {
-    async execute() {
-      return {
-        result: outcome.result,
-        ...(outcome.error !== undefined ? { error: outcome.error } : {}),
-        ...(outcome.logs !== undefined ? { logs: outcome.logs } : {}),
-      };
-    },
-  };
-}
 
 function handlerFor(executor: Executor) {
   return createExecuteTool(
