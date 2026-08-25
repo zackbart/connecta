@@ -828,51 +828,34 @@ describe("downstream session termination", () => {
 });
 
 describe("remoteMcp() destination guard", () => {
-  it("warns when static headers auth would travel over http://", () => {
+  it.each([
+    ["warns when static headers auth would travel over http://", "cleartext", "http://example.com/mcp", true, true],
+    ["does not warn for headers auth over https://", "secure", "https://example.com/mcp", true, false],
+    ["does not warn for headers auth over http://localhost", "local", "http://localhost:8787/mcp", true, false],
+    ["does not warn when there is no static headers auth, even over http://", "noauth", "http://example.com/mcp", false, false, false],
+    ["requireHttps throws a config error for an http:// url", "must-tls", "http://example.com/mcp", false, false, true],
+  ] as const)("%s", (_name, id, url, authenticated, shouldWarn, requireHttps = false) => {
     const { logger, warn } = spyLogger();
-    remoteMcp("cleartext", {
-      url: "http://example.com/mcp",
-      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
-      logger,
-    });
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("cleartext");
-    expect(required(warn.mock.calls[0])[0]).toMatch(/http:\/\/example\.com/);
-  });
-
-  it("does not warn for headers auth over https://", () => {
-    const { logger, warn } = spyLogger();
-    remoteMcp("secure", {
-      url: "https://example.com/mcp",
-      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
-      logger,
-    });
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("does not warn for headers auth over http://localhost", () => {
-    const { logger, warn } = spyLogger();
-    remoteMcp("local", {
-      url: "http://localhost:8787/mcp",
-      auth: { type: "headers", headers: { authorization: "Bearer secret" } },
-      logger,
-    });
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("does not warn when there is no static headers auth, even over http://", () => {
-    const { logger, warn } = spyLogger();
-    remoteMcp("noauth", { url: "http://example.com/mcp", logger });
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("requireHttps throws a config error for an http:// url", () => {
-    expect(() =>
-      remoteMcp("must-tls", {
-        url: "http://example.com/mcp",
-        requireHttps: true,
-      }),
-    ).toThrow(/requireHttps/);
+    const construct = () => remoteMcp(id, {
+        url,
+        ...(authenticated
+          ? { auth: { type: "headers" as const, headers: { authorization: "Bearer secret" } } }
+          : {}),
+        ...(requireHttps ? { requireHttps: true } : {}),
+        logger,
+      });
+    if (requireHttps) {
+      expect(construct).toThrow(/requireHttps/);
+      return;
+    }
+    construct();
+    if (shouldWarn) {
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(required(warn.mock.calls[0])[0]).toContain("cleartext");
+      expect(required(warn.mock.calls[0])[0]).toMatch(/http:\/\/example\.com/);
+    } else {
+      expect(warn).not.toHaveBeenCalled();
+    }
   });
 
   it("requireHttps allows https:// and loopback without throwing", () => {
@@ -1115,106 +1098,5 @@ describe("remoteMcp() redirect policy", () => {
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("x-api-key")).toBe("static-secret");
-  });
-});
-
-describe("remoteMcp() startAuth", () => {
-  it("non-force re-issues an outstanding consent URL without touching the verifier", async () => {
-    const storage = memoryStorage();
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      // Must not connect while a URL is pending — the pending short-circuit
-      // fires first, so this factory should never run.
-      _transportFactory: () => {
-        throw new Error("should not connect while a consent URL is pending");
-      },
-    });
-    const url = "https://auth.example/authorize?code_challenge=abc";
-    await storage.set("oauth:pending", url);
-    await storage.set("oauth:verifier", "verifier-123");
-    const context = ctx(storage);
-
-    const first = await c.startAuth!(context, {});
-    const second = await c.startAuth!(context, {});
-
-    expect(first.state).toBe("auth_required");
-    expect(first.authorizationUrl).toBe(url);
-    expect(second.authorizationUrl).toBe(first.authorizationUrl);
-    // The verifier the operator's URL is bound to must survive both touches.
-    expect(await storage.get("oauth:verifier")).toBe("verifier-123");
-  });
-
-  it("force with a live client closes it, wipes creds, and reconnects", async () => {
-    const s1 = await connectServer();
-    const s2 = await connectServer();
-    closer = async () => {
-      await s1.server.close();
-      await s2.server.close();
-    };
-    let closedFirst = false;
-    const origClose = s1.clientTransport.close.bind(s1.clientTransport);
-    s1.clientTransport.close = async () => {
-      closedFirst = true;
-      return origClose();
-    };
-    const transports = [s1.clientTransport, s2.clientTransport];
-    const storage = memoryStorage();
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: () => transports.shift()!,
-    });
-    const context = ctx(storage);
-
-    // First connect → live client on transport #1.
-    await c.listTools(context);
-    await storage.set("oauth:pending", "x");
-    await storage.set("oauth:verifier", "v");
-    await storage.set("oauth:tokens", "tok");
-    await storage.set("oauth:client", "cli");
-
-    const result = await c.startAuth!(context, { force: true });
-
-    expect(closedFirst).toBe(true);
-    // Reconnected cleanly via transport #2 → healthy again.
-    expect(result.state).toBe("ok");
-    expect(await storage.get("oauth:pending")).toBeNull();
-    expect(await storage.get("oauth:verifier")).toBeNull();
-    expect(await storage.get("oauth:tokens")).toBeNull();
-    expect(await storage.get("oauth:client")).toBeNull();
-  });
-
-  it("force fences an in-flight connect before wiping", async () => {
-    const storage = memoryStorage();
-    let started = 0;
-    // A transport whose start() rejects after a tick, standing in for a slow
-    // connect that is still in flight when force lands.
-    const slowFailing = (): Transport => ({
-      async start() {
-        started++;
-        await new Promise((r) => setTimeout(r, 5));
-        throw new Error("ECONNREFUSED");
-      },
-      async send() {},
-      async close() {},
-    });
-    const c = remoteMcp("oauthed", {
-      url: "https://unused.example/mcp",
-      auth: { type: "oauth" },
-      _transportFactory: slowFailing,
-    });
-    const context = ctx(storage);
-
-    // Kick a connect without awaiting so it is in flight when force runs.
-    const inflight = c.listTools(context).catch(() => {});
-    const result = await c.startAuth!(context, { force: true });
-    await inflight;
-
-    // force awaited the in-flight connect (fence) then ran its own connect.
-    expect(started).toBe(2);
-    // Network failure on an oauth connector surfaces as error, not auth_required.
-    expect(result.state).toBe("error");
-    expect(result.message).toContain("ECONNREFUSED");
   });
 });

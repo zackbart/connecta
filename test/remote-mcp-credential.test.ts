@@ -585,43 +585,26 @@ describe("remoteMcp() unauthenticated status for a non-OAuth connector", () => {
 });
 
 describe("remoteMcp() credential auth — cleartext destination", () => {
-  it("warns when an operator-managed credential would travel over http://", () => {
+  it.each([
+    ["warns when an operator-managed credential would travel over http://", "down", "http://downstream.test/mcp", true],
+    ["does not warn over https://", "secure", URL_UNDER_TEST, false],
+    ["does not warn over loopback", "local", "http://localhost:8787/mcp", false, false],
+    ["still refuses a cleartext destination under requireHttps", "down", "http://downstream.test/mcp", false, true],
+  ] as const)("%s", (_name, id, url, shouldWarn, requireHttps = false) => {
     const { logger, warn } = spyLogger();
-    remoteMcp("down", {
-      url: "http://downstream.test/mcp",
-      auth: { type: "credential" },
-      logger,
-    });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("cleartext"),
-    );
+    const construct = () => remoteMcp(id, { url, auth: { type: "credential" }, ...(requireHttps ? { requireHttps: true } : {}), logger });
+    if (requireHttps) {
+      expect(construct).toThrow("refusing to connect");
+      return;
+    }
+    construct();
+    if (shouldWarn) {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("cleartext"));
+    } else {
+      expect(warn).not.toHaveBeenCalled();
+    }
   });
 
-  it("does not warn over https:// or loopback", () => {
-    const { logger, warn } = spyLogger();
-    remoteMcp("secure", {
-      url: URL_UNDER_TEST,
-      auth: { type: "credential" },
-      logger,
-    });
-    remoteMcp("local", {
-      url: "http://localhost:8787/mcp",
-      auth: { type: "credential" },
-      logger,
-    });
-    expect(warn).not.toHaveBeenCalled();
-  });
-
-  it("still refuses a cleartext destination under requireHttps", () => {
-    expect(() =>
-      remoteMcp("down", {
-        url: "http://downstream.test/mcp",
-        auth: { type: "credential" },
-        requireHttps: true,
-        logger: silentLogger,
-      }),
-    ).toThrow("refusing to connect");
-  });
 });
 
 describe("remoteMcp() credential auth — through the deployment", () => {

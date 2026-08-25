@@ -305,124 +305,22 @@ describe("api() argument validation", () => {
 });
 
 describe("api() construction contract", () => {
-  it("refuses a tool with no description", () => {
-    expect(() =>
-      api("acme", {
-        tools: [
-          {
-            name: "nameless",
-            description: "",
-            annotations: { readOnlyHint: true },
-            handler: () => null,
-          },
-        ],
-      }),
-    ).toThrow(/acme\.nameless.*non-empty description/s);
-  });
-
-  it("refuses a tool whose description is only whitespace", () => {
-    expect(() =>
-      api("acme", {
-        tools: [
-          {
-            name: "blank",
-            description: "   \n",
-            annotations: { readOnlyHint: true },
-            handler: () => null,
-          },
-        ],
-      }),
-    ).toThrow(/acme\.blank/);
-  });
-
-  it("refuses a tool with no explicit readOnlyHint", () => {
-    expect(() =>
-      api("acme", {
-        tools: [
-          {
-            name: "unclassified",
-            description: "Do something of unknown safety",
-            // A JS deployment can reach this; TypeScript refuses it outright.
-            annotations: { destructiveHint: true } as never,
-            handler: () => null,
-          },
-        ],
-      }),
-    ).toThrow(/acme\.unclassified.*annotations\.readOnlyHint/s);
-  });
-
-  it("never infers a classification from the tool name or description", () => {
-    expect(() =>
-      api("acme", {
-        tools: [
-          {
-            name: "list_things",
-            description: "List things. Reads only, honest.",
-            annotations: {} as never,
-            handler: () => [],
-          },
-        ],
-      }),
-    ).toThrow(/annotations\.readOnlyHint/);
-  });
-
-  it("refuses a schema the validator cannot compile", () => {
-    expect(() =>
-      api("acme", {
-        tools: [
-          {
-            name: "clashing_ids",
-            description: "Declares the same $id twice",
-            annotations: { readOnlyHint: true },
-            inputSchema: {
-              $id: "urn:connecta-test:api-clash",
-              type: "object",
-              $defs: { clash: { $id: "urn:connecta-test:api-clash" } },
-            },
-            handler: () => null,
-          },
-        ],
-      }),
-    ).toThrow(/acme\.clashing_ids.*validator cannot use/s);
-  });
-
-  it("checks the schema even when validateArgs is off", () => {
-    // Opting out of enforcement is not opting out of the schema being real:
-    // the catalog still publishes it, and an agent still writes against it.
-    expect(() =>
-      api("acme", {
-        validateArgs: false,
-        tools: [
-          {
-            name: "clashing_ids",
-            description: "Declares the same $id twice",
-            annotations: { readOnlyHint: true },
-            inputSchema: {
-              $id: "urn:connecta-test:api-clash-loose",
-              type: "object",
-              $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } },
-            },
-            handler: () => null,
-          },
-        ],
-      }),
-    ).toThrow(/acme\.clashing_ids/);
-  });
-
-  it("accepts an explicit readOnlyHint: false as the destructive declaration", () => {
-    const c = api("acme", {
-      tools: [
-        {
-          name: "delete_thing",
-          description: "Delete a thing",
-          annotations: { readOnlyHint: false, destructiveHint: true },
-          handler: () => ({ deleted: true }),
-        },
-      ],
-    });
-    expect(required(c.staticTools?.[0]).annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
+  it.each([
+    ["refuses a tool with no description", () => api("acme", { tools: [{ name: "nameless", description: "", annotations: { readOnlyHint: true }, handler: () => null }] }), /acme\.nameless.*non-empty description/s],
+    ["refuses a tool whose description is only whitespace", () => api("acme", { tools: [{ name: "blank", description: "   \n", annotations: { readOnlyHint: true }, handler: () => null }] }), /acme\.blank/],
+    // A JS deployment can reach these; TypeScript refuses them outright.
+    ["refuses a tool with no explicit readOnlyHint", () => api("acme", { tools: [{ name: "unclassified", description: "Do something of unknown safety", annotations: { destructiveHint: true } as never, handler: () => null }] }), /acme\.unclassified.*annotations\.readOnlyHint/s],
+    ["never infers a classification from the tool name or description", () => api("acme", { tools: [{ name: "list_things", description: "List things. Reads only, honest.", annotations: {} as never, handler: () => [] }] }), /annotations\.readOnlyHint/],
+    ["refuses a schema the validator cannot compile", () => api("acme", { tools: [{ name: "clashing_ids", description: "Declares the same $id twice", annotations: { readOnlyHint: true }, inputSchema: { $id: "urn:connecta-test:api-clash", type: "object", $defs: { clash: { $id: "urn:connecta-test:api-clash" } } }, handler: () => null }] }), /acme\.clashing_ids.*validator cannot use/s],
+    // Opting out of enforcement is not opting out of the schema being real.
+    ["checks the schema even when validateArgs is off", () => api("acme", { validateArgs: false, tools: [{ name: "clashing_ids", description: "Declares the same $id twice", annotations: { readOnlyHint: true }, inputSchema: { $id: "urn:connecta-test:api-clash-loose", type: "object", $defs: { clash: { $id: "urn:connecta-test:api-clash-loose" } } }, handler: () => null }] }), /acme\.clashing_ids/],
+    ["accepts an explicit readOnlyHint: false as the destructive declaration", () => api("acme", { tools: [{ name: "delete_thing", description: "Delete a thing", annotations: { readOnlyHint: false, destructiveHint: true }, handler: () => ({ deleted: true }) }] }), null],
+  ] as const)("%s", (_name, construct, message) => {
+    if (message) {
+      expect(construct).toThrow(message);
+      return;
+    }
+    const c = construct();
+    expect(required(c.staticTools?.[0]).annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
   });
 });

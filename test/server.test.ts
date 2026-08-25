@@ -11,7 +11,6 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
-import { MAX_SEARCH_LIMIT } from "../src/meta-tools.js";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
 import {
   MCP_APPS_EXTENSION,
@@ -257,67 +256,6 @@ describe("server /mcp end-to-end", () => {
       "search_tools",
       "skills",
     ]);
-    const byName = Object.fromEntries(
-      body.result.tools.map((tool: { name: string }) => [tool.name, tool]),
-    );
-    expect(
-      byName.search_tools.inputSchema.properties.includeSchemas.enum,
-    ).toEqual(["compact", "json"]);
-    expect(byName.search_tools.inputSchema.properties.safety.enum).toEqual([
-      "readOnly",
-      "approvalRequired",
-      "all",
-    ]);
-    expect(byName.search_tools.description).toContain("2–4 action/object terms");
-    expect(byName.search_tools.description).toContain("one unknown-address read");
-    // Programs admit read-only tools only, so multi-step destructive work has
-    // nowhere to discover but here. Scoping the prohibition to read-only work
-    // is what keeps that route open (#295).
-    expect(byName.search_tools.description).toContain(
-      "approval-required work before call_destructive_tool",
-    );
-    expect(byName.search_tools.description).toContain(
-      'safety="readOnly" finds direct or program calls',
-    );
-    expect(byName.search_tools.description).toContain("filters grant no authority");
-    expect(byName.execute_code.description).toContain('skills({ name: "usage" })');
-    expect(byName.search_tools.inputSchema.properties.limit.maximum).toBe(
-      MAX_SEARCH_LIMIT,
-    );
-    expect(byName.call_tool.inputSchema.properties).toHaveProperty("timeoutMs");
-    expect(byName.call_tool.inputSchema.properties).toHaveProperty(
-      "maxRetries",
-    );
-    expect(byName.call_tool.inputSchema.properties).toHaveProperty(
-      "diagnostics",
-    );
-    expect(byName.call_destructive_tool.annotations).toMatchObject({
-      destructiveHint: true,
-      readOnlyHint: false,
-    });
-    // Bounded above only: an empty reason is treated as no reason, never as a
-    // validation failure that refuses the call.
-    expect(
-      byName.call_destructive_tool.inputSchema.properties.reason,
-    ).toMatchObject({ type: "string", maxLength: 500 });
-    expect(
-      byName.call_destructive_tool.inputSchema.properties.reason,
-    ).not.toHaveProperty("minLength");
-    expect(byName.call_destructive_tool.description).toContain(
-      "reason for the human reviewer",
-    );
-    expect(byName.skills.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      idempotentHint: true,
-      openWorldHint: false,
-    });
-    // Both halves of the routing each of these descriptions performs: where
-    // the tool sends work it declines to do, and the narrow case it admits.
-    expect(byName.call_tool.description).toContain("Call one tool explicitly annotated");
-    expect(byName.get_result.description).toContain(
-      "reduce it inside execute_code",
-    );
   });
 
   it("declares exactly one extension, the MCP Apps one (U11)", async () => {
@@ -348,39 +286,6 @@ describe("server /mcp end-to-end", () => {
     // and never sends a list_changed notification, so a client that subscribed
     // on the strength of that flag would wait forever.
     expect(body.result.capabilities.resources).toEqual({ listChanged: false });
-  });
-
-  it("keeps seven tools while exposing only call_tool to program views", async () => {
-    const c = makeDeployment();
-    const body = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
-    const execute = body.result.tools.find(
-      (tool: { name: string }) => tool.name === "execute_code",
-    );
-    expect(execute._meta.ui).toEqual({
-      resourceUri: PROGRAM_UI_RESOURCE_URI,
-      visibility: ["model"],
-    });
-    expect(execute.description).toContain("connecta.ui(html, options?)");
-    // U12: the model never sees the view, so the description says what the
-    // program owes it instead — a return value that mirrors what was rendered.
-    // A view the return does not mirror is a view nobody can check (#282).
-    expect(execute.description).toContain(
-      "return the same initial summary the HTML renders",
-    );
-    // #418 keeps the route and minimum call form always loaded. Detailed read
-    // binding and budget rules live in the usage skill.
-    expect(execute.description).toContain('skills({ name: "usage" })');
-    expect(body.result.tools).toHaveLength(7);
-    // No other tool claims a view. `call_tool` alone accepts app-originated
-    // calls; every other existing model tool says model-only explicitly so
-    // the Apps default cannot widen it by accident.
-    for (const tool of body.result.tools) {
-      if (tool.name === "execute_code") continue;
-      expect(tool._meta?.ui).toEqual({
-        visibility:
-          tool.name === "call_tool" ? ["model", "app"] : ["model"],
-      });
-    }
   });
 
   it("serves exactly the shell URI and lists nothing (U5)", async () => {

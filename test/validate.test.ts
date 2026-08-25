@@ -296,33 +296,30 @@ describe("validateToolInput", () => {
     );
   });
 
-  it("a schema the validator cannot compile warns once and passes through", () => {
+  it.each([
+    ["a schema the validator cannot compile warns once and passes through", { $id: "urn:connecta-test:dup", type: "object", $defs: { clash: { $id: "urn:connecta-test:dup" } } }, [{ anything: true }, { anything: true }], "acme.dup_id", false],
+    ["a schema that only fails on first validate warns once and passes through", { type: "object", properties: { x: { $ref: "#/definitions/missing" } } }, [{ x: 1 }, { x: 2 }], "acme.broken_ref", false],
+    ["fail-closed: a schema that cannot compile yields invalid_args", { $id: "urn:connecta-test:failclosed-compile", type: "object", $defs: { clash: { $id: "urn:connecta-test:failclosed-compile" } } }, [{ anything: true }], "acme.dup_id_strict", true],
+    ["fail-closed: a schema that only fails on first validate yields invalid_args", { type: "object", properties: { x: { $ref: "#/definitions/missing" } } }, [{ x: 1 }], "acme.broken_ref_strict", true],
+  ] as const)("%s", (_name, schema, inputs, address, failClosed) => {
     const { logger, warn } = spyLogger();
-    const schema: JsonSchema = {
-      $id: "urn:connecta-test:dup",
-      type: "object",
-      $defs: { clash: { $id: "urn:connecta-test:dup" } },
-    };
-    const opts = { address: "acme.dup_id", logger };
-    expect(validateToolInput(schema, { anything: true }, opts)).toBeNull();
-    expect(validateToolInput(schema, { anything: true }, opts)).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("acme.dup_id");
-  });
-
-  it("a schema that only fails on first validate warns once and passes through", () => {
-    const { logger, warn } = spyLogger();
-    // Unresolvable $ref — @cfworker/json-schema surfaces this on the first
-    // validate() call, not at construction.
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { x: { $ref: "#/definitions/missing" } },
-    };
-    const opts = { address: "acme.broken_ref", logger };
-    expect(validateToolInput(schema, { x: 1 }, opts)).toBeNull();
-    expect(validateToolInput(schema, { x: 2 }, opts)).toBeNull();
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(required(warn.mock.calls[0])[0]).toContain("acme.broken_ref");
+    const results = inputs.map((input) =>
+      validateToolInput(schema as JsonSchema, input, { address, logger, failClosed }),
+    );
+    if (!failClosed) {
+      for (const result of results) expect(result).toBeNull();
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(required(warn.mock.calls[0])[0]).toContain(address);
+      return;
+    }
+    const err = results[0]!;
+    expect(err).toBeInstanceOf(ConnectorCallError);
+    expect(err.code).toBe("invalid_args");
+    expect(err.retryable).toBe(false);
+    expect(err.message).toContain(address);
+    if (address === "acme.dup_id_strict") {
+      expect(err.message).toContain("could not be evaluated");
+    }
   });
 
   it("caches the compiled validator per schema object", () => {
@@ -374,41 +371,6 @@ describe("validateToolInput", () => {
       validateToolInput(schema, { mode: "basic", surprise: true }, OPTS)
         ?.code,
     ).toBe("invalid_args");
-  });
-
-  it("fail-closed: a schema that cannot compile yields invalid_args", () => {
-    const { logger } = spyLogger();
-    const schema: JsonSchema = {
-      $id: "urn:connecta-test:failclosed-compile",
-      type: "object",
-      $defs: { clash: { $id: "urn:connecta-test:failclosed-compile" } },
-    };
-    const err = validateToolInput(schema, { anything: true }, {
-      address: "acme.dup_id_strict",
-      logger,
-      failClosed: true,
-    });
-    expect(err).toBeInstanceOf(ConnectorCallError);
-    expect(err!.code).toBe("invalid_args");
-    expect(err!.retryable).toBe(false);
-    expect(err!.message).toContain("acme.dup_id_strict");
-    expect(err!.message).toContain("could not be evaluated");
-  });
-
-  it("fail-closed: a schema that only fails on first validate yields invalid_args", () => {
-    const { logger } = spyLogger();
-    const schema: JsonSchema = {
-      type: "object",
-      properties: { x: { $ref: "#/definitions/missing" } },
-    };
-    const err = validateToolInput(schema, { x: 1 }, {
-      address: "acme.broken_ref_strict",
-      logger,
-      failClosed: true,
-    });
-    expect(err).toBeInstanceOf(ConnectorCallError);
-    expect(err!.code).toBe("invalid_args");
-    expect(err!.message).toContain("acme.broken_ref_strict");
   });
 
   it("fail-closed still returns null for input that matches a good schema", () => {

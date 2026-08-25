@@ -208,104 +208,106 @@ describe("branding in served pages", () => {
 });
 
 describe("branding is not an injection vector", () => {
-  it("cannot break out of the dashboard's script block", async () => {
-    const body = await (
-      await makeDeployment(brandingConfig({ productName: '</script><img src=x onerror=alert(1)>' })).fetch(
-        new Request(`${BASE}/`),
-      )
-    ).text();
-    expect(body).not.toContain("</script><img");
-    expect(body).toContain("<\\/script>");
-  });
+  it.each([
+    ["cannot break out of the dashboard's script block", async () => {
+      const body = await (
+        await makeDeployment(brandingConfig({ productName: '</script><img src=x onerror=alert(1)>' })).fetch(
+          new Request(`${BASE}/`),
+        )
+      ).text();
+      expect(body).not.toContain("</script><img");
+      expect(body).toContain("<\\/script>");
+    }],
 
-  it("never renders a javascript: favicon href on either page", async () => {
-    const c = makeDeployment(brandingConfig({
-      productName: "Acme MCP",
-      favicon: { href: "javascript:alert(1)" },
-    }));
-    for (const path of PAGES) {
-      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
-      expect(iconHref(body)).toBe("/favicon.svg");
-    }
-  });
-
-  it("never renders a javascript: product or owner link", async () => {
-    const c = makeDeployment(brandingConfig({
-      productName: "Acme MCP",
-      productUrl: "javascript:alert(1)",
-      ownerName: "Acme Inc",
-      ownerUrl: "javascript:alert(2)",
-    }));
-    for (const path of PAGES) {
-      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
-      expect(
-        hrefs(body).filter((h) => h.toLowerCase().startsWith("javascript:")),
-      ).toEqual([]);
-      expect(body).toContain('<span class="brand">Acme Inc</span>');
-    }
-  });
-
-  it("never renders a same-origin-looking favicon href with an authority", async () => {
-    for (const href of [
-      "//connecta.invalid/x.svg",
-      "//CONNECTA.INVALID/x",
-      "/\\connecta.invalid/x",
-      "//connecta.invalid:443/x",
-      "//user@connecta.invalid/x",
-      "//evil.example/icon.svg",
-    ]) {
-      const c = makeDeployment(brandingConfig({ favicon: { href } }));
+    ["never renders a javascript: favicon href on either page", async () => {
+      const c = makeDeployment(brandingConfig({
+        productName: "Acme MCP",
+        favicon: { href: "javascript:alert(1)" },
+      }));
       for (const path of PAGES) {
         const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
         expect(iconHref(body)).toBe("/favicon.svg");
       }
-    }
-  });
+    }],
 
-  it("survives a non-string favicon href instead of failing construction", async () => {
-    const logger = spyLogger();
-    const c = makeDeployment(brandingConfig(
-      { favicon: { href: 42 as unknown as string } },
-      { logger },
-    ));
-    for (const path of PAGES) {
-      const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
-      expect(iconHref(body)).toBe("/favicon.svg");
-    }
-    expect(warnings(logger)).toContain("branding favicon.href dropped");
-  });
+    ["never renders a javascript: product or owner link", async () => {
+      const c = makeDeployment(brandingConfig({
+        productName: "Acme MCP",
+        productUrl: "javascript:alert(1)",
+        ownerName: "Acme Inc",
+        ownerUrl: "javascript:alert(2)",
+      }));
+      for (const path of PAGES) {
+        const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
+        expect(
+          hrefs(body).filter((h) => h.toLowerCase().startsWith("javascript:")),
+        ).toEqual([]);
+        expect(body).toContain('<span class="brand">Acme Inc</span>');
+      }
+    }],
 
-  it("serves an active-content favicon SVG inertly instead of rejecting it", async () => {
-    const hostile =
-      '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">' +
-      "<script>alert(1)</script>" +
-      '<foreignObject><iframe src="https://evil.example"></iframe></foreignObject>' +
-      "</svg>";
-    const res = await makeDeployment(brandingConfig({ favicon: { svg: hostile } })).fetch(
-      new Request(`${BASE}/favicon.svg`),
-    );
-    const csp = res.headers.get("content-security-policy") ?? "";
+    ["never renders a same-origin-looking favicon href with an authority", async () => {
+      for (const href of [
+        "//connecta.invalid/x.svg",
+        "//CONNECTA.INVALID/x",
+        "/\\connecta.invalid/x",
+        "//connecta.invalid:443/x",
+        "//user@connecta.invalid/x",
+        "//evil.example/icon.svg",
+      ]) {
+        const c = makeDeployment(brandingConfig({ favicon: { href } }));
+        for (const path of PAGES) {
+          const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
+          expect(iconHref(body)).toBe("/favicon.svg");
+        }
+      }
+    }],
 
-    // Neutralized by the response, not by inspecting the body: `sandbox` puts
-    // the document in an opaque origin with scripting off and `default-src
-    // 'none'` denies script and the framed subresource, so navigating straight
-    // to /favicon.svg cannot run this on the deployment origin.
-    expect(res.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(csp).toContain("default-src 'none'");
-    expect(csp).toContain("sandbox");
-    expect(res.headers.get("content-type")).toContain("image/svg+xml");
-    // The body itself is untouched, which is what keeps valid SVGs byte-exact.
-    expect(await res.text()).toBe(hostile);
-  });
+    ["survives a non-string favicon href instead of failing construction", async () => {
+      const logger = spyLogger();
+      const c = makeDeployment(brandingConfig(
+        { favicon: { href: 42 as unknown as string } },
+        { logger },
+      ));
+      for (const path of PAGES) {
+        const body = await (await c.fetch(new Request(`${BASE}${path}`))).text();
+        expect(iconHref(body)).toBe("/favicon.svg");
+      }
+      expect(warnings(logger)).toContain("branding favicon.href dropped");
+    }],
 
-  it("escapes branding in HTML attribute and text positions", async () => {
-    const body = await (
-      await makeDeployment(brandingConfig({
-        productName: 'Acme" onload="alert(1)',
-        ownerName: "<b>owner</b>",
-      })).fetch(new Request(`${BASE}/`))
-    ).text();
-    expect(body).not.toContain('onload="alert(1)"');
-    expect(body).not.toContain("<b>owner</b>");
-  });
+    ["serves an active-content favicon SVG inertly instead of rejecting it", async () => {
+      const hostile =
+        '<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)">' +
+        "<script>alert(1)</script>" +
+        '<foreignObject><iframe src="https://evil.example"></iframe></foreignObject>' +
+        "</svg>";
+      const res = await makeDeployment(brandingConfig({ favicon: { svg: hostile } })).fetch(
+        new Request(`${BASE}/favicon.svg`),
+      );
+      const csp = res.headers.get("content-security-policy") ?? "";
+
+      // Neutralized by the response, not by inspecting the body: `sandbox` puts
+      // the document in an opaque origin with scripting off and `default-src
+      // 'none'` denies script and the framed subresource, so navigating straight
+      // to /favicon.svg cannot run this on the deployment origin.
+      expect(res.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(csp).toContain("default-src 'none'");
+      expect(csp).toContain("sandbox");
+      expect(res.headers.get("content-type")).toContain("image/svg+xml");
+      // The body itself is untouched, which is what keeps valid SVGs byte-exact.
+      expect(await res.text()).toBe(hostile);
+    }],
+
+    ["escapes branding in HTML attribute and text positions", async () => {
+      const body = await (
+        await makeDeployment(brandingConfig({
+          productName: 'Acme" onload="alert(1)',
+          ownerName: "<b>owner</b>",
+        })).fetch(new Request(`${BASE}/`))
+      ).text();
+      expect(body).not.toContain('onload="alert(1)"');
+      expect(body).not.toContain("<b>owner</b>");
+    }],
+  ] as const)("%s", async (_name, run) => run());
 });

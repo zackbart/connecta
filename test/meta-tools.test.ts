@@ -428,19 +428,16 @@ Prefer \`notion.search\` over listing databases.
     }
   });
 
-  it("does not treat common or dotted abbreviations as sentence endings", () => {
-    const cases = [
-      "Use exact identifiers, e.g. the project id from search, before making any deployment lookup across the account and its teams.",
-      "Use exact identifiers, i.e. project ids rather than names, before making any deployment lookup across the account and its teams.",
-      "Use the U.S. project region with the exact project id before making any deployment lookup across the account and its teams.",
-      "Ask Dr. Smith for the exact project id before making any deployment lookup across the account and its teams or archived workspaces.",
-    ];
-    for (const [index, guide] of cases.entries()) {
-      const summary = connectorGuideSummary(guided(`abbr${index}`, guide));
-      expect(summary, guide).not.toMatch(/(?:e\.g|i\.e|U\.S|Dr)\.$/u);
-      expect(summary, guide).toMatch(/…$/u);
-      expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
-    }
+  it.each([
+    ["e.g.", "Use exact identifiers, e.g. the project id from search, before making any deployment lookup across the account and its teams."],
+    ["i.e.", "Use exact identifiers, i.e. project ids rather than names, before making any deployment lookup across the account and its teams."],
+    ["U.S.", "Use the U.S. project region with the exact project id before making any deployment lookup across the account and its teams."],
+    ["Dr.", "Ask Dr. Smith for the exact project id before making any deployment lookup across the account and its teams or archived workspaces."],
+  ] as const)("does not treat %s as a sentence ending", (name, guide) => {
+    const summary = connectorGuideSummary(guided(`abbr-${name}`, guide));
+    expect(summary, guide).not.toMatch(/(?:e\.g|i\.e|U\.S|Dr)\.$/u);
+    expect(summary, guide).toMatch(/…$/u);
+    expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
   });
 
   it("allows a dotted abbreviation to finish a sentence", () => {
@@ -453,17 +450,14 @@ Prefer \`notion.search\` over listing databases.
     );
   });
 
-  it("keeps a dotted initialism attached to the name it extends", () => {
-    const cases = [
-      "Use projects from the U.S. East region with the exact project id before making any deployment lookup across the account and its archived teams.",
-      "Coordinate with U.S. Army contacts for the exact project id before making any deployment lookup across the account and its teams.",
-    ];
-    for (const guide of cases) {
-      const summary = connectorGuideSummary(guided("region", guide));
-      expect(summary, guide).not.toMatch(/U\.S\.$/u);
-      expect(summary, guide).toMatch(/…$/u);
-      expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
-    }
+  it.each([
+    ["region", "Use projects from the U.S. East region with the exact project id before making any deployment lookup across the account and its archived teams."],
+    ["organization", "Coordinate with U.S. Army contacts for the exact project id before making any deployment lookup across the account and its teams."],
+  ] as const)("keeps a dotted initialism attached to its %s", (_name, guide) => {
+    const summary = connectorGuideSummary(guided("region", guide));
+    expect(summary, guide).not.toMatch(/U\.S\.$/u);
+    expect(summary, guide).toMatch(/…$/u);
+    expect(summary?.length, guide).toBeLessThanOrEqual(GUIDE_SUMMARY_LENGTH);
   });
 
   it("uses an ellipsis when an initialism boundary lacks clause evidence", () => {
@@ -4842,14 +4836,12 @@ describe("call_tool size guard + get_result", () => {
   });
 });
 
-describe("per-connector maxResultBytes override", () => {
-  // ASCII, so byte length == char length, and it JSON-encodes to one line —
-  // the truncation notice is therefore always exactly the second line.
-  const PAYLOAD = "x".repeat(500);
-  const FULL = JSON.stringify(PAYLOAD); // 502 bytes
+// ASCII, so byte length == char length, and it JSON-encodes to one line.
+const PAYLOAD = "x".repeat(500);
+const FULL = JSON.stringify(PAYLOAD); // 502 bytes
 
-  /** An api connector returning PAYLOAD, optionally under its own byte cap. */
-  function capped(id: string, maxResultBytes?: number): Connector {
+/** An api connector returning PAYLOAD, optionally under its own byte cap. */
+function capped(id: string, maxResultBytes?: number): Connector {
     return connectorWith({
       id,
       kind: "api",
@@ -4864,7 +4856,9 @@ describe("per-connector maxResultBytes override", () => {
         ],
       call: async () => PAYLOAD,
     });
-  }
+}
+
+describe("per-connector maxResultBytes override", () => {
 
   interface Notice {
     truncated: boolean;
@@ -4884,45 +4878,25 @@ describe("per-connector maxResultBytes override", () => {
     };
   }
 
-  it("truncates at a connector cap lower than the global one", async () => {
+  it.each([
+    ["truncates at a connector cap lower than the global one", "tight", 100, 400, 100, true],
+    ["keeps a result inline under a connector cap higher than the global one", "wide", 1_000, 100, null, false],
+    ["falls back to the global cap when a connector declares no override", "plain", undefined, 300, 300, true],
+    ["falls back to the registry default when nothing is configured", "plain", undefined, undefined, null, false],
+  ] as const)("%s", async (_name, id, override, deploymentCap, expectedHead, truncated) => {
     const mt = createMetaTools(
-      makeRegistry([capped("tight", 100)], { maxResultBytes: 400 }),
+      makeRegistry([capped(id, override)], deploymentCap === undefined ? {} : { maxResultBytes: deploymentCap }),
       BASE,
     );
-    const { head, notice } = truncation(
-      await mt.callTool({ address: "tight.big" }),
-    );
-    expect(head).toBe(FULL.slice(0, 100));
-    expect(notice.truncated).toBe(true);
-    expect(notice.totalBytes).toBe(FULL.length);
-  });
-
-  it("keeps a result inline under a connector cap higher than the global one", async () => {
-    const mt = createMetaTools(
-      makeRegistry([capped("wide", 1_000)], { maxResultBytes: 100 }),
-      BASE,
-    );
-    const result = await mt.callTool({ address: "wide.big" });
-    expect(required(result.content[0]).text).toBe(FULL);
-  });
-
-  it("falls back to the global cap when a connector declares no override", async () => {
-    const mt = createMetaTools(
-      makeRegistry([capped("plain")], { maxResultBytes: 300 }),
-      BASE,
-    );
-    const { head, notice } = truncation(
-      await mt.callTool({ address: "plain.big" }),
-    );
-    expect(head).toBe(FULL.slice(0, 300));
-    expect(notice.totalBytes).toBe(FULL.length);
-  });
-
-  it("falls back to the registry default when nothing is configured", async () => {
-    // 502 bytes is far below the built-in 50_000, so nothing truncates.
-    const mt = createMetaTools(makeRegistry([capped("plain")]), BASE);
-    const result = await mt.callTool({ address: "plain.big" });
-    expect(required(result.content[0]).text).toBe(FULL);
+    const result = await mt.callTool({ address: `${id}.big` });
+    if (!truncated) {
+      expect(required(result.content[0]).text).toBe(FULL);
+      return;
+    }
+    const guarded = truncation(result);
+    expect(guarded.head).toBe(FULL.slice(0, required(expectedHead)));
+    expect(guarded.notice.truncated).toBe(true);
+    expect(guarded.notice.totalBytes).toBe(FULL.length);
   });
 
   it("pages a result truncated under an override through get_result", async () => {
@@ -5001,30 +4975,8 @@ describe("per-connector maxResultBytes override", () => {
 });
 
 describe("maxResultBytes validation", () => {
-  // Same 502-byte fixture as the override suite above, so the measured heads
-  // line up with the numbers in issue #32.
-  const PAYLOAD = "x".repeat(500);
-  const FULL = JSON.stringify(PAYLOAD); // 502 bytes
-
   /** Caps that are accepted today but silently do something wrong (issue #32). */
   const BAD_CAPS = [0, -1, -50, 1.5, Number.NaN, Number.POSITIVE_INFINITY];
-
-  function capped(id: string, maxResultBytes?: number): Connector {
-    return connectorWith({
-      id,
-      kind: "api",
-      description: "Capped",
-      ...(maxResultBytes !== undefined ? { maxResultBytes } : {}),
-      tools: [
-          {
-            name: "big",
-            description: "Return a large blob",
-            annotations: { readOnlyHint: true },
-          },
-        ],
-      call: async () => PAYLOAD,
-    });
-  }
 
   /** Stash an oversized result and hand back its page id. */
   async function stash(): Promise<{
@@ -5042,22 +4994,11 @@ describe("maxResultBytes validation", () => {
     return { mt, resultId: notice.resultId };
   }
 
-  it("rejects a get_result maxBytes of 0 instead of never advancing", async () => {
-    // Pre-fix this returned { offset: 0, nextOffset: 0, text: "" } — a client
-    // paging on nextOffset loops forever.
+  it.each(BAD_CAPS)("rejects get_result maxBytes %s", async (maxBytes) => {
     const { mt, resultId } = await stash();
-    const result = await mt.getResult({ id: resultId, offset: 0, maxBytes: 0 });
-    expect(result.isError).toBe(true);
-    expect(required(result.content[0]).text).toContain("Invalid maxBytes 0");
-  });
-
-  it("rejects every get_result maxBytes that is not a whole positive byte count", async () => {
-    const { mt, resultId } = await stash();
-    for (const maxBytes of BAD_CAPS) {
-      const result = await mt.getResult({ id: resultId, maxBytes });
-      expect(result.isError, `maxBytes ${String(maxBytes)}`).toBe(true);
-      expect(required(result.content[0]).text).toContain("Invalid maxBytes");
-    }
+    const result = await mt.getResult({ id: resultId, maxBytes });
+    expect(result.isError, `maxBytes ${String(maxBytes)}`).toBe(true);
+    expect(required(result.content[0]).text).toContain("Invalid maxBytes");
   });
 
   it("accepts the 1-byte floor and still pages to completion", async () => {
@@ -5091,30 +5032,25 @@ describe("maxResultBytes validation", () => {
     expect(alignEndToCharBoundary(bytes, 3, 3, bytes.length)).toBe(7);
   });
 
-  it("ignores a deployment cap that would zero or invert the guard", async () => {
-    for (const maxResultBytes of BAD_CAPS) {
-      const mt = createMetaTools(
-        makeRegistry([capped("c")], { maxResultBytes }),
-        BASE,
-      );
-      const result = await mt.callTool({ address: "c.big" });
-      // Falls back to the built-in 50_000, so 502 bytes stay inline whole —
-      // never an empty head (0/NaN) or an over-long one (negatives).
-      expect(required(result.content[0]).text, `cap ${String(maxResultBytes)}`).toBe(FULL);
-    }
+  it.each(BAD_CAPS)("ignores deployment cap %s", async (maxResultBytes) => {
+    const mt = createMetaTools(
+      makeRegistry([capped("c")], { maxResultBytes }),
+      BASE,
+    );
+    const result = await mt.callTool({ address: "c.big" });
+    // Falls back to the built-in 50_000, so 502 bytes stay inline whole.
+    expect(required(result.content[0]).text, `cap ${String(maxResultBytes)}`).toBe(FULL);
   });
 
-  it("ignores a connector override that would zero or invert the guard", async () => {
-    for (const override of BAD_CAPS) {
-      const mt = createMetaTools(
-        makeRegistry([capped("c", override)], { maxResultBytes: 400 }),
-        BASE,
-      );
-      const result = await mt.callTool({ address: "c.big" });
-      const [head] = required(result.content[0]).text.split("\n");
-      // Inherits the deployment-wide 400 exactly as an unset override would.
-      expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
-    }
+  it.each(BAD_CAPS)("ignores connector override %s", async (override) => {
+    const mt = createMetaTools(
+      makeRegistry([capped("c", override)], { maxResultBytes: 400 }),
+      BASE,
+    );
+    const result = await mt.callTool({ address: "c.big" });
+    const [head] = required(result.content[0]).text.split("\n");
+    // Inherits the deployment-wide 400 exactly as an unset override would.
+    expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
   });
 
   it("warns with the very cap a call then falls back to", async () => {
@@ -5440,11 +5376,11 @@ describe("mcp-mode content size guard", () => {
 describe("get_result offset validation and alignment", () => {
   // Stored as `"aa😀bb"` — byte 3 starts the 4-byte emoji, so bytes 4, 5 and 6
   // are inside a character and byte 3 is the boundary they belong to.
-  const PAYLOAD = "aa😀bb";
-  const FULL = JSON.stringify(PAYLOAD);
+  const EMOJI_PAYLOAD = "aa😀bb";
+  const EMOJI_FULL = JSON.stringify(EMOJI_PAYLOAD);
   const EMOJI_START = 3;
 
-  async function stash(): Promise<{
+  async function stashEmoji(): Promise<{
     mt: ReturnType<typeof createMetaTools>;
     resultId: string;
   }> {
@@ -5456,7 +5392,7 @@ describe("get_result offset validation and alignment", () => {
           description: "unicode",
           inputSchema: { type: "object" },
           annotations: { readOnlyHint: true },
-          handler: () => PAYLOAD,
+          handler: () => EMOJI_PAYLOAD,
         },
       ],
     });
@@ -5471,42 +5407,39 @@ describe("get_result offset validation and alignment", () => {
     return { mt, resultId: notice.resultId };
   }
 
-  it("rejects an in-process offset that is not a whole byte count", async () => {
+  it.each([
+    -50,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+  ])("rejects in-process offset %s", async (offset) => {
     // The tier #32 chose to defend for maxBytes: MCP callers are stopped by the
     // registered schema, in-process callers of createMetaTools are not. Pre-fix
     // `offset: NaN` answered with `"offset": null`, empty text and no
     // nextOffset — the result silently vanished instead of erroring (issue #38).
-    const { mt, resultId } = await stash();
-    for (const offset of [
-      -1,
-      -50,
-      1.5,
-      Number.NaN,
-      Number.POSITIVE_INFINITY,
-      Number.NEGATIVE_INFINITY,
-    ]) {
-      const result = await mt.getResult({ id: resultId, offset });
-      expect(result.isError, `offset ${String(offset)}`).toBe(true);
-      expect(required(result.content[0]).text).toContain("Invalid offset");
-    }
+    const { mt, resultId } = await stashEmoji();
+    const result = await mt.getResult({ id: resultId, offset });
+    expect(result.isError, `offset ${String(offset)}`).toBe(true);
+    expect(required(result.content[0]).text).toContain("Invalid offset");
   });
 
-  it("aligns an offset landing inside a character and reports the one served", async () => {
+  it.each([4, 5, 6])(
+    "aligns offset %s landing inside a character",
+    async (requested) => {
     // Pre-fix these decoded the severed bytes as U+FFFD.
-    const { mt, resultId } = await stash();
-    for (const requested of [4, 5, 6]) {
-      const page = textOf(
-        await mt.getResult({ id: resultId, offset: requested, maxBytes: 100 }),
-      ) as { text: string; offset: number; totalBytes: number };
-      expect(page.text, `offset ${requested}`).not.toContain("�");
-      expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
-      expect(page.text).toBe("😀bb\"");
-      expect(page.totalBytes).toBe(byteLength(FULL));
-    }
-  });
+    const { mt, resultId } = await stashEmoji();
+    const page = textOf(
+      await mt.getResult({ id: resultId, offset: requested, maxBytes: 100 }),
+    ) as { text: string; offset: number; totalBytes: number };
+    expect(page.text, `offset ${requested}`).not.toContain("�");
+    expect(page.offset, `offset ${requested}`).toBe(EMOJI_START);
+    expect(page.text).toBe("😀bb\"");
+    expect(page.totalBytes).toBe(byteLength(EMOJI_FULL));
+    },
+  );
 
   it("leaves a boundary-aligned offset byte-identical", async () => {
-    const { mt, resultId } = await stash();
+    const { mt, resultId } = await stashEmoji();
     // Every boundary in the payload, including the ones paging produces.
     for (const offset of [0, 1, 2, EMOJI_START, 7, 8]) {
       const page = textOf(
@@ -5527,23 +5460,23 @@ describe("get_result offset validation and alignment", () => {
       if (page.nextOffset === undefined) break;
       offset = page.nextOffset;
     }
-    expect(assembled).toBe(FULL);
+    expect(assembled).toBe(EMOJI_FULL);
   });
 
   it("answers an offset past the end with an empty final page", async () => {
     // Still a whole number of bytes, so still legal: an empty last page rather
     // than an error, and nothing to align.
-    const { mt, resultId } = await stash();
+    const { mt, resultId } = await stashEmoji();
     const page = textOf(
-      await mt.getResult({ id: resultId, offset: byteLength(FULL) + 5 }),
+      await mt.getResult({ id: resultId, offset: byteLength(EMOJI_FULL) + 5 }),
     ) as { text: string; offset: number; nextOffset?: number };
     expect(page.text).toBe("");
-    expect(page.offset).toBe(byteLength(FULL) + 5);
+    expect(page.offset).toBe(byteLength(EMOJI_FULL) + 5);
     expect(page.nextOffset).toBeUndefined();
   });
 
   it("moves a start offset back to the character it lands inside", () => {
-    const bytes = new TextEncoder().encode(FULL);
+    const bytes = new TextEncoder().encode(EMOJI_FULL);
     expect([4, 5, 6].map((o) => alignStartToCharBoundary(bytes, o))).toEqual([
       3, 3, 3,
     ]);
