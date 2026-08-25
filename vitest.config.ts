@@ -30,11 +30,14 @@ export const WORKERS_SUITES = [
   "test/guarded-fetch.test.ts",
   "test/guest-api-contract.test.ts",
   "test/linear-provider.test.ts",
+  "test/meta-tools-call.test.ts",
+  "test/meta-tools-search.test.ts",
   "test/meta-tools.test.ts",
   "test/mixpanel-provider.test.ts",
   "test/notion-provider.test.ts",
   "test/operator-boundary.test.ts",
   "test/operator-store.test.ts",
+  "test/operator-view.test.ts",
   "test/provider-conventions.test.ts",
   "test/provider-registry.test.ts",
   "test/registry.test.ts",
@@ -49,6 +52,7 @@ export const WORKERS_SUITES = [
   "test/startup-warnings.test.ts",
   "test/stripe-provider.test.ts",
   "test/ui.test.ts",
+  "test/ui-credentials.test.ts",
   "test/validate.test.ts",
 ] as const;
 
