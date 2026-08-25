@@ -2,6 +2,7 @@
 import { api, type ApiTool } from "../connectors/api.js";
 import {
   guardedFetch,
+  retryAfterMs,
   type GuardedRequest,
   type GuardedTransport,
 } from "../connectors/guarded-fetch.js";
@@ -254,15 +255,6 @@ function errorCodes(errors: CloudflareEnvelopeError[]): Set<number> {
  */
 const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
 
-/** Seconds in a `retry-after` header, converted to the milliseconds the core wants. */
-function retryAfterMs(headers: Headers): number | undefined {
-  const raw = headers.get("retry-after");
-  if (!raw) return undefined;
-  const seconds = Number(raw.trim());
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return Math.trunc(seconds * 1000);
-}
-
 /**
  * Turn a failed Cloudflare response into a typed connector failure.
  *
@@ -392,19 +384,11 @@ async function callCloudflare(
   ctx: ConnectorContext,
 ): Promise<CloudflareResponse> {
   return await send(spec, ctx, async (response) => {
-    let envelope: CloudflareEnvelope | undefined;
-    let parseFailure: unknown;
-    try {
-      envelope = (await response.json()) as CloudflareEnvelope | undefined;
-    } catch (cause) {
-      // A transport failure is not a parse failure. The connector's byte
-      // ceiling fires from inside this read and is deliberately non-retryable;
-      // routing it through the branch below would relabel it as a retryable
-      // `unavailable` and tell an agent to retry a response that will exceed
-      // the ceiling every time.
-      if (cause instanceof ConnectorCallError) throw cause;
-      parseFailure = cause;
-    }
+    const parsed = await response.jsonResult();
+    const envelope =
+      "value" in parsed
+        ? (parsed.value as CloudflareEnvelope | undefined)
+        : undefined;
     if (envelope === undefined) {
       // A gateway error page or an empty body, not an envelope: the status is
       // the only real signal left.
@@ -412,7 +396,7 @@ async function callCloudflare(
         ? new ConnectorCallError(
             "unavailable",
             "Cloudflare returned a non-JSON body for a successful status.",
-            parseFailure !== undefined ? { cause: parseFailure } : {},
+            "parseError" in parsed ? { cause: parsed.parseError } : {},
           )
         : failureFor(response.status, response.headers, []);
     }
@@ -469,18 +453,19 @@ async function callCloudflareContent(
 ): Promise<JsonRecord> {
   return await send(spec, ctx, async (response) => {
     if (!response.ok) {
-      let errors: CloudflareEnvelopeError[] = [];
+      let envelope: CloudflareEnvelope | undefined;
       try {
-        const envelope = (await response.json()) as
-          | CloudflareEnvelope
-          | undefined;
-        if (envelope && Array.isArray(envelope.errors)) errors = envelope.errors;
+        const parsed = await response.jsonResult();
+        envelope =
+          "value" in parsed
+            ? (parsed.value as CloudflareEnvelope | undefined)
+            : undefined;
       } catch {
-        // A raw or gateway error body has no structured detail to preserve,
-        // and one past the byte ceiling has none worth reporting over the
-        // status that already failed this call. Either way the throw below
-        // classifies the status, so nothing is swallowed into a success.
+        // Content reads classify an already-failed status even when its error
+        // body exceeds the transport ceiling.
       }
+      const errors =
+        envelope && Array.isArray(envelope.errors) ? envelope.errors : [];
       throw failureFor(response.status, response.headers, errors);
     }
     const common = compact({

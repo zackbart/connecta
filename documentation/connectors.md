@@ -160,6 +160,29 @@ is that machinery extracted once ([#341](https://github.com/zackbart/connecta/is
 one `guardedFetch({ provider, baseUrl, headers, maxResponseBytes, authenticate })`
 factory returning the transport a connector sends every request through.
 
+```ts
+const send = guardedFetch({
+  provider: "Billing",
+  baseUrl: "https://billing.internal.example/v1",
+  maxResponseBytes: 4 * 1024 * 1024,
+  headers: { Accept: "application/json" },
+  authenticate: async (ctx) => {
+    const token = await ctx.credential?.get();
+    if (!token) throw new ConnectorCallError("auth_required", "...");
+    return { Authorization: `Bearer ${token}` };
+  },
+});
+
+const invoice = await send(
+  { method: "GET", path: `/invoices/${id}` },
+  ctx,
+  (response) => {
+    if (!response.ok) throw billingFailure(response.status);
+    return response.json();
+  },
+);
+```
+
 What it owns is mechanical and provider-independent:
 
 - **Confinement.** A request path is provider-relative, carries no query or
