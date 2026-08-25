@@ -4,6 +4,7 @@ import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import { createTestConnecta, silentLogger } from "./helpers.js";
+import { mcpRpc } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
 const TOKEN = "route-contract-token";
@@ -68,35 +69,6 @@ function expectMcpCors(response: Response): void {
   );
   expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
     "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name",
-  );
-}
-
-let requestId = 0;
-function mcpRequest(
-  connecta: { fetch(request: Request): Promise<Response> },
-  options: { token?: string; query?: string } = {},
-): Promise<Response> {
-  const headers: Record<string, string> = {
-    Accept: "application/json, text/event-stream",
-    "Content-Type": "application/json",
-  };
-  if (options.token) {
-    headers.Authorization = `Bearer ${options.token}`;
-  }
-  return connecta.fetch(
-    new Request(`${BASE}/mcp${options.query ?? ""}`, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: ++requestId,
-        method: "tools/call",
-        params: {
-          name: "search_tools",
-          arguments: { query: "read" },
-        },
-      }),
-    }),
   );
 }
 
@@ -168,7 +140,7 @@ describe("server route contracts", () => {
       await response.arrayBuffer();
     }
 
-    const mcp = await mcpRequest(connecta);
+    const mcp = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } });
     expect(mcp.status).toBe(401);
     expectMcpCors(mcp);
     expect(await mcp.text()).toBe('{"error":"unauthorized"}');
@@ -235,7 +207,7 @@ describe("server route contracts", () => {
       expect(await response.text()).toBe('{"error":"unauthorized"}');
     }
 
-    const mcp = await mcpRequest(connecta);
+    const mcp = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } });
     expect(mcp.status).toBe(401);
     expectMcpCors(mcp);
     expect(mcp.headers.get("WWW-Authenticate")).toBe("Bearer");
@@ -349,7 +321,7 @@ describe("server route contracts", () => {
     // gets the same 404: an endpoint URL minted before the retirement (#178)
     // must not silently widen into the full registry.
     for (const value of ["support", "no-such-toolkit", ""]) {
-      const response = await mcpRequest(connecta, {
+      const response = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } }, {
         token: TOKEN,
         query: `?toolkit=${value}`,
       });
@@ -368,7 +340,7 @@ describe("server route contracts", () => {
 
     // Auth still runs first: an unauthenticated ?toolkit= request is a plain
     // 401, revealing nothing about the retirement.
-    const unauthenticated = await mcpRequest(connecta, {
+    const unauthenticated = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } }, {
       query: "?toolkit=support",
     });
     expect(unauthenticated.status).toBe(401);
@@ -376,7 +348,7 @@ describe("server route contracts", () => {
     // The same credential without the param reaches the endpoint normally —
     // and the call actually succeeds, which is the only way this contrasts
     // with the 404 above rather than with some other refusal.
-    const clean = await mcpRequest(connecta, { token: TOKEN });
+    const clean = await mcpRpc(connecta, "tools/call", { name: "search_tools", arguments: { query: "read" } }, { token: TOKEN });
     expect(clean.status).toBe(200);
     const cleanBody = (await clean.json()) as {
       error?: unknown;

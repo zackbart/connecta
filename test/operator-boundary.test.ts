@@ -2,8 +2,14 @@ import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
-import type { Connector, InboundAuth, ToolDef } from "../src/types.js";
+import type { Connector, ToolDef } from "../src/types.js";
 import { createTestConnecta } from "./helpers.js";
+import {
+  fakeClerkAuth,
+  makeDeployment,
+  mcpRpc,
+  readJsonRpc,
+} from "./fixtures/http.js";
 
 /**
  * The operator boundary, enforced rather than asserted in prose (#338).
@@ -29,26 +35,6 @@ const OPERATOR_TOKEN = "clerk-operator";
 const CREDENTIAL_KEY = btoa("0123456789abcdef0123456789abcdef");
 
 type Deployment = ReturnType<typeof createTestConnecta>;
-
-function fakeClerkOperator(): InboundAuth {
-  return {
-    kind: "clerk",
-    uiAuth: {
-      kind: "clerk",
-      publishableKey: "pk_test_fake",
-      frontendApiUrl: "https://clerk.example.test",
-    },
-    authorize(request) {
-      return request.headers.get("authorization") ===
-        `Bearer ${OPERATOR_TOKEN}`
-        ? { ok: true, userId: "user_operator" }
-        : {
-            ok: false,
-            response: Response.json({ error: "unauthorized" }, { status: 401 }),
-          };
-    },
-  };
-}
 
 /** Credential slot, downstream OAuth, an admission policy, and both safety classes. */
 function oauthConnector(): Connector {
@@ -153,10 +139,10 @@ function dynamicConnector(catalog: { listings: number }): Connector {
   };
 }
 
-function makeConnecta(connectors: Connector[]): Deployment {
-  return createTestConnecta({
+function boundaryConfig(connectors: Connector[]) {
+  return {
     connectors,
-    auth: [fakeClerkOperator()],
+    auth: [fakeClerkAuth({ token: OPERATOR_TOKEN })],
     storage: memoryStorage(),
     accessTokens: {},
     credentials: { encryptionKey: CREDENTIAL_KEY },
@@ -165,44 +151,17 @@ function makeConnecta(connectors: Connector[]): Deployment {
     // dynamic connector's tools be served from memory and quietly turn this
     // suite back into a comparison of two frozen arrays.
     discovery: { catalogTtlSeconds: 0 },
-  });
+  };
 }
 
-let nextId = 0;
-async function rpc(
+async function callerRpc(
   connecta: Deployment,
   method: string,
   token: string,
 ): Promise<unknown> {
-  const response = await connecta.fetch(
-    new Request(`${BASE}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: ++nextId,
-        method,
-        params: {},
-      }),
-    }),
-  );
+  const response = await mcpRpc(connecta, method, {}, { token });
   expect(response.status, method).toBe(200);
-  const text = await response.text();
-  const payload = (response.headers.get("content-type") ?? "").includes(
-    "text/event-stream",
-  )
-    ? text
-        .split("\n")
-        .filter((line) => line.startsWith("data:"))
-        .pop()
-        ?.slice("data:".length)
-        .trim()
-    : text;
-  return JSON.parse(payload ?? "null") as unknown;
+  return readJsonRpc(response) as Promise<unknown>;
 }
 
 /** Exactly what a caller may call: the tool list `/mcp` serves that caller. */
@@ -210,7 +169,7 @@ async function callerToolScope(
   connecta: Deployment,
   token: string,
 ): Promise<unknown> {
-  const body = (await rpc(connecta, "tools/list", token)) as {
+  const body = (await callerRpc(connecta, "tools/list", token)) as {
     result?: { tools?: unknown };
   };
   return body.result?.tools;
@@ -358,11 +317,11 @@ function credentialAndOAuthMutations(
 describe("the operator boundary", () => {
   it("manages authentication material without moving a declared structure", async () => {
     const catalog = { listings: 0 };
-    const connecta = makeConnecta([
+    const connecta = makeDeployment(boundaryConfig([
       oauthConnector(),
       plainConnector(),
       dynamicConnector(catalog),
-    ]);
+    ]));
     const before = await declaredSurface(connecta, OPERATOR_TOKEN);
     // A snapshot that silently captured nothing would pass every comparison
     // below, so establish that it holds all three connectors, both safety
@@ -500,7 +459,7 @@ describe("the operator boundary", () => {
         return {};
       },
     };
-    const connecta = makeConnecta([drifting]);
+    const connecta = makeDeployment(boundaryConfig([drifting]));
     const before = await declaredSurface(connecta, OPERATOR_TOKEN);
 
     const stored = await connecta.fetch(

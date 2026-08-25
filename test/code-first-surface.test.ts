@@ -2,12 +2,17 @@
 // two structural configuration mistakes construction refuses.
 
 import { describe, expect, it } from "vitest";
-import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import { createConnecta } from "../src/index.js";
 import { CONNECTA_INSTRUCTIONS, USAGE_SKILL } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Executor } from "../src/types.js";
+import {
+  calcApi,
+  makeDeployment,
+  mcpRpc,
+  readJsonRpc,
+} from "./fixtures/http.js";
 
 const TOKEN = "surface-token";
 const BASE = "https://connecta.test";
@@ -18,57 +23,16 @@ const stubExecutor: Executor = {
 };
 
 function connectors() {
-  return [
-    api("calc", {
-      description: "Calculator",
-      tools: [
-        {
-          name: "add",
-          description: "Add two numbers",
-          annotations: { readOnlyHint: true },
-          inputSchema: {
-            type: "object",
-            properties: { a: { type: "number" }, b: { type: "number" } },
-            required: ["a", "b"],
-          },
-          handler: (args: { a: number; b: number }) => ({
-            sum: args.a + args.b,
-          }),
-        },
-      ],
-    }),
-  ];
+  return [calcApi()];
 }
 
-function makeConnecta() {
-  return createConnecta({
-    connectors: connectors(),
-    auth: bearerToken(TOKEN),
-    storage: memoryStorage(),
-    publicUrl: BASE,
-    executor: stubExecutor,
-  });
-}
-
-async function rpc(
-  connecta: { fetch: (r: Request) => Promise<Response> },
-  method: string,
-  params: unknown,
-  // Every assertion below reads one JSON-RPC envelope.
-): Promise<any> {
-  const response = await connecta.fetch(
-    new Request(`${BASE}/mcp`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json, text/event-stream",
-        Authorization: `Bearer ${TOKEN}`,
-      },
-      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
-    }),
-  );
-  return JSON.parse(await response.text());
-}
+const deploymentConfig = {
+  connectors: connectors(),
+  auth: bearerToken(TOKEN),
+  storage: memoryStorage(),
+  publicUrl: BASE,
+  executor: stubExecutor,
+};
 
 describe("construction", () => {
   it("requires an executor and names both runtime configurations", () => {
@@ -114,7 +78,9 @@ describe("construction", () => {
 
 describe("the advertised surface", () => {
   it("advertises exactly seven tools", async () => {
-    const body = await rpc(makeConnecta(), "tools/list", {});
+    const body = await readJsonRpc(
+      await mcpRpc(makeDeployment(deploymentConfig), "tools/list", {}, { token: TOKEN }),
+    );
     expect(body.result.tools.map((tool: { name: string }) => tool.name).sort())
       .toEqual([
         "authorize_connector",
@@ -128,20 +94,22 @@ describe("the advertised surface", () => {
   });
 
   it("never advertises or teaches a removed top-level tool", async () => {
-    const connecta = makeConnecta();
-    const listed = await rpc(connecta, "tools/list", {});
-    const initialized = await rpc(connecta, "initialize", {
+    const connecta = makeDeployment(deploymentConfig);
+    const listed = await readJsonRpc(
+      await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }),
+    );
+    const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
       clientInfo: { name: "surface-test", version: "0" },
-    });
+    }, { token: TOKEN }));
     // The skill is swept as it is *served*, not as it is imported: pinning the
     // served text to the constant first is what makes the sweep below evidence
     // about this deployment rather than about a string literal.
-    const skill = await rpc(connecta, "tools/call", {
+    const skill = await readJsonRpc(await mcpRpc(connecta, "tools/call", {
       name: "skills",
       arguments: { name: "usage" },
-    });
+    }, { token: TOKEN }));
     const servedSkill = skill.result.content[0].text as string;
     expect(servedSkill).toBe(USAGE_SKILL);
     expect(servedSkill).toContain(
@@ -164,12 +132,12 @@ describe("the advertised surface", () => {
   });
 
   it("locates connecta.ui before an agent chooses catalog search (U13)", async () => {
-    const connecta = makeConnecta();
-    const initialized = await rpc(connecta, "initialize", {
+    const connecta = makeDeployment(deploymentConfig);
+    const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
       protocolVersion: "2025-06-18",
       capabilities: {},
       clientInfo: { name: "surface-test", version: "0" },
-    });
+    }, { token: TOKEN }));
     const instructions = initialized.result.instructions as string;
     expect(instructions).toBe(CONNECTA_INSTRUCTIONS);
     expect(instructions).toContain("connecta.ui(html) exists only inside execute_code");
@@ -183,12 +151,12 @@ describe("the advertised surface", () => {
   });
 
   it("rejects calls to every removed top-level tool", async () => {
-    const connecta = makeConnecta();
+    const connecta = makeDeployment(deploymentConfig);
     for (const removed of REMOVED_TOOLS) {
-      const body = await rpc(connecta, "tools/call", {
+      const body = await readJsonRpc(await mcpRpc(connecta, "tools/call", {
         name: removed,
         arguments: {},
-      });
+      }, { token: TOKEN }));
       // The MCP server owns this refusal: an unregistered name is a JSON-RPC
       // error, not a tool result. What matters is that it fails loudly and
       // names the tool that was called, rather than resolving to something
