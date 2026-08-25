@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
 import {
   NOTION_API_BASE_URL,
@@ -957,6 +957,11 @@ describe("notion() property pagination", () => {
 });
 
 describe("notion() error mapping", () => {
+  const cases: Array<[string, () => Promise<void>]> = [];
+  const caseOf = (name: string, run: () => Promise<void>) => {
+    cases.push([name, run]);
+  };
+
   async function failWith(
     status: number,
     body: unknown,
@@ -968,7 +973,7 @@ describe("notion() error mapping", () => {
     );
   }
 
-  it("routes an invalid token to auth_required", async () => {
+  caseOf("routes an invalid token to auth_required", async () => {
     const error = await failWith(401, {
       object: "error",
       status: 401,
@@ -981,7 +986,7 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("/credentials");
   });
 
-  it("does not send a capability failure to re-authorization", async () => {
+  caseOf("does not send a capability failure to re-authorization", async () => {
     const error = await failWith(403, {
       object: "error",
       code: "restricted_resource",
@@ -995,7 +1000,7 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("Re-authorizing will not help");
   });
 
-  it("says a 404 may mean unshared rather than absent", async () => {
+  caseOf("says a 404 may mean unshared rather than absent", async () => {
     const error = await failWith(404, {
       object: "error",
       code: "object_not_found",
@@ -1011,7 +1016,7 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("do not treat it as proof of deletion");
   });
 
-  it("treats every malformed request as invalid_args", async () => {
+  caseOf("treats every malformed request as invalid_args", async () => {
     const error = await failWith(400, {
       object: "error",
       code: "validation_error",
@@ -1022,7 +1027,7 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("validation_error");
   });
 
-  it("converts Retry-After seconds into a millisecond window", async () => {
+  caseOf("converts Retry-After seconds into a millisecond window", async () => {
     const error = await failWith(
       429,
       {
@@ -1040,12 +1045,12 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("public_api_request_rate_limit");
   });
 
-  it("falls back to a default window when Retry-After is absent", async () => {
+  caseOf("falls back to a default window when Retry-After is absent", async () => {
     const error = await failWith(429, { code: "rate_limited", message: "slow" });
     expect(error.retryAfterMs).toBe(1_000);
   });
 
-  it("backs off on overload and conflict, and retries upstream failures", async () => {
+  caseOf("backs off on overload and conflict, and retries upstream failures", async () => {
     const overloaded = await failWith(
       529,
       { code: "service_overload", message: "overloaded" },
@@ -1070,7 +1075,7 @@ describe("notion() error mapping", () => {
     expect(upstream.retryable).toBe(true);
   });
 
-  it("survives an error body that is not JSON", async () => {
+  caseOf("survives an error body that is not JSON", async () => {
     queue({ status: 500, body: undefined });
     globalThis.fetch = vi.fn(
       async () => new Response("<html>gateway</html>", { status: 502 }),
@@ -1080,7 +1085,7 @@ describe("notion() error mapping", () => {
     expect(error.message).toContain("HTTP 502");
   });
 
-  it("fails an oversized 2xx body instead of reporting an empty success", async () => {
+  caseOf("fails an oversized 2xx body instead of reporting an empty success", async () => {
     // The transport's byte ceiling fires from inside the same `json()` the
     // mapper tolerates a parse failure from. Reported as a success with no
     // payload, an agent would read "this page has no properties" out of a
@@ -1097,6 +1102,8 @@ describe("notion() error mapping", () => {
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("response ceiling");
   });
+
+  test.each(cases)("%s", async (_name, run) => run());
 });
 
 describe("notion() writes", () => {

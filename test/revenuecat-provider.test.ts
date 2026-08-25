@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Connector, ToolDef } from "../src/types.js";
+import type { ToolDef } from "../src/types.js";
+import {
+  guideOf,
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+} from "./fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -21,45 +26,14 @@ import {
 } from "../src/providers/revenuecat.js";
 import { connectorGuideSummary } from "../src/skills.js";
 
-const context = {
-  storage: {
-    get: vi.fn(),
-    set: vi.fn(),
-    delete: vi.fn(),
-  },
-  logger: console,
-  baseUrl: "https://connecta.example",
-};
-
 const KEY_AUTH = {
   type: "headers",
   headers: { Authorization: "Bearer sk_example" },
 } as const;
 
-/** Every maintained provider guide is structured (H13, P7). */
-function guideOf(connector: Connector): string {
-  const guide = connector.usageGuide;
-  if (typeof guide !== "object" || guide === undefined) {
-    throw new Error("expected a structured usage guide");
-  }
-  return guide.content;
-}
-
 describe("revenuecat()", () => {
   beforeEach(() => {
-    mocks.listTools.mockReset();
-    mocks.remoteMcp.mockReset();
-    mocks.remoteMcp.mockImplementation(
-      (id: string, options: object): Connector => ({
-        id,
-        kind: "mcp",
-        ...options,
-        listTools: mocks.listTools,
-        async callTool() {
-          return [];
-        },
-      }),
-    );
+    mockRemoteMcp(mocks);
   });
 
   it("owns the endpoint, the OAuth default, and account-wide scoping (P9)", () => {
@@ -362,87 +336,16 @@ describe("revenuecat()", () => {
     expect(verdictFor("detach-products-from-package")).toBe("destructive");
   });
 
-  it("fills in silent annotations and fails closed on catalog drift", async () => {
-    mocks.listTools.mockResolvedValue([
-      // Allowlisted read, downstream silent on both hints: fill it in.
-      { name: "list-projects", annotations: { openWorldHint: true } },
-      // Allowlisted read with no annotations object at all.
-      { name: "get-customer" },
-      // Maintained additive write: leaves the read path without inflating the
-      // host's approval copy with a destruction it does not perform.
-      { name: "create-offering" },
-      // No access column in RevenueCat's own reference, so no release has
-      // classified it. Unclassified and unannotated means fail closed.
-      { name: "render-paywall-screenshot" },
-    ]);
-    const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      openWorldHint: true,
-    });
-    expect(tools[1]?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-  });
-
-  it("keeps a vetted destructive tool closed despite a read-only claim", async () => {
-    mocks.listTools.mockResolvedValue([
-      { name: "grant-customer-entitlement", annotations: { readOnlyHint: true } },
-    ]);
-    const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("believes an explicit annotation on a tool no release has classified", async () => {
-    mocks.listTools.mockResolvedValue([
-      // Not on either maintained list, and the downstream calls it read-only.
-      // On a name no release has reviewed, the downstream's word is the only
-      // evidence there is.
-      { name: "list-new-thing", annotations: { readOnlyHint: true } },
-      // The same rule in the other direction.
-      { name: "wreck-new-thing", annotations: { destructiveHint: true } },
-    ]);
-    const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
-    expect(tools[1]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("never overrules an explicit downstream annotation on a vetted read", async () => {
-    mocks.listTools.mockResolvedValue([
-      // The downstream says this allowlisted name now mutates something. That
-      // is the downstream telling us the allowlist is stale; it wins.
-      {
-        name: "list-projects",
-        annotations: { destructiveHint: true, openWorldHint: true },
-      },
-      { name: "get-customer", annotations: { readOnlyHint: false } },
-    ]);
-    const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({
-      destructiveHint: true,
-      openWorldHint: true,
-    });
-    expect(tools[0]?.annotations?.readOnlyHint).toBeUndefined();
-    expect(tools[1]?.annotations).toEqual({ readOnlyHint: false });
-  });
+  itClassifiesLikeARelease(
+    () => revenuecat("revenuecat", { purpose: "Rehearsal" }),
+    mocks,
+    {
+      read: ["list-projects", "get-customer", "get-customer"],
+      write: "create-offering",
+      destructive: "grant-customer-entitlement",
+      unknown: ["render-paywall-screenshot", "list-new-thing", "wreck-new-thing"],
+    },
+  );
 
   it("declares no operator credential slot or credential test (P10)", () => {
     const connector = revenuecat("revenuecat", { purpose: "Rehearsal" });
