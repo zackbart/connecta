@@ -11,6 +11,7 @@ import {
   ExecutorAdmissionError,
   ExecutorExecutionError,
 } from "../executor-admission.js";
+import { msg } from "../errors.js";
 import type {
   AdmittingExecutor,
   AdmissionSnapshot,
@@ -91,10 +92,6 @@ const CHILD_EXIT_GRACE_MS = 250;
 const CHILD_STARTUP_TIMEOUT_MS = 10_000;
 const MAX_CHILD_STDERR_BYTES = 8 * 1024;
 const MAX_ERROR_CHARS = 4_000;
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function retainStderrTail(current: Buffer, chunk: Buffer | string): Buffer {
   const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;

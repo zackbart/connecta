@@ -14,7 +14,7 @@ import type {
 } from "@modelcontextprotocol/client";
 import { KvOAuthProvider } from "../auth/downstream-oauth.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
-import { ConnectorCallError } from "../errors.js";
+import { ConnectorCallError, msg } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
@@ -253,10 +253,6 @@ function isCursorShapeError(err: unknown): boolean {
   // SDK v2 wraps Standard Schema failures in a ProtocolError and preserves the
   // failing path in the message rather than exposing the validator's issues.
   return msg(err).startsWith("Invalid result for tools/list: nextCursor:");
-}
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 /**

@@ -21,8 +21,29 @@ import {
 import { unwrapMcpResult } from "./mcp-result.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
+import { sleep, withDeadline } from "./timeout.js";
 import type { ToolDef } from "./types.js";
 import { validateToolInput } from "./validate.js";
+
+function defined<T extends object>(
+  values: T,
+): { [K in keyof T]?: Exclude<T[K], undefined> } {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) => value !== undefined),
+  ) as { [K in keyof T]?: Exclude<T[K], undefined> };
+}
+
+async function timed<T>(
+  bucket: (elapsed: number) => void,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const started = Date.now();
+  try {
+    return await fn();
+  } finally {
+    bucket(Date.now() - started);
+  }
+}
 
 /**
  * The longest the engine will park a synchronous inbound request in *waiting
@@ -207,13 +228,9 @@ export class InvocationService {
     args: unknown,
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
+    const options = defined({ signal: context.requestSignal });
     return this.invokeWithResolution(address, args, context, () =>
-      this.catalog.resolveTool(
-        address,
-        context.requestSignal !== undefined
-          ? { signal: context.requestSignal }
-          : {},
-      ),
+      this.catalog.resolveTool(address, options),
     );
   }
 
@@ -228,6 +245,7 @@ export class InvocationService {
     args: unknown,
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
+    const options = defined({ signal: context.requestSignal });
     return this.invokeWithResolution(
       `${connectorId}.${toolAlias}`,
       args,
@@ -237,9 +255,7 @@ export class InvocationService {
           connectorId,
           toolAlias,
           aliasFor,
-          context.requestSignal !== undefined
-            ? { signal: context.requestSignal }
-            : {},
+          options,
         ),
     );
   }
@@ -292,24 +308,21 @@ export class InvocationService {
         outcome,
         durationMs: Date.now() - started,
         attempts,
-        ...(classification.errorCode
-          ? { errorCode: classification.errorCode }
-          : {}),
-        ...(classification.friction
-          ? { friction: classification.friction }
-          : {}),
+        ...defined({
+          errorCode: classification.errorCode,
+          friction: classification.friction,
+        }),
       });
     };
-    const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
-      const diagnostics = timing();
-      const target = resolved ?? activityTarget;
-      const echoed =
-        error.code === "destructive_tool_requires_approval"
-          ? echoedCallArgs(args)
-          : {};
-      const details =
-        error.code === "destructive_tool_requires_approval" && target
-          ? {
+    const enrich = (
+      error: CallErrorDetails,
+      target: typeof activityTarget,
+    ): CallErrorDetails => {
+      if (!target) return error;
+      switch (error.code) {
+        case "destructive_tool_requires_approval": {
+          const echoed = echoedCallArgs(args);
+          return {
               ...error,
               nextAction: {
                 tool: "call_destructive_tool" as const,
@@ -323,9 +336,10 @@ export class InvocationService {
                     ? "Re-send these arguments and add a short reason for the human reviewer."
                     : "Re-send the arguments you just sent — they are too large to echo back — and add a short reason for the human reviewer."),
               },
-            }
-          : error.code === "auth_required" && target
-          ? {
+            };
+        }
+        case "auth_required":
+          return {
               ...error,
               connector: target.connector.id,
               operation: `${target.connector.id}.${target.toolName}`,
@@ -343,9 +357,10 @@ export class InvocationService {
               retry:
                 `Retry ${target.connector.id}.${target.toolName} after ` +
                 "the operator completes recovery.",
-            }
-          : error.code === "invalid_args" && error.validation && target
-            ? {
+            };
+        case "invalid_args":
+          if (!error.validation) return error;
+          return {
                 ...error,
                 connector: target.connector.id,
                 operation: `${target.connector.id}.${target.toolName}`,
@@ -359,8 +374,14 @@ export class InvocationService {
                 retry:
                   `Correct the listed arguments and retry ` +
                   `${target.connector.id}.${target.toolName}.`,
-              }
-          : error;
+              };
+        default:
+          return error;
+      }
+    };
+    const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
+      const diagnostics = timing();
+      const details = enrich(error, resolved ?? activityTarget);
       record(
         details.code === "timeout"
           ? "timeout"
@@ -374,7 +395,7 @@ export class InvocationService {
         durationMs: Date.now() - started,
         attempts,
         timing: diagnostics,
-        ...(resolved ? { resolved } : {}),
+        ...defined({ resolved }),
         error: details,
       };
     };
@@ -466,108 +487,68 @@ export class InvocationService {
     while (true) {
       attempts++;
       let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-      const controller =
-        context.timeoutMs || context.requestSignal
-          ? new AbortController()
-          : undefined;
-      const forwardAbort = () =>
-        controller?.abort(context.requestSignal?.reason);
-      if (context.requestSignal?.aborted) forwardAbort();
-      else {
-        context.requestSignal?.addEventListener("abort", forwardAbort, {
-          once: true,
-        });
-      }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      let onAbort: (() => void) | undefined;
       let attemptError: unknown;
       let attemptFailed = false;
       try {
-        const admissionStarted = Date.now();
-        try {
-          permit = await this.registry.admitCall(resolved.connector.id, {
+        permit = await timed(
+          (elapsed) => { admissionMs += elapsed; },
+          () => this.registry.admitCall(resolved.connector.id, {
             toolName: resolved.toolName,
             args: args ?? {},
-            ...(context.requestSignal !== undefined
-              ? { signal: context.requestSignal }
-              : {}),
-          });
-        } finally {
-          admissionMs += Date.now() - admissionStarted;
-        }
-        const connectorContext = this.registry.contextFor(
-          resolved.connector.id,
-          this.catalog.baseUrl,
-          this.catalog.requestScope,
-          {
-            ...(controller?.signal !== undefined
-              ? { signal: controller.signal }
-              : {}),
-            ...(context.timeoutMs !== undefined
-              ? { timeoutMs: context.timeoutMs }
-              : {}),
-          },
+            ...defined({ signal: context.requestSignal }),
+          }),
         );
-        if (resolved.connector.credential && !connectorContext.credential) {
-          throw new ConnectorCallError(
-            "auth_required",
-            "Operator-managed credential storage is not configured. Call " +
-              `authorize_connector({ connector: "${resolved.connector.id}" }).`,
-          );
-        }
-        let rejectCancelled!: (reason: unknown) => void;
-        const cancelled = controller
-          ? new Promise<never>((_, reject) => {
-              rejectCancelled = reject;
-            })
-          : undefined;
-        onAbort = () => {
-          rejectCancelled(
-            controller?.signal.reason ??
-              new ConnectorCallError("timeout", "Tool call was cancelled"),
-          );
-        };
-        controller?.signal.addEventListener("abort", onAbort, { once: true });
-        if (controller?.signal.aborted) onAbort();
-        if (controller?.signal.aborted) await cancelled;
-        if (context.timeoutMs) {
-          timer = setTimeout(() => {
-            controller?.abort(
-              new ConnectorCallError(
+        const raw = await timed(
+          (elapsed) => { connectorMs += elapsed; },
+          () => {
+            const call = (callSignal?: AbortSignal) => {
+              const connectorContext = this.registry.contextFor(
+                resolved.connector.id,
+                this.catalog.baseUrl,
+                this.catalog.requestScope,
+                defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
+              );
+              if (
+                resolved.connector.credential &&
+                !connectorContext.credential
+              ) {
+                throw new ConnectorCallError(
+                  "auth_required",
+                  "Operator-managed credential storage is not configured. Call " +
+                    `authorize_connector({ connector: "${resolved.connector.id}" }).`,
+                );
+              }
+              // Cancellation can arrive during admission or context construction.
+              if (callSignal?.aborted) throw callSignal.reason;
+              return resolved.connector.callTool(
+                resolved.toolName,
+                args ?? {},
+                connectorContext,
+              );
+            };
+            if (!context.timeoutMs && !context.requestSignal) return call();
+            return withDeadline(call, {
+              ...defined({
+                timeoutMs: context.timeoutMs,
+                signal: context.requestSignal,
+              }),
+              timeoutError: new ConnectorCallError(
                 "timeout",
                 `Tool call timed out after ${context.timeoutMs}ms`,
               ),
-            );
-          }, context.timeoutMs);
-        }
-        const connectorStarted = Date.now();
-        try {
-          const pending = resolved.connector.callTool(
-            resolved.toolName,
-            args ?? {},
-            connectorContext,
-          );
-          const raw = cancelled
-            ? await Promise.race([pending, cancelled])
-            : await pending;
-          // isError is checked here for BOTH result shapes so every adapter
-          // reports the same downstream-failure wording, and the throw lands
-          // inside the attempt where it stays retry-eligible and feeds health.
-          assertRawMcpSuccess(resolved.connector.kind, raw);
-          observedResult = unwrapMcpResult(resolved.connector.kind, raw);
-          result = context.unwrapResult ? observedResult : raw;
-        } finally {
-          connectorMs += Date.now() - connectorStarted;
-        }
+            });
+          },
+        );
+        // isError is checked here for BOTH result shapes so every adapter
+        // reports the same downstream-failure wording, and the throw lands
+        // inside the attempt where it stays retry-eligible and feeds health.
+        assertRawMcpSuccess(resolved.connector.kind, raw);
+        observedResult = unwrapMcpResult(resolved.connector.kind, raw);
+        result = context.unwrapResult ? observedResult : raw;
       } catch (error) {
         attemptFailed = true;
         attemptError = error;
       } finally {
-        if (timer) clearTimeout(timer);
-        if (onAbort) {
-          controller?.signal.removeEventListener("abort", onAbort);
-        }
-        context.requestSignal?.removeEventListener("abort", forwardAbort);
         permit?.release();
       }
 
@@ -587,29 +568,11 @@ export class InvocationService {
         ) {
           const wait = retryBackoffMs(attempts, details.retryAfterMs);
           if (wait !== undefined) {
-            const backoffStarted = Date.now();
-            if (wait > 0) {
-              const completed = await new Promise<boolean>((resolve) => {
-                let settled = false;
-                const finish = (value: boolean) => {
-                  if (settled) return;
-                  settled = true;
-                  clearTimeout(timer);
-                  context.requestSignal?.removeEventListener("abort", cancel);
-                  resolve(value);
-                };
-                const timer = setTimeout(() => finish(true), wait);
-                const cancel = () => finish(false);
-                context.requestSignal?.addEventListener("abort", cancel, {
-                  once: true,
-                });
-                if (context.requestSignal?.aborted) cancel();
-              });
-              backoffMs += Date.now() - backoffStarted;
-              if (!completed) return failed(callerCancelledDetails());
-            } else {
-              backoffMs += Date.now() - backoffStarted;
-            }
+            const completed = await timed(
+              (elapsed) => { backoffMs += elapsed; },
+              () => sleep(wait, context.requestSignal),
+            );
+            if (!completed) return failed(callerCancelledDetails());
             continue;
           }
           // The reported window is longer than the engine will park a
@@ -629,21 +592,25 @@ export class InvocationService {
     }
 
     this.registry.recordSuccess(resolved.connector.id, Date.now() - started);
-    const processingStarted = Date.now();
     try {
-      const value = context.processResult
-        ? await context.processResult(result, resolved)
-        : (result as T);
-      try {
-        this.registry.observeOutputShape(
-          resolved.connector.id,
-          resolved.definition,
-          observedResult,
-        );
-      } catch {
-        // Shape learning is advisory. It cannot change a completed call.
-      }
-      resultProcessingMs += Date.now() - processingStarted;
+      const value = await timed(
+        (elapsed) => { resultProcessingMs += elapsed; },
+        async () => {
+          const processed = context.processResult
+            ? await context.processResult(result, resolved)
+            : (result as T);
+          try {
+            this.registry.observeOutputShape(
+              resolved.connector.id,
+              resolved.definition,
+              observedResult,
+            );
+          } catch {
+            // Shape learning is advisory. It cannot change a completed call.
+          }
+          return processed;
+        },
+      );
       const diagnostics = timing();
       const friction = context.activityFriction?.(value);
       record("success", friction ? { friction } : {});
@@ -656,7 +623,6 @@ export class InvocationService {
         timing: diagnostics,
       };
     } catch (error) {
-      resultProcessingMs += Date.now() - processingStarted;
       return failed(
         framingError(
           "result_processing_failed",

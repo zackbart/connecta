@@ -1,4 +1,5 @@
 import { prepareExecuteResultForTransport } from "../executor-result.js";
+import { msg } from "../errors.js";
 import type { ExecutorProvider } from "../types.js";
 import {
   MAX_QUICKJS_IPC_BYTES,
@@ -23,10 +24,6 @@ const pending = new Map<
     reject: (error: Error) => void;
   }
 >();
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function send(message: ChildToParentMessage): void {
   if (!process.send) throw new Error("QuickJS child IPC channel is unavailable.");

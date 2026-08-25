@@ -12,6 +12,7 @@ import type {
   Logger,
 } from "../types.js";
 import { operatorPageForPath } from "../ui.js";
+export { msg } from "../errors.js";
 
 export interface ServerOptions {
   registry: Registry;
@@ -61,10 +62,6 @@ export interface RouteContext {
   opts: ServerOptions;
   defer: DeferredWork | undefined;
   runtimeContext: RuntimeExecutionContext | undefined;
-}
-
-export function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function privateJson(

@@ -28,7 +28,7 @@ import {
 } from "../src/connectors/remote-mcp.js";
 import { createMetaTools } from "../src/meta-tools.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { withTimeout } from "../src/timeout.js";
+import { withAbortableTimeout } from "../src/timeout.js";
 import { buildUiData } from "../src/ui.js";
 import type {
   ConnectorContext,
@@ -644,7 +644,11 @@ describe("remoteMcp() connector", () => {
     const context = { ...ctx(storage), requestScope: {} };
 
     const status = connector.status!(context);
-    await withTimeout(secondRead, 250, "post-connect generation read");
+    await withAbortableTimeout(
+      () => secondRead,
+      250,
+      "post-connect generation read",
+    );
     await connector.closeScope!(context);
     expect(counts).toEqual({ connect: 1, close: 1 });
     releaseSecondRead();

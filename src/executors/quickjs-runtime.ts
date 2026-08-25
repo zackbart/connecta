@@ -14,6 +14,7 @@ import {
   type QuickJSDeferredPromise,
 } from "quickjs-emscripten";
 import type { ExecuteResult, ExecutorProvider } from "../types.js";
+import { msg } from "../errors.js";
 import {
   hostCallLabel,
   MAX_QUICKJS_LOG_TRANSPORT_BYTES,
@@ -51,10 +52,6 @@ const MAX_LOG_MARKER_TRANSPORT_BYTES = Math.max(
 // This still lets guest code reduce data more than ten times larger than
 // connecta's final response budget.
 const MAX_HOST_RESULT_BYTES = 256 * 1024;
-
-function msg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function logTransportBytes(entry: string): number {
   // The log is encoded into ExecutionPayload, then that payloadJson string is
