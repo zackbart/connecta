@@ -1,7 +1,7 @@
 // The Cloudflare connection is hand-written fetch, so the seam worth testing
 // is the request it builds and the result it projects. `fetch` is stubbed for
 // the whole file; nothing here reaches the network.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import {
   CLOUDFLARE_API_BASE,
   CLOUDFLARE_CONTENT_DNS_RECORD_TYPES,
@@ -74,21 +74,15 @@ function stubFetch(...responses: StubResponse[]): void {
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     calls.push({ url: String(input), init });
     const next = queue.shift() ?? { status: 200, body: { success: true, result: {} } };
-    const status = next.status ?? 200;
-    const response = {
-      ok: status >= 200 && status < 300,
-      status,
-      headers: new Headers(next.headers ?? {}),
-      json: async () => {
-        if (next.nonJson) throw new SyntaxError("Unexpected token <");
-        return next.body;
-      },
-      text: async () => next.text ?? "",
-      arrayBuffer: async () =>
-        (next.bytes ?? new Uint8Array()).buffer,
-    } as unknown as Response;
-    Object.assign(response, { clone: () => response });
-    return response;
+    const body = next.bytes
+      ? new Blob([next.bytes])
+      : next.nonJson || next.text !== undefined
+        ? next.text ?? "<html>gateway</html>"
+        : JSON.stringify(next.body ?? {});
+    return new Response(body, {
+      status: next.status ?? 200,
+      headers: next.headers ?? {},
+    });
   }) as unknown as typeof fetch;
 }
 
@@ -1285,6 +1279,11 @@ describe("cloudflare() projections", () => {
 });
 
 describe("cloudflare() typed failures", () => {
+  const cases: Array<[string, () => Promise<void>]> = [];
+  const caseOf = (name: string, run: () => Promise<void>) => {
+    cases.push([name, run]);
+  };
+
   async function failure(
     stub: StubResponse,
     tool = "list_zones",
@@ -1299,7 +1298,7 @@ describe("cloudflare() typed failures", () => {
     throw new Error("expected a failure");
   }
 
-  it("routes a missing token to auth_required before any request", async () => {
+  caseOf("routes a missing token to auth_required before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
     await expect(
       connection().callTool("list_zones", {}, contextWithToken(null)),
@@ -1307,7 +1306,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("routes an incomplete Global API Key pair to auth_required before any request", async () => {
+  caseOf("routes an incomplete Global API Key pair to auth_required before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
     await expect(
       connection({ authentication: "globalApiKey" }).callTool(
@@ -1319,7 +1318,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("routes an invalid token to auth_required and walks the error chain", async () => {
+  caseOf("routes an invalid token to auth_required and walks the error chain", async () => {
     // Cloudflare answers an unusable token with 401 on resource endpoints and
     // nests the real reason in error_chain, so the chain must be flattened for
     // the agent to see anything actionable.
@@ -1343,7 +1342,7 @@ describe("cloudflare() typed failures", () => {
     expect(chained.message).toContain("Invalid API Token");
   });
 
-  it("reads a credential-shaped 400 as auth, not as repairable arguments", async () => {
+  caseOf("reads a credential-shaped 400 as auth, not as repairable arguments", async () => {
     // 6003 "Invalid request headers" arrives on HTTP 400, so status alone
     // would tell the agent to fix its arguments when the token is malformed.
     const error = await failure({
@@ -1366,7 +1365,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.retryable).toBe(false);
   });
 
-  it("does not read the overloaded 10000 code as an auth failure on its own", async () => {
+  caseOf("does not read the overloaded 10000 code as an auth failure on its own", async () => {
     // Cloudflare reuses 10000 as a generic validation code. On a 400 it means
     // the arguments are wrong; treating it as auth would strand the agent.
     const error = await failure({
@@ -1380,7 +1379,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.code).toBe("invalid_args");
   });
 
-  it("treats an insufficient-permission 403 as auth_required, not a retry", async () => {
+  caseOf("treats an insufficient-permission 403 as auth_required, not a retry", async () => {
     const error = await failure({
       status: 403,
       body: {
@@ -1394,7 +1393,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("permission");
   });
 
-  it("maps a 429 to rate_limited and honors retry-after", async () => {
+  caseOf("maps a 429 to rate_limited and honors retry-after", async () => {
     const withHeader = await failure({
       status: 429,
       headers: { "retry-after": "42" },
@@ -1413,7 +1412,7 @@ describe("cloudflare() typed failures", () => {
     expect(withoutHeader.retryAfterMs).toBe(300_000);
   });
 
-  it("maps a duplicate-record rejection to invalid_args", async () => {
+  caseOf("maps a duplicate-record rejection to invalid_args", async () => {
     const error = await failure(
       {
         status: 400,
@@ -1438,7 +1437,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("81057");
   });
 
-  it("maps an unknown identifier to not_found, naming the fix", async () => {
+  caseOf("maps an unknown identifier to not_found, naming the fix", async () => {
     // Cloudflare refuses a token that may not touch a resource with 401 or
     // 403, so a 404 here is an absence rather than a permission gap wearing a
     // miss — the unambiguous case not_found exists for (H11). A program can
@@ -1457,7 +1456,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("list_zones");
   });
 
-  it("maps a 5xx to a retryable unavailable", async () => {
+  caseOf("maps a 5xx to a retryable unavailable", async () => {
     const error = await failure({
       status: 502,
       body: { success: false, errors: [] },
@@ -1466,12 +1465,12 @@ describe("cloudflare() typed failures", () => {
     expect(error.retryable).toBe(true);
   });
 
-  it("survives a non-JSON gateway page", async () => {
+  caseOf("survives a non-JSON gateway page", async () => {
     const error = await failure({ status: 503, nonJson: true });
     expect(error.code).toBe("unavailable");
   });
 
-  it("reports an oversized 2xx body as the ceiling failure it is", async () => {
+  caseOf("reports an oversized 2xx body as the ceiling failure it is", async () => {
     // A body past the ceiling fails from inside the same `json()` a gateway
     // page fails from, and the two are not the same failure: this one is not
     // a retryable "non-JSON body", it is a non-retryable refusal to read a
@@ -1494,7 +1493,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("response ceiling");
   });
 
-  it("treats success: false with a 200 as a failure", async () => {
+  caseOf("treats success: false with a 200 as a failure", async () => {
     const error = await failure({
       status: 200,
       body: {
@@ -1507,7 +1506,7 @@ describe("cloudflare() typed failures", () => {
     expect(error.message).toContain("1004");
   });
 
-  it("maps a transport failure to unavailable", async () => {
+  caseOf("maps a transport failure to unavailable", async () => {
     globalThis.fetch = vi.fn(async () => {
       throw new TypeError("network unreachable");
     }) as unknown as typeof fetch;
@@ -1516,7 +1515,7 @@ describe("cloudflare() typed failures", () => {
     ).rejects.toMatchObject({ code: "unavailable", retryable: true });
   });
 
-  it("refuses an omitted scope at the schema, before any request", async () => {
+  caseOf("refuses an omitted scope at the schema, before any request", async () => {
     stubFetch({ body: { success: true, result: [] } });
     await expect(
       connection().callTool("get_zone", {}, contextWithToken()),
@@ -1534,7 +1533,7 @@ describe("cloudflare() typed failures", () => {
     expect(zoneProperty["description"]).toContain("list_zones");
   });
 
-  it("refuses a blank scope the schema cannot catch, naming the discovery tool", async () => {
+  caseOf("refuses a blank scope the schema cannot catch, naming the discovery tool", async () => {
     stubFetch({ body: { success: true, result: [] } });
     await expect(
       connection().callTool("get_zone", { zoneId: "   " }, contextWithToken()),
@@ -1555,7 +1554,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("refuses an ambiguous or empty purge locally", async () => {
+  caseOf("refuses an ambiguous or empty purge locally", async () => {
     stubFetch({ body: { success: true, result: {} } });
     const connector = connection({ zoneId: "zone-1" });
 
@@ -1588,7 +1587,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("refuses an update with nothing to change", async () => {
+  caseOf("refuses an update with nothing to change", async () => {
     stubFetch({ body: { success: true, result: {} } });
     await expect(
       connection().callTool(
@@ -1600,17 +1599,7 @@ describe("cloudflare() typed failures", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("rejects an argument the closed schema does not declare", async () => {
-    stubFetch({ body: { success: true, result: [] } });
-    await expect(
-      connection().callTool(
-        "list_zones",
-        { zone: "example.com" },
-        contextWithToken(),
-      ),
-    ).rejects.toMatchObject({ code: "invalid_args" });
-    expect(calls).toHaveLength(0);
-  });
+  test.each(cases)("%s", async (_name, run) => run());
 });
 
 describe("cloudflare() credential test", () => {

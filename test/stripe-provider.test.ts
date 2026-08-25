@@ -1,5 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Connector, ToolDef } from "../src/types.js";
+import type { ToolDef } from "../src/types.js";
+import {
+  guideOf,
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+} from "./fixtures/hosted-provider.js";
 
 const mocks = vi.hoisted(() => ({
   listTools: vi.fn<() => Promise<ToolDef[]>>(),
@@ -17,44 +22,9 @@ vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
 import { STRIPE_MCP_ENDPOINT, stripe } from "../src/providers/stripe.js";
 import { connectorGuideSummary } from "../src/skills.js";
 
-const context = {
-  storage: {
-    get: vi.fn(),
-    set: vi.fn(),
-    delete: vi.fn(),
-  },
-  logger: console,
-  baseUrl: "https://connecta.example",
-};
-
-
-/**
- * Every maintained provider guide is structured now (H13, P7), so a guide
- * assertion reads its `content` rather than the connector field.
- */
-function guideOf(connector: Connector): string {
-  const guide = connector.usageGuide;
-  if (typeof guide !== "object" || guide === undefined) {
-    throw new Error("expected a structured usage guide");
-  }
-  return guide.content;
-}
-
 describe("stripe()", () => {
   beforeEach(() => {
-    mocks.listTools.mockReset();
-    mocks.remoteMcp.mockReset();
-    mocks.remoteMcp.mockImplementation(
-      (id: string, options: object): Connector => ({
-        id,
-        kind: "mcp",
-        ...options,
-        listTools: mocks.listTools,
-        async callTool() {
-          return [];
-        },
-      }),
-    );
+    mockRemoteMcp(mocks);
   });
 
   it("owns the endpoint, OAuth default, purpose, and mixed-mode guidance", () => {
@@ -409,99 +379,16 @@ describe("stripe()", () => {
     ).toThrow('connectedAccount must be a Stripe account id ("acct_...").');
   });
 
-  it("fills in silent annotations and fails closed on catalog drift", async () => {
-    mocks.listTools.mockResolvedValue([
-      // Allowlisted read, downstream silent on both hints: fill it in.
-      { name: "stripe_api_read", annotations: { openWorldHint: true } },
-      // Allowlisted read with no annotations object at all.
-      { name: "search_stripe_documentation" },
-      // Maintained additive write: leaves the read path without inflating the
-      // host's approval copy with a destruction it does not perform.
-      { name: "stripe_report" },
-      // `create_customer` still appears in one stale Stripe doc example but is
-      // absent from the documented tool table. Unclassified and unannotated
-      // means fail closed.
-      { name: "create_customer" },
-    ]);
-    const connector = stripe("billing", {
-      purpose: "Rehearsal",
-    });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-      openWorldHint: true,
-    });
-    expect(tools[1]?.annotations).toMatchObject({
-      readOnlyHint: true,
-      destructiveHint: false,
-    });
-    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
-    expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
-  });
-
-  it("keeps a vetted destructive tool closed despite a read-only claim", async () => {
-    mocks.listTools.mockResolvedValue([
-      { name: "create_refund", annotations: { readOnlyHint: true } },
-    ]);
-    const connector = stripe("billing", {
-      purpose: "Rehearsal",
-    });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("believes an explicit annotation on a tool no release has classified", async () => {
-    mocks.listTools.mockResolvedValue([
-      // Not on either maintained list, and the downstream calls it read-only.
-      // Rewriting that to `false` would be an overrule, not a fill-in: on a
-      // name no release has reviewed, the downstream's word is the only
-      // evidence there is. Stripe alludes to undocumented Treasury tools that
-      // will arrive exactly this way.
-      { name: "get_new_treasury_thing", annotations: { readOnlyHint: true } },
-      // The same rule in the other direction.
-      { name: "wreck_new_thing", annotations: { destructiveHint: true } },
-    ]);
-    const connector = stripe("billing", {
-      purpose: "Rehearsal",
-    });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({ readOnlyHint: true });
-    expect(tools[1]?.annotations).toEqual({
-      readOnlyHint: false,
-      destructiveHint: true,
-    });
-  });
-
-  it("never overrules an explicit downstream annotation on a vetted read", async () => {
-    mocks.listTools.mockResolvedValue([
-      // The downstream says this allowlisted name now mutates something. That
-      // is the downstream telling us the allowlist is stale; it wins.
-      {
-        name: "stripe_api_read",
-        annotations: { destructiveHint: true, openWorldHint: true },
-      },
-      // Same story stated the other way round.
-      { name: "get_balance_summary", annotations: { readOnlyHint: false } },
-    ]);
-    const connector = stripe("billing", {
-      purpose: "Rehearsal",
-    });
-    const tools = await connector.listTools(context);
-
-    expect(tools[0]?.annotations).toEqual({
-      destructiveHint: true,
-      openWorldHint: true,
-    });
-    expect(tools[0]?.annotations?.readOnlyHint).toBeUndefined();
-    expect(tools[1]?.annotations).toEqual({ readOnlyHint: false });
-  });
+  itClassifiesLikeARelease(
+    () => stripe("billing", { purpose: "Rehearsal" }),
+    mocks,
+    {
+      read: ["stripe_api_read", "search_stripe_documentation", "get_balance_summary"],
+      write: "stripe_report",
+      destructive: "create_refund",
+      unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
+    },
+  );
 
   it("rejects an empty purpose and an unknown static mode at construction", () => {
     expect(() => stripe("billing", { purpose: "  " })).toThrow(
