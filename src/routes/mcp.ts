@@ -242,7 +242,7 @@ async function serveMcp(
       // it — without this line no host reads execute_code's _meta.ui, no host
       // fetches the shell, and the whole design is inert. This is the one
       // extension connecta advertises; the versioned extensions framework
-      // stays declined as a general surface (documentation/mcp-2026-07-28.md).
+      // stays declined as a general surface (https://github.com/zackbart/connecta/blob/main/records/mcp-2026-07-28.md).
       capabilities: {
         extensions: {
           [MCP_APPS_EXTENSION]: { mimeTypes: [PROGRAM_UI_MIME_TYPE] },

@@ -752,7 +752,7 @@ it back byte-identical after each operator mutation.
   constructor, schemas, validation path, handlers, and catalog service run, and
   only `fetch` is a probe that records the request (#350).
 - **Five provider audit reports** in
-  [`documentation/provider-audit.md`](./documentation/provider-audit.md), with
+  [`records/provider-audit.md`](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md), with
   a verdict per convention, the fix for every miss, and every accepted
   exception recorded with its argument (#342).
 - **A convention test over the shipped surface.**
@@ -1535,7 +1535,7 @@ The channel is additive — a program that never calls `connecta.ui` produces th
 byte-for-byte prior response, no executor changed to carry it, and there is no
 new budget knob. Deployments do gain a `resources` capability and one extension
 declaration, both of which the design requires before any host will render.
-The design record is `documentation/mcp-ui-design.md` (#266); the contract is
+The design record is [`records/mcp-ui-design.md`](https://github.com/zackbart/connecta/blob/main/records/mcp-ui-design.md) (#266); the contract is
 `code-mode.md`'s "Rendered output" clauses (#277).
 
 ### Added
@@ -1611,7 +1611,7 @@ that cannot be projected, like a screenshot a downstream tool returned. The
 channel is additive: a program that never emits produces the byte-for-byte
 prior response, no executor changed to carry it, and deployments that do
 nothing get sensible budgets. The design record is
-`documentation/rich-output-design.md` (#267); the contract is `code-mode.md`'s
+[`records/rich-output-design.md`](https://github.com/zackbart/connecta/blob/main/records/rich-output-design.md) (#267); the contract is `code-mode.md`'s
 "Emitted output" clauses (#270).
 
 Agent recovery is now executable data instead of prose at the remaining local
@@ -2024,7 +2024,7 @@ tests confirm SDK v2 client close does not make it redundant.
   advances the existing generation fence before the SDK starts a fresh grant;
   pre-upgrade credentials bind in place on their first validated read.
 - **A complete in-repo disposition of the revision** in
-  [`documentation/mcp-2026-07-28.md`](./documentation/mcp-2026-07-28.md),
+  [`records/mcp-2026-07-28.md`](https://github.com/zackbart/connecta/blob/main/records/mcp-2026-07-28.md),
   including the declined and gated surfaces.
 
 ### Changed

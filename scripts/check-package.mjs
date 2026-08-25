@@ -330,7 +330,7 @@ try {
   // doc linking an excluded guide is the same defect one indirection out — the
   // reader clicks and lands nowhere (#346), and so does one linking `eval/`,
   // `test/`, `scripts/`, or the README hero, none of which the tarball carries
-  // (#378). The rule those all answer to lives in scripts/check-packed-links.mjs
+  // (#378). The rule those all answer to lives in check-doc-links --packed
   // and reads the same packed list this pack just produced; a link the tarball
   // cannot satisfy either ships its target or becomes a github.com URL.
   const packedManifest = join(work, "packed-paths.txt");
@@ -338,7 +338,8 @@ try {
   run(
     process.execPath,
     [
-      join(root, "scripts", "check-packed-links.mjs"),
+      join(root, "scripts", "check-doc-links.mjs"),
+      "--packed",
       "--root",
       root,
       "--files",

@@ -651,7 +651,7 @@ runs this document against each of the six providers and returns a verdict per
 convention: **meets**, **misses** (with the fix), or **not applicable** (with
 the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
-Its six reports live in [provider-audit.md](./provider-audit.md), and the
+Its six reports live in [provider-audit.md](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md), and the
 mechanically checkable half of the hand-written bar runs on every test run in
 [`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts) —
 so a convention that was met once stays met, or fails loudly.

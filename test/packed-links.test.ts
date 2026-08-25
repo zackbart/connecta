@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
 const checker = fileURLToPath(
-  new URL("../scripts/check-packed-links.mjs", import.meta.url),
+  new URL("../scripts/check-doc-links.mjs", import.meta.url),
 );
 const fixtures: string[] = [];
 
@@ -33,7 +33,7 @@ async function fixture(
 function check(root: string) {
   const result = spawnSync(
     process.execPath,
-    [checker, "--root", root, "--files", join(root, "packed-paths.txt")],
+    [checker, "--packed", "--root", root, "--files", join(root, "packed-paths.txt")],
     { encoding: "utf8" },
   );
   return { status: result.status, output: `${result.stdout}${result.stderr}` };

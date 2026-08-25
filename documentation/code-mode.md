@@ -5,14 +5,14 @@ is promised: what it can reach, what it gets back, how failures look, what it
 may retry, what bounds it runs under, and what its execution leaves behind in
 the activity surface. It is the interface a model actually programs against, so
 it is specified in prose first and implemented second — the same discipline the
-[MCP spec bump](./mcp-2026-07-28.md) followed.
+[MCP spec bump](https://github.com/zackbart/connecta/blob/main/records/mcp-2026-07-28.md) followed.
 
 Two executors implement this document: QuickJS in a child process on Node, and
 `DynamicWorkerExecutor` from `@cloudflare/codemode` on Workers. Divergence between
 them is a bug unless it appears in [Executor exceptions](#executor-exceptions),
 which names the reason. Anyone can implement a third from this document alone.
 
-The [code-first exploration](./code-first-exploration.md) is the evidence behind
+The [code-first exploration](https://github.com/zackbart/connecta/blob/main/records/code-first-exploration.md) is the evidence behind
 the direction; [`ethos.md`](../ethos.md) carries the verdicts. Where its prototype
 and this document disagree, this document wins. Clause identifiers (`A1`, `E3`, …)
 are stable and cited by the tests in [Verification](#verification).
@@ -437,7 +437,7 @@ on data nobody asked for.
 MCP-native output a return value cannot carry: base64 is not projectable, so a
 block that survives intake uncapped (`S5`) must not die at the `R2` exit
 guard. The argument and the refused alternatives live in the
-[design record](./rich-output-design.md) and `ethos.md`
+[design record](https://github.com/zackbart/connecta/blob/main/records/rich-output-design.md) and `ethos.md`
 ([#267](https://github.com/zackbart/connecta/issues/267),
 [#270](https://github.com/zackbart/connecta/issues/270)).
 
@@ -498,7 +498,7 @@ one MCP Apps view per successful run, assembled where composition already
 happens. Programs supply HTML content and nothing else — the only `ui://` URI in
 the system is connecta's build-time shell, so nothing a client could dereference
 is derived from anything a program said. The argument, the refused shapes, and
-the security posture live in the [design record](./mcp-ui-design.md)
+the security posture live in the [design record](https://github.com/zackbart/connecta/blob/main/records/mcp-ui-design.md)
 ([#266](https://github.com/zackbart/connecta/issues/266),
 [#277](https://github.com/zackbart/connecta/issues/277)); this section is the
 contract, and it wins where the two disagree.
@@ -599,7 +599,7 @@ seven-tool surface, guest API, catalog, Apps delivery, and runtime do not change
 ([#286](https://github.com/zackbart/connecta/issues/286),
 [#418](https://github.com/zackbart/connecta/issues/418)).
 
-Bounded view reads follow normative [`V1`–`V8`](./program-ui-read-calls.md) ([#287](https://github.com/zackbart/connecta/issues/287), [#289](https://github.com/zackbart/connecta/issues/289)).
+Bounded view reads follow normative [`V1`–`V8`](https://github.com/zackbart/connecta/blob/main/records/program-ui-read-calls.md) ([#287](https://github.com/zackbart/connecta/issues/287), [#289](https://github.com/zackbart/connecta/issues/289)).
 
 ## Retry semantics
 

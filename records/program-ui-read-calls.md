@@ -2,7 +2,7 @@
 
 Decision note for [#287](https://github.com/zackbart/connecta/issues/287),
 2026-08-02. The implementation contract is [#289](https://github.com/zackbart/connecta/issues/289)
-and the normative clauses are `V1`–`V8` in [code-mode.md](./code-mode.md).
+and the normative clauses are `V1`–`V8` in [code-mode.md](../documentation/code-mode.md).
 
 ## Verdict
 

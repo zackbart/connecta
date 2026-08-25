@@ -145,4 +145,4 @@ either way and still needs restrained use.
 This connection is audited against
 [the provider conventions](./provider-conventions.md). Its verdict per
 convention, including every recorded exception, is the Mixpanel section of
-[the provider audit](./provider-audit.md).
+[the provider audit](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md).

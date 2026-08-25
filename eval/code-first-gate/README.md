@@ -14,6 +14,6 @@ describe the product and harness as they existed when recorded; they are not a
 current deployment guide or a benchmark that can be rerun against today's API.
 
 For the evidence and reasoning that led to the code-first design, see the
-[code-first exploration](../../documentation/code-first-exploration.md). The
+[code-first exploration](../../records/code-first-exploration.md). The
 current contract lives in [code mode](../../documentation/code-mode.md), and
 [`ethos.md`](../../ethos.md) records the accepted and removed decisions.

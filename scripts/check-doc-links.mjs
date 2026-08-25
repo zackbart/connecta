@@ -34,7 +34,7 @@ const guideLineLimit = 900;
 function usage(message) {
   if (message) console.error(message);
   console.error(
-    "usage: node scripts/check-doc-links.mjs [--root <path>] [--skip-structure]",
+    "usage: node scripts/check-doc-links.mjs [--root <path>] [--skip-structure] [--packed --files <path>]",
   );
   process.exit(2);
 }
@@ -42,6 +42,8 @@ function usage(message) {
 function parseArguments(argv) {
   let root = repositoryRoot;
   let checkStructure = true;
+  let packed = false;
+  let files;
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
     if (argument === "--root") {
@@ -51,11 +53,20 @@ function parseArguments(argv) {
       index += 1;
     } else if (argument === "--skip-structure") {
       checkStructure = false;
+    } else if (argument === "--packed") {
+      packed = true;
+    } else if (argument === "--files") {
+      const value = argv[index + 1];
+      if (!value) usage("--files requires a path");
+      files = resolve(value);
+      index += 1;
     } else {
       usage(`unknown argument: ${argument}`);
     }
   }
-  return { root, checkStructure };
+  if (packed && !files) usage("--packed requires --files");
+  if (!packed && files) usage("--files requires --packed");
+  return { root, checkStructure, packed, files };
 }
 
 function displayPath(root, path) {
@@ -250,6 +261,41 @@ async function checkLinks(root, markdownPaths, markdownCache, errors) {
   }
 }
 
+async function checkPackedLinks(root, packedPaths, errors) {
+  const packed = new Set(packedPaths);
+  for (const packedPath of [...packed].sort()) {
+    if (!packedPath.endsWith(".md") || historicalLinkAllowlist.has(packedPath)) continue;
+    const path = resolve(root, packedPath);
+    const source = await readFile(path, "utf8");
+    for (const { line, target } of markdownLinks(source)) {
+      const unescaped = unescapeTarget(target);
+      if (/^[a-z][a-z0-9+.-]*:/i.test(unescaped) || unescaped.startsWith("/")) {
+        continue;
+      }
+      const [withoutFragment] = unescaped.split("#");
+      const [relativePath] = withoutFragment.split("?");
+      if (!relativePath) continue;
+      const resolved = resolveLocalTarget(root, path, relativePath);
+      const resolvedPath = displayPath(root, resolved.path);
+      const directoryTarget = relativePath.endsWith("/");
+      const carried = directoryTarget
+        ? [...packed].some((candidate) => candidate.startsWith(`${resolvedPath}/`))
+        : packed.has(resolvedPath);
+      if (carried) continue;
+      addError(
+        errors,
+        root,
+        path,
+        line,
+        `relative link "${target}" resolves to ${resolvedPath}${
+          directoryTarget ? "/" : ""
+        }, which the tarball does not carry; ship the target or cite it as ` +
+          `https://github.com/zackbart/connecta/blob/main/${resolvedPath}`,
+      );
+    }
+  }
+}
+
 async function checkStaleReferences(root, paths, errors) {
   const stalePattern =
     /(?:docs\/)?documentation\.md(?:#[A-Za-z0-9_/-]+|\s+§\s*\d+)|§\s*\d+/gi;
@@ -394,20 +440,32 @@ async function checkStructure(root, markdownCache, errors) {
   }
 }
 
-const { root, checkStructure: shouldCheckStructure } = parseArguments(
-  process.argv.slice(2),
-);
-const paths = await walkFiles(root);
-const markdownPaths = paths.filter(
-  (path) => extname(path).toLowerCase() === ".md",
-);
-const markdownCache = new Map();
+const { root, checkStructure: shouldCheckStructure, packed, files } =
+  parseArguments(process.argv.slice(2));
 const errors = [];
+let successMessage;
 
-await checkLinks(root, markdownPaths, markdownCache, errors);
-await checkStaleReferences(root, paths, errors);
-if (shouldCheckStructure) {
-  await checkStructure(root, markdownCache, errors);
+if (packed) {
+  const packedPaths = (await readFile(files, "utf8"))
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+  await checkPackedLinks(root, packedPaths, errors);
+  successMessage = `packed link check passed (${packedPaths.length} packed paths)`;
+} else {
+  const paths = await walkFiles(root);
+  const markdownPaths = paths.filter(
+    (path) => extname(path).toLowerCase() === ".md",
+  );
+  const markdownCache = new Map();
+  await checkLinks(root, markdownPaths, markdownCache, errors);
+  await checkStaleReferences(root, paths, errors);
+  if (shouldCheckStructure) {
+    await checkStructure(root, markdownCache, errors);
+  }
+  successMessage = `documentation check passed (${markdownPaths.length} Markdown files${
+    shouldCheckStructure ? ", structure verified" : ""
+  })`;
 }
 
 errors.sort(
@@ -423,9 +481,5 @@ if (errors.length > 0) {
   }
   process.exitCode = 1;
 } else {
-  console.log(
-    `documentation check passed (${markdownPaths.length} Markdown files${
-      shouldCheckStructure ? ", structure verified" : ""
-    })`,
-  );
+  console.log(successMessage);
 }

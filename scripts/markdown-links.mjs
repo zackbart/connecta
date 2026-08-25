@@ -1,6 +1,6 @@
 // Markdown link extraction, shared by the two gates that read links: the
 // repository checker (`check:docs`, scripts/check-doc-links.mjs) and the
-// packed-tarball checker (scripts/check-packed-links.mjs). One parser means one
+// packed-tarball mode (check-doc-links --packed). One parser means one
 // answer to "is this a link" — fenced examples are not, reference definitions
 // are, and an escaped parenthesis inside a target belongs to the target.
 

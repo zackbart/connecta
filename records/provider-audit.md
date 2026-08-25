@@ -1,6 +1,6 @@
 # Provider audit
 
-[`provider-conventions.md`](./provider-conventions.md) wrote the bar down. This
+[`provider-conventions.md`](../documentation/provider-conventions.md) wrote the bar down. This
 document runs it against the six maintained prebuilt connections and returns a
 verdict for every applicable convention: **meets**, **misses** (with the fix),
 or **n/a** (with the reason). A convention is never quietly skipped, and an

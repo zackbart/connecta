@@ -150,7 +150,7 @@ are in it and that no unshippable path leaked in — including any
 Cloudflare-named connector or storage path (`connectors/cloudflare`,
 `storage/cloudflare`) anywhere in the artifact, `dist/` and `examples/` alike —
 derives the shipped guide list from which guides still carry a stub marker,
-hands the packed path list to `scripts/check-packed-links.mjs`, and then runs
+hands the packed path list to `check-doc-links --packed`, and then runs
 `connecta init` and builds and runs the generated deployment's own container.
 
 That last step enforces the packed-link policy, which is one sentence: **every
@@ -290,7 +290,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | Suite | Covers |
 | --- | --- |
 | `browser/operator-ui.spec.ts` | the operator wiring in a real browser: Clerk loader order across its version redirect and a real load failure, the shell staying open until authentication, credential and access-token and OAuth flows end to end, drift shown without naming a tool, and every failure and empty state |
-| `browser/program-ui.spec.ts` | the Apps shell in a real browser: a bound view merging fixed and declared arguments and correlating concurrent reads, and the one-string payload receiving no read bridge ([program UI read calls](./program-ui-read-calls.md)) |
+| `browser/program-ui.spec.ts` | the Apps shell in a real browser: a bound view merging fixed and declared arguments and correlating concurrent reads, and the one-string payload receiving no read bridge ([program UI read calls](https://github.com/zackbart/connecta/blob/main/records/program-ui-read-calls.md)) |
 
 **The `_transportFactory` seam.** `RemoteMcpOptions._transportFactory` is
 internal, not public API: when set, `remoteMcp()` uses that `Transport` instead

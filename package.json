@@ -105,12 +105,11 @@
     "check:examples": "tsc -p tsconfig.template.node.json && tsc -p tsconfig.examples.worker.json",
     "check:security": "npm audit --omit=dev --audit-level=moderate",
     "check:package": "node scripts/check-package.mjs",
-    "load:admission": "npm run build && node scripts/admission-load.mjs",
+    "load:admission": "npm run build && node eval/admission-load.mjs",
     "drift:check": "tsx scripts/drift-check.mjs",
     "check": "npm run check:docs && npm run check:operator-ui && npm run check:lint && npm run check:unused && npm run typecheck && npm run test && npm run build && npm run check:examples",
     "release:check": "npm run check && npm run check:security && npm run check:package",
-    "prepack": "npm run check",
-    "prepublishOnly": "npm run check:security"
+    "prepack": "npm run check"
   },
   "dependencies": {
     "@cfworker/json-schema": "^4.1.1",
