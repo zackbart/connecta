@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.18.3 — 2026-08-25
 
 This change gives code mode memory where downstream MCP catalogs are usually
 silent: after a successful call with no declared output schema, Connecta keeps
