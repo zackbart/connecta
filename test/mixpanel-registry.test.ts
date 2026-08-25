@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createConnecta } from "../src/index.js";
 import { mixpanel } from "../src/providers/mixpanel.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
 import type { KVStorage } from "../src/types.js";
 
 // Unmocked on purpose. test/mixpanel-provider.test.ts stubs remote-mcp to
@@ -19,23 +19,6 @@ const executor = { execute: async () => ({ result: null }) };
  * Seed one connector's persisted catalog so `getTools` resolves from storage.
  * The key (`catalog:<id>`) is the namespace under test.
  */
-async function seedCatalog(
-  storage: KVStorage,
-  id: string,
-  toolName: string,
-): Promise<void> {
-  const now = Date.now();
-  await storage.set(
-    `catalog:${id}`,
-    JSON.stringify({
-      tools: [{ name: toolName, annotations: { readOnlyHint: true } }],
-      fetchedAt: now,
-      expiresAt: now + 600_000,
-      staleUntil: now + 1_200_000,
-    }),
-  );
-}
-
 function twoAccounts(storage: KVStorage) {
   return createConnecta({
     executor,
@@ -132,7 +115,9 @@ describe("mixpanel() inside a real deployment", () => {
   });
 
   it("meters only the account that asked to be metered, and observes both", async () => {
-    const connecta = twoAccounts(memoryStorage());
+    const storage = memoryStorage();
+    await seedCatalog(storage, "mixpanel_us", "Run-Query");
+    const connecta = twoAccounts(storage);
     // No invented default ceiling: the unmetered instance has no admission
     // controller at all, while the operator-configured one does.
     expect(Object.keys(connecta.registry.callAdmissionSnapshot())).toEqual([
@@ -153,10 +138,9 @@ describe("mixpanel() inside a real deployment", () => {
     expect(budgets["mixpanel_us"]?.totals.admitted).toBe(1);
     expect(budgets["mixpanel_eu"]).toBeUndefined();
 
-    // Health and activity are keyed by connector id the same way.
-    connecta.registry.recordFailure("mixpanel_us", 5, new Error("boom"));
-    expect(connecta.registry.healthFor("mixpanel_us")?.consecutiveFailures)
-      .toBe(1);
-    expect(connecta.registry.healthFor("mixpanel_eu")).toBeUndefined();
+    const activity = activitySink();
+    await invokeTestCall(connecta.registry, activity, "mixpanel_us.Run-Query");
+    expect(activityFor(activity.events, "mixpanel_us")?.outcome).toBe("error");
+    expect(activityFor(activity.events, "mixpanel_eu")).toBeUndefined();
   });
 });

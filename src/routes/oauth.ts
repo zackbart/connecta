@@ -218,9 +218,9 @@ function html(
  * list the flat 400 was meant to withhold. So zero-I/O refusals read the same
  * keys in the same `conn:<id>:` namespace, where an unconfigured id gets misses.
  *
- * This is deliberately *not* a constant-time claim, and documentation/connectors.md says
- * so in prose: a hit and a miss are not identical in a KV store, and a connector
- * shipping its own `verifyState` may do more or less work. What it
+ * This is deliberately *not* a constant-time claim: a hit and a miss are not
+ * identical in a KV store, and a connector shipping its own `verifyState` may
+ * do more or less work. What it
  * removes is the order-of-magnitude "no I/O versus a round trip" difference,
  * which is the only part of the signal that makes enumeration cheap.
  *

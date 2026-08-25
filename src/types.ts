@@ -352,8 +352,8 @@ export interface Connector {
    * download link minted by one of the connector's tools. Called only after
    * every built-in route misses, so a connector can never shadow `/mcp`,
    * `/`, `/credentials`, `/activity`, `/health`, or the credential API. The
-   * first connector to return a
-   * Response wins, in registration order; return null to decline.
+   * first connector to return a Response wins, in registration order; return
+   * null to decline. See documentation/architecture.md route 9.
    *
    * These routes are PUBLIC: connecta applies no auth gate to them. A
    * connector that serves data here MUST authenticate the request itself — for
@@ -398,7 +398,7 @@ export interface ExecutorProvider {
    * Optional trusted sandbox-side setup run after provider globals exist.
    * Connecta uses this to install lazy connector namespace proxies without
    * materializing one host closure per tool. This is host-authored code, never
-   * model input.
+   * model input. See documentation/code-mode.md#what-an-executor-must-implement.
    */
   prelude?: string;
 }

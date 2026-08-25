@@ -565,62 +565,89 @@ export class CatalogService {
       : {};
   }
 
+  private unknownAddressFailure(address: string, query: string): CatalogResolution {
+    return {
+      ok: false,
+      error: {
+        ...framingError(
+          "unknown_address",
+          `Unknown address "${boundedEchoText(address)}"`,
+        ),
+        nextAction: this.searchRecovery(
+          { query: recoveryQuery(query) },
+          "Find the configured canonical address before retrying.",
+        ),
+      },
+      catalogMs: 0,
+    };
+  }
+
+  private catalogLoadFailure(
+    cause: unknown,
+    started: number,
+    connector: Connector,
+    toolName: string,
+  ): CatalogResolution {
+    return {
+      ok: false,
+      error: classifyCallError(cause, "catalog_lookup_failed"),
+      catalogMs: Date.now() - started,
+      connector,
+      toolName,
+      cause,
+    };
+  }
+
+  private unknownToolFailure(
+    toolName: string,
+    connector: Connector,
+    started: number,
+  ): CatalogResolution {
+    return {
+      ok: false,
+      error: {
+        ...framingError(
+          "unknown_tool",
+          `Unknown tool "${boundedEchoText(toolName)}" on connector "${connector.id}"`,
+        ),
+        nextAction: this.searchRecovery(
+          { query: recoveryQuery(toolName), connector: connector.id },
+          "Find the connector's current canonical tool address.",
+        ),
+      },
+      catalogMs: Date.now() - started,
+      connector,
+      toolName,
+    };
+  }
+
   async resolveTool(
     address: string,
     callOptions: ConnectorOperationOptions = {},
   ): Promise<CatalogResolution> {
     const resolved = this.registry.resolveAddress(address);
     if (!resolved) {
-      return {
-        ok: false,
-        error: {
-          ...framingError(
-            "unknown_address",
-            `Unknown address "${boundedEchoText(address)}"`,
-          ),
-          nextAction: this.searchRecovery(
-            { query: recoveryQuery(address) },
-            "Find the configured canonical address before retrying.",
-          ),
-        },
-        catalogMs: 0,
-      };
+      return this.unknownAddressFailure(address, address);
     }
     const started = Date.now();
     let tools: ToolDef[];
     try {
       tools = await this.loadConnector(resolved.connector.id, callOptions);
     } catch (cause) {
-      return {
-        ok: false,
-        error: classifyCallError(cause, "catalog_lookup_failed"),
-        catalogMs: Date.now() - started,
-        connector: resolved.connector,
-        toolName: resolved.toolName,
+      return this.catalogLoadFailure(
         cause,
-      };
+        started,
+        resolved.connector,
+        resolved.toolName,
+      );
     }
     const definition = tools.find((tool) => tool.name === resolved.toolName);
     if (!definition) {
-      return {
-        ok: false,
-        error: {
-          ...framingError(
-            "unknown_tool",
-            `Unknown tool "${boundedEchoText(resolved.toolName)}" on connector "${resolved.connector.id}"`,
-          ),
-          nextAction: this.searchRecovery(
-            {
-              query: recoveryQuery(resolved.toolName),
-              connector: resolved.connector.id,
-            },
-            "Find the connector's current canonical tool address.",
-          ),
-        },
-        catalogMs: Date.now() - started,
-        connector: resolved.connector,
-        toolName: resolved.toolName,
-      };
+      return this.unknownToolFailure(
+        resolved.toolName,
+        resolved.connector,
+        started,
+      );
     }
     return {
       ok: true,
@@ -646,55 +673,20 @@ export class CatalogService {
   ): Promise<CatalogResolution> {
     const connector = this.registry.getConnector(connectorId);
     if (!connector) {
-      return {
-        ok: false,
-        error: {
-          ...framingError(
-            "unknown_address",
-            `Unknown address "${boundedEchoText(`${connectorId}.${alias}`)}"`,
-          ),
-          nextAction: this.searchRecovery(
-            { query: recoveryQuery(alias) },
-            "Find the configured canonical address before retrying.",
-          ),
-        },
-        catalogMs: 0,
-      };
+      return this.unknownAddressFailure(`${connectorId}.${alias}`, alias);
     }
     const started = Date.now();
     let tools: ToolDef[];
     try {
       tools = await this.loadConnector(connector.id, callOptions);
     } catch (cause) {
-      return {
-        ok: false,
-        error: classifyCallError(cause, "catalog_lookup_failed"),
-        catalogMs: Date.now() - started,
-        connector,
-        toolName: alias,
-        cause,
-      };
+      return this.catalogLoadFailure(cause, started, connector, alias);
     }
     const [definition, ...collisions] = tools.filter(
       (tool) => aliasFor(tool.name) === alias,
     );
     if (!definition) {
-      return {
-        ok: false,
-        error: {
-          ...framingError(
-            "unknown_tool",
-            `Unknown tool "${boundedEchoText(alias)}" on connector "${connector.id}"`,
-          ),
-          nextAction: this.searchRecovery(
-            { query: recoveryQuery(alias), connector: connector.id },
-            "Find the connector's current canonical tool address.",
-          ),
-        },
-        catalogMs: Date.now() - started,
-        connector,
-        toolName: alias,
-      };
+      return this.unknownToolFailure(alias, connector, started);
     }
     if (collisions.length > 0) {
       const names = [definition, ...collisions]
@@ -861,20 +853,21 @@ export class CatalogService {
       );
     });
     const pageMatches = matches.slice(offset, offset + limit);
+    const withSchemas = args.includeSchemas;
     const entries = pageMatches.map((match) => {
-      const output = args.includeSchemas
+      const output = withSchemas
         ? this.outputSchema(match.connector.id, match.tool)
         : {};
       const input = match.tool.inputSchema ?? { type: "object" };
-      const renderedInput = args.includeSchemas
-        ? renderSearchSchema(input, args.includeSchemas)
+      const renderedInput = withSchemas
+        ? renderSearchSchema(input, withSchemas)
         : undefined;
       const renderedOutput =
-        args.includeSchemas && output.schema
-          ? renderSearchSchema(output.schema, args.includeSchemas)
+        withSchemas && output.schema
+          ? renderSearchSchema(output.schema, withSchemas)
           : undefined;
       const schemaKeys =
-        args.includeSchemas && args.includeSchemaKeys
+        withSchemas && args.includeSchemaKeys
           ? schemaKeyMetadata(input, output.schema)
           : undefined;
       const description = summarizeDiscoveryDescription(
@@ -899,7 +892,7 @@ export class CatalogService {
           name: match.tool.name,
           address: `${match.connector.id}.${match.tool.name}`,
           ...(description !== undefined ? { description } : {}),
-          ...(args.includeSchemas
+          ...(withSchemas
             ? {
                 inputSchema: renderedInput?.schema,
               }
@@ -907,12 +900,12 @@ export class CatalogService {
           ...(renderedInput?.truncated
             ? { inputSchemaTruncated: true as const }
             : {}),
-          ...(args.includeSchemas && output.schema
+          ...(withSchemas && output.schema
             ? {
                 outputSchema: renderedOutput?.schema,
               }
             : {}),
-          ...(args.includeSchemas && output.source
+          ...(withSchemas && output.source
             ? { outputSchemaSource: output.source }
             : {}),
           ...(renderedOutput?.truncated
@@ -1071,42 +1064,42 @@ export class CatalogService {
       (queryTerms.length > 0
         ? matchMode === "partial"
         : unknownConnectorGuidance !== undefined || unavailableCatalogs > 0);
-    const guidance =
-      unsearchableQuery
-        ? (unknownConnectorGuidance ??
-          (scopedConnector && unavailableCatalogs > 0
-            ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-            : "The query contained no searchable lexical terms. Use 2–4 ASCII action/object terms, or browse with an empty query."))
-        : queryTerms.length === 0
-        ? // A browse has no terms to advise about, so it stays silent unless
-          // the scope itself failed: the guidance on a scoped miss recommends
-          // browsing with an empty query, and that advice must not lead into a
-          // dead end that looks like a connector with no tools.
-          (unknownConnectorGuidance ??
-          (unavailableCatalogs === 0
-            ? undefined
-            : scopedConnector
-              ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-              : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`))
-        : matches.length === 0
-          ? (unknownConnectorGuidance ??
-            (scopedConnector
-              ? unavailableCatalogs > 0
-                ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
-                : scopedGuide?.required
-                  ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
-                  : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`
-              : (identityGuidance ??
-                (unavailableCatalogs === 0
-                  ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
-                  : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`))))
-          : matchMode === "partial"
-            ? scopedConnector
-              ? `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`
-              : unavailableCatalogs === 0
-              ? "No single tool matched every term. Split distinct intents into separate searches."
-              : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches."
-            : undefined;
+    const searchGuidance = (): string | undefined => {
+      if (unknownConnectorGuidance) return unknownConnectorGuidance;
+      if (unsearchableQuery) {
+        return scopedConnector && unavailableCatalogs > 0
+          ? `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
+          : "The query contained no searchable lexical terms. Use 2–4 ASCII action/object terms, or browse with an empty query.";
+      }
+      if (queryTerms.length === 0) {
+        if (unavailableCatalogs === 0) return undefined;
+        return scopedConnector
+          ? `Connector "${scopedConnector.id}" could not be browsed because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`
+          : `${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable, so this browse is incomplete. Scope by connector to see the typed reason.`;
+      }
+      if (matches.length === 0) {
+        if (scopedConnector) {
+          if (unavailableCatalogs > 0) {
+            return `Connector "${scopedConnector.id}" could not be searched because its catalog was unavailable. Inspect catalogError for the typed reason and recovery detail.`;
+          }
+          return scopedGuide?.required
+            ? `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Fetch queryAnalysis.guide before calling, then refine terms or browse with an empty query.${filterRecovery}`
+            : `No matching ${safetyLabel}capability was found on connector "${scopedConnector.id}". Refine terms or browse it with an empty query.${filterRecovery}`;
+        }
+        if (identityGuidance) return identityGuidance;
+        return unavailableCatalogs === 0
+          ? `No matching ${safetyLabel}capability is configured in this deployment. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`
+          : `No matching ${safetyLabel}capability was found in the catalogs that answered; ${unavailableCatalogs} connector catalog${unavailableCatalogs === 1 ? " was" : "s were"} unavailable. Refine terms, scope by connector, or browse with an empty query.${filterRecovery}`;
+      }
+      if (matchMode !== "partial") return undefined;
+      if (scopedConnector) {
+        return `No single tool on connector "${scopedConnector.id}" matched every term. Split distinct intents into separate searches.`;
+      }
+      return unavailableCatalogs === 0
+        ? "No single tool matched every term. Split distinct intents into separate searches."
+        : "No single tool matched every term in the catalogs that answered. Split distinct intents into separate searches.";
+    };
+    const guidance = searchGuidance();
     return {
       entries,
       total: matches.length,
@@ -1294,6 +1287,18 @@ export class CatalogService {
   }
 }
 
+function pageTail(page: CatalogSearchPage) {
+  return {
+    total: page.total,
+    offset: page.offset,
+    limit: page.limit,
+    hasMore: page.hasMore,
+    ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
+    ...(page.matchMode ? { matchMode: page.matchMode } : {}),
+    ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
+  };
+}
+
 export function groupedSearchResult(page: CatalogSearchPage) {
   const groups: Array<{
     id: string;
@@ -1324,13 +1329,7 @@ export function groupedSearchResult(page: CatalogSearchPage) {
   }
   return {
     connectors: groups,
-    total: page.total,
-    offset: page.offset,
-    limit: page.limit,
-    hasMore: page.hasMore,
-    ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
-    ...(page.matchMode ? { matchMode: page.matchMode } : {}),
-    ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
+    ...pageTail(page),
   };
 }
 
@@ -1343,12 +1342,6 @@ export function flatSearchResult(page: CatalogSearchPage) {
         ? { guideSummary: entry.guideSummary }
         : {}),
     })),
-    total: page.total,
-    offset: page.offset,
-    limit: page.limit,
-    hasMore: page.hasMore,
-    ...(page.nextOffset !== undefined ? { nextOffset: page.nextOffset } : {}),
-    ...(page.matchMode ? { matchMode: page.matchMode } : {}),
-    ...(page.queryAnalysis ? { queryAnalysis: page.queryAnalysis } : {}),
+    ...pageTail(page),
   };
 }

@@ -3,7 +3,7 @@ import { CredentialVault } from "../src/credentials.js";
 import { createConnecta } from "../src/index.js";
 import { notion } from "../src/providers/notion.js";
 import { memoryStorage } from "../src/storage/memory.js";
-import { silentLogger } from "./helpers.js";
+import { activityFor, activitySink, invokeTestCall, silentLogger } from "./helpers.js";
 import type { KVStorage } from "../src/types.js";
 
 // Unmocked on purpose. test/notion-provider.test.ts stubs the network to
@@ -133,11 +133,10 @@ describe("notion() inside a real deployment", () => {
     expect(budgets["notion_eng"]?.totals.admitted).toBe(1);
     expect(budgets["notion_ops"]?.totals.admitted).toBe(0);
 
-    connecta.registry.recordFailure("notion_eng", 5, new Error("boom"));
-    expect(connecta.registry.healthFor("notion_eng")?.consecutiveFailures).toBe(
-      1,
-    );
-    expect(connecta.registry.healthFor("notion_ops")).toBeUndefined();
+    const activity = activitySink();
+    await invokeTestCall(connecta.registry, activity, "notion_eng.search");
+    expect(activityFor(activity.events, "notion_eng")?.outcome).toBe("error");
+    expect(activityFor(activity.events, "notion_ops")).toBeUndefined();
   });
 
   it("carries a distinct guide per workspace", () => {

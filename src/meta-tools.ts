@@ -17,6 +17,7 @@ import {
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
 import { msg, type CallErrorDetails } from "./errors.js";
+import { serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
   MAX_RETRY_BACKOFF_MS,
@@ -53,6 +54,8 @@ interface TextContent {
   text: string;
 }
 export interface ToolResult {
+  // See documentation/meta-tools.md#result-representation for why both forms
+  // travel together and when text may differ from structuredContent.
   content: TextContent[];
   isError?: boolean;
   structuredContent?: Record<string, unknown>;
@@ -63,9 +66,9 @@ const RESULT_TTL_SECONDS = 900;
 const enc = new TextEncoder();
 const dec = new TextDecoder();
 
-export function jsonResult(obj: unknown): ToolResult {
+export function jsonResult(obj: unknown, text = JSON.stringify(obj)): ToolResult {
   return {
-    content: [{ type: "text", text: JSON.stringify(obj) }],
+    content: [{ type: "text", text }],
     ...(obj !== null && typeof obj === "object" && !Array.isArray(obj)
       ? { structuredContent: obj as Record<string, unknown> }
       : {}),
@@ -95,12 +98,7 @@ async function discoveryResult(
   try {
     const value = await operation();
     const text = boundedDiscoveryText(value, hint);
-    return {
-      content: [{ type: "text", text }],
-      ...(value !== null && typeof value === "object" && !Array.isArray(value)
-        ? { structuredContent: value as Record<string, unknown> }
-        : {}),
-    };
+    return jsonResult(value, text);
   } catch (err) {
     if (err instanceof DiscoveryPolicyError) {
       return discoveryErrorResult(err);
@@ -117,20 +115,8 @@ function isContinuationByte(b: number | undefined): boolean {
 /** Smallest accepted `get_result` byte offset. */
 const MIN_RESULT_OFFSET = 0;
 
-/**
- * The one definition of a usable `get_result` offset: a whole number of bytes
- * at or past {@link MIN_RESULT_OFFSET}. Shared by the registered zod schema and
- * the handler's own check, the way `isValidMaxResultBytes` is shared across the
- * cap's intake points (issue #32) — so a value valid at the wire is valid in
- * process, and the two cannot drift.
- *
- * Everything else is rejected rather than coerced, because coercion is how an
- * out-of-domain offset used to void a result silently: `Math.max(0, NaN)` is
- * `NaN`, which slices to nothing, serializes as `"offset": null`, and reports
- * no `nextOffset` — a caller sees a successful, empty result instead of an
- * error. An offset past the end of the payload stays legal: it is a whole
- * number of bytes, and it answers with an empty final page.
- */
+/** Whole-byte offset accepted by the result representation documented in
+ * documentation/meta-tools.md#result-representation. */
 function isValidResultOffset(value: number): boolean {
   return Number.isInteger(value) && value >= MIN_RESULT_OFFSET;
 }
@@ -156,21 +142,8 @@ export function alignStartToCharBoundary(
   return o;
 }
 
-/**
- * Move a byte `end` back to the nearest UTF-8 codepoint boundary in
- * `(offset, total]`, so decoding `bytes[offset, end)` never splits a codepoint
- * (which would emit U+FFFD and break byte-exact reassembly). If backing up
- * would make no progress — a single codepoint wider than the window — extend
- * forward to the end of that codepoint instead so paging always advances.
- * Assumes `offset` is itself a codepoint boundary (offsets are the prior
- * `nextOffset`, which this function guarantees, and 0 is always a boundary).
- *
- * The return is always `> offset` while `offset < total`, whatever `end` is
- * asked for. That is the belt-and-braces half of issue #32: cap validation
- * keeps an empty window from arising in the first place, and this keeps an
- * empty window from turning into a `nextOffset === offset` paging loop if one
- * ever does. Exported for direct testing of that invariant.
- */
+/** End boundary for UTF-8-safe, forward-progressing result pages. See
+ * documentation/meta-tools.md#result-representation. */
 export function alignEndToCharBoundary(
   bytes: Uint8Array,
   offset: number,
@@ -786,11 +759,6 @@ function applyFieldsToContent(
  * the three give one answer to the same question. A value JSON cannot serialize
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
-function serializeResultText(value: unknown): string {
-  const serialized = JSON.stringify(value);
-  return serialized === undefined ? String(value) : serialized;
-}
-
 /**
  * Stash `text` under `result:<uuid>` (ttl 900s) and describe it as the
  * truncation notice every over-cap path hands back.
@@ -1103,6 +1071,15 @@ export function createMetaTools(
             resolved.connector.maxResultBytes,
             globalCap,
           );
+          const processed = (
+            toolResult: ToolResult,
+            truncated: boolean,
+            value?: { value: unknown },
+          ): ProcessedCallResult => ({
+            toolResult,
+            ...value,
+            ...(truncated ? { friction: "result_too_large" } : {}),
+          });
           if (call.resultMode === "value") {
             let value = fields
               ? projectionValue(
@@ -1113,13 +1090,11 @@ export function createMetaTools(
               : result;
             const guarded = await guardValue(value, results, cap);
             value = guarded.result;
-            return {
-              toolResult: jsonResult({ ok: true, data: value }),
-              value,
-              ...(guarded.truncated
-                ? { friction: "result_too_large" as const }
-                : {}),
-            };
+            return processed(
+              jsonResult({ ok: true, data: value }),
+              guarded.truncated,
+              { value },
+            );
           }
           if (resolved.connector.kind === "mcp") {
             const mcpResult = result as { content?: TextContent[] };
@@ -1132,12 +1107,7 @@ export function createMetaTools(
               );
             }
             const guarded = await guardContent(content, results, cap);
-            return {
-              toolResult: guarded.result,
-              ...(guarded.truncated
-                ? { friction: "result_too_large" as const }
-                : {}),
-            };
+            return processed(guarded.result, guarded.truncated);
           }
           const value = fields
             ? projectionValue(
@@ -1151,24 +1121,22 @@ export function createMetaTools(
             results,
             cap,
           );
-          return {
-            toolResult: guarded.result,
-            value,
-            ...(guarded.truncated
-              ? { friction: "result_too_large" as const }
-              : {}),
-          };
+          return processed(guarded.result, guarded.truncated, { value });
         },
         activityFriction: (processed) => processed.friction,
       },
     );
     if (!outcome.ok) {
       const structuredRecovery = outcome.error.nextAction !== undefined;
-      const failedResult =
+      const recoveryRequired =
         structuredRecovery ||
-        outcome.error.code === "auth_required" ||
-        outcome.error.code === "invalid_args" ||
-        outcome.error.code === "input_required_unsupported" ||
+        [
+          "auth_required",
+          "invalid_args",
+          "input_required_unsupported",
+        ].includes(outcome.error.code);
+      const failedResult =
+        recoveryRequired ||
         call.resultMode === "value"
           ? jsonResult({
               ok: false,
@@ -1178,12 +1146,7 @@ export function createMetaTools(
               ...(call.diagnostics ? { timing: outcome.timing } : {}),
             })
           : errorResult(outcome.error.message);
-      if (
-        structuredRecovery ||
-        outcome.error.code === "auth_required" ||
-        outcome.error.code === "invalid_args" ||
-        outcome.error.code === "input_required_unsupported"
-      ) {
+      if (recoveryRequired) {
         failedResult.isError = true;
       }
       return {
@@ -1426,8 +1389,6 @@ const AUTHORIZE_DESC =
 const SKILLS_DESC =
   'List or fetch on-demand guidance. Fetch usage once per task for program syntax, selection, repair, examples, and runtime details.';
 
-const SEARCH_WITH_DESCRIBE_DESC = SEARCH_DESC;
-
 /**
  * Sentences appended to a meta-tool description only when this connection
  * actually has connector guides. Tool descriptions are always-loaded context,
@@ -1532,7 +1493,7 @@ export function registerMetaTools(
     {
       description: describedFor(
         registry,
-        SEARCH_WITH_DESCRIBE_DESC,
+        SEARCH_DESC,
         "search",
       ),
       inputSchema: z.object({

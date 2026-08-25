@@ -274,16 +274,17 @@ describe("drift on the registry surface", () => {
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
+      toolCacheTtlSeconds: 0,
     });
 
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     expect(await registry.statusFor("linear_test", BASE)).toMatchObject({
       state: "ok",
       catalogDrift: { unclassifiedTools: 0 },
     });
 
     drifting = true;
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     const status = await registry.statusFor("linear_test", BASE);
     expect(status.catalogDrift).toMatchObject({
       unclassifiedTools: 1,
@@ -307,8 +308,9 @@ describe("drift on the registry surface", () => {
     const registry = new Registry([plain], {
       storage: memoryStorage(),
       logger: silentLogger,
+      toolCacheTtlSeconds: 0,
     });
-    await registry.refreshTools("plain", BASE);
+    await registry.getTools("plain", BASE);
     expect(await registry.statusFor("plain", BASE)).toEqual({ state: "ok" });
   });
 
@@ -323,6 +325,7 @@ describe("drift on the registry surface", () => {
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
+      toolCacheTtlSeconds: 0,
       catalogDriftActivity: {
         sink: {
           record() {},
@@ -336,20 +339,20 @@ describe("drift on the registry surface", () => {
     });
 
     // A first clean observation is not news.
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     expect(events).toHaveLength(0);
 
     drifting = true;
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     expect(events).toHaveLength(1);
 
     // The same drift on the next refresh is a heartbeat, not a second finding.
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     expect(events).toHaveLength(1);
 
     // Resolved is worth an event: the timeline should say when it stopped.
     drifting = false;
-    await registry.refreshTools("linear_test", BASE);
+    await registry.getTools("linear_test", BASE);
     expect(events).toHaveLength(2);
 
     const [drift] = events;
@@ -390,6 +393,7 @@ describe("drift on the registry surface", () => {
     const registry = new Registry([connector], {
       storage: memoryStorage(),
       logger: silentLogger,
+      toolCacheTtlSeconds: 0,
       catalogDriftActivity: {
         sink: {
           record() {},
@@ -401,7 +405,7 @@ describe("drift on the registry surface", () => {
       },
     });
     await expect(
-      registry.refreshTools("linear_test", BASE),
+      registry.getTools("linear_test", BASE),
     ).resolves.toHaveLength(5);
   });
 });

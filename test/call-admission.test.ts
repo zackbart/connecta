@@ -10,7 +10,7 @@ import type {
   ConnectorCallAdmissionPolicy,
   ToolDef,
 } from "../src/types.js";
-import { createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
+import { activitySink, createTestConnecta, required, makeRegistry, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 const READ_TOOL: ToolDef = {
@@ -507,7 +507,6 @@ describe("connector call admission integration", () => {
     });
     expect(calls).toBe(1);
     expect(connectorSignal?.aborted).toBe(true);
-    expect(registry.healthFor("limited")).toBeUndefined();
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({
       active: 0,
       queued: 0,
@@ -515,6 +514,8 @@ describe("connector call admission integration", () => {
     });
     expect(events).toHaveLength(1);
     expect(events[0]).toMatchObject({
+      connectorId: "limited",
+      toolName: "read",
       outcome: "cancelled",
       attempts: 1,
       errorCode: "cancelled",
@@ -538,11 +539,13 @@ describe("connector call admission integration", () => {
       },
     };
     const registry = makeRegistry([connector]);
+    const observed = activitySink();
     const controller = new AbortController();
     controller.abort(new Error("caller already left"));
 
     const result = await createMetaTools(registry, BASE, {
       requestSignal: controller.signal,
+      activity: observed.activity,
     }).callTool({
       address: "limited.read",
       maxRetries: 2,
@@ -555,7 +558,10 @@ describe("connector call admission integration", () => {
       attempts: 1,
     });
     expect(calls).toBe(0);
-    expect(registry.healthFor("limited")).toBeUndefined();
+    expect(observed.events[0]).toMatchObject({
+      connectorId: "limited",
+      outcome: "cancelled",
+    });
   });
 
   it("exposes payload-free connector aggregates on health", async () => {
@@ -690,9 +696,12 @@ describe("connector call admission integration", () => {
         attempts: 1,
         errorCode: "rate_limited",
       });
-      expect(registry.healthFor("budgeted")).toMatchObject({
-        consecutiveFailures: 0,
-      });
+      expect(events.map(({ outcome, attempts }) => ({ outcome, attempts })))
+        .toEqual([
+          { outcome: "success", attempts: 1 },
+          { outcome: "success", attempts: 2 },
+          { outcome: "error", attempts: 1 },
+        ]);
     } finally {
       vi.useRealTimers();
     }

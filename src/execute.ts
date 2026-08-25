@@ -23,7 +23,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { boundedEchoText, classifyCallError, msg } from "./errors.js";
+import { boundedEchoText, classifyCallError, msg, type CallErrorDetails } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -67,13 +67,11 @@ interface ExecuteOperationDiagnostics {
   calls?: number;
 }
 
-type MutableOperationDiagnostics = ExecuteOperationDiagnostics;
-
 class ExecuteDiagnostics {
   private readonly started = Date.now();
   private readonly operations = new Map<
     ExecuteDiagnosticOperation,
-    MutableOperationDiagnostics
+    ExecuteOperationDiagnostics
   >();
   admissionMs = 0;
   setupMs = 0;
@@ -487,22 +485,25 @@ export class EmitCollector {
    * complaint about its type would send the author to fix the wrong thing.
    */
   acceptUi(...values: unknown[]): void {
-    if (this.ui) {
-      throw guestFailure(
-        "invalid_args",
-        "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
-      );
-    }
+    this.assertUiVacant();
     this.acceptUiPayload(requireUiPayload(values));
   }
 
-  acceptUiPayload(payload: UiPayload): void {
+  acceptValidatedUi(payload: UiPayload): void {
+    this.assertUiVacant();
+    this.acceptUiPayload(payload);
+  }
+
+  private assertUiVacant(): void {
     if (this.ui) {
       throw guestFailure(
         "invalid_args",
         "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
       );
     }
+  }
+
+  private acceptUiPayload(payload: UiPayload): void {
     let serialized: string;
     try {
       serialized = JSON.stringify(payload);
@@ -815,41 +816,61 @@ export async function buildSandboxProviders(
       throw err;
     }
   };
+  const timedCatalog = async <T>(
+    operation: "search" | "describe",
+    fn: () => Promise<T>,
+  ): Promise<T> => {
+    const started = Date.now();
+    try {
+      const result = await fn();
+      limits.diagnostics?.recordCatalog(
+        operation,
+        Date.now() - started,
+        true,
+        result,
+      );
+      return result;
+    } catch (err) {
+      limits.diagnostics?.recordCatalog(
+        operation,
+        Date.now() - started,
+        false,
+      );
+      throw err;
+    }
+  };
+  const called = async <T>(
+    operation: "call" | "batch",
+    invoke: () => Promise<Awaited<ReturnType<InvocationService["invoke"]>>>,
+  ): Promise<T> => {
+    const outcome = await invoke();
+    limits.diagnostics?.recordCall(operation, outcome);
+    if (!outcome.ok) throw new InvocationFailure(outcome.error);
+    return outcome.value as T;
+  };
   const callAddress = async (
     address: unknown,
     args: unknown,
     diagnosticOperation: "call" | "batch" = "call",
   ) => {
-    const outcome = await invocation.invoke(
-      String(address),
-      args ?? {},
-      invocationContext(),
+    return called(diagnosticOperation, () =>
+      invocation.invoke(String(address), args ?? {}, invocationContext()),
     );
-    limits.diagnostics?.recordCall(diagnosticOperation, outcome);
-    if (!outcome.ok) {
-      const failure = new InvocationFailure(outcome.error);
-      throw failure;
-    }
-    return outcome.value;
   };
   const callNamespace = async (
     connectorId: unknown,
     toolAlias: unknown,
     args: unknown,
   ) => {
-    const outcome = await invocation.invokeToolAlias(
-      String(connectorId),
-      String(toolAlias),
-      sanitizeIdentifier,
-      args ?? {},
-      invocationContext(),
+    return called("call", () =>
+      invocation.invokeToolAlias(
+        String(connectorId),
+        String(toolAlias),
+        sanitizeIdentifier,
+        args ?? {},
+        invocationContext(),
+      ),
     );
-    limits.diagnostics?.recordCall("call", outcome);
-    if (!outcome.ok) {
-      const failure = new InvocationFailure(outcome.error);
-      throw failure;
-    }
-    return outcome.value;
   };
 
   /**
@@ -921,7 +942,7 @@ export async function buildSandboxProviders(
         );
       }
       const payload = await validateUiReads(requireUiPayload(values));
-      limits.emitCollector.acceptUiPayload(payload);
+      limits.emitCollector.acceptValidatedUi(payload);
     },
     batch: async (calls: unknown) => {
       const started = Date.now();
@@ -979,10 +1000,9 @@ export async function buildSandboxProviders(
         throw err;
       }
     },
-    search: async (raw: unknown) => {
-      const started = Date.now();
-      try {
-        const result = await typedDiscovery(async () => {
+    search: async (raw: unknown) =>
+      timedCatalog("search", () =>
+        typedDiscovery(async () => {
           const args = (raw ?? {}) as {
             query?: string;
             connector?: string;
@@ -1004,27 +1024,11 @@ export async function buildSandboxProviders(
             "Request a smaller limit, omit fullDescriptions, use compact schemas, or pass includeSchemaKeys: false.",
           );
           return result;
-        });
-        limits.diagnostics?.recordCatalog(
-          "search",
-          Date.now() - started,
-          true,
-          result,
-        );
-        return result;
-      } catch (err) {
-        limits.diagnostics?.recordCatalog(
-          "search",
-          Date.now() - started,
-          false,
-        );
-        throw err;
-      }
-    },
-    describe: async (raw: unknown) => {
-      const started = Date.now();
-      try {
-        const result = await typedDiscovery(async () => {
+        }),
+      ),
+    describe: async (raw: unknown) =>
+      timedCatalog("describe", () =>
+        typedDiscovery(async () => {
           const args = (raw ?? {}) as {
             address?: unknown;
             addresses?: unknown;
@@ -1037,23 +1041,8 @@ export async function buildSandboxProviders(
             'Split the address list or use format: "compact".',
           );
           return result;
-        });
-        limits.diagnostics?.recordCatalog(
-          "describe",
-          Date.now() - started,
-          true,
-          result,
-        );
-        return result;
-      } catch (err) {
-        limits.diagnostics?.recordCatalog(
-          "describe",
-          Date.now() - started,
-          false,
-        );
-        throw err;
-      }
-    },
+        }),
+      ),
   };
   const transportedFns = Object.fromEntries(
     Object.entries(fns).map(([name, fn]) => [
@@ -1183,8 +1172,11 @@ export function createExecuteTool(
             retryAfterMs: err.retryAfterMs,
           });
         }
-        const result = jsonResult({
-          error: {
+        return failureResponse(err.message, {
+          emitted:
+            err instanceof ExecutorExecutionError ? emitted : undefined,
+          diagnostics,
+          code: {
             code: err.code,
             message: err.message,
             retryable: err.retryable,
@@ -1192,30 +1184,13 @@ export function createExecuteTool(
               ? { retryAfterMs: err.retryAfterMs }
               : {}),
           },
-          ...(err instanceof ExecutorExecutionError
-            ? discardedEmits(emitted)
-            : {}),
-          ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
         });
-        result.isError = true;
-        return result;
       }
-      if (diagnostics) {
-        const result = jsonResult({
-          error: {
-            code: "executor_failed",
-            message: `Executor failed: ${msg(err)}`,
-            retryable: false,
-          },
-          ...discardedEmits(emitted),
-          diagnostics: diagnostics.finish(),
-        });
-        result.isError = true;
-        return result;
-      }
-      return errorResult(
-        `Executor failed: ${msg(err)}${discardedEmitsText(emitted)}`,
-      );
+      return failureResponse(`Executor failed: ${msg(err)}`, {
+        emitted,
+        diagnostics,
+        code: "executor_failed",
+      });
     } finally {
       // A sandbox timeout or early return must also release any outstanding
       // host waits and signal cooperative connectors to stop their work.
@@ -1268,33 +1243,20 @@ export function createExecuteTool(
         // framed with bounded caller text (`boundedEchoText`) precisely so
         // this path never needs one. Adding a cap here instead would leave the
         // top-level surfaces, which have the same amplification, uncovered.
-        const result = jsonResult({
-          error: invocationFailure.details,
-          ...(logs ? { logs } : {}),
-          ...discardedEmits(emitted),
-          ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+        return failureResponse(invocationFailure.details.message, {
+          logs,
+          emitted,
+          diagnostics,
+          code: invocationFailure.details,
         });
-        result.isError = true;
-        return result;
       }
       const message = `Error: ${outcome.error}`;
-      if (diagnostics) {
-        const result = jsonResult({
-          error: {
-            code: "executor_failed",
-            message,
-            retryable: false,
-          },
-          ...(logs ? { logs } : {}),
-          ...discardedEmits(emitted),
-          diagnostics: diagnostics.finish(),
-        });
-        result.isError = true;
-        return result;
-      }
-      return errorResult(
-        `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${discardedEmitsText(emitted)}`,
-      );
+      return failureResponse(message, {
+        logs,
+        emitted,
+        diagnostics,
+        code: "executor_failed",
+      });
     }
     // A result crossing back as a host BigInt (or otherwise unserializable
     // value) makes JSON.stringify throw — keep that inside the structured
@@ -1304,23 +1266,12 @@ export function createExecuteTool(
       result = guardExecuteResultValue(outcome.result);
     } catch (err) {
       const message = `Error: result is not JSON-serializable: ${msg(err)}`;
-      if (diagnostics) {
-        const response = jsonResult({
-          error: {
-            code: "executor_failed",
-            message,
-            retryable: false,
-          },
-          ...(logs ? { logs } : {}),
-          ...discardedEmits(emitted),
-          diagnostics: diagnostics.finish(),
-        });
-        response.isError = true;
-        return response;
-      }
-      return errorResult(
-        `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${discardedEmitsText(emitted)}`,
-      );
+      return failureResponse(message, {
+        logs,
+        emitted,
+        diagnostics,
+        code: "executor_failed",
+      });
     }
     const response = jsonResult({
       result,
@@ -1348,6 +1299,34 @@ export function createExecuteTool(
     }
     return response;
   };
+}
+
+function failureResponse(
+  message: string,
+  options: {
+    logs?: string | undefined;
+    emitted?: EmitCollector | undefined;
+    diagnostics?: ExecuteDiagnostics | undefined;
+    code: string | CallErrorDetails;
+  },
+): ToolResult {
+  const { logs, emitted, diagnostics, code } = options;
+  if (diagnostics || typeof code !== "string") {
+    const result = jsonResult({
+      error:
+        typeof code === "string"
+          ? { code, message, retryable: false }
+          : code,
+      ...(logs ? { logs } : {}),
+      ...(emitted ? discardedEmits(emitted) : {}),
+      ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
+    });
+    result.isError = true;
+    return result;
+  }
+  return errorResult(
+    `${message}${logs ? `\n\nLogs:\n${logs}` : ""}${emitted ? discardedEmitsText(emitted) : ""}`,
+  );
 }
 
 /**
@@ -1503,12 +1482,8 @@ export function registerExecuteTool(
         destructiveHint: false,
         openWorldHint: true,
       },
-      // U5 and U10: declared unconditionally. A host without the Apps
-      // extension ignores unknown _meta and sees the ordinary envelope, which
-      // is the text fallback the spec mandates — and a stateless aggregator
-      // has nowhere dependable to hold a negotiation check anyway. The
-      // explicit visibility keeps hosts from being told the view may call
-      // execute_code; the default ["model","app"] would say exactly that.
+      // U5 and U10 are specified in documentation/code-mode.md; explicit model
+      // visibility prevents hosts from offering execute_code to the view.
       _meta: {
         ui: {
           resourceUri: PROGRAM_UI_RESOURCE_URI,

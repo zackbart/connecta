@@ -174,10 +174,6 @@ function indexFor(tools: ToolDef[]): SearchIndex {
   return index;
 }
 
-function documentsFor(tools: ToolDef[]): SearchDocument[] {
-  return indexFor(tools).documents;
-}
-
 /**
  * Whole-token equality is the ordinary lexical match. A deliberately narrow
  * inflection check retains useful singular/plural and past-tense recall
@@ -395,7 +391,7 @@ export function rankTools(
   const exactNamePhrase = normalized(exactNameQuery);
   const terms = [...new Set(phrase.split(/\s+/).filter(Boolean))];
   const ranked: RankedTool[] = [];
-  documentsFor(tools).forEach((doc, order) => {
+  indexFor(tools).documents.forEach((doc, order) => {
     const scored = scoreDocument(doc, phrase, terms, mode, statistics);
     if (scored !== null) {
       ranked.push({
@@ -561,6 +557,15 @@ function renderSchema(
     return JSON.stringify(schema);
   }
   const s = schema as Record<string, unknown>;
+  const constrain = (rendered: string) =>
+    options.renderConstraints
+      ? renderConstraints(
+          rendered,
+          s,
+          options.constraintByteLimit,
+          options.onConstraintTruncated,
+        )
+      : rendered;
 
   // allOf composes rather than replaces: it is checked before every other
   // keyword, and renders the schema's own shape alongside its members instead
@@ -591,14 +596,7 @@ function renderSchema(
     seen.add(name);
     const rendered = renderSchema(target, defs, seen, depth, options);
     seen.delete(name);
-    return options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+    return constrain(rendered);
   }
 
   const union = (s.oneOf ?? s.anyOf) as unknown[] | undefined;
@@ -608,14 +606,7 @@ function renderSchema(
         .map((u) => renderSchema(u, defs, seen, depth + 1, options))
         .join(" | ") ||
       "unknown";
-    return options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+    return constrain(rendered);
   }
   if (Array.isArray(s.enum)) {
     const rendered = renderEnum(
@@ -623,14 +614,7 @@ function renderSchema(
       options.enumByteLimit,
       options.onEnumTruncated,
     );
-    return options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+    return constrain(rendered);
   }
   // Checked before type/properties so a discriminator like
   // { type: "string", const: "emoji" } renders as "emoji" rather than string.
@@ -638,14 +622,7 @@ function renderSchema(
   // `const: undefined` must fall through to the regular type rendering.
   if (s.const !== undefined) {
     const rendered = JSON.stringify(s.const);
-    return options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+    return constrain(rendered);
   }
 
   const type = s.type;
@@ -690,25 +667,11 @@ function renderSchema(
       .join(", ")} }`;
   }
   if (typeof type === "string") {
-    return options.renderConstraints
-      ? renderConstraints(
-          type,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : type;
+    return constrain(type);
   }
   if (Array.isArray(type)) {
     const rendered = type.join(" | ");
-    return options.renderConstraints
-      ? renderConstraints(
-          rendered,
-          s,
-          options.constraintByteLimit,
-          options.onConstraintTruncated,
-        )
-      : rendered;
+    return constrain(rendered);
   }
   if (options.renderConstraints && constraintEntries(s).length > 0) {
     return renderConstraints(
@@ -723,14 +686,18 @@ function renderSchema(
 
 const compactSchemas = new WeakMap<JsonSchema, string>();
 
+function defsOf(schema: JsonSchema): Record<string, unknown> {
+  return {
+    ...(schema.$defs as Record<string, unknown>),
+    ...(schema.definitions as Record<string, unknown>),
+  };
+}
+
 /** Render and cache a compact TypeScript-like representation of JSON Schema. */
 export function compactSchema(schema: JsonSchema): string {
   const cached = compactSchemas.get(schema);
   if (cached) return cached;
-  const defs = {
-    ...(schema.$defs as Record<string, unknown>),
-    ...(schema.definitions as Record<string, unknown>),
-  };
+  const defs = defsOf(schema);
   let rendered: string;
   try {
     rendered = renderSchema(schema, defs, new Set(), 0, {
@@ -802,24 +769,24 @@ export function compactDiscoverySchema(
 ): CompactDiscoverySchema {
   const cached = compactDiscoverySchemas.get(schema);
   if (cached) return cached;
-  const defs = {
-    ...(schema.$defs as Record<string, unknown>),
-    ...(schema.definitions as Record<string, unknown>),
-  };
+  const defs = defsOf(schema);
   let rendered: string;
   let enumTruncated = false;
   let constraintTruncated = false;
+  const base = {
+    propertyDescriptions: false,
+    requiredFirst: true,
+    enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
+    onEnumTruncated: () => {
+      enumTruncated = true;
+    },
+  };
   try {
     rendered = renderSchema(schema, defs, new Set(), 0, {
-      propertyDescriptions: false,
-      requiredFirst: true,
+      ...base,
       // Three near-cap enums spend about three quarters of the complete shape
       // budget, leaving the final quarter for surrounding syntax before the
       // unchanged global fallback applies. Whole values keep this UTF-8 safe.
-      enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
-      onEnumTruncated: () => {
-        enumTruncated = true;
-      },
       renderConstraints: true,
       constraintByteLimit: MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES,
       onConstraintTruncated: () => {
@@ -835,12 +802,7 @@ export function compactDiscoverySchema(
   ) {
     try {
       rendered = renderSchema(schema, defs, new Set(), 0, {
-        propertyDescriptions: false,
-        requiredFirst: true,
-        enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
-        onEnumTruncated: () => {
-          enumTruncated = true;
-        },
+        ...base,
         renderConstraints: false,
       });
       constraintTruncated = true;
@@ -889,10 +851,7 @@ export function schemaObjectKeys(
   schema: JsonSchema | undefined,
 ): SchemaObjectKeys | undefined {
   if (!schema) return undefined;
-  const defs = {
-    ...(schema.$defs as Record<string, unknown>),
-    ...(schema.definitions as Record<string, unknown>),
-  };
+  const defs = defsOf(schema);
   try {
     return objectKeys(schema, defs, new Set(), 0);
   } catch {
