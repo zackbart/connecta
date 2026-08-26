@@ -258,6 +258,36 @@ describe("server /mcp end-to-end", () => {
     ]);
   });
 
+  it("declares the Apps template only on execute_code", async () => {
+    const body = await readJsonRpc(
+      await mcpRpc(makeDeployment(), "tools/list", {}, { token: TOKEN }),
+    );
+    const tools = body.result.tools as Array<{
+      name: string;
+      description: string;
+      _meta?: unknown;
+    }>;
+    const execute = required(
+      tools.find((tool) => tool.name === "execute_code"),
+    );
+    expect(execute._meta).toEqual({
+      ui: {
+        resourceUri: PROGRAM_UI_RESOURCE_URI,
+        visibility: ["model"],
+      },
+    });
+    expect(execute.description).toContain("connecta.ui(html)");
+    expect(execute.description).toContain("display-only");
+    expect(execute.description).not.toContain("connecta.ui(html, options?)");
+
+    for (const tool of tools) {
+      if (tool.name === "execute_code") continue;
+      expect(tool._meta, tool.name).toEqual({
+        ui: { visibility: ["model"] },
+      });
+    }
+  });
+
   it("declares exactly one extension, the MCP Apps one (U11)", async () => {
     const c = makeDeployment();
     const body = await readJsonRpc(
@@ -306,7 +336,8 @@ describe("server /mcp end-to-end", () => {
     expect(String(shell.text).startsWith("<!doctype html>")).toBe(true);
 
     for (const uri of [
-      "ui://connecta/program-ui/v3",
+      "ui://connecta/program-ui/v2",
+      "ui://connecta/program-ui/v1",
       "ui://connecta/program-ui",
       "ui://elsewhere/view",
       "https://connecta.test/mcp",
@@ -512,13 +543,13 @@ describe("server /mcp end-to-end", () => {
       "offset inside a multi-byte character moves back to its first byte",
     );
     expect(skill).toContain("unknown or expired id is an error");
-    // #418: bound reads expose their complete shape, and rendering shares the
-    // rich-output budget instead of receiving a second allowance.
+    // #484: program views are local snapshots again. No app-to-host call
+    // grammar is taught, while rendering still shares the rich-output budget.
+    expect(skill).toContain("no network, connector calls, discovery");
+    expect(skill).not.toContain("connecta.read");
+    expect(skill).not.toContain("fixedArgs");
     expect(skill).toContain(
-      "{ reads: { name: { address, fixedArgs?, viewArgs? } } }",
-    );
-    expect(skill).toContain(
-      "one shared budget apply to the UI and emitted content, not separate budgets",
+      "One shared budget applies to the UI and emitted content, not separate budgets",
     );
     expect(skill).toContain("## Examples");
     expect(skill).toContain("crm.get_account");

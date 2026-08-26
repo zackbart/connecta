@@ -30,7 +30,6 @@ import {
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
 import { hasConnectorGuides } from "./skills.js";
-import { isExplicitlyReadOnly } from "./tool-safety.js";
 import type {
   Executor,
   ExecutorProvider,
@@ -256,22 +255,10 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
 }
 
 const UI_SHAPE_HINT =
-  "connecta.ui accepts exactly one HTML argument and, optionally, one read-binding options object";
-
-const MAX_UI_READ_BINDINGS = 32;
-const MAX_UI_VIEW_ARGS = 32;
-const UI_READ_NAME = /^[A-Za-z][A-Za-z0-9_-]{0,63}$/;
-const FORBIDDEN_UI_KEY = new Set(["__proto__", "constructor", "prototype"]);
-
-interface UiReadBinding {
-  address: string;
-  fixedArgs: Record<string, unknown>;
-  viewArgs: string[];
-}
+  "connecta.ui accepts exactly one argument: a non-empty string of HTML";
 
 interface UiPayload {
   html: string;
-  reads?: Record<string, UiReadBinding>;
 }
 
 /** What the argument was, named the way the emit validator names a bad field. */
@@ -285,9 +272,9 @@ function describeUiArgument(raw: unknown): string {
 }
 
 /**
- * Strict U1/V1 validation. The first argument remains HTML; the only second
- * argument is one read-binding manifest. There are no alternate object or MCP
- * block forms.
+ * Strict U1 validation. There is no options parameter and no sugar form, for
+ * M1's reason: sugar is how a one-shape contract grows hair. An options bag or
+ * an MCP block object is just a non-string, and fails as one.
  */
 function requireUiHtml(raw: unknown): string {
   if (typeof raw !== "string" || raw.length === 0) {
@@ -299,132 +286,14 @@ function requireUiHtml(raw: unknown): string {
   return raw;
 }
 
-function requireRecord(raw: unknown, label: string): Record<string, unknown> {
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw guestFailure("invalid_args", `${label} must be an object`);
-  }
-  return raw as Record<string, unknown>;
-}
-
-function requireExactKeys(
-  value: Record<string, unknown>,
-  allowed: readonly string[],
-  label: string,
-): void {
-  const extras = Object.keys(value).filter((key) => !allowed.includes(key));
-  if (extras.length > 0) {
-    throw guestFailure(
-      "invalid_args",
-      `${label} carries unsupported field(s) ${extras.map((key) => JSON.stringify(key)).join(", ")}`,
-    );
-  }
-}
-
-function requireUiReadKey(raw: unknown, label: string): string {
-  if (
-    typeof raw !== "string" ||
-    raw.length === 0 ||
-    raw.length > 128 ||
-    FORBIDDEN_UI_KEY.has(raw)
-  ) {
-    throw guestFailure(
-      "invalid_args",
-      `${label} must be a non-empty string of at most 128 characters and cannot be __proto__, constructor, or prototype`,
-    );
-  }
-  return raw;
-}
-
-function requireUiReads(raw: unknown): Record<string, UiReadBinding> {
-  const record = requireRecord(raw, "connecta.ui options.reads");
-  const names = Object.keys(record);
-  if (names.length === 0 || names.length > MAX_UI_READ_BINDINGS) {
-    throw guestFailure(
-      "invalid_args",
-      `connecta.ui options.reads must contain from 1 through ${MAX_UI_READ_BINDINGS} named bindings`,
-    );
-  }
-  const reads = Object.create(null) as Record<string, UiReadBinding>;
-  for (const name of names) {
-    if (!UI_READ_NAME.test(name) || FORBIDDEN_UI_KEY.has(name)) {
-      throw guestFailure(
-        "invalid_args",
-        `connecta.ui read binding name ${JSON.stringify(name)} must match ${UI_READ_NAME}`,
-      );
-    }
-    const value = requireRecord(
-      record[name],
-      `connecta.ui read binding ${JSON.stringify(name)}`,
-    );
-    requireExactKeys(
-      value,
-      ["address", "fixedArgs", "viewArgs"],
-      `connecta.ui read binding ${JSON.stringify(name)}`,
-    );
-    if (typeof value.address !== "string" || value.address.length === 0) {
-      throw guestFailure(
-        "invalid_args",
-        `connecta.ui read binding ${JSON.stringify(name)} address must be a non-empty string`,
-      );
-    }
-    const fixedArgs =
-      value.fixedArgs === undefined
-        ? {}
-        : requireRecord(
-            value.fixedArgs,
-            `connecta.ui read binding ${JSON.stringify(name)} fixedArgs`,
-          );
-    const rawViewArgs = value.viewArgs ?? [];
-    if (!Array.isArray(rawViewArgs) || rawViewArgs.length > MAX_UI_VIEW_ARGS) {
-      throw guestFailure(
-        "invalid_args",
-        `connecta.ui read binding ${JSON.stringify(name)} viewArgs must be an array of at most ${MAX_UI_VIEW_ARGS} strings`,
-      );
-    }
-    const viewArgs = rawViewArgs.map((key) =>
-      requireUiReadKey(
-        key,
-        `connecta.ui read binding ${JSON.stringify(name)} viewArgs entry`,
-      )
-    );
-    if (new Set(viewArgs).size !== viewArgs.length) {
-      throw guestFailure(
-        "invalid_args",
-        `connecta.ui read binding ${JSON.stringify(name)} viewArgs must not repeat a key`,
-      );
-    }
-    for (const key of viewArgs) {
-      if (Object.prototype.hasOwnProperty.call(fixedArgs, key)) {
-        throw guestFailure(
-          "invalid_args",
-          `connecta.ui read binding ${JSON.stringify(name)} view argument ${JSON.stringify(key)} cannot override a fixed argument`,
-        );
-      }
-    }
-    reads[name] = {
-      address: value.address,
-      fixedArgs,
-      viewArgs,
-    };
-  }
-  return reads;
-}
-
 function requireUiPayload(values: unknown[]): UiPayload {
-  if (values.length !== 1 && values.length !== 2) {
+  if (values.length !== 1) {
     throw guestFailure(
       "invalid_args",
       `${UI_SHAPE_HINT}; got ${values.length} arguments`,
     );
   }
-  const html = requireUiHtml(values[0]);
-  if (values.length === 1) return { html };
-  const options = requireRecord(values[1], "connecta.ui options");
-  requireExactKeys(options, ["reads"], "connecta.ui options");
-  if (!Object.prototype.hasOwnProperty.call(options, "reads")) {
-    throw guestFailure("invalid_args", "connecta.ui options must contain reads");
-  }
-  return { html, reads: requireUiReads(options.reads) };
+  return { html: requireUiHtml(values[0]) };
 }
 
 /**
@@ -487,11 +356,6 @@ export class EmitCollector {
   acceptUi(...values: unknown[]): void {
     this.assertUiVacant();
     this.acceptUiPayload(requireUiPayload(values));
-  }
-
-  acceptValidatedUi(payload: UiPayload): void {
-    this.assertUiVacant();
-    this.acceptUiPayload(payload);
   }
 
   private assertUiVacant(): void {
@@ -873,44 +737,6 @@ export async function buildSandboxProviders(
     );
   };
 
-  /**
-   * A read binding is admitted while the program still owns the request. The
-   * shell later calls the ordinary `call_tool`, which repeats this same
-   * fail-closed check against the then-current catalog; validating here keeps
-   * a typo or destructive address from producing a view whose controls can
-   * never work, while validation at use keeps a stale view from retaining old
-   * authority.
-   */
-  const validateUiReads = async (payload: UiPayload): Promise<UiPayload> => {
-    if (!payload.reads) return payload;
-    const reads = Object.create(null) as Record<string, UiReadBinding>;
-    for (const [name, binding] of Object.entries(payload.reads)) {
-      const resolution = await catalog.resolveTool(
-        binding.address,
-        limits.signal !== undefined ? { signal: limits.signal } : {},
-      );
-      if (!resolution.ok) {
-        throw new InvocationFailure({
-          ...resolution.error,
-          message:
-            `connecta.ui read binding ${JSON.stringify(name)} could not resolve ${JSON.stringify(binding.address)}: ${resolution.error.message}`,
-        });
-      }
-      if (!isExplicitlyReadOnly(resolution.resolved.definition)) {
-        throw guestFailure(
-          "destructive_tool_requires_approval",
-          `connecta.ui read binding ${JSON.stringify(name)} refuses ${JSON.stringify(binding.address)}: the tool is not explicitly read-only`,
-        );
-      }
-      reads[name] = {
-        ...binding,
-        address:
-          `${resolution.resolved.connector.id}.${resolution.resolved.toolName}`,
-      };
-    }
-    return { html: payload.html, reads };
-  };
-
   const fns: ExecutorProvider["fns"] = {
     __callNamespace: callNamespace,
     call: (address: unknown, args: unknown) =>
@@ -941,8 +767,7 @@ export async function buildSandboxProviders(
           true,
         );
       }
-      const payload = await validateUiReads(requireUiPayload(values));
-      limits.emitCollector.acceptValidatedUi(payload);
+      limits.emitCollector.acceptUi(...values);
     },
     batch: async (calls: unknown) => {
       const started = Date.now();
@@ -1399,7 +1224,7 @@ Write one plain-JavaScript async arrow function. Use only:
 - <connectorId>.<toolName>(args) for a sanitized shortcut, or connecta.call(address, args) for a canonical address.
 - connecta.search(args), connecta.describe(args), and connecta.batch(calls) for discovery and independent read-only calls.
 - connecta.emit(block) — { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }. Success-only; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; invalid/over-budget throws.
-- connecta.ui(html, options?) for one success-only view; return the same initial summary the HTML renders.
+- connecta.ui(html) for one display-only, success-only view; return the same summary the HTML renders.
 - console.log(...) — captured.
 
 Programs have no portable ambient capabilities. Return JSON and reduce large results before they truncate. Fetch skills({ name: "usage" }) once for selection rules, exact result shapes, repair, examples, guide handling${connectorGuides ? ", connector-guide rules" : ""}, and runtime differences.`;

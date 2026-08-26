@@ -154,7 +154,7 @@ host-call budget (`L4`). One transport bound covers everything rich a program
 delivers; no new knob.
 
 **U5.** One static shell: a connecta-authored HTML5 document at
-`ui://connecta/program-ui/v1`, mimeType `text/html;profile=mcp-app`, declared
+`ui://connecta/program-ui/v3`, mimeType `text/html;profile=mcp-app`, declared
 on `execute_code` via `_meta.ui.resourceUri` together with an explicit
 `_meta.ui.visibility: ["model"]`, and served by a `resources/read` handler that
 answers exactly that URI and fails on any other. The handler registers on the
@@ -163,9 +163,10 @@ capability into the discovery response — so `resources/list` is served too, an
 returns an empty list. That is the Apps spec's permitted omission of UI-only
 resources from listing, taken exactly: the capability stays honest because the
 method answers, and nothing downstream is ever listed or aggregated.
-`visibility` is declared rather than left to default because the default
-`["model","app"]` would tell hosts the view may call `execute_code` over
-`tools/call` — the thing the view-initiated-calls gate defers. The version
+The other six tools declare the same model-only visibility without a resource
+URI. `visibility` is declared rather than left to default because the default
+`["model","app"]` would tell hosts the display-only view it may call every tool
+over `tools/call`. It may not. The version
 segment bumps whenever the shell's bytes change, because hosts cache templates
 by URI.
 
@@ -267,7 +268,7 @@ a block.
   frame is permitted and offline by the same rule. That is a dependency on
   documented behavior, not something connecta enforces: hosts MAY tighten
   further, and MAY override the inner `sandbox` attribute, either of which
-  could close the gap the shell rides through. If one does, the `v1` segment in
+  could close the gap the shell rides through. If one does, the `v3` segment in
   the shell URI is the escape hatch — a new shell at a new address is a version
   bump, not a redesign. Program UI is offline because the host makes it
   offline, not because connecta scanned the HTML for `fetch`.
@@ -319,14 +320,14 @@ official spec at all — it survives there as background prose, not as a deferre
 item with a queue position. Adopting a payload format the official spec never
 took, on the path the official spec superseded, is two bets on one square.
 
-**View-initiated tool calls from program UI.** This original gate was split by
-[#287](https://github.com/zackbart/connecta/issues/287) on 2026-08-02. Bounded
-refresh, pagination, and drill-down reads are accepted through named bindings
-and the existing `call_tool`; mutations remain gated. The evidence, threat
-trace, and boundary between live reads and Executor's artifact product live in
-[`program-ui-read-calls.md`](./program-ui-read-calls.md). The normative contract
-is `V1`–`V8` in [`code-mode.md`](../documentation/code-mode.md); it supersedes this record's
-display-only clauses where they disagree.
+**View-initiated tool calls from program UI.** Removed by
+[#484](https://github.com/zackbart/connecta/issues/484) on 2026-08-26. Issue
+[#287](https://github.com/zackbart/connecta/issues/287) accepted bounded reads
+for refresh, pagination, and drill-down, but the declaration validator,
+host-call protocol, tool metadata, and focused tests did not earn their cost.
+Program UI is display-only again. The superseded evidence and contract remain
+in [`program-ui-read-calls.md`](./program-ui-read-calls.md) so the reversal does
+not erase why the bridge once looked reasonable.
 
 **Downstream MCP Apps template passthrough** (downstream connectors declaring
 their own `ui://` templates, proxied through connecta's `resources/read`).
@@ -369,7 +370,7 @@ buy a guarantee the protocol already gives away.
 - The server capability declaration carries exactly one extension identifier,
   `io.modelcontextprotocol/ui`.
 - `execute_code`'s metadata declares `_meta.ui.resourceUri` pointing at the
-  shell URI and `_meta.ui.visibility: ["model"]`.
+  shell URI, and all seven tools declare exact model-only visibility.
 - The shell renders payload HTML in a sandboxed inner frame and exposes no
   bridge — asserted however the implementation can, at minimum that the shell
   source carries the `srcdoc` and sandbox attributes and contains no

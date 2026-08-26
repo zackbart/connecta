@@ -78,7 +78,7 @@ CHANGELOG, not here.
 | MRTR / `input_required` passthrough | gated | relayable statelessly; no host or downstream emits it yet ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | needs refresh-churn evidence ([#206](https://github.com/zackbart/connecta/issues/206)) |
 | Downstream MCP Apps template passthrough | gated | needs a downstream that ships one ([#266](https://github.com/zackbart/connecta/issues/266)) |
-| View-initiated mutation calls from program UI | gated | a click is not approval ([#287](https://github.com/zackbart/connecta/issues/287)) |
+| Program UI tool calls | removed | the read bridge added a second contract without improving agent data retrieval; views are display-only again ([#287](https://github.com/zackbart/connecta/issues/287), [#484](https://github.com/zackbart/connecta/issues/484)) |
 
 ## Invariants
 

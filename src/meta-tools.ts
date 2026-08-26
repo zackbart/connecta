@@ -1521,10 +1521,8 @@ export function registerMetaTools(
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
-      // The trusted program-view shell delegates bounded named reads here.
-      // It is already one of the seven model tools; app visibility adds no
-      // tool and this handler repeats ordinary fail-closed read admission.
-      _meta: { ui: { visibility: ["model", "app"] } },
+      // Omission defaults to model + app. Display-only views may call no tool.
+      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.callTool(args as CallArgs),
   );
