@@ -163,9 +163,10 @@ capability into the discovery response — so `resources/list` is served too, an
 returns an empty list. That is the Apps spec's permitted omission of UI-only
 resources from listing, taken exactly: the capability stays honest because the
 method answers, and nothing downstream is ever listed or aggregated.
-`visibility` is declared rather than left to default because the default
-`["model","app"]` would tell hosts the display-only view it may call
-`execute_code` over `tools/call`. It may not. The version
+The other six tools declare the same model-only visibility without a resource
+URI. `visibility` is declared rather than left to default because the default
+`["model","app"]` would tell hosts the display-only view it may call every tool
+over `tools/call`. It may not. The version
 segment bumps whenever the shell's bytes change, because hosts cache templates
 by URI.
 
@@ -369,7 +370,7 @@ buy a guarantee the protocol already gives away.
 - The server capability declaration carries exactly one extension identifier,
   `io.modelcontextprotocol/ui`.
 - `execute_code`'s metadata declares `_meta.ui.resourceUri` pointing at the
-  shell URI and `_meta.ui.visibility: ["model"]`.
+  shell URI, and all seven tools declare exact model-only visibility.
 - The shell renders payload HTML in a sandboxed inner frame and exposes no
   bridge — asserted however the implementation can, at minimum that the shell
   source carries the `srcdoc` and sandbox attributes and contains no

@@ -265,14 +265,16 @@ describe("server /mcp end-to-end", () => {
     const tools = body.result.tools as Array<{
       name: string;
       description: string;
-      _meta?: { ui?: unknown };
+      _meta?: unknown;
     }>;
     const execute = required(
       tools.find((tool) => tool.name === "execute_code"),
     );
-    expect(execute._meta?.ui).toEqual({
-      resourceUri: PROGRAM_UI_RESOURCE_URI,
-      visibility: ["model"],
+    expect(execute._meta).toEqual({
+      ui: {
+        resourceUri: PROGRAM_UI_RESOURCE_URI,
+        visibility: ["model"],
+      },
     });
     expect(execute.description).toContain("connecta.ui(html)");
     expect(execute.description).toContain("display-only");
@@ -280,7 +282,9 @@ describe("server /mcp end-to-end", () => {
 
     for (const tool of tools) {
       if (tool.name === "execute_code") continue;
-      expect(tool._meta?.ui, tool.name).toBeUndefined();
+      expect(tool._meta, tool.name).toEqual({
+        ui: { visibility: ["model"] },
+      });
     }
   });
 

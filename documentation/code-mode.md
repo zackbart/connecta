@@ -535,8 +535,11 @@ delivers.
 **U5.** One static shell: a connecta-authored HTML5 document at
 `ui://connecta/program-ui/v3`, mimeType `text/html;profile=mcp-app`, declared on
 `execute_code` via `_meta.ui.resourceUri` together with an explicit
-`_meta.ui.visibility: ["model"]`. A `resources/read` handler answers exactly
-that URI and fails on any other; `resources/list` is served and returns an empty list.
+`_meta.ui.visibility: ["model"]`. The other six tools declare the same
+model-only visibility without a resource URI. Omission defaults to model and
+app visibility, which would let a display-only view call them. A
+`resources/read` handler answers exactly that URI and fails on any other;
+`resources/list` is served and returns an empty list.
 The version segment bumps whenever the shell's bytes change, because hosts cache
 templates by URI.
 
@@ -875,7 +878,7 @@ the upstream `Executor` shape assignable.
 | `U1`, `U2` | `test/guest-api-contract.test.ts` (invalid and repeated calls throw catchably, first payload stands), `test/execute-ui.test.ts` (every rejected shape) |
 | `U3` | `test/guest-api-contract.test.ts` (`_meta` payload and `ui: true`, identical on both executors), `test/execute-ui.test.ts` (`structuredContent`, byte-for-byte no-call path, discard structured and plain, coexistence with `emittedDiscarded`), `test/quickjs-executor.test.ts` (mid-run shutdown) |
 | `U4` | `test/execute-ui.test.ts` (one shared byte aggregate crossed in either order; block count and host-call budget untouched) |
-| `U5`, `U10`, `U11` | `test/server.test.ts` (the shell URI, mimeType, and body; every other URI fails; empty listing; `execute_code`'s `_meta.ui`; exactly one declared extension) |
+| `U5`, `U10`, `U11` | `test/server.test.ts` (the shell URI, mimeType, and body; every other URI fails; empty listing; exact model-only `_meta.ui` on all seven tools; exactly one declared extension) |
 | `U6` | `test/execute-ui.test.ts` (valid HTML5, `srcdoc` and sandbox attributes, no `allow-same-origin`, no path from the inner frame to the host) |
 | `U7`, `U8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `U9` | `test/execute-ui.test.ts` (a `ui` byte aggregate distinct from `emitted`, absent when nothing was accepted) |
