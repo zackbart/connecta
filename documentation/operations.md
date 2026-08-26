@@ -238,7 +238,7 @@ in.
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
 | `guest-api-contract.test.ts` | the shared guest contract on the Dynamic Worker, including caught call, typed inline describe recovery, discovery, utility, batch, and budget failure codes; plus the real authority boundary — local `data:` fetch, denied egress, unresolved DNS, empty environment paths, unavailable filesystem/HTTP builtins, and present runtime globals |
 | `linear-provider.test.ts` | the Linear proxy's construction, classification, and guide |
-| `meta-tools-call.test.ts` | registry-backed calls: structured errors, field projection, truncation and `get_result`, per-connector result bounds, JSON representation failures, MCP content bounds, and offset alignment |
+| `meta-tools-call.test.ts` | registry-backed calls: structured errors, truncation and `get_result`, per-connector result bounds, JSON representation failures, MCP content bounds, and offset alignment |
 | `meta-tools-search.test.ts` | registry-backed discovery: bounded search with page and address maxima, compact and JSON schemas with constraints, typed describe recovery and suggestions, and structured-result compatibility |
 | `meta-tools.test.ts` | the remaining registry-backed meta-tools: the complete on-demand usage skill, connector-guide selection and summary bounds, stored-credential drift, catalog health, authorization, probe timeouts, and unavailable or unknown browse recovery |
 | `mixpanel-provider.test.ts` | the Mixpanel proxy, its conditional-input guide and complete reviewed schema-digest manifest |

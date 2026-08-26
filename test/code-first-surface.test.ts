@@ -93,6 +93,22 @@ describe("the advertised surface", () => {
       ]);
   });
 
+  it("does not advertise direct-call field projection", async () => {
+    const body = await readJsonRpc(
+      await mcpRpc(makeDeployment(deploymentConfig), "tools/list", {}, {
+        token: TOKEN,
+      }),
+    );
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const tool = body.result.tools.find(
+        (entry: { name: string }) => entry.name === name,
+      );
+      expect(tool.inputSchema.properties).not.toHaveProperty("fields");
+    }
+    expect(CONNECTA_INSTRUCTIONS).not.toContain("use fields");
+    expect(USAGE_SKILL).not.toContain("Projection misses");
+  });
+
   it("never advertises or teaches a removed top-level tool", async () => {
     const connecta = makeDeployment(deploymentConfig);
     const listed = await readJsonRpc(

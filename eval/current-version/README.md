@@ -240,6 +240,17 @@ large-result reduction. Fixtures use nested schemas, typed catalog failures,
 provider query syntax, and deterministic domain-shaped results rather than
 empty synthetic tools. No live account payload enters the lane.
 
+`large-document-paging` is the evidence gate for retaining `get_result`. It
+calls a deterministic document fixture whose serialized value exceeds 40 KB,
+then reads the final page through the direct result handle. Run it alone with:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --case large-document-paging \
+  --repetitions 3 \
+  --concurrency 1
+```
+
 `auth-handoff` is the lane's only coverage of the accepted
 `authorize_connector` recovery route
 ([#192](https://github.com/zackbart/connecta/issues/192)); keep it. The #294

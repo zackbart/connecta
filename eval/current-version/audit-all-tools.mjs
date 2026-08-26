@@ -149,7 +149,7 @@ export async function runTaskAudit(context, { baseUrl, operatorToken }) {
     "call_tool",
     {
       address: "controlled.large_document",
-      args: { paragraphs: 30 },
+      args: { paragraphs: 200 },
       resultMode: "value",
       diagnostics: true,
     },
@@ -158,7 +158,8 @@ export async function runTaskAudit(context, { baseUrl, operatorToken }) {
       return pass(
         value.ok === true &&
           value.data?.truncated === true &&
-          typeof value.data?.resultId === "string",
+          typeof value.data?.resultId === "string" &&
+          value.data?.totalBytes >= 40_000,
         {
           outcome: "result-truncated",
           resultId: value.data?.resultId ?? null,

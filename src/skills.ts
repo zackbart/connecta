@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Choose a route before discovery. For one read at an unknown address, use search_tools then call_tool; a known address needs only call_tool. For read-only reduction, multiple or dependent calls, loops, joins, or branches, use one execute_code program that discovers, calls, and returns the reduced answer. Only readOnlyHint: true tools run there. Keep unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool. After auth_required use authorize_connector. After a truncated direct result use fields or get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Fetch skills({ name: "usage" }) once for program syntax, selection, repair, examples, and runtime details.';
+  'Choose a route before discovery. For one read at an unknown address, use search_tools then call_tool; a known address needs only call_tool. For read-only reduction, multiple or dependent calls, loops, joins, or branches, use one execute_code program that discovers, calls, and returns the reduced answer. Only readOnlyHint: true tools run there. Keep unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool. After auth_required use authorize_connector. After a truncated direct result use get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Fetch skills({ name: "usage" }) once for program syntax, selection, repair, examples, and runtime details.';
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
@@ -43,10 +43,10 @@ Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`detail
 
 - \`destructive_tool_requires_approval\`: stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
-- A truncated direct-call result: retry \`call_tool\` with \`fields\`, or follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
+- A truncated direct-call result: follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
 
-For a direct call, \`fields\` selects JSON dot-paths and \`[]\` traverses arrays, for example \`results[].id\`. Projection misses return \`data\` plus \`$connecta\` feedback. \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. \`maxRetries\` is honored only for safely annotated tools. \`diagnostics: true\` adds timing.
+For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. \`maxRetries\` is honored only for safely annotated tools. \`diagnostics: true\` adds timing.
 
 \`get_result({ id, offset?, maxBytes? })\` returns \`{ text, offset, nextOffset?, totalBytes }\` for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1 and defaults to the deployment cap; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the response reports the served offset. Follow \`nextOffset\` to reassemble pages. An unknown or expired id is an error.
 

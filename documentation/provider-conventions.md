@@ -183,10 +183,9 @@ tokens.
 
 ### H8 — Every tool declares an `outputSchema`
 
-Declared outputs are what produce `outputKeys` and the `fields` projection's
-`availableFields`, and they let a program reduce a result without first
-fetching one to look at. Connecta measured *declared* output schemas at 0 of 30
-tools on one real deployment and 3 of 30 on another
+Declared outputs produce `outputKeys` and let a program reduce a result without
+first fetching one to look at. Connecta measured *declared* output schemas at 0
+of 30 tools on one real deployment and 3 of 30 on another
 ([#282](https://github.com/zackbart/connecta/issues/282)) — nearly every tool an
 agent meets is a shape it can only learn by calling. A maintained provider has
 no excuse to join that majority.
