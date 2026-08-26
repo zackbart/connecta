@@ -1,16 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
   createConnecta,
-  type ConnectaAdmissionConfig,
-  type ConnectaActivityConfig,
-  type ConnectaCallsConfig,
   type ConnectaConfig,
-  type ConnectaCredentialsConfig,
-  type ConnectaDiscoveryConfig,
 } from "../src/index.js";
 import type { ActivityStore } from "../src/activity.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
+import { fakeClerkAuth } from "./fixtures/http.js";
+import { silentLogger } from "./helpers.js";
 
 const executor = { execute: async () => ({ result: null }) };
 
@@ -22,44 +19,80 @@ const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
-  it("accepts all five cohesive config groups", () => {
-    const activity: ConnectaActivityConfig = {
-      store: { record() {} },
-      readGate: () => true,
-      deploymentId: "test",
-    };
-    const credentials: ConnectaCredentialsConfig = {};
-    const discovery: ConnectaDiscoveryConfig = {
-      concurrency: 4,
-      catalogTtlSeconds: 10,
-      persistCatalog: false,
-      staleCatalogSeconds: 30,
-      probeTimeoutMs: 1_000,
-    };
-    const calls: ConnectaCallsConfig = {
-      defaultTimeoutMs: 1_000,
-      maxResultBytes: 123,
-    };
-    const admission: ConnectaAdmissionConfig = {
-      requests: {
-        concurrency: 4,
-        maxQueueSize: 8,
-        queueTimeoutMs: 250,
-      },
-      code: {
-        concurrency: 1,
-        maxQueueSize: 2,
-        queueTimeoutMs: 100,
-      },
-    };
+  it("accepts every declared closed option", () => {
     const config: ConnectaConfig = {
       connectors: [],
+      auth: fakeClerkAuth(),
+      storage: memoryStorage(),
+      publicUrl: "https://connecta.test",
       executor,
-      activity,
-      credentials,
-      discovery,
-      calls,
-      admission,
+      activity: {
+        store: { record() {} },
+        readGate: () => true,
+        deploymentId: "test",
+      },
+      credentials: {
+        encryptionKey: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
+      },
+      accessTokens: { maxActive: 3 },
+      discovery: {
+        concurrency: 4,
+        catalogTtlSeconds: 10,
+        persistCatalog: false,
+        staleCatalogSeconds: 30,
+        probeTimeoutMs: 1_000,
+      },
+      calls: {
+        defaultTimeoutMs: 1_000,
+        maxResultBytes: 123,
+      },
+      execute: {
+        maxEmittedBytes: 1_000,
+        maxEmittedBlocks: 2,
+      },
+      admission: {
+        requests: {
+          concurrency: 4,
+          maxQueueSize: 8,
+          queueTimeoutMs: 250,
+          retryAfterMs: 25,
+        },
+        code: {
+          concurrency: 1,
+          maxQueueSize: 2,
+          queueTimeoutMs: 100,
+          retryAfterMs: 10,
+        },
+      },
+      branding: {
+        productName: "Connecta test",
+        productUrl: "https://connecta.test",
+        ownerName: "Test owner",
+        ownerUrl: "https://owner.connecta.test",
+        description: "Config boundary test",
+        pageTitle: "Connecta test page",
+        favicon: {
+          svg: "<svg xmlns=\"http://www.w3.org/2000/svg\" />",
+          ico: new Uint8Array([0]),
+          href: "/favicon.svg",
+        },
+        themeColor: "#ffffff",
+      },
+      logger: silentLogger,
+      serverInfo: {
+        name: "connecta-test",
+        version: "1.0.0",
+        title: "Connecta test",
+        websiteUrl: "https://connecta.test",
+        icons: [
+          {
+            src: "https://connecta.test/icon.svg",
+            mimeType: "image/svg+xml",
+            sizes: ["any"],
+          },
+        ],
+      },
+      deploymentInfo: { fixture: true },
     };
 
     const connecta = createConnecta(config);

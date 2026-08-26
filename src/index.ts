@@ -259,34 +259,52 @@ type OptionSchema =
   | { readonly [key: string]: OptionSchema }
   | readonly [OptionSchema];
 
+type ClosedOptionSchema<T extends object> = {
+  readonly [K in keyof T]-?: OptionSchema;
+};
+
 const admissionPoolSchema = {
   concurrency: null,
   maxQueueSize: null,
   queueTimeoutMs: null,
   retryAfterMs: null,
-} as const satisfies OptionSchema;
+} as const satisfies ClosedOptionSchema<AdmissionPoolConfig>;
 
 const CONFIG_SCHEMA = {
   connectors: null,
   auth: null,
   storage: null,
   publicUrl: null,
-  activity: { store: null, readGate: null, deploymentId: null },
-  credentials: { encryptionKey: null },
-  accessTokens: { maxActive: null },
+  activity: {
+    store: null,
+    readGate: null,
+    deploymentId: null,
+  } satisfies ClosedOptionSchema<ConnectaActivityConfig>,
+  credentials: {
+    encryptionKey: null,
+  } satisfies ClosedOptionSchema<ConnectaCredentialsConfig>,
+  accessTokens: {
+    maxActive: null,
+  } satisfies ClosedOptionSchema<ConnectaAccessTokensConfig>,
   discovery: {
     concurrency: null,
     catalogTtlSeconds: null,
     persistCatalog: null,
     staleCatalogSeconds: null,
     probeTimeoutMs: null,
-  },
-  calls: { defaultTimeoutMs: null, maxResultBytes: null },
-  execute: { maxEmittedBytes: null, maxEmittedBlocks: null },
+  } satisfies ClosedOptionSchema<ConnectaDiscoveryConfig>,
+  calls: {
+    defaultTimeoutMs: null,
+    maxResultBytes: null,
+  } satisfies ClosedOptionSchema<ConnectaCallsConfig>,
+  execute: {
+    maxEmittedBytes: null,
+    maxEmittedBlocks: null,
+  } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
     requests: admissionPoolSchema,
     code: admissionPoolSchema,
-  },
+  } satisfies ClosedOptionSchema<ConnectaAdmissionConfig>,
   branding: {
     productName: null,
     productUrl: null,
@@ -294,17 +312,29 @@ const CONFIG_SCHEMA = {
     ownerUrl: null,
     description: null,
     pageTitle: null,
-    favicon: { svg: null, ico: null, href: null },
+    favicon: {
+      svg: null,
+      ico: null,
+      href: null,
+    } satisfies ClosedOptionSchema<NonNullable<ConnectaBranding["favicon"]>>,
     themeColor: null,
-  },
+  } satisfies ClosedOptionSchema<ConnectaBranding>,
   logger: null,
   serverInfo: {
     name: null,
     version: null,
     title: null,
     websiteUrl: null,
-    icons: [{ src: null, mimeType: null, sizes: null }],
-  },
+    icons: [
+      {
+        src: null,
+        mimeType: null,
+        sizes: null,
+      } satisfies ClosedOptionSchema<
+        NonNullable<NonNullable<ConnectaConfig["serverInfo"]>["icons"]>[number]
+      >,
+    ],
+  } satisfies ClosedOptionSchema<NonNullable<ConnectaConfig["serverInfo"]>>,
   deploymentInfo: null,
   executor: null,
 } as const satisfies Record<keyof ConnectaConfig, OptionSchema>;

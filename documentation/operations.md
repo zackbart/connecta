@@ -96,7 +96,7 @@ optional.
 | `admission.requests?` | 16 active / 32 queued / 5 s / 1 s | global FIFO `/mcp` capacity, taken before auth ([request admission](./request-admission.md)) |
 | `admission.code?` | 2 active / 8 queued / 5 s / 1 s | fallback pool for an executor that owns no `acquire()`; ignored with a warning when it does |
 
-An unknown own option throws before construction reads the deployment. The
+An unknown own option throws before construction does deployment work. The
 check covers the top level, every configuration group, admission pools,
 branding icons, and server icons; the error names the rejected path without
 copying its value. Removed options such as `toolkits`, `credentials.health`,
