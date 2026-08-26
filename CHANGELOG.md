@@ -10,10 +10,11 @@ is to maintainer history: six finished design records now live in the repository
 at their GitHub URLs instead of shipping in the npm package, cutting 91 KB from
 the package. The constitution is a fifth of its former size and keeps the same
 decisions. The core shrank from 28,756 to 27,417 lines and the tests from 42,341
-to 40,375 before the final pure-suite splits, which landed about 60 lines back
-to keep the Node and Workers runs honest. Two dead paths finally left with the
-rest: write-only health accessors on `RegistryView`, residue from #179, and the
-v1 persisted-catalog reader, unreachable since 2026-07-28.
+to 40,375 before the final pure-suite splits, which put 198 lines back — a
+copied preamble the next pass moves into a fixture (#479). Two dead paths
+finally left with the rest: write-only health accessors on `RegistryView`,
+residue from #179, and the v1 persisted-catalog reader, unreachable since
+2026-07-28.
 
 ### Changed
 
