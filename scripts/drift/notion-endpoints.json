@@ -38,7 +38,7 @@
       "method": "POST",
       "path": "/v1/data_sources/{data_source_id}/query",
       "specRevision": "1.0.0",
-      "contract": "sha256:2d1323e215c611c4b204dc6a7098885bb275eb3e6c4a76cb2bbce9eb93b1371f"
+      "contract": "sha256:d50f72ca64da8d3994334d597e12cb4c0531597051d2dc69a370d0fd44882618"
     },
     {
       "method": "GET",

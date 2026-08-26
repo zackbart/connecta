@@ -86,61 +86,61 @@
       "method": "GET",
       "path": "/accounts/{account_id}/r2/buckets",
       "specRevision": "4.0.0",
-      "contract": "sha256:8376d08dc65c17c49b1040b06cc365b3bff0b55bc468bcd043d4143ee4c1bcbb"
+      "contract": "sha256:801724f3e2d201cbb2b035b797263c15774cb60002e070ce368874b6bc53afd4"
     },
     {
       "method": "POST",
       "path": "/accounts/{account_id}/r2/buckets",
       "specRevision": "4.0.0",
-      "contract": "sha256:29a76da91395c0a21b811155d719b93528f0b0e3e47488afa1f04c793d26ceb6"
+      "contract": "sha256:b454613e1a5265afdec8331e86e5950f59fe5bc3da9b39b7efa68446666cff34"
     },
     {
       "method": "DELETE",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
       "specRevision": "4.0.0",
-      "contract": "sha256:dffb4cdc5f3739c23912af8703d8f355c4512752dee70bae05726a51028a1143"
+      "contract": "sha256:3080913a81495efca25edfee436fc4c5c6e9aa002bbda2805d04a7183ce9ed12"
     },
     {
       "method": "GET",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
       "specRevision": "4.0.0",
-      "contract": "sha256:4b1a77b7d42eb1d47691538fdc2f3b8167152abef7ffdb913e20048a4bc415cc"
+      "contract": "sha256:f8a1362939fa6b95d29a18ca3b5fdf3a417736478ca28e43cfb3c20dcd5ee175"
     },
     {
       "method": "PATCH",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}",
       "specRevision": "4.0.0",
-      "contract": "sha256:b173764b9d6984b335f014bac5abd0ccd1184ed647bf30e3c1b8c1698ecef89a"
+      "contract": "sha256:d255bde18ca5a163c960108ea590eab4beae4fc100205fe93a37d6ec03e63cb9"
     },
     {
       "method": "GET",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/cors",
       "specRevision": "4.0.0",
-      "contract": "sha256:f26ae4d8ec27c0c5962c2279f52c4160935c654452ebf8a27b80ae2a8bc30bb1"
+      "contract": "sha256:728c971391d573a2317c1ca2dbc1897e4bdf81775896ea36ff27928e59791a83"
     },
     {
       "method": "GET",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/objects",
       "specRevision": "4.0.0",
-      "contract": "sha256:80890469a7825f81f38eefb9a22cf28b19b7c8ed9692f43761fedb9829d1ecf4"
+      "contract": "sha256:cb69bc787cc661d3bb814777eb515ed1ee5cde86dc88df09666fc48f48b4cd92"
     },
     {
       "method": "DELETE",
       "path": "/accounts/{account_id}/r2/buckets/{bucket_name}/objects/{object_key}",
       "specRevision": "4.0.0",
-      "contract": "sha256:e6e98b73430075b7e468924df625d8912151f759fdf73c9aad7f770f889cfb76"
+      "contract": "sha256:7e9f7c73332ac7eeda74548ccf4884fb763acb78c4a36208f87def73c561c347"
     },
     {
       "method": "GET",
       "path": "/accounts/{account_id}/storage/kv/namespaces",
       "specRevision": "4.0.0",
-      "contract": "sha256:d6f21875cba5f0b1b4e8eee7bf3a5e5f61a1651bc05925cbde8fe5d0c704c0a5"
+      "contract": "sha256:10f156a9a8203c73ac1506a889f2d3ff6f96d32acc80067e4fd94bcba48e8f28"
     },
     {
       "method": "POST",
       "path": "/accounts/{account_id}/storage/kv/namespaces",
       "specRevision": "4.0.0",
-      "contract": "sha256:8fbbb8d5f79d53213bfe01552b3dbad3fc86fbe2f7f97f224d405fb1d9a7c103"
+      "contract": "sha256:43d406b31aa57189f45f656c820ffde88218420937fc0badbb34d35a0ef723e8"
     },
     {
       "method": "DELETE",
@@ -152,13 +152,13 @@
       "method": "GET",
       "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:7ba8192512693b8f9185dfcdda22814d4d6295203971a02c7fdb60999d55a42c"
+      "contract": "sha256:7efdad70a567ad2c9852b19213ae73a7c7c10360a2ef64fc1e85a80d186d6b5e"
     },
     {
       "method": "PUT",
       "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:650659b74a8e792d94d6ba0332f0fff0cc8063a217a5af78299ab00813793269"
+      "contract": "sha256:dfef304ade256082b00b8d7037fee2b9db052aa63f10180f0bb7993c089ec8c9"
     },
     {
       "method": "PUT",
@@ -188,7 +188,7 @@
       "method": "GET",
       "path": "/accounts/{account_id}/workers/scripts",
       "specRevision": "4.0.0",
-      "contract": "sha256:b47fe32cb84845716df6c81b857c6b590555dd9ca06a8c92906275901fdddf7d"
+      "contract": "sha256:9a6c563ac189de140a587e6da21736b6470732bd72a774a34f6da67a81e5b28f"
     },
     {
       "method": "DELETE",
@@ -212,7 +212,7 @@
       "method": "GET",
       "path": "/accounts/{account_id}/workers/scripts/{script_name}/settings",
       "specRevision": "4.0.0",
-      "contract": "sha256:c56f81067cb2713dc16ad689bc447675fa3d2a4a67ae32f223cf686a27645844"
+      "contract": "sha256:a2482150f3eb3518aa0f692ee9fbaa7d4159b9ab15fb76a1445cbe520dd3af1a"
     },
     {
       "method": "GET",
@@ -284,19 +284,19 @@
       "method": "GET",
       "path": "/zones/{zone_id}/rulesets/{ruleset_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:c3e9c4a392c0e2697ff4542c59956b00c527758c6467e3d1c4aca1843a81070d"
+      "contract": "sha256:fa0ce243fb2a928c4cc2fe84a4523a865922f904fb7179f283913496310de526"
     },
     {
       "method": "GET",
       "path": "/zones/{zone_id}/settings/{setting_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:d40d6e69038efbcb47a4e211d4e2c293c557a943fb383975c838245ee9c96888"
+      "contract": "sha256:55b55adc0ed04a368710e274615faceca0c8456dd59694b68edf075c52060b28"
     },
     {
       "method": "PATCH",
       "path": "/zones/{zone_id}/settings/{setting_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:131e78bf0692cc655846a3ab748ca1738522244117eb3733c75d7032847a6512"
+      "contract": "sha256:edb944622554aca746c8cde0e4efe68e2434eb050b09129cb5410e3bb9e65a27"
     }
   ]
 }
