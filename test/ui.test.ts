@@ -23,17 +23,17 @@ import { InvalidActivityCursorError } from "../src/activity.js";
 import type { Connector, InboundAuth } from "../src/types.js";
 import { createTestConnecta, required, makeRegistry } from "./helpers.js";
 import { calcApi, fakeClerkAuth, makeDeployment } from "./fixtures/http.js";
-
-const TOKEN = "test-token-123";
-const BASE = "https://connecta.test";
-const CREDENTIAL_KEY = "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=";
+import {
+  BASE,
+  CLERK_OPTIONS,
+  CREDENTIAL_KEY,
+  credentialConnector,
+  credentialRequest,
+  makeCredentialConnecta,
+  TOKEN,
+} from "./fixtures/ui.js";
 
 const CALC_OPTIONS = { title: "Calculator", inputSchema: "object" } as const;
-const CLERK_OPTIONS = {
-  frontendApiUrl: "https://clerk.example.com",
-  token: "clerk-token",
-  userId: "user_123",
-} as const;
 
 /** A connector whose listTools always throws — exercises broken-connector isolation. */
 function broken(): Connector {
@@ -80,62 +80,6 @@ function scriptSrcs(body: string): string[] {
   return (body.match(/<script[^>]*>/g) ?? [])
     .map((tag) => /\bsrc="([^"]*)"/.exec(tag)?.[1])
     .filter((src): src is string => src !== undefined);
-}
-
-function credentialConnector(): Connector {
-  return api("vaulted", {
-    description: "Vaulted API",
-    credential: {
-      label: "API token",
-      description: "Token used for outbound API requests.",
-      placeholder: "Paste API token",
-    },
-    testCredential: async (value) => ({
-      ok: value === "valid-secret-9876",
-      message:
-        value === "valid-secret-9876"
-          ? "Credential is valid."
-          : "Credential was rejected.",
-    }),
-    tools: [
-      {
-        name: "whoami",
-        description: "Return the configured credential for test inspection.",
-        inputSchema: { type: "object" },
-        annotations: { readOnlyHint: true },
-        handler: async (_args, ctx) => ({ credential: await ctx.credential?.get() }),
-      },
-    ],
-  });
-}
-
-function makeCredentialConnecta() {
-  const storage = memoryStorage();
-  const connecta = createTestConnecta({
-    connectors: [credentialConnector()],
-    auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-    storage,
-    publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
-  });
-  return { connecta, storage };
-}
-
-function credentialRequest(
-  connecta: ReturnType<typeof createTestConnecta>,
-  path: string,
-  init: RequestInit = {},
-) {
-  return connecta.fetch(
-    new Request(`${BASE}${path}`, {
-      ...init,
-      headers: {
-        Authorization: "Bearer clerk-token",
-        Origin: BASE,
-        ...init.headers,
-      },
-    }),
-  );
 }
 
 describe("status UI", () => {

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
+import {
+  BASE,
+  registry,
+  type SearchResult,
+  textOf,
+} from "./fixtures/meta-tools.js";
 import { api } from "../src/connectors/api.js";
 import { CatalogService } from "../src/catalog-service.js";
 import {
@@ -7,9 +13,7 @@ import {
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
 } from "../src/credentials.js";
 import { ConnectorCallError } from "../src/errors.js";
-import {
-  createMetaTools,
-} from "../src/meta-tools.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import {
   connectorGuideSummary,
   GUIDE_SUMMARY_LENGTH,
@@ -18,69 +22,15 @@ import {
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import type { ToolCallActivityEvent } from "../src/activity.js";
-import { required,
+import {
+  required,
   activitySink,
   authConnector,
-  brokenConnector,
   calcConnector,
   makeRegistry,
-  remoteConnector,
 } from "./helpers.js";
 
-const BASE = "https://connecta.test";
 const CREDENTIAL_KEY = Buffer.alloc(32, 11).toString("base64");
-
-function textOf(result: { content: { text: string }[] }): unknown {
-  return JSON.parse(required(result.content[0]).text);
-}
-
-function registry() {
-  return makeRegistry([
-    calcConnector,
-    remoteConnector,
-    brokenConnector,
-    authConnector,
-  ]);
-}
-
-interface SearchGroup {
-  id: string;
-  description?: string;
-  tools: {
-    name: string;
-    address: string;
-    description?: string;
-  }[];
-}
-interface SearchResult {
-  connectors: SearchGroup[];
-  total: number;
-  offset: number;
-  limit: number;
-  hasMore: boolean;
-  nextOffset?: number;
-  matchMode?: "partial";
-  queryAnalysis?: {
-    representedTerms: string[];
-    otherResultTerms: string[];
-    unmatchedTerms: string[];
-    truncated?: true;
-    connectorScope?: string;
-    unknownConnector?: true;
-    unavailableConnectorCount?: number;
-    catalogError?: {
-      code: string;
-      message: string;
-      retryable: boolean;
-      retryAfterMs?: number;
-    };
-    guide?: string;
-    guideSummary?: string;
-    guideRequired?: true;
-    guideRequiredReasons?: string[];
-    guidance?: string;
-  };
-}
 
 describe("skills", () => {
   const NOTION_GUIDE = `# Notion usage

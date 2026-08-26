@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
+import {
+  BASE,
+  registry,
+  type SearchResult,
+  textOf,
+} from "./fixtures/meta-tools.js";
 import { api } from "../src/connectors/api.js";
 import {
   compactDiscoverySchema,
@@ -15,20 +21,12 @@ import {
   MAX_SEARCH_LIMIT,
 } from "../src/meta-tools.js";
 import type { Connector } from "../src/types.js";
-import { required,
-  authConnector,
-  brokenConnector,
+import {
+  required,
   calcConnector,
   makeRegistry,
   remoteConnector,
 } from "./helpers.js";
-
-const BASE = "https://connecta.test";
-
-
-function textOf(result: { content: { text: string }[] }): unknown {
-  return JSON.parse(required(result.content[0]).text);
-}
 
 function expectStructurallyCompleteTypeShape(text: string): void {
   const pairs = new Map([
@@ -58,54 +56,6 @@ function expectStructurallyCompleteTypeShape(text: string): void {
   expect(inString).toBe(false);
   expect(stack).toEqual([]);
   expect(text).not.toContain("\uFFFD");
-}
-
-function registry() {
-  return makeRegistry([
-    calcConnector,
-    remoteConnector,
-    brokenConnector,
-    authConnector,
-  ]);
-}
-
-interface SearchGroup {
-  id: string;
-  description?: string;
-  tools: {
-    name: string;
-    address: string;
-    description?: string;
-  }[];
-}
-interface SearchResult {
-  connectors: SearchGroup[];
-  total: number;
-  offset: number;
-  limit: number;
-  hasMore: boolean;
-  nextOffset?: number;
-  matchMode?: "partial";
-  queryAnalysis?: {
-    representedTerms: string[];
-    otherResultTerms: string[];
-    unmatchedTerms: string[];
-    truncated?: true;
-    connectorScope?: string;
-    unknownConnector?: true;
-    unavailableConnectorCount?: number;
-    catalogError?: {
-      code: string;
-      message: string;
-      retryable: boolean;
-      retryAfterMs?: number;
-    };
-    guide?: string;
-    guideSummary?: string;
-    guideRequired?: true;
-    guideRequiredReasons?: string[];
-    guidance?: string;
-  };
 }
 
 describe("structured result compatibility", () => {
