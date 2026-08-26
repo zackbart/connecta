@@ -21,21 +21,7 @@ type UnsafeCreateConnecta = (
 const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
-const EXPECTED_ALL_MIGRATIONS = [
-  "Unsupported v0.6.x ConnectaConfig options. Migrate each path for v0.7.0:",
-  "- activity -> activity.store",
-  "- activityReadGate -> activity.readGate",
-  "- activityDeploymentId -> activity.deploymentId",
-  "- credentialEncryptionKey -> credentials.encryptionKey",
-  "- toolCacheTtlSeconds -> discovery.catalogTtlSeconds",
-  "- persistToolCatalog -> discovery.persistCatalog",
-  "- toolCatalogStaleSeconds -> discovery.staleCatalogSeconds",
-  "- probeTimeoutMs -> discovery.probeTimeoutMs",
-  "- defaultToolTimeoutMs -> calls.defaultTimeoutMs",
-  "- maxResultBytes -> calls.maxResultBytes",
-].join("\n");
-
-describe("ConnectaConfig v0.7 shape", () => {
+describe("ConnectaConfig boundary", () => {
   it("accepts all five cohesive config groups", () => {
     const activity: ConnectaActivityConfig = {
       store: { record() {} },
@@ -157,75 +143,86 @@ describe("ConnectaConfig v0.7 shape", () => {
     expect(await noPersistenceStorage.get("catalog:memory-only")).toBeNull();
   });
 
-  it("aggregates every legacy own path without exposing its values", () => {
+  it("rejects an unknown top-level option before reading the config", () => {
     const secret = "must-not-appear";
-    let thrown: unknown;
-    try {
-      unsafeCreateConnecta({
-        connectors: [],
-        activity: { record() {} },
-        activityReadGate: () => true,
-        activityDeploymentId: secret,
-        credentialEncryptionKey: secret,
-        toolCacheTtlSeconds: 1,
-        persistToolCatalog: false,
-        toolCatalogStaleSeconds: 1,
-        probeTimeoutMs: 1,
-        defaultToolTimeoutMs: 1,
-        maxResultBytes: 1,
-      });
-    } catch (error) {
-      thrown = error;
-    }
+    let connectorsRead = false;
+    const config = { typo: secret } as Record<PropertyKey, unknown>;
+    Object.defineProperty(config, "connectors", {
+      enumerable: true,
+      get() {
+        connectorsRead = true;
+        return [];
+      },
+    });
 
-    expect(thrown).toBeInstanceOf(Error);
-    expect((thrown as Error).message).toBe(EXPECTED_ALL_MIGRATIONS);
-    expect((thrown as Error).message).not.toContain(secret);
+    expect(() => unsafeCreateConnecta(config)).toThrow(
+      "ConnectaConfig.typo",
+    );
+    expect(() => unsafeCreateConnecta(config)).not.toThrow(secret);
+    expect(connectorsRead).toBe(false);
   });
 
-  it("rejects an old path even when the new path is also present", () => {
+  it.each([
+    ["activity", { store: { record() {} }, typo: true }, "activity.typo"],
+    ["credentials", { typo: true }, "credentials.typo"],
+    ["accessTokens", { typo: true }, "accessTokens.typo"],
+    ["discovery", { typo: true }, "discovery.typo"],
+    ["calls", { typo: true }, "calls.typo"],
+    ["execute", { typo: true }, "execute.typo"],
+    ["admission", { typo: true }, "admission.typo"],
+    [
+      "admission",
+      { requests: { typo: true } },
+      "admission.requests.typo",
+    ],
+    ["admission", { code: { typo: true } }, "admission.code.typo"],
+    ["branding", { typo: true }, "branding.typo"],
+    [
+      "branding",
+      { favicon: { typo: true } },
+      "branding.favicon.typo",
+    ],
+    ["serverInfo", { typo: true }, "serverInfo.typo"],
+    [
+      "serverInfo",
+      { icons: [{ src: "/icon.svg", typo: true }] },
+      "serverInfo.icons[0].typo",
+    ],
+  ] as const)("rejects an unknown %s option", (group, value, path) => {
     expect(() =>
       unsafeCreateConnecta({
         connectors: [],
-        calls: { maxResultBytes: 100 },
-        maxResultBytes: 200,
+        executor,
+        [group]: value,
       }),
-    ).toThrow(
-      "- maxResultBytes -> calls.maxResultBytes",
-    );
+    ).toThrow(`ConnectaConfig.${path}`);
   });
 
-  it("rejects removed credential-health config at either path", () => {
-    for (const config of [
-      { credentialHealth: undefined },
-      { credentials: { health: undefined } },
-      { credentials: { health: { onRequest: false } } },
-    ]) {
-      expect(() =>
-        unsafeCreateConnecta({ connectors: [], ...config }),
-      ).toThrow("removed in issue #179");
-      expect(() =>
-        unsafeCreateConnecta({ connectors: [], ...config }),
-      ).toThrow("ethos.md");
-    }
+  it.each([
+    ["toolkits", { support: { connectors: ["notes"] } }],
+    ["credentialHealth", undefined],
+    ["surface", "classic"],
+    ["maxResultBytes", 1],
+  ] as const)("rejects the removed top-level %s option", (path, value) => {
+    expect(() =>
+      unsafeCreateConnecta({ connectors: [], executor, [path]: value }),
+    ).toThrow(`ConnectaConfig.${path}`);
   });
 
-  it("rejects retired toolkit config even when undefined", () => {
-    for (const toolkits of [
-      undefined,
-      {},
-      { support: { connectors: ["notes"] } },
-    ]) {
-      expect(() =>
-        unsafeCreateConnecta({ connectors: [], toolkits }),
-      ).toThrow("removed in issue #178");
-      expect(() =>
-        unsafeCreateConnecta({ connectors: [], toolkits }),
-      ).toThrow("ethos.md");
-    }
+  it.each([
+    ["credentials", "health"],
+    ["calls", "maxBatchResultBytes"],
+  ] as const)("rejects the removed %s.%s option", (group, path) => {
+    expect(() =>
+      unsafeCreateConnecta({
+        connectors: [],
+        executor,
+        [group]: { [path]: undefined },
+      }),
+    ).toThrow(`ConnectaConfig.${group}.${path}`);
   });
 
-  it("ignores inherited legacy names because only own properties are config", () => {
+  it("ignores inherited names because only own properties are config", () => {
     const config = Object.assign(
       Object.create({ maxResultBytes: 1 }),
       { connectors: [], executor },
@@ -240,7 +237,7 @@ describe("ConnectaConfig v0.7 shape", () => {
     ).not.toThrow();
   });
 
-  it("recognizes an old activity store that itself owns `store`", () => {
+  it("rejects an old activity store whose nested store is not an activity store", () => {
     class LegacyActivityStore implements ActivityStore {
       store = { backend: true };
       record(): void {}
@@ -252,7 +249,7 @@ describe("ConnectaConfig v0.7 shape", () => {
         executor,
         activity: new LegacyActivityStore(),
       }),
-    ).toThrow("- activity -> activity.store");
+    ).toThrow("activity.store");
   });
 });
 

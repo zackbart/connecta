@@ -96,14 +96,14 @@ optional.
 | `admission.requests?` | 16 active / 32 queued / 5 s / 1 s | global FIFO `/mcp` capacity, taken before auth ([request admission](./request-admission.md)) |
 | `admission.code?` | 2 active / 8 queued / 5 s / 1 s | fallback pool for an executor that owns no `acquire()`; ignored with a warning when it does |
 
-Options removed in earlier releases throw with their migration named rather
-than falling back to a default: `toolkits`
-([#178](https://github.com/zackbart/connecta/issues/178)), `credentials.health`
-([#179](https://github.com/zackbart/connecta/issues/179)), `surface` and
-`calls.maxBatchResultBytes`
-([#273](https://github.com/zackbart/connecta/issues/273)), and the flat v0.6
-paths. Silently ignoring a removed option is how a deployment ends up running a
-policy its config file says it has.
+An unknown own option throws before construction reads the deployment. The
+check covers the top level, every configuration group, admission pools,
+branding icons, and server icons; the error names the rejected path without
+copying its value. Removed options such as `toolkits`, `credentials.health`,
+`surface`, `calls.maxBatchResultBytes`, and the flat v0.6 paths now take that
+same path. The [upgrade guide](./upgrading.md#removed-options-that-throw) keeps
+their historical mappings. Silently ignoring either a typo or a removed option
+is how a deployment runs a policy its config file does not describe.
 
 ### Deployment as a release unit
 
@@ -226,7 +226,7 @@ in.
 | `cloudflare-provider.test.ts` | `cloudflare()` construction, tool surface, request building, projections, typed failures, and credential test |
 | `code-first-surface.test.ts` | the seven-tool surface itself — an executor required, every removed option and top-level tool refused, compact always-loaded routing pinned below 1,000 characters, complete on-demand usage served, and `connecta.ui` findable before connector search |
 | `codemode-compat.test.ts` | the `Executor` seam staying structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor`, enforced by `tsc` |
-| `config.test.ts` | the grouped `ConnectaConfig` boundary — each group forwarding to its internals, malformed admission bounds failing construction, and one complete migration error for legacy own-properties |
+| `config.test.ts` | the grouped `ConnectaConfig` boundary — each group forwarding to its internals, malformed admission bounds failing construction, and unknown own-properties rejected by their complete path before construction does work |
 | `credentials.test.ts` | the pure stored-shape classifier (containment, not equality) and the AES-GCM vault: round-trip, ciphertext bound to its connector id, named field sets, masked metadata, wrong-key rejection, deletion, coexistence with OAuth keys |
 | `d1-activity-example.test.ts` | the Worker example's deployment-owned D1 activity store: actor namespace round-trip, payload-free friction reconstructed from the persisted code, and agreement with the package's friction table |
 | `downstream-oauth.test.ts` | `KvOAuthProvider` round-trips and races, `auth_required` versus `error`, `startAuth`/`finishAuth`, callback refusal equality, bounded diagnostics, and HTML escaping |
