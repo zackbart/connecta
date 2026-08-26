@@ -212,6 +212,18 @@ try {
   )[0];
   const archive = join(work, packed.filename);
   const paths = new Set(packed.files.map((file) => file.path));
+  const operatorUiDeclaration = packed.files.find(
+    (file) => file.path === "dist/operator-ui/generated.d.ts",
+  );
+  if (!operatorUiDeclaration) {
+    throw new Error("Packed artifact is missing dist/operator-ui/generated.d.ts");
+  }
+  if (operatorUiDeclaration.size >= 1_000) {
+    throw new Error(
+      "Generated operator UI declaration must stay below 1 KB; " +
+        `packed ${operatorUiDeclaration.size} bytes`,
+    );
+  }
 
   for (const required of [
     "AGENTS.md",
