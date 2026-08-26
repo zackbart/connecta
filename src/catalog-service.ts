@@ -765,6 +765,7 @@ export class CatalogService {
       order: number;
       exactName: boolean;
       matchedTermCount: number;
+      strongSingleTermMatch: boolean;
       complete: boolean;
     }> = [];
     let matchMode: "all" | "partial" = "all";
@@ -808,6 +809,7 @@ export class CatalogService {
               order: orderBase + ranked.order,
               exactName: ranked.exactName,
               matchedTermCount: ranked.matchedTermCount,
+              strongSingleTermMatch: ranked.strongSingleTermMatch,
               complete:
                 isBrowse || ranked.matchedTermCount === queryTermCount,
             });
@@ -831,9 +833,9 @@ export class CatalogService {
       ...rankedMatches.filter(
         (match) =>
           match.complete ||
-          completeMatchCount === 0 ||
           match.exactName ||
-          match.matchedTermCount >= 2,
+          match.matchedTermCount >= 2 ||
+          (completeMatchCount === 0 && match.strongSingleTermMatch),
       ),
     );
     if (!isBrowse && !unsearchableQuery && completeMatchCount === 0) {

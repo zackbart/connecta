@@ -2,11 +2,20 @@ import { describe, expect, it } from "vitest";
 import {
   compactSchema,
   lexicalCorpusStatistics,
+  lexicalSearchQuery,
   rankTools,
 } from "../src/catalog.js";
 import type { JsonSchema, ToolDef } from "../src/types.js";
 
 describe("lexical tool ranking", () => {
+  it("makes conversational-only input unsearchable without changing a browse", () => {
+    expect(lexicalSearchQuery("can you please show me all of this")).toBe("");
+    expect(lexicalSearchQuery("  \n\t ")).toBe("");
+    expect(lexicalSearchQuery("please list project issues")).toBe(
+      "list project issues",
+    );
+  });
+
   it("matches whole tokens rather than arbitrary substrings", () => {
     const tools: ToolDef[] = [
       {

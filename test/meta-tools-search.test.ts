@@ -1054,7 +1054,7 @@ describe("search_tools", () => {
     expect(parsed.matchMode).toBeUndefined();
   });
 
-  it("falls back to the original query when cleanup removes every term", async () => {
+  it("does not search or browse when cleanup removes every term", async () => {
     const connector: Connector = connectorWith({
       id: "framing",
       staticTools: [
@@ -1079,12 +1079,70 @@ describe("search_tools", () => {
       }),
     ) as SearchResult;
 
-    expect(
-      parsed.connectors.flatMap((group) =>
-        group.tools.map((tool) => tool.name),
-      ),
-    ).toEqual(["phrase"]);
+    expect(parsed.connectors).toEqual([]);
+    expect(parsed.total).toBe(0);
     expect(parsed.matchMode).toBeUndefined();
+    expect(parsed.queryAnalysis).toMatchObject({
+      representedTerms: [],
+      otherResultTerms: [],
+      unmatchedTerms: ["a and the"],
+      guidance: expect.stringContaining("no searchable lexical terms"),
+    });
+  });
+
+  it("admits one-term partials only through a name or rare description term", async () => {
+    const connector: Connector = connectorWith({
+      id: "routing",
+      staticTools: [
+        {
+          name: "organization_directory",
+          description: "Find available organizations",
+        },
+        {
+          name: "team_directory",
+          description: "Find available teams",
+        },
+        {
+          name: "service_directory",
+          description: "Find available services",
+        },
+        {
+          name: "retention_snapshot",
+          description: "Inspect cohort retention metrics",
+        },
+        {
+          name: "book_record",
+          description: "Read a stored book",
+        },
+        ...Array.from({ length: 15 }, (_, index) => ({
+          name: `internal_record_${index}`,
+          description: "Inspect an internal record",
+        })),
+      ],
+      tools: [],
+      call: async () => null,
+    });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+
+    const weak = textOf(
+      await mt.searchTools({ query: "available hotel rooms" }),
+    ) as SearchResult;
+    expect(weak.connectors).toEqual([]);
+    expect(weak.total).toBe(0);
+
+    const rare = textOf(
+      await mt.searchTools({ query: "cohort churn forecast" }),
+    ) as SearchResult;
+    expect(required(rare.connectors[0]).tools.map((tool) => tool.name)).toEqual([
+      "retention_snapshot",
+    ]);
+
+    const named = textOf(
+      await mt.searchTools({ query: "book airline flight" }),
+    ) as SearchResult;
+    expect(required(named.connectors[0]).tools.map((tool) => tool.name)).toEqual([
+      "book_record",
+    ]);
   });
 
   it("returns no false positive when only a framing word overlaps", async () => {

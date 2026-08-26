@@ -34,11 +34,11 @@ const sourceCommit = option(
 );
 const outputPath = resolve(
   here,
-  option("--output", "results/issue-322-development-discovery.json"),
+  option("--output", "results/issue-481-development-discovery.json"),
 );
 const reportPath = resolve(
   here,
-  option("--report", "results/issue-322-development-discovery.md"),
+  option("--report", "results/issue-481-development-discovery.md"),
 );
 const tokenizerName = process.env.CONNECTA_EVAL_TOKENIZER ?? "o200k_base";
 const corpusPath = resolve(here, "discovery-development.json");
@@ -130,9 +130,17 @@ try {
     tokenizerName,
   });
   const discovery = await runDiscoveryBenchmark(context, corpusPath);
+  const positiveCases = discovery.cases.filter(
+    (entry) => entry.relevant.length > 0,
+  );
+  const negativeCases = discovery.cases.filter(
+    (entry) => entry.relevant.length === 0,
+  );
   const qualification = {
     passed:
-      discovery.cases.every((entry) => entry.passed) &&
+      negativeCases.length >= 30 &&
+      discovery.metrics.falsePositiveRate <= 0.1 &&
+      positiveCases.every((entry) => entry.passed) &&
       discovery.metrics.expectedTopAccuracy === 1 &&
       discovery.metrics.positiveRecall === 1 &&
       discovery.cases.every(
@@ -164,7 +172,7 @@ try {
     discovery,
   };
   const metrics = discovery.metrics;
-  const report = `# Issue #322 development discovery evidence
+  const report = `# Issue #481 development discovery evidence
 
 Source commit: \`${sourceCommit}\`
 
@@ -177,6 +185,8 @@ Machine-readable results: \`${basename(outputPath)}\` (run artifact, not committ
 - Development gate: ${qualification.passed ? "pass" : "FAIL"}
 - Expected top-1 accuracy: ${(metrics.expectedTopAccuracy * 100).toFixed(1)}%
 - Positive recall: ${(metrics.positiveRecall * 100).toFixed(1)}%
+- Negative queries: ${negativeCases.length}
+- Negative-query false-positive rate: ${(metrics.falsePositiveRate * 100).toFixed(1)}%
 - Mean precision: ${(metrics.meanPrecision * 100).toFixed(1)}%
 - Serialized query-coverage rows: ${discovery.cases.reduce((sum, entry) => sum + entry.queryCoverageRows, 0)}
 - Serialized query-coverage bytes/tokens: ${metrics.totalQueryCoverageBytes}/${metrics.totalQueryCoverageTokens}

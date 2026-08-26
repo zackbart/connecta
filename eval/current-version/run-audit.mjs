@@ -166,6 +166,9 @@ try {
   const surfaceMatches =
     advertisedTools.length === expectedTools.length &&
     advertisedTools.every((name, index) => name === expectedTools[index]);
+  const holdoutFalsePositives = discovery.cases.filter(
+    (entry) => entry.relevant.length === 0 && entry.falsePositive,
+  ).length;
   const qualificationChecks = [
     {
       name: "advertised surface is exactly the seven meta-tools",
@@ -182,8 +185,8 @@ try {
     {
       name: "holdout top-1 accuracy does not regress",
       actual: discovery.metrics.top1Accuracy,
-      minimum: 0.897,
-      passed: discovery.metrics.top1Accuracy >= 0.897,
+      minimum: 0.931,
+      passed: discovery.metrics.top1Accuracy >= 0.931,
     },
     {
       name: "holdout positive recall stays complete",
@@ -196,6 +199,12 @@ try {
       actual: discovery.metrics.recallAtDefaultPage,
       minimum: 1,
       passed: discovery.metrics.recallAtDefaultPage === 1,
+    },
+    {
+      name: "holdout negatives return at most one false positive",
+      actual: holdoutFalsePositives,
+      maximum: 1,
+      passed: holdoutFalsePositives <= 1,
     },
     {
       name: "activity storage stays payload-free",

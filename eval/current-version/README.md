@@ -21,17 +21,20 @@ its cases.
 
 Ranking development uses the separate
 [`discovery-development.json`](./discovery-development.json). It contains the
-mixed all/partial analytics decoy that reproduced #326 without adding the
-fixture to the sealed holdout. Run its isolated deterministic lane with:
+mixed all/partial analytics decoy from #326 plus 35 independently authored
+negative queries for conversational filler, weak description-only overlap,
+and unrelated requests. Run its isolated deterministic lane with:
 
 ```sh
 npm --prefix eval/current-version run audit:development
 ```
 
-The development report records exact expected top-1 accuracy, recall,
-precision, and the absence of the removed per-result query-coverage wire. Its
-server advertises only the synthetic development connector. The release gate
-remains the complete holdout `audit` command.
+The development report requires at least 30 negatives, no more than 10% false
+positives, exact expected top-1 accuracy, complete positive recall, and the
+absence of the removed per-result query-coverage wire. Its server advertises
+only the synthetic development connector. Freeze the rule and development
+corpus before running the complete holdout `audit` command once for release
+qualification.
 The current removal report is
 [`results/issue-323-removal-evidence.md`](./results/issue-323-removal-evidence.md).
 The causal coverage-shape history remains in

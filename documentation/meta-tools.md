@@ -238,9 +238,15 @@ a partial candidate whose complete normalized tool name occurs in the
 normalized raw query competes with complete matches by score, and other
 candidates covering at least two terms fill the remaining page after them.
 Conversational cleanup applies only to scoring terms, never to the exact-name
-phrase check. If no tool covers every non-conversational term, the same scorer
-preserves the wider any-term fallback and marks the result
-`matchMode: "partial"`.
+phrase check. A non-empty query made entirely of conversational framing is
+unsearchable. If no tool covers every non-conversational term, a partial
+candidate covering two or more terms remains eligible. A one-term partial is
+eligible only when that term matches the tool name under the same narrow
+inflection rules, or when it appears in no more than two tools and no more than
+ten percent of the available catalog. The count cap prevents a large catalog
+from returning hundreds of weak matches; the percentage prevents a generic
+word in a tiny catalog from looking rare. Exact-name phrases remain eligible.
+The page is marked `matchMode: "partial"`.
 
 Returned tool rows expose neither lexical scores nor per-result query coverage.
 The mixed complete/partial scorer still ranks rare domain terms, action terms,
@@ -249,11 +255,12 @@ safety, and output shape. Page-level `queryAnalysis` remains the recovery path
 when no single result covers every term or no match exists.
 
 Only an empty or whitespace-only query browses. A non-empty query that
-normalizes to no ASCII lexical terms returns no tools instead of unrelated
-browse results. Its bounded `queryAnalysis.unmatchedTerms` contains the clipped
-raw query and guidance asks for ASCII action/object terms. A mixed query still
-searches with its ASCII terms; unsupported characters do not become false
-matches or per-tool coverage terms.
+normalizes to no ASCII lexical terms, or whose terms are all conversational
+framing, returns no tools instead of unrelated browse results. Its bounded
+`queryAnalysis.unmatchedTerms` contains the clipped raw query and guidance asks
+for ASCII action/object terms. A mixed query still searches with its ASCII
+content terms; unsupported characters and framing do not become false matches
+or per-tool coverage terms.
 
 Every partial or no-match lexical search also returns bounded page-level
 `queryAnalysis`; an all-term result needs no recovery advice.

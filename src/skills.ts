@@ -20,14 +20,14 @@ The minimum guest API is:
 - \`<connectorId>.<toolName>(args)\` calls a sanitized shortcut. Non-identifier characters become \`_\`; leading digits gain \`_\`; reserved words gain a trailing \`_\`.
 - \`connecta.call("connector.tool", args)\` uses the canonical address and returns the unwrapped value.
 - \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
-- \`connecta.batch(calls)\` runs 2–10 independent calls. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails }\`.
+- \`connecta.batch(calls)\` runs 1–10 independent calls. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails }\`.
 - \`console.log(...)\` is captured. \`connecta.emit(block)\` and \`connecta.ui(html, options?)\` produce rich output.
 
 ## Discover and select
 
 Search inside the run and finish the task there. A discovery-only program wastes a round trip. Use 2–4 distinctive action/object terms, not the full request. Use separate short searches for distinct operations.
 
-For top-level \`search_tools\`, omit \`limit\` initially (the default is 10), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An observed shape carries \`outputSchemaSource: "observed"\`; treat it as routing evidence rather than a provider contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
+For top-level \`search_tools\`, omit \`limit\` initially (the default is 8), then page with a limit up to 100 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms or only conversational framing returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An observed shape carries \`outputSchemaSource: "observed"\`; treat it as routing evidence rather than a provider contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
 - \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for program calls. These inputs filter discovery; they grant no authority.
 - Request \`includeSchemas: "compact"\`. Check address, purpose, annotations, required inputs, truncation, safety, and available outputs. Never select only because a result ranks first or has fewer required inputs.

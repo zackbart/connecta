@@ -11,7 +11,14 @@ import {
   StreamableHTTPClientTransport,
 } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
-import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
+import {
+  CONNECTOR_INVENTORY_MAX_BYTES,
+  EXECUTE_MAX_BATCH_CALLS,
+} from "../src/execute.js";
+import {
+  DEFAULT_SEARCH_LIMIT,
+  MAX_SEARCH_LIMIT,
+} from "../src/catalog-service.js";
 import {
   MCP_APPS_EXTENSION,
   PROGRAM_UI_MIME_TYPE,
@@ -484,12 +491,19 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("2–4 distinctive action/object terms");
     // #418: top-level search defaults, paging, compact row semantics, and
     // non-ASCII behavior moved here from the always-loaded definition.
-    expect(skill).toContain("omit `limit` initially (the default is 10)");
-    expect(skill).toContain("page with a limit up to 50");
+    expect(skill).toContain(
+      `omit \`limit\` initially (the default is ${DEFAULT_SEARCH_LIMIT})`,
+    );
+    expect(skill).toContain(`page with a limit up to ${MAX_SEARCH_LIMIT}`);
+    expect(skill).toContain(
+      `\`connecta.batch(calls)\` runs 1–${EXECUTE_MAX_BATCH_CALLS} independent calls`,
+    );
     expect(skill).toContain(
       "Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`",
     );
-    expect(skill).toContain("non-empty query with no ASCII terms returns no matches");
+    expect(skill).toContain(
+      "non-empty query with no ASCII terms or only conversational framing returns no matches",
+    );
     expect(skill).toContain("mixed input searches with its ASCII terms");
     expect(skill).toContain(
       '`format: "json"` only for exact constraints',

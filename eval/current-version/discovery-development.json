@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "name": "Connecta lexical discovery development corpus",
   "authorship": {
-    "createdFor": "https://github.com/zackbart/connecta/issues/322",
-    "source": "Synthetic reproduction of the mixed all/partial Mixpanel-shaped failure recorded in issue #326.",
+    "createdFor": "https://github.com/zackbart/connecta/issues/481",
+    "source": "Synthetic positive controls from issue #322 plus independently authored conversational, weak-overlap, and unrelated negatives for issue #481.",
     "policy": "This corpus is development evidence. Ranking work may use it. The separate discovery-holdout.json remains qualification-only."
   },
   "connectors": [
@@ -58,6 +58,14 @@
         {
           "name": "project_note_1",
           "description": "Inspect one project note"
+        },
+        {
+          "name": "retention_snapshot",
+          "description": "Inspect cohort retention metrics"
+        },
+        {
+          "name": "status",
+          "description": "Return service health"
         }
       ]
     }
@@ -76,6 +84,230 @@
       "query": "list all organizations projects",
       "relevant": ["analytics.List-All-Organizations"],
       "expectedTop": "analytics.List-All-Organizations"
+    },
+    {
+      "id": "rare-description-partial",
+      "category": "positive-control",
+      "query": "cohort churn forecast",
+      "relevant": ["analytics.retention_snapshot"],
+      "expectedTop": "analytics.retention_snapshot"
+    },
+    {
+      "id": "exact-single-token-name",
+      "category": "positive-control",
+      "query": "please status for an unrelated detail",
+      "relevant": ["analytics.status"],
+      "expectedTop": "analytics.status"
+    },
+    {
+      "id": "filler-please",
+      "category": "conversational-negative",
+      "query": "please",
+      "relevant": []
+    },
+    {
+      "id": "filler-can-you",
+      "category": "conversational-negative",
+      "query": "can you",
+      "relevant": []
+    },
+    {
+      "id": "filler-show-me",
+      "category": "conversational-negative",
+      "query": "show me",
+      "relevant": []
+    },
+    {
+      "id": "filler-i-want-it",
+      "category": "conversational-negative",
+      "query": "i want it",
+      "relevant": []
+    },
+    {
+      "id": "filler-could-you-please",
+      "category": "conversational-negative",
+      "query": "could you please",
+      "relevant": []
+    },
+    {
+      "id": "filler-let-me",
+      "category": "conversational-negative",
+      "query": "let me",
+      "relevant": []
+    },
+    {
+      "id": "filler-all-of-this",
+      "category": "conversational-negative",
+      "query": "all of this",
+      "relevant": []
+    },
+    {
+      "id": "filler-which-are-current",
+      "category": "conversational-negative",
+      "query": "which are current",
+      "relevant": []
+    },
+    {
+      "id": "filler-right-up-to-current",
+      "category": "conversational-negative",
+      "query": "right up to current",
+      "relevant": []
+    },
+    {
+      "id": "filler-when-can-you",
+      "category": "conversational-negative",
+      "query": "when can you",
+      "relevant": []
+    },
+    {
+      "id": "filler-for-our-current",
+      "category": "conversational-negative",
+      "query": "for our current",
+      "relevant": []
+    },
+    {
+      "id": "filler-the-most-current",
+      "category": "conversational-negative",
+      "query": "the most current",
+      "relevant": []
+    },
+    {
+      "id": "weak-available-hotels",
+      "category": "weak-description-negative",
+      "query": "available hotel rooms",
+      "relevant": []
+    },
+    {
+      "id": "weak-available-dentist",
+      "category": "weak-description-negative",
+      "query": "available dental appointments",
+      "relevant": []
+    },
+    {
+      "id": "weak-available-concerts",
+      "category": "weak-description-negative",
+      "query": "available concert tickets",
+      "relevant": []
+    },
+    {
+      "id": "weak-caller-permissions",
+      "category": "weak-description-negative",
+      "query": "caller identity permissions",
+      "relevant": []
+    },
+    {
+      "id": "weak-caller-support",
+      "category": "weak-description-negative",
+      "query": "caller phone support",
+      "relevant": []
+    },
+    {
+      "id": "weak-configured-payroll",
+      "category": "weak-description-negative",
+      "query": "configured payroll deductions",
+      "relevant": []
+    },
+    {
+      "id": "weak-configured-warehouse",
+      "category": "weak-description-negative",
+      "query": "configured warehouse shipments",
+      "relevant": []
+    },
+    {
+      "id": "weak-configured-benefits",
+      "category": "weak-description-negative",
+      "query": "configured medical benefits",
+      "relevant": []
+    },
+    {
+      "id": "weak-analysis-stocks",
+      "category": "weak-description-negative",
+      "query": "analysis stock forecasts",
+      "relevant": []
+    },
+    {
+      "id": "weak-analysis-weather",
+      "category": "weak-description-negative",
+      "query": "analysis weather radar",
+      "relevant": []
+    },
+    {
+      "id": "weak-analysis-nutrition",
+      "category": "weak-description-negative",
+      "query": "analysis recipe nutrition",
+      "relevant": []
+    },
+    {
+      "id": "weak-inspect-warranty",
+      "category": "weak-description-negative",
+      "query": "inspect vehicle warranty",
+      "relevant": []
+    },
+    {
+      "id": "weak-inspect-delivery",
+      "category": "weak-description-negative",
+      "query": "inspect package delivery",
+      "relevant": []
+    },
+    {
+      "id": "weak-one-reservation",
+      "category": "weak-description-negative",
+      "query": "one restaurant reservation",
+      "relevant": []
+    },
+    {
+      "id": "weak-one-trailer",
+      "category": "weak-description-negative",
+      "query": "one movie trailer",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-airline",
+      "category": "unrelated-negative",
+      "query": "reserve airline flight",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-translation",
+      "category": "unrelated-negative",
+      "query": "translate french paragraph",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-message",
+      "category": "unrelated-negative",
+      "query": "send text message",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-doctor",
+      "category": "unrelated-negative",
+      "query": "schedule doctor appointment",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-weather",
+      "category": "unrelated-negative",
+      "query": "forecast tomorrow rain",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-grocery",
+      "category": "unrelated-negative",
+      "query": "purchase grocery delivery",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-music",
+      "category": "unrelated-negative",
+      "query": "stream jazz album",
+      "relevant": []
+    },
+    {
+      "id": "unrelated-mortgage",
+      "category": "unrelated-negative",
+      "query": "calculate mortgage payment",
+      "relevant": []
     }
   ]
 }

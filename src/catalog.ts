@@ -99,16 +99,16 @@ const CONVERSATIONAL_QUERY_WORDS = new Set([
 ]);
 
 /**
- * Remove conversational framing before the all-term/partial decision. If
- * every term is framing, retain the original query rather than turning a
- * search into an unfiltered catalog browse.
+ * Remove conversational framing before the all-term/partial decision. A
+ * non-empty query made entirely of framing becomes unsearchable; the caller
+ * keeps it distinct from an empty-query browse.
  */
 export function lexicalSearchQuery(query: string): string {
   const terms = normalized(query).split(/\s+/).filter(Boolean);
   const contentTerms = terms.filter(
     (term) => !CONVERSATIONAL_QUERY_WORDS.has(term),
   );
-  return contentTerms.length > 0 ? contentTerms.join(" ") : query;
+  return contentTerms.join(" ");
 }
 
 interface SearchDocument {
@@ -132,6 +132,7 @@ export interface RankedTool {
   order: number;
   exactName: boolean;
   matchedTermCount: number;
+  strongSingleTermMatch: boolean;
 }
 
 const searchIndexes = new WeakMap<ToolDef[], SearchIndex>();
@@ -319,14 +320,42 @@ function inverseDocumentFrequency(
   );
 }
 
+/**
+ * A description-only term is rare enough to justify a one-term partial match
+ * when it occurs in no more than two tools and no more than ten percent of the
+ * available catalog. The absolute bound keeps a large catalog from returning
+ * hundreds of weak matches; the share keeps one generic word in a tiny catalog
+ * from looking rare. Tool-name matches do not need this exception.
+ */
+const MAX_RARE_TERM_DOCUMENTS = 2;
+const MAX_RARE_TERM_SHARE = 0.1;
+
+function isRareDescriptionTerm(
+  term: string,
+  statistics: LexicalCorpusStatistics,
+): boolean {
+  const frequency = statistics.documentFrequency.get(term) ?? 0;
+  return (
+    frequency > 0 &&
+    frequency <= MAX_RARE_TERM_DOCUMENTS &&
+    frequency / statistics.documentCount <= MAX_RARE_TERM_SHARE
+  );
+}
+
 function scoreDocument(
   doc: SearchDocument,
   phrase: string,
   terms: string[],
   mode: LexicalMatchMode,
   statistics: LexicalCorpusStatistics,
-): { score: number; matchedTermCount: number } | null {
-  if (!phrase) return { score: 0, matchedTermCount: 0 };
+): {
+  score: number;
+  matchedTermCount: number;
+  strongSingleTermMatch: boolean;
+} | null {
+  if (!phrase) {
+    return { score: 0, matchedTermCount: 0, strongSingleTermMatch: false };
+  }
   const matchedTerms = terms.filter((term) =>
     statistics.nameMatches.get(term)?.has(doc.tool) ||
     statistics.descriptionMatches.get(term)?.has(doc.tool),
@@ -364,7 +393,16 @@ function scoreDocument(
       score += 1.5 * weight;
     }
   }
-  return { score, matchedTermCount: matchedTerms.length };
+  const singleTerm = matchedTerms.length === 1 ? matchedTerms[0] : undefined;
+  const strongSingleTermMatch =
+    singleTerm !== undefined &&
+    (statistics.nameMatches.get(singleTerm)?.has(doc.tool) === true ||
+      isRareDescriptionTerm(singleTerm, statistics));
+  return {
+    score,
+    matchedTermCount: matchedTerms.length,
+    strongSingleTermMatch,
+  };
 }
 
 function queryContainsExactName(doc: SearchDocument, phrase: string): boolean {
@@ -400,6 +438,7 @@ export function rankTools(
         order,
         exactName: queryContainsExactName(doc, exactNamePhrase),
         matchedTermCount: scored.matchedTermCount,
+        strongSingleTermMatch: scored.strongSingleTermMatch,
       });
     }
   });
