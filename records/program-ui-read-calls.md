@@ -1,10 +1,31 @@
-# Bounded reads from program UI — evidence and decision
+# Bounded reads from program UI — superseded decision record
 
 Decision note for [#287](https://github.com/zackbart/connecta/issues/287),
-2026-08-02. The implementation contract is [#289](https://github.com/zackbart/connecta/issues/289)
-and the normative clauses are `V1`–`V8` in [code-mode.md](../documentation/code-mode.md).
+2026-08-02. Issue [#484](https://github.com/zackbart/connecta/issues/484)
+superseded it on 2026-08-26. The `V1`–`V8` clauses below describe the removed
+implementation from [#289](https://github.com/zackbart/connecta/issues/289).
+They are not part of the current contract in
+[code-mode.md](../documentation/code-mode.md).
 
-## Verdict
+## Superseding verdict
+
+Program UI is display-only again. `connecta.ui(html)` accepts one HTML string;
+the shell renders it with local JavaScript and no path to connectors,
+discovery, the host RPC channel, conversation messages, or the network.
+
+The read bridge solved real refresh, pagination, and drill-down cases. It also
+added a second declaration contract, catalog validation during UI creation, an
+app-to-host call protocol, app-visible tool metadata, and a large focused test
+fixture. Those costs sit beside the agent data path rather than improving it.
+For the 0.20 simplification pass, display-only rendering keeps the proven output
+channel and removes the live application machinery. Reintroducing any
+view-initiated call now requires a new decision and evidence that pays for that
+whole protocol, not only a useful demo.
+
+The rest of this file stays intact as the evidence that made the earlier choice
+reasonable. Superseding a decision is not rewriting its history.
+
+## Earlier verdict
 
 Accept explicitly bound, host-mediated **read-only** calls for refresh,
 pagination, and drill-down. Keep mutations gated. Keep the one-string
@@ -18,7 +39,7 @@ result.
 
 ## What display-only could not do
 
-The current shell and the read-bound browser fixture were walked through with
+The then-current shell and the read-bound browser fixture were walked through with
 the same three shapes. In the display-only arm, local JavaScript could sort,
 filter, chart, expand already-delivered fields, and rerender indefinitely; every
 attempt to obtain bytes not present in the original HTML stopped at the nested
@@ -91,7 +112,10 @@ the existing `call_tool` with `resultMode: "value"`.
 The declaration-time catalog lookup proves the view was not born broken or
 write-capable. The use-time `call_tool` lookup proves it is still read-only now.
 
-## Normative contract
+## Removed contract
+
+These clauses governed the read bridge while it shipped. None is current after
+[#484](https://github.com/zackbart/connecta/issues/484).
 
 **V1. Manifest.** The second argument is exactly
 `{ reads: { name: { address, fixedArgs?, viewArgs? } } }`: 1–32 names matching
@@ -191,7 +215,7 @@ manifest identically on both executors without changing `ExecuteResult`.
   destructive meta-tool is not app-visible. No human gesture is interpreted as
   write consent.
 
-## Invariants and parity
+## Former invariants and parity
 
 - **Seven tools:** unchanged; metadata makes one existing tool app-callable and
   makes the other six explicitly model-only.
@@ -208,6 +232,6 @@ manifest identically on both executors without changing `ExecuteResult`.
 - **Fallback:** hosts without Apps keep the ordinary result; Apps hosts without
   server-tool calls keep the initial view and fail a read locally.
 
-The remaining gate is intentionally crisp: a mutation proposal needs real
+At the time, the remaining gate was intentionally crisp: a mutation proposal needed real
 workflow evidence plus a host-tested consent and replay story. Read utility is
 not permission to smuggle that decision into this bridge.

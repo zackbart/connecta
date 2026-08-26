@@ -21,7 +21,7 @@ The minimum guest API is:
 - \`connecta.call("connector.tool", args)\` uses the canonical address and returns the unwrapped value.
 - \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
 - \`connecta.batch(calls)\` runs 2–10 independent calls. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails }\`.
-- \`console.log(...)\` is captured. \`connecta.emit(block)\` and \`connecta.ui(html, options?)\` produce rich output.
+- \`console.log(...)\` is captured. \`connecta.emit(block)\` and \`connecta.ui(html)\` produce rich output.
 
 ## Discover and select
 
@@ -68,7 +68,7 @@ Dependent calls, only when the second needs a value from the first:
 
 ## Rendering a view
 
-\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. \`connecta.ui(html)\` renders one success-only display view outside model context. One argument is display-only. Bind read-only refresh or drill-down calls with \`{ reads: { name: { address, fixedArgs?, viewArgs? } } }\`; page markup calls \`connecta.read(name, args)\`. Admission and one shared budget apply to the UI and emitted content, not separate budgets. Fetch and check the data shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables and return the same initial summary because the model reads the return value, not the view. A second, invalid, or over-budget UI call throws catchably.
+\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. \`connecta.ui(html)\` renders one success-only display view outside model context. The view has local HTML and JavaScript only: no network, connector calls, discovery, conversation messages, or host links. One shared budget applies to the UI and emitted content, not separate budgets. Fetch and check the data shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables and return the same summary because the model reads the return value, not the view. A second, invalid, or over-budget UI call throws catchably.
 
 `;
 

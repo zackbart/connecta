@@ -233,7 +233,7 @@ in.
 | `errors.test.ts` | `ConnectorCallError` codes, retryable defaults and overrides, `retryAfterMs` round-trip, typed-over-heuristic classification, `AbortError` as a retryable timeout, and framing errors |
 | `execute.test.ts` | the code-mode host bridge: identifier sanitization, MCP-result unwrapping, sandbox provider construction, authenticated thrown-failure framing, fail-closed filtering of destructive and unannotated tools, MCP/code-mode invocation parity, and payload-free describe diagnostics |
 | `execute-emit.test.ts` | `connecta.emit` (M1–M10) — block validation, budgets, the provider, delivery after the result envelope on success only, and the defaults |
-| `execute-ui.test.ts` | `connecta.ui` (U1–U9) — validation, multiplicity and budget, the provider, `_meta` delivery, and the Apps shell |
+| `execute-ui.test.ts` | display-only `connecta.ui` (U1–U13) — one-string validation, multiplicity and budget, the provider, `_meta` delivery, shell isolation, and the absence of a payload-to-host call path |
 | `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
 | `guest-api-contract.test.ts` | the shared guest contract on the Dynamic Worker, including caught call, typed inline describe recovery, discovery, utility, batch, and budget failure codes; plus the real authority boundary — local `data:` fetch, denied egress, unresolved DNS, empty environment paths, unavailable filesystem/HTTP builtins, and present runtime globals |
@@ -294,7 +294,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | Suite | Covers |
 | --- | --- |
 | `browser/operator-ui.spec.ts` | the operator wiring in a real browser: Clerk loader order across its version redirect and a real load failure, the shell staying open until authentication, credential and access-token and OAuth flows end to end, drift shown without naming a tool, and every failure and empty state |
-| `browser/program-ui.spec.ts` | the Apps shell in a real browser: a bound view merging fixed and declared arguments and correlating concurrent reads, and the one-string payload receiving no read bridge ([program UI read calls](https://github.com/zackbart/connecta/blob/main/records/program-ui-read-calls.md)) |
+| `browser/program-ui.spec.ts` | the display-only Apps shell in a real browser: local payload JavaScript runs, `connecta` stays absent, and forged payload messages never become host tool calls |
 
 **The `_transportFactory` seam.** `RemoteMcpOptions._transportFactory` is
 internal, not public API: when set, `remoteMcp()` uses that `Transport` instead

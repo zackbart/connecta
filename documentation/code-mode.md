@@ -503,9 +503,9 @@ the security posture live in the [design record](https://github.com/zackbart/con
 [#277](https://github.com/zackbart/connecta/issues/277)); this section is the
 contract, and it wins where the two disagree.
 
-**U1.** `connecta.ui(html, options?)` accepts one non-empty HTML string and at
-most the bounded read manifest `V1` defines. The one-argument call stays
-display-only; every other shape throws catchably and accepts nothing.
+**U1.** `connecta.ui(html)` accepts exactly one non-empty HTML string. There is
+no options parameter, read manifest, or sugar form. Every other shape throws
+catchably and accepts nothing.
 
 **U2.** At most one payload per run. A second call throws catchably, naming the
 constraint; the first accepted payload stands. One tool result renders one view,
@@ -513,7 +513,7 @@ and last-wins would silently discard a payload the program deliberately
 supplied.
 
 **U3.** Delivered on success only, and out of model context: the tool result
-gains `_meta["connecta/ui"] = { html, reads? }` and the JSON envelope gains `ui: true`,
+gains `_meta["connecta/ui"] = { html }` and the JSON envelope gains `ui: true`,
 so the model learns a view rendered without seeing its bytes. `structuredContent`
 stays the envelope alone. The single-label `connecta/ui` prefix is deliberate —
 connecta has no domain to reverse, and fabricating one to satisfy MCP's
@@ -526,29 +526,28 @@ with `emittedDiscarded: N` when one failure discards both.
 
 **U4.** The payload spends the aggregate emit byte budget
 (`ConnectaConfig.execute.maxEmittedBytes`), measured at the call as the
-serialized bytes of `{ html, reads? }` — `M5`'s measurement. Over budget throws
+serialized bytes of `{ html }` — `M5`'s measurement. Over budget throws
 catchably, naming the budget and the room remaining, with nothing partially
 accepted. It spends no block count (`maxEmittedBlocks`: it is not a block) and no
 host-call budget (`L4`). One transport bound covers everything rich a program
 delivers.
 
 **U5.** One static shell: a connecta-authored HTML5 document at
-`ui://connecta/program-ui/v2`, mimeType `text/html;profile=mcp-app`, declared on
+`ui://connecta/program-ui/v3`, mimeType `text/html;profile=mcp-app`, declared on
 `execute_code` via `_meta.ui.resourceUri` together with an explicit
-`_meta.ui.visibility: ["model"]`. Only `call_tool` declares app visibility; all
-other tools say model-only. A `resources/read` handler answers exactly that
-URI and fails on any other; `resources/list` is served and returns an empty list.
+`_meta.ui.visibility: ["model"]`. A `resources/read` handler answers exactly
+that URI and fails on any other; `resources/list` is served and returns an empty list.
 The version segment bumps whenever the shell's bytes change, because hosts cache
 templates by URI.
 
 **U6.** The shell renders the payload in a nested iframe
 (`srcdoc`, `sandbox="allow-scripts"`, no `allow-same-origin`) and declares no CSP
 domains, so the host applies its restrictive default and the `about:srcdoc` frame
-inherits `default-src 'none'; connect-src 'none'`. One argument stays display-only;
-a `V1` manifest installs only named `connecta.read`, with no direct network, raw
-tool calls, discovery, conversation, writes, or links. The shell participates in the Apps lifecycle —
-initialize, tool-result, size-changed, resource-teardown — and forwards no
-channel whatsoever from the inner frame to the host. That isolation makes
+inherits `default-src 'none'; connect-src 'none'`. The shell offers no direct
+network, tool calls, discovery, conversation messages, writes, or links. It
+participates in the Apps lifecycle — initialize, tool-result, size-changed,
+resource-teardown — and forwards no channel whatsoever from the inner frame to
+the host. That isolation makes
 program views fixed-height by construction: with no bridge there is no
 content-height signal, the shell reports only its own box, and content taller
 than that scrolls inside the inner frame rather than growing the view.
@@ -591,15 +590,13 @@ the same mistake as automatic host-side projection, refused in `ethos.md`
 
 **U13.** The always-loaded MCP instructions locate `connecta.ui(html)` before an
 agent chooses a route: it exists only inside `execute_code`, never in connector
-search, and carries `U12`'s mirrored-return duty. The detailed call, binding,
-budget, and repair rules live in the on-demand `usage` skill. The location
+search, and carries `U12`'s mirrored-return duty. The detailed call, budget,
+and repair rules live in the on-demand `usage` skill. The location
 distinction rides `initialize`, under a 1,000-character ceiling for the complete
 instructions string. This promotes existing contract, not capability: the
 seven-tool surface, guest API, catalog, Apps delivery, and runtime do not change
 ([#286](https://github.com/zackbart/connecta/issues/286),
 [#418](https://github.com/zackbart/connecta/issues/418)).
-
-Bounded view reads follow normative [`V1`–`V8`](https://github.com/zackbart/connecta/blob/main/records/program-ui-read-calls.md) ([#287](https://github.com/zackbart/connecta/issues/287), [#289](https://github.com/zackbart/connecta/issues/289)).
 
 ## Retry semantics
 
