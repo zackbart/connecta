@@ -195,7 +195,8 @@ npm --prefix eval/current-version run perf:agent -- \
 The issue #295 routing lane selects six fresh-agent cases covering one unknown
 read, dependent reads, in-program reduction, multi-operation discovery,
 ambiguous candidates, and a nonstandard collection root. It reports
-`routePassRate` and requires at least 95% route compliance:
+`routePassRate`. Its original absolute release rule required at least 95% route
+compliance:
 
 ```sh
 npm --prefix eval/current-version run perf:agent -- \
@@ -203,6 +204,14 @@ npm --prefix eval/current-version run perf:agent -- \
   --repetitions 5 \
   --concurrency 5
 ```
+
+That 30-session absolute rule is underpowered, and an unpinned model alias makes
+it too sensitive to host drift for an unrelated change to treat one result as a
+release verdict. [Issue #496](https://github.com/zackbart/connecta/issues/496)
+owns the replacement. Until that work lands, report the absolute rate but do
+not call a result below 95% a pass. For an unrelated candidate, use an identical
+untouched-main arm as the applicable non-regression comparison, preserve both
+raw artifacts, and make no causal claim from independent samples.
 
 Compare arms with identical repetitions and concurrency. A before/after table
 built from one repetition against five is comparing sample sizes as much as
@@ -239,6 +248,17 @@ dependent read, an unavailable catalog, an authorization handoff, and
 large-result reduction. Fixtures use nested schemas, typed catalog failures,
 provider query syntax, and deterministic domain-shaped results rather than
 empty synthetic tools. No live account payload enters the lane.
+
+`large-document-paging` is the evidence gate for retaining `get_result`. It
+calls a deterministic document fixture whose serialized value exceeds 40 KB,
+then reads the final page through the direct result handle. Run it alone with:
+
+```sh
+npm --prefix eval/current-version run perf:agent -- \
+  --case large-document-paging \
+  --repetitions 3 \
+  --concurrency 1
+```
 
 `auth-handoff` is the lane's only coverage of the accepted
 `authorize_connector` recovery route

@@ -526,14 +526,13 @@ describe("server /mcp end-to-end", () => {
       '`format: "json"` only for exact constraints',
     );
     // #418: direct-call shaping, bounded execution, retry safety, diagnostics,
-    // projection recovery, and byte-exact paging all remain model-visible.
+    // and byte-exact paging all remain model-visible.
     expect(skill).toContain('`resultMode: "value"` unwraps the result');
     expect(skill).toContain("`timeoutMs` sets its deadline");
     expect(skill).toContain(
       "`maxRetries` is honored only for safely annotated tools",
     );
     expect(skill).toContain("`diagnostics: true` adds timing");
-    expect(skill).toContain("Projection misses return `data` plus `$connecta` feedback");
     expect(skill).toContain(
       "`get_result({ id, offset?, maxBytes? })` returns `{ text, offset, nextOffset?, totalBytes }`",
     );

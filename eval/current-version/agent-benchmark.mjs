@@ -176,6 +176,22 @@ const cases = [
     },
   },
   {
+    id: "large-document-paging",
+    workflow: "large-document-retrieval",
+    fixtureClass: "large-result",
+    prompt:
+      "Using Connecta's direct tools, call the read-only address `controlled.large_document` with 200 paragraphs. The legitimate document is over 40 KB. Do not retrieve earlier pages: use `totalBytes` from the truncation notice to request only the final 1,000 bytes with `get_result`, then return only the exact FINAL_MARKER value.",
+    expectedCalls: [
+      { address: "controlled.large_document", args: { paragraphs: 200 } },
+    ],
+    validOuterRoutes: [["call_tool", "get_result"]],
+    routePolicy: { outerTools: ["call_tool", "get_result"] },
+    costEnvelope: { maxRoundTrips: 3, maxMcpResultTokens: 2_500 },
+    correct(finalText) {
+      return finalText.includes("CONNECTA-LARGE-DOCUMENT-COMPLETE-200");
+    },
+  },
+  {
     id: "ts-prone-annotation",
     workflow: "simple-read",
     fixtureClass: "issue-419-typescript-prone",

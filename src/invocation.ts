@@ -166,7 +166,7 @@ export interface InvocationContext<T> {
   requestSignal?: AbortSignal;
   unwrapResult?: boolean;
   /**
-   * Caller-owned result policy. MCP passes fields + paging here; code mode
+   * Caller-owned result policy. MCP applies result paging here; code mode
    * normally accepts the already-unwrapped value unchanged.
    */
   processResult?: (

@@ -818,14 +818,20 @@ const controlled = api("controlled", {
         additionalProperties: false,
       },
       annotations: { readOnlyHint: true, idempotentHint: true },
-      handler: (args: { paragraphs?: number }) => ({
-        title: "Deterministic paging fixture",
-        paragraphs: Array.from(
-          { length: args.paragraphs ?? 40 },
+      handler: (args: { paragraphs?: number }) => {
+        const count = args.paragraphs ?? 40;
+        const sections = Array.from(
+          { length: count },
           (_, index) =>
-            `${index + 1}. Connecta keeps results bounded. UTF-8: café, 東京, 🧪.`,
-        ),
-      }),
+            `${index + 1}. Connecta retrieval handbook section. A direct read can return a legitimate document larger than the inline budget. get_result preserves complete text by byte offset. Stable section numbers expose missing or reordered content. UTF-8: café, 東京, 🧪.`,
+        );
+        return {
+          title: "Deterministic retrieval handbook",
+          body:
+            sections.join("\n\n") +
+            `\n\nFINAL_MARKER: CONNECTA-LARGE-DOCUMENT-COMPLETE-${count}`,
+        };
+      },
     },
     {
       name: "records",

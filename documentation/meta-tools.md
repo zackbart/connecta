@@ -192,36 +192,10 @@ offsets and totals refer to that exact compact text.
 A `call_tool` truncation notice carries both the historical `resultId` and an
 exact `nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The
 handle is therefore
-directly actionable without copying an identifier out of prose; re-calling with
-`fields` remains the smaller alternative when projection is possible. Program results and oversized discovery responses carry no such
-route — paging a program's return value is a refused shape, because a program
-can shrink anything before it returns.
-
-`fields` keeps its historical flat `{ "<path>": value }` result when every
-requested dot-path resolves. Dot notation traverses objects; append `[]` to an
-array field before continuing, as in `results[].id`. Empty arrays resolve to
-empty arrays. An exact downstream
-`$connecta` field is always escaped under `data`. If any path misses—or that
-reserved name is selected—the result carries matches under `data` and reserves `$connecta` for a
-`type: "field_projection"` recovery record naming each `unmatchedFields`
-entry. A path that resolves for only some array elements stays in `data` and
-appears in `partialFields`; its unresolved positions serialize as `null`, while
-the recovery record distinguishes them from genuine downstream nulls. A path
-that misses every element appears in `unmatchedFields` and is omitted from
-`data`. Both lists scale with requested paths, never with array length. When a
-miss matches a declared array path except for `[]`, the record also carries the
-traversal hint. The discriminator means downstream fields
-named `data`, `projection`,
-or `$connecta` remain ordinary values nested under `data`, never apparent
-metadata. A declared output schema contributes a bounded `availableFields`
-list and a `schemaCoverage` verdict. Only a completely analyzed, closed schema
-can label paths `invalidFields`; open, patterned, tuple, unresolvable, cyclic,
-`$ref`-sibling, or traversal-limited shapes stay `partial`. Traversal bounds
-depth, nodes, path count, individual path characters/bytes, and cumulative path
-characters/bytes before sorting or rendering. Without a schema, Connecta
-reports only observed misses and does not pretend it knows the complete runtime
-shape. API values and JSON-parseable downstream MCP text blocks follow the same
-rule.
+directly actionable without copying an identifier out of prose. Program results
+and oversized discovery responses carry no such route — paging a program's
+return value is a refused shape, because a program can shrink anything before
+it returns.
 
 ## Lexical discovery
 
