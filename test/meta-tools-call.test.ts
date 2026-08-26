@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
+import { BASE, registry, textOf } from "./fixtures/meta-tools.js";
 import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -13,30 +14,12 @@ import {
 import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
-import { required,
-  authConnector,
-  brokenConnector,
+import {
+  required,
   calcConnector,
   makeRegistry,
-  remoteConnector,
   silentLogger,
 } from "./helpers.js";
-
-const BASE = "https://connecta.test";
-
-
-function textOf(result: { content: { text: string }[] }): unknown {
-  return JSON.parse(required(result.content[0]).text);
-}
-
-function registry() {
-  return makeRegistry([
-    calcConnector,
-    remoteConnector,
-    brokenConnector,
-    authConnector,
-  ]);
-}
 
 describe("call_tool", () => {
   it("JSON-wraps an api connector's return value", async () => {
@@ -2755,4 +2738,3 @@ describe("get_result offset validation and alignment", () => {
     );
   });
 });
-
