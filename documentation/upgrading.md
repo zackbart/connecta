@@ -451,9 +451,11 @@ built-in routes miss, so it can add a route and never shadow one
 
 ### Removed options that throw
 
-These fail at construction with their migration named rather than falling back
-to a default, because silently ignoring a removed option is how a deployment
-ends up running a policy its config file says it has:
+These fail at construction rather than falling back to a default, because
+silently ignoring a removed option is how a deployment runs a policy its config
+file says it has. Releases through 0.19 name the migration in the error. Version
+0.20's strict configuration boundary names the unknown path; this table remains
+the migration map:
 
 | Option | Removed in | Do |
 | --- | --- | --- |
@@ -461,7 +463,7 @@ ends up running a policy its config file says it has:
 | `credentials.health`, `credentialHealth` | 0.8.1 (#179) | delete; credentials fail at use |
 | `surface` | 0.11.0 (#273) | delete; there is one seven-tool surface |
 | `calls.maxBatchResultBytes` | 0.11.0 (#273) | delete; program batching is bounded by `execute_code`'s own limits |
-| flat v0.6 config paths | 0.7.0 | move into their groups — one complete migration error lists them ([operations](./operations.md#configuration)) |
+| flat v0.6 config paths | 0.7.0 | move into their groups ([operations](./operations.md#configuration)) |
 
 ## Verify
 

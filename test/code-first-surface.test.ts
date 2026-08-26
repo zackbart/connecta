@@ -61,7 +61,7 @@ describe("construction", () => {
           executor: stubExecutor,
           surface,
         }),
-      ).toThrow("ConnectaConfig.surface was removed in issue #273");
+      ).toThrow("ConnectaConfig.surface");
     }
   });
 
@@ -72,7 +72,7 @@ describe("construction", () => {
         executor: stubExecutor,
         calls: { maxBatchResultBytes: 1_000 },
       }),
-    ).toThrow("`calls.maxBatchResultBytes` was removed in issue #273");
+    ).toThrow("ConnectaConfig.calls.maxBatchResultBytes");
   });
 });
 

@@ -254,87 +254,146 @@ function normalizeAuth(auth: ConnectaConfig["auth"]): InboundAuth[] {
   });
 }
 
-const LEGACY_CONFIG_MIGRATIONS = [
-  ["activityReadGate", "activity.readGate"],
-  ["activityDeploymentId", "activity.deploymentId"],
-  ["credentialEncryptionKey", "credentials.encryptionKey"],
-  ["toolCacheTtlSeconds", "discovery.catalogTtlSeconds"],
-  ["persistToolCatalog", "discovery.persistCatalog"],
-  ["toolCatalogStaleSeconds", "discovery.staleCatalogSeconds"],
-  ["probeTimeoutMs", "discovery.probeTimeoutMs"],
-  ["defaultToolTimeoutMs", "calls.defaultTimeoutMs"],
-  ["maxResultBytes", "calls.maxResultBytes"],
-] as const;
+type OptionSchema =
+  | null
+  | { readonly [key: string]: OptionSchema }
+  | readonly [OptionSchema];
 
-const hasOwn = (value: object, key: PropertyKey): boolean =>
-  Object.prototype.hasOwnProperty.call(value, key);
+type ClosedOptionSchema<T extends object> = {
+  readonly [K in keyof T]-?: OptionSchema;
+};
 
-/**
- * Fail closed at the public boundary: a JavaScript caller on the v0.6 shape
- * must receive one complete migration error, never silently lose an option to
- * a default. This runs before createConnecta reads any other config field.
- */
-function assertNoLegacyConfig(config: ConnectaConfig): void {
-  const candidate = config as unknown as Record<PropertyKey, unknown>;
-  if (hasOwn(candidate, "toolkits")) {
-    throw new Error(
-      "ConnectaConfig.toolkits was removed in issue #178. Deploy one " +
-        "connecta instance per audience instead; see ethos.md.",
+const admissionPoolSchema = {
+  concurrency: null,
+  maxQueueSize: null,
+  queueTimeoutMs: null,
+  retryAfterMs: null,
+} as const satisfies ClosedOptionSchema<AdmissionPoolConfig>;
+
+const CONFIG_SCHEMA = {
+  connectors: null,
+  auth: null,
+  storage: null,
+  publicUrl: null,
+  activity: {
+    store: null,
+    readGate: null,
+    deploymentId: null,
+  } satisfies ClosedOptionSchema<ConnectaActivityConfig>,
+  credentials: {
+    encryptionKey: null,
+  } satisfies ClosedOptionSchema<ConnectaCredentialsConfig>,
+  accessTokens: {
+    maxActive: null,
+  } satisfies ClosedOptionSchema<ConnectaAccessTokensConfig>,
+  discovery: {
+    concurrency: null,
+    catalogTtlSeconds: null,
+    persistCatalog: null,
+    staleCatalogSeconds: null,
+    probeTimeoutMs: null,
+  } satisfies ClosedOptionSchema<ConnectaDiscoveryConfig>,
+  calls: {
+    defaultTimeoutMs: null,
+    maxResultBytes: null,
+  } satisfies ClosedOptionSchema<ConnectaCallsConfig>,
+  execute: {
+    maxEmittedBytes: null,
+    maxEmittedBlocks: null,
+  } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
+  admission: {
+    requests: admissionPoolSchema,
+    code: admissionPoolSchema,
+  } satisfies ClosedOptionSchema<ConnectaAdmissionConfig>,
+  branding: {
+    productName: null,
+    productUrl: null,
+    ownerName: null,
+    ownerUrl: null,
+    description: null,
+    pageTitle: null,
+    favicon: {
+      svg: null,
+      ico: null,
+      href: null,
+    } satisfies ClosedOptionSchema<NonNullable<ConnectaBranding["favicon"]>>,
+    themeColor: null,
+  } satisfies ClosedOptionSchema<ConnectaBranding>,
+  logger: null,
+  serverInfo: {
+    name: null,
+    version: null,
+    title: null,
+    websiteUrl: null,
+    icons: [
+      {
+        src: null,
+        mimeType: null,
+        sizes: null,
+      } satisfies ClosedOptionSchema<
+        NonNullable<NonNullable<ConnectaConfig["serverInfo"]>["icons"]>[number]
+      >,
+    ],
+  } satisfies ClosedOptionSchema<NonNullable<ConnectaConfig["serverInfo"]>>,
+  deploymentInfo: null,
+  executor: null,
+} as const satisfies Record<keyof ConnectaConfig, OptionSchema>;
+
+function unknownOptionPaths(
+  value: unknown,
+  path: string,
+  schema: OptionSchema,
+): string[] {
+  if (schema === null) return [];
+  if (Array.isArray(schema)) {
+    if (!Array.isArray(value)) return [];
+    return value.flatMap((entry, index) =>
+      unknownOptionPaths(entry, `${path}[${index}]`, schema[0]),
     );
   }
-  const credentials = candidate.credentials;
-  const hasNestedHealth =
-    typeof credentials === "object" &&
-    credentials !== null &&
-    hasOwn(credentials, "health");
-  if (hasOwn(candidate, "credentialHealth") || hasNestedHealth) {
-    throw new Error(
-      "`credentials.health` and legacy `credentialHealth` were removed in " +
-        "issue #179. Credentials now fail at use; see ethos.md.",
+  if (typeof value !== "object" || value === null) return [];
+  const known = new Set(Object.keys(schema));
+  const unknown = Reflect.ownKeys(value)
+    .filter((key) => typeof key !== "string" || !known.has(key))
+    .map((key) => `${path}.${String(key)}`)
+    .sort();
+  if (unknown.length > 0) return unknown;
+  for (const [key, childSchema] of Object.entries(schema)) {
+    unknown.push(
+      ...unknownOptionPaths(
+        (value as Record<string, unknown>)[key],
+        `${path}.${key}`,
+        childSchema,
+      ),
     );
   }
-  const calls = candidate.calls;
+  return unknown;
+}
+
+function rejectUnknownOptions(paths: string[]): void {
+  if (paths.length === 0) return;
+  throw new Error(
+    `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
+      paths.map((path) => `- ${path}`).join("\n"),
+  );
+}
+
+/** Reject JavaScript typos and removed options before construction does work. */
+function assertKnownConfig(config: ConnectaConfig): void {
+  rejectUnknownOptions(
+    unknownOptionPaths(config, "ConnectaConfig", CONFIG_SCHEMA),
+  );
+  const activity = config.activity as unknown;
   if (
-    typeof calls === "object" &&
-    calls !== null &&
-    hasOwn(calls, "maxBatchResultBytes")
+    activity !== undefined &&
+    (typeof activity !== "object" ||
+      activity === null ||
+      typeof (activity as ConnectaActivityConfig).store?.record !== "function")
   ) {
     throw new Error(
-      "`calls.maxBatchResultBytes` was removed in issue #273 along with " +
-        "batch_call. Remove it; a program's batching is bounded by " +
-        "execute_code's own limits — connecta.batch's per-run call ceiling " +
-        "and the executor result cap — while each call inside it still honours " +
-        "calls.maxResultBytes and any per-connector override.",
+      "ConnectaConfig.activity.store must implement record(event)",
     );
   }
-  const found: Array<readonly [string, string]> = [];
-  if (hasOwn(candidate, "activity")) {
-    const activity = candidate.activity;
-    const isObject =
-      typeof activity === "object" && activity !== null;
-    // A valid v0.6 ActivityStore can itself own a backend field named `store`.
-    // Its required `record` method (including a prototype method) therefore
-    // takes precedence over the otherwise-new wrapper shape.
-    const hasLegacyRecord =
-      isObject &&
-      typeof (activity as { record?: unknown }).record === "function";
-    if (
-      activity !== undefined &&
-      (!isObject ||
-        hasLegacyRecord ||
-        !hasOwn(activity, "store"))
-    ) {
-      found.push(["activity", "activity.store"]);
-    }
-  }
-  for (const migration of LEGACY_CONFIG_MIGRATIONS) {
-    if (hasOwn(candidate, migration[0])) found.push(migration);
-  }
-  if (found.length === 0) return;
-  throw new Error(
-    "Unsupported v0.6.x ConnectaConfig options. Migrate each path for v0.7.0:\n" +
-      found.map(([oldPath, newPath]) => `- ${oldPath} -> ${newPath}`).join("\n"),
-  );
 }
 
 /**
@@ -446,13 +505,7 @@ function warnInsecureConfig(
 }
 
 export function createConnecta(config: ConnectaConfig): Connecta {
-  assertNoLegacyConfig(config);
-  if (hasOwn(config, "surface")) {
-    throw new Error(
-      "ConnectaConfig.surface was removed in issue #273. Remove it; connecta " +
-        "now serves one seven-tool surface.",
-    );
-  }
+  assertKnownConfig(config);
   if (!config.executor) {
     throw new Error(
       "ConnectaConfig.executor is required. Configure quickJsExecutor() from " +
