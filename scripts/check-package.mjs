@@ -624,7 +624,7 @@ try {
     generatedTsx,
     ["src/removed-surface.ts"],
     generatedRoot,
-    "ConnectaConfig.surface was removed in issue #273",
+    "ConnectaConfig.surface",
     { CONNECTA_TOKEN: "package-smoke-token" },
   );
 

@@ -148,7 +148,7 @@ describe("the upgrade guide", () => {
   it("opens the boundary list with this release", () => {
     const { version } = JSON.parse(read("package.json")) as { version: string };
     const first = guide.match(/^### (\d+\.\d+\.\d+) → (\d+\.\d+\.\d+)$/m);
-    expect(first?.slice(1)).toEqual(["0.18.3", version]);
+    expect(first?.slice(1)).toEqual(["0.19.0", version]);
     expect(guide).toContain(`| **B** | 0.16.0 – ${version} |`);
   });
 
