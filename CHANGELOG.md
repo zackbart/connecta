@@ -2,6 +2,64 @@
 
 All notable changes to this package are documented here.
 
+## 0.20.0 — 2026-08-26
+
+This release removes the two side languages that had grown around the seven
+tools: direct-call field projection and live reads from program-rendered HTML.
+Agents now shape data in JavaScript, page a genuinely large direct result with
+`get_result`, and render a display-only view. Configuration becomes strict at
+the same boundary, so a typo fails at startup instead of surviving as inert
+deployment state. Existing deployments using current documented options need
+only bump the pin and reconcile generation B; callers that send `fields`,
+programs that bind UI reads, and JavaScript deployments carrying retired or
+misspelled options must migrate. The implementation stack deletes 2,866 lines
+and adds 1,063 before these release notes, while preserving exactly seven MCP
+tools and the Node and Worker deployment shapes.
+
+### Changed
+
+- **One data-shaping language.** `call_tool` and `call_destructive_tool` no
+  longer advertise or accept `fields`; the path resolver, schema walker,
+  projection recovery records, guidance, and tests are gone. `execute_code`
+  remains the projection surface, while `get_result` still pages oversized
+  direct reads byte-exactly. The 21-scenario current-version audit passes, fixed
+  tool definitions fall from 1,625 to 1,587 tokens, and a deterministic
+  52,396-byte document succeeds 3/3 through `call_tool` then `get_result`
+  (#482).
+- **Display-only program UI.** `connecta.ui(html)` keeps success-only Apps
+  delivery, sandboxing, one shared rich-output budget, executor parity, and the
+  compact mirrored return. Its read manifest, host-call bridge, and second
+  argument are removed. All seven tools explicitly remain model-only, and only
+  `execute_code` advertises the cache-busted v3 display resource, so neither a
+  current nor cached shell can call Connecta tools (#484).
+- **Strict configuration.** `createConnecta` rejects unknown own options at
+  every closed configuration path without reading or quoting their values.
+  Each closed schema is compile-time exhaustive against its public type;
+  connector, auth, storage, activity-store, logger, deployment-metadata, and
+  executor implementations remain open leaves (#485).
+- **Smaller package and tests.** Generated operator assets publish explicit
+  95-byte string declarations instead of embedding about 95 KB of literals,
+  with byte-identical runtime output and a packed-package size guard (#486).
+  The remaining copied UI credential and meta-tool fixtures are shared without
+  changing any test or assertion count, removing another 127 repository lines
+  (#479).
+
+### Removed
+
+- The direct-call `fields` projection option and its dot/array path language.
+- Program UI read bindings, `connecta.read`, and the Apps-to-host tool-call
+  bridge.
+
+### Declined with evidence
+
+- Discovery filtering did not ship: its sealed qualification retained complete
+  scenario coverage but missed top-1, recall, default-page recall, and negative
+  false-positive gates. The holdout cases were not inspected or tuned (#481).
+- Lean object-result text did not ship: Codex and Claude read ordinary
+  structured values, but Claude's error route took extra recovery actions and
+  Cursor was unavailable for the required matrix. The compatibility JSON copy
+  remains (#483).
+
 ## 0.19.0 — 2026-08-25
 
 This release is a smaller, simpler package with no behavioral change for a

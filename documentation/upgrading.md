@@ -57,7 +57,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.19.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.20.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -106,7 +106,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.19.0
+npm pkg set dependencies.@zackbart/connecta=0.20.0
 npm install
 ```
 
@@ -130,7 +130,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.19.0 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.20.0 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -186,7 +186,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.19.0 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.20.0 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -206,6 +206,30 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.19.0 → 0.20.0
+
+Three intake paths become deliberately strict. None changes storage, the two
+deployment shapes, or the exact seven-tool MCP surface.
+
+- `createConnecta` now rejects every unknown own configuration property by its
+  complete path. Remove typos and options retired before 0.19, including the
+  top-level `toolkits`, `credentialHealth`, `surface`, and `maxResultBytes`,
+  plus `credentials.health` and `calls.maxBatchResultBytes`. Connector, auth,
+  storage, activity-store, logger, deployment-metadata, and executor
+  implementations remain open objects; their implementation-specific fields
+  are not configuration typos.
+- `call_tool` and `call_destructive_tool` no longer accept `fields`. Put
+  projection in one `execute_code` program. For a legitimate oversized direct
+  read, call without `fields` and follow the returned `get_result` action; that
+  paging path remains part of the seven-tool surface.
+- `connecta.ui` accepts one HTML string and is display-only. Remove its second
+  read-binding argument and any page calls to `connecta.read`. Fetch and shape
+  data in the program before rendering, then return the same compact summary
+  the view initially displays. Views cannot call any Connecta tool.
+
+The Node template layout remains generation B. Reconcile it as usual after the
+version bump; no new deployment file or environment variable is required.
 
 ### 0.18.3 → 0.19.0
 
