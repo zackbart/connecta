@@ -89,5 +89,5 @@ respective worktrees.
 The focused Node run passed 148 tests across `meta-tools-call`,
 `code-first-surface`, and `server`. `npm run check` then passed all 114 suites:
 2,681 tests passed and 41 were skipped. Before the two generated evidence
-reports, the candidate removes 1,338 net lines across production code, tests,
+reports, the candidate removes 1,326 net lines across production code, tests,
 documentation, and the added evaluation lane.
