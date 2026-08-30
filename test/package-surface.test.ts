@@ -100,6 +100,7 @@ describe("public package boundary", () => {
         "./json-schema",
         "./quickjs",
         "./auth/clerk",
+        "./auth/cloudflare-access",
         ...providers,
       ].sort(),
     );
@@ -164,6 +165,15 @@ describe("public package boundary", () => {
       optional: true,
     });
     expect(packageJson.exports).toHaveProperty("./auth/clerk");
+  });
+
+  it("keeps Cloudflare Access dependency-free behind its Worker subpath", () => {
+    expect(packageJson.exports).toHaveProperty("./auth/cloudflare-access");
+    const source = readFileSync(
+      join(ROOT, "src", "auth", "cloudflare-access.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/from\s+["'][^./]/);
   });
 
   it("keeps QuickJS behind an optional executor subpath", () => {

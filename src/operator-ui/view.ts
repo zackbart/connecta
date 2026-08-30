@@ -223,7 +223,7 @@ export function credentialUnavailableCopy(
   if (capability === "vault_not_configured") {
     return "Credential storage is not configured. Set credentials.encryptionKey before managing connector credentials here.";
   }
-  return "Credential management requires an eligible Clerk operator. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
+  return "Credential management requires an eligible interactive operator. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
 }
 
 export function accessTokenUnavailableCopy(
@@ -232,7 +232,7 @@ export function accessTokenUnavailableCopy(
   if (capability === "not_configured") {
     return "Access tokens are not configured for this deployment. Add accessTokens to the deployment configuration to enable them.";
   }
-  return "Access token management requires an eligible Clerk operator. A Bearer token can connect to MCP, but it cannot create or revoke other tokens.";
+  return "Access token management requires an eligible interactive operator. A Bearer token can connect to MCP, but it cannot create or revoke other tokens.";
 }
 
 export function connectorStatusLabel(status: string): string {
@@ -418,8 +418,11 @@ export function credentialStateLabel(credential: {
     : masked;
 }
 
-/** Gate copy for the two inbound-auth shapes, so the sign-in state is never a blank page. */
+/** Gate copy for each browser-auth shape, so the sign-in state is never a blank page. */
 export function gateCopy(kind: string, signedIn: boolean): string {
+  if (kind === "cloudflare-access") {
+    return "Cloudflare Access admitted this browser, but the current identity cannot open deployment-wide operator pages.";
+  }
   if (kind !== "clerk") {
     return "Paste an operator bearer token to open this page. Nothing is requested until you do.";
   }

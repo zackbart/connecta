@@ -137,16 +137,18 @@ describe("server /mcp end-to-end", () => {
     expect(res.status).toBe(200);
     const body = await readJsonRpc(res);
     expect(body.result.serverInfo.name).toBe("connecta");
-    expect(body.result.instructions).toContain("search_tools then call_tool");
+    expect(body.result.instructions).toContain(
+      "Unknown-address read-only work starts with one execute_code program",
+    );
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
-      "Fetch skills",
+      "Guidance is on demand",
     );
     expect(body.result.instructions).toContain(
-      "use one execute_code program",
+      "starts with one execute_code program",
     );
     expect(body.result.instructions).toContain(
-      "discovers, calls, and returns the reduced answer",
+      "discovers, calls, and returns the answer",
     );
     expect(body.result.instructions).toContain(
       "connecta.ui(html) exists only inside execute_code",
@@ -157,7 +159,7 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain(
       "return the same summary data the HTML renders",
     );
-    expect(body.result.instructions).toContain("once");
+    expect(body.result.instructions).toContain("only when");
   });
 
   it("legacy initialize passes through title, websiteUrl, and icons (MCP icons spec)", async () => {
@@ -623,7 +625,7 @@ describe("server /mcp end-to-end", () => {
     expect(guided.usage).toContain("## Per-connector guides");
     expect(guided.search).toContain("guideRequired: true");
     expect(guided.destructive).toContain("exact connector guide");
-    expect(guided.execute).toContain("connector-guide rules");
+    expect(guided.execute).toContain("guide handling");
     // The deployment inventory may spend at most 256 bytes inside #418's
     // always-loaded execute definition; this cap must not drift around it.
     expect(guided.execute.length).toBeLessThan(1_800);
@@ -1092,7 +1094,7 @@ describe("server /mcp end-to-end", () => {
     );
     expect(mutation.status).toBe(403);
     expect(await mutation.json()).toEqual({
-      error: "credential management requires Clerk authentication",
+      error: "credential management requires interactive operator authentication",
     });
   });
 
@@ -1784,20 +1786,20 @@ describe("execute_code registration (code mode)", () => {
       "Choose the route before discovery",
     );
     expect(executeTool.description).toContain(
-      "primary surface for everything wider",
+      "Unknown-address and wider read-only work",
     );
-    expect(executeTool.description).toContain("make exactly one execute_code call");
+    expect(executeTool.description).toContain("use exactly one execute_code call");
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
     expect(executeTool.description).toContain(
-      "A discovery-only program wastes its round trip: finish here, don't return catalog matches for a later call",
+      "Finish in that program; don't return catalog matches for a later call",
     );
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(
-      "Exactly one unknown-address read uses top-level search_tools then call_tool",
+      "Unknown-address and wider read-only work use exactly one execute_code call",
     );
-    expect(executeTool.description).toContain("Programs have no portable ambient capabilities");
+    expect(executeTool.description).toContain("No portable ambient capabilities");
     expect(executeTool.description).toContain('skills({ name: "usage" })');
     expect(executeTool.inputSchema.properties.code.description).toContain(
       "discovers, calls, and returns the reduced answer",

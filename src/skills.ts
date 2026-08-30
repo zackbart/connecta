@@ -1,15 +1,15 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Choose a route before discovery. For one read at an unknown address, use search_tools then call_tool; a known address needs only call_tool. For read-only reduction, multiple or dependent calls, loops, joins, or branches, use one execute_code program that discovers, calls, and returns the reduced answer. Only readOnlyHint: true tools run there. Keep unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool. After auth_required use authorize_connector. After a truncated direct result use get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Fetch skills({ name: "usage" }) once for program syntax, selection, repair, examples, and runtime details.';
+  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with one execute_code program that discovers, calls, and returns the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
 ## The surface
 
-Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Broad discovery and multi-call work live in a program, not in top-level tools.
+Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Read-only discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
 
-The always-loaded MCP instructions are authoritative for choosing the top-level route. Read this skill at most once per task for the program workflow and recovery details below.
+The always-loaded MCP instructions are authoritative for choosing the top-level route. Read this skill at most once, and only when their program workflow is insufficient or a run needs repair.
 
 ## Inside a program
 
@@ -27,13 +27,16 @@ The minimum guest API is:
 
 Search inside the run and finish the task there. A discovery-only program wastes a round trip. Use 2–4 distinctive action/object terms, not the full request. Use separate short searches for distinct operations.
 
-For top-level \`search_tools\`, omit \`limit\` initially (the default is 10), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An observed shape carries \`outputSchemaSource: "observed"\`; treat it as routing evidence rather than a provider contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
+For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 10), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An observed shape carries \`outputSchemaSource: "observed"\`; treat it as routing evidence rather than a provider contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
 - \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for program calls. These inputs filter discovery; they grant no authority.
 - Request \`includeSchemas: "compact"\`. Check address, purpose, annotations, required inputs, truncation, safety, and available outputs. Never select only because a result ranks first or has fewer required inputs.
 - Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
 - Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
 - Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as \`items\` or \`results\`. If a match or result key is missing, inspect, re-search, or describe inside the same run instead of returning discovery for another call.
+- Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.
+- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string. Call the search and describe functions directly; batch accepts canonical connector tool addresses, not guest API function names.
+- Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
 Only tools explicitly annotated \`readOnlyHint: true\` are reachable. The catalog, credential, admission, and read-only gates run below the sandbox; code cannot widen its authority.
 

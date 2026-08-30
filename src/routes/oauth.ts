@@ -31,6 +31,7 @@ async function handleOAuthManagementRequest(
     baseUrl,
     opts.auth,
     "OAuth management",
+    context.runtimeContext,
   );
   if (!admin.ok) return admin.response;
 

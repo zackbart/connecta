@@ -892,6 +892,7 @@ describe("remoteMcp() startAuth", () => {
     });
     const clerk: InboundAuth = {
       kind: "clerk",
+      interactiveOperator: true,
       uiAuth: {
         kind: "clerk",
         publishableKey: "pk_test_fake",

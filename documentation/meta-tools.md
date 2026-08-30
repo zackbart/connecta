@@ -12,19 +12,19 @@ Every deployment requires an executor and `tools/list` is exactly seven:
 batching live in `connecta.search`, `connecta.describe`, and `connecta.batch`
 inside a program ([#273](https://github.com/zackbart/connecta/issues/273)).
 
-Code-first is what a model sees. Four overlapping ways to reach one connector
-became two: `search_tools` then `call_tool` for a single cold read — measurably
-cheaper direct than through a program — and `execute_code` for everything wider.
-The consolidation removed overlapping routing choices while preserving the
-cheaper direct path for one cold call. The [guest API contract](./code-mode.md)
-is what a program is promised.
+Code-first is what a model sees. Read-only work has two routes: `call_tool` for
+one known address, and `execute_code` when discovery or any wider work is
+needed. Real hosted catalogs reversed the earlier synthetic result that made a
+top-level cold search look cheaper. Keeping discovery inside the program avoids
+returning every candidate schema to the model and removes a model round trip.
+The [guest API contract](./code-mode.md) is what a program is promised.
 
-The route is chosen before discovery. A result that will be reduced, a call
-whose arguments depend on an earlier result, or work with multiple operations
-starts with one `execute_code` call and keeps discovery, calls, and reduction
-inside it. Distinct operations get distinct short `connecta.search` queries in
-that program. Only one unknown-address read takes the cheaper top-level
-`search_tools` → `call_tool` path; a known address needs only `call_tool`.
+The route is chosen before discovery. An unknown address, a result that will be
+reduced, a call whose arguments depend on an earlier result, or work with
+multiple operations starts with one `execute_code` call and keeps discovery,
+calls, and reduction inside it. Distinct operations get distinct short
+`connecta.search` queries in that program. A known address needs only
+`call_tool`.
 
 That routing is about read-only work, because that is the only work a program
 can do. Anything unannotated, write-capable, or destructive is inadmissible
@@ -68,13 +68,15 @@ and a truncated line ends with the exact `+N more` count. This reads only the
 configured registry: it loads no catalog, probes no credential, grants no
 capability, and does not replace canonical discovery or addressing.
 
-Start an unknown-address lookup with two to four distinctive action/object
-terms, not the full request, and omit `limit` so the default eight-result page
-stays small. When the integration is obvious, set `connector` to its id: a
-scoped search loads that catalog alone, while an unscoped search must fan out
-across every configured connector. Leave the search unscoped when the right
-integration is genuinely ambiguous. Set `safety: "readOnly"` when the result is
-headed to `call_tool` or generated code; `safety: "approvalRequired"` finds the
+Start a lookup with two to four distinctive action/object terms, not the full
+request. Read-only lookup belongs in `connecta.search` inside the program.
+Top-level `search_tools` remains available for explicit catalog inspection and
+approval-required discovery. Omit `limit` initially so the default
+eight-result page stays small. When the integration is obvious, set
+`connector` to its id: a scoped search loads that catalog alone, while an
+unscoped search must fan out across every configured connector. Leave the
+search unscoped when the right integration is genuinely ambiguous. Set
+`safety: "readOnly"` for generated code; `safety: "approvalRequired"` finds the
 complementary set that must cross `call_destructive_tool`. Omitting `safety`,
 or setting it to `"all"`, preserves the complete configured catalog. This is
 only a discovery filter: it neither grants authority nor changes invocation admission.

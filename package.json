@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.20.0",
+  "version": "0.21.0",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
@@ -62,6 +62,10 @@
     "./auth/clerk": {
       "types": "./dist/auth/clerk.d.ts",
       "import": "./dist/auth/clerk.js"
+    },
+    "./auth/cloudflare-access": {
+      "types": "./dist/auth/cloudflare-access.d.ts",
+      "import": "./dist/auth/cloudflare-access.js"
     },
     "./providers/cloudflare": {
       "types": "./dist/providers/cloudflare.d.ts",

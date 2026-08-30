@@ -275,11 +275,11 @@ export function operatorPageTitle(
 }
 
 export function credentialManagementCapability(input: {
-  eligibleClerkOperator: boolean;
+  eligibleOperator: boolean;
   hasCredentialSlots: boolean;
   hasCredentialVault: boolean;
 }): CredentialManagementCapability {
-  if (!input.eligibleClerkOperator) return "requires_clerk";
+  if (!input.eligibleOperator) return "requires_operator";
   if (!input.hasCredentialSlots) return "no_slots";
   if (!input.hasCredentialVault) return "vault_not_configured";
   return "available";
@@ -298,7 +298,7 @@ export async function buildUiData(
   activityEnabled = false,
   credentialManagement: CredentialManagementCapability = credentialVault
     ? "available"
-    : "requires_clerk",
+    : "requires_operator",
   defer?: DeferredWork,
   oauthManagement = false,
   discoveryConcurrency?: number,

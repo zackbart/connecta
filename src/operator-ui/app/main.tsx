@@ -85,7 +85,7 @@ function OperatorNav() {
         ))}
       </nav>
       <div class="session-actions" aria-label="Session actions">
-        {auth.kind === "clerk" ? (
+        {auth.kind === "clerk" || auth.kind === "cloudflare-access" ? (
           <button class="navlink" type="button" onClick={signOut}>
             Sign out
           </button>
@@ -125,6 +125,12 @@ function Gate({ state }: { state: OperatorState }) {
                   Team sign in
                 </button>
               )}
+            </div>
+          ) : auth.kind === "cloudflare-access" ? (
+            <div class="actions gate-actions">
+              <button class="linklike" type="button" onClick={signOut}>
+                Sign out of Cloudflare Access
+              </button>
             </div>
           ) : (
             <form

@@ -78,7 +78,9 @@ Fifty issues in, one small object out. Your context window notices.
 
 There is also an operator surface, off until you turn it on: sign-in, an
 encrypted credential vault with rotation, revocable per-client tokens, and a
-payload-free activity log.
+payload-free activity log. Worker deployments can use Cloudflare Access for
+both MCP and operator identity; Node deployments and existing Workers can use
+Clerk.
 
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one

@@ -67,13 +67,13 @@ export interface UiConnector {
 
 export type CredentialManagementCapability =
   | "available"
-  | "requires_clerk"
+  | "requires_operator"
   | "vault_not_configured"
   | "no_slots";
 
 export type AccessTokenManagementCapability =
   | "available"
-  | "requires_clerk"
+  | "requires_operator"
   | "not_configured";
 
 export interface UiData {
@@ -84,7 +84,7 @@ export interface UiData {
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
   accessTokenManagement: AccessTokenManagementCapability;
-  /** True only for an eligible Clerk operator. */
+  /** True only for an eligible interactive operator. */
   oauthManagement: boolean;
 }
 

@@ -48,6 +48,7 @@ read top to bottom.
 | Order | Route | Notes |
 | --- | --- | --- |
 | 0 | HTTPS upgrade | 308 to `publicUrl` when it is HTTPS and the request arrived over HTTP. Path and query are *assigned* onto the configured URL, never resolved against it, so a `//host` pathname cannot replace the deployment origin. `/health` is exempt: a loopback container probe must not depend on public DNS and TLS. `/ui` is canonicalized to `/` while upgrading. |
+| 0 | Cloudflare Access (Worker deployment, when enabled) | Edge admission before this route table. Managed OAuth owns its challenge and discovery metadata; an admitted direct invocation carries trusted identity in `ctx.access`. |
 | 1 | `/ui/access-tokens[/<id>]`, `/ui/credentials/<id>[/<action>]`, `/ui/oauth/<id>` | Private mutation routes, matched **first** so nothing can shadow them and so they own their own `OPTIONS` — they answer it with a refusal rather than inheriting the wildcard CORS preflight. |
 | 2 | `OPTIONS` | Each auth provider's `handleMetadata` gets a chance (CORS preflight for browser MCP clients); otherwise 204 with MCP CORS. |
 | 3 | `/.well-known/*` | Auth providers' `handleMetadata`, open. 404 when none handles it. |
@@ -72,7 +73,7 @@ any one file and a reordering reads like a harmless refactor.
    ([request admission](./request-admission.md)). The permit is held until the
    response *body* completes, not until the handler returns.
 2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
-   before Clerk. First `ok` admits; if all fail, the last provider's challenge
+   before interactive providers. First `ok` admits; if all fail, the last provider's challenge
    response is returned. No providers configured means open — development
    only, and it warns at construction.
 3. **Refuse `?toolkit=`.** Toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
@@ -116,7 +117,9 @@ The Node-touching paths are `src/node.ts` (the `node:http` adapter),
 subpath export — `@zackbart/connecta/node`, `@zackbart/connecta/quickjs` — and
 must stay unreachable from the root entry. The optional Clerk adapter is behind
 `./auth/clerk` for the adjacent reason: `@clerk/backend` is an optional peer,
-not a dependency.
+not a dependency. The zero-dependency Cloudflare Access adapter likewise stays
+behind `./auth/cloudflare-access`: it is Web-API-pure, but its trust contract is
+specific to a direct Worker invocation carrying `ctx.access`.
 
 `test/purity.test.ts` walks the relative-import graph from `src/index.ts` and
 fails on (a) any `node:` specifier in a reachable file and (b) the Node
@@ -156,7 +159,7 @@ src/
   operator-ui/        the Preact app, its pure rules, and the built bundle
   connectors/         remote-mcp.ts, api.ts, guarded-fetch.ts
   providers/          the maintained prebuilt connections
-  auth/               bearer, clerk (optional peer), downstream OAuth
+  auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth
   executors/          the QuickJS pool and child (Node only)
   storage/            memory.ts, file.ts (Node only)
   node.ts             listen() + fileStorage re-export (Node only)
@@ -177,7 +180,7 @@ src/
   the connector limiters, then the executor. Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
-  invalid admission rule, `accessTokens` without a Clerk provider, a missing
+  invalid admission rule, `accessTokens` without an interactive operator provider, a missing
   executor: all refuse to boot. A deployment that starts in the wrong shape is
   worse than one that does not start.
 

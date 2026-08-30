@@ -27,7 +27,8 @@ function shellCd(path) {
 function usage() {
   console.log(`Usage:
   connecta init [directory]
-  CONNECTA_TOKEN=<bearer> connecta doctor [--url http://localhost:8787]`);
+  CONNECTA_TOKEN=<bearer> connecta doctor [--url http://localhost:8787]
+  CF_ACCESS_CLIENT_ID=<id> CF_ACCESS_CLIENT_SECRET=<secret> connecta doctor --url https://worker.example`);
 }
 
 async function init() {
@@ -169,19 +170,35 @@ async function doctor() {
     !loopbackHosts.has(parsedUrl.hostname)
   ) {
     throw new Error(
-      "Refusing to send a bearer token over remote plaintext HTTP. Use HTTPS.",
+      "Refusing to send authentication credentials over remote plaintext HTTP. Use HTTPS.",
     );
   }
   const baseUrl = requestedUrl.replace(/\/+$/, "");
   const token = process.env.CONNECTA_TOKEN;
-  if (!token) {
+  const accessClientId = process.env.CF_ACCESS_CLIENT_ID;
+  const accessClientSecret = process.env.CF_ACCESS_CLIENT_SECRET;
+  if (Boolean(accessClientId) !== Boolean(accessClientSecret)) {
     throw new Error(
-      "Set CONNECTA_TOKEN so doctor can inspect the MCP surface.",
+      "Set both CF_ACCESS_CLIENT_ID and CF_ACCESS_CLIENT_SECRET.",
     );
   }
+  if (!token && !accessClientId) {
+    throw new Error(
+      "Set CONNECTA_TOKEN or a CF_ACCESS_CLIENT_ID/CF_ACCESS_CLIENT_SECRET pair so doctor can inspect the MCP surface.",
+    );
+  }
+  const authHeaders = {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(accessClientId && accessClientSecret
+      ? {
+          "CF-Access-Client-Id": accessClientId,
+          "CF-Access-Client-Secret": accessClientSecret,
+        }
+      : {}),
+  };
 
   const health = await jsonResponse(
-    await doctorFetch(`${baseUrl}/health`),
+    await doctorFetch(`${baseUrl}/health`, { headers: authHeaders }),
   );
   if (health.status !== "ok") {
     throw new Error(`Unexpected health status: ${String(health.status)}`);
@@ -206,7 +223,7 @@ async function doctor() {
       await doctorFetch(`${baseUrl}/mcp`, {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${token}`,
+        ...authHeaders,
         "Content-Type": "application/json",
         Accept: "application/json, text/event-stream",
       },

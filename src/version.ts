@@ -4,4 +4,4 @@
  * a bump that forgets this file fails the build rather than shipping a stale
  * version to `/health` and to downstream MCP handshakes.
  */
-export const CONNECTA_VERSION = "0.20.0";
+export const CONNECTA_VERSION = "0.21.0";

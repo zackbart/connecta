@@ -473,6 +473,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
 
   return {
     kind: "clerk",
+    interactiveOperator: true,
     activityActorNamespace: frontendApiUrl,
     activityActorLabel: resolveActivityLabel,
     uiAuth: {

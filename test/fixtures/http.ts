@@ -106,6 +106,7 @@ export function fakeClerkAuth(options: {
 } = {}): InboundAuth {
   return {
     kind: "clerk",
+    interactiveOperator: true,
     uiAuth: {
       kind: "clerk",
       publishableKey: options.publishableKey ?? "pk_test_fake",

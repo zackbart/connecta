@@ -56,9 +56,20 @@ function message(error: unknown, fallback: string): string {
 }
 
 function sessionToken(): Promise<string | null | undefined> {
+  if (auth.kind === "cloudflare-access") return Promise.resolve(undefined);
   return auth.kind === "clerk"
     ? Promise.resolve(window.Clerk?.session?.getToken() ?? null)
     : Promise.resolve(localStorage.getItem(TOKEN_KEY));
+}
+
+function requestHeaders(
+  token: string | null | undefined,
+  body = false,
+): Record<string, string> {
+  return {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(body ? { "Content-Type": "application/json" } : {}),
+  };
 }
 
 function gate(notice: Notice | null = null): void {
@@ -85,13 +96,13 @@ async function operatorRequest(
 ): Promise<OperatorResponse | null> {
   const token = await sessionToken();
   if (!current()) throw new Error("The operator session changed.");
-  if (!token) throw new Error("Your operator session has expired.");
+  if (!token && auth.kind !== "cloudflare-access") {
+    throw new Error("Your operator session has expired.");
+  }
   const res = await fetch(path, {
     method,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
+    headers: requestHeaders(token, Boolean(body)),
+    credentials: "same-origin",
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
   if (res.status === 204) return null;
@@ -126,11 +137,12 @@ async function loadData(): Promise<void> {
     return gate(failure(`Could not read the Clerk session: ${why}`));
   }
   if (!current()) return;
-  if (!token) return gate(null);
+  if (!token && auth.kind !== "cloudflare-access") return gate(null);
   let res: Response;
   try {
     res = await fetch("/ui/data", {
-      headers: { Authorization: `Bearer ${token}` },
+      headers: requestHeaders(token),
+      credentials: "same-origin",
     });
   } catch (error) {
     if (!current()) return;
@@ -144,6 +156,13 @@ async function loadData(): Promise<void> {
           res.status === 403
             ? "This Clerk account is not allowed to access connecta."
             : "Your Clerk session was not accepted. Sign out and try again.",
+        ),
+      );
+    }
+    if (auth.kind === "cloudflare-access") {
+      return gate(
+        failure(
+          "Cloudflare Access admitted the request, but this identity is not an eligible operator.",
         ),
       );
     }
@@ -551,6 +570,11 @@ export function signIn(): void {
 }
 
 export function signOut(): void {
+  if (auth.kind === "cloudflare-access") {
+    gate(null);
+    window.location.assign("/cdn-cgi/access/logout");
+    return;
+  }
   const clerk = window.Clerk;
   gate(null);
   void clerk?.signOut({ redirectUrl: window.location.href });

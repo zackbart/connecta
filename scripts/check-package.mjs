@@ -250,6 +250,8 @@ try {
     "dist/executors/quickjs-child.js",
     "dist/executors/quickjs-protocol.js",
     "dist/executors/quickjs-runtime.js",
+    "dist/auth/cloudflare-access.js",
+    "dist/auth/cloudflare-access.d.ts",
     "dist/providers/mixpanel.js",
     "dist/providers/mixpanel.d.ts",
     "dist/providers/revenuecat.js",
@@ -497,8 +499,10 @@ for (const name of [
     join(work, "optional.mjs"),
     `
 const clerk = await import("@zackbart/connecta/auth/clerk");
+const access = await import("@zackbart/connecta/auth/cloudflare-access");
 const quickjs = await import("@zackbart/connecta/quickjs");
 if (typeof clerk.clerkAuth !== "function") throw new Error("missing Clerk adapter");
+if (typeof access.cloudflareAccessAuth !== "function") throw new Error("missing Cloudflare Access adapter");
 if (typeof quickjs.quickJsExecutor !== "function") throw new Error("missing QuickJS adapter");
 const executor = quickjs.quickJsExecutor({ timeoutMs: 2_000 });
 try {

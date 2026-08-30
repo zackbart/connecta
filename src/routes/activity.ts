@@ -169,12 +169,12 @@ async function enrichActivityActorLabels(
 export async function routeActivity(
   context: RouteContext,
 ): Promise<Response | null> {
-  const { path, request, url, baseUrl, opts } = context;
+  const { path, request, url, baseUrl, opts, runtimeContext } = context;
   if (path !== "/ui/activity") return null;
   if (request.method !== "GET") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }
-  const authz = await authorize(request, baseUrl, opts.auth);
+  const authz = await authorize(request, baseUrl, opts.auth, runtimeContext);
   if (!authz.ok) return authz.response;
   if (
     opts.activityReadGate &&

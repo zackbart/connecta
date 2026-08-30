@@ -6,12 +6,20 @@
   "compatibility_flags": ["nodejs_compat"],
   "observability": { "enabled": true },
 
-  // Plain vars. Secrets (SUPPORT_TOKEN, EXEC_TOKEN, CLERK_SECRET_KEY,
-  // CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) are set with
+  // Plain vars. Secrets (CREDENTIAL_ENCRYPTION_KEY, DOWNSTREAM_TOKEN) are set with
   // `wrangler secret put <NAME>`, not here.
   "vars": {
-    "PUBLIC_URL": "https://connecta.example.workers.dev",
-    "CLERK_PUBLISHABLE_KEY": "pk_test_replace-me"
+    "PUBLIC_URL": "https://connecta.example.workers.dev"
+  },
+
+  // Local-only Access identity. Remove this block to exercise the
+  // unauthenticated path in `wrangler dev`; production identity comes from the
+  // Worker-level Access application, not from this file.
+  "access": {
+    "dev": {
+      "aud": "connecta-local",
+      "identity": { "email": "operator@example.com" }
+    }
   },
 
   // Create with `wrangler kv namespace create CONNECTA_KV` and paste the id.

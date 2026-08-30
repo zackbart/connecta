@@ -1,9 +1,7 @@
 # connecta — ethos
 
 What connecta is, what it refuses to be, and the invariants every change must
-preserve. Deliberately terse: when a change contradicts a line here, either the
-change is wrong or this file needs amending — in that order, and amending it is
-a design decision, not a drive-by edit.
+preserve. A contradiction needs a design decision, not a drive-by edit.
 
 ## What this is
 
@@ -78,6 +76,7 @@ CHANGELOG, not here.
 | MRTR / `input_required` passthrough | gated | relayable statelessly; no host or downstream emits it yet ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | needs refresh-churn evidence ([#206](https://github.com/zackbart/connecta/issues/206)) |
 | Downstream MCP Apps template passthrough | gated | needs a downstream that ships one ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Worker Access inbound auth | provisional | Managed OAuth and Clerk migration need production evidence ([#506](https://github.com/zackbart/connecta/issues/506)) |
 | Program UI tool calls | removed | the read bridge added a second contract without improving agent data retrieval; views are display-only again ([#287](https://github.com/zackbart/connecta/issues/287), [#484](https://github.com/zackbart/connecta/issues/484)) |
 
 ## Invariants

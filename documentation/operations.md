@@ -45,6 +45,10 @@ one.
 npx @zackbart/connecta init my-deployment
 cd my-deployment && npm install && npm start
 CONNECTA_TOKEN=… npx connecta doctor --url http://localhost:8787
+
+# A Worker protected by Cloudflare Access
+CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
+  npx connecta doctor --url https://connecta.example.workers.dev
 ```
 
 `init` copies the template, pins the generated deployment to the CLI package's
@@ -59,11 +63,16 @@ on the way out: `QuickJS` on the Node template, `DynamicWorkerExecutor` on the
 Worker example, and `code executed` when an executor identifies as nothing —
 a checker that asserts a sandbox it never saw is worse than one that says it
 does not know ([#368](https://github.com/zackbart/connecta/issues/368)). It
-refuses to send a bearer token over remote plaintext HTTP, and it
+refuses to send authentication credentials over remote plaintext HTTP, and it
 *reports* catalog drift without failing on it — an unclassified downstream tool
 already fails closed onto `call_destructive_tool`, so drift is a maintainer's
 next task rather than a broken deployment
 ([#343](https://github.com/zackbart/connecta/issues/343)).
+
+For an Access-protected Worker, doctor sends the service-token pair to both
+`/health` and `/mcp`; Access authenticates those requests before connecta runs.
+`CONNECTA_TOKEN` remains the Node and legacy Worker path, and may be supplied
+alongside the Access pair during rollback testing. A partial pair is refused.
 
 ### Configuration
 
@@ -74,7 +83,7 @@ optional.
 | --- | --- | --- |
 | `connectors` | — (required) | the connector set ([connectors](./connectors.md)) |
 | `executor` | — (required) | the sandbox `execute_code` runs in ([code mode](./code-mode.md#what-an-executor-must-implement)) |
-| `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before Clerk ([inbound auth](./auth.md)) |
+| `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before interactive providers ([inbound auth](./auth.md)) |
 | `storage?` | `memoryStorage()` | the one state seam for catalogs, result paging, credentials, and access tokens ([storage](./storage-and-credentials.md)) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }` |
@@ -83,7 +92,7 @@ optional.
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
 | `activity?` | unset | `{ store, readGate?, deploymentId? }` — payload-free activity storage, an optional operator-read gate, and a stable event label |
 | `credentials.encryptionKey?` | unset | base64 32-byte AES key for the connector vault. Without it, connectors declaring `credential` warn and their slots stay unmanageable |
-| `accessTokens?` | unset | `{ maxActive? }` (default 100) for operator-issued MCP bearer tokens. Requires a Clerk provider, or construction throws ([access tokens](./auth.md#operator-issued-access-tokens)) |
+| `accessTokens?` | unset | `{ maxActive? }` (default 100) for operator-issued MCP bearer tokens. Requires an interactive operator provider, or construction throws ([access tokens](./auth.md#operator-issued-access-tokens)) |
 | `discovery.concurrency?` | 4 | connector catalogs/status probes in flight at once |
 | `discovery.catalogTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `discovery.persistCatalog?` | true | persist serializable catalogs as a manifest plus revision-addressed chunks |
@@ -214,7 +223,7 @@ in.
 
 | Suite | Covers |
 | --- | --- |
-| `access-tokens.test.ts` | the `AccessTokenManager` — a one-time secret created, authenticated, renamed, and revoked, bounded names and active count, enumerable storage required, a deployment with no Clerk operator refused — and the Clerk-only routes, down to historical activity still resolving a revoked token's name |
+| `access-tokens.test.ts` | the `AccessTokenManager` — a one-time secret created, authenticated, renamed, and revoked, bounded names and active count, enumerable storage required, a deployment with no interactive operator refused — and the operator-only routes, down to historical activity still resolving a revoked token's name |
 | `activity.test.ts` | payload-free delivery: a rejected async write attaches to `waitUntil` instead of throwing, approved destructive calls record under their real entry point, result-size friction records without retaining the result, and a hallucinated connector id or invented identity is clamped so the event still cannot carry a payload |
 | `api-connector.test.ts` | `api()` — kind, description, tool defs, dispatch, default args, unknown tools, handler throws, argument validation, and the construction contract |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the retired audience options refusing rather than silently unbinding |
@@ -223,6 +232,7 @@ in.
 | `catalog-drift.test.ts` | `vettedCatalog()`, `detectCatalogDrift()`, and `withVettedCatalog()`; drift on the registry surface and on `/health`; the connector seam projected rather than echoed; and the drift types being public |
 | `catalog.test.ts` | lexical ranking and the compact schema renderer — `const`, `allOf` beside siblings, `$ref`, the depth limit, per-schema caching, and 2020-12 keyword compatibility |
 | `clerk.test.ts` | protected-resource metadata, the browser sign-in config, OAuth and session tokens, cached best-effort activity labels with their caps, the hand-applied `azp` rejection, and the `allowedDomains` allowlist including every lookalike that must not be repaired into a match |
+| `cloudflare-access-auth.test.ts` | trusted `ctx.access` human and service identities, absent/error fail-closed behavior, service-token MCP admission without operator mutation, human same-origin mutation, and the Clerk-to-ambient shell switch |
 | `cloudflare-provider.test.ts` | `cloudflare()` construction, tool surface, request building, projections, typed failures, and credential test |
 | `code-first-surface.test.ts` | the seven-tool surface itself — an executor required, every removed option and top-level tool refused, compact always-loaded routing pinned below 1,000 characters, complete on-demand usage served, and `connecta.ui` findable before connector search |
 | `codemode-compat.test.ts` | the `Executor` seam staying structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor`, enforced by `tsc` |
@@ -244,7 +254,7 @@ in.
 | `mixpanel-provider.test.ts` | the Mixpanel proxy, its conditional-input guide and complete reviewed schema-digest manifest |
 | `notion-provider.test.ts` | Notion's deliberate tool surface, including declined expanded page inputs, request construction, lean projections, both pagination conventions, error mapping, and writes |
 | `operator-boundary.test.ts` | the operator row of the decisions table, after every mutation route: authentication material managed without moving a declared structure, and the one honest exception — a credential write making a remote catalog appear, which is discovery arriving, not an operator editing the deployment |
-| `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, `gate()`, the generation fence, and the request path |
+| `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, ambient Access requests without a browser-readable token, `gate()`, the generation fence, and the request path |
 | `provider-conventions.test.ts` | the conventions a test can hold: hand-written providers refusing schemas they cannot enforce (H5), their compact discovery schemas staying complete (H7), Cloudflare stating its second pagination convention in the schema (H10), and Notion saying it has no escape hatch (H14) |
 | `provider-registry.test.ts` | all six maintained providers inside real deployments: boot, description, address, catalog, storage, credential, admission, and activity isolation; plus provider-specific discovery and guide contracts |
 | `registry.test.ts` | construction and id validation, startup warnings, address resolution, version 2 catalog TTL/persistence/completeness, agent-only stale-while-revalidate with cross-request single-flight shared with blocking reads in both start orders, owned teardown, invalidation/fingerprint guards, blocking diagnostics, and broken-connector isolation |
@@ -272,13 +282,13 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | --- | --- | --- |
 | `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
-| `doctor-cli.test.ts` | `connecta doctor`'s executor line end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, and a hostile name is bounded and stripped before it reaches a terminal | spawns the CLI against a Node HTTP deployment over real sockets |
+| `doctor-cli.test.ts` | `connecta doctor`'s executor line and credentials end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, a hostile name is bounded, and a complete Cloudflare Access service-token pair is accepted while a partial pair is refused | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the maintainer drift checker — hosted-provider credential framing, recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
 | `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor, including identical caught failure codes and inline describe recovery, its exact absent globals, and blocked runtime imports | runs the contract cases on the Node QuickJS executor |
 | `node.test.ts` | the `listen()` adapter propagating an HTTP client disconnect through the Web `Request` and the MCP handler into a program's connector call, releasing both admission permits | exercises the Node HTTP adapter over real TCP sockets |
 | `packed-links.test.ts` | the packed-link gate itself — shipped targets and repository URLs accepted, relative links into unshipped paths and directories rejected with the citation to write instead, reference definitions seen, fenced examples ignored, the changelog exempt | spawns the Node packed-link gate against filesystem fixtures |
-| `package-surface.test.ts` | the published boundary — built output shipped, the `exports` map carrying exactly the documented subpaths plus `./package.json`, only generic factories, platform storage kept in examples, Clerk and QuickJS behind optional subpaths, every provider independently importable, and the Cloudflare provider free of bare specifiers | walks the package tree with Node filesystem APIs |
+| `package-surface.test.ts` | the published boundary — built output shipped, the `exports` map carrying exactly the documented subpaths plus `./package.json`, only generic factories, platform storage kept in examples, Clerk and QuickJS behind optional subpaths, dependency-free Cloudflare Access behind its Worker subpath, every provider independently importable, and the Cloudflare API provider free of bare specifiers | walks the package tree with Node filesystem APIs |
 | `purity.test.ts` | the import-graph guardrail ([architecture](./architecture.md#import-graph-purity)) — the core stays Workers-clean | walks the source import graph with Node filesystem APIs |
 | `quickjs-child-entry.test.ts` | a missing QuickJS child entry failing before `fork()`, with the expected path and the bundler-externalization constraint | mocks Node child-process and filesystem APIs |
 | `quickjs-child-stderr.test.ts` | abnormal child exits retaining only an 8 KiB stderr tail, included in the parent-side diagnostic | mocks Node child-process streams |
@@ -319,10 +329,15 @@ confinement does too.
 - **A connector with no `verifyState` refuses every callback.** That is the
   designed behavior, not a bug: handing an unverified code to `finishAuth` is
   the vulnerability. The startup warning names the connector.
-- **401 loops from a client that cannot discover auth.** The client must reach
+- **401 loops from a Clerk client that cannot discover auth.** The client must reach
   the open `/.well-known/oauth-protected-resource` (and the `/mcp` variant);
   confirm CORS and the Clerk keys, and that DCR is enabled on the Clerk
   instance.
+- **An Access-protected MCP client receives redirects or loops.** Enable Managed
+  OAuth on the Access application and use an RFC 8707-capable client. Access,
+  not connecta, must answer the unauthenticated challenge and `/.well-known/`
+  metadata. Do not bypass those routes. For unattended automation, use an
+  Access Service Auth policy and service-token headers instead.
 - **No sessions and no server push, by design.** The transport is stateless.
   Scope resolves per request, which is also where the MCP spec has arrived.
 - **A tool that should be callable from a program is not.** Only tools

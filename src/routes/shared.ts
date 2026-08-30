@@ -9,6 +9,7 @@ import type {
   ConnectaBranding,
   Executor,
   InboundAuth,
+  InboundAuthRuntimeContext,
   Logger,
 } from "../types.js";
 import { operatorPageForPath } from "../ui.js";
@@ -50,7 +51,7 @@ export interface ServerOptions {
   branding?: ConnectaBranding | undefined;
 }
 
-export interface RuntimeExecutionContext {
+export interface RuntimeExecutionContext extends InboundAuthRuntimeContext {
   waitUntil(promise: Promise<unknown>): void;
 }
 
@@ -110,6 +111,7 @@ export async function authorize(
   request: Request,
   baseUrl: string,
   auth: InboundAuth[],
+  runtimeContext?: RuntimeExecutionContext,
 ): Promise<
   | {
       ok: true;
@@ -124,7 +126,7 @@ export async function authorize(
   }
   let lastResponse: Response | null = null;
   for (const provider of auth) {
-    const result = await provider.authorize(request, baseUrl);
+    const result = await provider.authorize(request, baseUrl, runtimeContext);
     if (result.ok) {
       const subjectId = result.subjectId ?? result.userId;
       const actorNamespace = activityActorNamespace(provider);
@@ -137,7 +139,7 @@ export async function authorize(
             ? { namespace: actorNamespace }
             : {}),
         },
-        ...(result.userId && provider.uiAuth?.kind === "clerk"
+        ...(result.userId && provider.interactiveOperator
           ? { uiAdminEligible: true }
           : {}),
       };
@@ -163,30 +165,29 @@ export async function authorizeUiAdmin(
   baseUrl: string,
   auth: InboundAuth[],
   purpose = "credential management",
+  runtimeContext?: RuntimeExecutionContext,
 ): Promise<{ ok: true; userId: string } | { ok: false; response: Response }> {
   // Operator mutation is intentionally narrower than /mcp and /ui/data: only
-  // an interactive Clerk provider may admit it. A static bearer token is useful
+  // an interactive provider may admit it. A static bearer token is useful
   // for headless tool calls but must not become a deployment-admin key.
   //
-  // Every Clerk provider gets a turn, the way the /mcp gate does. Stopping at
-  // the first would make admission depend on config order: a failed gate or
+  // Every interactive provider gets a turn, the way the /mcp gate does.
+  // Stopping at the first would make admission depend on config order: a failed gate or
   // missing user may simply mean a later provider is the one meant to admit.
   // The last refusal is returned if none do.
-  const providers = auth.filter(
-    (candidate) => candidate.uiAuth?.kind === "clerk",
-  );
+  const providers = auth.filter((candidate) => candidate.interactiveOperator);
   if (providers.length === 0) {
     return {
       ok: false,
       response: privateJson(
-        { error: `${purpose} requires Clerk authentication` },
+        { error: `${purpose} requires interactive operator authentication` },
         { status: 403 },
       ),
     };
   }
   let lastResponse: Response | null = null;
   for (const provider of providers) {
-    const result = await provider.authorize(request, baseUrl);
+    const result = await provider.authorize(request, baseUrl, runtimeContext);
     if (!result.ok) {
       lastResponse = result.response;
       continue;

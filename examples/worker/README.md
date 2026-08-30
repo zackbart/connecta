@@ -1,9 +1,9 @@
 # connecta — Cloudflare Worker example
 
 A deployable Worker that aggregates a downstream remote MCP and an in-code HTTP
-API connector, guarded by Clerk OAuth *and* a static bearer token, with state in
-a KV namespace. Its required Worker Loader binding backs the seven-tool surface
-and requires the Workers Paid plan.
+API connector, guarded by Cloudflare Access, with state in a KV namespace. Its
+required Worker Loader binding backs the seven-tool surface and requires the
+Workers Paid plan.
 
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
@@ -37,18 +37,26 @@ npm install                                    # from the package root
 wrangler kv namespace create CONNECTA_KV       # paste the id into wrangler.jsonc
 
 cd examples/worker
-wrangler secret put SUPPORT_TOKEN                # one headless client
-wrangler secret put EXEC_TOKEN                   # another headless client
-wrangler secret put CLERK_SECRET_KEY
 wrangler secret put DOWNSTREAM_TOKEN
 wrangler secret put CREDENTIAL_ENCRYPTION_KEY   # base64 32-byte AES key
 wrangler deploy
 ```
 
-`PUBLIC_URL` and `CLERK_PUBLISHABLE_KEY` are plain vars in `wrangler.jsonc`.
-Enable Dynamic Client Registration on the Clerk instance (OAuth Applications →
-DCR) so Claude/Cursor can self-register — full walkthrough in
-[setting up Clerk](../../documentation/auth.md).
+`PUBLIC_URL` is a plain var in `wrangler.jsonc`. After the first deploy, attach
+Cloudflare Access to the Worker and choose the account, email-domain, or
+advanced Zero Trust policy that owns admission. Enable **Managed OAuth** on
+that Access application for interactive MCP clients. Access then serves OAuth
+discovery and turns the client's opaque token into the trusted `ctx.access`
+identity connecta reads. A cron job or CI client uses an Access service token
+instead.
+
+Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
+owns the dashboard/API steps; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+owns client registration, redirect allowlists, and token lifetimes.
+
+The checked-in `access.dev` block gives `wrangler dev` a local operator
+identity. Remove the block to test the missing-Access refusal. It has no effect
+on a deployed Worker's production identity.
 
 ### Copied into its own repository
 
@@ -57,24 +65,22 @@ dependency this file imports. A copy with its own `package.json` installs three
 things, because two of them are not part of connecta and never install with it:
 
 ```sh
-npm install @zackbart/connecta @cloudflare/codemode @clerk/backend
+npm install @zackbart/connecta @cloudflare/codemode
 ```
 
-Both are optional peers of `@zackbart/connecta` — declared in its manifest,
-never installed with it, and each carrying the range this release supports.
-`@cloudflare/codemode` is the executor behind `execute_code`, published as
+`@cloudflare/codemode` is the optional peer behind `execute_code`, declared in
+connecta's manifest but never installed with it, and published as
 `^0.4.4 || ^0.5.0`: install a version inside that and npm stays quiet, install
 one outside and npm says so at install time instead of leaving a Worker to
 discover the skew in production ([#376](https://github.com/zackbart/connecta/issues/376)).
 
-`@clerk/backend` is the peer behind `@zackbart/connecta/auth/clerk`, which
-`src/index.ts` imports at the top level, so wrangler must resolve it at
-build time. Miss it and the build stops at
-`Could not resolve "@clerk/backend"`, which is a missing peer rather than a
-broken example. Drop `clerkAuth` from `auth` if this deployment has no operator
-sign-in, and the peer goes with it — but read
-[the operator surface](#the-operator-surface) first, because a deployment
-without it can never write a credential or issue an access token.
+`cloudflareAccessAuth()` has no dependency of its own. A deployment keeping
+Clerk for rollback still installs `@clerk/backend` and keeps the commented
+provider shape in `src/index.ts` until the migration is verified.
+
+```sh
+npm install @clerk/backend   # migration window only
+```
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, named MCP access tokens are at
@@ -87,11 +93,11 @@ the next section for what turns each one on.
 This example ships the whole operator feature set. Three quarters of it is on
 as deployed; the fourth needs a database, so it is commented in place.
 
-**Operator sign-in** is the `clerkAuth` entry in `src/index.ts`, alongside two
-static bearers. The split is deliberate: a bearer is a client key that may call
-tools and read connector status, while writing a credential or issuing an
-access token requires an interactive Clerk identity. Narrow who that can be
-with `allowedDomains`, or with a `gate` for anything a domain cannot express.
+**Operator sign-in** is the `cloudflareAccessAuth()` entry in `src/index.ts`.
+Access authenticates before the Worker runs. A human Access identity can use
+MCP and operator pages; a service-token identity can use MCP but cannot write a
+credential, run downstream OAuth, or issue a connecta token. Narrow admission
+in the Access policy rather than repeating email domains or groups in code.
 
 **The credential vault** is `credentials: { encryptionKey: … }`, backed by the
 same KV namespace as everything else and encrypted with the
@@ -116,11 +122,17 @@ shape on `echo` is exactly it) or use a provider connector such as `notion()`,
 which declares its own, and Credentials appears for a signed-in operator on the
 next load.
 
-**Access tokens** are `accessTokens: {}`. A signed-in operator mints named,
+**Access tokens** are `accessTokens: {}`. A signed-in human operator mints named,
 revocable Bearer tokens at `/tokens` for header-capable clients that will not do
 OAuth. Secrets are shown once and only their hashes enter KV; a lost token is
 reissued, never recovered. Note the KV caveat above — revocation is visible
 everywhere only as fast as the namespace converges.
+
+Worker-level Access still runs before these tokens. A `cta_…` token therefore
+does not reach connecta by itself; retain the feature as a rollback path or for
+a caller that already supplies separate Access service-token headers. Normal
+interactive MCP clients should use Managed OAuth, and unattended clients should
+use Access service tokens.
 
 **Activity** is the commented block in `src/index.ts` and the commented
 `d1_databases` binding in `wrangler.jsonc`; the section below creates the
@@ -134,10 +146,17 @@ never the connector set, the tool catalog, or its annotations.
 this on: connector count, executor, seven tools. The executor it names is this
 one — `DynamicWorkerExecutor executed`, not the Node template's QuickJS, which
 is what doctor used to claim everywhere
-([#368](https://github.com/zackbart/connecta/issues/368)). It carries a bearer, and a
-bearer learns the model-facing surface rather than the deployment's
-configuration topology. Confirm the operator surface the way an operator will:
-sign in at `<PUBLIC_URL>/` and check that Tokens is live. Credentials joins it
+([#368](https://github.com/zackbart/connecta/issues/368)). Against Access it
+carries `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`, and the service
+identity learns the model-facing surface rather than deployment topology:
+
+```sh
+CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
+  npx connecta doctor --url "$PUBLIC_URL"
+```
+
+Confirm the operator surface the way an operator will: sign in at
+`<PUBLIC_URL>/` and check that Tokens is live. Credentials joins it
 once a connector declares a `credential` slot, and Activity once the D1 wiring
 below is on — the nav shows a page when the deployment can actually serve it,
 so a missing page is the honest report that its half is still off.
