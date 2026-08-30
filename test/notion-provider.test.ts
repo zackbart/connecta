@@ -793,6 +793,34 @@ describe("notion() pagination", () => {
     });
   });
 
+  it("passes every verification inequality value through unchanged", async () => {
+    const connector = build();
+    for (const value of ["verified", "expired", "none"]) {
+      queue({ body: { results: [], has_more: false } });
+      await call(connector, "query_data_source", {
+        data_source_id: "ds-1",
+        filter: {
+          property: "Verification",
+          verification: { does_not_equal: value },
+        },
+      });
+    }
+    expect(calls.map((request) => request.body?.filter)).toEqual([
+      {
+        property: "Verification",
+        verification: { does_not_equal: "verified" },
+      },
+      {
+        property: "Verification",
+        verification: { does_not_equal: "expired" },
+      },
+      {
+        property: "Verification",
+        verification: { does_not_equal: "none" },
+      },
+    ]);
+  });
+
   it("builds search filter and sort objects from flat arguments", async () => {
     queue({ body: { results: [], has_more: false } });
     await call(build(), "search", {

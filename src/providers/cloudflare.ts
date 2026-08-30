@@ -571,6 +571,16 @@ function projectZone(value: unknown): JsonRecord {
   });
 }
 
+function projectZoneSetting(value: unknown): JsonRecord {
+  const setting = asRecord(value);
+  return compact({
+    id: setting["id"],
+    value: setting["value"],
+    editable: setting["editable"],
+    modifiedOn: setting["modified_on"],
+  });
+}
+
 function projectDnsRecord(value: unknown): JsonRecord {
   const record = asRecord(value);
   const comment = record["comment"] ? record["comment"] : undefined;
@@ -602,12 +612,41 @@ function projectWorkerScript(value: unknown): JsonRecord {
   });
 }
 
+function projectWorkerSettings(value: unknown): JsonRecord {
+  const settings = asRecord(value);
+  return compact({
+    compatibilityDate: settings["compatibility_date"],
+    compatibilityFlags: settings["compatibility_flags"],
+    bindings: settings["bindings"],
+    limits: settings["limits"],
+    observability: settings["observability"],
+    placement: settings["placement"],
+    usageModel: settings["usage_model"],
+    tailConsumers: settings["tail_consumers"],
+    logpush: settings["logpush"],
+  });
+}
+
 function projectKvNamespace(value: unknown): JsonRecord {
   const namespace = asRecord(value);
   return compact({
     id: namespace["id"],
     title: namespace["title"],
     supportsUrlEncoding: namespace["supports_url_encoding"],
+    jurisdiction: namespace["jurisdiction"],
+  });
+}
+
+function projectKvBulkValues(value: unknown): JsonRecord {
+  const result = asRecord(value);
+  return compact({ values: result["values"] });
+}
+
+function projectKvBulkResult(value: unknown): JsonRecord {
+  const result = asRecord(value);
+  return compact({
+    successfulKeyCount: result["successful_key_count"],
+    unsuccessfulKeys: result["unsuccessful_keys"],
   });
 }
 
@@ -633,6 +672,11 @@ function projectR2Object(value: unknown): JsonRecord {
     httpMetadata: object["http_metadata"],
     customMetadata: object["custom_metadata"],
   });
+}
+
+function projectR2Cors(value: unknown): JsonRecord {
+  const cors = asRecord(value);
+  return compact({ rules: cors["rules"] });
 }
 
 function projectKvKey(value: unknown): JsonRecord {
@@ -1136,10 +1180,147 @@ function uploadBody(args: JsonRecord): {
   };
 }
 
-const OPEN_OBJECT_OUTPUT_SCHEMA: JsonSchema = {
+const ZONE_SETTING_SCHEMA: JsonSchema = {
   type: "object",
-  description: "Cloudflare's result object. Its fields depend on the endpoint.",
-  additionalProperties: true,
+  properties: {
+    id: { type: "string" },
+    value: {
+      type: ["string", "number", "boolean", "array", "object", "null"],
+      items: {},
+      additionalProperties: true,
+    },
+    editable: { type: "boolean" },
+    modifiedOn: { type: "string" },
+  },
+  required: ["id", "value"],
+};
+
+const RULESET_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    kind: { type: "string" },
+    phase: { type: "string" },
+    description: { type: "string" },
+    version: { type: "string" },
+    lastUpdated: { type: "string" },
+    rules: {
+      type: "array",
+      items: { type: "object", additionalProperties: true },
+    },
+  },
+  required: ["id", "name"],
+};
+
+const WORKER_SETTINGS_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    compatibilityDate: { type: "string" },
+    compatibilityFlags: { type: "array", items: { type: "string" } },
+    bindings: { type: "array", items: { type: "object", additionalProperties: true } },
+    limits: { type: "object", additionalProperties: true },
+    observability: { type: "object", additionalProperties: true },
+    placement: { type: "object", additionalProperties: true },
+    usageModel: { type: "string" },
+    tailConsumers: { type: "array", items: { type: "object", additionalProperties: true } },
+    logpush: { type: "boolean" },
+  },
+};
+
+const WORKER_DEPLOYMENT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    createdOn: { type: "string" },
+    source: { type: "string" },
+    strategy: { type: "string" },
+    versions: { type: "array", items: { type: "object", additionalProperties: true } },
+  },
+  required: ["id"],
+};
+
+const KV_NAMESPACE_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    title: { type: "string" },
+    supportsUrlEncoding: { type: "boolean" },
+    jurisdiction: { type: "string", enum: ["eu", "fedramp", "us"] },
+    renamed: { type: "boolean" },
+    namespaceId: { type: "string" },
+  },
+};
+
+const KV_BULK_VALUES_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    values: {
+      type: "object",
+      additionalProperties: true,
+    },
+  },
+  required: ["values"],
+};
+
+const KV_BULK_RESULT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    successfulKeyCount: { type: "number" },
+    unsuccessfulKeys: { type: "array", items: { type: "string" } },
+  },
+};
+
+const R2_CORS_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    rules: {
+      type: "array",
+      items: { type: "object", additionalProperties: true },
+    },
+  },
+  required: ["rules"],
+};
+
+const PAGES_DEPLOYMENT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    projectName: { type: "string" },
+    environment: { type: "string" },
+    url: { type: "string" },
+    aliases: { type: "array", items: { type: "string" } },
+    stage: { type: "object", additionalProperties: true },
+    latestStage: { type: "object", additionalProperties: true },
+    createdOn: { type: "string" },
+    modifiedOn: { type: "string" },
+  },
+  required: ["id"],
+};
+
+const PAGES_DOMAIN_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    id: { type: "string" },
+    name: { type: "string" },
+    status: { type: "string" },
+    verificationData: { type: "object", additionalProperties: true },
+    createdOn: { type: "string" },
+  },
+  required: ["name"],
+};
+
+const PAGES_PROJECT_SCHEMA: JsonSchema = {
+  type: "object",
+  properties: {
+    name: { type: "string" },
+    subdomain: { type: "string" },
+    domains: { type: "array", items: { type: "string" } },
+    productionBranch: { type: "string" },
+    createdOn: { type: "string" },
+    latestDeployment: PAGES_DEPLOYMENT_SCHEMA,
+  },
+  required: ["name"],
 };
 
 const QUERY_INPUT_PROPERTY: JsonSchema = {
@@ -1175,9 +1356,16 @@ const HEADERS_INPUT_PROPERTY: JsonSchema = {
 
 const R2_JURISDICTION_PROPERTY: JsonSchema = {
   type: "string",
-  enum: ["default", "eu", "fedramp"],
+  enum: ["default", "eu", "us", "fedramp"],
   description:
-    "Bucket jurisdiction. Omit for ordinary buckets; set eu or fedramp for jurisdictional buckets.",
+    "Bucket jurisdiction. Omit for ordinary buckets; set eu, us, or fedramp for jurisdictional buckets.",
+};
+
+const KV_JURISDICTION_PROPERTY: JsonSchema = {
+  type: "string",
+  enum: ["eu", "fedramp", "us"],
+  description:
+    "Creation-only namespace jurisdiction. Omit for an ordinary namespace; it cannot be changed by rename_kv_namespace.",
 };
 
 const R2_BUCKET_NAME_PROPERTY: JsonSchema = {
@@ -1251,7 +1439,7 @@ const SETTING_ID_PROPERTY: JsonSchema = {
   type: "string",
   minLength: 1,
   description:
-    "Cloudflare zone setting id, such as ssl, brotli, http3, or min_tls_version.",
+    "Cloudflare zone setting id, such as ssl, brotli, webmcp_enabled, or webmcp_packs.",
 };
 
 const RECORD_ID_PROPERTY: JsonSchema = {
@@ -1265,7 +1453,7 @@ const R2_BUCKET_SCHEMA: JsonSchema = {
     name: { type: "string" },
     location: { type: "string" },
     storageClass: { type: "string" },
-    jurisdiction: { type: "string" },
+    jurisdiction: { type: "string", enum: ["default", "eu", "us", "fedramp"] },
     creationDate: { type: "string" },
   },
   required: ["name"],
@@ -1743,16 +1931,18 @@ function buildTools(
       "zoneId",
       scope.zoneId,
       {
-              settingId: SETTING_ID_PROPERTY
+              settingId: SETTING_ID_PROPERTY,
+                raw: RAW_INPUT_PROPERTY
             },
       ["settingId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      ZONE_SETTING_SCHEMA,
       getResult(
         send,
         (args) => ({
                   method: "GET",
                   path: `/zones/${encodeURIComponent(zoneArg(args))}/settings/${encodeURIComponent(requireString(args, "settingId"))}`,
                 }),
+        (result, args) => args["raw"] === true ? result : projectZoneSetting(result),
       ),
     ),
     cfTool(
@@ -1771,7 +1961,7 @@ function buildTools(
                 }
             },
       ["settingId", "value"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      ZONE_SETTING_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -1782,7 +1972,7 @@ function buildTools(
                 },
                 ctx,
               );
-              return result;
+              return projectZoneSetting(result);
             },
     ),
     cfTool(
@@ -1804,7 +1994,7 @@ function buildTools(
       {
               type: "object",
               properties: {
-                rulesets: { type: "array", items: OPEN_OBJECT_OUTPUT_SCHEMA },
+                rulesets: { type: "array", items: RULESET_SCHEMA },
                 nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
               },
               required: ["rulesets"],
@@ -1843,7 +2033,7 @@ function buildTools(
                 }
             },
       ["rulesetId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      RULESET_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -1978,16 +2168,18 @@ function buildTools(
       "accountId",
       scope.accountId,
       {
-              scriptName: SCRIPT_NAME_PROPERTY
+              scriptName: SCRIPT_NAME_PROPERTY,
+                raw: RAW_INPUT_PROPERTY
             },
       ["scriptName"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      WORKER_SETTINGS_SCHEMA,
       getResult(
         send,
         (args) => ({
                   method: "GET",
                   path: `/accounts/${encodeURIComponent(accountArg(args))}/workers/scripts/${encodeURIComponent(requireString(args, "scriptName"))}/settings`,
                 }),
+        (result, args) => args["raw"] === true ? result : projectWorkerSettings(result),
       ),
     ),
     cfTool(
@@ -2000,7 +2192,7 @@ function buildTools(
               scriptName: SCRIPT_NAME_PROPERTY
             },
       ["scriptName"],
-      listOutputSchema("deployments", OPEN_OBJECT_OUTPUT_SCHEMA),
+      listOutputSchema("deployments", WORKER_DEPLOYMENT_SCHEMA),
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2028,7 +2220,7 @@ function buildTools(
                 deploymentId: WORKER_DEPLOYMENT_ID_PROPERTY
             },
       ["scriptName", "deploymentId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      WORKER_DEPLOYMENT_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -2089,6 +2281,7 @@ function buildTools(
                 id: { type: "string" },
                 title: { type: "string" },
                 supportsUrlEncoding: { type: "boolean" },
+                jurisdiction: { type: "string", enum: ["eu", "fedramp", "us"] },
               },
               required: ["id", "title"],
             }),
@@ -2118,7 +2311,7 @@ function buildTools(
               namespaceId: NAMESPACE_ID_PROPERTY
             },
       ["namespaceId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_NAMESPACE_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -2140,17 +2333,21 @@ function buildTools(
                   minLength: 1,
                   maxLength: 512,
                   description: "Human-readable namespace title.",
-                }
+                },
+                jurisdiction: KV_JURISDICTION_PROPERTY
             },
       ["title"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_NAMESPACE_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
                 {
                   method: "POST",
                   path: `/accounts/${encodeURIComponent(accountArg(args))}/storage/kv/namespaces`,
-                  body: { title: requireString(args, "title") },
+                  body: compact({
+                    title: requireString(args, "title"),
+                    jurisdiction: args["jurisdiction"],
+                  }),
                 },
                 ctx,
               );
@@ -2173,7 +2370,7 @@ function buildTools(
                 }
             },
       ["namespaceId", "title"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_NAMESPACE_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2184,7 +2381,9 @@ function buildTools(
                 },
                 ctx,
               );
-              return result ?? { renamed: true, namespaceId: args["namespaceId"] };
+              return result
+                ? projectKvNamespace(result)
+                : { renamed: true, namespaceId: args["namespaceId"] };
             },
     ),
     cfTool(
@@ -2239,7 +2438,18 @@ function buildTools(
       {
               type: "object",
               properties: {
-                keys: { type: "array", items: OPEN_OBJECT_OUTPUT_SCHEMA },
+                keys: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      name: { type: "string" },
+                      expiration: { type: "number" },
+                      metadata: {},
+                    },
+                    required: ["name"],
+                  },
+                },
                 nextCursor: NEXT_CURSOR_OUTPUT_PROPERTY,
               },
               required: ["keys"],
@@ -2291,7 +2501,7 @@ function buildTools(
                 }
             },
       ["namespaceId", "keys"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_BULK_VALUES_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2306,7 +2516,7 @@ function buildTools(
                 },
                 ctx,
               );
-              return asRecord(result);
+              return projectKvBulkValues(result);
             },
     ),
     cfTool(
@@ -2360,7 +2570,7 @@ function buildTools(
                 }
             },
       ["namespaceId", "entries"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_BULK_RESULT_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2371,7 +2581,7 @@ function buildTools(
                 },
                 ctx,
               );
-              return asRecord(result);
+              return projectKvBulkResult(result);
             },
     ),
     cfTool(
@@ -2391,7 +2601,7 @@ function buildTools(
                 }
             },
       ["namespaceId", "keys"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      KV_BULK_RESULT_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2402,7 +2612,7 @@ function buildTools(
                 },
                 ctx,
               );
-              return asRecord(result);
+              return projectKvBulkResult(result);
             },
     ),
     cfTool(
@@ -2707,7 +2917,7 @@ function buildTools(
                 jurisdiction: R2_JURISDICTION_PROPERTY
             },
       ["bucketName"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      R2_CORS_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -2715,7 +2925,7 @@ function buildTools(
                   path: `/accounts/${encodeURIComponent(accountArg(args))}/r2/buckets/${encodeURIComponent(requireString(args, "bucketName"))}/cors`,
                   headers: r2Headers(args),
                 }),
-        asRecord,
+        projectR2Cors,
       ),
     ),
     cfTool(
@@ -2729,26 +2939,7 @@ function buildTools(
                 raw: RAW_INPUT_PROPERTY
             },
       [],
-      listOutputSchema("projects", {
-              type: "object",
-              properties: {
-                name: { type: "string" },
-                subdomain: { type: "string" },
-                domains: { type: "array", items: { type: "string" } },
-                productionBranch: { type: "string" },
-                createdOn: { type: "string" },
-                latestDeployment: {
-                  type: "object",
-                  properties: {
-                    id: { type: "string" },
-                    environment: { type: "string" },
-                    url: { type: "string" },
-                    createdOn: { type: "string" },
-                  },
-                },
-              },
-              required: ["name"],
-            }),
+      listOutputSchema("projects", PAGES_PROJECT_SCHEMA),
       async (args: JsonRecord, ctx) => {
               const { result, resultInfo } = await callCloudflare(
                 send,
@@ -2776,7 +2967,7 @@ function buildTools(
                 raw: RAW_INPUT_PROPERTY
             },
       ["projectName"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      PAGES_PROJECT_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -2802,7 +2993,7 @@ function buildTools(
                 ...pagingInputProperties(1, 100, { bounds: "undocumented" })
             },
       ["projectName"],
-      listOutputSchema("deployments", OPEN_OBJECT_OUTPUT_SCHEMA),
+      listOutputSchema("deployments", PAGES_DEPLOYMENT_SCHEMA),
       async (args: JsonRecord, ctx) => {
               const { result, resultInfo } = await callCloudflare(
                 send,
@@ -2835,7 +3026,7 @@ function buildTools(
                 raw: RAW_INPUT_PROPERTY
             },
       ["projectName", "deploymentId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      PAGES_DEPLOYMENT_SCHEMA,
       getResult(
         send,
         (args) => ({
@@ -2856,7 +3047,7 @@ function buildTools(
                 deploymentId: RETRY_DEPLOYMENT_ID_PROPERTY
             },
       ["projectName", "deploymentId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      PAGES_DEPLOYMENT_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2880,7 +3071,7 @@ function buildTools(
                 deploymentId: ROLLBACK_DEPLOYMENT_ID_PROPERTY
             },
       ["projectName", "deploymentId"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      PAGES_DEPLOYMENT_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2925,7 +3116,7 @@ function buildTools(
               projectName: PAGES_PROJECT_NAME_PROPERTY
             },
       ["projectName"],
-      listOutputSchema("domains", OPEN_OBJECT_OUTPUT_SCHEMA),
+      listOutputSchema("domains", PAGES_DOMAIN_SCHEMA),
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,
@@ -2949,7 +3140,7 @@ function buildTools(
                 domain: { type: "string", minLength: 1, description: "Fully qualified custom domain to attach." }
             },
       ["projectName", "domain"],
-      OPEN_OBJECT_OUTPUT_SCHEMA,
+      PAGES_DOMAIN_SCHEMA,
       async (args: JsonRecord, ctx) => {
               const { result } = await callCloudflare(
                 send,

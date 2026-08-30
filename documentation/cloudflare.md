@@ -153,6 +153,18 @@ every constrained field, endpoint-specific pagination bounds, and a description
 on every property. `test/cloudflare-provider.test.ts` walks the surface and
 asserts those properties rather than leaving them as a claim.
 
+The per-setting zone tools accept Cloudflare's current non-empty setting ids,
+including `webmcp_enabled` and `webmcp_packs`. Cloudflare's
+[rendered setting reference](https://developers.cloudflare.com/api/resources/zones/subresources/settings/)
+and current OpenAPI now agree on both beta ids. Results preserve the value and
+the actual `editable` flag Cloudflare returned; Connecta does not apply the
+document's defaults locally.
+
+KV namespace jurisdiction is creation-only. `create_kv_namespace` accepts
+`eu`, `fedramp`, or `us`, and namespace reads preserve the returned value.
+R2 uses a different enum: `default`, `eu`, `us`, or `fedramp`, sent through
+`cf-r2-jurisdiction` by all eight named R2 operations.
+
 ### What the named surface deliberately leaves out
 
 A named tool is a permanent line item in every deployment's catalog, so the
@@ -206,7 +218,7 @@ connection *calls*, dropping the tool drops the row — so
 rather than by a recorded exception. A path reached only through a hatch is
 named by the caller, so it was never a touched endpoint.
 
-The surviving 47 named tools all refuse malformed arguments locally, which is
+The surviving 48 named tools all refuse malformed arguments locally, which is
 the one thing no escape hatch can do: a hatch's path is an opaque string, so it
 can only check that a path is a path.
 
@@ -317,6 +329,12 @@ description fields kept, plan/permission/meta noise dropped, `snake_case`
 renamed to `camelCase`. A zone comes back as `id`, `name`, `status`, `paused`,
 `type`, `accountId`, `accountName`, `plan`, `nameServers`, and timestamps —
 not the forty-field object Cloudflare sends.
+
+Every named tool declares useful top-level output keys. Zone settings, Worker
+settings and deployments, KV namespaces and bulk operations, rulesets, R2 CORS,
+and Pages resources use maintained result schemas instead of an open
+"Cloudflare object" declaration. The three raw escape hatches remain open by
+design because their result fields depend on the caller-supplied endpoint.
 
 Paginated lists add a `page` object derived from `result_info`:
 `{ page, perPage, count, totalCount, totalPages, hasMore }`. `hasMore` is the

@@ -436,6 +436,13 @@ describe("cloudflare() tool surface", () => {
       expect(input["additionalProperties"], tool.name).toBe(false);
       expect(Array.isArray(input["required"]), tool.name).toBe(true);
       expect(tool.outputSchema, `${tool.name} needs an outputSchema`).toBeTruthy();
+      const output = tool.outputSchema as Record<string, unknown>;
+      if (!tool.name.startsWith("cloudflare_api_")) {
+        expect(
+          Object.keys((output["properties"] ?? {}) as Record<string, unknown>),
+          `${tool.name} needs useful output keys`,
+        ).not.toHaveLength(0);
+      }
       const properties = input["properties"] as Record<string, unknown>;
       for (const key of input["required"] as string[]) {
         expect(properties, `${tool.name}.${key} is required but undeclared`)
@@ -486,6 +493,39 @@ describe("cloudflare() tool surface", () => {
       ]);
       expect(properties(tool)["type"]!["enum"], tool).not.toContain("SRV");
     }
+  });
+
+  it("publishes the current R2 and KV jurisdiction values", async () => {
+    const tools = await connection().listTools(contextWithToken());
+    const properties = (name: string) =>
+      (toolNamed(tools, name).inputSchema as any).properties as Record<
+        string,
+        Record<string, unknown>
+      >;
+
+    for (const name of [
+      "list_r2_buckets",
+      "get_r2_bucket",
+      "create_r2_bucket",
+      "update_r2_bucket",
+      "delete_r2_bucket",
+      "get_r2_cors",
+      "list_r2_objects",
+      "delete_r2_object",
+    ]) {
+      expect(properties(name)["jurisdiction"]?.["enum"], name).toEqual([
+        "default",
+        "eu",
+        "us",
+        "fedramp",
+      ]);
+    }
+    expect(properties("create_kv_namespace")["jurisdiction"]?.["enum"]).toEqual([
+      "eu",
+      "fedramp",
+      "us",
+    ]);
+    expect(properties("rename_kv_namespace")).not.toHaveProperty("jurisdiction");
   });
 
   it("requires a scope argument only when the deployment declares no default", async () => {
@@ -810,6 +850,27 @@ describe("cloudflare() request building", () => {
     );
   });
 
+  it("forwards the R2 us jurisdiction on reads and writes", async () => {
+    stubFetch(
+      { body: { success: true, result: { name: "assets", jurisdiction: "us" } } },
+      { body: { success: true, result: { name: "archive", jurisdiction: "us" } } },
+    );
+    const connector = connection();
+    await connector.callTool(
+      "get_r2_bucket",
+      { accountId: "acct-1", bucketName: "assets", jurisdiction: "us" },
+      contextWithToken(),
+    );
+    await connector.callTool(
+      "create_r2_bucket",
+      { accountId: "acct-1", bucketName: "archive", jurisdiction: "us" },
+      contextWithToken(),
+    );
+    for (const call of calls) {
+      expect(call.init.headers).toMatchObject({ "cf-r2-jurisdiction": "us" });
+    }
+  });
+
   it("refuses R2 object keys whose dot segments would retarget deletion", async () => {
     const connector = connection();
     for (const objectKey of ["..", "../cors", "folder/./item"]) {
@@ -842,6 +903,44 @@ describe("cloudflare() request building", () => {
     expect(bodyOf()).toEqual([
       { key: "feature", value: "on", expiration_ttl: 600 },
     ]);
+  });
+
+  it("sends KV jurisdiction only when namespace creation asks for it", async () => {
+    stubFetch(
+      ...["eu", "fedramp", "us", undefined].map((jurisdiction) => ({
+        body: {
+          success: true,
+          result: { id: `ns-${jurisdiction ?? "default"}`, title: "Cache", jurisdiction },
+        },
+      })),
+    );
+    const connector = connection();
+    for (const jurisdiction of ["eu", "fedramp", "us", undefined]) {
+      await connector.callTool(
+        "create_kv_namespace",
+        {
+          accountId: "acct-1",
+          title: "Cache",
+          ...(jurisdiction ? { jurisdiction } : {}),
+        },
+        contextWithToken(),
+      );
+    }
+    expect(calls.map((_call, index) => bodyOf(index))).toEqual([
+      { title: "Cache", jurisdiction: "eu" },
+      { title: "Cache", jurisdiction: "fedramp" },
+      { title: "Cache", jurisdiction: "us" },
+      { title: "Cache" },
+    ]);
+
+    await expect(
+      connector.callTool(
+        "create_kv_namespace",
+        { accountId: "acct-1", title: "Cache", jurisdiction: "default" },
+        contextWithToken(),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_args" });
+    expect(calls).toHaveLength(4);
   });
 
   it("authenticates with a bearer token against the documented v4 base", async () => {
@@ -1013,6 +1112,248 @@ describe("cloudflare() request building", () => {
 });
 
 describe("cloudflare() projections", () => {
+  it("projects zone settings without inventing provider defaults", async () => {
+    stubFetch(
+      {
+        body: {
+          success: true,
+          result: {
+            id: "proxy_read_timeout",
+            value: 100,
+            editable: false,
+            modified_on: "2026-08-30T00:00:00Z",
+          },
+        },
+      },
+      {
+        body: {
+          success: true,
+          result: {
+            id: "webmcp_packs",
+            value: "dom,credentials",
+            editable: true,
+          },
+        },
+      },
+    );
+    const connector = connection();
+    const current = await connector.callTool(
+      "get_zone_setting",
+      { zoneId: "zone-1", settingId: "proxy_read_timeout" },
+      contextWithToken(),
+    );
+    expect(current).toEqual({
+      id: "proxy_read_timeout",
+      value: 100,
+      editable: false,
+      modifiedOn: "2026-08-30T00:00:00Z",
+    });
+
+    const updated = await connector.callTool(
+      "update_zone_setting",
+      {
+        zoneId: "zone-1",
+        settingId: "webmcp_packs",
+        value: "dom,credentials",
+      },
+      contextWithToken(),
+    );
+    expect(bodyOf(1)).toEqual({ value: "dom,credentials" });
+    expect(updated).toEqual({
+      id: "webmcp_packs",
+      value: "dom,credentials",
+      editable: true,
+    });
+  });
+
+  it("preserves new ruleset and Worker settings fields in bounded results", async () => {
+    stubFetch(
+      {
+        body: {
+          success: true,
+          result: {
+            id: "ruleset-1",
+            name: "origin controls",
+            rules: [
+              {
+                id: "rule-1",
+                action_parameters: { origin_range_requests: { mode: "on" } },
+              },
+            ],
+          },
+        },
+      },
+      {
+        body: {
+          success: true,
+          result: {
+            compatibility_date: "2026-08-30",
+            bindings: [
+              {
+                type: "vpc_network",
+                name: "NETWORK",
+                network_id: "cf1:network",
+                identity: "runtime-email-alpha",
+              },
+            ],
+            observability: {
+              enabled: true,
+              redact_query_string: false,
+              traces: { propagation_policy: null },
+            },
+          },
+        },
+      },
+      {
+        body: {
+          success: true,
+          result: [
+            {
+              id: "worker-a",
+              observability: {
+                redact_query_string: false,
+                traces: { propagation_policy: null },
+              },
+            },
+          ],
+        },
+      },
+    );
+    const connector = connection();
+    const ruleset = await connector.callTool(
+      "get_zone_ruleset",
+      { zoneId: "zone-1", rulesetId: "ruleset-1" },
+      contextWithToken(),
+    );
+    expect((ruleset as any).rules[0].action_parameters.origin_range_requests).toEqual({
+      mode: "on",
+    });
+
+    const settings = await connector.callTool(
+      "get_worker_settings",
+      { accountId: "acct-1", scriptName: "worker-a" },
+      contextWithToken(),
+    );
+    expect((settings as any).bindings[0].identity).toBe("runtime-email-alpha");
+    expect((settings as any).observability).toEqual({
+      enabled: true,
+      redact_query_string: false,
+      traces: { propagation_policy: null },
+    });
+
+    const raw = await connector.callTool(
+      "list_worker_scripts",
+      { accountId: "acct-1", raw: true },
+      contextWithToken(),
+    );
+    expect((raw as any).scripts[0].observability.traces.propagation_policy).toBeNull();
+  });
+
+  it("projects namespace jurisdiction and bulk operation results", async () => {
+    stubFetch(
+      {
+        body: {
+          success: true,
+          result: [{ id: "ns-1", title: "Cache", jurisdiction: "us" }],
+          result_info: { page: 1, per_page: 20, count: 1, total_pages: 1 },
+        },
+      },
+      { body: { success: true, result: { id: "ns-1", title: "Cache", jurisdiction: "us" } } },
+      { body: { success: true, result: { id: "ns-2", title: "EU", jurisdiction: "eu" } } },
+      { body: { success: true, result: { id: "ns-1", title: "Renamed", jurisdiction: "us" } } },
+      { body: { success: true, result: { values: { feature: "on" } } } },
+      {
+        body: {
+          success: true,
+          result: { successful_key_count: 2, unsuccessful_keys: ["later"] },
+        },
+      },
+      {
+        body: {
+          success: true,
+          result: { successful_key_count: 1, unsuccessful_keys: [] },
+        },
+      },
+    );
+    const connector = connection();
+    const listed = await connector.callTool(
+      "list_kv_namespaces",
+      { accountId: "acct-1" },
+      contextWithToken(),
+    );
+    const fetched = await connector.callTool(
+      "get_kv_namespace",
+      { accountId: "acct-1", namespaceId: "ns-1" },
+      contextWithToken(),
+    );
+    const created = await connector.callTool(
+      "create_kv_namespace",
+      { accountId: "acct-1", title: "EU", jurisdiction: "eu" },
+      contextWithToken(),
+    );
+    const renamed = await connector.callTool(
+      "rename_kv_namespace",
+      { accountId: "acct-1", namespaceId: "ns-1", title: "Renamed" },
+      contextWithToken(),
+    );
+    expect((listed as any).namespaces[0].jurisdiction).toBe("us");
+    expect((fetched as any).jurisdiction).toBe("us");
+    expect((created as any).jurisdiction).toBe("eu");
+    expect((renamed as any).jurisdiction).toBe("us");
+
+    const values = await connector.callTool(
+      "bulk_get_kv_values",
+      { accountId: "acct-1", namespaceId: "ns-1", keys: ["feature"] },
+      contextWithToken(),
+    );
+    const written = await connector.callTool(
+      "bulk_write_kv_values",
+      {
+        accountId: "acct-1",
+        namespaceId: "ns-1",
+        entries: [{ key: "feature", value: "on" }],
+      },
+      contextWithToken(),
+    );
+    const deleted = await connector.callTool(
+      "bulk_delete_kv_values",
+      { accountId: "acct-1", namespaceId: "ns-1", keys: ["feature"] },
+      contextWithToken(),
+    );
+    expect(values).toEqual({ values: { feature: "on" } });
+    expect(written).toEqual({ successfulKeyCount: 2, unsuccessfulKeys: ["later"] });
+    expect(deleted).toEqual({ successfulKeyCount: 1, unsuccessfulKeys: [] });
+  });
+
+  it("declares and returns the R2 CORS rule collection", async () => {
+    stubFetch({
+      body: {
+        success: true,
+        result: {
+          rules: [
+            {
+              id: "browser",
+              allowed: { methods: ["GET"], origins: ["https://example.com"] },
+            },
+          ],
+        },
+      },
+    });
+    const result = await connection().callTool(
+      "get_r2_cors",
+      { accountId: "acct-1", bucketName: "assets" },
+      contextWithToken(),
+    );
+    expect(result).toEqual({
+      rules: [
+        {
+          id: "browser",
+          allowed: { methods: ["GET"], origins: ["https://example.com"] },
+        },
+      ],
+    });
+  });
+
   it("unwraps the zone envelope and surfaces pagination", async () => {
     stubFetch({
       body: {
