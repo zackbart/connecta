@@ -149,11 +149,16 @@ describe("mixpanel()", () => {
   });
 
   it("records a reviewed schema digest for every classified tool", () => {
-    expect(MIXPANEL_VETTED_CATALOG.tools.size).toBe(63);
+    expect(MIXPANEL_VETTED_CATALOG.tools.size).toBe(64);
     for (const [name, record] of MIXPANEL_VETTED_CATALOG.tools) {
       expect(name).toBeTruthy();
       expect(record.schemaDigest).toMatch(/^sha256:[0-9a-f]{64}$/);
     }
+    expect(MIXPANEL_VETTED_CATALOG.tools.get("Fill-Event-Metadata")).toEqual({
+      verdict: "destructive",
+      schemaDigest:
+        "sha256:53accc988f216bdd5d7a259d731f6df82549e4e6146b191f1815a0d1a72a1abe",
+    });
   });
 
   it("puts the residency in the title and the guide's first line (P3)", () => {

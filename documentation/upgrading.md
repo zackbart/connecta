@@ -57,7 +57,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.21.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.21.1 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -106,7 +106,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.21.0
+npm pkg set dependencies.@zackbart/connecta=0.21.1
 npm install
 ```
 
@@ -130,7 +130,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.21.0 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.21.1 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -186,7 +186,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.21.0 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.21.1 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -207,9 +207,10 @@ first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
 
-### 0.20.0 → 0.21.0
+### 0.20.0 → 0.21.1
 
-This is additive for Node and existing Clerk deployments. The new Worker path
+0.21.1 adds no deployment migration beyond 0.21.0. The boundary is additive
+for Node and existing Clerk deployments. The new Worker path
 uses Cloudflare Access identity directly and removes Clerk only after the edge
 cutover has been verified. An agent can perform every repository edit; a human
 must attach Access, choose its policy, create service credentials, and enable
@@ -217,7 +218,7 @@ Managed OAuth in the Cloudflare dashboard.
 
 For a Worker currently using Clerk, keep rollback live through the cutover:
 
-1. Bump and install 0.21.0. Add the new provider **before** the existing Clerk
+1. Bump and install 0.21.1. Add the new provider **before** the existing Clerk
    provider, but remove nothing:
 
    ```ts

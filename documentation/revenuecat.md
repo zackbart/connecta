@@ -152,17 +152,18 @@ names the `authorize_connector` recovery. A permission gap, a plan restriction,
 or a rejected argument arrives as RevenueCat wrote it and is not an
 authorization problem.
 
-## The ninety-five tools, and what they are classified as
+## The ninety-six tools, and what they are classified as
 
 RevenueCat's
 [tool reference](https://www.revenuecat.com/docs/tools/mcp/tools-reference),
-read on **2026-08-18**, documents ninety-five tools in a Read/Write table.
-Ninety-four carry an access column and are classified here: **50 read-only, 15
-additive writes, 29 destructive writes.**
+read on **2026-08-30**, documents ninety-six tools. Ninety-five carry an access
+column and are classified here: **51 read-only, 15 additive writes, 29
+destructive writes.**
 
 Reads are every `Read` row, verbatim — the nine project and app reads, the four
 product reads, the entitlement, offering, targeting, paywall, customer, virtual
-currency, chart, webhook, and SDK reads, and `get-paywall-ai-task`.
+currency, chart, webhook, and SDK reads, `get-paywall-ai-task`, and
+`get-refund-request-preferences`.
 
 Writes follow the verb where the verb is honest: `archive-*` and `unarchive-*`
 flip an existing object's active state, `update-*`, `delete-*`, `publish-*`,
@@ -191,14 +192,15 @@ beside the row:
 `create-webhook-integration` deserves a sentence too. No existing integration
 changes, so the verb reads additive — but with filters omitted the new one
 "starts delivering" every customer event in the project to a URL the caller
-typed. Customer data leaving the account is the `create_refund` argument again:
-filed destructive on consequence, so the approval copy says what is at stake.
+typed. Customer data leaving the account makes it destructive on consequence,
+so the approval copy says what is at stake.
 
 **`render-paywall-screenshot` is deliberately unclassified.** RevenueCat's
-reference gives it no access column at all, so no release has reviewed what it
-does. It fails closed onto `call_destructive_tool` rather than being guessed
-into the read path because its name sounds harmless (P5). The guide names it,
-so an agent does not read the approval prompt as a bug.
+reference gives it no access column. The current live server explicitly marks
+it read-only, so that catalog keeps it callable from `execute_code`; if a later
+catalog omits the annotation, it fails closed onto `call_destructive_tool`.
+Connecta preserves the provider's current annotation without inventing a
+release classification from the tool's harmless-sounding name (P5).
 
 That classification fills in downstream silence and otherwise preserves explicit
 annotations. A tool on the read allowlist arriving with `destructiveHint: true`
@@ -242,7 +244,7 @@ API v2 meters per minute and **per domain**
 | Charts & Metrics | 25 |
 
 A `ConnectorCallAdmissionPolicy` carries exactly one rule, so a connector-wide
-budget has to pick one of those six numbers for all ninety-five tools.
+budget has to pick one of those six numbers for all ninety-six tools.
 Transcribing 25 would throttle a customer read loop to a nineteenth of its
 documented allowance; transcribing 480 would leave a chart sweep unprotected.
 Neither is the provider's limit, and both would look like RevenueCat being
@@ -281,15 +283,13 @@ still needs restrained use.
 
 ## What is not verified
 
-- **Every tool name is transcribed from RevenueCat's published reference on
-  2026-08-18, not read from a live catalog.** No maintainer ran this against a
-  project with a real key before it shipped. A name the reference lists and the
-  server does not serve costs nothing; a tool the server serves and the
-  reference omits fails closed. The maintainer-run drift check with
-  `CONNECTA_DRIFT_REVENUECAT_KEY` set is what turns that into a finding with a
-  name attached.
-- **No input or output schema has been read**, which is why the manifest
-  carries no digests.
+- **The 2026-08-30 live review used a project-scoped catalog.** It proves the
+  additions that catalog serves, including `get-refund-request-preferences`,
+  but cannot prove a globally documented tool was removed. The manifest stays
+  a superset because plan, platform, and credential scope hide tools.
+- **No complete schema set has been recorded**, which is why the manifest
+  carries no digests. The review read the new live schemas, but its scoped
+  catalog omitted many classified writes.
 - **Whether `render-paywall-screenshot` mutates anything.** It has no access
   column, and guessing is exactly what P5 exists to prevent.
 

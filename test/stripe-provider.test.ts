@@ -49,10 +49,10 @@ describe("stripe()", () => {
     expect(guideOf(connector)).toContain("stripe_context");
     expect(guideOf(connector)).toContain("livemode");
     expect(guideOf(connector)).toContain("stripe_api_details");
-    // The dedicated tools must stay named: a refund routed through the generic
-    // `stripe_api_write` degrades the approval prompt a human actually reads.
-    expect(guideOf(connector)).toContain("create_refund");
-    expect(guideOf(connector)).toContain("get_stripe_account_info");
+    expect(guideOf(connector)).toContain("stripe_analytics");
+    expect(guideOf(connector)).toContain("stripe_implementation_planner");
+    expect(guideOf(connector)).not.toContain("create_refund");
+    expect(guideOf(connector)).not.toContain("get_stripe_account_info");
     expect(guideOf(connector)).toContain("Idempotency-Key");
     expect(guideOf(connector)).toContain(
       "100 requests per second in live mode and 25 in sandbox mode",
@@ -383,9 +383,13 @@ describe("stripe()", () => {
     () => stripe("billing", { purpose: "Rehearsal" }),
     mocks,
     {
-      read: ["stripe_api_read", "search_stripe_documentation", "get_balance_summary"],
-      write: "stripe_report",
-      destructive: "create_refund",
+      read: [
+        "stripe_api_read",
+        "list_available_accounts_or_orgs",
+        "manage_stripe_accounts",
+      ],
+      write: "stripe_analytics",
+      destructive: "stripe_api_write",
       unknown: ["create_customer", "get_new_treasury_thing", "wreck_new_thing"],
     },
   );

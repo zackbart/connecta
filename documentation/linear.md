@@ -110,9 +110,10 @@ the connector is present and reports `auth_required`. See
 
 The wrapper classifies Linear's documented `list_*`, `get_*`, and
 `search_documentation` tools as reads, and its `save_*`, `create_*`, `delete_*`,
-`resolve_*`, `submit_*`, and `merge_*` tools as writes. An unfamiliar tool the
-downstream leaves unannotated fails closed onto `call_destructive_tool` until a
-Connecta release reviews it.
+`resolve_*`, `submit_*`, `merge_*`, `share_issue`, and `unshare_issue` tools as
+writes. Sharing changes an existing issue's access, so both halves are
+destructive. An unfamiliar tool the downstream leaves unannotated fails closed
+onto `call_destructive_tool` until a Connecta release reviews it.
 
 That classification fills in downstream silence and otherwise preserves
 explicit annotations. A tool on the read allowlist arriving with
@@ -136,7 +137,8 @@ though some calls only create. The genuine creates are `create_issue_label` and
 ## The catalog is not a fixed set
 
 Linear's hosted `tools/list` varies by workspace plan and enabled features:
-customer requests, releases, and code review do not appear in every workspace.
+customer requests, releases, code review, templates, and explicit issue sharing
+do not appear in every workspace.
 The maintained allowlists are therefore a superset — a classified name a
 workspace never returns costs nothing, and a genuinely new tool fails closed.
 Agents should search this connector's catalog for what the workspace actually

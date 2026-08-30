@@ -75,6 +75,10 @@ const READ_ONLY_TOOLS = new Set([
   "get_team",
   "list_users",
   "get_user",
+  "get_workspace",
+  // Templates
+  "list_templates",
+  "get_template",
   // Status updates
   "get_status_updates",
   // Releases
@@ -137,6 +141,9 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["create_attachment_from_upload", "additive"],
   ["create_attachment", "additive"],
   ["delete_attachment", "destructive"],
+  // Explicit issue access
+  ["share_issue", "destructive"],
+  ["unshare_issue", "destructive"],
   // Customer requests (plan-gated)
   ["save_customer", "destructive"],
   ["delete_customer", "destructive"],

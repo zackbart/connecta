@@ -260,7 +260,7 @@ describe("revenuecat()", () => {
     expect(guide).toContain("call_destructive_tool");
     // The unclassified tool is named rather than left to be discovered.
     expect(guide).toContain(
-      "`render-paywall-screenshot` is unclassified on purpose",
+      "`render-paywall-screenshot` is unclassified on purpose because",
     );
   });
 
@@ -296,16 +296,19 @@ describe("revenuecat()", () => {
     const verdicts = REVENUECAT_VETTED_CATALOG.tools;
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    // The 2026-08-18 reading of RevenueCat's tool reference: 95 tools, of
-    // which 94 carry an access column.
+    // The 2026-08-30 reading of RevenueCat's tool reference: 96 tools, of
+    // which 95 carry an access column.
     expect(counts).toEqual({
-      "read-only": 50,
+      "read-only": 51,
       additive: 15,
       destructive: 29,
     });
-    expect(verdicts.size).toBe(94);
+    expect(verdicts.size).toBe(95);
+    expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe(
+      "read-only",
+    );
     expect(verdicts.has("render-paywall-screenshot")).toBe(false);
-    // No digests: no release has read a live RevenueCat schema (#351).
+    // No digests: the scoped live catalog cannot provide a complete set (#351).
     for (const record of verdicts.values()) {
       expect(record.schemaDigest).toBeUndefined();
     }
@@ -340,7 +343,11 @@ describe("revenuecat()", () => {
     () => revenuecat("revenuecat", { purpose: "Rehearsal" }),
     mocks,
     {
-      read: ["list-projects", "get-customer", "get-customer"],
+      read: [
+        "list-projects",
+        "get-customer",
+        "get-refund-request-preferences",
+      ],
       write: "create-offering",
       destructive: "grant-customer-entitlement",
       unknown: ["render-paywall-screenshot", "list-new-thing", "wreck-new-thing"],

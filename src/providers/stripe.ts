@@ -87,17 +87,17 @@ const READ_ONLY_TOOLS = new Set([
   "stripe_api_search",
   "stripe_api_details",
   "stripe_api_read",
-  "get_stripe_account_info",
   "get_balance_summary",
+  "list_available_accounts_or_orgs",
+  "manage_stripe_accounts",
   "search_stripe_documentation",
-  "stripe_implementation_planner",
 ]);
 
-/** Reviewed writes, including refund rationale: `documentation/stripe.md`. */
+/** Reviewed writes, including mixed read/create tools: `documentation/stripe.md`. */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["stripe_api_write", "destructive"],
-  ["create_refund", "destructive"],
-  ["stripe_report", "additive"],
+  ["stripe_implementation_planner", "additive"],
+  ["stripe_analytics", "additive"],
   ["send_stripe_mcp_feedback", "additive"],
 ]);
 
@@ -234,7 +234,8 @@ ${
 function sharedUsageGuide(rate: string): string {
   return `
 - Four generic tools reach any Stripe API method. Find the method with \`stripe_api_search\`, read its parameters with \`stripe_api_details\`, then call \`stripe_api_read\` (GET) or \`stripe_api_write\` (POST/PATCH/PUT/DELETE). Never guess a path or a parameter name — \`stripe_api_details\` is cheaper than a rejected write.
-- Prefer a dedicated tool when one covers the task: \`get_stripe_account_info\` for account information, \`get_balance_summary\` for balances, \`create_refund\` for refunds, \`stripe_report\` for reports. One call instead of three, and a refund named \`create_refund\` reads far more clearly in the approval a human sees than the same refund buried in \`stripe_api_write\` arguments.
+- Prefer a dedicated tool when one covers the task: \`get_balance_summary\` for balances and \`stripe_analytics\` for Sigma or Metrics reporting. Use \`stripe_api_search\` for everything else instead of assuming a retired dedicated tool still exists.
+- \`stripe_implementation_planner\` and the query-execution intents of \`stripe_analytics\` create provider-side planning or query-run state. Connecta therefore routes both through \`call_destructive_tool\` as non-destructive writes; their retrieval paths stay behind the same tool boundary.
 - \`stripe_api_write\` carries the blast radius of the entire write API — every POST, PATCH, PUT, and DELETE, from a customer edit to a subscription cancellation. State the method and path explicitly; expect approval on every call.
 - Lists are cursor-paginated: \`limit\` defaults to 10 and caps at 100, \`starting_after\` and \`ending_before\` take an object id and are mutually exclusive, and \`has_more\` says whether to continue. Page inside \`execute_code\`.
 - Any \`stripe_api_read\` list or \`stripe_api_search\` that returns full objects belongs inside \`execute_code\`, projected to the fields the question needs before \`return\`. Neither \`limit\` nor \`expand\` substitutes for that: an unprojected list of customers or invoices truncates long before it answers, and a projected one keeps the customer's name, email, and address out of the transcript.
