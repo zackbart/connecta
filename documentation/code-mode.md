@@ -889,11 +889,11 @@ the upstream `Executor` shape assignable.
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 
-The surface itself is checked by `test/server.test.ts` (the exact seven-tool
-list) and `test/code-first-surface.test.ts` (the fold's construction rules, the
+The surface itself is checked by `test/server.test.ts` (the exact seven-tool list)
+and `test/code-first-surface.test.ts` (the fold's construction rules, the
 required executor, the refusals a removed top-level tool now gets, copy, and
-measured size). There is one shape left to audit, so there is one audit:
+measured size). The small whole-agent benchmark checks both read routes, provider semantics, and private pagination:
 
 ```sh
-npm --prefix eval/current-version run audit
+npm --prefix eval/current-version run benchmark
 ```

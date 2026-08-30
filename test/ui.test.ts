@@ -495,7 +495,7 @@ describe("status UI", () => {
     expect(body.serverInfo.name).toBe("connecta");
     expect(body.connectaVersion).toBe(CONNECTA_VERSION);
     expect(body.activityEnabled).toBe(false);
-    expect(body.credentialManagement).toBe("requires_clerk");
+    expect(body.credentialManagement).toBe("requires_operator");
 
     const byId = Object.fromEntries(
       body.connectors.map((x: any) => [x.id, x]),
@@ -524,7 +524,7 @@ describe("status UI", () => {
         }),
       )
     ).json()) as any;
-    expect(bearer.credentialManagement).toBe("requires_clerk");
+    expect(bearer.credentialManagement).toBe("requires_operator");
     expect(bearer.connectors[0].credential).toBeUndefined();
 
     const clerk = (await (
@@ -813,7 +813,7 @@ describe("status UI", () => {
     const data = (await (
       await connecta.fetch(new Request(`${BASE}/ui/data`, { headers }))
     ).json()) as any;
-    expect(data.credentialManagement).toBe("requires_clerk");
+    expect(data.credentialManagement).toBe("requires_operator");
     expect(data.connectors[0].credential).toBeUndefined();
 
     const mutation = await connecta.fetch(

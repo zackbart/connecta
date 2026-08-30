@@ -138,6 +138,8 @@ async function handleCredentialRequest(
     request,
     baseUrl,
     opts.auth,
+    "credential management",
+    context.runtimeContext,
   );
   if (!admin.ok) return admin.response;
 

@@ -1,24 +1,12 @@
 {
-  "name": "connecta-current-version-eval",
+  "name": "connecta-current-version-benchmark",
   "private": true,
   "type": "module",
   "scripts": {
-    "audit": "node run-audit.mjs",
-    "audit:development": "node run-development-discovery.mjs",
-    "perf:logic": "node logic-benchmark.mjs",
-    "perf:agent": "node agent-benchmark.mjs",
-    "perf:agent:compare": "node agent-benchmark-compare.mjs",
-    "perf:lookup": "node agent-lookup-benchmark.mjs",
-    "issue:419": "npm --prefix ../.. run build && node issue-419-ts-eval.mjs",
-    "report:cloudflare-surface": "node --import tsx cloudflare-surface-report.ts",
-    "perf:report": "node performance-report.mjs",
-    "perf": "npm run audit -- --output results/current-performance-audit.json --report results/current-performance-audit.md && npm run perf:logic && npm run perf:agent && npm run perf:report",
-    "check": "tsc -p tsconfig.json --noEmit && node agent-benchmark-self-test.mjs && node performance-report-self-test.mjs && npm run issue:419 -- --verify"
+    "benchmark": "npm --prefix ../.. run build && node benchmark.mjs",
+    "check": "node benchmark.mjs --self-test"
   },
   "dependencies": {
-    "js-tiktoken": "1.0.21",
-    "sucrase": "3.35.1",
-    "ts-blank-space": "0.9.0",
-    "typescript": "5.9.3"
+    "js-tiktoken": "1.0.21"
   }
 }

@@ -57,7 +57,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.20.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.21.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -106,7 +106,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.20.0
+npm pkg set dependencies.@zackbart/connecta=0.21.0
 npm install
 ```
 
@@ -130,7 +130,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.20.0 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.21.0 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -186,7 +186,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.20.0 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.21.0 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -206,6 +206,74 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.20.0 → 0.21.0
+
+This is additive for Node and existing Clerk deployments. The new Worker path
+uses Cloudflare Access identity directly and removes Clerk only after the edge
+cutover has been verified. An agent can perform every repository edit; a human
+must attach Access, choose its policy, create service credentials, and enable
+Managed OAuth in the Cloudflare dashboard.
+
+For a Worker currently using Clerk, keep rollback live through the cutover:
+
+1. Bump and install 0.21.0. Add the new provider **before** the existing Clerk
+   provider, but remove nothing:
+
+   ```ts
+   import { cloudflareAccessAuth } from
+     "@zackbart/connecta/auth/cloudflare-access";
+   import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+
+   auth: [
+     cloudflareAccessAuth(),
+     // Keep the deployment's existing options and secrets unchanged.
+     clerkAuth({ /* existing configuration */ }),
+   ],
+   ```
+
+   Before Access is attached, the new provider fails closed and the operator
+   shell selects Clerk. Deploy this state and run doctor with the existing
+   `CONNECTA_TOKEN`. This separates the package/code change from the edge
+   change and proves the old path still works.
+
+2. In Cloudflare, attach Access to the Worker, apply the intended human policy,
+   and enable Managed OAuth. Create an Access service token and a **Service
+   Auth** policy for doctor and fully unattended clients. Do not create a
+   bypass for `/.well-known/*`; Managed OAuth owns that discovery surface.
+
+3. Reconnect interactive MCP clients to `<PUBLIC_URL>/mcp`. Their old Clerk
+   OAuth tokens are not Cloudflare credentials, so each client performs one new
+   browser authorization. An agent can edit client configuration and start the
+   flow; the user still completes the identity-provider prompt. Move CI, cron,
+   and server-to-server callers from connecta bearers to the two Access service
+   headers. The cutover warning is literal: once Access is attached, a static
+   bearer or `cta_…` token by itself is stopped at the edge before connecta can
+   inspect it.
+
+4. Verify the edge path:
+
+   ```sh
+   CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
+     npx connecta doctor --url https://connecta.example.workers.dev
+   ```
+
+   Open `/` as a human and exercise any enabled credential, token, and OAuth
+   controls. A service token may pass doctor and MCP but must receive 403 from
+   operator mutations.
+
+5. After an observation window, remove `clerkAuth`, its import,
+   `@clerk/backend`, and the Clerk variables/secrets. Until then they are inert
+   behind Access but preserve rollback. Rollback order matters: detach Access
+   first, then the untouched Clerk sessions and connecta bearers reach the
+   Worker again. Reverting code first cannot help a request the edge still
+   blocks. There is no storage migration and no token-format conversion.
+
+If the Worker exposes an intentionally public connector route, create a
+more-specific hostname/path Access application with a Bypass policy for that
+route only. `/health`, downstream OAuth callbacks, operator shells, and MCP are
+private under the canonical whole-Worker shape; doctor knows how to authenticate
+its health request.
 
 ### 0.19.0 → 0.20.0
 

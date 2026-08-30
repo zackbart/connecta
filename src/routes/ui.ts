@@ -52,7 +52,7 @@ function uiScriptNonce(): string {
 export async function routeUi(
   context: RouteContext,
 ): Promise<Response | null> {
-  const { request, url, path, baseUrl, opts, defer } = context;
+  const { request, url, path, baseUrl, opts, defer, runtimeContext } = context;
   if (request.method === "GET" && path === "/favicon.svg") {
     return new Response(opts.branding?.favicon?.svg ?? CONNECTA_FAVICON_SVG, {
       headers: {
@@ -89,7 +89,15 @@ export async function routeUi(
     }
     // Open shell — carries no operator data; everything comes from the
     // authenticated /ui/* APIs after the browser establishes a session.
-    const uiAuth = opts.auth.find((provider) => provider.uiAuth)?.uiAuth;
+    const ambient = runtimeContext?.access
+      ? opts.auth.find(
+          (provider) => provider.uiAuth?.kind === "cloudflare-access",
+        )?.uiAuth
+      : undefined;
+    const uiAuth = ambient ?? opts.auth.find(
+      (provider) =>
+        provider.uiAuth && provider.uiAuth.kind !== "cloudflare-access",
+    )?.uiAuth;
     const mcpUrl = new URL("/mcp", baseUrl).toString();
     // Nonce the page's inline script (and the Clerk loader). 'strict-dynamic'
     // lets scripts the nonced Clerk loader injects at runtime execute; the
@@ -116,21 +124,21 @@ export async function routeUi(
   }
   if (path !== "/ui/data") return null;
 
-  const authz = await authorize(request, baseUrl, opts.auth);
+  const authz = await authorize(request, baseUrl, opts.auth, runtimeContext);
   if (!authz.ok) return authz.response;
-  const eligibleClerkOperator = authz.uiAdminEligible === true;
+  const eligibleOperator = authz.uiAdminEligible === true;
   const credentialManagement = credentialManagementCapability({
-    eligibleClerkOperator,
+    eligibleOperator,
     hasCredentialSlots: opts.registry
       .listConnectors()
       .some((connector) => Boolean(connector.credential)),
     hasCredentialVault: Boolean(opts.credentialVault),
   });
   // As with connector credentials, a Bearer-authenticated observer learns
-  // only that Clerk is required—not whether this deployment has opted into
+  // only that an interactive operator is required, not whether this deployment has opted into
   // token issuance. Configuration topology is operator data.
-  const accessTokenManagement = !eligibleClerkOperator
-    ? "requires_clerk" as const
+  const accessTokenManagement = !eligibleOperator
+    ? "requires_operator" as const
     : opts.accessTokens
       ? "available" as const
       : "not_configured" as const;
@@ -140,11 +148,11 @@ export async function routeUi(
     opts.serverInfo,
     // The static headless bearer may read connector health, but only a
     // Clerk-authenticated operator receives credential metadata.
-    eligibleClerkOperator ? opts.credentialVault : undefined,
+    eligibleOperator ? opts.credentialVault : undefined,
     Boolean(opts.activity?.list),
     credentialManagement,
     defer,
-    eligibleClerkOperator,
+    eligibleOperator,
     opts.discoveryConcurrency,
     accessTokenManagement,
   );

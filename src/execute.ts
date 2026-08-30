@@ -29,7 +29,12 @@ import {
   InvocationService,
 } from "./invocation.js";
 import type { RegistryView } from "./registry.js";
-import { hasConnectorGuides } from "./skills.js";
+import {
+  connectorGuide,
+  connectorGuideRequired,
+  connectorSkillName,
+  hasConnectorGuides,
+} from "./skills.js";
 import type {
   Executor,
   ExecutorProvider,
@@ -1188,9 +1193,14 @@ function connectorInventory(
   if (connectors.length === 0) return `${prefix}none.`;
   const entries = connectors.map((connector) => {
     const shortcut = sanitizeIdentifier(connector.id);
-    return shortcut === connector.id
+    const address = shortcut === connector.id
       ? connector.id
       : `${connector.id} (shortcut ${shortcut})`;
+    if (!connectorGuide(connector)) return address;
+    const requirement = connectorGuideRequired(connector)
+      ? "required guide"
+      : "guide";
+    return `${address} (${requirement} ${connectorSkillName(connector.id)})`;
   });
   const shown: string[] = [];
   for (let index = 0; index < entries.length; index++) {
@@ -1216,18 +1226,18 @@ const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Choose the route before discovery. Exactly one unknown-address read uses top-level search_tools then call_tool. execute_code is the primary surface for everything wider: make exactly one execute_code call that searches, selects, calls, and reduces. A discovery-only program wastes its round trip: finish here, don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_MAX_BATCH_CALLS} per batch, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
+) => `Choose the route before discovery. A known address uses call_tool. Unknown-address and wider read-only work use exactly one execute_code call that discovers, calls, and returns the answer. Finish in that program; don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_MAX_BATCH_CALLS} per batch, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
 
 ${connectorInventory(connectors)}
 
-Write one plain-JavaScript async arrow function. Use only:
+Fetch required guides named above before executing. Write one plain-JavaScript async arrow function. Use only:
 - <connectorId>.<toolName>(args) for a sanitized shortcut, or connecta.call(address, args) for a canonical address.
-- connecta.search(args), connecta.describe(args), and connecta.batch(calls) for discovery and independent read-only calls.
+- connecta.search(args) returns { tools }; connecta.describe(args) returns { tools }; use entry key lists. connecta.batch(calls) accepts canonical connector addresses only.
 - connecta.emit(block) — { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }. Success-only; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; invalid/over-budget throws.
 - connecta.ui(html) for one display-only, success-only view; return the same summary the HTML renders.
 - console.log(...) — captured.
 
-Programs have no portable ambient capabilities. Return JSON and reduce large results before they truncate. Fetch skills({ name: "usage" }) once for selection rules, exact result shapes, repair, examples, guide handling${connectorGuides ? ", connector-guide rules" : ""}, and runtime differences.`;
+No portable ambient capabilities. Return JSON; reduce large results before truncation. Build arguments from required input keys and schemas, never descriptions or output keys. Fetch skills({ name: "usage" }) only when this is insufficient or repair is needed; it has full rules, examples${connectorGuides ? ", guide handling" : ""}, and runtime details.`;
 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(

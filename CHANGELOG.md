@@ -2,6 +2,51 @@
 
 All notable changes to this package are documented here.
 
+## 0.21.0 — 2026-08-28
+
+Cloudflare Access becomes the canonical interactive-auth path for Worker
+deployments. It authenticates both MCP clients and human operators before the
+Worker runs, while connecta consumes only the trusted runtime identity. Clerk
+is unchanged and remains supported: existing deployments can add Access,
+verify the edge cutover, and remove Clerk later, with no storage migration or
+token conversion. Node deployments can ignore this release beyond the version
+pin.
+
+### Added
+
+- **Direct Worker Access auth.** `cloudflareAccessAuth()` ships from
+  `@zackbart/connecta/auth/cloudflare-access` with no dependency and no JWT
+  verifier. Human `ctx.access` identities may use MCP and operator routes;
+  service-token identities may use MCP but cannot mutate operator state. The
+  same suite runs under Node and workerd (#506).
+- **Ambient operator sessions.** The operator shell selects Cloudflare Access
+  when the current invocation carries it, sends no browser-readable token, and
+  signs out through Cloudflare. A co-configured Clerk provider remains the
+  shell before Access is attached and the rollback path after it is detached
+  (#506).
+- **Access-aware doctor.** `connecta doctor` accepts
+  `CF_ACCESS_CLIENT_ID`/`CF_ACCESS_CLIENT_SECRET` and sends the pair to health
+  and MCP requests. A partial pair fails before network access (#506).
+
+### Changed
+
+- **Cold reads stay in code mode.** One known canonical address still uses
+  `call_tool`, while an unknown-address read now starts with one
+  `execute_code` program and keeps discovery results off the model-facing
+  route. The current-version benchmark is reset to four deterministic
+  whole-agent cases covering both routes, exact provider semantics, private
+  pagination, forwarding bytes, tokens, and latency.
+- **Worker deployment path.** The shipped Worker example uses Access and
+  Managed OAuth, carries a local `access.dev` identity, and documents service
+  tokens for unattended callers. Its Clerk shape stays beside the provider as
+  the reversible migration seam. Static connecta and operator-issued bearers
+  remain supported by core but are not standalone credentials through a
+  whole-Worker Access gate (#506).
+- **Operator capability is vendor-neutral.** Inbound auth providers now declare
+  interactive-operator capability explicitly, and runtime context reaches
+  their authorization hook as an optional third argument. Existing custom
+  providers with the two-argument hook remain source-compatible (#506).
+
 ## 0.20.0 — 2026-08-26
 
 This release removes the two side languages that had grown around the seven

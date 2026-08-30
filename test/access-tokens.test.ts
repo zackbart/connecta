@@ -83,14 +83,14 @@ describe("AccessTokenManager", () => {
 });
 
 describe("managed access token routes", () => {
-  it("refuses a deployment with no Clerk operator", () => {
+  it("refuses a deployment with no interactive operator", () => {
     expect(() =>
       createTestConnecta({
         connectors: [],
         storage: memoryStorage(),
         accessTokens: {},
       }),
-    ).toThrow("requires a Clerk auth provider");
+    ).toThrow("requires an interactive operator auth provider");
   });
 
   it("reveals token configuration only to an eligible Clerk operator", async () => {
@@ -164,7 +164,7 @@ describe("managed access token routes", () => {
     );
     expect(admitted.status).toBe(200);
     expect(await admitted.json()).toMatchObject({
-      accessTokenManagement: "requires_clerk",
+      accessTokenManagement: "requires_operator",
     });
 
     const renamed = await connecta.fetch(

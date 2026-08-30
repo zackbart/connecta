@@ -15,6 +15,7 @@ export const WORKERS_SUITES = [
   "test/catalog-drift.test.ts",
   "test/catalog.test.ts",
   "test/clerk.test.ts",
+  "test/cloudflare-access-auth.test.ts",
   "test/cloudflare-provider.test.ts",
   "test/code-first-surface.test.ts",
   "test/codemode-compat.test.ts",

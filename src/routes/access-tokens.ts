@@ -47,7 +47,7 @@ async function readName(
 }
 
 /**
- * Clerk-only lifecycle for deployment access tokens. The access token itself
+ * Interactive-operator lifecycle for deployment access tokens. The token itself
  * is deliberately never an administrator credential and cannot reach here.
  */
 export async function routeAccessTokens(
@@ -78,6 +78,7 @@ export async function routeAccessTokens(
     baseUrl,
     opts.auth,
     "access token management",
+    context.runtimeContext,
   );
   if (!admin.ok) return admin.response;
 

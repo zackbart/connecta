@@ -23,8 +23,8 @@ export interface BearerTokenOptions {
 
 /**
  * Static bearer-token inbound auth. Constant-time compares the Bearer token
- * against `secret`. Checked BEFORE the Clerk gate in the server; a mismatch
- * falls through so a co-configured Clerk provider can still admit the request.
+ * against `secret`. Checked before interactive providers in the server; a
+ * mismatch falls through so another configured provider can admit the request.
  */
 export function bearerToken(
   secret: string,

@@ -66,7 +66,13 @@ function accessToken(name: string) {
  * the module registry is reset for every test — one store, one identity, one
  * test.
  */
-async function loadStore(session: FakeSession) {
+async function loadStore(
+  session: FakeSession,
+  browserAuth: Record<string, unknown> = {
+    kind: "clerk",
+    publishableKey: "pk_test_fake",
+  },
+) {
   const fetchMock = vi.fn();
   const windowListeners = new Map<string, () => void>();
   let clerkListener:
@@ -83,7 +89,7 @@ async function loadStore(session: FakeSession) {
     signOut: vi.fn(async () => {}),
   };
   const window = {
-    location: { href: `${BASE}/` },
+    location: { href: `${BASE}/`, assign: vi.fn() },
     Clerk: clerk,
     addEventListener: (name: string, listener: () => void) => {
       windowListeners.set(name, listener);
@@ -93,7 +99,7 @@ async function loadStore(session: FakeSession) {
   for (const [name, value] of Object.entries(PAGE_CONSTANTS)) {
     vi.stubGlobal(name, value);
   }
-  vi.stubGlobal("AUTH", { kind: "clerk", publishableKey: "pk_test_fake" });
+  vi.stubGlobal("AUTH", browserAuth);
   vi.stubGlobal("window", window);
   vi.stubGlobal("localStorage", {
     getItem: () => null,
@@ -243,5 +249,22 @@ describe("operator store identity wiring", () => {
     expect(store.getState().session).toBe("gated");
     expect(store.getState().data).toBeNull();
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("uses the same-origin Access session without a browser-readable token", async () => {
+    const loaded = await loadStore(
+      { id: "unused", getToken: async () => "unused" },
+      { kind: "cloudflare-access" },
+    );
+    loaded.fetchMock.mockResolvedValueOnce(Response.json(uiData("access-user")));
+
+    await loaded.store.boot();
+
+    expect(loaded.store.getState().session).toBe("ready");
+    expect(loaded.clerk.load).not.toHaveBeenCalled();
+    expect(loaded.fetchMock).toHaveBeenCalledWith("/ui/data", {
+      headers: {},
+      credentials: "same-origin",
+    });
   });
 });

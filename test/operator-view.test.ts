@@ -88,28 +88,28 @@ describe("operator page routing and capabilities", () => {
   it("orders credential capability states without revealing topology to bearer", () => {
     expect(
       credentialManagementCapability({
-        eligibleClerkOperator: false,
+        eligibleOperator: false,
         hasCredentialSlots: true,
         hasCredentialVault: true,
       }),
-    ).toBe("requires_clerk");
+    ).toBe("requires_operator");
     expect(
       credentialManagementCapability({
-        eligibleClerkOperator: true,
+        eligibleOperator: true,
         hasCredentialSlots: false,
         hasCredentialVault: false,
       }),
     ).toBe("no_slots");
     expect(
       credentialManagementCapability({
-        eligibleClerkOperator: true,
+        eligibleOperator: true,
         hasCredentialSlots: true,
         hasCredentialVault: false,
       }),
     ).toBe("vault_not_configured");
     expect(
       credentialManagementCapability({
-        eligibleClerkOperator: true,
+        eligibleOperator: true,
         hasCredentialSlots: true,
         hasCredentialVault: true,
       }),
@@ -393,13 +393,13 @@ describe("operator app state", () => {
     expect(credentialUnavailableCopy("vault_not_configured")).toContain(
       "credentials.encryptionKey",
     );
-    expect(credentialUnavailableCopy("requires_clerk")).toContain(
-      "eligible Clerk operator",
+    expect(credentialUnavailableCopy("requires_operator")).toContain(
+      "eligible interactive operator",
     );
     expect(accessTokenUnavailableCopy("not_configured")).toContain(
       "not configured for this deployment",
     );
-    expect(accessTokenUnavailableCopy("requires_clerk")).toContain(
+    expect(accessTokenUnavailableCopy("requires_operator")).toContain(
       "cannot create or revoke other tokens",
     );
   });

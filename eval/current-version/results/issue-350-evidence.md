@@ -21,21 +21,10 @@ The surviving surface is 48 named tools.
 
 ## The measurement
 
-`eval/current-version/cloudflare-surface-report.ts`, one representative
-operator request per named tool in
-[`cloudflare-surface-tasks.json`](../cloudflare-surface-tasks.json):
-
-```sh
-npm --prefix eval/current-version run report:cloudflare-surface
-```
-
-The pre-audit report (the 55-tool surface at commit `297f0b9`, before this
-change) is
-[`issue-350-cloudflare-surface-preaudit.md`](./issue-350-cloudflare-surface-preaudit.md);
-the post-change run is
-[`issue-350-cloudflare-surface.md`](./issue-350-cloudflare-surface.md). Every
-number in this document is from the pre-audit run unless it says otherwise. The
-lane is deterministic, so the JSON behind either report is one command away.
+The retired deterministic lane used one representative operator request per
+named tool. Its runner, task corpus, pre-audit report (the 55-tool surface at
+commit `297f0b9`), and post-change report remain in Git history. Every number in
+this document is from the pre-audit run unless it says otherwise.
 
 The lane is deterministic and runs entirely inside the process. Nothing in the
 provider is stubbed: the real constructor, the real hand-written schemas, the

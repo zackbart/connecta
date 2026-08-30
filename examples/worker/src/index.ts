@@ -2,9 +2,10 @@
  * connecta on Cloudflare Workers.
  *
  * One MCP endpoint aggregating a downstream remote MCP and an HTTP API, guarded
- * by Clerk OAuth *and* a static bearer token, with OAuth/cache state in a KV
- * namespace. The required Worker Loader binding in wrangler.jsonc backs the
- * seven-tool surface.
+ * by Cloudflare Access, with OAuth/cache state in a KV namespace. Access
+ * authenticates the request before this Worker runs and supplies the trusted
+ * identity through ctx.access. The required Worker Loader binding in
+ * wrangler.jsonc backs the seven-tool surface.
  *
  * The operator surface is wired here except for activity history, which needs
  * a database this example does not create for you: sign-in, the credential
@@ -15,19 +16,16 @@
  * installed `@zackbart/connecta` package):
  *   1. `npm install` in the connecta package root (../../ from here) so the
  *      package import and wrangler resolve. A copy in its own repository
- *      installs `@zackbart/connecta @cloudflare/codemode @clerk/backend`
- *      instead — the last two are not part of connecta, and the Clerk import
- *      below is an optional peer wrangler resolves at build time.
+ *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
+ *      an optional peer; a migrating deployment also keeps `@clerk/backend`
+ *      until it removes the commented rollback provider below.
  *   2. Create a KV namespace and put its id in wrangler.jsonc under `kv_namespaces`.
  *   3. Set secrets:
- *        wrangler secret put SUPPORT_TOKEN
- *        wrangler secret put EXEC_TOKEN
- *        wrangler secret put CLERK_SECRET_KEY
  *        wrangler secret put DOWNSTREAM_TOKEN
  *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
- *      and CLERK_PUBLISHABLE_KEY + PUBLIC_URL as plain vars in wrangler.jsonc.
- *   4. Enable Dynamic Client Registration in the Clerk dashboard
- *        (OAuth Applications -> DCR toggle) so Claude/Cursor can self-register.
+ *      and PUBLIC_URL as a plain var in wrangler.jsonc.
+ *   4. Attach Cloudflare Access to this Worker. Enable Managed OAuth on the
+ *      Access application for interactive MCP clients.
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
  *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
@@ -35,23 +33,21 @@
 import { DynamicWorkerExecutor } from "@cloudflare/codemode";
 import {
   api,
-  bearerToken,
   createConnecta,
   remoteMcp,
 } from "@zackbart/connecta";
-import { clerkAuth } from "@zackbart/connecta/auth/clerk";
+import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
+// Rollback for a deployment migrating from Clerk:
+// import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { cloudflareKvStorage } from "./cloudflare-kv.js";
 // Activity history, off by default because it needs a D1 database.
 // import { d1ActivityStore } from "./d1-activity.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;
-  /** Bearer token for one headless client in this deployment's audience. */
-  SUPPORT_TOKEN: string;
-  /** Bearer token for another headless client in the same audience. */
-  EXEC_TOKEN: string;
-  CLERK_PUBLISHABLE_KEY: string;
-  CLERK_SECRET_KEY: string;
+  // Keep these during a Clerk migration until Access has been verified:
+  // CLERK_PUBLISHABLE_KEY: string;
+  // CLERK_SECRET_KEY: string;
   /**
    * Base64 32-byte AES key encrypting operator-managed credentials in KV.
    * Unset means no vault: /credentials stays read-only and connecta says so at
@@ -75,22 +71,19 @@ function build(env: Env) {
     storage: cloudflareKvStorage(env.CONNECTA_KV),
     executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
     auth: [
-      // Multiple credentials may identify callers in one deployment. Every
-      // admitted caller reaches this deployment's deliberate connector set.
-      bearerToken(env.SUPPORT_TOKEN, {
-        subjectId: "support-team",
-      }),
-      bearerToken(env.EXEC_TOKEN, {
-        subjectId: "exec-team",
-      }),
-      // The operator signs in with Clerk. Restrict who may sign in with
-      // `allowedDomains` (or a `gate`, for anything a domain cannot express).
-      clerkAuth({
-        publishableKey: env.CLERK_PUBLISHABLE_KEY,
-        secretKey: env.CLERK_SECRET_KEY,
-        publicUrl: env.PUBLIC_URL,
-        // allowedDomains: ["acme.com"],
-      }),
+      // Access owns admission policy. A human identity may use MCP and the
+      // operator pages; a service token may use MCP but cannot mutate operator
+      // state. Neither path asks connecta to parse a JWT.
+      cloudflareAccessAuth(),
+      // Leave the previous Clerk provider below this entry during migration.
+      // It is a rollback path until Worker-level Access is detached; Access
+      // itself decides whether a request reaches this array.
+      // clerkAuth({
+      //   publishableKey: env.CLERK_PUBLISHABLE_KEY,
+      //   secretKey: env.CLERK_SECRET_KEY,
+      //   publicUrl: env.PUBLIC_URL,
+      //   allowedDomains: ["acme.com"],
+      // }),
     ],
     // Connectors that declare a `credential` slot become editable at
     // /credentials, encrypted with this key before anything reaches KV. A
@@ -105,8 +98,9 @@ function build(env: Env) {
     // `echo`, or use a provider connector like `notion()`, which declares its
     // own) and the page appears on the next load.
     credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },
-    // Eligible Clerk operators can create named, revocable MCP Bearer tokens
-    // at /tokens. Secrets are shown once; only their hashes enter KV.
+    // Eligible human operators can create named, revocable MCP Bearer tokens
+    // at /tokens. Under Worker-level Access those tokens are a rollback tool,
+    // not standalone edge credentials: Access still runs before connecta.
     accessTokens: {},
     // Payload-free activity at /activity, off until a database exists to hold
     // it. Uncomment the `d1_databases` binding in wrangler.jsonc, apply the

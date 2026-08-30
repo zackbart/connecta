@@ -475,36 +475,52 @@ export type AuthResult =
   | { ok: false; response: Response };
 
 /** Public browser-auth configuration exposed to connecta's status UI. */
-export type UiAuthConfig = {
-  kind: "clerk";
-  publishableKey: string;
-  /**
-   * Origin the operator shell fetches its browser sign-in loader from. **Must be an absolute
-   * `https:` URL** — the value lands in a `<script src>`, so the gate is
-   * stricter than the branding href gate: no `http:`, no loopback exemption, and
-   * no root-relative form (a relative path is rejected, not resolved). The
-   * shipped `clerkAuth` adapter derives this from the publishable key and
-   * Clerk's Frontend API is always https, so nothing legitimate needs a
-   * carve-out. A value that fails the gate reaches neither the loader tag nor
-   * the page's inline auth config: operator pages render without it and report
-   * that Clerk could not load, and `createConnecta` names the drop in a startup
-   * warning.
-   */
-  frontendApiUrl: string;
-  /**
-   * Hosted Account Portal sign-in address, handed to `Clerk.load`. **Must be an
-   * absolute `https:` URL** — the same gate `frontendApiUrl` passes, because
-   * this value is where Clerk *navigates* the operator's browser. An Account
-   * Portal address is always https, so the stricter gate costs nothing real: a
-   * value that fails it (a `javascript:`/`data:` payload, a cleartext `http:`
-   * address, a relative path) reaches no part of the page, the shell signs in
-   * through Clerk's default instead, and `createConnecta` names the drop in a
-   * startup warning.
-   */
-  signInUrl?: string;
-  /** Hosted Account Portal sign-up address. Gated exactly like `signInUrl`. */
-  signUpUrl?: string;
-};
+export type UiAuthConfig =
+  | {
+      kind: "cloudflare-access";
+    }
+  | {
+      kind: "clerk";
+      publishableKey: string;
+      /**
+       * Origin the operator shell fetches its browser sign-in loader from.
+       * **Must be an absolute `https:` URL** — the value lands in a `<script
+       * src>`, so the gate is stricter than the branding href gate: no `http:`,
+       * no loopback exemption, and no root-relative form (a relative path is
+       * rejected, not resolved). The shipped `clerkAuth` adapter derives this
+       * from the publishable key and Clerk's Frontend API is always https, so
+       * nothing legitimate needs a carve-out. A value that fails the gate
+       * reaches neither the loader tag nor the page's inline auth config:
+       * operator pages render without it and report that Clerk could not load,
+       * and `createConnecta` names the drop in a startup warning.
+       */
+      frontendApiUrl: string;
+      /**
+       * Hosted Account Portal sign-in address, handed to `Clerk.load`. **Must
+       * be an absolute `https:` URL** — the same gate `frontendApiUrl` passes,
+       * because this value is where Clerk *navigates* the operator's browser.
+       * An Account Portal address is always https, so the stricter gate costs
+       * nothing real: a value that fails it (a `javascript:`/`data:` payload,
+       * a cleartext `http:` address, a relative path) reaches no part of the
+       * page, the shell signs in through Clerk's default instead, and
+       * `createConnecta` names the drop in a startup warning.
+       */
+      signInUrl?: string;
+      /** Hosted Account Portal sign-up address. Gated exactly like `signInUrl`. */
+      signUpUrl?: string;
+    };
+
+/**
+ * Runtime identity context an inbound-auth provider may consume. The shape is
+ * deliberately structural: core stays Web-API-only while a Worker can pass
+ * Cloudflare's authenticated `ctx.access` object through unchanged.
+ */
+export interface InboundAuthRuntimeContext {
+  readonly access?: {
+    readonly aud: string;
+    getIdentity(): Promise<Record<string, unknown> | undefined>;
+  };
+}
 
 /**
  * Optional labels and marks used by the browser UI and OAuth result pages.
@@ -545,9 +561,11 @@ export interface ConnectaBranding {
   themeColor?: string;
 }
 
-/** An inbound authentication provider (bearer token, Clerk, ...). */
+/** An inbound authentication provider (bearer token, interactive identity, ...). */
 export interface InboundAuth {
   kind: string;
+  /** This provider may admit a human identity to operator mutation routes. */
+  interactiveOperator?: true;
   /**
    * Stable, non-secret namespace of the identity directory behind
    * `activityActorLabel`. Stored with new activity actors so two providers with
@@ -566,8 +584,8 @@ export interface InboundAuth {
     subjectId: string,
   ): string | undefined | Promise<string | undefined>;
   /**
-   * Optional browser sign-in configuration. When present, operator pages use it
-   * provider instead of asking the operator to paste a static bearer secret.
+   * Optional browser sign-in configuration. When present, operator pages use
+   * the provider instead of asking the operator to paste a static bearer secret.
    */
   uiAuth?: UiAuthConfig;
   /** Serve/short-circuit .well-known + OPTIONS. Return null when not handled. */
@@ -579,5 +597,6 @@ export interface InboundAuth {
   authorize(
     request: Request,
     baseUrl: string,
+    runtimeContext?: InboundAuthRuntimeContext,
   ): AuthResult | Promise<AuthResult>;
 }

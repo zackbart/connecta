@@ -167,7 +167,7 @@ export interface ConnectaConfig {
   credentials?: ConnectaCredentialsConfig;
   /**
    * Named, revocable Bearer tokens for MCP clients. Creation and mutation
-   * require an eligible Clerk operator; token secrets are returned once.
+   * require an eligible interactive operator; token secrets are returned once.
    */
   accessTokens?: ConnectaAccessTokensConfig;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
@@ -534,10 +534,10 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     : undefined;
   if (
     accessTokens &&
-    !configuredAuth.some((provider) => provider.uiAuth?.kind === "clerk")
+    !configuredAuth.some((provider) => provider.interactiveOperator)
   ) {
     throw new Error(
-      "accessTokens requires a Clerk auth provider: only an eligible Clerk " +
+      "accessTokens requires an interactive operator auth provider: only an eligible " +
         "operator may create, rename, or revoke deployment access tokens",
     );
   }
@@ -619,7 +619,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
       handler(
         request,
         ctx && typeof (ctx as { waitUntil?: unknown }).waitUntil === "function"
-          ? (ctx as { waitUntil(promise: Promise<unknown>): void })
+          ? (ctx as import("./routes/shared.js").RuntimeExecutionContext)
           : undefined,
       ),
     registry,
@@ -687,6 +687,7 @@ export type {
   ExecutorLease,
   ExecutorProvider,
   InboundAuth,
+  InboundAuthRuntimeContext,
   UiAuthConfig,
   AuthResult,
   JsonSchema,

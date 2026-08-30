@@ -39,10 +39,25 @@ their walkthrough, which is the honest version of the same page count.
 | `src/operator-ui/browser.css` | One stylesheet, inlined into the shell. |
 | `src/operator-ui/generated.ts` | The build output: the bundle and the stylesheet as two exported strings. |
 
-The server renders a mount point, not a page. Branding, the Clerk loader, and
-every operator-configured URL stay in `src/ui.ts`, where they are gated before
-they can become an attribute; the bundle renders everything that has a state.
-Two roots share one store: `#operatorNav` and `#operatorContent`.
+The server renders a mount point, not a page. Branding, the optional Clerk
+loader, and every operator-configured URL stay in `src/ui.ts`, where they are
+gated before they can become an attribute; the bundle renders everything that
+has a state. Two roots share one store: `#operatorNav` and `#operatorContent`.
+
+Cloudflare Access is ambient browser auth. When the current Worker invocation
+has `ctx.access`, the shell selects the `cloudflare-access` UI mode, emits no
+Clerk loader, and sends no browser-readable token. Same-origin fetch includes
+the HttpOnly `CF_Authorization` cookie, Access admits it at the edge, and the
+server reads the resulting runtime identity. Sign out navigates to
+`/cdn-cgi/access/logout`. Mutations still require an exact same-origin
+`Origin`; an ambient cookie does not weaken the CSRF boundary.
+
+This runtime selection is the Clerk migration seam. A deployment may contain
+both providers: before Worker-level Access is attached, the data-free shell
+selects Clerk; after Access supplies `ctx.access`, it selects ambient auth. That
+is not two same-hostname gates running in parallel. Access is upstream and a
+request it rejects never reaches Clerk. Keeping Clerk in the array preserves a
+code-level rollback after Access is detached.
 
 The Clerk loader is intentionally blocking. The inline operator bundle calls
 `boot()` as soon as the parser reaches the end of the body, so a deferred Clerk
@@ -58,7 +73,8 @@ the same ordering.
   credential, token, and activity data arrives only through the authenticated
   `/ui/*` APIs, and the shell is identical whether or not a caller is signed in.
 - **One store, one identity.** `store.ts` is the only file that touches `fetch`,
-  `localStorage`, or Clerk. Every request carries the current session's token,
+  `localStorage`, Clerk, or the ambient Access mode. Every token-bearing request carries the current session's token,
+  while Access requests deliberately carry none,
   and every response is dropped unless the identity that asked for it is still
   the one on screen. `resetIdentity` replaces all identity-scoped state at once
   and bumps a generation that work already in flight compares itself against.

@@ -778,9 +778,9 @@ export function createMetaTools(
   };
 }
 
-const SEARCH_DESC = `Use top-level search for one unknown-address read before call_tool, or for approval-required work before call_destructive_tool. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds direct or program calls; "approvalRequired" finds the fail-closed complement. These filters grant no authority. For multiple, dependent, or reduced read-only calls, use one execute_code program instead. Empty query browses.`;
+const SEARCH_DESC = `Use top-level search for catalog inspection or approval-required work before call_destructive_tool. Unknown-address read-only work belongs in one execute_code program that searches, calls, and returns the answer. Use 2–4 action/object terms and includeSchemas="compact"; the default limit is ${DEFAULT_SEARCH_LIMIT}. Set connector when known. safety="readOnly" finds direct or program calls; "approvalRequired" finds the fail-closed complement. These filters grant no authority. Empty query browses.`;
 const CALL_DESC =
-  'Call one tool explicitly annotated readOnlyHint: true. Use execute_code for multiple, dependent, or reduced read-only calls. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.';
+  'Call one known-address tool explicitly annotated readOnlyHint: true. Use execute_code for unknown-address, multiple, dependent, or reduced read-only work. Unannotated or write-capable tools fail closed to call_destructive_tool. A truncated result carries a get_result action.';
 const CALL_DESTRUCTIVE_DESC =
   "Call any tool not explicitly annotated readOnlyHint: true. Include a short reason for the human reviewer after checking the schema and consequences. The reason grants no authority and is not sent downstream.";
 const GET_RESULT_DESC =
@@ -788,7 +788,7 @@ const GET_RESULT_DESC =
 const AUTHORIZE_DESC =
   "Use after auth_required. Returns an OAuth or operator-credential handoff, or reports required deployment configuration. force=true restarts OAuth only; this tool never accepts credentials.";
 const SKILLS_DESC =
-  'List or fetch on-demand guidance. Fetch usage once per task for program syntax, selection, repair, examples, and runtime details.';
+  'List or fetch on-demand guidance. Fetch usage only when the always-loaded instructions are insufficient or a program needs repair.';
 
 /**
  * Sentences appended to a meta-tool description only when this connection
