@@ -139,38 +139,39 @@ boots but cannot list tools is usually a dashboard toggle, not a bad key.
 
 ## The eleven tools, and what they are classified as
 
-Stripe documents eleven tools on the hosted server. Seven are reads:
+Stripe currently serves eleven tools. Seven are reads:
 
 `stripe_api_search`, `stripe_api_details`, `stripe_api_read`,
-`get_stripe_account_info`, `get_balance_summary`,
-`search_stripe_documentation`, `stripe_implementation_planner`.
+`get_balance_summary`, `list_available_accounts_or_orgs`,
+`manage_stripe_accounts`, and `search_stripe_documentation`.
 
 Four are writes:
 
-`stripe_api_write` and `create_refund` are classified destructive;
-`stripe_report` and `send_stripe_mcp_feedback` are additive.
+`stripe_api_write` is destructive. `stripe_implementation_planner`,
+`stripe_analytics`, and `send_stripe_mcp_feedback` are additive.
 
 Two of those deserve a sentence. `stripe_api_read` is a read because Stripe
 documents it as the `GET` half of a generic pair — the tool is the read
 boundary, not whichever endpoint an agent names inside it, and its sibling
 `stripe_api_write` carries every `POST`, `PATCH`, `PUT`, and `DELETE`.
-`create_refund` is filed destructive despite its name: it reverses a settled
-charge and moves money back out, which is a mutation of something that already
-exists rather than a fresh object appearing beside it. Additive writes
-(`stripe_report`, `send_stripe_mcp_feedback`) leave `destructiveHint` unset;
+`stripe_implementation_planner` creates and continues provider-side guide
+state. `stripe_analytics` combines retrieval with query-run creation behind one
+tool. Stripe marks both not read-only and not destructive, so Connecta records
+them as additive writes. They leave `destructiveHint` unset. Their explicit
 `readOnlyHint: false` already routes them through `call_destructive_tool`, and
-asserting destruction only inflates the approval copy the host shows a human.
+asserting destruction would misstate their effect.
 
 That classification fills in downstream silence and otherwise preserves
-explicit annotations. It supplies the annotations Stripe leaves unset — Stripe
-documents no MCP annotations at all. A tool on the read allowlist arriving with
+explicit annotations. The current server annotates all eleven tools, while the
+manifest records what this release reviewed and exposes later contradictions.
+A tool on the read allowlist arriving with
 `destructiveHint: true` or `readOnlyHint: false` keeps exactly what the
 downstream said and stays behind `call_destructive_tool`. A tool on neither
 maintained list arriving with `readOnlyHint: true` keeps that too, and stays
 callable from `execute_code`. Both are the downstream telling you this release's
 allowlist is stale, and on a name no release has reviewed its word is the only
 evidence there is. One narrow fail-closed exception applies to a name this
-release reviewed and filed destructive: a `create_refund` claiming
+release reviewed and filed destructive: `stripe_api_write` claiming
 `readOnlyHint: true` is a downstream bug rather than news, and stays on the
 approval path.
 

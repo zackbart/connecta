@@ -2,6 +2,50 @@
 
 All notable changes to this package are documented here.
 
+## 0.21.1 — 2026-08-30
+
+This patch aligns the handwritten Cloudflare and Notion contracts and the four
+hosted-provider manifests with their current catalogs. Existing deployments
+need no configuration or storage migration. Cloudflare programs that depend on
+provider fields outside the maintained `get_zone_setting` or
+`get_worker_settings` projections should pass `raw: true`. Stripe's server has
+retired three dedicated tool names, so programs that hardcoded them must search
+the current catalog and use the generic API tools or `stripe_analytics`.
+
+### Added
+
+- **Current Cloudflare jurisdictions.** All eight R2 bucket tools accept the
+  `us` jurisdiction alongside `default`, `eu`, and `fedramp`. KV namespace
+  creation accepts its separate `eu`, `fedramp`, and `us` set and preserves
+  jurisdiction on namespace reads (#498, #499).
+- **Current hosted-provider classifications.** Linear's workspace, template,
+  and issue-sharing tools join its plan-aware reviewed superset. RevenueCat's
+  refund-request preferences are read-only, and Mixpanel's metadata fill is a
+  destructive Lexicon update (#512).
+
+### Changed
+
+- **Useful Cloudflare result schemas.** All 48 named tools now declare their
+  maintained output keys. Zone settings and Worker settings project stable
+  camel-case fields by default and expose the provider response through
+  `raw: true`; rulesets, deployments, KV bulk operations, R2 CORS, and Pages
+  reuse named schemas instead of an empty object contract (#488).
+- **Stripe's current eleven tools.** Account listing, account-management links,
+  and analytics replace the retired account-info, refund, and report tools.
+  The integration planner and analytics are additive writes because their tool
+  boundaries can create provider-side guide or query-run state (#512).
+
+### Fixed
+
+- Worker settings retain VPC binding identity and observability fields,
+  rulesets retain origin-range metadata, and zone setting ids include
+  Cloudflare's current WebMCP settings (#500, #501, #502, #503).
+- Notion preserves every documented `verification.does_not_equal` value, and
+  Cloudflare's recorded KV bulk and zone-setting specifications match the
+  current published documents (#504, #509).
+- Mixpanel records the current schemas for all 64 classified tools, including
+  the three experiment contracts that changed since the prior review (#512).
+
 ## 0.21.0 — 2026-08-28
 
 Cloudflare Access becomes the canonical interactive-auth path for Worker

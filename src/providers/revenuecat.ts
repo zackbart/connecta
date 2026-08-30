@@ -70,6 +70,7 @@ const READ_ONLY_TOOLS = new Set([
   // Customers and subscriptions
   "get-customer",
   "get-customer-center-config",
+  "get-refund-request-preferences",
   "get-subscription",
   "list-customer-events",
   "list-customers",
@@ -199,7 +200,7 @@ function sharedUsageGuide(): string {
 - \`get-chart-data\` is the metrics path: read \`get-chart-options-schema\` for the chart you want before calling it, rather than guessing an option name. \`get-overview-metrics\` and \`get-revenue-metric\` answer the summary questions in one call.
 - \`create-paywall-ai\`, \`edit-paywall-ai\`, and \`set-product-store-state\` are asynchronous. They return a task or operation id; poll it with \`get-paywall-ai-task\` or \`get-product-store-state-operation\` rather than assuming the work finished when the call returned.
 - This connection's tool list is not a fixed set. RevenueCat gates parts of its MCP catalog by plan, platform, and beta enrollment — paywall AI editing, benchmarks, experiments, virtual currencies, and the account-billing tools are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.
-- \`render-paywall-screenshot\` is unclassified on purpose: RevenueCat's reference gives it no access column, so it fails closed onto \`call_destructive_tool\` until a release reviews it.
+- \`render-paywall-screenshot\` is unclassified on purpose because RevenueCat's reference gives it no access column. The current server marks it read-only, which Connecta preserves; without that annotation it fails closed onto \`call_destructive_tool\`.
 - RevenueCat meters API v2 per minute and per domain, and the domains differ: 480 requests per minute for customer information and virtual currencies, 60 for project configuration and audiences, 25 for charts and metrics. It answers a breach with \`429\`, a \`Retry-After\` header, and a \`backoff_ms\` field. Back off on that rather than retrying immediately, and expect chart sweeps to hit the ceiling long before customer reads do.
 - Treat every create, update, archive, unarchive, attach, detach, delete, publish, unpublish, grant, assign, and submit operation as a write. Connecta routes the maintained write catalog through \`call_destructive_tool\`; newly added tools also fail closed until a release classifies them.
 - An \`auth_required\` failure means this connector's RevenueCat authorization is missing or expired: run \`authorize_connector\` for this connector id, then retry the same call unchanged. A rejected argument, a permission gap, or a plan restriction comes back in RevenueCat's own words instead — read it rather than re-authorizing.

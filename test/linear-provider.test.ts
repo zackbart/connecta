@@ -280,13 +280,17 @@ describe("linear()", () => {
     });
   });
 
-  it("classifies the plan-gated customer and code-review surfaces", async () => {
+  it("classifies plan-gated and current workspace surfaces", async () => {
     mocks.listTools.mockResolvedValue([
       { name: "list_customers" },
       { name: "delete_customer_need" },
       { name: "merge_diff" },
       { name: "prepare_attachment_upload" },
       { name: "search_documentation" },
+      { name: "get_workspace" },
+      { name: "get_template" },
+      { name: "share_issue" },
+      { name: "unshare_issue" },
     ]);
     const connector = linear("tracker", {
       purpose: "Delivery planning",
@@ -300,6 +304,10 @@ describe("linear()", () => {
     // An upload URL is a side effect but destroys nothing.
     expect(tools[3]?.annotations).toEqual({ readOnlyHint: false });
     expect(tools[4]?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(tools[5]?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(tools[6]?.annotations).toMatchObject({ readOnlyHint: true });
+    expect(tools[7]?.annotations).toMatchObject({ destructiveHint: true });
+    expect(tools[8]?.annotations).toMatchObject({ destructiveHint: true });
   });
 
   it("rejects an empty workspace purpose at construction", () => {

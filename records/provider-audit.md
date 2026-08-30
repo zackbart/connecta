@@ -115,7 +115,7 @@ deletion workflows rather than missing fields on the five existing writes
 | P2 identity | meets | required `purpose`, `instructions` appended, classification untouchable from there; purpose states deployment routing intent and the guide says it is not proof of authenticated account identity |
 | P3 routing fact | meets | OAuth metadata states mixed account scope and the guide resolves mode from `livemode`; fixed header credentials retain their mode in every routing surface |
 | P4 endpoint default | meets | OAuth has no connector-wide mode to default; static headers require one, and construction throws when a recognizable key prefix contradicts it |
-| P5 classification | meets | including the two verdicts that needed an argument — `stripe_api_read` is a read because the tool is the boundary, `create_refund` is destructive despite its name |
+| P5 classification | meets | `stripe_api_read` is a read because the tool is the boundary; `stripe_implementation_planner` and `stripe_analytics` are additive because their shared tool boundaries can create guide or query-run state without changing an existing Stripe resource |
 | P6 catalog varies | **missed → fixed** | the doc already knew this (`get_balance_summary` is Treasury and gated; a `create_customer` example survives in Stripe's prose but not its tool table), but the *guide* did not say it, and the guide is what reaches the agent. Added |
 | P7 reduction advice | **missed → fixed** | OAuth has a mixed-scope summary; fixed credentials keep mode-shaped summaries. `required` stays unset because the four generic tools remain the routing decision |
 | P8 identity resolution | **missed → fixed** | The guide names typed object ids and their read sources. For OAuth it requires `list_available_accounts_or_orgs`, then carries the returned `stripe_context` and `livemode` unchanged; ambiguity stops ([#404](https://github.com/zackbart/connecta/issues/404), [#414](https://github.com/zackbart/connecta/issues/414)) |
@@ -138,7 +138,7 @@ Linear's reasoning.
 | P3 routing fact | **missed → fixed** | region is exactly the fact P3 names, and it appeared in neither the default title (`"Mixpanel"`) nor the guide's first line. A project lives in one residency, so a question pointed at the wrong connector comes back empty rather than wrong — which reads as the project having no data. The title now carries it (`Mixpanel (us)`, `(eu)`, `(in)`) and the guide opens with it |
 | P4 endpoint default | meets | three published endpoints, an option that selects between them, and `"us"` as the default because that is where a project lives unless it was explicitly created elsewhere. Unlike Linear's, this default is honest: a wrong region cannot cause an irrecoverable write, only an empty read. Construction now also rejects a region there is no endpoint for |
 | P5 classification | meets | reads and writes named, unlisted fails closed, reviewed destructive beats a contradictory `readOnlyHint: true` |
-| P6 catalog varies | **missed → fixed** | the provider doc knew that 15 of the 63 classified tools are beta surfaces; the guide did not say so. Added, naming experiments, feature flags, session replay, and issue triage as the usual absentees |
+| P6 catalog varies | **missed → fixed** | the provider doc knew that beta surfaces vary by account; the guide did not say so. Added, naming experiments, feature flags, session replay, and issue triage as the usual absentees. The 2026-08-30 review classified the new `Fill-Event-Metadata` write and refreshed three beta experiment schemas (#512) |
 | P7 reduction advice | **missed → fixed** | bare string, derived summary. Now structured with a declared, region-shaped summary. `required` unset: the project-then-context sequence is worth reading before an analysis, not before every call |
 | P8 identity resolution | **missed → fixed** | the guide told an agent not to guess event and property *spelling* but said nothing about ids, and Mixpanel's `Get-`, `Update-`, and `Delete-` tools all take them. Added, naming the `List-` tools that produce each one |
 | P9 authentication | meets | OAuth default, `requireHttps`, service account documented as a secret |
@@ -149,9 +149,9 @@ Linear's reasoning.
 
 ## RevenueCat — hosted-MCP proxy
 
-Written after the conventions existed, so it has no misses to record — only two
-places where the honest answer departs from the obvious one, both argued below.
-Ninety-five documented tools, ninety-four classified, one deliberately not.
+Written after the conventions existed, so it has no misses to record, only two
+places where the honest answer departs from the obvious one. Ninety-six
+documented tools, ninety-five classified, one deliberately not.
 
 | Convention | Verdict | Notes |
 | --- | --- | --- |
@@ -159,7 +159,7 @@ Ninety-five documented tools, ninety-four classified, one deliberately not.
 | P2 identity | meets | required `purpose` (blank throws), `instructions` appended under `## Project instructions`, and appended text cannot reach the classification |
 | P3 routing fact | meets, with the fact split in two | the routing fact is scope, and it has two halves. The *shape* — one project versus every project the account can reach — is knowable at construction and rides the default title (`RevenueCat (single project)` versus `RevenueCat`). *Which* project a key opens is not knowable without calling something, which P10 forbids, so it rides the guide's first line and the declared summary, built from the operator's `purpose`. That makes this the one maintained proxy with a purpose-bearing summary rather than a static one, and the reason is P3's own cost: two `sk_` connectors share a title, an endpoint, and a catalog, so a static summary would leave them indistinguishable in the only field search returns |
 | P4 endpoint default | n/a — one endpoint, and the scope rides the credential | RevenueCat publishes a single MCP endpoint, so there is nothing to select between. The scope difference comes from the credential shape itself, which the constructor reads rather than asks for: `auth.type === "headers"` *is* the single-project declaration. There is no mode to default and no mode to contradict, so the P4 machinery Stripe needs has nothing to do here |
-| P5 classification | meets | 50 reads, 15 additive writes, 29 destructive writes named; `render-paywall-screenshot` is on neither list because RevenueCat's reference gives it no access column, and it fails closed. Nine borderline verdicts are argued beside the rows they decide, and asserted in the suite so a silent flip fails |
+| P5 classification | meets | 51 reads, 15 additive writes, 29 destructive writes named; `get-refund-request-preferences` is the added read. `render-paywall-screenshot` remains unclassified because RevenueCat's reference gives it no access column; its current explicit read-only annotation is preserved, and silence fails closed. Nine borderline verdicts are argued beside the rows they decide, and asserted in the suite so a silent flip fails |
 | P6 catalog varies | meets | the guide names paywall AI editing, benchmarks, experiments, virtual currencies, and account billing as the plan-, platform-, and beta-gated areas where absence is expected, and separately names the unclassified tool so its approval prompt does not read as a bug |
 | P7 reduction advice | meets | structured guide, declared summary, cursor-then-reduce advice aimed at the two objects that are actually large here (customers and their event history). `required` stays unset: the project-resolution sequence is worth reading before a run, not before every call |
 | P8 identity resolution | meets | the guide names the whole chain — `list-projects` for the `project_id` every project-scoped call takes, then `list-apps`, `list-products`, `list-entitlements`, `list-offerings`, `list-paywalls`, `list-audiences`, and `list-customers` for the ids their `get-`, `update-`, `archive-`, and `delete-` counterparts expect — and says a plausible-looking id belongs to another project or to nobody. For OAuth it also says to stop and ask when more than one project fits |
@@ -173,7 +173,7 @@ Ninety-five documented tools, ninety-four classified, one deliberately not.
 
 | Provider | Meets | Missed and fixed | Recorded exception | Open |
 | --- | --- | --- | --- | --- |
-| Cloudflare | 9 | 5 | H5 hatch request parts | H14 keep/prune ([#350](https://github.com/zackbart/connecta/issues/350)) |
+| Cloudflare | 9 | 5 | H5 hatch request parts | — |
 | Notion | 10 | 4 | H5 exclusive parent | — |
 | Linear | 11 | 2 | P4 departs from the letter | — |
 | Stripe | 10 | 3 | — | — |

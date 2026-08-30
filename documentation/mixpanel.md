@@ -84,7 +84,7 @@ the maintained guide carries the missing call guidance:
 A read-only live audit on 2026-08-13 confirmed all three refusals against the
 US hosted endpoint. They are reported upstream as
 [`mixpanel/mixpanel-headless#202`](https://github.com/mixpanel/mixpanel-headless/issues/202).
-The vetted catalog records the same audit's schema digests for all 63 tools,
+The vetted catalog records current schema digests for all 64 tools,
 so a later schema correction or regression appears by tool name in the
 maintainer drift check. The guide can then shrink when the downstream schema
 becomes complete; Connecta does not absorb the defect permanently.
@@ -110,8 +110,10 @@ rest) leave `destructiveHint` unset; `readOnlyHint: false` already routes them
 through the destructive path, and asserting destruction only inflates the
 approval copy the host shows a human.
 
-Experiments and Feature Flags — 15 of the 63 classified tools — are Mixpanel
-beta surfaces. Expect their names and schemas to move faster than the rest.
+Experiments and Feature Flags are Mixpanel beta surfaces. Their three changed
+schemas were reviewed again on 2026-08-30. The same review added
+`Fill-Event-Metadata` as a destructive write because it applies generated names
+and descriptions to existing Lexicon events.
 
 ## Rate limits
 
