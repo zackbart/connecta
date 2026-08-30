@@ -237,10 +237,14 @@ For a Worker currently using Clerk, keep rollback live through the cutover:
    `CONNECTA_TOKEN`. This separates the package/code change from the edge
    change and proves the old path still works.
 
-2. In Cloudflare, attach Access to the Worker, apply the intended human policy,
-   and enable Managed OAuth. Create an Access service token and a **Service
-   Auth** policy for doctor and fully unattended clients. Do not create a
-   bypass for `/.well-known/*`; Managed OAuth owns that discovery surface.
+2. In Cloudflare, attach Access to the Worker itself, apply the intended human
+   policy, and enable Managed OAuth. Through the API this is an Access
+   application destination of `{ "type": "worker", "worker_id": "<script
+   tag>" }`, not a hostname application for the `workers.dev` URL: the latter
+   gates traffic but does not provide `ctx.access`. Create an Access service
+   token and a **Service Auth** policy for doctor and fully unattended clients.
+   Do not create a bypass for `/.well-known/*`; Managed OAuth owns that
+   discovery surface.
 
 3. Reconnect interactive MCP clients to `<PUBLIC_URL>/mcp`. Their old Clerk
    OAuth tokens are not Cloudflare credentials, so each client performs one new

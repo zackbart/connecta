@@ -24,11 +24,16 @@ createConnecta({
 
 The adapter trusts only `ctx.access`, which Cloudflare creates after Access has
 authenticated a request that directly invokes the Worker. It calls
-`ctx.access.getIdentity()` and never reads `Cf-Access-Jwt-Assertion`, downloads
-signing keys, or accepts a JWT from the caller. A missing context or unreadable
-identity fails closed. This also means it is deliberately not a Node or
-`cloudflared` origin adapter, and it does not survive a Service Binding hop:
-those shapes need their own explicit trust boundary.
+`ctx.access.getIdentity()` for a human. Cloudflare returns no user identity for
+a service token and strips the service-token headers before invoking the
+Worker, so after `ctx.access` proves admission the adapter uses the Access
+application audience as the automation activity subject. Service tokens on the
+same Access application therefore share attribution. It never reads
+`Cf-Access-Jwt-Assertion`, downloads signing keys, or accepts a JWT from the
+caller. A missing context or an identity lookup that throws fails closed. This
+also means it is deliberately not a Node or `cloudflared` origin adapter, and
+it does not survive a Service Binding hop: those shapes need their own explicit
+trust boundary.
 
 A human identity gets MCP and operator access. A Cloudflare service-token
 identity gets MCP access and a stable activity subject, but no `userId`, so it
@@ -36,8 +41,11 @@ cannot write credentials, run downstream OAuth mutations, or issue connecta
 tokens. Access policy decides who reaches the Worker; connecta does not mirror
 email domains, groups, or device posture into a second policy layer.
 
-Enable [**Managed OAuth**](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
-on the Access application for interactive MCP clients.
+Protect the Worker with a Worker-level Access application whose destination is
+`{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
+hostname-level application blocks the URL but does not attach `ctx.access` to
+the Worker. Enable [**Managed OAuth**](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
+on that Worker-level application for interactive MCP clients.
 Cloudflare then owns the unauthenticated challenge and `/.well-known/`
 metadata, issues opaque RFC 8707 tokens, and resolves them into the same trusted
 Worker identity. Do not add a bypass for the discovery routes. A fully

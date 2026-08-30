@@ -43,7 +43,8 @@ wrangler deploy
 ```
 
 `PUBLIC_URL` is a plain var in `wrangler.jsonc`. After the first deploy, attach
-Cloudflare Access to the Worker and choose the account, email-domain, or
+Cloudflare Access to the Worker itself (the API destination type is `worker`,
+not a hostname application) and choose the account, email-domain, or
 advanced Zero Trust policy that owns admission. Enable **Managed OAuth** on
 that Access application for interactive MCP clients. Access then serves OAuth
 discovery and turns the client's opaque token into the trusted `ctx.access`
