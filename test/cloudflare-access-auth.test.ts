@@ -60,13 +60,16 @@ describe("cloudflareAccessAuth", () => {
     const result = await cloudflareAccessAuth().authorize(
       request,
       BASE,
-      runtime({
-        service_token_status: true,
-        service_token_id: "service-client-id",
-      }),
+      runtime(),
     );
-    expect(result).toEqual({ ok: true, subjectId: "service-client-id" });
+    expect(result).toEqual({
+      ok: true,
+      subjectId: "access-app",
+    });
 
+    // Keep accepting assertion-shaped identities for runtimes that expose
+    // them, even though production service tokens currently return no user
+    // identity from getIdentity().
     const assertionShape = await cloudflareAccessAuth().authorize(
       request,
       BASE,
@@ -97,14 +100,10 @@ describe("cloudflareAccessAuth", () => {
       auth: cloudflareAccessAuth(),
       accessTokens: {},
     });
-    const context = workerRuntime({
-      service_token_status: true,
-      service_token_id: "automation",
-    });
+    const context = workerRuntime();
 
-    const mcp = await mcpRpc(deployment, "tools/list", {}, {
-      runtimeContext: context,
-    });
+    const mcpRequest = mcpRpc("tools/list", {});
+    const mcp = await deployment.fetch(mcpRequest, undefined, context);
     expect(mcp.status).toBe(200);
 
     const mutation = await deployment.fetch(

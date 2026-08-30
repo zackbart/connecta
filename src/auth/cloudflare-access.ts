@@ -41,7 +41,14 @@ export function cloudflareAccessAuth(): InboundAuth {
       } catch {
         return unauthorized();
       }
-      if (!identity) return unauthorized();
+      if (!identity) {
+        // Access service-token policies authenticate the request and attach
+        // ctx.access, but getIdentity() is a user-identity API and returns
+        // undefined. Cloudflare strips the service-token headers before the
+        // Worker, so the Access application audience is the only trusted,
+        // stable service attribution available without parsing a JWT.
+        return { ok: true, subjectId: access.aud };
+      }
 
       const userId = identityString(identity, "user_uuid") ??
         identityString(identity, "email");

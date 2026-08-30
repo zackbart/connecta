@@ -17,8 +17,10 @@ pin.
 - **Direct Worker Access auth.** `cloudflareAccessAuth()` ships from
   `@zackbart/connecta/auth/cloudflare-access` with no dependency and no JWT
   verifier. Human `ctx.access` identities may use MCP and operator routes;
-  service-token identities may use MCP but cannot mutate operator state. The
-  same suite runs under Node and workerd (#506).
+  service-token identities may use MCP but cannot mutate operator state. Since
+  Cloudflare exposes no user identity for a service token, its Access
+  application audience is the shared activity subject. The same suite runs
+  under Node and workerd (#506).
 - **Ambient operator sessions.** The operator shell selects Cloudflare Access
   when the current invocation carries it, sends no browser-readable token, and
   signs out through Cloudflare. A co-configured Clerk provider remains the
@@ -37,11 +39,13 @@ pin.
   whole-agent cases covering both routes, exact provider semantics, private
   pagination, forwarding bytes, tokens, and latency.
 - **Worker deployment path.** The shipped Worker example uses Access and
-  Managed OAuth, carries a local `access.dev` identity, and documents service
-  tokens for unattended callers. Its Clerk shape stays beside the provider as
-  the reversible migration seam. Static connecta and operator-issued bearers
-  remain supported by core but are not standalone credentials through a
-  whole-Worker Access gate (#506).
+  Managed OAuth through a Worker-level `worker` destination, carries a local
+  `access.dev` identity, and documents service tokens for unattended callers.
+  A hostname-only Access application gates the URL but does not supply
+  `ctx.access`. The Clerk shape stays beside the provider as the reversible
+  migration seam. Static connecta and operator-issued bearers remain supported
+  by core but are not standalone credentials through a whole-Worker Access
+  gate (#506).
 - **Operator capability is vendor-neutral.** Inbound auth providers now declare
   interactive-operator capability explicitly, and runtime context reaches
   their authorization hook as an optional third argument. Existing custom
