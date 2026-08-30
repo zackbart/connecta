@@ -19,6 +19,9 @@ went with `set_r2_cors` as the other half of one policy pair, which the rule
 below states as its own ground so the record does not pretend it was a defect.
 The surviving surface is 48 named tools.
 
+The eighteen `improve` rows are historical findings. Issue #488 later replaced
+their empty output declarations with useful keys and maintained projections.
+
 ## The measurement
 
 The retired deterministic lane used one representative operator request per

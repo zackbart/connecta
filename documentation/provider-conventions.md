@@ -693,8 +693,10 @@ Cloudflare keep/prune half of that judgment was made in
 [#350](https://github.com/zackbart/connecta/issues/350): 30 keep, 18 improve,
 3 prune, measured per tool in
 [`eval/current-version/results/issue-350-evidence.md`](https://github.com/zackbart/connecta/blob/main/eval/current-version/results/issue-350-evidence.md).
-Its eighteen `improve` rows are H8 and H9 misses on tools that clearly earn
-their place, so they are this audit's work, not a second removal argument.
+Its eighteen `improve` rows were H8 and H9 misses on tools that clearly earned
+their place. Issue #488 resolved them with useful output keys and maintained
+projections; the measurements remain the reason those tools stayed rather than
+a second removal argument.
 
 Each provider's own guide ([Cloudflare](./cloudflare.md),
 [Linear](./linear.md), [Mixpanel](./mixpanel.md), [Notion](./notion.md),

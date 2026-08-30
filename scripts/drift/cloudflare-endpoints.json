@@ -164,13 +164,13 @@
       "method": "PUT",
       "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk",
       "specRevision": "4.0.0",
-      "contract": "sha256:90b888706e5235d55a60c848672de347e6b68728c3525a818936d027c7e0281d"
+      "contract": "sha256:999dc0b7711a4e8052e4c2305819f6cfe38eff0acf91b4979d63f42cd9f25073"
     },
     {
       "method": "POST",
       "path": "/accounts/{account_id}/storage/kv/namespaces/{namespace_id}/bulk/delete",
       "specRevision": "4.0.0",
-      "contract": "sha256:511865ab33597f3effa82a513e01fa6fad33141c1b3a73434aaaf5a8eb07c43e"
+      "contract": "sha256:62bb7e37e596f18517040d859bfb727325e4e4e659c0fbeddcc017b45156269c"
     },
     {
       "method": "POST",
@@ -290,13 +290,13 @@
       "method": "GET",
       "path": "/zones/{zone_id}/settings/{setting_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:55b55adc0ed04a368710e274615faceca0c8456dd59694b68edf075c52060b28"
+      "contract": "sha256:d40d6e69038efbcb47a4e211d4e2c293c557a943fb383975c838245ee9c96888"
     },
     {
       "method": "PATCH",
       "path": "/zones/{zone_id}/settings/{setting_id}",
       "specRevision": "4.0.0",
-      "contract": "sha256:edb944622554aca746c8cde0e4efe68e2434eb050b09129cb5410e3bb9e65a27"
+      "contract": "sha256:131e78bf0692cc655846a3ab748ca1738522244117eb3733c75d7032847a6512"
     }
   ]
 }

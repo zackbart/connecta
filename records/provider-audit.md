@@ -36,7 +36,7 @@ Two things this audit deliberately does not decide:
 
 ## Cloudflare — hand-written HTTP
 
-Fifty-five tools over the v4 REST API: fifty-two named, three guarded escape
+Fifty-one tools over the v4 REST API: forty-eight named, three guarded escape
 hatches. The largest surface here and the one with the most to get wrong.
 
 | Convention | Verdict | Notes |
@@ -49,14 +49,14 @@ hatches. The largest surface here and the one with the most to get wrong.
 | H5 exception | recorded | the three escape hatches' request parts — `query[]`, `headers[]`, `fields[]`, `files[]` — keep undescribed `name`/`value` members, because H5 collides with H7 there. `query` and `headers` are one shared constant the renderer inlines into all three hatches, and `cloudflare_api_upload` sits at 1,007 of the 1,024-byte budget this same audit brought it back under; describing name/value pairs the parent property has already named as name/value pairs would truncate the whole tool in discovery. The 21 properties are listed by path in `test/provider-conventions.test.ts` and asserted exactly, so a new one fails and so does a stale entry |
 | H6 whose bound | meets | exemplary. `pagingInputProperties` carries a three-way `bounds` vocabulary — `cloudflare`, `clamped`, `undocumented` — and the description says which one applies |
 | H7 compact fit | **missed → fixed** | `cloudflare_api_upload` rendered to 1,297 bytes. The refused-header list, inlined once per hatch, moved to the usage guide; the remaining upload descriptions were cut to the fact each adds. Now 1,007 |
-| H8 output schemas | meets | 52 of 52 declare one |
+| H8 output schemas | meets | all 48 named tools declare useful top-level keys; the three endpoint-generic hatches alone keep open result objects |
 | H9 projection | meets | reads project and rename; `raw: true` wherever the projection drops something recoverable; `cloudflare_api_get` is the universal unprojected read |
 | H10 pagination | **missed → fixed** | two conventions live here, which H10 allows, but only the guide said so. Three of the four cursor tools had a bare `nextCursor: { type: "string" }` with no description. Both ends now state it: `cursor` says the endpoint pages by cursor, `nextCursor` says it is the only signal and no `page` object is coming |
 | H11 errors | meets | mapped by the caller's next move, including the 400-with-credential-code case that is `auth_required` rather than `invalid_args`; every mapped status has a test asserting code and retryability |
 | H12 credential | meets | labeled fields per authentication mode, `testCredential` on the token path (`/user/tokens/verify`) and `testCredentials` on the Global API Key pair (`/user`), each reporting who it authenticated as |
 | H13 guide | **missed → fixed** | the guide was a bare string, so its summary was derived from the first content line — the zone-scoping rule, which varies per deployment and reads as an instruction. Now structured with a declared summary. `required` stays unset, deliberately: every named schema is complete enough to call on its own and the scoping convention is repeated on each `zoneId` and `accountId` property, so forcing the guide into context before every operation would buy nothing |
 | H14 hatch shape | meets | split GET / JSON-mutate / upload, the split is Connecta's, the GET tool is annotated read-only, paths are provider-relative and confined |
-| H14 keep/prune | **open — [#350](https://github.com/zackbart/connecta/issues/350)** | whether each of the named tools beats the hatch on schema, projection, or safety routing is a reading that needs usage evidence. Out of scope here by the issue's own terms |
+| H14 keep/prune | meets | #350 measured 30 keep, 18 improve, and 3 prune; the three removals shipped, and #488 resolved the output misses on the tools that stayed |
 
 ## Notion — hand-written HTTP
 
