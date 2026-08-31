@@ -1,5 +1,6 @@
-import { UnauthorizedError } from "@modelcontextprotocol/client";
+import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
+  FetchLike,
   OAuthClientInformationContext,
   OAuthClientInformationFull,
   OAuthTokens,
@@ -9,10 +10,12 @@ import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   KvOAuthProvider,
+  OAuthRefreshCoordinator,
   oauthValueStorageKey,
 } from "../src/auth/downstream-oauth.js";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
+import { classifyCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type {
   Connector,
@@ -32,6 +35,7 @@ async function storeCurrentOAuthValue(
   storage: KVStorage,
   key: string,
   value: unknown,
+  issuer?: string,
 ): Promise<void> {
   const generation = (await storage.get("oauth:generation")) ?? "legacy";
   await storage.set(
@@ -39,6 +43,7 @@ async function storeCurrentOAuthValue(
     JSON.stringify({
       connectaOAuthVersion: 2,
       generation,
+      ...(issuer !== undefined ? { issuer } : {}),
       value,
     }),
   );
@@ -735,6 +740,1948 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await pAll.clientInformation()).toBeUndefined();
     expect(await pAll.tokens()).toBeUndefined();
     await expect(pAll.codeVerifier()).rejects.toThrow();
+  });
+});
+
+describe("OAuthRefreshCoordinator", () => {
+  const refreshInit = (token: string): RequestInit => ({
+    method: "POST",
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: token,
+    }),
+  });
+
+  const trackedAbortSignal = () => {
+    const controller = new AbortController();
+    let listeners = 0;
+    const signal = {
+      get aborted() {
+        return controller.signal.aborted;
+      },
+      get reason() {
+        return controller.signal.reason;
+      },
+      addEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: EventListenerOptions | boolean,
+      ) {
+        if (type === "abort") listeners++;
+        controller.signal.addEventListener(type, listener, options);
+      },
+      removeEventListener(
+        type: string,
+        listener: EventListenerOrEventListenerObject,
+        options?: EventListenerOptions | boolean,
+      ) {
+        if (type === "abort") listeners--;
+        controller.signal.removeEventListener(type, listener, options);
+      },
+    } as unknown as AbortSignal;
+    return { controller, signal, listeners: () => listeners };
+  };
+
+  it("settles non-2xx waiters at fetch completion and permits a later retry", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const retry = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower, retry]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let attempts = 0;
+    let releaseFailure!: () => void;
+    let observedFirstRequest!: () => void;
+    const firstRequest = new Promise<void>((resolve) => {
+      observedFirstRequest = resolve;
+    });
+    const failureBarrier = new Promise<void>((resolve) => {
+      releaseFailure = resolve;
+    });
+    const baseFetch: FetchLike = async () => {
+      attempts++;
+      if (attempts === 1) {
+        observedFirstRequest();
+        await failureBarrier;
+        return Response.json(
+          { error: "server_error", error_description: "temporarily down" },
+          { status: 503 },
+        );
+      }
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+    const ownerRefresh = coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+    await firstRequest;
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    const followerRefresh = coordinator.coordinatedFetch(follower, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+    const firstOutcomes = Promise.allSettled([ownerRefresh, followerRefresh]);
+    await followerRead;
+    expect(attempts).toBe(1);
+    releaseFailure();
+    const [ownerOutcome, followerOutcome] = await firstOutcomes;
+
+    expect(ownerOutcome.status).toBe("fulfilled");
+    if (ownerOutcome.status === "fulfilled") {
+      expect(ownerOutcome.value.status).toBe(503);
+    }
+    expect(followerOutcome).toMatchObject({
+      status: "rejected",
+      reason: new Error("OAuth refresh failed with HTTP 503."),
+    });
+
+    const response = await coordinator.coordinatedFetch(retry, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+    const tokens = (await response.json()) as OAuthTokens;
+    await retry.saveTokens(tokens);
+
+    expect(attempts).toBe(2);
+    expect(await retry.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("releases an SDK-invalid success body without clearing its exact retry", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const malformed = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const retry = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [malformed, retry, follower]) {
+      provider.captureGeneration("legacy");
+    }
+    await malformed.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+
+    let attempts = 0;
+    const baseFetch: FetchLike = async () => {
+      attempts++;
+      return attempts === 1
+        ? Response.json({
+            access_token: "access-malformed",
+            token_type: "Bearer",
+            refresh_token: 123,
+          })
+        : Response.json({
+            access_token: "access-new",
+            token_type: "Bearer",
+            refresh_token: "refresh-new",
+            id_token: "id-new",
+            scope: "read",
+            expires_in: "3600",
+          });
+    };
+
+    const malformedResponse = await coordinator.coordinatedFetch(
+      malformed,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await expect(malformedResponse.json()).resolves.toMatchObject({
+      refresh_token: 123,
+    });
+
+    // The SDK rejects the first body before any provider callback. Its gate
+    // must already be gone so this same-generation attempt can own a retry.
+    const retryResponse = await coordinator.coordinatedFetch(
+      retry,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    expect(attempts).toBe(2);
+
+    // A delayed callback from the malformed attempt must not clear the newer
+    // exact flight. The valid response includes every SDK string optional and
+    // an expires_in value its schema coerces to a number.
+    await malformed.redirectToAuthorization(
+      new URL("https://auth.example/authorize"),
+    );
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    let followerSettled = false;
+    const followerResponse = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old")).then(
+      (response) => {
+        followerSettled = true;
+        return response;
+      },
+    );
+    await followerRead;
+    await Promise.resolve();
+    expect(followerSettled).toBe(false);
+    expect(attempts).toBe(2);
+
+    const raw = (await retryResponse.json()) as Record<string, unknown>;
+    await retry.saveTokens({
+      access_token: String(raw.access_token),
+      token_type: String(raw.token_type),
+      refresh_token: String(raw.refresh_token),
+      id_token: String(raw.id_token),
+      scope: String(raw.scope),
+      expires_in: Number(raw.expires_in),
+    });
+    const replayed = (await (await followerResponse).json()) as OAuthTokens;
+    await follower.saveTokens(replayed);
+
+    expect(attempts).toBe(2);
+    expect(replayed).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+      expires_in: 3600,
+    });
+  });
+
+  it("lets an aborted follower leave an owner flight without poisoning it", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const later = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower, later]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    const controller = new AbortController();
+    const reason = new DOMException("Follower scope ended", "AbortError");
+    const followerRefresh = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+      controller.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await followerRead;
+    controller.abort(reason);
+
+    await expect(followerRefresh).rejects.toBe(reason);
+    expect(upstreamRequests).toBe(1);
+
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    const laterResponse = await coordinator.coordinatedFetch(
+      later,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const replayed = (await laterResponse.json()) as OAuthTokens;
+    await later.saveTokens(replayed);
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+    expect(await later.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("aborts the owner fetch and fails joined scopes without promotion", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const later = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower, later]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+
+    const trackedOwner = trackedAbortSignal();
+    const trackedFollower = trackedAbortSignal();
+    let upstreamRequests = 0;
+    let observedOwnerFetch!: () => void;
+    const ownerFetch = new Promise<void>((resolve) => {
+      observedOwnerFetch = resolve;
+    });
+    let fetchAbortListenerActive = false;
+    let firstFetchSignal: AbortSignal | null | undefined;
+    const baseFetch: FetchLike = async (_input, init) => {
+      upstreamRequests++;
+      if (upstreamRequests === 1) {
+        firstFetchSignal = init?.signal;
+        observedOwnerFetch();
+        await new Promise<never>((_resolve, reject) => {
+          const signal = init?.signal;
+          expect(signal).toBeDefined();
+          const onAbort = () => {
+            fetchAbortListenerActive = false;
+            signal?.removeEventListener("abort", onAbort);
+            reject(signal?.reason);
+          };
+          fetchAbortListenerActive = true;
+          signal?.addEventListener("abort", onAbort, { once: true });
+          if (signal?.aborted) onAbort();
+        });
+      }
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+
+    const ownerRefresh = coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+      trackedOwner.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await ownerFetch;
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    const followerRefresh = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+      trackedFollower.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const outcomes = Promise.allSettled([ownerRefresh, followerRefresh]);
+    await followerRead;
+    await vi.waitFor(() => expect(trackedFollower.listeners()).toBe(1));
+
+    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
+    trackedOwner.controller.abort(ownerAbort);
+    await expect(outcomes).resolves.toEqual([
+      { status: "rejected", reason: ownerAbort },
+      { status: "rejected", reason: ownerAbort },
+    ]);
+    expect(firstFetchSignal).toBe(trackedOwner.signal);
+    expect(upstreamRequests).toBe(1);
+    expect(fetchAbortListenerActive).toBe(false);
+    expect(trackedOwner.listeners()).toBe(0);
+    expect(trackedFollower.listeners()).toBe(0);
+
+    const laterController = new AbortController();
+    const retryResponse = await coordinator.coordinatedFetch(
+      later,
+      baseFetch,
+      laterController.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await later.saveTokens((await retryResponse.json()) as OAuthTokens);
+
+    expect(upstreamRequests).toBe(2);
+    expect(await later.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("rechecks a pending mutation after a contender's token read", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+    const trackedOwner = trackedAbortSignal();
+    await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+      trackedOwner.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+
+    let observedTokenRead!: () => void;
+    let releaseTokenRead!: () => void;
+    const tokenRead = new Promise<void>((resolve) => {
+      observedTokenRead = resolve;
+    });
+    const tokenReadBarrier = new Promise<void>((resolve) => {
+      releaseTokenRead = resolve;
+    });
+    const readContenderTokens = contender.tokens.bind(contender);
+    contender.tokens = async (issuerContext) => {
+      observedTokenRead();
+      await tokenReadBarrier;
+      return readContenderTokens(issuerContext);
+    };
+    const contenderRefresh = coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await tokenRead;
+
+    trackedOwner.controller.abort(
+      new DOMException("Owner scope ended", "AbortError"),
+    );
+    releaseTokenRead();
+    const blocked = await contenderRefresh;
+
+    expect(blocked.status).toBe(503);
+    await expect(blocked.json()).resolves.toMatchObject({
+      error: "temporarily_unavailable",
+    });
+    expect(upstreamRequests).toBe(1);
+    expect(trackedOwner.listeners()).toBe(0);
+  });
+
+  it("surfaces a pending mutation as retryable without starting authorization", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const issuer = "https://auth.example";
+    const mcpUrl = "https://downstream.example/mcp";
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveClientInformation(
+      {
+        client_id: "connecta-client",
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "none",
+      },
+      { issuer },
+    );
+    await owner.saveTokens(
+      {
+        access_token: "access-old",
+        token_type: "Bearer",
+        refresh_token: "refresh-old",
+      },
+      { issuer },
+    );
+    let tokenRequests = 0;
+    const baseFetch: FetchLike = async (input) => {
+      const url = new URL(input);
+      if (url.href === `${issuer}/token`) {
+        tokenRequests++;
+        return Response.json({
+          access_token: "access-new",
+          token_type: "Bearer",
+          refresh_token: "refresh-new",
+        });
+      }
+      if (
+        url.href ===
+        "https://downstream.example/.well-known/oauth-protected-resource/mcp"
+      ) {
+        return Response.json({
+          resource: mcpUrl,
+          authorization_servers: [issuer],
+        });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    };
+    const trackedOwner = trackedAbortSignal();
+    await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+      trackedOwner.signal,
+    )(`${issuer}/token`, refreshInit("refresh-old"));
+    trackedOwner.controller.abort(
+      new DOMException("Owner scope ended", "AbortError"),
+    );
+
+    let sdkError: unknown;
+    try {
+      await auth(contender, {
+        serverUrl: mcpUrl,
+        fetchFn: coordinator.coordinatedFetch(contender, baseFetch),
+      });
+    } catch (error) {
+      sdkError = error;
+    }
+
+    expect(sdkError).toBeInstanceOf(Error);
+    expect(classifyCallError(sdkError)).toMatchObject({ retryable: true });
+    expect(await contender.pendingAuthorizationUrl()).toBeUndefined();
+    expect(tokenRequests).toBe(1);
+  });
+
+  it("rereads a stale snapshot when an active refresh completes", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+
+    let observedStaleSnapshot!: () => void;
+    let releaseStaleSnapshot!: () => void;
+    const staleSnapshot = new Promise<void>((resolve) => {
+      observedStaleSnapshot = resolve;
+    });
+    const staleSnapshotBarrier = new Promise<void>((resolve) => {
+      releaseStaleSnapshot = resolve;
+    });
+    let holdFirstRead = true;
+    const readContenderTokens = contender.tokens.bind(contender);
+    contender.tokens = async (issuerContext) => {
+      const tokens = await readContenderTokens(issuerContext);
+      if (holdFirstRead) {
+        holdFirstRead = false;
+        observedStaleSnapshot();
+        await staleSnapshotBarrier;
+      }
+      return tokens;
+    };
+    const contenderRefresh = coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await staleSnapshot;
+
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    releaseStaleSnapshot();
+    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("detects a complete flight ABA during a stale token snapshot", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [contender, owner]) {
+      provider.captureGeneration("legacy");
+    }
+    await contender.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+
+    let observedStaleSnapshot!: () => void;
+    let releaseStaleSnapshot!: () => void;
+    const staleSnapshot = new Promise<void>((resolve) => {
+      observedStaleSnapshot = resolve;
+    });
+    const staleSnapshotBarrier = new Promise<void>((resolve) => {
+      releaseStaleSnapshot = resolve;
+    });
+    let holdFirstRead = true;
+    const readContenderTokens = contender.tokens.bind(contender);
+    contender.tokens = async (issuerContext) => {
+      const tokens = await readContenderTokens(issuerContext);
+      if (holdFirstRead) {
+        holdFirstRead = false;
+        observedStaleSnapshot();
+        await staleSnapshotBarrier;
+      }
+      return tokens;
+    };
+    const contenderRefresh = coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await staleSnapshot;
+
+    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    releaseStaleSnapshot();
+    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("replays byte-identical success completed before wrapped fetch", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    const unchanged: OAuthTokens = {
+      access_token: "access-same",
+      token_type: "Bearer",
+      refresh_token: "refresh-same",
+    };
+    await owner.saveTokens(unchanged);
+    await contender.tokens({ issuer: "https://auth.example" });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json(unchanged);
+    };
+
+    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-same"),
+    );
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    const replayedResponse = await coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-same"));
+    const replayed = (await replayedResponse.json()) as OAuthTokens;
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toEqual(unchanged);
+  });
+
+  it("captures success identity before the SDK token-basis read", async () => {
+    const backing = memoryStorage();
+    let blockBasisRead = false;
+    let observedBasisRead!: () => void;
+    let releaseBasisRead!: () => void;
+    const basisRead = new Promise<void>((resolve) => {
+      observedBasisRead = resolve;
+    });
+    const basisReadBarrier = new Promise<void>((resolve) => {
+      releaseBasisRead = resolve;
+    });
+    const storage: KVStorage = {
+      get: async (key) => {
+        const snapshot = await backing.get(key);
+        if (blockBasisRead && key === "oauth:tokens") {
+          blockBasisRead = false;
+          observedBasisRead();
+          await basisReadBarrier;
+        }
+        return snapshot;
+      },
+      set: (key, value, options) => backing.set(key, value, options),
+      delete: (key) => backing.delete(key),
+    };
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, contender]) {
+      provider.captureGeneration("legacy");
+    }
+    const unchanged: OAuthTokens = {
+      access_token: "access-same",
+      token_type: "Bearer",
+      refresh_token: "refresh-same",
+    };
+    await owner.saveTokens(unchanged);
+    blockBasisRead = true;
+    const contenderBasis = contender.tokens({
+      issuer: "https://auth.example",
+    });
+    await basisRead;
+
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json(unchanged);
+    };
+    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-same"),
+    );
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    releaseBasisRead();
+    await contenderBasis;
+
+    const replayedResponse = await coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-same"));
+    const replayed = (await replayedResponse.json()) as OAuthTokens;
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toEqual(unchanged);
+  });
+
+  it("detects byte-identical success across a complete flight ABA", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const contender = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [contender, owner]) {
+      provider.captureGeneration("legacy");
+    }
+    const unchanged: OAuthTokens = {
+      access_token: "access-same",
+      token_type: "Bearer",
+      refresh_token: "refresh-same",
+    };
+    await contender.saveTokens(unchanged);
+    await contender.tokens({ issuer: "https://auth.example" });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json(unchanged);
+    };
+
+    let observedStaleSnapshot!: () => void;
+    let releaseStaleSnapshot!: () => void;
+    const staleSnapshot = new Promise<void>((resolve) => {
+      observedStaleSnapshot = resolve;
+    });
+    const staleSnapshotBarrier = new Promise<void>((resolve) => {
+      releaseStaleSnapshot = resolve;
+    });
+    let holdFirstRead = true;
+    const readContenderTokens = contender.tokens.bind(contender);
+    contender.tokens = async (issuerContext) => {
+      const tokens = await readContenderTokens(issuerContext);
+      if (holdFirstRead) {
+        holdFirstRead = false;
+        observedStaleSnapshot();
+        await staleSnapshotBarrier;
+      }
+      return tokens;
+    };
+    const contenderRefresh = coordinator.coordinatedFetch(
+      contender,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-same"));
+    await staleSnapshot;
+
+    const ownerResponse = await coordinator.coordinatedFetch(owner, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-same"),
+    );
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    releaseStaleSnapshot();
+    const replayed = (await (await contenderRefresh).json()) as OAuthTokens;
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toEqual(unchanged);
+  });
+
+  it("rechecks generation after a stale token read", async () => {
+    const backing = memoryStorage();
+    let blockTokenRead = false;
+    let observedTokenRead!: () => void;
+    let releaseTokenRead!: () => void;
+    const tokenRead = new Promise<void>((resolve) => {
+      observedTokenRead = resolve;
+    });
+    const tokenReadBarrier = new Promise<void>((resolve) => {
+      releaseTokenRead = resolve;
+    });
+    const storage: KVStorage = {
+      get: async (key) => {
+        const snapshot = await backing.get(key);
+        if (blockTokenRead && key === "oauth:tokens") {
+          blockTokenRead = false;
+          observedTokenRead();
+          await tokenReadBarrier;
+        }
+        return snapshot;
+      },
+      set: (key, value, options) => backing.set(key, value, options),
+      delete: (key) => backing.delete(key),
+    };
+    const coordinator = new OAuthRefreshCoordinator();
+    const stale = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    stale.captureGeneration("legacy");
+    await stale.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    blockTokenRead = true;
+    const staleRefresh = coordinator.coordinatedFetch(stale, async () => {
+      upstreamRequests++;
+      return Response.json({});
+    })("https://auth.example/token", refreshInit("refresh-old"));
+    await tokenRead;
+
+    const resetter = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    await resetter.resetAuthorization();
+    releaseTokenRead();
+    const response = await staleRefresh;
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_grant",
+    });
+    expect(upstreamRequests).toBe(0);
+    expect(await storage.get("oauth:generation")).not.toBe("legacy");
+  });
+
+  it("blocks a new grant while an aborted owner's token write is pending", async () => {
+    const backing = memoryStorage();
+    let blockTokenWrite = false;
+    let observedBlockedWrite!: () => void;
+    let releaseBlockedWrite!: () => void;
+    const blockedWrite = new Promise<void>((resolve) => {
+      observedBlockedWrite = resolve;
+    });
+    const blockedWriteBarrier = new Promise<void>((resolve) => {
+      releaseBlockedWrite = resolve;
+    });
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: async (key, value, options) => {
+        if (blockTokenWrite && key === "oauth:tokens") {
+          blockTokenWrite = false;
+          observedBlockedWrite();
+          await blockedWriteBarrier;
+        }
+        await backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const retry = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const retryFollower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower, retry, retryFollower]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token:
+          upstreamRequests === 1 ? "access-owner" : "access-retry",
+        token_type: "Bearer",
+        refresh_token:
+          upstreamRequests === 1 ? "refresh-owner" : "refresh-retry",
+      });
+    };
+    const trackedOwner = trackedAbortSignal();
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+      trackedOwner.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const trackedFollower = trackedAbortSignal();
+    blockTokenWrite = true;
+    let ownerSaveSettled = false;
+    const ownerSave = owner
+      .saveTokens((await ownerResponse.json()) as OAuthTokens)
+      .then(() => {
+        ownerSaveSettled = true;
+      });
+    await blockedWrite;
+
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    const followerRefresh = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+      trackedFollower.signal,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const followerOutcome = followerRefresh.then(
+      () => undefined,
+      (error: unknown) => error,
+    );
+    await followerRead;
+    await vi.waitFor(() => expect(trackedFollower.listeners()).toBe(1));
+    expect(trackedOwner.listeners()).toBe(1);
+
+    const ownerAbort = new DOMException("Owner scope ended", "AbortError");
+    trackedOwner.controller.abort(ownerAbort);
+    await expect(followerOutcome).resolves.toBe(ownerAbort);
+    expect(ownerSaveSettled).toBe(false);
+    expect(trackedOwner.listeners()).toBe(0);
+    expect(trackedFollower.listeners()).toBe(0);
+    expect(upstreamRequests).toBe(1);
+
+    const blockedRetry = await coordinator.coordinatedFetch(retry, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-old"),
+    );
+    expect(blockedRetry.status).toBe(503);
+    await expect(blockedRetry.json()).resolves.toMatchObject({
+      error: "temporarily_unavailable",
+    });
+    expect(upstreamRequests).toBe(1);
+
+    releaseBlockedWrite();
+    await ownerSave;
+    expect(await owner.tokens()).toMatchObject({
+      access_token: "access-owner",
+      refresh_token: "refresh-owner",
+    });
+
+    // An already-started old-token flow reuses the committed result locally.
+    const replayedResponse = await coordinator.coordinatedFetch(
+      retry,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    const replayed = (await replayedResponse.json()) as OAuthTokens;
+    await retry.saveTokens(replayed);
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toMatchObject({
+      access_token: "access-owner",
+      refresh_token: "refresh-owner",
+    });
+
+    // Once the old mutation physically settles, the generation can safely own
+    // another refresh and no late old write remains to overwrite its result.
+    const nextResponse = await coordinator.coordinatedFetch(
+      retryFollower,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-owner"));
+    const next = (await nextResponse.json()) as OAuthTokens;
+    await retryFollower.saveTokens(next);
+
+    expect(upstreamRequests).toBe(2);
+    expect(await retryFollower.tokens()).toMatchObject({
+      access_token: "access-retry",
+      refresh_token: "refresh-retry",
+    });
+  });
+
+  it("shares a storage mutation failure before allowing an independent retry", async () => {
+    const backing = memoryStorage();
+    const storageFailure = new Error("token storage unavailable");
+    let failTokenWrite = false;
+    let observedFailedWrite!: () => void;
+    let releaseFailedWrite!: () => void;
+    const failedWrite = new Promise<void>((resolve) => {
+      observedFailedWrite = resolve;
+    });
+    const failedWriteBarrier = new Promise<void>((resolve) => {
+      releaseFailedWrite = resolve;
+    });
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: async (key, value, options) => {
+        if (failTokenWrite && key === "oauth:tokens") {
+          failTokenWrite = false;
+          observedFailedWrite();
+          await failedWriteBarrier;
+          throw storageFailure;
+        }
+        await backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const retry = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower, retry]) {
+      provider.captureGeneration("legacy");
+    }
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    let observedFollowerOldToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerOldToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") {
+        observedFollowerOldToken();
+      }
+      return tokens;
+    };
+    const followerRefresh = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await followerRead;
+
+    failTokenWrite = true;
+    const ownerSave = owner.saveTokens(
+      (await ownerResponse.json()) as OAuthTokens,
+    );
+    const failedOutcomes = Promise.allSettled([ownerSave, followerRefresh]);
+    await failedWrite;
+    expect(upstreamRequests).toBe(1);
+    releaseFailedWrite();
+    const outcomes = await failedOutcomes;
+    expect(outcomes).toEqual([
+      { status: "rejected", reason: storageFailure },
+      { status: "rejected", reason: storageFailure },
+    ]);
+    expect(await owner.tokens()).toMatchObject({
+      access_token: "access-old",
+      refresh_token: "refresh-old",
+    });
+
+    const retryResponse = await coordinator.coordinatedFetch(
+      retry,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await retry.saveTokens((await retryResponse.json()) as OAuthTokens);
+
+    expect(upstreamRequests).toBe(2);
+    expect(await retry.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("keeps a late old-token flow behind the owner until rotated tokens are saved", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    const late = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    late.captureGeneration("legacy");
+    let observedLateOldToken!: () => void;
+    const lateRead = new Promise<void>((resolve) => {
+      observedLateOldToken = resolve;
+    });
+    const readLateTokens = late.tokens.bind(late);
+    late.tokens = async (issuerContext) => {
+      const tokens = await readLateTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-old") observedLateOldToken();
+      return tokens;
+    };
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+        refresh_token: "refresh-new",
+      });
+    };
+
+    // The owner has its successful response, but has not parsed or saved it.
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    let lateSettled = false;
+    const lateResponse = coordinator.coordinatedFetch(
+      late,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old")).then(
+      (response) => {
+        lateSettled = true;
+        return response;
+      },
+    );
+    await lateRead;
+    await Promise.resolve();
+    expect(lateSettled).toBe(false);
+    expect(upstreamRequests).toBe(1);
+
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    const replayed = (await (await lateResponse).json()) as OAuthTokens;
+    await late.saveTokens(replayed);
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+    expect(await late.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
+  });
+
+  it("does not merge a retired refresh token into a tokenless current value", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const provider = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    provider.captureGeneration("legacy");
+    await provider.saveTokens({
+      access_token: "access-current",
+      token_type: "Bearer",
+    });
+    let upstreamRequests = 0;
+    const response = await coordinator.coordinatedFetch(
+      provider,
+      async () => {
+        upstreamRequests++;
+        return Response.json({});
+      },
+    )("https://auth.example/token", refreshInit("refresh-retired"));
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "invalid_grant",
+    });
+    expect(upstreamRequests).toBe(0);
+    const current = await provider.tokens();
+    expect(current?.access_token).toBe("access-current");
+    expect(current?.refresh_token).toBeUndefined();
+  });
+
+  it("shares a successful refresh that keeps the existing refresh token", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    follower.captureGeneration("legacy");
+    const issuerContext = { issuer: "https://auth.example" };
+    await owner.tokens(issuerContext);
+    await follower.tokens(issuerContext);
+
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token: "access-new",
+        token_type: "Bearer",
+      });
+    };
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    let followerSettled = false;
+    const followerResponse = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old")).then(
+      (response) => {
+        followerSettled = true;
+        return response;
+      },
+    );
+    await Promise.resolve();
+    expect(followerSettled).toBe(false);
+
+    const ownerTokens = (await ownerResponse.json()) as OAuthTokens;
+    await owner.saveTokens({
+      refresh_token: "refresh-old",
+      ...ownerTokens,
+    });
+    const followerTokens = (await (await followerResponse).json()) as OAuthTokens;
+    await follower.saveTokens(followerTokens);
+
+    expect(upstreamRequests).toBe(1);
+    expect(followerTokens).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-old",
+    });
+    expect(await follower.tokens()).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-old",
+    });
+  });
+
+  it("shares a successful refresh whose tokens are byte-identical", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const follower = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [owner, follower]) {
+      provider.captureGeneration("legacy");
+    }
+    const unchanged: OAuthTokens = {
+      access_token: "access-same",
+      token_type: "Bearer",
+      refresh_token: "refresh-same",
+    };
+    await owner.saveTokens(unchanged);
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json(unchanged);
+    };
+
+    const ownerResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-same"));
+    let observedFollowerToken!: () => void;
+    const followerRead = new Promise<void>((resolve) => {
+      observedFollowerToken = resolve;
+    });
+    const readFollowerTokens = follower.tokens.bind(follower);
+    follower.tokens = async (issuerContext) => {
+      const tokens = await readFollowerTokens(issuerContext);
+      if (tokens?.refresh_token === "refresh-same") observedFollowerToken();
+      return tokens;
+    };
+    const followerResponse = coordinator.coordinatedFetch(
+      follower,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-same"));
+    await followerRead;
+    expect(upstreamRequests).toBe(1);
+
+    await owner.saveTokens((await ownerResponse.json()) as OAuthTokens);
+    const replayed = (await (await followerResponse).json()) as OAuthTokens;
+    await follower.saveTokens(replayed);
+
+    expect(upstreamRequests).toBe(1);
+    expect(replayed).toEqual(unchanged);
+  });
+
+  it("does not join refreshes captured under different generations", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const oldProvider = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    oldProvider.captureGeneration("legacy");
+    await oldProvider.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+
+    const releases = new Map<string, () => void>();
+    const started: string[] = [];
+    const baseFetch: FetchLike = async (_input, init) => {
+      const body = init?.body as URLSearchParams;
+      const token = body.get("refresh_token")!;
+      started.push(token);
+      await new Promise<void>((resolve) => releases.set(token, resolve));
+      return Response.json({
+        access_token: `rotated-${token}`,
+        token_type: "Bearer",
+        refresh_token: `next-${token}`,
+      });
+    };
+    const oldRefresh = coordinator.coordinatedFetch(
+      oldProvider,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+    await vi.waitFor(() => expect(started).toEqual(["refresh-old"]));
+
+    const nextGeneration = `v2:${crypto.randomUUID()}`;
+    await storage.set("oauth:generation", nextGeneration);
+    await storeCurrentOAuthValue(
+      storage,
+      "oauth:tokens",
+      {
+        access_token: "access-current",
+        token_type: "Bearer",
+        refresh_token: "refresh-current",
+      },
+    );
+    const currentProvider = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    currentProvider.captureGeneration(nextGeneration);
+    const currentRefresh = coordinator.coordinatedFetch(
+      currentProvider,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-current"));
+    await vi.waitFor(() =>
+      expect(started).toEqual(["refresh-old", "refresh-current"]),
+    );
+
+    releases.get("refresh-old")!();
+    releases.get("refresh-current")!();
+    const [oldOutcome, currentOutcome] = await Promise.allSettled([
+      oldRefresh,
+      currentRefresh,
+    ]);
+    expect(oldOutcome).toMatchObject({
+      status: "rejected",
+      reason: new Error("OAuth refresh ended before tokens could be saved."),
+    });
+    expect(currentOutcome.status).toBe("fulfilled");
+    if (currentOutcome.status === "fulfilled") {
+      await currentProvider.saveTokens(
+        (await currentOutcome.value.json()) as OAuthTokens,
+      );
+    }
+    expect(await currentProvider.tokens()).toMatchObject({
+      access_token: "rotated-refresh-current",
+      refresh_token: "next-refresh-current",
+    });
+  });
+
+  it("cannot let late old-generation success replace the active success identity", async () => {
+    const backing = memoryStorage();
+    let blockOldWrite = false;
+    let observedOldWrite!: () => void;
+    let releaseOldWrite!: () => void;
+    const oldWrite = new Promise<void>((resolve) => {
+      observedOldWrite = resolve;
+    });
+    const oldWriteBarrier = new Promise<void>((resolve) => {
+      releaseOldWrite = resolve;
+    });
+    const storage: KVStorage = {
+      get: (key) => backing.get(key),
+      set: async (key, value, options) => {
+        if (blockOldWrite && key === "oauth:tokens") {
+          blockOldWrite = false;
+          observedOldWrite();
+          await oldWriteBarrier;
+        }
+        await backing.set(key, value, options);
+      },
+      delete: (key) => backing.delete(key),
+    };
+    const coordinator = new OAuthRefreshCoordinator();
+    const oldOwner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    oldOwner.captureGeneration("legacy");
+    await oldOwner.saveTokens({
+      access_token: "access-a",
+      token_type: "Bearer",
+      refresh_token: "refresh-a",
+    });
+    const upstreamTokens: string[] = [];
+    const baseFetch: FetchLike = async (_input, init) => {
+      expect(init?.body).toBeInstanceOf(URLSearchParams);
+      const token = (init!.body as URLSearchParams).get("refresh_token")!;
+      upstreamTokens.push(token);
+      return token === "refresh-a"
+        ? Response.json({
+            access_token: "access-a-new",
+            token_type: "Bearer",
+            refresh_token: "refresh-a-new",
+          })
+        : Response.json({
+            access_token: "access-b",
+            token_type: "Bearer",
+            refresh_token: "refresh-b",
+          });
+    };
+    const oldResponse = await coordinator.coordinatedFetch(
+      oldOwner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-a"));
+    blockOldWrite = true;
+    const oldSave = oldOwner.saveTokens(
+      (await oldResponse.json()) as OAuthTokens,
+    );
+    await oldWrite;
+
+    const generationB = `v2:${crypto.randomUUID()}`;
+    await storage.set("oauth:generation", generationB);
+    const unchangedB: OAuthTokens = {
+      access_token: "access-b",
+      token_type: "Bearer",
+      refresh_token: "refresh-b",
+    };
+    await storeCurrentOAuthValue(storage, "oauth:tokens", unchangedB);
+    const ownerB = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    const contenderB = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    for (const provider of [ownerB, contenderB]) {
+      provider.captureGeneration(generationB);
+    }
+    await contenderB.tokens({ issuer: "https://auth.example" });
+    const responseB = await coordinator.coordinatedFetch(ownerB, baseFetch)(
+      "https://auth.example/token",
+      refreshInit("refresh-b"),
+    );
+    await ownerB.saveTokens((await responseB.json()) as OAuthTokens);
+
+    releaseOldWrite();
+    await oldSave;
+    const replayedResponse = await coordinator.coordinatedFetch(
+      contenderB,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-b"));
+    const replayed = (await replayedResponse.json()) as OAuthTokens;
+
+    expect(upstreamTokens).toEqual(["refresh-a", "refresh-b"]);
+    expect(replayed).toEqual(unchangedB);
+    expect(await contenderB.tokens()).toEqual(unchangedB);
+  });
+
+  it("retires a pending mutation when force reauthorization fences its generation", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    owner.captureGeneration("legacy");
+    await owner.saveTokens({
+      access_token: "access-old",
+      token_type: "Bearer",
+      refresh_token: "refresh-old",
+    });
+    let upstreamRequests = 0;
+    const baseFetch: FetchLike = async () => {
+      upstreamRequests++;
+      return Response.json({
+        access_token:
+          upstreamRequests === 1 ? "access-retired" : "access-current-new",
+        token_type: "Bearer",
+        refresh_token:
+          upstreamRequests === 1 ? "refresh-retired" : "refresh-current-new",
+      });
+    };
+    const retiredResponse = await coordinator.coordinatedFetch(
+      owner,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-old"));
+
+    const resetter = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    await resetter.resetAuthorization();
+    const currentGeneration = (await storage.get("oauth:generation"))!;
+    await storeCurrentOAuthValue(storage, "oauth:tokens", {
+      access_token: "access-current",
+      token_type: "Bearer",
+      refresh_token: "refresh-current",
+    });
+    const current = new KvOAuthProvider(
+      "svc",
+      storage,
+      REDIRECT,
+      coordinator,
+    );
+    current.captureGeneration(currentGeneration);
+    const currentResponse = await coordinator.coordinatedFetch(
+      current,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-current"));
+    await current.saveTokens((await currentResponse.json()) as OAuthTokens);
+
+    // The retired provider can finish late, but its generation fence makes the
+    // write unreadable and its exact marker no longer blocks the active epoch.
+    await owner.saveTokens((await retiredResponse.json()) as OAuthTokens);
+    expect(upstreamRequests).toBe(2);
+    expect(await current.tokens()).toMatchObject({
+      access_token: "access-current-new",
+      refresh_token: "refresh-current-new",
+    });
+  });
+
+  it("shares one rotating-token redemption across two request scopes", async () => {
+    const storage = memoryStorage();
+    const issuer = "https://auth.example";
+    const mcpUrl = "https://downstream.example/mcp";
+    await storeCurrentOAuthValue(
+      storage,
+      "oauth:client",
+      {
+        client_id: "connecta-client",
+        redirect_uris: [REDIRECT],
+        token_endpoint_auth_method: "none",
+      },
+      issuer,
+    );
+    await storeCurrentOAuthValue(
+      storage,
+      "oauth:tokens",
+      {
+        access_token: "access-old",
+        token_type: "Bearer",
+        refresh_token: "refresh-old",
+      },
+      issuer,
+    );
+
+    let oldTokenRequests = 0;
+    let refreshRequests = 0;
+    let releaseRefresh!: () => void;
+    const bothScopesRejected = new Promise<void>((resolve) => {
+      releaseRefresh = resolve;
+    });
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.href === "https://downstream.example/.well-known/oauth-protected-resource") {
+        return Response.json({
+          resource: mcpUrl,
+          authorization_servers: [issuer],
+        });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          response_types_supported: ["code"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === `${issuer}/token`) {
+        refreshRequests++;
+        expect(init.body).toBeInstanceOf(URLSearchParams);
+        expect((init.body as URLSearchParams).get("refresh_token")).toBe(
+          "refresh-old",
+        );
+        if (refreshRequests > 1) {
+          return Response.json(
+            { error: "invalid_grant", error_description: "already rotated" },
+            { status: 400 },
+          );
+        }
+        await bothScopesRejected;
+        return Response.json({
+          access_token: "access-new",
+          token_type: "Bearer",
+          refresh_token: "refresh-new",
+        });
+      }
+      if (url.href !== mcpUrl) {
+        throw new Error(`Unexpected OAuth test request: ${url.href}`);
+      }
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+
+      const authorization = new Headers(init.headers).get("authorization");
+      if (authorization === "Bearer access-old") {
+        oldTokenRequests++;
+        if (oldTokenRequests === 2) releaseRefresh();
+        return new Response(null, {
+          status: 401,
+          headers: {
+            "www-authenticate":
+              'Bearer resource_metadata="https://downstream.example/.well-known/oauth-protected-resource"',
+          },
+        });
+      }
+      expect(authorization).toBe("Bearer access-new");
+      const message = JSON.parse(String(init.body)) as {
+        id?: string | number;
+        method: string;
+        params?: { protocolVersion?: string };
+      };
+      if (message.method === "notifications/initialized") {
+        return new Response(null, { status: 202 });
+      }
+      const result =
+        message.method === "initialize"
+          ? {
+              protocolVersion: message.params?.protocolVersion,
+              capabilities: { tools: {} },
+              serverInfo: { name: "rotating", version: "1.0.0" },
+            }
+          : message.method === "tools/list"
+            ? { tools: [] }
+            : undefined;
+      return Response.json({ jsonrpc: "2.0", id: message.id, result });
+    };
+    const connector = remoteMcp("svc", {
+      url: mcpUrl,
+      auth: { type: "oauth" },
+      versionNegotiation: "legacy",
+    });
+    const first = { ...ctx(storage), requestScope: {} };
+    const second = { ...ctx(storage), requestScope: {} };
+
+    vi.stubGlobal("fetch", fetchStub);
+    try {
+      await expect(
+        Promise.all([connector.listTools(first), connector.listTools(second)]),
+      ).resolves.toEqual([[], []]);
+    } finally {
+      await Promise.all([
+        connector.closeScope?.(first),
+        connector.closeScope?.(second),
+      ]);
+      vi.unstubAllGlobals();
+    }
+
+    expect(oldTokenRequests).toBe(2);
+    expect(refreshRequests).toBe(1);
+    expect(
+      await new KvOAuthProvider("svc", storage, REDIRECT).tokens(),
+    ).toMatchObject({
+      access_token: "access-new",
+      refresh_token: "refresh-new",
+    });
   });
 });
 

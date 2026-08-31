@@ -20,6 +20,23 @@ isolate or process —
 on Workers that means a lazy module-scope singleton, which is why both
 deployment shapes build it outside the request handler.
 
+An OAuth `remoteMcp()` connector also owns a runtime-local refresh completion
+gate. It coordinates credential mutation across concurrent request scopes but
+never shares their clients, transports, or responses, and never lets a follower
+cancel the owner. Every participant still awaits the refresh inside its own
+request lifetime; a cancelled follower leaves the shared owner untouched and
+removes only its own wait. The owner's request signal belongs to its token
+fetch. Cancelling that owner fails current joiners too because promoting one
+could replay a refresh token the authorization server already consumed.
+
+The coordinator retains the owner's abort signal only through one temporary
+listener on the exact active refresh. Save, failure, cancellation, or
+generation retirement removes it along with the map entry. It never retains a
+token response, client, or transport. If cancellation lands after a valid
+response while its credential write is still running, a generation-keyed
+identity marker rejects new owners until that exact write finishes. The marker
+contains no promise and generation retirement removes it.
+
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
 request that created them. `Nothing request-bound survives a request` is an

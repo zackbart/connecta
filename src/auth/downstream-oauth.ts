@@ -1,4 +1,5 @@
 import type {
+  FetchLike,
   OAuthClientInformationContext,
   OAuthClientInformationMixed,
   OAuthClientMetadata,
@@ -35,6 +36,379 @@ const OAUTH_VALUE_KEYS = [
   "oauth:state",
 ] as const;
 const MAX_CLEANUP_BACKLOG = 1_000;
+
+function isRefreshTokenRequest(init: RequestInit | undefined): boolean {
+  if ((init?.method ?? "GET").toUpperCase() !== "POST") return false;
+  const body = init?.body;
+  if (body instanceof URLSearchParams) {
+    return body.get("grant_type") === "refresh_token";
+  }
+  if (typeof body !== "string") return false;
+  return new URLSearchParams(body).get("grant_type") === "refresh_token";
+}
+
+function sdkAcceptsOAuthTokens(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const candidate = value as Record<string, unknown>;
+  if (
+    typeof candidate.access_token !== "string" ||
+    typeof candidate.token_type !== "string"
+  ) {
+    return false;
+  }
+  for (const key of ["id_token", "scope", "refresh_token"] as const) {
+    if (candidate[key] !== undefined && typeof candidate[key] !== "string") {
+      return false;
+    }
+  }
+  if (candidate.expires_in !== undefined) {
+    try {
+      if (!Number.isFinite(Number(candidate.expires_in))) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+async function refreshResponseFailure(
+  response: Response,
+): Promise<Error | undefined> {
+  if (!response.ok) {
+    return new Error(`OAuth refresh failed with HTTP ${response.status}.`);
+  }
+  try {
+    return sdkAcceptsOAuthTokens(await response.clone().json())
+      ? undefined
+      : new Error("OAuth refresh response did not match the token schema.");
+  } catch {
+    return new Error("OAuth refresh response did not contain JSON tokens.");
+  }
+}
+
+function refreshMutationPendingResponse(): Response {
+  return Response.json(
+    {
+      error: "temporarily_unavailable",
+      error_description:
+        "OAuth refresh is temporarily unavailable while previous credentials commit.",
+    },
+    { status: 503 },
+  );
+}
+
+type OAuthRefreshFlightOutcome =
+  | { status: "refreshed" }
+  | { status: "retired" }
+  | { status: "failed"; error: unknown };
+
+interface OAuthRefreshFlight {
+  done: Promise<OAuthRefreshFlightOutcome>;
+  release: (outcome: OAuthRefreshFlightOutcome) => void;
+  stopObservingOwnerAbort: () => void;
+  mutationId: object;
+}
+
+function aborted(signal: AbortSignal): unknown {
+  return (
+    signal.reason ?? new DOMException("This operation was aborted", "AbortError")
+  );
+}
+
+async function waitForRefreshFlight(
+  flight: OAuthRefreshFlight,
+  signal?: AbortSignal,
+): Promise<Exclude<OAuthRefreshFlightOutcome, { status: "failed" }>> {
+  let outcome: OAuthRefreshFlightOutcome;
+  if (!signal) {
+    outcome = await flight.done;
+  } else {
+    outcome = await new Promise<OAuthRefreshFlightOutcome>((resolve, reject) => {
+      let settled = false;
+      const finish = (settle: () => void) => {
+        if (settled) return;
+        settled = true;
+        signal.removeEventListener("abort", onAbort);
+        settle();
+      };
+      const onAbort = () => finish(() => reject(aborted(signal)));
+      signal.addEventListener("abort", onAbort, { once: true });
+      void flight.done.then((result) => finish(() => resolve(result)));
+      // Abort may land between the caller's check and listener registration.
+      if (signal.aborted) onAbort();
+    });
+  }
+  if (outcome.status === "failed") throw outcome.error;
+  return outcome;
+}
+
+/**
+ * Share one rotating-token redemption within one connector runtime and OAuth
+ * generation. The first request still owns the real fetch and response. Its
+ * abort signal has one bounded listener until the exact flight settles, so a
+ * cancellation after the response cannot strand waiters during token storage.
+ * Followers wait for that provider to save tokens, then re-read storage. The
+ * map never retains a token response or transport.
+ *
+ * This is intentionally runtime-local. KVStorage has no atomic coordination
+ * operation, so a second isolate can still race the same refresh token.
+ */
+export class OAuthRefreshCoordinator {
+  private readonly flights = new Map<string, OAuthRefreshFlight>();
+  /** Opaque identities only: no request promise, signal, callback, or response. */
+  private readonly pendingMutations = new Map<string, object>();
+  /** One bounded latest-success slot, containing only generation + identity. */
+  private successfulRefresh:
+    | { generation: string; identity: object }
+    | undefined;
+  /** Replaced on every map mutation, closing flight/pending ABA across awaits. */
+  private stateRevision: object = {};
+
+  private advanceStateRevision(): void {
+    this.stateRevision = {};
+  }
+
+  private observeAuthoritativeGeneration(generation: string): void {
+    const staleGenerations = new Set([
+      ...this.flights.keys(),
+      ...this.pendingMutations.keys(),
+    ]);
+    for (const stale of staleGenerations) {
+      if (stale !== generation) this.retire(stale);
+    }
+    if (
+      this.successfulRefresh &&
+      this.successfulRefresh.generation !== generation
+    ) {
+      this.successfulRefresh = undefined;
+      this.advanceStateRevision();
+    }
+  }
+
+  private settle(
+    generation: string,
+    flight: OAuthRefreshFlight,
+    outcome: OAuthRefreshFlightOutcome,
+  ): void {
+    if (this.flights.get(generation) !== flight) return;
+    this.flights.delete(generation);
+    this.advanceStateRevision();
+    flight.stopObservingOwnerAbort();
+    flight.release(outcome);
+  }
+
+  private markMutationPending(
+    generation: string,
+    flight: OAuthRefreshFlight,
+  ): boolean {
+    if (this.flights.get(generation) !== flight) return false;
+    this.pendingMutations.set(generation, flight.mutationId);
+    this.advanceStateRevision();
+    return true;
+  }
+
+  private finishMutation(
+    generation: string,
+    flight: OAuthRefreshFlight,
+  ): boolean {
+    if (this.pendingMutations.get(generation) === flight.mutationId) {
+      this.pendingMutations.delete(generation);
+      this.advanceStateRevision();
+      return true;
+    }
+    return false;
+  }
+
+  /** @internal Opaque basis for issuer-aware provider token reads. */
+  successfulRefreshIdentity(generation: string): object | undefined {
+    return this.successfulRefresh?.generation === generation
+      ? this.successfulRefresh.identity
+      : undefined;
+  }
+
+  coordinatedFetch(
+    provider: KvOAuthProvider,
+    baseFetch: FetchLike,
+    requestSignal?: AbortSignal,
+  ): FetchLike {
+    return async (input, init) => {
+      // Await passthrough failures here so workerd associates the rejection
+      // with the fetch the SDK is already awaiting, rather than reporting the
+      // adopted inner promise as an unhandled rejection.
+      if (!isRefreshTokenRequest(init)) return await baseFetch(input, init);
+
+      const generation = await provider.flowGeneration();
+      const requestedRefreshToken =
+        init?.body instanceof URLSearchParams
+          ? init.body.get("refresh_token")
+          : new URLSearchParams(String(init?.body ?? "")).get("refresh_token");
+      while (true) {
+        const revisionBeforeReads = this.stateRevision;
+        const activeGeneration = await provider.generation();
+        this.observeAuthoritativeGeneration(activeGeneration);
+        if (activeGeneration !== generation) this.retire(generation);
+        const activeFlight = this.flights.get(generation);
+        const pendingMutation = this.pendingMutations.get(generation);
+        if (
+          activeGeneration === generation &&
+          pendingMutation &&
+          activeFlight?.mutationId !== pendingMutation
+        ) {
+          return refreshMutationPendingResponse();
+        }
+        let currentTokens =
+          activeGeneration === generation ? await provider.tokens() : undefined;
+        const latestGeneration = await provider.generation();
+        this.observeAuthoritativeGeneration(latestGeneration);
+        if (latestGeneration !== generation) {
+          this.retire(generation);
+          currentTokens = undefined;
+        }
+
+        if (this.stateRevision !== revisionBeforeReads) continue;
+
+        // Re-check both identities after every storage await. An owner can
+        // abort while this caller reads tokens, leaving only the mutation
+        // marker; a reset can likewise retire this caller's captured epoch.
+        const existing = this.flights.get(generation);
+        const latestPendingMutation = this.pendingMutations.get(generation);
+        if (
+          latestGeneration === generation &&
+          latestPendingMutation &&
+          existing?.mutationId !== latestPendingMutation
+        ) {
+          return refreshMutationPendingResponse();
+        }
+
+        // This flow may have read a token just before another flow saved its
+        // rotation. Replaying the retired token would recreate the race after
+        // the first network response. Give the SDK the already-saved rotating
+        // credential instead. A tokenless current value cannot do that: the
+        // SDK would merge the requested old refresh token back into it.
+        if (
+          currentTokens?.refresh_token &&
+          (currentTokens.refresh_token !== requestedRefreshToken ||
+            provider.refreshBasisChanged(currentTokens, generation))
+        ) {
+          return Response.json(currentTokens);
+        }
+        if (currentTokens?.refresh_token !== requestedRefreshToken) {
+          return Response.json(
+            {
+              error: "invalid_grant",
+              error_description: "Refresh token is no longer active.",
+            },
+            { status: 400 },
+          );
+        }
+
+        if (existing) {
+          const outcome = await waitForRefreshFlight(existing, requestSignal);
+          if (outcome.status === "refreshed") {
+            const activeGeneration = await provider.generation();
+            const refreshedTokens =
+              activeGeneration === generation
+                ? await provider.tokens()
+                : undefined;
+            if (refreshedTokens?.refresh_token) {
+              return Response.json(refreshedTokens);
+            }
+          }
+          continue;
+        }
+
+        let release!: (outcome: OAuthRefreshFlightOutcome) => void;
+        const flight: OAuthRefreshFlight = {
+          done: new Promise<OAuthRefreshFlightOutcome>((resolve) => {
+            release = resolve;
+          }),
+          release: (outcome) => release(outcome),
+          stopObservingOwnerAbort: () => {},
+          mutationId: {},
+        };
+        this.flights.set(generation, flight);
+        this.advanceStateRevision();
+        provider.captureRefreshFlight(generation, flight);
+        if (requestSignal) {
+          let observing = true;
+          const onOwnerAbort = () => {
+            this.fail(generation, flight, aborted(requestSignal));
+          };
+          flight.stopObservingOwnerAbort = () => {
+            if (!observing) return;
+            observing = false;
+            requestSignal.removeEventListener("abort", onOwnerAbort);
+          };
+          requestSignal.addEventListener("abort", onOwnerAbort, { once: true });
+          // Abort may land between flight publication and listener registration.
+          if (requestSignal.aborted) onOwnerAbort();
+        }
+        try {
+          const response = await baseFetch(
+            input,
+            requestSignal ? { ...init, signal: requestSignal } : init,
+          );
+          // These responses never reach a successful saveTokens callback. Give
+          // current waiters a bounded failure now while leaving the owner's
+          // response untouched for the SDK to parse and classify itself.
+          const failure = await refreshResponseFailure(response);
+          if (failure) {
+            this.fail(generation, flight, failure);
+          } else if (
+            requestSignal?.aborted ||
+            !this.markMutationPending(generation, flight)
+          ) {
+            throw requestSignal?.aborted
+              ? aborted(requestSignal)
+              : new Error("OAuth refresh ended before tokens could be saved.");
+          }
+          return response;
+        } catch (error) {
+          this.fail(generation, flight, error);
+          throw error;
+        }
+      }
+    };
+  }
+
+  /** Publish one exact owner's successful save without disturbing a newer try. */
+  succeedMutation(generation: string, flight: OAuthRefreshFlight): void {
+    if (this.finishMutation(generation, flight)) {
+      this.successfulRefresh = { generation, identity: {} };
+      this.advanceStateRevision();
+    }
+    this.settle(generation, flight, { status: "refreshed" });
+  }
+
+  /** Give joined callers a fetch/flow failure, without rejecting the gate. */
+  fail(generation: string, flight: OAuthRefreshFlight, error: unknown): void {
+    this.settle(generation, flight, { status: "failed", error });
+  }
+
+  /** Finish an exact failed credential write, then publish its failure. */
+  failMutation(
+    generation: string,
+    flight: OAuthRefreshFlight,
+    error: unknown,
+  ): void {
+    this.finishMutation(generation, flight);
+    this.settle(generation, flight, { status: "failed", error });
+  }
+
+  /** Force reauthorization fences and wakes every waiter on the retired epoch. */
+  retire(generation: string): void {
+    if (this.pendingMutations.delete(generation)) {
+      this.advanceStateRevision();
+    }
+    if (this.successfulRefresh?.generation === generation) {
+      this.successfulRefresh = undefined;
+      this.advanceStateRevision();
+    }
+    const flight = this.flights.get(generation);
+    if (!flight) return;
+    this.settle(generation, flight, { status: "retired" });
+  }
+}
 
 interface StoredOAuthValue<T> {
   connectaOAuthVersion: typeof STORED_VALUE_VERSION;
@@ -117,11 +491,24 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * becoming readable under the new generation.
    */
   private capturedGeneration: string | null = null;
+  private refreshFlight:
+    | { generation: string; flight: OAuthRefreshFlight }
+    | undefined;
+  /** Tokens this request's issuer-aware auth flow decided to refresh. */
+  private refreshBasis:
+    | {
+        accessToken: string;
+        refreshToken?: string;
+        generation: string;
+        successIdentity?: object;
+      }
+    | undefined;
 
   constructor(
     private readonly connectorId: string,
     private readonly storage: KVStorage,
     private readonly redirectUri: string,
+    private readonly refreshCoordinator?: OAuthRefreshCoordinator,
   ) {}
 
   /**
@@ -131,6 +518,59 @@ export class KvOAuthProvider implements OAuthClientProvider {
    */
   captureGeneration(gen: string): void {
     this.capturedGeneration = gen;
+  }
+
+  /** The generation captured for this flow, before a concurrent reset. */
+  async flowGeneration(): Promise<string> {
+    return this.capturedGeneration ?? this.generation();
+  }
+
+  /** @internal Record the refresh attempt this provider owns. */
+  captureRefreshFlight(
+    generation: string,
+    flight: OAuthRefreshFlight,
+  ): void {
+    this.refreshFlight = { generation, flight };
+  }
+
+  private succeedRefreshFlight(): void {
+    const owned = this.refreshFlight;
+    this.refreshFlight = undefined;
+    if (owned) {
+      this.refreshCoordinator?.succeedMutation(
+        owned.generation,
+        owned.flight,
+      );
+    }
+  }
+
+  private failRefreshFlight(error: unknown, mutationFinished = false): void {
+    const owned = this.refreshFlight;
+    this.refreshFlight = undefined;
+    if (owned) {
+      if (mutationFinished) {
+        this.refreshCoordinator?.failMutation(
+          owned.generation,
+          owned.flight,
+          error,
+        );
+      } else {
+        this.refreshCoordinator?.fail(owned.generation, owned.flight, error);
+      }
+    }
+  }
+
+  /** True when another request saved a refresh result after this flow's read. */
+  refreshBasisChanged(current: OAuthTokens, generation: string): boolean {
+    const basis = this.refreshBasis;
+    return Boolean(
+      basis &&
+        basis.generation === generation &&
+        (basis.accessToken !== current.access_token ||
+          basis.refreshToken !== current.refresh_token ||
+          basis.successIdentity !==
+            this.refreshCoordinator?.successfulRefreshIdentity(generation)),
+    );
   }
 
   /**
@@ -370,24 +810,46 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async tokens(
     ctx?: OAuthClientInformationContext,
   ): Promise<OAuthTokens | undefined> {
-    return this.readIssuerBoundValue(
+    const refreshGeneration = ctx ? await this.flowGeneration() : undefined;
+    const successIdentity =
+      refreshGeneration !== undefined
+        ? this.refreshCoordinator?.successfulRefreshIdentity(refreshGeneration)
+        : undefined;
+    const tokens = await this.readIssuerBoundValue(
       "oauth:tokens",
       (raw) => JSON.parse(raw) as OAuthTokens,
       (value) => JSON.stringify(value),
       ctx,
     );
+    if (ctx && tokens && refreshGeneration !== undefined) {
+      this.refreshBasis = {
+        accessToken: tokens.access_token,
+        generation: refreshGeneration,
+        ...(tokens.refresh_token !== undefined
+          ? { refreshToken: tokens.refresh_token }
+          : {}),
+        ...(successIdentity !== undefined ? { successIdentity } : {}),
+      };
+    }
+    return tokens;
   }
 
   async saveTokens(
     tokens: OAuthTokens,
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
-    await this.writeValue(
-      "oauth:tokens",
-      tokens,
-      (value) => JSON.stringify(value),
-      ctx?.issuer,
-    );
+    try {
+      await this.writeValue(
+        "oauth:tokens",
+        tokens,
+        (value) => JSON.stringify(value),
+        ctx?.issuer,
+      );
+      this.succeedRefreshFlight();
+    } catch (error) {
+      this.failRefreshFlight(error, true);
+      throw error;
+    }
   }
 
   /**
@@ -430,11 +892,21 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    await this.writeValue(
-      "oauth:pending",
-      authorizationUrl.toString(),
-      (raw) => raw,
-    );
+    try {
+      await this.writeValue(
+        "oauth:pending",
+        authorizationUrl.toString(),
+        (raw) => raw,
+      );
+      this.failRefreshFlight(
+        new Error(
+          "OAuth refresh required reauthorization before tokens were saved.",
+        ),
+      );
+    } catch (error) {
+      this.failRefreshFlight(error);
+      throw error;
+    }
   }
 
   /** The stored authorization URL, if a flow is pending. */
@@ -518,6 +990,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     // reset's epoch after their cleanup finishes out of order.
     try {
       await this.storage.set("oauth:generation", active);
+      this.refreshCoordinator?.retire(previous);
     } catch (error) {
       try {
         await this.storage.delete(cleanupBacklogKey(active));
@@ -547,29 +1020,38 @@ export class KvOAuthProvider implements OAuthClientProvider {
   async invalidateCredentials(
     scope: "all" | "client" | "tokens" | "verifier" | "discovery",
   ): Promise<void> {
-    const generation = await this.writeGeneration();
-    if (scope === "all") {
-      await this.deleteAll([
-        oauthValueStorageKey("oauth:client", generation),
-        oauthValueStorageKey("oauth:tokens", generation),
-        oauthValueStorageKey("oauth:verifier", generation),
-      ]);
-      return;
-    }
-    if (scope === "client") {
-      await this.storage.delete(
-        oauthValueStorageKey("oauth:client", generation),
-      );
-    }
-    if (scope === "tokens") {
-      await this.storage.delete(
-        oauthValueStorageKey("oauth:tokens", generation),
-      );
-    }
-    if (scope === "verifier") {
-      await this.storage.delete(
-        oauthValueStorageKey("oauth:verifier", generation),
-      );
+    const endsRefresh = scope === "all" || scope === "tokens";
+    try {
+      const generation = await this.writeGeneration();
+      if (scope === "all") {
+        await this.deleteAll([
+          oauthValueStorageKey("oauth:client", generation),
+          oauthValueStorageKey("oauth:tokens", generation),
+          oauthValueStorageKey("oauth:verifier", generation),
+        ]);
+      } else if (scope === "client") {
+        await this.storage.delete(
+          oauthValueStorageKey("oauth:client", generation),
+        );
+      } else if (scope === "tokens") {
+        await this.storage.delete(
+          oauthValueStorageKey("oauth:tokens", generation),
+        );
+      } else if (scope === "verifier") {
+        await this.storage.delete(
+          oauthValueStorageKey("oauth:verifier", generation),
+        );
+      }
+      if (endsRefresh) {
+        this.failRefreshFlight(
+          new Error(
+            "OAuth refresh invalidated credentials before tokens were saved.",
+          ),
+        );
+      }
+    } catch (error) {
+      if (endsRefresh) this.failRefreshFlight(error);
+      throw error;
     }
   }
 }

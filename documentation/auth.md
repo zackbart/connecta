@@ -65,7 +65,7 @@ Worker-level Access runs before every connecta route. Consequently:
   OAuth discovery paths when Managed OAuth is enabled.
 
 The [Worker example](../examples/worker/) carries the complete deployment shape
-and the [upgrade guide](./upgrading.md#0200--0211) gives the reversible Clerk
+and the [upgrade guide](./upgrading.md#0200--0212) gives the reversible Clerk
 migration.
 
 ## Clerk configuration is checked at construction

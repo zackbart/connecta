@@ -107,3 +107,38 @@ the retired grant.
 The OAuth callback verifies the one-shot `state` first, then hands the complete
 query string—including RFC 9207 `iss`—to the SDK transport. One-shot state,
 verifier, and pending URL are cleared only after a successful exchange.
+
+Within one `remoteMcp()` runtime, one request scope owns refresh-token
+redemption for an OAuth generation. Concurrent scopes wait for the owner's
+token save or bounded failure, then either read storage again or receive that
+failure. A scope that had already read the retired refresh token reuses the
+newly stored rotating token locally instead of sending the retired value
+upstream. Force reauthorization retires the old generation's gate, and a
+failed flow releases ownership for a later attempt. The coordinator retains
+only a completion signal and one temporary owner-abort listener until that
+exact flight settles, never the token response or downstream transport. A
+follower may stop waiting when its own request is cancelled without cancelling
+the owner or poisoning the generation for later callers. If the owner's
+credential mutation fails, joined callers receive that same bounded failure
+instead of waking to redeem the unchanged token; a later independent call may
+retry. Non-success and malformed token responses settle current waiters at the
+fetch boundary, before any later authorization callback can itself fail.
+Cancelling the owner aborts its fetch and fails current joiners rather than
+promoting one: once a request reaches the authorization server, repeating its
+old refresh token is not known to be safe. If that cancellation lands while
+the valid response's credential write is already running, a same-generation
+attempt receives `temporarily_unavailable` until the exact write succeeds or
+fails. This mutation marker contains no retained promise; force
+reauthorization removes it when the old generation becomes unreadable.
+An additional opaque success identity lets a request recognize a refresh that
+completed after its issuer-aware token read even when the authorization server
+returned byte-identical credentials. The identity is generation-scoped and is
+discarded with the retired generation. Every authoritative storage-generation
+read also retires coordinator state from other epochs, so an externally
+advanced generation cannot be overwritten in runtime state by late old work.
+
+This guarantee is runtime-local. `KVStorage` has no atomic lock or
+compare-and-set operation, so separate processes or Worker isolates can still
+redeem the same refresh token concurrently. Generation envelopes continue to
+fence their writes, but Connecta does not claim cross-isolate exactly-once
+refresh.

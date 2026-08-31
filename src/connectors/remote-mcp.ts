@@ -12,7 +12,10 @@ import type {
   Tool,
   Transport,
 } from "@modelcontextprotocol/client";
-import { KvOAuthProvider } from "../auth/downstream-oauth.js";
+import {
+  KvOAuthProvider,
+  OAuthRefreshCoordinator,
+} from "../auth/downstream-oauth.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
 import { ConnectorCallError, msg } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
@@ -557,6 +560,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
   // must not recreate an ownerless connection under the ended scope.
   const closedScopes = new WeakSet<object>();
   const isOauth = opts.auth?.type === "oauth";
+  // Long-lived enough for distinct request scopes in this connector runtime to
+  // join one token redemption. It owns no client, transport, or request state.
+  const refreshCoordinator = new OAuthRefreshCoordinator();
   const logger = opts.logger ?? console;
 
   const credentialAuth =
@@ -785,6 +791,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       id,
       ctx.storage,
       `${ctx.baseUrl}/oauth/callback/${id}`,
+      refreshCoordinator,
     );
     if (state) state.provider = provider;
     return provider;
@@ -804,9 +811,14 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     const url = new URL(opts.url);
     const guardedFetch = redirectSafeFetch(id, opts.redirects);
     if (opts.auth?.type === "oauth") {
+      const oauthProvider = provider ?? newProvider(ctx);
       return new StreamableHTTPClientTransport(url, {
-        authProvider: provider ?? newProvider(ctx),
-        fetch: guardedFetch,
+        authProvider: oauthProvider,
+        fetch: refreshCoordinator.coordinatedFetch(
+          oauthProvider,
+          guardedFetch,
+          ctx.signal,
+        ),
       });
     }
     const headers =

@@ -468,6 +468,10 @@ class QuickJsChildPool implements AdmittingExecutor {
       );
     }
     const child = fork(childPath, [], {
+      // The child needs only its entry path, exec arguments, and IPC channel.
+      // Do not copy deployment credentials or Node startup configuration into
+      // the process that contains the guest runtime.
+      env: {},
       execArgv: sourceMode ? ["--import", "tsx"] : [],
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });

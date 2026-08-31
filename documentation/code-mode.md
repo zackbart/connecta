@@ -746,7 +746,7 @@ Worker renders arguments with `String()` (so an object logs as
 latter two. Only the three captured everywhere are contract (`R5`); rendering is
 not.
 
-**X5. Leftover authority.** QuickJS blocks imports and has no `fetch`, `process`, timers, `crypto`, or `WebSocket`. A Dynamic Worker has those globals plus a non-contract set of runtime builtins through `import()` and `process.getBuiltinModule()`, including `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and `cloudflare:workers`. The upstream set can drift; this list is not an allowlist.
+**X5. Leftover authority.** QuickJS blocks imports and has no `fetch`, `process`, timers, `crypto`, or `WebSocket`. Its Node child starts with an explicitly empty process environment rather than inheriting deployment variables or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of runtime builtins through `import()` and `process.getBuiltinModule()`, including `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and `cloudflare:workers`. The upstream set can drift; this list is not an allowlist.
 The supported Worker construction is exactly `new DynamicWorkerExecutor({ loader })`. Do not pass `bindings`, `modules`, or `globalOutbound`: each can grant ambient configuration, code, or egress. Under it, `process.env`, lexical `this.env`, and `cloudflare:workers.env` are empty; `node:fs`, `node:http`, and `node:https` are unavailable through either access route; external `fetch`, `WebSocket`, `node:net`, and `node:tls` fail with workerd's outbound-denial error; DNS lookup ends unresolved; and `fetch("data:...")` resolves locally.
 `P2` is the portable contract. Programs use none of this runtime-only authority, including timers and `crypto`, because the same code fails on QuickJS. The `execute_code` description and served `usage` skill say so before an agent writes code.
 
@@ -832,7 +832,7 @@ the upstream `Executor` shape assignable.
 | Clauses | Test |
 | --- | --- |
 | `P1`, `P5` | `test/guest-api-contract.test.ts` (TypeScript syntax), `test/quickjs-executor.test.ts` (`normalizeCode`) |
-| `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
+| `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (empty child-process environment), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
 | `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing), `test/server.test.ts` (bounded live connector inventory) |

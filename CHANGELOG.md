@@ -2,6 +2,36 @@
 
 All notable changes to this package are documented here.
 
+## 0.21.2 — 2026-08-31
+
+This patch closes two runtime isolation gaps: concurrent request scopes now
+share one downstream OAuth refresh inside a connector runtime, and QuickJS
+children no longer inherit the deployment process environment. Existing
+deployments need no configuration or storage migration. OAuth deployments get
+the refresh fix automatically; Node deployments using QuickJS get the tighter
+child boundary automatically. Deployments using neither path can ignore this
+release.
+
+### Changed
+
+- **Empty QuickJS child environments.** The Node process hosting the QuickJS
+  guest runtime starts with an explicit empty environment, so deployment
+  credentials and Node startup configuration such as `NODE_OPTIONS` never
+  cross the child-process boundary (#515).
+
+### Fixed
+
+- **One rotating-token redemption per runtime.** Concurrent request scopes for
+  one OAuth connector generation share the owner's refresh result or bounded
+  failure instead of independently redeeming the same refresh token. The gate
+  remains request-safe across follower and owner cancellation, storage
+  failures, force reauthorization, and issuer-generation changes (#514).
+- **Late and byte-identical refresh races.** Generation-scoped mutation and
+  success identities close token-save TOCTOU and complete-flight ABA windows,
+  including authorization servers that preserve the refresh token or return
+  byte-identical credentials. The guarantee is deliberately runtime-local;
+  `KVStorage` still has no cross-isolate compare-and-set primitive (#514).
+
 ## 0.21.1 — 2026-08-30
 
 This patch aligns the handwritten Cloudflare and Notion contracts and the four

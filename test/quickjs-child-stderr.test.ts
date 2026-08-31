@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const { forkMock } = vi.hoisted(() => ({ forkMock: vi.fn() }));
 
@@ -10,6 +10,10 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 import { quickJsExecutor } from "../src/executors/quickjs.js";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 class CrashingChild extends EventEmitter {
   connected = true;
@@ -51,6 +55,30 @@ class CrashingChild extends EventEmitter {
 }
 
 describe("QuickJS child stderr diagnostics", () => {
+  it("starts the child with an explicit empty environment", async () => {
+    vi.stubEnv("CONNECTA_QUICKJS_PARENT_SENTINEL", "deployment-secret");
+    vi.stubEnv("NODE_OPTIONS", "--inspect=127.0.0.1:0");
+    const child = new CrashingChild();
+    forkMock.mockImplementationOnce(() => {
+      queueMicrotask(() => child.emit("message", { type: "ready" }));
+      return child;
+    });
+
+    const executor = quickJsExecutor();
+    await executor.execute("async () => 1", []);
+
+    expect(process.env.CONNECTA_QUICKJS_PARENT_SENTINEL).toBe(
+      "deployment-secret",
+    );
+    expect(process.env.NODE_OPTIONS).toBe("--inspect=127.0.0.1:0");
+    expect(forkMock).toHaveBeenCalledWith(
+      expect.stringMatching(/quickjs-child\.ts$/),
+      [],
+      expect.objectContaining({ env: {} }),
+    );
+    await executor.close?.();
+  });
+
   it("reports only the bounded stderr tail after an abnormal child exit", async () => {
     const child = new CrashingChild();
     forkMock.mockImplementationOnce(() => {
