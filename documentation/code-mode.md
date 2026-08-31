@@ -785,8 +785,8 @@ The human message is unchanged; a mismatched frame is ordinary untyped prose.
 
 ## Changes from earlier code mode
 
-Six behaviors changed with this contract, matching the changelog's Unreleased
-entry. Programs that ran before still run.
+Six behaviors changed with this contract, matching the 0.10.0 release notes.
+Programs that ran before still run.
 
 - **Caught Connecta failures expose their classification** (`E1`, `X11`). Their human message and thrown semantics stay unchanged; `code`, `retryable`, and `details` are additive.
 

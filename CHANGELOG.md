@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.22.0 — 2026-08-31
 
 This release lets one deployment serve several authenticated people without
 becoming an account system. Connector visibility comes from deployment config,
@@ -12,7 +12,11 @@ every interactive human stays an operator unless the deployment opts into the
 new identity rules. A signed-in human may manage authentication for every
 connector their code-derived view includes; operator status separately controls
 tokens and global activity. Worker deployments also gain the complete Managed
-OAuth callback allowlist in the shipped example and agent instructions.
+OAuth callback allowlist in the shipped example and agent instructions. The
+one upgrade seam is deliberate: in-flight `get_result` ids created by a named
+caller do not cross into the new subject partition, so finish paging them
+before deployment. Single-user deployments need no identity configuration,
+and non-Worker deployments can ignore the callback-policy change.
 
 ### Added
 
@@ -47,6 +51,9 @@ OAuth callback allowlist in the shipped example and agent instructions.
 - **One tenant, several people.** The ethos now refuses a connecta-owned account
   model while allowing externally authenticated principals, config-derived
   connector visibility, and personal downstream credentials inside one tenant.
+- **Reviewed Cloudflare deletion contract.** Cloudflare removed a spurious
+  required empty request body from Worker script deletion. Connecta already
+  sent no body, so only the reviewed endpoint digest changes (#517).
 
 ## 0.21.2 — 2026-08-31
 

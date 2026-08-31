@@ -194,7 +194,7 @@
       "method": "DELETE",
       "path": "/accounts/{account_id}/workers/scripts/{script_name}",
       "specRevision": "4.0.0",
-      "contract": "sha256:04b2adec28494a7531b4ded74ceb33c4ee3334eb90aca0c9eee4330bf1460bc7"
+      "contract": "sha256:2d4c349e9d99294cc1c945e7bfe57f00e5086db8b8c20dd9036a9a638fb8242f"
     },
     {
       "method": "GET",
