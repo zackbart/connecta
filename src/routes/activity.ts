@@ -174,8 +174,18 @@ export async function routeActivity(
   if (request.method !== "GET") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }
-  const authz = await authorize(request, baseUrl, opts.auth, runtimeContext);
+  const authz = await authorize(
+    request,
+    baseUrl,
+    opts.auth,
+    runtimeContext,
+    opts.identity,
+    false,
+  );
   if (!authz.ok) return authz.response;
+  if (opts.identity?.operatorAccess && !authz.operator) {
+    return privateJson({ error: "operator access required" }, { status: 403 });
+  }
   if (
     opts.activityReadGate &&
     !(await opts.activityReadGate(authz.actor))

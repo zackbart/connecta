@@ -223,7 +223,7 @@ export function credentialUnavailableCopy(
   if (capability === "vault_not_configured") {
     return "Credential storage is not configured. Set credentials.encryptionKey before managing connector credentials here.";
   }
-  return "Credential management requires an eligible interactive operator. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
+  return "Credential management requires an interactive user. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
 }
 
 export function accessTokenUnavailableCopy(

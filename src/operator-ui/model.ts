@@ -42,6 +42,8 @@ interface UiCredential {
 
 export interface UiConnector {
   id: string;
+  /** Downstream authentication owner. Older payload fixtures omit it as shared. */
+  authScope?: "shared" | "personal";
   title?: string;
   description?: string;
   status: "ok" | "auth_required" | "error";
@@ -49,7 +51,7 @@ export interface UiConnector {
   authorizationUrl?: string;
   toolCount: number;
   tools: UiTool[];
-  /** This connector exposes operator-managed downstream OAuth lifecycle hooks. */
+  /** This connector exposes manageable downstream OAuth lifecycle hooks. */
   oauth?: boolean;
   credential?: UiCredential;
   /**
@@ -84,7 +86,7 @@ export interface UiData {
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
   accessTokenManagement: AccessTokenManagementCapability;
-  /** True only for an eligible interactive operator. */
+  /** True when this interactive human may manage any visible OAuth connector. */
   oauthManagement: boolean;
 }
 

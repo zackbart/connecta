@@ -151,6 +151,10 @@ export interface RegistryOptions {
   storage: KVStorage;
   logger: Logger;
   credentialVault?: CredentialVault | undefined;
+  /** Internal owner partition used by a personal registry. */
+  credentialOwner?: string | undefined;
+  /** Internal child registries skip deployment-wide construction warnings. */
+  constructionChecks?: boolean | undefined;
   toolCacheTtlSeconds?: number | undefined;
   persistToolCatalog?: boolean | undefined;
   toolCatalogStaleSeconds?: number | undefined;
@@ -175,6 +179,14 @@ function namespaced(storage: KVStorage, prefix: string): KVStorage {
     get: (k) => storage.get(prefix + k),
     set: (k, v, o) => storage.set(prefix + k, v, o),
     delete: (k) => storage.delete(prefix + k),
+    ...(storage.list
+      ? {
+          list: async (keyPrefix: string) =>
+            (await storage.list!(prefix + keyPrefix)).map((key) =>
+              key.slice(prefix.length),
+            ),
+        }
+      : {}),
   };
 }
 
@@ -246,6 +258,26 @@ export interface RegistryView {
     callOptions?: ConnectorOperationOptions,
   ): Promise<ConnectorStatus>;
   invalidateStored(id: string): Promise<void>;
+  /** Bind returned OAuth state to this view's personal storage partition. */
+  bindOAuthHandoff(id: string, authorizationUrl: string): Promise<void>;
+}
+
+export interface RegistryScope {
+  connectorIds: "all" | readonly string[];
+  subjectKey?: string;
+  principalKey?: string;
+}
+
+const MAX_PERSONAL_REGISTRIES = 1_024;
+const OAUTH_HANDOFF_TTL_SECONDS = 15 * 60;
+
+async function sha256Hex(value: string): Promise<string> {
+  const bytes = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", encoder.encode(value)),
+  );
+  return [...bytes]
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 /**
@@ -289,11 +321,14 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  private readonly configuredConnectors: Connector[];
+  private readonly personalRegistries = new Map<string, Registry>();
 
   constructor(
     connectors: Connector[],
     private readonly opts: RegistryOptions,
   ) {
+    this.configuredConnectors = [...connectors];
     this.observedOutputSchemas = new ObservedOutputSchemas();
     this.ttlMs =
       (opts.toolCacheTtlSeconds ?? DEFAULT_TTL_SECONDS) * 1000;
@@ -312,6 +347,15 @@ export class Registry implements RegistryView {
       }
       if (this.connectors.has(c.id)) {
         throw new Error(`Duplicate connector id "${c.id}"`);
+      }
+      if (
+        c.authScope !== undefined &&
+        c.authScope !== "shared" &&
+        c.authScope !== "personal"
+      ) {
+        throw new Error(
+          `Invalid authScope on connector "${c.id}": expected "shared" or "personal"`,
+        );
       }
       const configuredGuideSummary =
         typeof c.usageGuide === "object"
@@ -336,8 +380,116 @@ export class Registry implements RegistryView {
         );
       }
     }
-    this.checkConventions(opts.logger);
-    this.checkResultCaps(opts.logger, opts.maxResultBytes);
+    if (opts.constructionChecks !== false) {
+      this.checkConventions(opts.logger);
+      this.checkResultCaps(opts.logger, opts.maxResultBytes);
+    }
+  }
+
+  personalRegistry(principalKey: string): Registry {
+    const existing = this.personalRegistries.get(principalKey);
+    if (existing) {
+      this.personalRegistries.delete(principalKey);
+      this.personalRegistries.set(principalKey, existing);
+      return existing;
+    }
+    const registry = new Registry(
+      this.configuredConnectors.filter(
+        (connector) => connector.authScope === "personal",
+      ),
+      {
+        ...this.opts,
+        storage: namespaced(this.opts.storage, `principal:${principalKey}:`),
+        credentialOwner: principalKey,
+        constructionChecks: false,
+      },
+    );
+    this.personalRegistries.set(principalKey, registry);
+    const oldest = this.personalRegistries.keys().next().value;
+    if (
+      this.personalRegistries.size > MAX_PERSONAL_REGISTRIES &&
+      typeof oldest === "string"
+    ) {
+      this.personalRegistries.delete(oldest);
+    }
+    return registry;
+  }
+
+  /** Build the only connector view an authenticated request receives. */
+  scoped(scope: RegistryScope): RegistryView {
+    const requested = scope.connectorIds === "all"
+      ? new Set(this.connectors.keys())
+      : new Set(scope.connectorIds);
+    for (const id of requested) {
+      if (!this.connectors.has(id)) {
+        throw new Error(
+          `Identity access resolver returned unknown connector "${id}"`,
+        );
+      }
+    }
+    return new ScopedRegistryView(this, requested, scope);
+  }
+
+  scopedStorage(subjectKey: string): KVStorage {
+    return namespaced(this.opts.storage, `subject:${subjectKey}:`);
+  }
+
+  private oauthHandoffKey(connectorId: string, stateHash: string): string {
+    return `oauth-handoff:v1:${connectorId}:${stateHash}`;
+  }
+
+  async storeOAuthHandoff(
+    connectorId: string,
+    state: string,
+    principalKey: string,
+  ): Promise<void> {
+    const key = this.oauthHandoffKey(connectorId, await sha256Hex(state));
+    const existing = await this.opts.storage.get(key);
+    if (existing && existing !== principalKey) {
+      throw new Error(
+        `Connector "${connectorId}" reused one OAuth state across principals`,
+      );
+    }
+    await this.opts.storage.set(
+      key,
+      principalKey,
+      { ttlSeconds: OAUTH_HANDOFF_TTL_SECONDS },
+    );
+  }
+
+  async oauthCallbackView(
+    connectorId: string,
+    state: string | null,
+  ): Promise<{
+    registry: RegistryView;
+    principalKey?: string;
+  } | null> {
+    const connector = this.connectors.get(connectorId);
+    if (!connector) return null;
+    if (connector.authScope !== "personal") return { registry: this };
+    if (!state) return null;
+    const principalKey = await this.opts.storage.get(
+      this.oauthHandoffKey(connectorId, await sha256Hex(state)),
+    );
+    if (!principalKey) return null;
+    return {
+      registry: this.scoped({
+        connectorIds: [connectorId],
+        subjectKey: principalKey,
+        principalKey,
+      }),
+      principalKey,
+    };
+  }
+
+  async clearOAuthHandoff(
+    connectorId: string,
+    state: string | null,
+  ): Promise<void> {
+    if (!state) return;
+    await this.opts.storage.delete(
+      this.oauthHandoffKey(connectorId, await sha256Hex(state)),
+    );
   }
 
   /**
@@ -427,7 +579,7 @@ export class Registry implements RegistryView {
     if (this.opts.credentialVault && credentialConfig) {
       const vault = this.opts.credentialVault;
       const readValues = async () => {
-        const values = await vault.getAll(id);
+        const values = await vault.getAll(id, this.opts.credentialOwner);
         const shape = storedCredentialShape(credentialConfig, values);
         if (shape.state === "mismatch") {
           throw new ConnectorCallError("auth_required", shape.message);
@@ -545,6 +697,10 @@ export class Registry implements RegistryView {
    */
   resultsStorage(): KVStorage {
     return namespaced(this.opts.storage, "results:");
+  }
+
+  async bindOAuthHandoff(): Promise<void> {
+    // Shared OAuth already resolves in deployment-wide connector storage.
   }
 
   observedOutputSchema(
@@ -1264,7 +1420,7 @@ export class Registry implements RegistryView {
     const vault = this.opts.credentialVault;
     if (!credential || !vault) return undefined;
     try {
-      const values = await vault.getAll(id);
+      const values = await vault.getAll(id, this.opts.credentialOwner);
       const shape = storedCredentialShape(credential, values);
       return shape.state === "mismatch" ? shape.message : undefined;
     } catch (error) {
@@ -1354,5 +1510,142 @@ export class Registry implements RegistryView {
   async invalidateStored(id: string): Promise<void> {
     this.markCatalogInvalid(id);
     if (this.persistToolCatalog) await this.deleteStoredCatalog(id);
+  }
+}
+
+class ScopedRegistryView implements RegistryView {
+  readonly maxResultBytes: number;
+  private readonly personal: Registry | undefined;
+
+  constructor(
+    private readonly root: Registry,
+    private readonly allowed: ReadonlySet<string>,
+    private readonly scope: RegistryScope,
+  ) {
+    this.maxResultBytes = root.maxResultBytes;
+    this.personal = scope.principalKey
+      ? root.personalRegistry(scope.principalKey)
+      : undefined;
+  }
+
+  private registryFor(id: string): Registry | undefined {
+    if (!this.allowed.has(id)) return undefined;
+    const connector = this.root.getConnector(id);
+    if (!connector) return undefined;
+    return connector.authScope === "personal" ? this.personal : this.root;
+  }
+
+  listConnectors(): Connector[] {
+    return this.root.listConnectors().filter(
+      (connector) => this.registryFor(connector.id) !== undefined,
+    );
+  }
+
+  getConnector(id: string): Connector | undefined {
+    return this.registryFor(id)?.getConnector(id);
+  }
+
+  resolveAddress(
+    address: string,
+  ): { connector: Connector; toolName: string } | null {
+    const parsed = splitAddress(address);
+    if (!parsed) return null;
+    const connector = this.getConnector(parsed.connectorId);
+    return connector ? { connector, toolName: parsed.toolName } : null;
+  }
+
+  getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
+    const registry = this.registryFor(args[0]);
+    if (!registry) {
+      return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
+    }
+    return registry.getTools(...args);
+  }
+
+  contextFor(
+    ...args: Parameters<RegistryView["contextFor"]>
+  ): ConnectorContext {
+    const registry = this.registryFor(args[0]);
+    if (!registry) throw new Error(`Unknown connector "${args[0]}"`);
+    return registry.contextFor(...args);
+  }
+
+  admitCall(
+    ...args: Parameters<RegistryView["admitCall"]>
+  ): Promise<CallAdmissionPermit> {
+    if (!this.registryFor(args[0])) {
+      return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
+    }
+    return this.root.admitCall(...args);
+  }
+
+  resultsStorage(): KVStorage {
+    return this.scope.subjectKey
+      ? this.root.scopedStorage(this.scope.subjectKey)
+      : this.root.resultsStorage();
+  }
+
+  credentialDriftFor(id: string): Promise<string | undefined> {
+    const registry = this.registryFor(id);
+    return registry
+      ? registry.credentialDriftFor(id)
+      : Promise.resolve(undefined);
+  }
+
+  observedOutputSchema(
+    connectorId: string,
+    definition: ToolDef,
+  ): ToolDef["outputSchema"] | undefined {
+    return this.registryFor(connectorId)?.observedOutputSchema(
+      connectorId,
+      definition,
+    );
+  }
+
+  observeOutputShape(
+    connectorId: string,
+    definition: ToolDef,
+    value: unknown,
+  ): void {
+    this.registryFor(connectorId)?.observeOutputShape(
+      connectorId,
+      definition,
+      value,
+    );
+  }
+
+  statusFor(
+    ...args: Parameters<RegistryView["statusFor"]>
+  ): Promise<ConnectorStatus> {
+    const registry = this.registryFor(args[0]);
+    return registry
+      ? registry.statusFor(...args)
+      : Promise.resolve({ state: "error", message: "Unknown connector" });
+  }
+
+  invalidateStored(id: string): Promise<void> {
+    const registry = this.registryFor(id);
+    return registry ? registry.invalidateStored(id) : Promise.resolve();
+  }
+
+  async bindOAuthHandoff(
+    id: string,
+    authorizationUrl: string,
+  ): Promise<void> {
+    const connector = this.getConnector(id);
+    if (connector?.authScope !== "personal" || !this.scope.principalKey) return;
+    let state: string | null = null;
+    try {
+      state = new URL(authorizationUrl).searchParams.get("state");
+    } catch {
+      return;
+    }
+    if (state) {
+      await this.root.storeOAuthHandoff(
+        id,
+        state,
+        this.scope.principalKey,
+      );
+    }
   }
 }

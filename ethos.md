@@ -8,8 +8,8 @@ preserve. A contradiction needs a design decision, not a drive-by edit.
 - **One MCP endpoint, one programmable surface.** Every integration you chose
   sits behind a capability catalog that agents reach by writing JavaScript,
   ringed by a few explicit tools for the boundaries code must not cross.
-- **A deployment is a small config-as-code file.** Changing what agents can
-  reach is an edit and a redeploy. One deployment, one tenant, one audience.
+- **A deployment is config-as-code.** One tenant and connector set; principals
+  receive config-derived views.
 - **Curated when available, open when not.** Prefer a maintained prebuilt
   connection; `remoteMcp()` and `api()` stay first-class for everything else.
   Every path yields the same `Connector` with the same rules.
@@ -30,8 +30,8 @@ preserve. A contradiction needs a design decision, not a drive-by edit.
 - **Not a platform.** No runtime registration, admin-editable capability,
   policy engine, approvals, or pauses.
 - **Not a schema ingester.** No OpenAPI or GraphQL → tools.
-- **Not multi-tenant.** No account model or per-user credential store; scope
-  stays connector-level, and ambiguity stops rather than guesses.
+- **Not multi-tenant.** No accounts, groups, or sessions. Inbound auth owns
+  identity; personal state stays within one tenant.
 - **Not stateful.** No protocol sessions, no server push; scope resolves per
   request.
 - **Not a nanny.** Credentials fail loudly at use; nothing probes one.
@@ -47,7 +47,7 @@ CHANGELOG, not here.
 | Decision | Verdict | Why |
 | --- | --- | --- |
 | OpenAPI / GraphQL ingestion | refused | the disease is a tool nobody chose — a document authored it; hand-written literals, even through a shared factory, are still authorship |
-| Multi-tenancy / account model | refused | one deployment per tenant; deploy again |
+| Multi-tenancy / account model | refused | one deployment per tenant; inbound auth owns identity |
 | Policy engine, approvals, pauses | refused | the host asks the human; connecta only annotates |
 | Runtime connector registration | refused | config-as-code is the security model |
 | Provider registry / marketplace | refused | prebuilt connections are imports; discovery happens in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
@@ -67,7 +67,7 @@ CHANGELOG, not here.
 | Legacy embedded `UIResource` delivery | refused | superseded upstream, rendered by no client we face ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Effect as the core effect system | refused | −4% of the core for +75 KB gzip and a second async paradigm; re-measure at v4 stable ([#470](https://github.com/zackbart/connecta/issues/470)) |
 | Shared bounded queue under both admission controllers | refused | built and measured −17 lines for a hook-parameterised abstraction ([#453](https://github.com/zackbart/connecta/issues/453)) |
-| Toolkits (scoped views) | removed | deploy per audience ([#178](https://github.com/zackbart/connecta/issues/178)) |
+| Caller-selected toolkits | removed | only config may derive an identity's connector view ([#178](https://github.com/zackbart/connecta/issues/178)) |
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Classic (executor-free) surface | removed | an executor is mandatory ([#273](https://github.com/zackbart/connecta/issues/273)) |
 | Per-result lexical query coverage | removed | did not earn its response bytes in a precommitted gate ([#323](https://github.com/zackbart/connecta/issues/323)) |
@@ -91,10 +91,10 @@ Breaking one is a design change wearing a disguise.
 - **A downstream catalog is complete or it is a failure.** A partial catalog is never cached, persisted, or served.
 - **Activity is payload-free by construction.** The event type has nowhere to put arguments, results, code, or raw errors.
 - **An observed shape is never a declaration.** Names and broad types only, labeled, and gone behind any declared schema.
-- **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector, rendered by nothing.
+- **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector and, for personal auth, its owning principal; rendered by nothing.
 - **Import-graph purity.** Nothing reachable from the root entry imports a `node:` builtin.
 - **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath.
-- **Operator routes manage authentication material, never declared capability.** A downstream catalog is discovered, not declared.
+- **Human routes manage auth, never capability.** Signed-in humans manage auth for visible connectors; operators also manage tokens and global activity.
 - **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
 
 Connecta began as a radical simplification of

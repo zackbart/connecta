@@ -84,6 +84,7 @@ optional.
 | `connectors` | — (required) | the connector set ([connectors](./connectors.md)) |
 | `executor` | — (required) | the sandbox `execute_code` runs in ([code mode](./code-mode.md#what-an-executor-must-implement)) |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before interactive providers ([inbound auth](./auth.md)) |
+| `identity?` | all connectors; every interactive human is an operator | `{ connectorAccess?, operatorAccess? }` derives the request's connector view and shared-auth authority from its authenticated identity ([principals](./auth.md#principals-visibility-and-operators)) |
 | `storage?` | `memoryStorage()` | the one state seam for catalogs, result paging, credentials, and access tokens ([storage](./storage-and-credentials.md)) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }` |
@@ -247,6 +248,7 @@ in.
 | `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
 | `guest-api-contract.test.ts` | the shared guest contract on the Dynamic Worker, including caught call, typed inline describe recovery, discovery, utility, batch, and budget failure codes; plus the real authority boundary — local `data:` fetch, denied egress, unresolved DNS, empty environment paths, unavailable filesystem/HTTP builtins, and present runtime globals |
+| `identity-scope.test.ts` | identity-derived connector visibility, personal credential isolation, shared-auth operator control, and personal OAuth callback ownership |
 | `linear-provider.test.ts` | the Linear proxy's construction, guide, plan-aware catalog superset, and current workspace, template, and issue-sharing classifications |
 | `meta-tools-call.test.ts` | registry-backed calls: structured errors, truncation and `get_result`, per-connector result bounds, JSON representation failures, MCP content bounds, and offset alignment |
 | `meta-tools-search.test.ts` | registry-backed discovery: bounded search with page and address maxima, compact and JSON schemas with constraints, typed describe recovery and suggestions, and structured-result compatibility |
@@ -280,7 +282,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 
 | Suite | Covers | Why Node |
 | --- | --- | --- |
-| `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
+| `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, its agent instructions and setup guide pinning Claude and both ChatGPT Managed OAuth callback forms, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `doctor-cli.test.ts` | `connecta doctor`'s executor line and credentials end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, a hostile name is bounded, and a complete Cloudflare Access service-token pair is accepted while a partial pair is refused | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the maintainer drift checker — hosted-provider credential framing, recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |

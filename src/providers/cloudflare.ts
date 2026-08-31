@@ -61,6 +61,8 @@ export const CLOUDFLARE_CONTENT_DNS_RECORD_TYPES = [
 export interface CloudflareOptions {
   /** Human-readable display name; defaults to "Cloudflare". */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /** Which account/estate this connection administers, and for whom. */
   purpose: string;
   /**
@@ -3605,6 +3607,7 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     zoneId: options.zoneId?.trim() || undefined,
   };
   return api(id, {
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     title: options.title ?? "Cloudflare",
     description: `Cloudflare control-plane access for zones, DNS, Workers, KV, R2, Pages, media, email, and other v4 APIs — ${purpose}`,
     credential: credentialConfig(authentication, options.credential),

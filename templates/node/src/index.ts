@@ -42,10 +42,10 @@ const stateFile = process.env.CONNECTA_STATE_FILE || "./.connecta-state.json";
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 
 // Operator sign-in. A bearer token is a client key: it may call tools and read
-// connector status, but only a Clerk-authenticated operator may write a
-// credential or issue an access token. Without this block the operator pages
-// still render — an operator pastes the bearer to read them — and Credentials
-// and Tokens stay read-only.
+// connector status, but only a Clerk-authenticated human may write a visible
+// connector's credential, and only an operator may issue an access token.
+// Without this block the operator pages still render — an operator pastes the
+// bearer to read them — and Credentials and Tokens stay read-only.
 // const clerkPublishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 // const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 // if (!clerkPublishableKey || !clerkSecretKey) {
@@ -67,6 +67,15 @@ const connecta = createConnecta({
     //   // allowedDomains: ["acme.com"],
     // }),
   ],
+  // Optional member/operator split for Clerk-backed Docker deployments.
+  // Connector access is derived from the authenticated identity and cannot be
+  // selected by an MCP argument. Omit this block for the legacy all-visible,
+  // all-interactive-users-are-operators behavior.
+  // identity: {
+  //   connectorAccess: ({ principal }) =>
+  //     principal?.id === "user_admin" ? "all" : ["time"],
+  //   operatorAccess: ({ id }) => id === "user_admin",
+  // },
   publicUrl,
   // Required: model-written programs run in a bounded QuickJS child.
   executor: quickJsExecutor(),

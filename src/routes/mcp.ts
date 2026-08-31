@@ -19,6 +19,7 @@ import {
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
 import { instructionsFor } from "../skills.js";
+import { msg } from "../errors.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
@@ -403,10 +404,30 @@ export function createMcpRoute(
         baseUrl,
         opts.auth,
         runtimeContext,
+        opts.identity,
       );
       if (!authz.ok) {
         return releaseAdmissionWithResponse(
           withMcpCors(authz.response),
+          admission,
+          request.signal,
+        );
+      }
+      let scopedRegistry: RegistryView;
+      try {
+        scopedRegistry = opts.registry.scoped({
+          connectorIds: authz.connectorIds,
+          ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
+          ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+        });
+      } catch (error) {
+        return releaseAdmissionWithResponse(
+          withMcpCors(
+            new Response(JSON.stringify({ error: msg(error) }), {
+              status: 403,
+              headers: { "Content-Type": "application/json" },
+            }),
+          ),
           admission,
           request.signal,
         );
@@ -425,7 +446,7 @@ export function createMcpRoute(
             opts,
             baseUrl,
             authz.actor,
-            opts.registry,
+            scopedRegistry,
             runtimeContext,
           ),
         ),

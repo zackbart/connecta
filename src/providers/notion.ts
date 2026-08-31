@@ -56,6 +56,8 @@ const NOTION_ADMISSION: ConnectorCallAdmissionPolicy = {
 export interface NotionOptions {
   /** Human-readable display name; defaults to "Notion". */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /** Which workspace this is and what it should be used for. Required. */
   purpose: string;
   /** Workspace-specific conventions appended to the maintained provider guide. */
@@ -1752,6 +1754,7 @@ export function notion(id: string, options: NotionOptions): Connector {
   }
 
   return api(id, {
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     title: options.title ?? "Notion",
     description: `Notion workspace — ${purpose}`,
     credential: {

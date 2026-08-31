@@ -198,8 +198,10 @@ export function describeCredentialTestMismatch(
         "`testCredentials`";
 }
 
-function storageKey(connectorId: string): string {
-  return `conn:${connectorId}:credential:v1`;
+function storageKey(connectorId: string, owner?: string): string {
+  return owner
+    ? `principal:${owner}:conn:${connectorId}:credential:v1`
+    : `conn:${connectorId}:credential:v1`;
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -321,12 +323,19 @@ export class CredentialVault {
     );
   }
 
-  private additionalData(connectorId: string): Uint8Array {
-    return encoder.encode(`connecta:credential:${connectorId}:v1`);
+  private additionalData(connectorId: string, owner?: string): Uint8Array {
+    return encoder.encode(
+      owner
+        ? `connecta:credential:principal:${owner}:${connectorId}:v1`
+        : `connecta:credential:${connectorId}:v1`,
+    );
   }
 
-  private async read(connectorId: string): Promise<CredentialPlaintext | null> {
-    const raw = await this.storage.get(storageKey(connectorId));
+  private async read(
+    connectorId: string,
+    owner?: string,
+  ): Promise<CredentialPlaintext | null> {
+    const raw = await this.storage.get(storageKey(connectorId, owner));
     if (!raw) return null;
     const envelope = parseEnvelope(raw);
     try {
@@ -334,7 +343,7 @@ export class CredentialVault {
         {
           name: "AES-GCM",
           iv: base64ToBytes(envelope.iv),
-          additionalData: this.additionalData(connectorId),
+          additionalData: this.additionalData(connectorId, owner),
         },
         await this.key,
         base64ToBytes(envelope.ciphertext),
@@ -345,19 +354,27 @@ export class CredentialVault {
     }
   }
 
-  async get(connectorId: string, field = "value"): Promise<string | null> {
-    return (await this.read(connectorId))?.values[field] ?? null;
+  async get(
+    connectorId: string,
+    field = "value",
+    owner?: string,
+  ): Promise<string | null> {
+    return (await this.read(connectorId, owner))?.values[field] ?? null;
   }
 
   async getAll(
     connectorId: string,
+    owner?: string,
   ): Promise<ConnectorCredentialValues | null> {
-    const credential = await this.read(connectorId);
+    const credential = await this.read(connectorId, owner);
     return credential ? { ...credential.values } : null;
   }
 
-  async metadata(connectorId: string): Promise<CredentialMetadata | null> {
-    const credential = await this.read(connectorId);
+  async metadata(
+    connectorId: string,
+    owner?: string,
+  ): Promise<CredentialMetadata | null> {
+    const credential = await this.read(connectorId, owner);
     if (!credential) return null;
     const fields = Object.fromEntries(
       Object.entries(credential.values).map(([field, value]) => [
@@ -384,17 +401,19 @@ export class CredentialVault {
     connectorId: string,
     value: string,
     updatedBy: string,
+    owner?: string,
   ): Promise<CredentialMetadata> {
     // `await` (not a bare promise return) so a validation throw inside setAll
     // never sits handler-less for the thenable-adoption microtask — workerd
     // reports that gap as an unhandled rejection.
-    return await this.setAll(connectorId, { value }, updatedBy);
+    return await this.setAll(connectorId, { value }, updatedBy, owner);
   }
 
   async setAll(
     connectorId: string,
     values: ConnectorCredentialValues,
     updatedBy: string,
+    owner?: string,
   ): Promise<CredentialMetadata> {
     const normalized = validateValues(values);
     const plaintext: CredentialPlaintext = {
@@ -407,7 +426,7 @@ export class CredentialVault {
       {
         name: "AES-GCM",
         iv,
-        additionalData: this.additionalData(connectorId),
+        additionalData: this.additionalData(connectorId, owner),
       },
       await this.key,
       encoder.encode(JSON.stringify(plaintext)),
@@ -418,11 +437,14 @@ export class CredentialVault {
       iv: bytesToBase64(iv),
       ciphertext: bytesToBase64(new Uint8Array(ciphertext)),
     };
-    await this.storage.set(storageKey(connectorId), JSON.stringify(envelope));
-    return (await this.metadata(connectorId))!;
+    await this.storage.set(
+      storageKey(connectorId, owner),
+      JSON.stringify(envelope),
+    );
+    return (await this.metadata(connectorId, owner))!;
   }
 
-  async delete(connectorId: string): Promise<void> {
-    await this.storage.delete(storageKey(connectorId));
+  async delete(connectorId: string, owner?: string): Promise<void> {
+    await this.storage.delete(storageKey(connectorId, owner));
   }
 }

@@ -1,5 +1,18 @@
 # Connectors
 
+Every connector may set `authScope: "shared" | "personal"`. Shared is the
+default and keeps one deployment-wide downstream grant. Personal auth requires
+a stable human principal and partitions connector state, credentials, OAuth,
+catalogs, and observed shapes by that principal. Connector visibility is a
+separate deployment rule under `identity.connectorAccess`; hiding a connector
+does not change who owns its auth. See [shared and personal auth](./storage-and-credentials.md#shared-and-personal-auth).
+
+`authScope` partitions connecta-owned context, not arbitrary variables captured
+by connector code. A custom personal connector must read auth from
+`ctx.credential` or `ctx.storage`; a secret closed over by its handler remains
+shared JavaScript state. `remoteMcp()` rejects the equivalent mistake when
+literal headers are combined with personal scope.
+
 Connectors are the boundary between Connecta's fixed meta-tool surface and
 downstream capabilities. Prefer a prebuilt connection when Connecta maintains
 one for the provider. Use `api()` to define a deliberate HTTP API surface and

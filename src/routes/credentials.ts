@@ -8,7 +8,7 @@ import type {
   ConnectorCredentialValues,
 } from "../types.js";
 import {
-  authorizeUiAdmin,
+  authorizeUiIdentity,
   isSameOrigin,
   msg,
   privateJson,
@@ -134,19 +134,38 @@ async function handleCredentialRequest(
       { status: 403 },
     );
   }
-  const admin = await authorizeUiAdmin(
+  const authz = await authorizeUiIdentity(
     request,
     baseUrl,
     opts.auth,
     "credential management",
     context.runtimeContext,
+    opts.identity,
   );
-  if (!admin.ok) return admin.response;
+  if (!authz.ok) return authz.response;
+  let registry;
+  try {
+    registry = opts.registry.scoped({
+      connectorIds: authz.connectorIds,
+      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
+      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+    });
+  } catch (error) {
+    return privateJson({ error: msg(error) }, { status: 403 });
+  }
 
-  const connector = opts.registry.getConnector(connectorId);
+  const connector = registry.getConnector(connectorId);
   if (!connector?.credential) {
     return privateJson({ error: "unknown credential slot" }, { status: 404 });
   }
+  const personal = connector.authScope === "personal";
+  if (personal && !authz.principalKey) {
+    return privateJson({ error: "forbidden" }, { status: 403 });
+  }
+  const owner = personal ? authz.principalKey : undefined;
+  const updatedBy = authz.identity.principal
+    ? `${authz.identity.principal.namespace}:${authz.identity.principal.id}`
+    : authz.actor.id ?? authz.actor.kind;
 
   if (action === "test") {
     if (request.method !== "POST") {
@@ -168,7 +187,7 @@ async function handleCredentialRequest(
       );
     }
     try {
-      const values = await opts.credentialVault.getAll(connectorId);
+      const values = await opts.credentialVault.getAll(connectorId, owner);
       const shape = storedCredentialShape(connector.credential, values);
       if (shape.state === "missing") {
         return privateJson(
@@ -185,7 +204,7 @@ async function handleCredentialRequest(
         return privateJson({ error: shape.message }, { status: 409 });
       }
       const storedValues = values!;
-      const ctx = opts.registry.contextFor(connectorId, baseUrl);
+      const ctx = registry.contextFor(connectorId, baseUrl);
       const result =
         rule.mode === "multiple"
           ? await connector.testCredentials!(storedValues, ctx)
@@ -212,22 +231,24 @@ async function handleCredentialRequest(
           ? await opts.credentialVault.set(
               connectorId,
               input.input.value,
-              admin.userId,
+              updatedBy,
+              owner,
             )
           : await opts.credentialVault.setAll(
               connectorId,
               input.input.values,
-              admin.userId,
+              updatedBy,
+              owner,
             );
-      await opts.registry.invalidateStored(connectorId);
+      await registry.invalidateStored(connectorId);
       return privateJson({ credential: metadata });
     } catch (err) {
       return privateJson({ error: msg(err) }, { status: 400 });
     }
   }
   if (request.method === "DELETE") {
-    await opts.credentialVault.delete(connectorId);
-    await opts.registry.invalidateStored(connectorId);
+    await opts.credentialVault.delete(connectorId, owner);
+    await registry.invalidateStored(connectorId);
     return new Response(null, {
       status: 204,
       headers: {

@@ -5,10 +5,10 @@ the authentication material behind it. It is a small Preact app compiled by the
 repository's own esbuild step and inlined into a data-free server shell.
 
 Read [`ethos.md`](../ethos.md) first. The boundary this subsystem lives inside
-is the operator row in its decisions table: **operator routes may manage
-authentication material for capabilities declared in deployment configuration,
-and may not change the connector set, the tool catalog or annotations, requested
-OAuth scopes, admission policy, authorization rules, or caller tool scope.**
+is the human-management invariant: **members may manage authentication material
+for every connector their code-derived view includes, operators may also manage
+deployment tokens and global activity, and neither may change the connector set, tool catalog,
+annotations, requested OAuth scopes, admission policy, or identity rules.**
 `test/operator-boundary.test.ts` proves it after every mutation route.
 
 Both deployment shapes ship the whole feature set behind it, because pages for
@@ -51,6 +51,15 @@ the HttpOnly `CF_Authorization` cookie, Access admits it at the edge, and the
 server reads the resulting runtime identity. Sign out navigates to
 `/cdn-cgi/access/logout`. Mutations still require an exact same-origin
 `Origin`; an ambient cookie does not weaken the CSRF boundary.
+
+The shell is shared by members and operators. `/ui/data` uses the same
+identity-scoped registry view as `/mcp`, so it cannot list a connector the
+current caller cannot discover. A member sees credential and OAuth controls for
+every visible connector. Personal actions resolve to that member's principal
+partition; shared actions change the deployment-wide grant. The access-token
+and global activity pages require `identity.operatorAccess`. Existing
+deployments that omit that resolver keep every interactive human as an
+operator.
 
 This runtime selection is the Clerk migration seam. A deployment may contain
 both providers: before Worker-level Access is attached, the data-free shell

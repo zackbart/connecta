@@ -70,7 +70,7 @@ read top to bottom.
 | 2 | `OPTIONS` | Each auth provider's `handleMetadata` gets a chance (CORS preflight for browser MCP clients); otherwise 204 with MCP CORS. |
 | 3 | `/.well-known/*` | Auth providers' `handleMetadata`, open. 404 when none handles it. |
 | 4 | `/health` | Open JSON: status, connector count, `serverInfo`, the configured executor's sanitized name when it has one, catalog-drift counts, admission snapshots, reserved route names, and `deployment` when `deploymentInfo` is set. Payload-free by construction, and it never joins the MCP queue. |
-| 5 | `/oauth/callback/<connectorId>` | Downstream-OAuth completion, open, `verifyState` before `finishAuth`. |
+| 5 | `/oauth/callback/<connectorId>` | Downstream-OAuth completion, open, `verifyState` before `finishAuth`. Personal flows first resolve the short-lived state hash to the principal partition. |
 | 6 | `/favicon.*`, `/ui` → `/`, the operator shells, `/ui/data` | The operator surface ([operator UI](./operator-ui.md)). The shells are open and data-free; `/ui/data` behind them is gated. Built-ins are matched before connector routes, so a connector cannot shadow a page. |
 | 7 | `/ui/activity` | Gated, plus the optional `activity.readGate`. `GET` only; 404 with no `activity.store.list`. |
 | 8 | `/mcp` | **Admission before auth**, then the auth gate, then a fresh MCP server. |
@@ -93,11 +93,15 @@ any one file and a reordering reads like a harmless refactor.
    before interactive providers. First `ok` admits; if all fail, the last provider's challenge
    response is returned. No providers configured means open — development
    only, and it warns at construction.
-3. **Refuse `?toolkit=`.** Toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
+3. **Derive the registry view.** Auth supplies a namespaced subject and, for a
+   human, a principal. `identity.connectorAccess` selects declared connector
+   ids. Personal connectors use the principal partition; result paging uses
+   the subject partition. No caller parameter selects either.
+4. **Refuse `?toolkit=`.** Caller-selected toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
    but the URLs naming them were handed out, so the parameter is a 404 rather
    than silently serving the full registry. Retiring a scoping boundary into
    fail-open is the one outcome worse than the 404.
-4. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
+5. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
    against the registry, the Apps shell resource registered (and
    `resources/list` deliberately answering with nothing), and the response
    handed back.
@@ -109,7 +113,7 @@ owns or hands out, and a change usually belongs in exactly one of them:
 
 | Module | Owns |
 | --- | --- |
-| `src/registry.ts` | The connector set, address resolution, catalog TTL/persistence/completeness, shared refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
+| `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, catalog TTL/persistence/completeness, refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
 | `src/catalog-service.ts` | Request-local tool listing, search, and describe. It coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, per-attempt timeout, retry with the connector's own `Retry-After` honoured exactly or declined, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
@@ -184,10 +188,12 @@ src/
 
 ## Sharp edges
 
-- **The registry is shared; the request is not.** Anything you cache on the
-  registry is visible to every later request in that isolate. Anything you
-  cache per request dies with it. Putting a downstream client on the wrong side
-  of that line is the highest-severity mistake available here.
+- **The root registry is shared; identity views are partitioned.** Shared
+  connector caches are visible to later requests in the isolate. Personal
+  connectors use a bounded principal registry, and transient results use the
+  authenticated subject. Anything cached per request still dies with it.
+  Putting a downstream client or credential on the wrong side of those lines
+  is the highest-severity mistake available here.
 - **Route order is behavior.** Moving a built-in below the connector dispatch
   hands a connector the ability to shadow it. Moving a mutation route below the
   wildcard `OPTIONS` opts it into CORS preflight.

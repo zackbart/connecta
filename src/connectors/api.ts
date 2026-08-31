@@ -51,6 +51,8 @@ export interface ApiOptions {
   /** Human-readable display name; the connector id remains the address prefix. */
   title?: string;
   description?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /**
    * Max inline result size (bytes) for this connector's tools before
    * call_tool truncates and stashes the full text for get_result
@@ -131,6 +133,7 @@ export function api(id: string, opts: ApiOptions): Connector {
     kind: "api",
     ...defined({
       description: opts.description,
+      authScope: opts.authScope,
       maxResultBytes: opts.maxResultBytes,
       callAdmission: opts.callAdmission,
       usageGuide: opts.usageGuide,

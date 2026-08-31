@@ -29,6 +29,30 @@ describe("deployment shapes", () => {
     expect(options).toEqual(["loader: env.LOADER"]);
   });
 
+  it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
+    const worker = join(ROOT, "examples", "worker");
+    const agents = readFileSync(join(worker, "AGENTS.md"), "utf8");
+    const readme = readFileSync(join(worker, "README.md"), "utf8");
+    const source = readFileSync(join(worker, "src", "index.ts"), "utf8");
+    const callbacks = [
+      "https://claude.ai/api/mcp/auth_callback",
+      "https://chatgpt.com/connector_platform_oauth_redirect",
+      "https://chatgpt.com/connector/oauth/*",
+    ];
+    for (const callback of callbacks) {
+      expect(agents).toContain(callback);
+      expect(readme).toContain(callback);
+      expect(source).toContain(callback);
+    }
+    expect(agents).toContain(
+      "oauth_configuration.dynamic_client_registration.allowed_uris",
+    );
+    expect(readme).toContain(
+      '"dynamic_client_registration": {',
+    );
+    expect(readme).toContain('"allowed_uris": [');
+  });
+
   it("ships one Node deployment that is also its own container", () => {
     expect(readdirSync(TEMPLATE).sort()).toEqual([
       ".dockerignore",
@@ -128,7 +152,10 @@ describe("deployment shapes", () => {
       join(ROOT, "examples", "worker", "src", "index.ts"),
       "utf8",
     );
-    expect(worker).toContain("clerkAuth({");
+    expect(worker).toContain("cloudflareAccessAuth()");
+    expect(worker).not.toContain("clerkAuth");
+    expect(worker).toContain("// identity: {");
+    expect(worker).toContain('// Use `authScope: "personal"`');
     expect(worker).toContain(
       "credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },",
     );

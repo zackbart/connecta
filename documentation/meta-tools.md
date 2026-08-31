@@ -307,9 +307,10 @@ credential.
 
 The tool accepts no secret. `force` applies only to OAuth and may discard its
 stored grant before restarting consent. Static credential values are written
-only through the same-origin, Clerk-operator credential route. After OAuth
-consent or an operator update, retry the original operation; a static update is
-read from the vault on the next call and needs no redeploy.
+only through the same-origin interactive-user credential route, and only for a
+connector visible to that user. After OAuth consent or a human update, retry
+the original operation; a static update is read from the vault on the next call
+and needs no redeploy.
 
 ## Routing recovery
 

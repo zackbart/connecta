@@ -23,7 +23,7 @@ import {
   OPERATOR_UI_CSS,
   OPERATOR_UI_SCRIPT,
 } from "./operator-ui/generated.js";
-import type { Registry } from "./registry.js";
+import type { RegistryView } from "./registry.js";
 import type {
   ConnectaBranding,
   ConnectorStatus,
@@ -291,7 +291,7 @@ export function credentialManagementCapability(input: {
  * failing the whole payload.
  */
 export async function buildUiData(
-  registry: Registry,
+  registry: RegistryView,
   baseUrl: string,
   serverInfo: { name: string; version: string },
   credentialVault?: CredentialVault,
@@ -303,6 +303,7 @@ export async function buildUiData(
   oauthManagement = false,
   discoveryConcurrency?: number,
   accessTokenManagement: AccessTokenManagementCapability = "not_configured",
+  personalCredentialOwner?: string,
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -315,6 +316,9 @@ export async function buildUiData(
       const status: ConnectorStatus = drift
         ? { state: "auth_required", message: drift }
         : await registry.statusFor(c.id, baseUrl, requestScope);
+      if (status.authorizationUrl) {
+        await registry.bindOAuthHandoff(c.id, status.authorizationUrl);
+      }
       let tools: UiTool[] = [];
       // `status()` on an unauthenticated remote connector starts OAuth and
       // stores its state + PKCE verifier. Probing listTools immediately
@@ -337,7 +341,10 @@ export async function buildUiData(
         }
       }
       let credential: UiConnector["credential"];
-      if (c.credential && credentialVault) {
+      const mayManageAuth = c.authScope === "personal"
+        ? Boolean(personalCredentialOwner)
+        : oauthManagement;
+      if (c.credential && credentialVault && mayManageAuth) {
         // One rule, shared with the test route: only the hook matching the
         // declared credential shape can run, so the button is offered only
         // where a click can succeed (src/credentials.ts).
@@ -376,7 +383,10 @@ export async function buildUiData(
             : {}),
         };
         try {
-          const metadata = await credentialVault.metadata(c.id);
+          const metadata = await credentialVault.metadata(
+            c.id,
+            c.authScope === "personal" ? personalCredentialOwner : undefined,
+          );
           const fields = credentialFields(metadata);
           const shape = storedCredentialShape(
             c.credential,
@@ -423,6 +433,7 @@ export async function buildUiData(
       }
       return {
         id: c.id,
+        authScope: c.authScope ?? "shared",
         ...(c.title ? { title: c.title } : {}),
         ...(c.description !== undefined
           ? { description: c.description }
@@ -442,7 +453,13 @@ export async function buildUiData(
         ...(status.catalogAccess
           ? { catalogAccess: status.catalogAccess }
           : {}),
-        ...(c.disconnectAuth && c.startAuth ? { oauth: true } : {}),
+        ...(c.disconnectAuth &&
+        c.startAuth &&
+        (oauthManagement ||
+          c.authScope === "personal" ||
+          !personalCredentialOwner)
+          ? { oauth: true }
+          : {}),
         ...(credential ? { credential } : {}),
       };
     },
@@ -468,7 +485,7 @@ export async function buildUiData(
     activityEnabled,
     credentialManagement,
     accessTokenManagement,
-    oauthManagement,
+    oauthManagement: oauthManagement || Boolean(personalCredentialOwner),
   };
 }
 

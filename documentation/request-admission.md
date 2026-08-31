@@ -49,7 +49,8 @@ which is also why `/health` always has a code-admission shape to report.
 
 The request pool is global FIFO across identities. It is a capacity boundary,
 not tenant fairness: one busy caller can occupy it. Per-tenant fairness needs a
-policy above connecta, and one deployment serves one audience anyway
+policy above connecta, and one deployment still serves one tenant even when
+identity rules give its principals different connector views
 ([`ethos.md`](../ethos.md)), so a global queue is not pretending to supply
 something it does not.
 

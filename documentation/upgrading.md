@@ -207,6 +207,22 @@ first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
 
+### 0.21.2 → Unreleased
+
+Connector and user policy remain config-as-code. If `identity.connectorAccess`
+is configured, every interactive human may now manage the authentication of
+each connector that resolver makes visible. A personal connector changes only
+that principal's partition; a shared connector changes the deployment-wide
+grant. Keep shared connectors out of a member's view, or change them to
+`authScope: "personal"`, when that member must not rotate the shared grant.
+`identity.operatorAccess` continues to govern deployment access tokens and
+global activity.
+
+Paged results also move under the authenticated subject's storage partition.
+Finish any important in-flight `get_result` sequence before upgrading; its old
+result id is not readable from the new partition after deployment. No persisted
+connector catalog or credential migration is required.
+
 ### 0.20.0 → 0.21.2
 
 0.21.2 adds no deployment migration beyond 0.21.0. The boundary is additive
@@ -244,6 +260,21 @@ For a Worker currently using Clerk, keep rollback live through the cutover:
    tag>" }`, not a hostname application for the `workers.dev` URL: the latter
    gates traffic but does not provide `ctx.access`. Create an Access service
    token and a **Service Auth** policy for doctor and fully unattended clients.
+   In the application's Managed OAuth settings, enable Dynamic Client
+   Registration and add these three **Allowed redirect URIs**:
+
+   ```text
+   https://claude.ai/api/mcp/auth_callback
+   https://chatgpt.com/connector_platform_oauth_redirect
+   https://chatgpt.com/connector/oauth/*
+   ```
+
+   They map to
+   `oauth_configuration.dynamic_client_registration.allowed_uris` in the
+   Access API, not to the identity policy. The two ChatGPT entries cover its
+   stable and callback-id forms. An empty list fails client registration only
+   after discovery, so do not treat a working `/.well-known/*` response as
+   proof that this step is complete.
    Do not create a bypass for `/.well-known/*`; Managed OAuth owns that
    discovery surface.
 

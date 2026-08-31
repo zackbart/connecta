@@ -394,7 +394,7 @@ describe("operator app state", () => {
       "credentials.encryptionKey",
     );
     expect(credentialUnavailableCopy("requires_operator")).toContain(
-      "eligible interactive operator",
+      "interactive user",
     );
     expect(accessTokenUnavailableCopy("not_configured")).toContain(
       "not configured for this deployment",

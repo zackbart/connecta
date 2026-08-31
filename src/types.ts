@@ -158,7 +158,7 @@ export interface ConnectorContext {
   /** Public base URL of this deployment (origin), used for OAuth callbacks. */
   baseUrl: string;
   /**
-   * Read-only access to this connector's operator-managed credential. Present
+   * Read-only access to this connector's human-managed credential. Present
    * only when the connector declares `credential` and the deployment configures
    * `credentials.encryptionKey`.
    */
@@ -234,6 +234,12 @@ export interface ConnectorStatus {
 /** The whole plugin contract — the one open seam. */
 export interface Connector {
   id: string; // address prefix; [a-z0-9_-]+
+  /**
+   * Who owns this connector's downstream authentication. `shared` keeps one
+   * deployment-wide grant. `personal` isolates storage and credentials by the
+   * authenticated human principal. Defaults to `shared`.
+   */
+  authScope?: "shared" | "personal";
   /** Human-readable display name; the stable `id` remains the tool-address prefix. */
   title?: string;
   /** How call_tool wraps results. "mcp" passes the content array through; anything else is JSON-wrapped. */
@@ -266,7 +272,7 @@ export interface Connector {
    * configuration; no runtime registration or shared mutable copy exists.
    */
   usageGuide?: string | ConnectorUsageGuide;
-  /** Optional operator-managed credential slot rendered on /credentials. */
+  /** Optional human-managed credential slot rendered on /credentials. */
   credential?: ConnectorCredentialConfig;
   /** Optional server-side check used by /credentials' Test action. */
   testCredential?(
@@ -471,8 +477,30 @@ export type AuthResult =
       ok: true;
       userId?: string;
       subjectId?: string;
+      /** Human owner represented by a non-interactive access credential. */
+      principal?: IdentityReference;
     }
   | { ok: false; response: Response };
+
+/** Stable identity inside one configured authentication directory. */
+export interface IdentityReference {
+  namespace: string;
+  id: string;
+}
+
+/** Identity data passed to config-owned access resolvers. */
+export interface AuthenticatedIdentity {
+  actor: {
+    kind: string;
+    id?: string;
+    namespace?: string;
+  };
+  /** Any stable admitted caller, including service identities and tokens. */
+  subject?: IdentityReference;
+  /** Human owner of personal connector authentication. */
+  principal?: IdentityReference;
+  interactive: boolean;
+}
 
 /** Public browser-auth configuration exposed to connecta's status UI. */
 export type UiAuthConfig =

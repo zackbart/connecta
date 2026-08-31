@@ -30,6 +30,7 @@ export const WORKERS_SUITES = [
   "test/execute-ui.test.ts",
   "test/guarded-fetch.test.ts",
   "test/guest-api-contract.test.ts",
+  "test/identity-scope.test.ts",
   "test/linear-provider.test.ts",
   "test/meta-tools-call.test.ts",
   "test/meta-tools-search.test.ts",

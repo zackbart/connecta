@@ -23,6 +23,10 @@ describe("ConnectaConfig boundary", () => {
     const config: ConnectaConfig = {
       connectors: [],
       auth: fakeClerkAuth(),
+      identity: {
+        connectorAccess: () => "all",
+        operatorAccess: () => true,
+      },
       storage: memoryStorage(),
       publicUrl: "https://connecta.test",
       executor,
@@ -197,6 +201,7 @@ describe("ConnectaConfig boundary", () => {
 
   it.each([
     ["activity", { store: { record() {} }, typo: true }, "activity.typo"],
+    ["identity", { typo: true }, "identity.typo"],
     ["credentials", { typo: true }, "credentials.typo"],
     ["accessTokens", { typo: true }, "accessTokens.typo"],
     ["discovery", { typo: true }, "discovery.typo"],

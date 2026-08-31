@@ -17,9 +17,11 @@ import {
 } from "./executor-admission.js";
 import type { ActivityReadGate, ActivityStore } from "./activity.js";
 import type {
+  AuthenticatedIdentity,
   Connector,
   ConnectaBranding,
   Executor,
+  IdentityReference,
   InboundAuth,
   KVStorage,
   Logger,
@@ -150,10 +152,29 @@ export interface ConnectaAdmissionConfig {
   code?: AdmissionPoolConfig;
 }
 
+/** Config-owned identity rules for one deployment and tenant. */
+export interface ConnectaIdentityConfig {
+  /** Connector ids this admitted identity may discover and call. */
+  connectorAccess?(
+    identity: Readonly<AuthenticatedIdentity>,
+  ): "all" | readonly string[] | Promise<"all" | readonly string[]>;
+  /**
+   * Whether a human may manage deployment access tokens and global activity.
+   * Connector access already permits that human to manage the visible
+   * connector's shared or personal auth. Omit to preserve the existing
+   * all-interactive-humans operator rule.
+   */
+  operatorAccess?(
+    principal: Readonly<IdentityReference>,
+  ): boolean | Promise<boolean>;
+}
+
 export interface ConnectaConfig {
   connectors: Connector[];
   /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
+  /** Identity-derived connector visibility and deployment operator membership. */
+  identity?: ConnectaIdentityConfig;
   /** KVStorage impl. Defaults to memoryStorage(). */
   storage?: KVStorage;
   /**
@@ -273,6 +294,10 @@ const admissionPoolSchema = {
 const CONFIG_SCHEMA = {
   connectors: null,
   auth: null,
+  identity: {
+    connectorAccess: null,
+    operatorAccess: null,
+  } satisfies ClosedOptionSchema<ConnectaIdentityConfig>,
   storage: null,
   publicUrl: null,
   activity: {
@@ -520,7 +545,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const encryptionKey = config.credentials?.encryptionKey;
   if (credentialConnectors.length > 0 && !encryptionKey) {
     logger.warn(
-      "Operator-managed credentials are unavailable because " +
+      "Human-managed credentials are unavailable because " +
         "credentials.encryptionKey is not configured for connectors: " +
         credentialConnectors.map((c) => c.id).join(", "),
     );
@@ -594,6 +619,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
   const handler = createFetchHandler({
     registry,
     auth: inboundAuth,
+    identity: config.identity,
     publicUrl: config.publicUrl,
     serverInfo,
     logger,
@@ -690,6 +716,8 @@ export type {
   InboundAuthRuntimeContext,
   UiAuthConfig,
   AuthResult,
+  AuthenticatedIdentity,
+  IdentityReference,
   JsonSchema,
   KVStorage,
   Logger,

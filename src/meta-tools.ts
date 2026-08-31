@@ -737,8 +737,10 @@ export function createMetaTools(
           operatorUrl: new URL("/credentials", baseUrl).toString(),
           instructions:
             "Have the operator open operatorUrl, set and test the credential, " +
-            "then retry the original call. No redeploy is needed. Credential " +
-            "mutation requires a Clerk-authenticated operator.",
+            "then retry the original call. No redeploy is needed. " +
+            (connector.authScope === "personal"
+              ? "Credential mutation requires the signed-in principal who owns this connection."
+              : "Shared credential mutation requires a signed-in human with access to this connector."),
         });
       }
       const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
@@ -747,6 +749,12 @@ export function createMetaTools(
           ctx,
           args.force !== undefined ? { force: args.force } : {},
         );
+        if (status.authorizationUrl) {
+          await registry.bindOAuthHandoff(
+            connector.id,
+            status.authorizationUrl,
+          );
+        }
         if (status.state === "auth_required" && !status.authorizationUrl) {
           // auth_required with nothing to open is a dead end for the operator.
           return errorResult(

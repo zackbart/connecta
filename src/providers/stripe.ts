@@ -19,6 +19,8 @@ export const STRIPE_MCP_ENDPOINT = "https://mcp.stripe.com/";
 interface StripeCommonOptions {
   /** Human-readable display name; defaults to "Stripe" for OAuth. */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /** Which business purpose and Stripe context this connector is for. */
   purpose: string;
   /** Connector-specific conventions appended to the maintained provider guide. */
@@ -282,6 +284,7 @@ export function stripe(id: string, options: StripeOptions): Connector {
   const copy = mode === undefined ? undefined : MODE_COPY[mode];
   const connector = remoteMcp(id, {
     url: STRIPE_MCP_ENDPOINT,
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     title: options.title ?? copy?.title ?? "Stripe",
     description:
       mode === undefined

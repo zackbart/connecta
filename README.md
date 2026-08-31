@@ -82,6 +82,13 @@ payload-free activity log. Worker deployments can use Cloudflare Access for
 both MCP and operator identity; Node deployments and existing Workers can use
 Clerk.
 
+One deployment may serve several authenticated people inside the same tenant.
+Configuration can derive connector visibility from the admitted identity, and
+each connector may keep one shared downstream grant or a separate encrypted
+grant per human. Connecta does not own accounts or groups; Clerk or Cloudflare
+Access remains the identity provider. See [inbound auth](./documentation/auth.md#principals-visibility-and-operators)
+and [shared and personal auth](./documentation/storage-and-credentials.md#shared-and-personal-auth).
+
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one
 and why.

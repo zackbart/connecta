@@ -6,7 +6,7 @@ token is an independent record rather than one shared, race-prone manifest.
 The built-in memory and file adapters implement it, as does the Cloudflare KV
 example.
 
-Connectors may declare an operator-managed `credential` slot. When
+Connectors may declare a human-managed `credential` slot. When
 `credentials.encryptionKey` is configured, Connecta encrypts values in the
 deployment storage and exposes read-only access only through that connector's
 `ctx.credential`. Values, masked values, call arguments, and raw errors never
@@ -27,12 +27,39 @@ Credential mutation is intentionally narrower than MCP access:
 
 - a static bearer may call tools and receive the operator handoff, but it
   cannot write credentials;
-- only an admitted Clerk user may use the same-origin credential mutation
-  routes; and
+- an admitted interactive human may mutate credentials for every visible
+  connector: their own partition for personal auth, or the deployment-wide
+  value for shared auth; and
 - saving, replacing, testing, or removing a value never returns that value.
 
-The vault is read for each call. Once an operator saves a replacement,
+The vault is read for each call. Once a signed-in human saves a replacement,
 the agent can retry immediately without restarting or redeploying Connecta.
+
+## Shared and personal auth
+
+Connector auth defaults to `authScope: "shared"`. Its credential, OAuth state,
+tokens, catalog cache, and connector storage belong to the deployment. Set
+`authScope: "personal"` when every human principal needs a separate downstream
+account:
+
+```ts
+remoteMcp("linear", {
+  url: "https://mcp.linear.app/mcp",
+  authScope: "personal",
+  auth: { type: "oauth" },
+});
+```
+
+Personal connectors disappear from a request that has no stable human
+principal. For a principal that can see one, connecta partitions connector
+storage, encrypted vault records, catalog caches, OAuth generations, and
+observed result shapes under an opaque SHA-256 identity key. Results used by
+`get_result` are partitioned by the authenticated subject, so one token cannot
+page another token's call even when both tokens belong to the same principal.
+
+Literal `auth: { type: "headers" }` cannot be personal because its secret lives
+in deployment code. `remoteMcp()` refuses that combination at construction.
+Use operator-managed credential auth or OAuth instead.
 
 ## A remote MCP connector's static credential
 
@@ -96,6 +123,17 @@ and the pending authorization URL in the connector's storage namespace.
 Registration and token envelopes are bound to the validated authorization
 server `issuer`. An unbound pre-0.9 envelope is upgraded in place on its first
 issuer-aware read, preserving the existing grant.
+
+For personal OAuth, the authorization handoff also stores a 15-minute mapping
+from a SHA-256 digest of `state` to the principal partition. The public callback
+uses that mapping before it verifies state or exchanges the code. Neither the
+browser nor a callback parameter can select a principal. The callback deletes
+the mapping before it exchanges the code, so a second callback cannot replay
+the principal handoff in strongly consistent storage. Cloudflare KV deletion
+is eventually consistent, so handoff consumption there is best-effort across
+PoPs; the downstream authorization code remains single-use. If the callback
+request also carries an interactive identity, Connecta refuses it when that
+principal did not start the flow.
 
 If later discovery resolves a different issuer, Connecta does not send the old
 client identifier or tokens to it. The provider publishes a new generation

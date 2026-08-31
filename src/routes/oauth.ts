@@ -7,7 +7,7 @@ import type {
 } from "../types.js";
 import { isSafeHttpUrl, resolveBranding } from "../ui.js";
 import {
-  authorizeUiAdmin,
+  authorizeUiIdentity,
   isSameOrigin,
   loggableValue,
   msg,
@@ -26,28 +26,42 @@ async function handleOAuthManagementRequest(
       { status: 403 },
     );
   }
-  const admin = await authorizeUiAdmin(
+  const authz = await authorizeUiIdentity(
     request,
     baseUrl,
     opts.auth,
     "OAuth management",
     context.runtimeContext,
+    opts.identity,
   );
-  if (!admin.ok) return admin.response;
+  if (!authz.ok) return authz.response;
+  let registry;
+  try {
+    registry = opts.registry.scoped({
+      connectorIds: authz.connectorIds,
+      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
+      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+    });
+  } catch (error) {
+    return privateJson({ error: msg(error) }, { status: 403 });
+  }
 
-  const connector = opts.registry.getConnector(connectorId);
+  const connector = registry.getConnector(connectorId);
   if (!connector?.disconnectAuth || !connector.startAuth) {
     return privateJson(
       { error: "unknown OAuth connector" },
       { status: 404 },
     );
   }
+  if (connector.authScope === "personal" && !authz.principalKey) {
+    return privateJson({ error: "forbidden" }, { status: 403 });
+  }
   if (request.method !== "DELETE" && request.method !== "POST") {
     return privateJson({ error: "method not allowed" }, { status: 405 });
   }
 
   const requestScope = {};
-  const ctx = opts.registry.contextFor(connectorId, baseUrl, requestScope);
+  const ctx = registry.contextFor(connectorId, baseUrl, requestScope);
   try {
     let result: ConnectorStatus | undefined;
     let operationError: unknown;
@@ -56,6 +70,12 @@ async function handleOAuthManagementRequest(
         await connector.disconnectAuth(ctx);
       } else {
         result = await connector.startAuth(ctx, { force: true });
+        if (result.authorizationUrl) {
+          await registry.bindOAuthHandoff(
+            connectorId,
+            result.authorizationUrl,
+          );
+        }
       }
     } catch (error) {
       operationError = error;
@@ -64,7 +84,7 @@ async function handleOAuthManagementRequest(
     // The old grant and its cached catalog are invalid after either operation,
     // including a partially failed physical cleanup whose epoch fence succeeded.
     try {
-      await opts.registry.invalidateStored(connectorId);
+      await registry.invalidateStored(connectorId);
     } catch (error) {
       operationError ??= error;
     }
@@ -252,13 +272,18 @@ export async function routeOAuthCallback(
   const code = url.searchParams.get("code");
   if (!code) return html("Missing authorization code.", 400, opts.branding);
   const id = path.slice("/oauth/callback/".length);
-  const connector = opts.registry.getConnector(id);
+  const state = url.searchParams.get("state");
+  const callbackTarget = await opts.registry.oauthCallbackView(id, state);
+  const callbackRegistry = callbackTarget?.registry;
+  const connector = callbackRegistry?.getConnector(id);
   // Safe to build before we know the id names anything: `contextFor` is a pure
   // constructor — a namespaced storage view over `conn:<id>:` and, only for a
   // connector that declares one, a lazy credential accessor. It neither throws
   // nor touches storage for an unknown id, which is what lets the refusals
   // below borrow it to equalize their cost.
-  const connectorContext = opts.registry.contextFor(id, baseUrl);
+  const connectorContext = callbackRegistry
+    ? callbackRegistry.contextFor(id, baseUrl)
+    : opts.registry.contextFor(id, baseUrl);
   const refused = () =>
     html(
       "Authorization could not be completed. Re-run authorization from " +
@@ -269,6 +294,29 @@ export async function routeOAuthCallback(
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext);
     return refused();
+  }
+  const expectedPrincipalKey = callbackTarget?.principalKey;
+  if (expectedPrincipalKey) {
+    const browserIdentity = await authorizeUiIdentity(
+      context.request,
+      baseUrl,
+      opts.auth,
+      "OAuth callback",
+      context.runtimeContext,
+      opts.identity,
+    );
+    if (
+      browserIdentity.ok &&
+      browserIdentity.principalKey !== expectedPrincipalKey
+    ) {
+      opts.logger.warn(
+        `[connecta] refused an OAuth callback for connector ` +
+          `${loggableValue(id)} with 400: the authenticated browser identity ` +
+          "did not start this personal authorization flow. No authorization " +
+          "code was exchanged.",
+      );
+      return refused();
+    }
   }
   // CSRF / login-fixation guard: this route is intentionally public, so verify
   // the `state` matches the flow connecta started BEFORE exchanging the code.
@@ -283,7 +331,6 @@ export async function routeOAuthCallback(
     );
     return refused();
   }
-  const state = url.searchParams.get("state");
   let stateMatches: boolean;
   try {
     stateMatches = await connector.verifyState(state, connectorContext);
@@ -309,9 +356,21 @@ export async function routeOAuthCallback(
     );
     return refused();
   }
+  if (connector.authScope === "personal") {
+    try {
+      await opts.registry.clearOAuthHandoff(id, state);
+    } catch (err) {
+      opts.logger.warn(
+        `[connecta] refused an OAuth callback for connector ` +
+          `${loggableValue(id)} with 500: its principal handoff could not be ` +
+          `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
+      );
+      return html("Authorization could not be completed.", 500, opts.branding);
+    }
+  }
   try {
     await connector.finishAuth(code, connectorContext, url.searchParams);
-    await opts.registry.invalidateStored(id);
+    await callbackRegistry!.invalidateStored(id);
     return html(
       `Connected "${id}". You can close this window.`,
       200,

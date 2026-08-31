@@ -16,6 +16,8 @@ export const REVENUECAT_MCP_ENDPOINT = "https://mcp.revenuecat.ai/mcp";
 export interface RevenueCatOptions {
   /** Display name; scope defaults are in `documentation/revenuecat.md`. */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /**
    * Which project this connector is for and what decisions it answers. With
    * headers auth this is the only place the project a key reaches is named,
@@ -263,6 +265,7 @@ export function revenuecat(id: string, options: RevenueCatOptions): Connector {
   const scoped = auth.type !== "oauth";
   const connector = remoteMcp(id, {
     url: REVENUECAT_MCP_ENDPOINT,
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     // The scope shape rides the title because browse-time discovery renders
     // the title and the guide summary and nothing else, and reaching one
     // project versus every project the account has is the fact an agent must
