@@ -8,6 +8,7 @@ import {
 } from "../ui.js";
 import {
   authorize,
+  msg,
   privateJson,
   type RouteContext,
 } from "./shared.js";
@@ -124,16 +125,45 @@ export async function routeUi(
   }
   if (path !== "/ui/data") return null;
 
-  const authz = await authorize(request, baseUrl, opts.auth, runtimeContext);
+  const authz = await authorize(
+    request,
+    baseUrl,
+    opts.auth,
+    runtimeContext,
+    opts.identity,
+  );
   if (!authz.ok) return authz.response;
+  let registry;
+  try {
+    registry = opts.registry.scoped({
+      connectorIds: authz.connectorIds,
+      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
+      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+    });
+  } catch (error) {
+    return privateJson({ error: msg(error) }, { status: 403 });
+  }
   const eligibleOperator = authz.uiAdminEligible === true;
-  const credentialManagement = credentialManagementCapability({
-    eligibleOperator,
-    hasCredentialSlots: opts.registry
-      .listConnectors()
-      .some((connector) => Boolean(connector.credential)),
-    hasCredentialVault: Boolean(opts.credentialVault),
-  });
+  const interactiveManager = authz.identity.interactive;
+  const personalManager = Boolean(
+    interactiveManager && authz.principalKey,
+  );
+  const visibleConnectors = registry.listConnectors();
+  const hasManageableCredentialSlot = visibleConnectors.some(
+    (connector) => Boolean(connector.credential) &&
+      (connector.authScope !== "personal" || personalManager),
+  );
+  const credentialManagement = interactiveManager && hasManageableCredentialSlot
+    ? opts.credentialVault
+      ? "available" as const
+      : "vault_not_configured" as const
+    : credentialManagementCapability({
+        eligibleOperator: interactiveManager,
+        hasCredentialSlots: visibleConnectors.some((connector) =>
+          Boolean(connector.credential)
+        ),
+        hasCredentialVault: Boolean(opts.credentialVault),
+      });
   // As with connector credentials, a Bearer-authenticated observer learns
   // only that an interactive operator is required, not whether this deployment has opted into
   // token issuance. Configuration topology is operator data.
@@ -143,18 +173,20 @@ export async function routeUi(
       ? "available" as const
       : "not_configured" as const;
   const data = await buildUiData(
-    opts.registry,
+    registry,
     baseUrl,
     opts.serverInfo,
-    // The static headless bearer may read connector health, but only a
-    // Clerk-authenticated operator receives credential metadata.
-    eligibleOperator ? opts.credentialVault : undefined,
-    Boolean(opts.activity?.list),
+    // A static headless bearer may read connector health, but only an
+    // interactive human receives credential metadata for visible connectors.
+    interactiveManager ? opts.credentialVault : undefined,
+    Boolean(opts.activity?.list) &&
+      (!opts.identity?.operatorAccess || eligibleOperator),
     credentialManagement,
     defer,
-    eligibleOperator,
+    interactiveManager,
     opts.discoveryConcurrency,
     accessTokenManagement,
+    personalManager ? authz.principalKey : undefined,
   );
   return privateJson(data);
 }

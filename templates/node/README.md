@@ -68,6 +68,13 @@ import, the two `process.env.CLERK_*` reads, and the `clerkAuth({ … })` entry 
 Applications → DCR) if MCP clients should sign in through it too, and set
 `PUBLIC_URL` first — Clerk redirects back to it.
 
+Clerk remains the identity provider when several people share this Docker
+deployment. Uncomment the `identity` block in `src/index.ts` to give each Clerk
+principal a config-derived connector view and to choose operators. Add
+`authScope: "personal"` to a connector when each person should supply their own
+credential or finish their own downstream OAuth flow. Without those options,
+all connectors and auth stay shared exactly as before.
+
 **2. Credential vault.** Uncomment `credentials` and set
 `CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
 

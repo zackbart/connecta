@@ -46,14 +46,55 @@ wrangler deploy
 Cloudflare Access to the Worker itself (the API destination type is `worker`,
 not a hostname application) and choose the account, email-domain, or
 advanced Zero Trust policy that owns admission. Enable **Managed OAuth** on
-that Access application for interactive MCP clients. Access then serves OAuth
-discovery and turns the client's opaque token into the trusted `ctx.access`
-identity connecta reads. A cron job or CI client uses an Access service token
-instead.
+that Access application for interactive MCP clients, turn on Dynamic Client
+Registration, and add these three entries under **Allowed redirect URIs**:
+
+```text
+https://claude.ai/api/mcp/auth_callback
+https://chatgpt.com/connector_platform_oauth_redirect
+https://chatgpt.com/connector/oauth/*
+```
+
+The Claude entry is its fixed hosted-MCP callback. ChatGPT may register either
+its stable callback or a callback-id URL, so both forms are intentional. These
+are Managed OAuth application settings, represented by
+`oauth_configuration.dynamic_client_registration.allowed_uris` in the Access
+API; they do not belong in the Access Allow policy that decides who may sign
+in. Leaving the list empty is a footgun: discovery still works, then Dynamic
+Client Registration fails because the callback is not allowed. If either
+client presents a new redirect URI, copy that exact value from the registration
+attempt and add the narrowest matching entry rather than allowing its entire
+origin.
+
+Access then serves OAuth discovery and turns the client's opaque token into the
+trusted `ctx.access` identity connecta reads. A cron job or CI client uses an
+Access service token instead.
+
+Through the API, the relevant part of the application is:
+
+```json
+{
+  "oauth_configuration": {
+    "enabled": true,
+    "dynamic_client_registration": {
+      "enabled": true,
+      "allowed_uris": [
+        "https://claude.ai/api/mcp/auth_callback",
+        "https://chatgpt.com/connector_platform_oauth_redirect",
+        "https://chatgpt.com/connector/oauth/*"
+      ]
+    }
+  }
+}
+```
 
 Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 owns the dashboard/API steps; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 owns client registration, redirect allowlists, and token lifetimes.
+
+[`AGENTS.md`](./AGENTS.md) repeats the callback invariant for coding agents
+working in a copied deployment. Do not remove the entries there when changing
+the Access policy or application.
 
 The checked-in `access.dev` block gives `wrangler dev` a local operator
 identity. Remove the block to test the missing-Access refusal. It has no effect
@@ -75,13 +116,9 @@ connecta's manifest but never installed with it, and published as
 one outside and npm says so at install time instead of leaving a Worker to
 discover the skew in production ([#376](https://github.com/zackbart/connecta/issues/376)).
 
-`cloudflareAccessAuth()` has no dependency of its own. A deployment keeping
-Clerk for rollback still installs `@clerk/backend` and keeps the commented
-provider shape in `src/index.ts` until the migration is verified.
-
-```sh
-npm install @clerk/backend   # migration window only
-```
+`cloudflareAccessAuth()` has no dependency of its own. This Worker example has
+no Clerk import, secret, package, or fallback provider. Docker deployments keep
+the Clerk path in the Node template.
 
 Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
 Connections. Credentials is at `/credentials`, named MCP access tokens are at
@@ -96,9 +133,21 @@ as deployed; the fourth needs a database, so it is commented in place.
 
 **Operator sign-in** is the `cloudflareAccessAuth()` entry in `src/index.ts`.
 Access authenticates before the Worker runs. A human Access identity can use
-MCP and operator pages; a service-token identity can use MCP but cannot write a
-credential, run downstream OAuth, or issue a connecta token. Narrow admission
-in the Access policy rather than repeating email domains or groups in code.
+MCP and human-management pages; a service-token identity can use MCP but cannot
+write a credential, run downstream OAuth, or issue a connecta token. Cloudflare
+still owns the outer application admission policy, but Connecta's user roster,
+connector access, and deployment roles stay in `src/index.ts`.
+
+**Several users** need no second auth system or Connecta account dashboard.
+Uncomment the `identity` block in `src/index.ts` to derive connector ids and
+deployment-operator membership from the Access principal. Connectors remain
+visible to everyone and every human remains an operator when that block is
+absent. A signed-in human may edit auth for every connector their view includes.
+Add `authScope: "personal"` when each user should connect a different downstream
+account; leave it shared only when any user with connector access may rotate the
+deployment-wide grant. Static headers stay shared because their value lives in
+deployment configuration. See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators)
+for the resolver contract.
 
 **The credential vault** is `credentials: { encryptionKey: … }`, backed by the
 same KV namespace as everything else and encrypted with the

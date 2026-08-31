@@ -1056,7 +1056,7 @@ describe("server /mcp end-to-end", () => {
     expect(payload.authorizationUrl).toContain("auth.example");
   });
 
-  it("gives a bearer-only deployment a safe handoff but keeps mutation Clerk-only", async () => {
+  it("gives a bearer-only deployment a safe handoff but keeps mutation interactive-only", async () => {
     const c = createTestConnecta({
       connectors: [recoverableStaticConnector()],
       auth: bearerToken(TOKEN),
@@ -1077,7 +1077,9 @@ describe("server /mcp end-to-end", () => {
       recovery: "operator_config",
       operatorUrl: `${BASE}/credentials`,
     });
-    expect(recovery.instructions).toContain("Clerk-authenticated operator");
+    expect(recovery.instructions).toContain(
+      "signed-in human with access to this connector",
+    );
 
     const mutation = await c.fetch(
       new Request(`${BASE}/ui/credentials/static`, {
@@ -1094,7 +1096,7 @@ describe("server /mcp end-to-end", () => {
     );
     expect(mutation.status).toBe(403);
     expect(await mutation.json()).toEqual({
-      error: "credential management requires interactive operator authentication",
+      error: "credential management requires interactive user authentication",
     });
   });
 

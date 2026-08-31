@@ -103,6 +103,8 @@ export interface RemoteMcpOptions {
   /** Human-readable display name; the connector id remains the address prefix. */
   title?: string;
   description?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /**
    * Max inline result size (bytes) for this connector's tools before
    * call_tool truncates and stashes the full text for get_result
@@ -552,6 +554,13 @@ interface ConnectionState {
  * server or hide other connectors).
  */
 export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
+  if (opts.authScope === "personal" && opts.auth?.type === "headers") {
+    throw new Error(
+      `[connecta] connector "${id}" cannot combine authScope "personal" ` +
+        "with static headers. Use credential or OAuth auth so each principal " +
+        "can own a different grant.",
+    );
+  }
   // Weak keys ensure a completed request does not leave its SDK client,
   // transport, response bodies, AbortSignals, or connection promise reachable
   // from the isolate singleton. Those are request-bound in Cloudflare Workers.
@@ -1059,6 +1068,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     ...(opts.description !== undefined
       ? { description: opts.description }
       : {}),
+    ...(opts.authScope !== undefined ? { authScope: opts.authScope } : {}),
     ...(opts.maxResultBytes !== undefined
       ? { maxResultBytes: opts.maxResultBytes }
       : {}),

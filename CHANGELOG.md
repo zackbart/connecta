@@ -2,6 +2,52 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This release lets one deployment serve several authenticated people without
+becoming an account system. Connector visibility comes from deployment config,
+and downstream auth may be shared across the tenant or isolated per human.
+Existing connectors stay shared, every visible connector stays visible, and
+every interactive human stays an operator unless the deployment opts into the
+new identity rules. A signed-in human may manage authentication for every
+connector their code-derived view includes; operator status separately controls
+tokens and global activity. Worker deployments also gain the complete Managed
+OAuth callback allowlist in the shipped example and agent instructions.
+
+### Added
+
+- **Identity-derived connector views.** `identity.connectorAccess` selects
+  declared connector ids from the authenticated actor, subject, and principal.
+  The view reaches discovery, direct and program calls, status, catalogs,
+  observed output shapes, and paged results. Unknown ids and resolver failures
+  fail closed.
+- **Shared and personal connector auth.** `authScope: "personal"` partitions
+  connector storage, encrypted credentials, OAuth state and tokens, catalogs,
+  and runtime observations by a hashed principal identity. Interactive members
+  manage auth for every visible connector: their own partition for personal
+  auth, or the deployment-wide grant for shared auth. `identity.operatorAccess`
+  reserves deployment access tokens and global activity for configured
+  operators.
+- **Principal-bound access tokens and OAuth callbacks.** A new connecta access
+  token retains its creator's principal without gaining operator rights.
+  Personal OAuth handoffs bind a hash of state to the initiating principal for
+  15 minutes before the public callback can exchange a code.
+
+### Changed
+
+- **Result pages follow authenticated subjects.** `get_result` storage is now
+  partitioned for every namespaced subject, including existing Clerk, Access,
+  and connecta-token callers. In-flight result ids created before upgrading do
+  not cross that storage boundary; finish paging them before deployment when
+  that matters.
+- **Worker Managed OAuth setup.** The Worker guide, source comment, upgrade
+  guide, and local `AGENTS.md` require Claude's fixed callback plus ChatGPT's
+  stable and callback-id forms in
+  `dynamic_client_registration.allowed_uris`.
+- **One tenant, several people.** The ethos now refuses a connecta-owned account
+  model while allowing externally authenticated principals, config-derived
+  connector visibility, and personal downstream credentials inside one tenant.
+
 ## 0.21.2 — 2026-08-31
 
 This patch closes two runtime isolation gaps: concurrent request scopes now

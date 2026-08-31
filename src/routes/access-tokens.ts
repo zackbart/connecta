@@ -79,6 +79,7 @@ export async function routeAccessTokens(
     opts.auth,
     "access token management",
     context.runtimeContext,
+    opts.identity,
   );
   if (!admin.ok) return admin.response;
 
@@ -91,7 +92,10 @@ export async function routeAccessTokens(
       const input = await readName(request);
       if (!input.ok) return input.response;
       return privateJson(
-        await opts.accessTokens.create(input.name, admin.userId),
+        await opts.accessTokens.create(
+          input.name,
+          admin.principal ?? admin.userId,
+        ),
         { status: 201 },
       );
     }

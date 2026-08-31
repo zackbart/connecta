@@ -6,18 +6,23 @@ import type { DeferredWork } from "../connector-scope.js";
 import type { AdmissionController } from "../executor-admission.js";
 import type { Registry } from "../registry.js";
 import type {
+  AuthenticatedIdentity,
   ConnectaBranding,
   Executor,
+  IdentityReference,
   InboundAuth,
   InboundAuthRuntimeContext,
   Logger,
 } from "../types.js";
+import { identityStorageKey, validIdentityReference } from "../identity.js";
+import type { ConnectaIdentityConfig } from "../index.js";
 import { operatorPageForPath } from "../ui.js";
 export { msg } from "../errors.js";
 
 export interface ServerOptions {
   registry: Registry;
   auth: InboundAuth[];
+  identity?: ConnectaIdentityConfig | undefined;
   publicUrl?: string | undefined;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.
@@ -112,17 +117,35 @@ export async function authorize(
   baseUrl: string,
   auth: InboundAuth[],
   runtimeContext?: RuntimeExecutionContext,
+  identityConfig?: ConnectaIdentityConfig,
+  partitionIdentity = true,
 ): Promise<
   | {
       ok: true;
       actor: ActivityActor;
-      /** True only when the admitting provider can also authorize UI mutation. */
+      identity: AuthenticatedIdentity;
+      subjectKey?: string;
+      principalKey?: string;
+      connectorIds: "all" | readonly string[];
+      operator: boolean;
+      /** Backward-compatible name used by operator views. */
       uiAdminEligible?: boolean;
     }
   | { ok: false; response: Response }
 > {
   if (auth.length === 0) {
-    return { ok: true, actor: { kind: "anonymous" } };
+    const actor = { kind: "anonymous" } as const;
+    const identity: AuthenticatedIdentity = { actor, interactive: false };
+    let connectorIds: "all" | readonly string[] = "all";
+    try {
+      connectorIds = await identityConfig?.connectorAccess?.(identity) ?? "all";
+    } catch {
+      return {
+        ok: false,
+        response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
+      };
+    }
+    return { ok: true, actor, identity, connectorIds, operator: false };
   }
   let lastResponse: Response | null = null;
   for (const provider of auth) {
@@ -130,18 +153,58 @@ export async function authorize(
     if (result.ok) {
       const subjectId = result.subjectId ?? result.userId;
       const actorNamespace = activityActorNamespace(provider);
+      const subject = subjectId && actorNamespace
+        ? { namespace: actorNamespace, id: subjectId }
+        : undefined;
+      const derivedPrincipal = result.userId && actorNamespace
+        ? { namespace: actorNamespace, id: result.userId }
+        : undefined;
+      const principal = validIdentityReference(result.principal)
+        ? result.principal
+        : derivedPrincipal;
+      const interactive = Boolean(result.userId && provider.interactiveOperator);
+      const actor: ActivityActor = {
+        kind: provider.kind,
+        ...(subjectId ? { id: subjectId } : {}),
+        ...(subject ? { namespace: subject.namespace } : {}),
+      };
+      const identity: AuthenticatedIdentity = {
+        actor,
+        ...(subject ? { subject } : {}),
+        ...(principal ? { principal } : {}),
+        interactive,
+      };
+      let operator = interactive;
+      let connectorIds: "all" | readonly string[] = "all";
+      try {
+        if (identityConfig?.operatorAccess) {
+          operator = interactive && principal
+            ? await identityConfig.operatorAccess(principal)
+            : false;
+        }
+        connectorIds = await identityConfig?.connectorAccess?.(identity) ?? "all";
+      } catch {
+        return {
+          ok: false,
+          response: privateJson(
+            { error: "identity access resolution failed" },
+            { status: 403 },
+          ),
+        };
+      }
       return {
         ok: true,
-        actor: {
-          kind: provider.kind,
-          ...(subjectId ? { id: subjectId } : {}),
-          ...(subjectId && actorNamespace
-            ? { namespace: actorNamespace }
-            : {}),
-        },
-        ...(result.userId && provider.interactiveOperator
-          ? { uiAdminEligible: true }
+        actor,
+        identity,
+        ...(subject && partitionIdentity
+          ? { subjectKey: await identityStorageKey(subject) }
           : {}),
+        ...(principal && partitionIdentity
+          ? { principalKey: await identityStorageKey(principal) }
+          : {}),
+        connectorIds,
+        operator,
+        ...(operator ? { uiAdminEligible: true } : {}),
       };
     }
     lastResponse = result.response;
@@ -166,7 +229,17 @@ export async function authorizeUiAdmin(
   auth: InboundAuth[],
   purpose = "credential management",
   runtimeContext?: RuntimeExecutionContext,
-): Promise<{ ok: true; userId: string } | { ok: false; response: Response }> {
+  identityConfig?: ConnectaIdentityConfig,
+): Promise<
+  | {
+      ok: true;
+      userId: string;
+      principal?: IdentityReference;
+      principalKey?: string;
+      connectorIds: "all" | readonly string[];
+    }
+  | { ok: false; response: Response }
+> {
   // Operator mutation is intentionally narrower than /mcp and /ui/data: only
   // an interactive provider may admit it. A static bearer token is useful
   // for headless tool calls but must not become a deployment-admin key.
@@ -175,37 +248,78 @@ export async function authorizeUiAdmin(
   // Stopping at the first would make admission depend on config order: a failed gate or
   // missing user may simply mean a later provider is the one meant to admit.
   // The last refusal is returned if none do.
+  const authz = await authorizeUiIdentity(
+    request,
+    baseUrl,
+    auth,
+    purpose,
+    runtimeContext,
+    identityConfig,
+  );
+  if (!authz.ok) return authz;
+  if (!authz.operator || !authz.actor.id) {
+    return {
+      ok: false,
+      response: privateJson({ error: `${purpose} requires operator access` }, { status: 403 }),
+    };
+  }
+  return {
+    ok: true,
+    userId: authz.identity.principal?.id ?? authz.actor.id,
+    ...(authz.identity.principal
+      ? { principal: authz.identity.principal }
+      : {}),
+    ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
+    connectorIds: authz.connectorIds,
+  };
+}
+
+export async function authorizeUiIdentity(
+  request: Request,
+  baseUrl: string,
+  auth: InboundAuth[],
+  purpose: string,
+  runtimeContext?: RuntimeExecutionContext,
+  identityConfig?: ConnectaIdentityConfig,
+): Promise<
+  | Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>
+  | { ok: false; response: Response }
+> {
   const providers = auth.filter((candidate) => candidate.interactiveOperator);
   if (providers.length === 0) {
     return {
       ok: false,
       response: privateJson(
-        { error: `${purpose} requires interactive operator authentication` },
+        { error: `${purpose} requires interactive user authentication` },
         { status: 403 },
       ),
     };
   }
-  let lastResponse: Response | null = null;
+  let lastResponse: Response | undefined;
   for (const provider of providers) {
-    const result = await provider.authorize(request, baseUrl, runtimeContext);
-    if (!result.ok) {
-      lastResponse = result.response;
+    const authz = await authorize(
+      request,
+      baseUrl,
+      [provider],
+      runtimeContext,
+      identityConfig,
+    );
+    if (!authz.ok) {
+      lastResponse = authz.response;
       continue;
     }
-    if (!result.userId) {
-      lastResponse = privateJson(
-        { error: "authenticated user required" },
-        { status: 403 },
-      );
-      continue;
-    }
-    return { ok: true, userId: result.userId };
+    if (authz.identity.interactive) return authz;
+    lastResponse = privateJson(
+      { error: "authenticated user required" },
+      { status: 403 },
+    );
   }
   return {
     ok: false,
-    response:
-      lastResponse ??
-      privateJson({ error: "forbidden" }, { status: 403 }),
+    response: lastResponse ?? privateJson(
+      { error: `${purpose} requires interactive user authentication` },
+      { status: 403 },
+    ),
   };
 }
 

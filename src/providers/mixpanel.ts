@@ -27,6 +27,8 @@ export interface MixpanelOptions {
    * discovery shows the title before anything else.
    */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /** Who should use this account and for what decisions. */
   purpose: string;
   /** Data residency region; see `documentation/mixpanel.md`. */
@@ -249,6 +251,7 @@ export function mixpanel(id: string, options: MixpanelOptions): Connector {
   }
   const connector = remoteMcp(id, {
     url: MIXPANEL_MCP_ENDPOINTS[region],
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     // The region rides the title because browse-time discovery renders the
     // title and the guide summary and nothing else, and residency is the fact
     // an agent must not get wrong between two Mixpanel connections.

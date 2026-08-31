@@ -17,15 +17,17 @@
  *   1. `npm install` in the connecta package root (../../ from here) so the
  *      package import and wrangler resolve. A copy in its own repository
  *      installs `@zackbart/connecta @cloudflare/codemode` instead. Codemode is
- *      an optional peer; a migrating deployment also keeps `@clerk/backend`
- *      until it removes the commented rollback provider below.
+ *      an optional peer.
  *   2. Create a KV namespace and put its id in wrangler.jsonc under `kv_namespaces`.
  *   3. Set secrets:
  *        wrangler secret put DOWNSTREAM_TOKEN
  *        wrangler secret put CREDENTIAL_ENCRYPTION_KEY
  *      and PUBLIC_URL as a plain var in wrangler.jsonc.
- *   4. Attach Cloudflare Access to this Worker. Enable Managed OAuth on the
- *      Access application for interactive MCP clients.
+ *   4. Attach Cloudflare Access to this Worker. Enable Managed OAuth and
+ *      Dynamic Client Registration. Its Allowed redirect URIs must include
+ *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
+ *      https://chatgpt.com/connector_platform_oauth_redirect and
+ *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
  *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
@@ -37,17 +39,12 @@ import {
   remoteMcp,
 } from "@zackbart/connecta";
 import { cloudflareAccessAuth } from "@zackbart/connecta/auth/cloudflare-access";
-// Rollback for a deployment migrating from Clerk:
-// import { clerkAuth } from "@zackbart/connecta/auth/clerk";
 import { cloudflareKvStorage } from "./cloudflare-kv.js";
 // Activity history, off by default because it needs a D1 database.
 // import { d1ActivityStore } from "./d1-activity.js";
 
 interface Env {
   CONNECTA_KV: KVNamespace;
-  // Keep these during a Clerk migration until Access has been verified:
-  // CLERK_PUBLISHABLE_KEY: string;
-  // CLERK_SECRET_KEY: string;
   /**
    * Base64 32-byte AES key encrypting operator-managed credentials in KV.
    * Unset means no vault: /credentials stays read-only and connecta says so at
@@ -75,20 +72,24 @@ function build(env: Env) {
       // operator pages; a service token may use MCP but cannot mutate operator
       // state. Neither path asks connecta to parse a JWT.
       cloudflareAccessAuth(),
-      // Leave the previous Clerk provider below this entry during migration.
-      // It is a rollback path until Worker-level Access is detached; Access
-      // itself decides whether a request reaches this array.
-      // clerkAuth({
-      //   publishableKey: env.CLERK_PUBLISHABLE_KEY,
-      //   secretKey: env.CLERK_SECRET_KEY,
-      //   publicUrl: env.PUBLIC_URL,
-      //   allowedDomains: ["acme.com"],
-      // }),
     ],
-    // Connectors that declare a `credential` slot become editable at
-    // /credentials, encrypted with this key before anything reaches KV. A
-    // saved replacement takes effect on the next call — no redeploy, and no
-    // liveness probe: credentials fail at use.
+    // Optional code-owned roster. Access proves the identity; connecta derives
+    // connector visibility and deployment-operator status from the stable id
+    // it supplies. A signed-in human may manage auth for every connector this
+    // view includes. Omit the block to keep every connector visible and every
+    // human a deployment operator.
+    // identity: {
+    //   connectorAccess: ({ principal }) =>
+    //     principal?.id === "ACCESS_USER_UUID"
+    //       ? ["notion", "echo"]
+    //       : ["echo"],
+    //   operatorAccess: ({ id }) => id === "ACCESS_USER_UUID",
+    // },
+    // Connectors that declare a `credential` slot become editable by every
+    // signed-in human who can see that connector at /credentials, encrypted
+    // with this key before anything reaches KV. A saved replacement takes
+    // effect on the next call — no redeploy, and no liveness probe:
+    // credentials fail at use.
     //
     // The key is the vault, not the page: /credentials is a list of connector
     // slots, so it stays hidden until a connector declares one. Neither
@@ -123,6 +124,9 @@ function build(env: Env) {
           //   type: "credential",
           //   credential: { label: "Notion internal integration token" },
         },
+        // Use `authScope: "personal"` with OAuth or credential auth when each
+        // Access user connects their own downstream account. Literal headers
+        // are deployment-owned and cannot be personal.
       }),
       api("echo", {
         description: "Echo — text transforms",

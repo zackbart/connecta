@@ -83,6 +83,10 @@ function ConnectorCard({
           {toolCountLabel(connector.toolCount)}
           <br />
           <span class="mono">{connector.id}</span>
+          <br />
+          <span>
+            {connector.authScope === "personal" ? "personal auth" : "shared auth"}
+          </span>
         </div>
       </div>
       {connector.message ? (

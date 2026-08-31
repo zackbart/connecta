@@ -273,7 +273,7 @@ describe("server route contracts", () => {
     expectPrivateJson(credentialWithoutClerk);
     expect(credentialWithoutClerk.status).toBe(403);
     expect(await credentialWithoutClerk.text()).toBe(
-      '{"error":"credential management requires interactive operator authentication"}',
+      '{"error":"credential management requires interactive user authentication"}',
     );
 
     const oauthWithoutClerk = await connecta.fetch(
@@ -288,7 +288,7 @@ describe("server route contracts", () => {
     expectPrivateJson(oauthWithoutClerk);
     expect(oauthWithoutClerk.status).toBe(403);
     expect(await oauthWithoutClerk.text()).toBe(
-      '{"error":"OAuth management requires interactive operator authentication"}',
+      '{"error":"OAuth management requires interactive user authentication"}',
     );
 
     for (const path of [

@@ -1,4 +1,10 @@
-import type { AuthResult, InboundAuth, KVStorage } from "./types.js";
+import type {
+  AuthResult,
+  IdentityReference,
+  InboundAuth,
+  KVStorage,
+} from "./types.js";
+import { validIdentityReference } from "./identity.js";
 
 const TOKEN_PREFIX = "cta_";
 const TOKEN_BYTES = 32;
@@ -18,6 +24,7 @@ interface StoredAccessToken {
   tokenPrefix: string;
   createdAt: string;
   createdBy: string;
+  principal?: IdentityReference;
   revokedAt?: string;
   revokedBy?: string;
 }
@@ -96,6 +103,8 @@ function parseRecord(raw: string): StoredAccessToken {
       typeof value.tokenPrefix !== "string" ||
       typeof value.createdAt !== "string" ||
       typeof value.createdBy !== "string" ||
+      (value.principal !== undefined &&
+        !validIdentityReference(value.principal)) ||
       (value.revokedAt !== undefined &&
         typeof value.revokedAt !== "string") ||
       (value.revokedBy !== undefined &&
@@ -205,7 +214,10 @@ export class AccessTokenManager {
       .map(metadata);
   }
 
-  async create(name: unknown, createdBy: string): Promise<CreatedAccessToken> {
+  async create(
+    name: unknown,
+    createdBy: string | IdentityReference,
+  ): Promise<CreatedAccessToken> {
     const normalizedName = normalizeName(name);
     const active = (await this.list()).filter((token) => !token.revokedAt);
     if (active.length >= this.maxActive) {
@@ -226,7 +238,12 @@ export class AccessTokenManager {
       tokenHash: hash,
       tokenPrefix: token.slice(0, 12),
       createdAt: new Date().toISOString(),
-      createdBy,
+      createdBy: typeof createdBy === "string"
+        ? createdBy
+        : `${createdBy.namespace}:${createdBy.id}`,
+      ...(typeof createdBy === "string"
+        ? {}
+        : { principal: { ...createdBy } }),
     };
     await this.storage.set(recordKey(record.id), JSON.stringify(record));
     try {
@@ -284,6 +301,10 @@ export class AccessTokenManager {
     if (!record || record.revokedAt || record.tokenHash !== hash) {
       return unauthorized();
     }
-    return { ok: true, subjectId: record.id };
+    return {
+      ok: true,
+      subjectId: record.id,
+      ...(record.principal ? { principal: { ...record.principal } } : {}),
+    };
   }
 }

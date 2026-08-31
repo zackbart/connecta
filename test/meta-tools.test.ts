@@ -1018,8 +1018,9 @@ describe("authorize_connector", () => {
       operatorUrl: `${BASE}/credentials`,
       instructions:
         "Have the operator open operatorUrl, set and test the credential, " +
-        "then retry the original call. No redeploy is needed. Credential " +
-        "mutation requires a Clerk-authenticated operator.",
+        "then retry the original call. No redeploy is needed. Shared " +
+        "credential mutation requires a signed-in human with access to this " +
+        "connector.",
     });
     expect(required(result.content[0]).text).not.toContain(
       "do-not-return-this-secret",

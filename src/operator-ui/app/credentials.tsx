@@ -147,7 +147,7 @@ function CredentialCard({
         <span class="credential-state">{credentialStateLabel(credential)}</span>
       </div>
       <p class="mono">
-        {connector.id} · {credential.label}
+        {connector.id} · {connector.authScope === "personal" ? "personal" : "shared"} · {credential.label}
       </p>
       {credential.description ? (
         <p class="credential-copy meta">{credential.description}</p>
@@ -232,7 +232,7 @@ export function CredentialsPage({ state }: { state: OperatorState }) {
         </h1>
         <div class="pbody">
           <p class="activity-copy">
-            Rotate operator-managed connector credentials. Stored values are
+            Manage shared or personal connector credentials. Stored values are
             never returned or displayed.
           </p>
           <NoticeLine id="credentialNotice" notice={state.credentialNotice} />

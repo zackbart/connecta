@@ -30,6 +30,8 @@ export interface LinearOptions {
    * "Linear (read-only)" when `access` is `"read-only"`.
    */
   title?: string;
+  /** Downstream auth ownership. Defaults to one shared deployment grant. */
+  authScope?: "shared" | "personal";
   /** Which workspace this is and what decisions it answers. */
   purpose: string;
   /** Required endpoint selection; see `documentation/linear.md`. */
@@ -207,6 +209,7 @@ export function linear(id: string, options: LinearOptions): Connector {
   }
   const connector = remoteMcp(id, {
     url: LINEAR_MCP_ENDPOINTS[access],
+    ...(options.authScope ? { authScope: options.authScope } : {}),
     // The title is what browse-time discovery renders; a read-only connection
     // says so there rather than only in a description the caller may not see.
     title:
