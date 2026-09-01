@@ -218,13 +218,10 @@ benchmarks, experiments, virtual currencies, and the account-billing tools are
 the usual absentees — so search this connector for what it actually exposes
 rather than assuming a documented tool is here.
 
-**No schema digests are recorded.** No release has read RevenueCat's live
-schemas and written them down; that needs a live project and a maintainer's own
-key. The manifest therefore ships names and verdicts only, and the drift check
-honestly counts zero schema changes rather than reporting an invented one.
-`npm run drift:check -- --record` reads them from a live catalog and prints the
-block a release pastes in
-([#351](https://github.com/zackbart/connecta/issues/351)).
+**No schemas are vendored.** The manifest ships names and safety verdicts only.
+The live `tools/list` response remains the schema agents receive; Connecta does
+not replace it with a snapshot or require a maintainer credential to validate
+one.
 
 ## Rate limits
 
@@ -287,11 +284,18 @@ still needs restrained use.
   additions that catalog serves, including `get-refund-request-preferences`,
   but cannot prove a globally documented tool was removed. The manifest stays
   a superset because plan, platform, and credential scope hide tools.
-- **No complete schema set has been recorded**, which is why the manifest
-  carries no digests. The review read the new live schemas, but its scoped
-  catalog omitted many classified writes.
+- **No complete schema set is vendored.** The live review read the new schemas,
+  but its scoped catalog omitted many classified writes. Runtime schemas still
+  come from the server.
 - **Whether `render-paywall-screenshot` mutates anything.** It has no access
   column, and guessing is exactly what P5 exists to prevent.
+
+`npm run drift:check -- --docs --provider revenuecat` checks the official setup
+page and its 105-row tool reference without a credential. It compares the
+documented names with the release-reviewed classifications. The screenshot
+tool's blank Access column is a manually reviewed exception: the checker
+reports it separately and Connecta keeps it fail-closed. The check reads names,
+not live schemas or machine-interpreted access verdicts.
 
 ## Conventions
 

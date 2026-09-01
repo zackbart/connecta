@@ -176,6 +176,15 @@ A budget-only rule needs no queue. If you add `maxConcurrency` you are asking
 for a queue, and the admission controller then requires the rest of the queue
 settings at construction.
 
+## Public contract check
+
+`npm run drift:check -- --docs --provider linear` checks Linear's official MCP
+setup page for the read-write endpoint and OAuth support without using a
+credential. Linear does not publish an exact tool inventory there, so the
+command says `setup metadata only` and makes no claim about names or schemas.
+At runtime the live `tools/list` response remains the schema authority and is
+passed through without a vendored replacement.
+
 ## Conventions
 
 This connection is audited against

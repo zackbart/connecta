@@ -1,4 +1,6 @@
-import { api, type ApiTool } from "../connectors/api.js";
+import { api, defined, type ApiTool } from "../connectors/api.js";
+import { remoteMcp } from "../connectors/remote-mcp.js";
+import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -14,6 +16,8 @@ import type {
 
 /** Notion's REST origin. Every tool below speaks to exactly this host. */
 export const NOTION_API_BASE_URL = "https://api.notion.com";
+/** Notion's official hosted MCP endpoint. */
+export const NOTION_MCP_ENDPOINT = "https://mcp.notion.com/mcp";
 
 /** See documentation/notion.md#the-pinned-api-version. */
 export const NOTION_API_VERSION = "2026-03-11";
@@ -53,8 +57,8 @@ const NOTION_ADMISSION: ConnectorCallAdmissionPolicy = {
   ],
 };
 
-export interface NotionOptions {
-  /** Human-readable display name; defaults to "Notion". */
+interface NotionCommonOptions {
+  /** Human-readable display name; defaults identify the selected interface. */
   title?: string;
   /** Downstream auth ownership. Defaults to one shared deployment grant. */
   authScope?: "shared" | "personal";
@@ -62,6 +66,14 @@ export interface NotionOptions {
   purpose: string;
   /** Workspace-specific conventions appended to the maintained provider guide. */
   instructions?: string;
+  /** Connector-specific inline result limit; omit to inherit the deployment. */
+  maxResultBytes?: number;
+}
+
+/** Connecta's maintained hand-written Notion REST interface. */
+export interface NotionApiOptions extends NotionCommonOptions {
+  /** Omit for backward compatibility; the hand-written API interface is default. */
+  surface?: "api";
   /** Operator-facing label for the integration token. */
   credentialLabel?: string;
   /**
@@ -69,9 +81,20 @@ export interface NotionOptions {
    * Defaults to 25; Notion's maximum is 100.
    */
   defaultPageSize?: number;
-  /** Connector-specific inline result limit; omit to inherit the deployment. */
-  maxResultBytes?: number;
 }
+
+/** Notion's official hosted MCP interface, authenticated through OAuth. */
+export interface NotionMcpOptions extends NotionCommonOptions {
+  surface: "mcp";
+  /** Optional per-runtime downstream call-admission policy. */
+  callAdmission?: ConnectorCallAdmissionPolicy;
+}
+
+/** Backward-compatible API options; existing consumers may extend this interface. */
+export interface NotionOptions extends NotionApiOptions {}
+
+/** Select one Notion interface when deployment configuration constructs it. */
+export type NotionConnectionOptions = NotionOptions | NotionMcpOptions;
 
 // ---------------------------------------------------------------------------
 // Transport and typed failures
@@ -1636,7 +1659,7 @@ function buildTools(defaultPageSize: number): ApiTool[] {
 // ---------------------------------------------------------------------------
 
 /** See documentation/notion.md#databases-contain-data-sources. */
-function usageGuide(purpose: string, instructions: string | undefined): string {
+function apiUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Notion usage
 
@@ -1736,12 +1759,112 @@ ${
   }`;
 }
 
-/** A maintained Notion connection over the public REST API. */
-export function notion(id: string, options: NotionOptions): Connector {
-  const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("notion() requires a non-empty workspace purpose.");
-  }
+/** Release-reviewed Notion MCP inventory and safety verdicts. */
+export const NOTION_MCP_VETTED_CATALOG = vettedCatalog({
+  reads: new Set([
+    "notion-search",
+    "notion-search-skills",
+    "notion-fetch",
+    "notion-download-attachment",
+    "notion-query-data-sources",
+    "notion-query-meeting-notes",
+    "notion-search-agents",
+    "notion-list-agents",
+    "notion-query-sessions",
+    "notion-search-sessions",
+    "notion-get-session-status",
+    "notion-wait-session",
+    "notion-list-session-events",
+    "notion-read-session-event",
+    "notion-get-comments",
+    "notion-get-teams",
+    "notion-get-users",
+    "notion-get-async-task",
+  ]),
+  writes: new Map([
+    ["notion-create-file-upload", "additive"],
+    ["notion-create-attachment", "additive"],
+    ["notion-create-pages", "additive"],
+    ["notion-duplicate-page", "additive"],
+    ["notion-create-database", "additive"],
+    ["notion-create-folder", "additive"],
+    ["notion-create-view", "additive"],
+    ["notion-spawn-session", "additive"],
+    ["notion-send-message-to-session", "additive"],
+    ["notion-create-comment", "additive"],
+    ["notion-update-page", "destructive"],
+    ["notion-convert-page-to-skill", "destructive"],
+    ["notion-move-pages", "destructive"],
+    ["notion-update-data-source", "destructive"],
+    ["notion-update-view", "destructive"],
+    ["notion-stop-session", "destructive"],
+  ]),
+});
+
+function mcpUsageGuide(
+  purpose: string,
+  instructions: string | undefined,
+): string {
+  const accountInstructions = instructions?.trim();
+  return `# Notion MCP usage
+
+Official MCP interface: tool names, descriptions, argument schemas, and result
+schemas come from Notion's live server. Connecta preserves that catalog and
+only fills in release-reviewed safety annotations when Notion leaves them out.
+
+Workspace purpose: ${purpose}
+
+- Discover the live catalog before assuming a tool exists. Notion can gate
+  tools by workspace, account, client, and rollout independently of Connecta.
+- Start broad discovery with \`notion-search\`, then use \`notion-fetch\` on
+  the exact page, database, data source, or object before changing it.
+- Use the live input schema as the contract. Notion owns these MCP schemas;
+  the REST schemas in Connecta's API interface do not apply to MCP tools with
+  similar names.
+- Session and agent tools can launch asynchronous work. Read session state and
+  events before sending another message, waiting, or stopping a session.
+- File uploads and attachment tools create durable workspace state. Keep
+  downloads inside the requested task and do not expose signed attachment URLs.
+- An \`auth_required\` failure means this connector's OAuth grant is missing or
+  expired. Run \`authorize_connector\` for this connector id, then retry.
+${
+    accountInstructions
+      ? `\n## Workspace instructions\n\n${accountInstructions}\n`
+      : ""
+  }`;
+}
+
+function notionMcp(
+  id: string,
+  purpose: string,
+  options: NotionMcpOptions,
+): Connector {
+  const connector = remoteMcp(id, {
+    url: NOTION_MCP_ENDPOINT,
+    ...defined({
+      authScope: options.authScope,
+      callAdmission: options.callAdmission,
+      maxResultBytes: options.maxResultBytes,
+    }),
+    title: options.title ?? "Notion (MCP)",
+    description: `Notion's official hosted MCP interface: ${purpose}`,
+    auth: { type: "oauth" },
+    requireHttps: true,
+    usageGuide: {
+      content: mcpUsageGuide(purpose, options.instructions),
+      summary:
+        "Official MCP. Live Notion schemas, object discovery, sessions, agents, attachments, and OAuth ownership.",
+      required: true,
+    },
+  });
+  return withVettedCatalog(connector, NOTION_MCP_VETTED_CATALOG);
+}
+
+function notionApi(
+  id: string,
+  purpose: string,
+  options: NotionApiOptions,
+): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
   if (
     !Number.isInteger(defaultPageSize) ||
@@ -1785,7 +1908,7 @@ export function notion(id: string, options: NotionOptions): Connector {
     },
     callAdmission: NOTION_ADMISSION,
     usageGuide: {
-      content: usageGuide(purpose, options.instructions),
+      content: apiUsageGuide(purpose, options.instructions),
       summary:
         "Database-to-data-source lookup, property write rules, lean-vs-raw results, and Notion's overloaded 403/404.",
       required: true,
@@ -1795,4 +1918,15 @@ export function notion(id: string, options: NotionOptions): Connector {
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
   });
+}
+
+/** A maintained Notion connection using the selected provider interface. */
+export function notion(id: string, options: NotionConnectionOptions): Connector {
+  const purpose = options.purpose.trim();
+  if (!purpose) {
+    throw new Error("notion() requires a non-empty workspace purpose.");
+  }
+  return options.surface === "mcp"
+    ? notionMcp(id, purpose, options)
+    : notionApi(id, purpose, options);
 }

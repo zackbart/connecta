@@ -1,5 +1,7 @@
 /** See documentation/vercel.md#no-sdk-on-purpose. */
-import { api, type ApiTool } from "../connectors/api.js";
+import { api, defined, type ApiTool } from "../connectors/api.js";
+import { remoteMcp } from "../connectors/remote-mcp.js";
+import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -17,6 +19,8 @@ import type {
 
 /** Vercel's public REST origin. Override only for a proxy or test double. */
 export const VERCEL_API_BASE_URL = "https://api.vercel.com";
+/** Vercel's official hosted MCP endpoint. */
+export const VERCEL_MCP_ENDPOINT = "https://mcp.vercel.com";
 
 const MAX_PAGE_SIZE = 100;
 const DEFAULT_PAGE_SIZE = 20;
@@ -25,26 +29,43 @@ const MAX_RUNTIME_LOG_ROWS = 500;
 const DEFAULT_RUNTIME_LOG_ROWS = 100;
 const RUNTIME_LOG_TIMEOUT_MS = 10_000;
 
-export interface VercelOptions {
-  /** Human-readable display name; defaults to "Vercel". */
+interface VercelCommonOptions {
+  /** Human-readable display name; defaults identify the selected surface. */
   title?: string;
   /** Downstream auth ownership. Defaults to one shared deployment grant. */
   authScope?: "shared" | "personal";
   /** Which Vercel account or team this connection operates, and for whom. */
   purpose: string;
-  /** Default team id for scoped calls. Omit to use the token's personal account. */
-  teamId?: string;
   /** Account-specific conventions appended to the maintained provider guide. */
   instructions?: string;
-  /** API base override for a proxy or test double. */
-  baseUrl?: string;
-  /** Default page size for list tools. Defaults to 20; Vercel's local cap is 100. */
-  defaultPageSize?: number;
   /** Optional per-runtime downstream call-admission policy. */
   callAdmission?: ConnectorCallAdmissionPolicy;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
 }
+
+/** Connecta's maintained hand-written Vercel REST surface. */
+export interface VercelApiOptions extends VercelCommonOptions {
+  /** Omit for backward compatibility; the hand-written API surface is the default. */
+  surface?: "api";
+  /** Default team id for scoped calls. Omit to use the token's personal account. */
+  teamId?: string;
+  /** API base override for a proxy or test double. */
+  baseUrl?: string;
+  /** Default page size for list tools. Defaults to 20; Vercel's local cap is 100. */
+  defaultPageSize?: number;
+}
+
+/** Vercel's official hosted MCP surface, authenticated through OAuth. */
+export interface VercelMcpOptions extends VercelCommonOptions {
+  surface: "mcp";
+}
+
+/** Backward-compatible API options; existing consumers may extend this interface. */
+export interface VercelOptions extends VercelApiOptions {}
+
+/** Select one Vercel surface when deployment configuration constructs it. */
+export type VercelConnectionOptions = VercelOptions | VercelMcpOptions;
 
 type JsonRecord = Record<string, any>;
 
@@ -962,7 +983,7 @@ function tools(
                 type: { type: "string" }, createdAt: { type: "number" },
                 message: { type: "string" }, payload: { type: "object" },
               },
-              required: ["type", "createdAt"],
+              required: ["type"],
             },
           },
         },
@@ -986,7 +1007,8 @@ function tools(
           const event = asRecord(value);
           const eventPayload = asRecord(event["payload"]);
           return compact({
-            type: event["type"], createdAt: event["created"] ?? event["date"],
+            type: event["type"] ?? "unknown",
+            createdAt: event["created"] ?? event["date"],
             message: eventPayload["text"] ?? eventPayload["message"],
             payload: Object.keys(eventPayload).length === 0 ? undefined : eventPayload,
           });
@@ -1335,7 +1357,7 @@ function tools(
   ];
 }
 
-function usageGuide(
+function apiUsageGuide(
   purpose: string,
   teamId: string | undefined,
   instructions: string | undefined,
@@ -1394,12 +1416,124 @@ ${
   }`;
 }
 
-/** A maintained Vercel connection over the public REST API. */
-export function vercel(id: string, options: VercelOptions): Connector {
-  const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("vercel() requires a non-empty account purpose.");
-  }
+/** Reads reviewed against Vercel's official MCP tool reference. */
+const MCP_READ_ONLY_TOOLS = new Set([
+  "search_vercel_documentation",
+  "list_teams",
+  "list_projects",
+  "get_project",
+  "list_deployments",
+  "get_deployment",
+  "get_deployment_build_logs",
+  "get_runtime_logs",
+  "get_runtime_errors",
+  "get_web_analytics",
+  "list_agent_run_projects",
+  "list_agent_runs",
+  "get_agent_run",
+  "get_agent_run_trace",
+  "check_domain_availability_and_price",
+  "get_purchase_quote",
+  "get_domain_order",
+  "list_toolbar_threads",
+  "get_toolbar_thread",
+  // Returns CLI guidance. Any later CLI execution is outside this MCP call.
+  "use_vercel_cli",
+]);
+
+/** Writes reviewed against Vercel's official MCP tool reference. */
+const MCP_WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> =
+  new Map([
+    // These only append state.
+    ["reply_to_toolbar_thread", "additive"],
+    ["add_toolbar_reaction", "additive"],
+    // Deploying to production, billing, access grants, imports, and edits can
+    // all change existing state, even where the provider uses a create verb.
+    ["deploy_to_vercel", "destructive"],
+    ["buy_pro", "destructive"],
+    ["buy_credits", "destructive"],
+    ["buy_addon", "destructive"],
+    ["buy_domain", "destructive"],
+    ["get_access_to_vercel_url", "destructive"],
+    // A GET against application code is not guaranteed to be observational.
+    ["web_fetch_vercel_url", "destructive"],
+    ["import-claude-design-from-url", "destructive"],
+    ["change_toolbar_thread_resolve_status", "destructive"],
+    ["edit_toolbar_message", "destructive"],
+  ]);
+
+/** Release-reviewed Vercel MCP inventory and safety verdicts. */
+export const VERCEL_MCP_VETTED_CATALOG = vettedCatalog({
+  reads: MCP_READ_ONLY_TOOLS,
+  writes: MCP_WRITE_TOOLS,
+});
+
+function mcpUsageGuide(
+  purpose: string,
+  instructions: string | undefined,
+): string {
+  const accountInstructions = instructions?.trim();
+  return `# Vercel MCP usage
+
+Official MCP surface: tool names, descriptions, argument schemas, and result
+schemas come from Vercel's live server. Connecta preserves that catalog and
+only fills in release-reviewed safety annotations when Vercel leaves them out.
+
+Account purpose: ${purpose}
+
+- Discover the live catalog before assuming a tool exists. Vercel can change
+  the surface independently of a Connecta release, and account features may
+  affect what the authorization can reach.
+- Resolve team, project, deployment, run, thread, and order ids with the list
+  and get tools. Do not guess opaque ids.
+- Diagnose deployments with \`get_deployment\`, then build logs, runtime error
+  clusters, and runtime logs. Narrow time windows before raising result limits.
+- Purchase tools change billing. Read a quote first and carry its price,
+  idempotency key, and requested term into the confirmed purchase unchanged.
+- \`get_access_to_vercel_url\` creates a temporary access grant. Treat the URL
+  it returns as a credential and do not expose it outside the requested task.
+- \`deploy_to_vercel\` and \`import-claude-design-from-url\` can create or update
+  live projects. Read the target and deployment mode before approving them.
+- An \`auth_required\` failure means this connector's OAuth grant is missing or
+  expired. Run \`authorize_connector\` for this connector id, then retry.
+${
+    accountInstructions
+      ? `\n## Account instructions\n\n${accountInstructions}\n`
+      : ""
+  }`;
+}
+
+function vercelMcp(
+  id: string,
+  purpose: string,
+  options: VercelMcpOptions,
+): Connector {
+  const connector = remoteMcp(id, {
+    url: VERCEL_MCP_ENDPOINT,
+    ...defined({
+      authScope: options.authScope,
+      callAdmission: options.callAdmission,
+      maxResultBytes: options.maxResultBytes,
+    }),
+    title: options.title ?? "Vercel (MCP)",
+    description: `Vercel's official hosted MCP surface: ${purpose}`,
+    auth: { type: "oauth" },
+    requireHttps: true,
+    usageGuide: {
+      content: mcpUsageGuide(purpose, options.instructions),
+      summary:
+        "Official MCP. Live Vercel schemas, id resolution, deployment diagnosis, purchases, and access grants.",
+      required: true,
+    },
+  });
+  return withVettedCatalog(connector, VERCEL_MCP_VETTED_CATALOG);
+}
+
+function vercelApi(
+  id: string,
+  purpose: string,
+  options: VercelApiOptions,
+): Connector {
   const defaultPageSize = options.defaultPageSize ?? DEFAULT_PAGE_SIZE;
   if (
     !Number.isInteger(defaultPageSize) ||
@@ -1441,7 +1575,7 @@ export function vercel(id: string, options: VercelOptions): Connector {
       }
     },
     usageGuide: {
-      content: usageGuide(purpose, teamId, options.instructions),
+      content: apiUsageGuide(purpose, teamId, options.instructions),
       summary:
         "Team scoping, deployment diagnosis, value-safe environment variables, REST hatches, and cursor pagination.",
       required: true,
@@ -1454,4 +1588,15 @@ export function vercel(id: string, options: VercelOptions): Connector {
       ? { maxResultBytes: options.maxResultBytes }
       : {}),
   });
+}
+
+/** A maintained Vercel connection using the selected provider surface. */
+export function vercel(id: string, options: VercelConnectionOptions): Connector {
+  const purpose = options.purpose.trim();
+  if (!purpose) {
+    throw new Error("vercel() requires a non-empty account purpose.");
+  }
+  return options.surface === "mcp"
+    ? vercelMcp(id, purpose, options)
+    : vercelApi(id, purpose, options);
 }

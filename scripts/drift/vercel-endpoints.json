@@ -44,7 +44,7 @@
       "method": "GET",
       "path": "/v3/deployments/{idOrUrl}/events",
       "specRevision": "0.0.1",
-      "contract": "sha256:62dfec8f83e91c31b548a0a34dbf1b5d92a30c6931b366cd2828786c8c95fdde"
+      "contract": "sha256:fbeedd856cfdb853fdcd969ce973c7a899f064d59625dfba9e19ba4ac4eabf03"
     },
     {
       "method": "GET",

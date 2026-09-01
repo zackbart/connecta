@@ -54,11 +54,29 @@ const analytics = mixpanel("product_analytics", {
 });
 ```
 
-The constructor may use `remoteMcp()` or `api()` internally. Callers should not
-need to care which transport gives the better agent-facing surface, and the
-choice does not grant the connection different runtime privileges. Two
-instances of the same provider are isolated in exactly the same way as two
-hand-written connectors with different ids.
+The constructor may use `remoteMcp()` or `api()` internally. When a provider's
+official MCP and HTTP API expose materially different capabilities or schema
+ownership, the constructor may offer an explicit deployment-time surface
+choice. It must document the difference, keep a backward-compatible default,
+and never let an agent switch surfaces during a run. The choice grants no
+different runtime privileges. Two instances of the same provider are isolated
+in exactly the same way as two hand-written connectors with different ids.
+
+That choice exists only when the two interfaces are genuinely different:
+
+| Provider | Maintained interfaces | Why |
+| --- | --- | --- |
+| Cloudflare | API and MCP | The API interface has 48 projected named tools plus three safety-split hatches. The official MCP compresses more than 2,500 endpoints into `search` and approval-gated `execute`. |
+| Notion | API and MCP | The API interface has stable lean projections. The official MCP adds Notion-owned live schemas, workspace search, files, views, agents, and sessions. |
+| Vercel | API and MCP | The API interface has projected deployment operations. The official MCP owns a broader, independently changing catalog. |
+| Linear | MCP | Vendoring its GraphQL API would create a second schema system rather than a distinct maintained interface. |
+| Mixpanel | MCP | Its hosted service already joins several Mixpanel APIs; flattening those APIs would recreate the catalog problem. |
+| RevenueCat | MCP | Its official server is generated from API v2, so a second wrapper would duplicate the same contract. |
+| Stripe | MCP | Its official server already exposes both named workflows and supported API methods. A second raw API interface would duplicate it. |
+
+This is not a requirement that every provider have two labels. A second choice
+must change capability, result shape, or schema ownership enough to justify a
+second contract. Otherwise it only gives agents two names for the same thing.
 
 A prebuilt connection's vetted annotations fill in downstream silence and
 otherwise preserve explicit annotations. This includes an explicit

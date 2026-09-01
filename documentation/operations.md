@@ -194,10 +194,15 @@ Two more runners are deliberately outside `check`:
 - `npm run test:browser` — Playwright against a real headless Chromium
   (`npm run test:browser:install` once). It covers the embedded bundle without
   adding a browser download to the CI release check.
-- `npm run drift:check` — the maintainer-run provider drift check, with local
-  provider credentials exported. No credential goes near CI and nothing files
-  itself; findings are read by a human and become issues
+- `npm run drift:check` — the lower-level maintainer provider contract check.
+  It reads public MCP references and OpenAPI documents only. No provider
+  credential is read and nothing files itself; findings are read by a human
+  and become issues
   ([provider conventions](./provider-conventions.md#the-maintainer-run-drift-check)).
+- `npm run providers:check` — the normal provider check across every maintained
+  provider: official MCP documentation plus the OpenAPI contracts for
+  hand-written HTTP connections. It uses the network, so it stays outside the
+  deterministic `check` chain.
 - `npm run load:admission` — the opt-in capacity matrix and soak
   ([request admission](./request-admission.md#measuring-capacity)).
 
@@ -234,7 +239,7 @@ in.
 | `catalog.test.ts` | lexical ranking and the compact schema renderer — `const`, `allOf` beside siblings, `$ref`, the depth limit, per-schema caching, and 2020-12 keyword compatibility |
 | `clerk.test.ts` | protected-resource metadata, the browser sign-in config, OAuth and session tokens, cached best-effort activity labels with their caps, the hand-applied `azp` rejection, and the `allowedDomains` allowlist including every lookalike that must not be repaired into a match |
 | `cloudflare-access-auth.test.ts` | trusted `ctx.access` human and service identities, absent/error fail-closed behavior, service-token MCP admission without operator mutation, human same-origin mutation, and the Clerk-to-ambient shell switch |
-| `cloudflare-provider.test.ts` | `cloudflare()` construction, tool surface, current R2 and KV jurisdictions, useful output declarations, request building, projections including additive provider fields, typed failures, and credential test |
+| `cloudflare-provider.test.ts` | `cloudflare()` API and MCP construction, the code-mode safety manifest, API tool surface, current R2 and KV jurisdictions, useful output declarations, request building, projections including additive provider fields, typed failures, and credential test |
 | `code-first-surface.test.ts` | the seven-tool surface itself — an executor required, every removed option and top-level tool refused, compact always-loaded routing pinned below 1,000 characters, complete on-demand usage served, and `connecta.ui` findable before connector search |
 | `codemode-compat.test.ts` | the `Executor` seam staying structurally compatible with `@cloudflare/codemode`'s `DynamicWorkerExecutor`, enforced by `tsc` |
 | `config.test.ts` | the grouped `ConnectaConfig` boundary — each group forwarding to its internals, malformed admission bounds failing construction, and unknown own-properties rejected by their complete path before construction does work |
@@ -254,7 +259,7 @@ in.
 | `meta-tools-search.test.ts` | registry-backed discovery: bounded search with page and address maxima, compact and JSON schemas with constraints, typed describe recovery and suggestions, and structured-result compatibility |
 | `meta-tools.test.ts` | the remaining registry-backed meta-tools: the complete on-demand usage skill, connector-guide selection and summary bounds, stored-credential drift, catalog health, authorization, probe timeouts, and unavailable or unknown browse recovery |
 | `mixpanel-provider.test.ts` | the Mixpanel proxy, its conditional-input guide, destructive metadata fill, and complete 64-tool schema-digest manifest |
-| `notion-provider.test.ts` | Notion's deliberate tool surface, including declined expanded page inputs, request construction, lean projections, both pagination conventions, error mapping, and writes |
+| `notion-provider.test.ts` | Notion's API and MCP construction, the hosted safety manifest and drift behavior, the deliberate REST surface including declined expanded page inputs, request construction, lean projections, both pagination conventions, error mapping, and writes |
 | `operator-boundary.test.ts` | the operator row of the decisions table, after every mutation route: authentication material managed without moving a declared structure, and the one honest exception — a credential write making a remote catalog appear, which is discovery arriving, not an operator editing the deployment |
 | `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, ambient Access requests without a browser-readable token, `gate()`, the generation fence, and the request path |
 | `provider-conventions.test.ts` | the conventions a test can hold: hand-written providers refusing schemas they cannot enforce (H5), their compact discovery schemas staying complete (H7), Cloudflare stating its second pagination convention in the schema (H10), and Notion saying it has no escape hatch (H14) |
@@ -274,7 +279,7 @@ in.
 | `ui-credentials.test.ts` | credential-management routes: save, test, delete, validation, authentication, same-origin checks, and multi-field credential shapes |
 | `ui.test.ts` | the server shell and remaining `/ui/*` routes: gated `/ui/data` with broken-connector isolation and registry-owned catalog-observation containment, plus the URL safety gates |
 | `validate.test.ts` | `validateToolInput()` — a returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema validator caching, and an unusable schema passed through with one warning |
-| `vercel-provider.test.ts` | `vercel()` construction, team scoping, project and deployment projections, finite build and runtime logs, value-safe environment variables, domains, lifecycle writes, REST hatches, typed failures, and credential test |
+| `vercel-provider.test.ts` | `vercel()` API and MCP construction, MCP inventory classification, team scoping, project and deployment projections, finite build and runtime logs, value-safe environment variables, domains, lifecycle writes, REST hatches, typed failures, and credential test |
 
 ### Node-bound (`NODE_ONLY_SUITES`)
 
@@ -286,7 +291,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 | `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, its agent instructions and setup guide pinning Claude and both ChatGPT Managed OAuth callback forms, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `doctor-cli.test.ts` | `connecta doctor`'s executor line and credentials end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, a hostile name is bounded, and a complete Cloudflare Access service-token pair is accepted while a partial pair is refused | spawns the CLI against a Node HTTP deployment over real sockets |
-| `drift-check.test.ts` | the maintainer drift checker — hosted-provider credential framing, recorded touched endpoints, a quiet revision bump, clear failures for an unavailable spec/manifest/credential, `$ref` traversal, and one well-formed row per endpoint | spawns the Node checker against filesystem fixtures |
+| `drift-check.test.ts` | the credential-free maintainer drift checker: recorded touched endpoints, heading, table, and inline MCP inventories, setup-only providers, live-schema ownership, a quiet revision bump, clear failures for unavailable inputs, `$ref` traversal, and one well-formed row per endpoint | spawns the checker against filesystem fixtures |
 | `file-storage.test.ts` | `fileStorage()` across instances, logical TTL plus physical pruning without clobbering a newer value, and corrupt-file quarantine | exercises the Node filesystem storage adapter |
 | `guest-api-contract-quickjs.test.ts` | the shared guest-contract cases on the real QuickJS executor, including identical caught failure codes and inline describe recovery, its exact absent globals, and blocked runtime imports | runs the contract cases on the Node QuickJS executor |
 | `node.test.ts` | the `listen()` adapter propagating an HTTP client disconnect through the Web `Request` and the MCP handler into a program's connector call, releasing both admission permits | exercises the Node HTTP adapter over real TCP sockets |

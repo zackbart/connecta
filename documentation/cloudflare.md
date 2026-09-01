@@ -1,25 +1,34 @@
 # Cloudflare prebuilt connection
 
 Import `cloudflare()` independently from
-`@zackbart/connecta/providers/cloudflare`. It is a deliberate, hand-written
-surface over Cloudflare's v4 REST API. Fifty-one tools combine ergonomic,
-fully described operations for common work with three guarded escape hatches
-for the rest of Cloudflare's fast-moving control plane. Reads, JSON mutations,
-and raw/multipart uploads remain separate so safety routing does not depend on
-an agent-supplied HTTP method. The connection keeps lean projections, typed
-failures, and a rate-limit budget matching the documented one. It adds no
-provider dependency, imports nothing outside Connecta, and is not reachable
-from Connecta's root entry.
+`@zackbart/connecta/providers/cloudflare`. The deployment chooses one of two
+interfaces. The default is a deliberate, hand-written surface over
+Cloudflare's v4 REST API. Its fifty-one tools combine ergonomic, fully
+described operations for common work with three guarded escape hatches for the
+rest of Cloudflare's fast-moving control plane. The other choice is
+Cloudflare's official whole-API hosted MCP, which exposes `search` and
+`execute` with live provider-owned schemas. Both are ordinary connectors and
+neither is reachable from Connecta's root entry.
 
 ```ts
 import { cloudflare } from "@zackbart/connecta/providers/cloudflare";
 
 const edge = cloudflare("cloudflare_prod", {
+  surface: "api", // optional; this is the backward-compatible default
   title: "Production edge",
   purpose: "DNS and cache administration for the production estate",
   zoneId: "0a1b2c3d4e5f60718293a4b5c6d7e8f9",
   accountId: "9f8e7d6c5b4a30291817263544332211",
   instructions: "Never purge the whole zone during business hours.",
+});
+```
+
+Use Cloudflare's hosted code-mode interface instead:
+
+```ts
+const wholeApi = cloudflare("cloudflare_mcp", {
+  surface: "mcp",
+  purpose: "Cloudflare administration outside the curated REST workflows",
 });
 ```
 
@@ -41,6 +50,29 @@ between a production and a staging instance needs to know which one answers the
 question. Account `instructions` are appended to the maintained guide and
 cannot change the connector's safety classification.
 
+## Choosing an interface
+
+Use the API interface when its projected named tools cover the work. Connecta
+owns those schemas, projections, typed errors, pagination, and the split
+between read-only and mutating escape hatches.
+
+Use `surface: "mcp"` when broad product coverage matters more than projected
+results. Cloudflare's official server covers more than 2,500 API endpoints
+through two code-mode tools. `search` reads the OpenAPI document and is
+read-only. `execute` can run a program containing any authorized HTTP method,
+so Connecta always routes it through approval. A program that happens to use
+only GET cannot be proven observational from the tool schema.
+
+The MCP catalog and schemas come from the live server. The release manifest
+classifies the two known names but does not replace their schemas. OAuth is the
+default. A headless deployment may instead pass `auth` with a scoped API token.
+The credential remains the provider-side permission boundary either way. The
+MCP interface accepts `callAdmission` when the deployment has a concurrency or
+call-rate requirement; it does not reuse the API interface's REST-wide budget.
+
+The remaining sections document the hand-written API interface. MCP tool
+arguments and results are intentionally read from the live server instead.
+
 ## No SDK, on purpose
 
 Cloudflare publishes an official `cloudflare` npm SDK, and this connection does
@@ -61,7 +93,7 @@ claim: the `cloudflare` package must not appear in `dependencies`,
 `peerDependencies`, or `devDependencies`, and every import in the provider
 must be relative.
 
-## Credentials
+## API credentials
 
 The default credential is a scoped Cloudflare API token, sent as
 `Authorization: Bearer <token>`. Create it under My Profile → API Tokens →
@@ -133,7 +165,7 @@ an empty `accountId` would fall back to the default again. A deployment that
 wants zones from one account passes `accountId` explicitly, and the property
 says so.
 
-## Tools
+## API tools
 
 The named surface covers workflows that benefit most from concise schemas and
 projections:
@@ -422,6 +454,14 @@ dashboard traffic of a human sharing the account is counted by Cloudflare but
 not by Connecta. `maxConcurrency` is the bound that actually protects a shared
 credential, because a single `execute_code` program can fan out far faster than
 the window notices.
+
+## Contract checks
+
+`npm run providers:check` compares the 49 fixed REST endpoints with
+Cloudflare's published OpenAPI document and the two MCP names, endpoint, and
+OAuth support with Cloudflare's official MCP page. It needs no Cloudflare
+credential. The MCP schemas are not vendored or reconstructed: the live
+`tools/list` response remains the contract agents receive.
 
 ## Conventions
 

@@ -1,11 +1,11 @@
 # Provider audit
 
 [`provider-conventions.md`](../documentation/provider-conventions.md) wrote the bar down. This
-document runs it against the seven maintained prebuilt connections and returns a
-verdict for every applicable convention: **meets**, **misses** (with the fix),
-or **n/a** (with the reason). A convention is never quietly skipped, and an
-accepted miss is recorded as a provider-specific exception with its argument
-rather than left blank.
+document runs it against the seven maintained providers and their ten selectable
+interfaces, then returns a verdict for every applicable convention: **meets**,
+**misses** (with the fix), or **n/a** (with the reason). A convention is never
+quietly skipped, and an accepted miss is recorded as a provider-specific
+exception with its argument rather than left blank.
 
 Hand-written HTTP providers are audited against H1–H14; hosted-MCP proxies
 against P1–P13. Applying a hand-written convention to a proxy is a category
@@ -120,6 +120,29 @@ v9. The reviewed 19 fixed operations now live in
 `scripts/drift/vercel-endpoints.json`; the dynamic hatches do not pretend to
 have a fixed endpoint manifest.
 
+## Cloudflare, Notion, and Vercel — hosted-MCP alternatives
+
+These three providers also expose an explicitly selected hosted-MCP interface.
+They share the proxy boundary without pretending their catalogs are the same:
+the provider owns every name, description, schema, and result, while Connecta
+adds only the release-reviewed safety verdict and routing guide.
+
+| Convention | Verdict | Notes |
+| --- | --- | --- |
+| P1 add, never rewrite | meets | `withVettedCatalog()` preserves every live tool field and changes only missing or contradicted safety annotations; deterministic coverage pins the description and both schemas by reference |
+| P2 identity | meets | all three require a non-empty `purpose`; `instructions` are appended to the guide and cannot alter classification |
+| P3 routing fact | meets | default titles name the provider and `(MCP)` interface; each guide opens with the deployment purpose and official-interface boundary |
+| P4 endpoint default | n/a, recorded | each provider publishes one whole-interface endpoint, so there is no regional or access-mode endpoint choice to default; selecting `surface: "mcp"` is itself explicit |
+| P5 classification | meets | every officially documented name is reviewed; unlisted names fail closed, and Vercel URL fetching is destructive because an application GET route may execute stateful code |
+| P6 catalog varies | meets | the guides say permissions, account features, plans, clients, and provider rollout can change the live catalog independently of Connecta |
+| P7 reduction advice | meets | all three guides tell agents to narrow at the provider call and reduce again inside `execute_code`; the summaries identify the cross-tool routing facts |
+| P8 identity resolution | meets | Cloudflare searches the OpenAPI document before execute; Notion and Vercel name the discovery tools and opaque ids their subsequent calls require |
+| P9 authentication | meets | all require HTTPS and default to OAuth; Cloudflare additionally accepts a scoped bearer token for a headless deployment |
+| P10 no credential test | meets | construction performs no downstream request and the wrappers expose no credential-test hook |
+| P11 transport vs tool error | meets | inherited from `remoteMcp()`; provider argument, permission, plan, and rollout errors remain provider-owned prose |
+| P12 admission budget | meets | no guessed provider-wide quota is hardcoded; each MCP option accepts an operator-supplied per-runtime admission policy |
+| P13 drift visible | meets | module-level vetted catalogs feed runtime count-only drift and the credential-free public-docs check; live `tools/list` remains the schema authority |
+
 ## Linear — hosted-MCP proxy
 
 | Convention | Verdict | Notes |
@@ -181,8 +204,8 @@ Linear's reasoning.
 ## RevenueCat — hosted-MCP proxy
 
 Written after the conventions existed, so it has no misses to record, only two
-places where the honest answer departs from the obvious one. Ninety-six
-documented tools, ninety-five classified, one deliberately not.
+places where the honest answer departs from the obvious one. One hundred five
+documented tools, 104 classified, one deliberately not.
 
 | Convention | Verdict | Notes |
 | --- | --- | --- |
@@ -190,7 +213,7 @@ documented tools, ninety-five classified, one deliberately not.
 | P2 identity | meets | required `purpose` (blank throws), `instructions` appended under `## Project instructions`, and appended text cannot reach the classification |
 | P3 routing fact | meets, with the fact split in two | the routing fact is scope, and it has two halves. The *shape* — one project versus every project the account can reach — is knowable at construction and rides the default title (`RevenueCat (single project)` versus `RevenueCat`). *Which* project a key opens is not knowable without calling something, which P10 forbids, so it rides the guide's first line and the declared summary, built from the operator's `purpose`. That makes this the one maintained proxy with a purpose-bearing summary rather than a static one, and the reason is P3's own cost: two `sk_` connectors share a title, an endpoint, and a catalog, so a static summary would leave them indistinguishable in the only field search returns |
 | P4 endpoint default | n/a — one endpoint, and the scope rides the credential | RevenueCat publishes a single MCP endpoint, so there is nothing to select between. The scope difference comes from the credential shape itself, which the constructor reads rather than asks for: `auth.type === "headers"` *is* the single-project declaration. There is no mode to default and no mode to contradict, so the P4 machinery Stripe needs has nothing to do here |
-| P5 classification | meets | 51 reads, 15 additive writes, 29 destructive writes named; `get-refund-request-preferences` is the added read. `render-paywall-screenshot` remains unclassified because RevenueCat's reference gives it no access column; its current explicit read-only annotation is preserved, and silence fails closed. Nine borderline verdicts are argued beside the rows they decide, and asserted in the suite so a silent flip fails |
+| P5 classification | meets | 51 reads, 17 additive writes, and 36 destructive writes named. `render-paywall-screenshot` remains unclassified because RevenueCat's reference gives it no access column; its current explicit read-only annotation is preserved, and silence fails closed. Borderline verdicts are argued beside the rows they decide and asserted in the suite so a silent flip fails |
 | P6 catalog varies | meets | the guide names paywall AI editing, benchmarks, experiments, virtual currencies, and account billing as the plan-, platform-, and beta-gated areas where absence is expected, and separately names the unclassified tool so its approval prompt does not read as a bug |
 | P7 reduction advice | meets | structured guide, declared summary, cursor-then-reduce advice aimed at the two objects that are actually large here (customers and their event history). `required` stays unset: the project-resolution sequence is worth reading before a run, not before every call |
 | P8 identity resolution | meets | the guide names the whole chain — `list-projects` for the `project_id` every project-scoped call takes, then `list-apps`, `list-products`, `list-entitlements`, `list-offerings`, `list-paywalls`, `list-audiences`, and `list-customers` for the ids their `get-`, `update-`, `archive-`, and `delete-` counterparts expect — and says a plausible-looking id belongs to another project or to nobody. For OAuth it also says to stop and ask when more than one project fits |
@@ -198,22 +221,26 @@ documented tools, ninety-five classified, one deliberately not.
 | P10 no credential test | meets | no `credential`, `testCredential`, or `testCredentials`. This is also where the constructor's most tempting option was refused: a `project?: string` checked against `list-projects` at construction is a credential test wearing a configuration hat, so the operator's stated purpose carries the claim and the agent confirms it on first use. There is no recognizable-credential contradiction to throw on either — an `sk_` key encodes no project — so the construction-time half of P10 has nothing to check here, exactly as it has nothing to check for Mixpanel's region |
 | P11 transport vs tool error | meets | inherited whole from `remoteMcp()`; the wrapper adds no error handling and reads no downstream prose. The guide says a rejected argument, a permission gap, and a plan restriction all arrive in RevenueCat's own words |
 | P12 admission budget | meets, by declining a number that exists | RevenueCat does publish limits, which is why this row needed an argument rather than a shrug. It meters per domain — 480/min for customer information, virtual currencies, and refunds; 60 for project configuration and audiences; 25 for charts and metrics — and a `ConnectorCallAdmissionPolicy` carries exactly one rule. Picking 25 throttles a customer read loop to a nineteenth of its allowance; picking 480 leaves a chart sweep unprotected; neither is the provider's limit. The metering scope repeats the point: developer-level keys are metered per developer, which a per-runtime counter cannot approximate. So the guide states RevenueCat's own numbers and the `429` / `Retry-After` / `backoff_ms` signals, and `callAdmission` stays an operator option with a documented example |
-| P13 drift visible | meets | both lists are module-level constants in one file and *are* the manifest the wrapper classifies from, compared against the live catalog on every refresh ([#343](https://github.com/zackbart/connecta/issues/343)). The maintainer-run check accepts `revenuecat` with `CONNECTA_DRIFT_REVENUECAT_KEY`. No schema digests are recorded, and the manifest says so rather than shipping invented ones |
+| P13 drift visible | meets | both lists are module-level constants in one file and *are* the manifest the wrapper classifies from, compared against the live catalog on every refresh ([#343](https://github.com/zackbart/connecta/issues/343)). The credential-free provider check compares them with RevenueCat's official 105-row reference. No schema is vendored; the live definition remains the one agents receive |
 
 ## Scoreboard
 
-| Provider | Meets | Missed and fixed | Recorded exception | Open |
+| Provider interface | Meets | Missed and fixed | Recorded exception | Open |
 | --- | --- | --- | --- | --- |
-| Cloudflare | 9 | 5 | H5 hatch request parts | — |
-| Notion | 10 | 4 | H5 exclusive parent | — |
+| Cloudflare API | 9 | 5 | H5 hatch request parts | — |
+| Cloudflare MCP | 12 | 0 | P4 n/a (one endpoint) | — |
+| Notion API | 10 | 4 | H5 exclusive parent | — |
+| Notion MCP | 12 | 0 | P4 n/a (one endpoint) | — |
 | Linear | 11 | 2 | P4 departs from the letter | — |
 | Stripe | 10 | 3 | — | — |
 | Mixpanel | 7 | 5 | P10 half n/a | — |
 | RevenueCat | 12 | 0 | P4 n/a (one endpoint); P3 met with a purpose-bearing summary | — |
-| Vercel | 14 | 0 | — | — |
+| Vercel API | 14 | 0 | — | — |
+| Vercel MCP | 12 | 0 | P4 n/a (one endpoint) | — |
 
-Nineteen misses, nineteen fixes, six recorded exceptions, one judgment left to
-the issue that owns it. The pattern in the misses is worth naming: sixteen of
+The original seven interfaces recorded nineteen misses and nineteen fixes. The
+three hosted alternatives add no misses and record their one-endpoint P4 cases
+instead of inventing a choice. The pattern in the original misses is worth naming: sixteen of
 the nineteen are a guide, a title, or a schema description failing to *say*
 something the implementation already did correctly. Only three changed what a
 provider does — Notion refusing an unevaluable schema, Linear requiring an

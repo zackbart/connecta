@@ -1,19 +1,31 @@
 # Notion prebuilt connection
 
 Import `notion()` independently from `@zackbart/connecta/providers/notion`. It
-is a hand-written `api()` surface over Notion's public REST API — fifteen
-deliberate tools, lean projections of Notion's famously bloated payloads, typed
-failures, a rate budget matched to the documented limit, and a required usage
-guide. It adds no provider dependency, imports no `node:` builtin, and is not
+offers two deployment-time interfaces. The default is a hand-written `api()`
+surface over Notion's public REST API: fifteen deliberate tools, lean
+projections of Notion's famously bloated payloads, typed failures, a rate
+budget matched to the documented limit, and a required usage guide. The other
+choice is Notion's official hosted MCP with live provider-owned schemas and a
+broader workspace, files, views, agents, and sessions catalog. Neither is
 reachable from Connecta's root entry.
 
 ```ts
 import { notion } from "@zackbart/connecta/providers/notion";
 
 const wiki = notion("engineering_wiki", {
+  surface: "api", // optional; this is the backward-compatible default
   title: "Engineering wiki",
   purpose: "Runbooks, specs, and on-call notes for the platform team",
   instructions: "Prefer the Runbooks database; specs live under Projects.",
+});
+```
+
+Use Notion's hosted MCP instead:
+
+```ts
+const workspace = notion("notion_mcp", {
+  surface: "mcp",
+  purpose: "Workspace search, files, views, and asynchronous agent sessions",
 });
 ```
 
@@ -23,17 +35,26 @@ instances needs to know which workspace answers the question. Workspace
 `instructions` are appended to the maintained guide and cannot change the
 connector's safety classification.
 
-## Why this one is `api()` and not `remoteMcp()`
+## Choosing an interface
 
-Notion publishes an MCP server, but the interesting problem here is not
-transport — it is shape. A single Notion page returns every property as a
+Use the API interface for its compact, stable projections. A single Notion
+page returns every property as a
 discriminated wrapper object, every string as an array of rich-text runs each
 carrying its own annotations block, and every user reference as a nested
 object. A twenty-five row database query is tens of kilobytes of structure
 around a few hundred bytes of meaning. Hand-writing the surface is what makes
 the projections possible, and the projections are the point.
 
-## Authentication
+Use `surface: "mcp"` for Notion's wider official capabilities, including
+connected-source search, attachments, saved views, Notion Skills, agents, and
+asynchronous sessions. Tool names and schemas come from the live server.
+Connecta preserves them and only fills in release-reviewed safety annotations
+when Notion is silent. OAuth is the hosted server's authentication contract.
+Do not apply the hand-written REST schemas to similarly named MCP tools. The
+MCP interface accepts `callAdmission` for an operator-supplied runtime policy;
+it does not assume the REST interface's endpoint budget describes MCP traffic.
+
+## API authentication
 
 One operator-managed credential: an internal integration token from
 [notion.so/profile/integrations](https://www.notion.so/profile/integrations).
@@ -52,6 +73,10 @@ Two Notion-specific facts decide whether a working token is enough:
 cheapest call that proves a token is live — and reports the workspace it
 authenticated into.
 
+The MCP interface uses Notion OAuth instead of the integration-token form. An
+`auth_required` failure means the grant is absent or expired and must be
+completed again through `authorize_connector`.
+
 ## The pinned API version
 
 The connection pins `Notion-Version: 2026-03-11` and offers no override. That
@@ -69,7 +94,10 @@ type's payload rather than switching exhaustively. A property type that ships
 after this release degrades to its raw value, and a block type that does keeps
 its payload under `raw`; neither vanishes.
 
-## Tools
+The remaining sections document the hand-written API interface. MCP tool
+arguments and results are intentionally read from the live server instead.
+
+## API tools
 
 Ten reads, all annotated `readOnlyHint: true`:
 
@@ -229,13 +257,14 @@ Cursors are opaque. Notion's own versioning page is explicit that they may
 change in length, format, and structure at any time and must be passed back
 verbatim — never parsed, validated, or constructed.
 
-## What this connection does not do
+## What the API interface does not do
 
 No file uploads, no database or data-source creation, no schema editing, no
 block updates or deletes, no page moves. Those are all real Notion endpoints
 and all deliberately absent: this is a deliberate tool surface, not a mirror of
-the API. Anything missing is reachable through a custom `api()` connector
-beside this one, which remains a first-class path.
+the API. Some are present on Notion's hosted MCP interface. Anything still
+missing is reachable through a custom `api()` connector beside this one, which
+remains a first-class path.
 
 The 2026-03-11 contract also offers more fields on create and update. They were
 reviewed after the 0.17.0 drift check and remain deliberately absent:
@@ -262,6 +291,14 @@ public API is finite and slow-moving enough that a named surface can cover it.
 The usage guide says it too, because an agent that assumes a hatch exists
 spends a search proving it does not: absent from the tool list means absent
 from this connection, not hidden behind a generic call.
+
+## Contract checks
+
+`npm run providers:check` compares the 14 fixed REST endpoints with Notion's
+published OpenAPI document and the 34 MCP names, endpoint, and OAuth support
+with Notion's official pages. It needs no Notion credential. The MCP schemas
+are not vendored or reconstructed: the live `tools/list` response remains the
+contract agents receive.
 
 ## Conventions
 

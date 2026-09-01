@@ -85,9 +85,11 @@ A read-only live audit on 2026-08-13 confirmed all three refusals against the
 US hosted endpoint. They are reported upstream as
 [`mixpanel/mixpanel-headless#202`](https://github.com/mixpanel/mixpanel-headless/issues/202).
 The vetted catalog records current schema digests for all 64 tools,
-so a later schema correction or regression appears by tool name in the
-maintainer drift check. The guide can then shrink when the downstream schema
-becomes complete; Connecta does not absorb the defect permanently.
+so a later schema correction or regression increments runtime drift when an
+ordinary catalog refresh observes it. The live definition is still served
+unchanged. The credential-free provider check does not depend on those digests.
+The guide can shrink when the downstream schema becomes complete; Connecta does
+not absorb the defect permanently.
 
 The wrapper classifies the documented observational tools as reads and the
 documented create, update, edit, merge, dismiss, duplicate, and delete tools as
@@ -141,6 +143,14 @@ A budget-only rule needs no queue. If you add `maxConcurrency` you are asking
 for a queue, and the admission controller then requires the rest of the queue
 settings at construction. Discovery traffic is outside connector call admission
 either way and still needs restrained use.
+
+## Public contract check
+
+`npm run drift:check -- --docs --provider mixpanel` compares Mixpanel's
+official Available Tools table with the vetted manifest and checks all three
+regional endpoints plus OAuth support. The current table lists 63 tools. It
+omits `Fill-Event-Metadata`, which remains classified from the last
+authenticated review and is reported as `not documented`, not silently removed.
 
 ## Conventions
 

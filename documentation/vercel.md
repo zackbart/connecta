@@ -1,19 +1,41 @@
 # Vercel
 
 Import `vercel()` independently from `@zackbart/connecta/providers/vercel`.
-It is a hand-written `api()` connection over Vercel's public REST API. The
-connection owns 18 named operations and three provider-relative REST hatches.
-It adds no provider dependency, imports no `node:` builtin, and is not reachable
-from Connecta's root entry.
+It offers two explicit provider surfaces:
+
+| `surface` | Contract owner | Authentication | Best fit |
+| --- | --- | --- | --- |
+| `"api"` or omitted | Connecta's hand-written schemas and projections | Vercel access token | Stable named operations, guarded REST hatches, environment variables, domains, and deployment lifecycle |
+| `"mcp"` | Vercel's live MCP catalog and schemas | OAuth | Vercel's newest agent tools, documentation search, observability, purchases, toolbar comments, and direct deployment |
+
+The choice belongs to deployment configuration. It never changes during an
+agent run, and neither surface receives different Connecta privileges. Use two
+connector ids when a deployment needs both.
 
 ```ts
 import { vercel } from "@zackbart/connecta/providers/vercel";
 
-const hosting = vercel("hosting", {
+const hostingApi = vercel("hosting_api", {
+  surface: "api",
   purpose: "Production web applications for the product team",
   teamId: "team_1a2b3c4d5e6f7g8h9i0j1k2l",
 });
+
+const hostingMcp = vercel("hosting_mcp", {
+  surface: "mcp",
+  purpose: "Production diagnosis and Vercel-native agent workflows",
+});
 ```
+
+Omitting `surface` still selects `"api"`, so existing configurations do not
+change behavior.
+
+## API surface
+
+The API surface is a hand-written `api()` connection over Vercel's public REST
+API. It owns 18 named operations and three provider-relative REST hatches. It
+adds no provider dependency, imports no `node:` builtin, and is not reachable
+from Connecta's root entry.
 
 The deployment stores one Vercel access token in Connecta's credential vault.
 Create the token in Vercel Account Settings under Tokens. Scope it to the
@@ -21,24 +43,16 @@ personal account or team this connection needs and give it an expiration date.
 The operator UI's Test action calls `GET /v2/user` and reports the authenticated
 username, email, name, or id. Connecta never probes it in the background.
 
-## Why this uses REST instead of Vercel MCP
-
-Vercel MCP provides useful project, deployment, and log reads, but it does not
-cover the public API. This connection keeps those common reads and adds project
-domains, value-safe environment-variable management, deployment promotion and
-deletion, and direct access to versioned REST endpoints. The three hatches mean
-a newly published Vercel endpoint does not require a Connecta release before an
-agent can use it.
-
-This is still authored rather than generated. No OpenAPI document creates tools
-at runtime. The named operations are reviewed, projected, classified, and
-tested by hand. The published OpenAPI document is used only by
-`npm run drift:check` to compare the 19 named endpoints this connection calls.
+This surface is authored rather than generated. No OpenAPI document creates
+tools at runtime. The named operations are reviewed, projected, classified,
+and tested by hand. The published OpenAPI document is used only by
+`npm run drift:check` to compare the 19 named endpoints this surface calls.
 
 ## Configuration
 
 ```ts
 vercel("hosting", {
+  surface: "api",
   title: "Production hosting",
   authScope: "shared",
   purpose: "Customer-facing sites owned by Platform",
@@ -69,7 +83,35 @@ from replacing `Authorization`, passes `ctx.signal`, and stops reading at 8 MiB.
 The runtime-log read also returns at most 500 rows and stops a stream that stays
 open past 10 seconds. HTTP is accepted only for a loopback test double.
 
-## Named tools
+## MCP surface
+
+The MCP surface proxies Vercel's official hosted endpoint at
+`https://mcp.vercel.com` and uses OAuth. Connecta does not copy Vercel's schemas
+into this repository. Each complete `tools/list` response is preserved as the
+live catalog, cached under the connector id, and invalidated when authorization
+changes.
+
+Connecta does vendor one thing: the 32 tool names and their release-reviewed
+read, additive-write, or destructive-write verdicts from Vercel's
+[official MCP tool reference](https://vercel.com/docs/agent-resources/vercel-mcp/tools).
+Those verdicts fill in missing annotations and keep reviewed destructive tools
+off the read-only execution path. A new tool remains fail-closed until a release
+classifies it. The provider check needs no schema digest because Connecta does
+not serve a schema snapshot.
+
+This separation matters when diagnosing a schema mismatch:
+
+- On `surface: "api"`, the schema in `src/providers/vercel.ts` is Connecta's
+  contract and its tests must prove the behavior.
+- On `surface: "mcp"`, Vercel's live `tools/list` response is the contract.
+  Connecta does not rewrite it. `search_tools` with compact schemas is a lossy
+  preview; use `describe` with JSON format when the exact schema matters.
+
+[integrations.sh's Vercel record](https://integrations.sh/vercel.com/) remains
+useful discovery evidence. The contract check uses Vercel's official setup and
+tool pages instead. Neither source replaces the live MCP schemas.
+
+## API named tools
 
 | Tool | What it does |
 | --- | --- |
@@ -188,7 +230,12 @@ the REST hatches share one guarded transport.
 
 The trade is API drift, handled explicitly. `scripts/drift/vercel-endpoints.json`
 records the method, versioned path, specification revision, and request/response
-digest for every fixed endpoint. Before a release, `npm run drift:check` compares
-those rows with Vercel's published OpenAPI document at
-`https://openapi.vercel.sh/`. The hatches are intentionally absent from that
-list because their endpoint is chosen by deployment code at call time.
+digest for every fixed endpoint. Before a release,
+`npm run providers:check -- --provider vercel` compares those rows with
+Vercel's published OpenAPI document at `https://openapi.vercel.sh/`, compares
+the vendored MCP inventory with Vercel's official tool reference, and checks
+the endpoint and OAuth support in Vercel's setup page. It states that live MCP
+schemas are not vendored and that the live `tools/list` response remains their
+runtime authority. The API hatches are absent from the endpoint manifest
+because deployment code chooses their path at call time. No Vercel credential
+is needed for this check.

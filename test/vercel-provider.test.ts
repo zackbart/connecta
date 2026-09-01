@@ -2,8 +2,26 @@
 // the requests, projections, secret handling, and typed failures we own.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
+import type { ToolDef } from "../src/types.js";
+import {
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+} from "./fixtures/hosted-provider.js";
+
+const mcpMocks = vi.hoisted(() => ({
+  listTools: vi.fn<() => Promise<ToolDef[]>>(),
+  remoteMcp: vi.fn(),
+}));
+
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
+  remoteMcp: mcpMocks.remoteMcp,
+}));
+
 import {
   VERCEL_API_BASE_URL,
+  VERCEL_MCP_ENDPOINT,
+  VERCEL_MCP_VETTED_CATALOG,
   vercel,
 } from "../src/providers/vercel.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -40,6 +58,7 @@ function queue(...items: StubResponse[]): void {
 beforeEach(() => {
   responses = [];
   calls.length = 0;
+  mockRemoteMcp(mcpMocks);
   globalThis.fetch = vi.fn(async (input: unknown, init: RequestInit = {}) => {
     const text =
       responses[0]?.text ?? JSON.stringify(responses[0]?.body ?? {});
@@ -153,6 +172,74 @@ describe("vercel() construction", () => {
   it("constructs without touching the network", () => {
     connection();
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("vercel() MCP surface", () => {
+  function mcp(): Connector {
+    return vercel("hosting_mcp", {
+      surface: "mcp",
+      purpose: "Production deployment diagnosis",
+    });
+  }
+
+  it("binds the explicit MCP surface to Vercel's OAuth endpoint", () => {
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
+    const connector = vercel("hosting_mcp", {
+      surface: "mcp",
+      purpose: "Production deployment diagnosis",
+      callAdmission,
+    });
+    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
+      "hosting_mcp",
+      expect.objectContaining({
+        url: VERCEL_MCP_ENDPOINT,
+        title: "Vercel (MCP)",
+        auth: { type: "oauth" },
+        callAdmission,
+        requireHttps: true,
+      }),
+    );
+    expect(connector.kind).toBe("mcp");
+    expect(connector.credential).toBeUndefined();
+    expect(guide(connector).content).toContain("live server");
+    expect(guide(connector).content).toContain("Purchase tools change billing");
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("classifies every tool in Vercel's published MCP reference", () => {
+    const counts = { "read-only": 0, additive: 0, destructive: 0 };
+    for (const { verdict } of VERCEL_MCP_VETTED_CATALOG.tools.values()) {
+      counts[verdict] += 1;
+    }
+    expect(VERCEL_MCP_VETTED_CATALOG.tools.size).toBe(32);
+    expect(counts).toEqual({
+      "read-only": 20,
+      additive: 2,
+      destructive: 10,
+    });
+    expect(
+      VERCEL_MCP_VETTED_CATALOG.tools.get("get_purchase_quote")?.verdict,
+    ).toBe("read-only");
+    expect(
+      VERCEL_MCP_VETTED_CATALOG.tools.get("deploy_to_vercel")?.verdict,
+    ).toBe("destructive");
+    expect(
+      VERCEL_MCP_VETTED_CATALOG.tools.get("web_fetch_vercel_url")?.verdict,
+    ).toBe("destructive");
+    expect(
+      VERCEL_MCP_VETTED_CATALOG.tools.get("reply_to_toolbar_thread")?.verdict,
+    ).toBe("additive");
+    for (const record of VERCEL_MCP_VETTED_CATALOG.tools.values()) {
+      expect(record.schemaDigest).toBeUndefined();
+    }
+  });
+
+  itClassifiesLikeARelease(mcp, mcpMocks, {
+    read: ["list_projects", "get_project", "get_deployment"],
+    write: "reply_to_toolbar_thread",
+    destructive: "buy_domain",
+    unknown: ["new_vercel_tool", "peek_at_new_thing", "wreck_new_thing"],
   });
 });
 
@@ -374,6 +461,48 @@ describe("Vercel reads and projections", () => {
         { type: "stdout", created: 100, payload: { text: "raw" }, extra: true },
       ],
     });
+  });
+
+  it("accepts the expanded build-event variants without inventing a schema", async () => {
+    queue({
+      body: [
+        {
+          type: "stdout",
+          created: 100,
+          payload: {
+            text: "Building",
+            deploymentId: "dpl_1",
+            info: { type: "build", name: "web", serviceName: "frontend" },
+          },
+        },
+        {
+          type: "alias-assigned",
+          date: 101,
+          deploymentId: "dpl_1",
+          alias: ["app.example.com"],
+          aliasError: null,
+          aliasWarning: null,
+        },
+        {},
+      ],
+    });
+    const result = await call(connection(), "get_build_logs", {
+      deploymentId: "dpl_1",
+    });
+    expect(result.events).toEqual([
+      {
+        type: "stdout",
+        createdAt: 100,
+        message: "Building",
+        payload: {
+          text: "Building",
+          deploymentId: "dpl_1",
+          info: { type: "build", name: "web", serviceName: "frontend" },
+        },
+      },
+      { type: "alias-assigned", createdAt: 101 },
+      { type: "unknown" },
+    ]);
   });
 
   it("parses runtime stream JSON under either content type and caps rows", async () => {

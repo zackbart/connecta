@@ -89,7 +89,12 @@ const READ_ONLY_TOOLS = new Set([
   "stripe_api_search",
   "stripe_api_details",
   "stripe_api_read",
+  "get_stripe_account_info",
   "get_balance_summary",
+  "list_metrics",
+  "explain_metric",
+  "metric_drilldown",
+  "show_metric_app",
   "list_available_accounts_or_orgs",
   "manage_stripe_accounts",
   "search_stripe_documentation",
@@ -98,8 +103,10 @@ const READ_ONLY_TOOLS = new Set([
 /** Reviewed writes, including mixed read/create tools: `documentation/stripe.md`. */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["stripe_api_write", "destructive"],
+  ["create_refund", "destructive"],
   ["stripe_implementation_planner", "additive"],
   ["stripe_analytics", "additive"],
+  ["stripe_report", "additive"],
   ["send_stripe_mcp_feedback", "additive"],
 ]);
 

@@ -7,11 +7,13 @@ writes the judgment down so it can be argued with, audited, and reused.
 There are two genuinely different provider shapes, and one convention set
 cannot honestly cover both:
 
-- **Hand-written HTTP providers** — `api()` surfaces where Connecta owns every
-  tool name, schema, projection, and error. Today: Cloudflare, Notion, Vercel.
-- **Hosted-MCP proxies** — `remoteMcp()` wrappers around a server somebody else
+- **Hand-written HTTP providers**: `api()` surfaces where Connecta owns every
+  tool name, schema, projection, and error. Today: Cloudflare, Notion, and the
+  Vercel API surface.
+- **Hosted-MCP proxies**: `remoteMcp()` wrappers around a server somebody else
   operates, where the names, schemas, results, and error prose arrive as they
-  are. Today: Linear, Stripe, Mixpanel, RevenueCat.
+  are. Today: Cloudflare, Linear, Stripe, Mixpanel, Notion, RevenueCat, and
+  Vercel MCP interfaces.
 
 The governing principle for every convention below is the same: **keep the
 model that interacts with connecta as efficient as possible.** A convention
@@ -85,8 +87,8 @@ other source with no description or no `inputSchema`.
 ## Hand-written HTTP providers
 
 Connecta owns the whole surface here, which means every miss is ours. These
-apply to `api()`-based prebuilt connections (Cloudflare, Notion, Vercel) and are the
-bar any future one is written to.
+apply to `api()`-based prebuilt connections (Cloudflare, Notion, and Vercel's
+API surface) and are the bar any future one is written to.
 
 None of them asks an author to re-derive transport safety. URL confinement,
 query and body construction, `ctx.signal`, redirect refusal, credential
@@ -513,15 +515,12 @@ credential probe, and no automatic issue filing. Proactive credential liveness
 stays removed ([#179](https://github.com/zackbart/connecta/issues/179)); this
 is the shape that does not become it.
 
-**What a manifest holds.** Every tool name a release reviewed, the verdict it
-reviewed it as (`read-only`, `additive`, `destructive`), and — where a release
-actually read them — a digest of that tool's input and output schemas. Today
-three of the four proxies ship names and verdicts and no digests, because no
-release has read a live schema and written it down, and an invented digest reports a
-change that never happened. `npm run drift:check -- --record` reads them from a
-live catalog and prints the block a release pastes in; until a release does,
-a manifest without digests counts no schema changes, which is the honest answer
-rather than a silent zero.
+**What a manifest holds.** Every tool name a release reviewed and its verdict
+(`read-only`, `additive`, or `destructive`). A manifest may also carry a schema
+digest from a prior review, but that digest is runtime drift evidence, not a
+schema Connecta serves. The credential-free provider check neither requires nor
+updates schema digests. The live `tools/list` definition always remains the
+agent-facing contract.
 
 **What it counts.** Four categories, and only counts:
 
@@ -547,8 +546,9 @@ One activity event per *change* in the counts — an identical report every TTL
 is a heartbeat, not news — carrying the connector id and four integers. The
 event type has nowhere to put a tool name, a schema, an argument, a result, or
 downstream error prose, which is the same construction guarantee the tool-call
-event makes. Which tool drifted is deliberately absent from the runtime: it is
-answered by the maintainer-run check, with a live catalog in front of it.
+event makes. Which account-specific tool drifted is deliberately absent from
+this payload-free runtime report. The public check can name documented drift;
+it cannot recover a plan-gated name the provider does not publish.
 
 **How far an observation reaches.** One runtime, and no further. The
 observation lives in the isolate or process that served the refresh; unlike the
@@ -558,8 +558,9 @@ the instance that took the request: on Workers a `connecta doctor` run will
 usually land on an isolate that has served no refresh and print nothing, and
 behind more than one process it is a coin flip. Read an empty report as *this
 runtime has observed nothing*, never as *nothing drifted* — the durable record
-of a finding is the activity event a sink already stored, and naming the tool
-is still the maintainer-run check's job.
+of a finding is the activity event a sink already stored. The public check can
+name a documented change. Naming an unpublished, account-only tool is outside a
+credential-free checker.
 
 **What a finding obliges.** A contradicted vetted verdict — the downstream
 calling a release-reviewed destructive tool `readOnlyHint: true`, or a vetted
@@ -570,33 +571,43 @@ whether or not anybody noticed it arrived.
 
 ## The maintainer-run drift check
 
-`npm run drift:check` is the other half
+`npm run providers:check` is the other half
 ([#351](https://github.com/zackbart/connecta/issues/351)): a human at a laptop,
-before a release, with local credentials and the published specifications in
-front of them. It lives in
+before a release, using only published specifications and documentation. It
+lives in
 [`scripts/drift-check.mjs`](https://github.com/zackbart/connecta/blob/main/scripts/drift-check.mjs) and ships nowhere —
 `scripts/` is outside the package, no runtime module imports it, and nothing it
 reads becomes a runtime input.
 
-**Hosted-MCP catalogs.** `--hosted` lists each proxy's live catalog with the
-maintainer's own key and diffs it against the same `vettedCatalog()` manifest
-the connector classifies from, reporting tools *by name*: added, no longer
-served, annotation conflicts with what the downstream actually claimed, and —
-once a manifest records schema digests — which tool's schemas moved. The names
-live here rather than in the runtime because the runtime's counts are
-payload-free by construction, and a name has no reader there anyway. It then
-compares its own totals against `detectCatalogDrift()`: two readings of one
-manifest that disagree mean one of them is lying, which is worth failing over.
-One credential per provider comes from the environment —
-`CONNECTA_DRIFT_LINEAR_KEY`, `CONNECTA_DRIFT_STRIPE_KEY`,
-`CONNECTA_DRIFT_MIXPANEL_KEY`, `CONNECTA_DRIFT_REVENUECAT_KEY` — and a missing
-or dead one stops the run with a message naming it rather than reporting an
-empty catalog as mass removal. Linear, bare Stripe, and RevenueCat `sk_` values
-use their documented bearer or Basic framing.
-Mixpanel's beta service-account form is provider-specific:
-`user:secret` becomes `Bearer Basic <base64(user:secret)>`, exactly as its MCP
-documentation requires. A value that already includes whitespace is treated
-as a complete Authorization value and passes through unchanged.
+**Published MCP references.** `--docs` checks
+the official setup page for each maintained hosted MCP connection, including
+the endpoint and OAuth support. Cloudflare, Stripe, Mixpanel, Notion,
+RevenueCat, and Vercel also publish structured tool inventories. The checker
+compares their documented names with the same vetted manifests the wrappers
+use. Linear's setup page does not enumerate tools, so its result says that only
+setup metadata was checked.
+
+A documented addition with no classification is a finding. A classified tool
+missing from public docs is printed but does not fail the run, because account
+scope, staged rollout, and documentation lag can all hide a tool that an
+earlier release reviewed. RevenueCat's `render-paywall-screenshot` is the odd
+one out: the official inventory names it but leaves its Access column blank.
+The checker reports the reviewed exception and Connecta keeps it fail-closed.
+
+`npm run providers:check` runs this documentation check for every maintained
+hosted MCP connection and the touched-endpoint OpenAPI check for every
+hand-written HTTP connection. It never reads a provider credential. The network
+keeps it outside `npm run check`; a provider outage must not make the
+deterministic test suite flaky.
+
+MCP schema handling needs a different assertion. Connecta does not vendor or
+reconstruct those schemas, so there is no static MCP schema snapshot for this
+command to compare. The live `tools/list` response is passed through at runtime,
+and the deterministic `catalog-drift.test.ts` suite pins that the vetted wrapper
+changes safety annotations only while preserving the provider input schema,
+output schema, and description. A parameter table in a docs page is never
+promoted into a runtime schema. The report states this directly instead of
+printing a misleading authenticated-schema requirement.
 
 **Touched endpoints.** A hand-written provider is written against a published
 OpenAPI document and calls a few dozen of its operations, so
@@ -630,13 +641,16 @@ H11's business, mapped from the status. `--record` rewrites the manifests from
 the documents on hand; run it when a finding has been reviewed, and read the
 diff before committing it.
 
-Narrowing is checked against the half being run: `--specs --provider linear`
-and `--hosted --provider notion` exit 2 rather than checking nothing and
-reporting no drift, because a false green from a plausible typo is the one
-failure mode a release-time exit code cannot afford.
+Narrowing is checked against the part being run: `--specs --provider linear`
+and `--specs --provider stripe` exit 2 rather than checking nothing and
+reporting no drift. `npm run providers:check -- --provider vercel` checks the
+REST OpenAPI contract and public MCP documentation without credentials.
+`npm run drift:check` is the lower-level equivalent with the same
+credential-free default plus fixture and recording flags.
 
-**What it never does.** No downstream credential reaches CI. No scheduled job,
-no background traffic in a deployment, no automatic issue filing. A finding is
+**What it never does.** No provider credential is read at all. There is no
+scheduled job, background traffic in a deployment, or automatic issue filing.
+Public docs do not generate tools or replace the live MCP catalog. A finding is
 read by a human and becomes a GitHub issue they wrote, because the decision a
 finding needs — the provider moved this endpoint, or connecta has to stop
 calling it — is not one a diff can make. Published specifications remain drift

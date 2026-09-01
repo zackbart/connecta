@@ -1,5 +1,11 @@
 /** See documentation/cloudflare.md#no-sdk-on-purpose. */
-import { api, type ApiTool } from "../connectors/api.js";
+import { api, defined, type ApiTool } from "../connectors/api.js";
+import {
+  remoteMcp,
+  withCredentialDefaults,
+  type RemoteMcpAuth,
+} from "../connectors/remote-mcp.js";
+import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";
 import {
   guardedFetch,
   retryAfterMs,
@@ -17,6 +23,8 @@ import type {
 
 /** Cloudflare's v4 REST base. Override only for a proxy or a test double. */
 export const CLOUDFLARE_API_BASE = "https://api.cloudflare.com/client/v4";
+/** Cloudflare's official whole-API hosted MCP endpoint. */
+export const CLOUDFLARE_MCP_ENDPOINT = "https://mcp.cloudflare.com/mcp";
 
 /** Authentication schemes accepted by Cloudflare's v4 API. */
 export type CloudflareAuthentication = "apiToken" | "globalApiKey";
@@ -58,13 +66,22 @@ export const CLOUDFLARE_CONTENT_DNS_RECORD_TYPES = [
   "TXT",
 ] as const;
 
-export interface CloudflareOptions {
-  /** Human-readable display name; defaults to "Cloudflare". */
+interface CloudflareCommonOptions {
+  /** Human-readable display name; defaults identify the selected interface. */
   title?: string;
   /** Downstream auth ownership. Defaults to one shared deployment grant. */
   authScope?: "shared" | "personal";
   /** Which account/estate this connection administers, and for whom. */
   purpose: string;
+  /** Account-specific conventions appended to the maintained provider guide. */
+  instructions?: string;
+  /** Connector-specific inline result limit; omit to inherit the deployment. */
+  maxResultBytes?: number;
+}
+
+export interface CloudflareApiOptions extends CloudflareCommonOptions {
+  /** Omit for backward compatibility; the hand-written API interface is default. */
+  surface?: "api";
   /**
    * Default account id for account-scoped tools. When set, `accountId` becomes
    * an optional argument; when omitted, agents must pass one and can find it
@@ -83,13 +100,25 @@ export interface CloudflareOptions {
   authentication?: CloudflareAuthentication;
   /** Credential presentation override; credentials are always operator-managed. */
   credential?: ConnectorCredentialConfig;
-  /** Account-specific conventions appended to the maintained provider guide. */
-  instructions?: string;
-  /** Connector-specific inline result limit; omit to inherit the deployment. */
-  maxResultBytes?: number;
   /** Simultaneous downstream calls. Defaults to 6. */
   maxConcurrency?: number;
 }
+
+export interface CloudflareMcpOptions extends CloudflareCommonOptions {
+  surface: "mcp";
+  /** OAuth by default, or a scoped API token for a headless deployment. */
+  auth?: RemoteMcpAuth;
+  /** Optional per-runtime downstream call-admission policy. */
+  callAdmission?: ConnectorCallAdmissionPolicy;
+}
+
+/** Backward-compatible API options; existing consumers may extend this interface. */
+export interface CloudflareOptions extends CloudflareApiOptions {}
+
+/** Select one Cloudflare interface when deployment configuration constructs it. */
+export type CloudflareConnectionOptions =
+  | CloudflareOptions
+  | CloudflareMcpOptions;
 
 /** See documentation/cloudflare.md#rate-limits. */
 function admissionPolicy(maxConcurrency: number): ConnectorCallAdmissionPolicy {
@@ -3543,7 +3572,7 @@ function buildTools(
   return tools;
 }
 
-function usageGuide(
+function apiUsageGuide(
   purpose: string,
   scope: Scoping,
   instructions: string | undefined,
@@ -3582,12 +3611,82 @@ ${
   }`;
 }
 
-/** A maintained Cloudflare REST API connection. */
-export function cloudflare(id: string, options: CloudflareOptions): Connector {
-  const purpose = options.purpose.trim();
-  if (!purpose) {
-    throw new Error("cloudflare() requires a non-empty account purpose.");
-  }
+export const CLOUDFLARE_MCP_VETTED_CATALOG = vettedCatalog({
+  reads: new Set(["search"]),
+  // `execute` can send any method to more than 2,500 API endpoints. Its input
+  // schema cannot prove a particular program is observational, so it stays on
+  // the approval path even when that program happens to issue only GETs.
+  writes: new Map([["execute", "destructive"]]),
+});
+
+function mcpUsageGuide(
+  purpose: string,
+  instructions: string | undefined,
+): string {
+  const accountInstructions = instructions?.trim();
+  return `# Cloudflare MCP usage
+
+Official whole-API MCP interface: ${purpose}
+
+- The catalog contains \`search\` and \`execute\`. Search runs code against
+  Cloudflare's OpenAPI document. Execute runs code that may call any authorized
+  Cloudflare API endpoint.
+- Use \`search\` to find the exact method, path, and fields before writing an
+  execute program. Do not guess an endpoint from product naming.
+- Connecta routes every \`execute\` call through approval because the tool can
+  mix GET, POST, PUT, PATCH, and DELETE requests inside one program. The MCP
+  schema cannot establish that arbitrary code is read-only.
+- Keep returned values small. Filter and project inside the Cloudflare MCP
+  program, then reduce again inside Connecta's \`execute_code\` when several
+  calls must be joined.
+- OAuth and API-token permissions remain the provider-side boundary. An
+  \`auth_required\` failure needs authorization or a token with the required
+  Cloudflare permission.
+${
+    accountInstructions
+      ? `\n## Account instructions\n\n${accountInstructions}\n`
+      : ""
+  }`;
+}
+
+function cloudflareMcp(
+  id: string,
+  purpose: string,
+  options: CloudflareMcpOptions,
+): Connector {
+  const connector = remoteMcp(id, {
+    url: CLOUDFLARE_MCP_ENDPOINT,
+    ...defined({
+      authScope: options.authScope,
+      callAdmission: options.callAdmission,
+      maxResultBytes: options.maxResultBytes,
+    }),
+    title: options.title ?? "Cloudflare (MCP)",
+    description: `Cloudflare's official whole-API MCP interface: ${purpose}`,
+    auth: withCredentialDefaults(options.auth ?? { type: "oauth" }, {
+      credential: {
+        label: "Cloudflare API token",
+        description:
+          "A scoped Cloudflare API token. Connecta sends it as a bearer token to mcp.cloudflare.com and stores it encrypted.",
+        placeholder: "Paste Cloudflare API token",
+      },
+    }),
+    requireHttps: true,
+    usageGuide: {
+      content: mcpUsageGuide(purpose, options.instructions),
+      summary:
+        "Official whole-API MCP. Search the OpenAPI document, then approve each mixed-method execute program.",
+      required: true,
+    },
+  });
+  return withVettedCatalog(connector, CLOUDFLARE_MCP_VETTED_CATALOG);
+}
+
+function cloudflareApi(
+  id: string,
+  purpose: string,
+  options: CloudflareApiOptions,
+): Connector {
   const maxConcurrency = options.maxConcurrency ?? 6;
   if (!Number.isInteger(maxConcurrency) || maxConcurrency < 1) {
     throw new Error("cloudflare() maxConcurrency must be a positive integer.");
@@ -3613,7 +3712,7 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
     credential: credentialConfig(authentication, options.credential),
     callAdmission: admissionPolicy(maxConcurrency),
     usageGuide: {
-      content: usageGuide(purpose, scope, options.instructions, authentication),
+      content: apiUsageGuide(purpose, scope, options.instructions, authentication),
       // Explicit rather than derived: the first content line is the zone
       // scoping rule, which varies per deployment and reads as an instruction
       // rather than as the routing fact a browsing agent needs.
@@ -3675,4 +3774,18 @@ export function cloudflare(id: string, options: CloudflareOptions): Connector {
           },
         }),
   });
+}
+
+/** A maintained Cloudflare connection using the selected provider interface. */
+export function cloudflare(
+  id: string,
+  options: CloudflareConnectionOptions,
+): Connector {
+  const purpose = options.purpose.trim();
+  if (!purpose) {
+    throw new Error("cloudflare() requires a non-empty account purpose.");
+  }
+  return options.surface === "mcp"
+    ? cloudflareMcp(id, purpose, options)
+    : cloudflareApi(id, purpose, options);
 }
