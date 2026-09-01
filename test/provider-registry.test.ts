@@ -8,6 +8,7 @@ import { mixpanel } from "../src/providers/mixpanel.js";
 import { notion } from "../src/providers/notion.js";
 import { revenuecat } from "../src/providers/revenuecat.js";
 import { stripe } from "../src/providers/stripe.js";
+import { vercel } from "../src/providers/vercel.js";
 import { connectorGuideSummary } from "../src/skills.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { activityFor, activitySink, invokeTestCall, seedCatalog, silentLogger } from "./helpers.js";
@@ -127,6 +128,20 @@ const providers: ProviderCase[] = [
     factory: (storage: KVStorage) => deployment(storage, [
       notion("notion_eng", { purpose: "Engineering runbooks and specs" }),
       notion("notion_ops", { purpose: "Operations handbook", title: "Ops wiki", defaultPageSize: 50 }),
+    ], true),
+  },
+  {
+    name: "vercel",
+    ids: ["vercel_prod", "vercel_preview"] as const,
+    toolName: "list_projects",
+    secondToolName: "list_deployments",
+    descriptionMarks: ["Production applications", "Preview applications"],
+    admissionIds: ["vercel_prod", "vercel_preview"],
+    meteredId: "vercel_prod",
+    staticCatalog: true,
+    factory: (storage: KVStorage) => deployment(storage, [
+      vercel("vercel_prod", { purpose: "Production applications", teamId: "team_prod", callAdmission: budget }),
+      vercel("vercel_preview", { purpose: "Preview applications", teamId: "team_preview", callAdmission: budget }),
     ], true),
   },
 ];

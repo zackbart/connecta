@@ -56,6 +56,7 @@ export const WORKERS_SUITES = [
   "test/ui.test.ts",
   "test/ui-credentials.test.ts",
   "test/validate.test.ts",
+  "test/vercel-provider.test.ts",
 ] as const;
 
 export const NODE_ONLY_SUITES = [

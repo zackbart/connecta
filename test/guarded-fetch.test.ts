@@ -1,6 +1,6 @@
 // The guarded transport hand-written connectors send every request through.
-// Cloudflare and Notion prove the shape end to end in their own suites; this
-// one pins the mechanics they both depend on and neither exercises directly —
+// Cloudflare, Notion, and Vercel prove the shape in their own suites; this one
+// pins the mechanics they all depend on and do not each exercise directly —
 // the confinement that only fails on a hostile path, the ceiling that only
 // fires on an absurd response, and the redirect nobody's provider sends.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

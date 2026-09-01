@@ -1,0 +1,122 @@
+{
+  "provider": "vercel",
+  "specification": {
+    "url": "https://openapi.vercel.sh/"
+  },
+  "endpoints": [
+    {
+      "method": "GET",
+      "path": "/v2/teams",
+      "specRevision": "0.0.1",
+      "contract": "sha256:8fb7afa7c425fdfd85ec0bb1e679c0b94e59708543ccd88b3c89fdeaa0ad3981"
+    },
+    {
+      "method": "GET",
+      "path": "/v2/user",
+      "specRevision": "0.0.1",
+      "contract": "sha256:02edb7d895128ab8f701af0c83a1daa1cc3cc3b8b773286a344312171e2205cf"
+    },
+    {
+      "method": "GET",
+      "path": "/v10/projects",
+      "specRevision": "0.0.1",
+      "contract": "sha256:4c247451cb5bde9cc660cecedec94c9ddd8711b3cfd9925062f8eb403b39d756"
+    },
+    {
+      "method": "GET",
+      "path": "/v9/projects/{idOrName}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:755ef20b9d393b17888336e0e6753b6e508b5dd769cf3f5b8e64c8b3dd3fb228"
+    },
+    {
+      "method": "GET",
+      "path": "/v7/deployments",
+      "specRevision": "0.0.1",
+      "contract": "sha256:1923d5b2ceb2efe93bdf31db7c1e5cdbaa6e6af859e46557ee95a6b7d43fe2cd"
+    },
+    {
+      "method": "GET",
+      "path": "/v13/deployments/{idOrUrl}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:613490ff5f551d9943abcbaaab02c7aa1a49a447587d7ae7ce34a2b0eddd77ef"
+    },
+    {
+      "method": "GET",
+      "path": "/v3/deployments/{idOrUrl}/events",
+      "specRevision": "0.0.1",
+      "contract": "sha256:62dfec8f83e91c31b548a0a34dbf1b5d92a30c6931b366cd2828786c8c95fdde"
+    },
+    {
+      "method": "GET",
+      "path": "/v1/projects/{projectId}/deployments/{deploymentId}/runtime-logs",
+      "specRevision": "0.0.1",
+      "contract": "sha256:277157a1c7de04d7f8e062d90a6925bb83293cbd761babb9bdd498e614bc96cd"
+    },
+    {
+      "method": "GET",
+      "path": "/v9/projects/{idOrName}/domains",
+      "specRevision": "0.0.1",
+      "contract": "sha256:a9d34690d44f4a2614a5711886a29f23c03c24e769fe79c1c9569c0701440930"
+    },
+    {
+      "method": "POST",
+      "path": "/v10/projects/{idOrName}/domains",
+      "specRevision": "0.0.1",
+      "contract": "sha256:a41fb79cbd0ddd7ba52d9b041ca6c636aa60a1065210ca6019449685c2bb9633"
+    },
+    {
+      "method": "POST",
+      "path": "/v9/projects/{idOrName}/domains/{domain}/verify",
+      "specRevision": "0.0.1",
+      "contract": "sha256:366900558cfa65f3145c4824935a6834bf21daece06e72a4d36c4b6646353578"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v9/projects/{idOrName}/domains/{domain}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:cf73839ee932602c00a1b1882c9bb2a2a2b4c4901e597cd517abb893ce6f85f9"
+    },
+    {
+      "method": "GET",
+      "path": "/v10/projects/{idOrName}/env",
+      "specRevision": "0.0.1",
+      "contract": "sha256:6ed625cd296bcbc3375e80317b7b4bb2f18a8f9bb973f0928c7220e1b324e2bc"
+    },
+    {
+      "method": "POST",
+      "path": "/v10/projects/{idOrName}/env",
+      "specRevision": "0.0.1",
+      "contract": "sha256:369c0569a468cc2bc9d15d66c1be8b0b242dbd132b253ff0f5f50fbf1b3cdd20"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v9/projects/{idOrName}/env/{id}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:4b3f2750b254069abc5be22580135ad335d581dc075c0d70e718fe7e359959bd"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v9/projects/{idOrName}/env/{id}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:d6588fd053b7d376ba70042b94503ade24a869ed316afa38cc11c245915a315b"
+    },
+    {
+      "method": "POST",
+      "path": "/v10/projects/{projectId}/promote/{deploymentId}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:087cb47af9f3500691b55680414f9664a60e4eafa27842cf4324dcf7518fbfa2"
+    },
+    {
+      "method": "PATCH",
+      "path": "/v12/deployments/{id}/cancel",
+      "specRevision": "0.0.1",
+      "contract": "sha256:4994c3bb309b363a4614c36f82ada2f42192d2bc2dfd5a79fa305852872030b2"
+    },
+    {
+      "method": "DELETE",
+      "path": "/v13/deployments/{id}",
+      "specRevision": "0.0.1",
+      "contract": "sha256:41d4413d7865ed00540aabddb79130b658362e59d480a9a0cbf2e2f3719c0c5e"
+    }
+  ]
+}

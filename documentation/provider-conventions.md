@@ -1,6 +1,6 @@
 # Provider conventions
 
-The six maintained prebuilt connections grew one at a time, and until now
+The seven maintained prebuilt connections grew one at a time, and until now
 "excellent provider" meant whatever the last author thought. This document
 writes the judgment down so it can be argued with, audited, and reused.
 
@@ -8,7 +8,7 @@ There are two genuinely different provider shapes, and one convention set
 cannot honestly cover both:
 
 - **Hand-written HTTP providers** — `api()` surfaces where Connecta owns every
-  tool name, schema, projection, and error. Today: Cloudflare, Notion.
+  tool name, schema, projection, and error. Today: Cloudflare, Notion, Vercel.
 - **Hosted-MCP proxies** — `remoteMcp()` wrappers around a server somebody else
   operates, where the names, schemas, results, and error prose arrive as they
   are. Today: Linear, Stripe, Mixpanel, RevenueCat.
@@ -85,7 +85,7 @@ other source with no description or no `inputSchema`.
 ## Hand-written HTTP providers
 
 Connecta owns the whole surface here, which means every miss is ours. These
-apply to `api()`-based prebuilt connections (Cloudflare, Notion) and are the
+apply to `api()`-based prebuilt connections (Cloudflare, Notion, Vercel) and are the
 bar any future one is written to.
 
 None of them asks an author to re-derive transport safety. URL confinement,
@@ -646,11 +646,11 @@ evidence and nothing else: no tool is generated from one, which is the
 ## What the audit checks
 
 The provider audit ([#342](https://github.com/zackbart/connecta/issues/342))
-runs this document against each of the six providers and returns a verdict per
+runs this document against each of the seven providers and returns a verdict per
 convention: **meets**, **misses** (with the fix), or **not applicable** (with
 the reason). A convention is never quietly skipped, and an accepted miss is
 recorded as a provider-specific exception with its argument, not left blank.
-Its six reports live in [provider-audit.md](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md), and the
+Its seven reports live in [provider-audit.md](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md), and the
 mechanically checkable half of the hand-written bar runs on every test run in
 [`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts) —
 so a convention that was met once stays met, or fails loudly.

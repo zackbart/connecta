@@ -1,6 +1,6 @@
 {
   "name": "@zackbart/connecta",
-  "version": "0.22.0",
+  "version": "0.22.1",
   "type": "module",
   "sideEffects": false,
   "description": "One MCP to rule them all — a single MCP endpoint aggregating many downstream connectors behind a code-first surface of seven meta-tools.",
@@ -90,6 +90,10 @@
     "./providers/stripe": {
       "types": "./dist/providers/stripe.d.ts",
       "import": "./dist/providers/stripe.js"
+    },
+    "./providers/vercel": {
+      "types": "./dist/providers/vercel.d.ts",
+      "import": "./dist/providers/vercel.js"
     }
   },
   "scripts": {

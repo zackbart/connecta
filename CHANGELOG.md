@@ -2,6 +2,22 @@
 
 All notable changes to this package are documented here.
 
+## 0.22.1 — 2026-08-31
+
+This patch adds a maintained Vercel connection over the public REST API. It is
+a new opt-in provider subpath: existing imports, connector declarations,
+credentials, and deployment behavior do not change. Deployments that do not
+import the Vercel provider can ignore this release.
+
+### Added
+
+- **Maintained Vercel REST connection.** `@zackbart/connecta/providers/vercel`
+  ships 18 projected project, deployment, log, domain, environment-variable,
+  and lifecycle tools plus separate GET, JSON-mutation, and upload hatches. It
+  uses one operator-managed access token, defaults account calls to an optional
+  team, never decrypts environment values in named reads, and adds no Vercel
+  SDK dependency.
+
 ## 0.22.0 — 2026-08-31
 
 This release lets one deployment serve several authenticated people without

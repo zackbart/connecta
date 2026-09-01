@@ -37,7 +37,7 @@ const defaultManifestDirectory = resolvePath(repositoryRoot, "scripts/drift");
 /** Hosted-MCP proxies: a live catalog, read with the maintainer's own key. */
 const HOSTED_PROVIDERS = ["linear", "stripe", "mixpanel", "revenuecat"];
 /** Hand-written HTTP providers: a published specification, read as evidence. */
-const SPEC_PROVIDERS = ["cloudflare", "notion"];
+const SPEC_PROVIDERS = ["cloudflare", "notion", "vercel"];
 
 /** Where each hosted provider's credential comes from, and what it is. */
 const HOSTED_CREDENTIALS = {

@@ -264,6 +264,8 @@ try {
     "dist/providers/stripe.d.ts",
     "dist/providers/cloudflare.js",
     "dist/providers/cloudflare.d.ts",
+    "dist/providers/vercel.js",
+    "dist/providers/vercel.d.ts",
   ]) {
     if (!paths.has(required)) {
       throw new Error(`Packed artifact is missing ${required}`);
@@ -470,6 +472,19 @@ const cloudflareConnection = cloudflareProvider.cloudflare("edge", {
 if (cloudflareConnection.id !== "edge") {
   throw new Error("Cloudflare provider did not return a connector");
 }
+const vercelProvider = await import("@zackbart/connecta/providers/vercel");
+if (typeof vercelProvider.vercel !== "function") {
+  throw new Error("missing Vercel provider constructor");
+}
+const vercelConnection = vercelProvider.vercel("hosting", {
+  purpose: "package smoke",
+});
+if (vercelConnection.id !== "hosting" || vercelConnection.kind !== "api") {
+  throw new Error("Vercel provider did not return an api() connector");
+}
+if (!vercelConnection.staticTools?.length) {
+  throw new Error("Vercel provider published no tools");
+}
 for (const name of [
   "clerkAuth",
   "cloudflareApi",
@@ -490,6 +505,8 @@ for (const name of [
   "cloudflare",
   "CLOUDFLARE_API_BASE",
   "CLOUDFLARE_DNS_RECORD_TYPES",
+  "vercel",
+  "VERCEL_API_BASE_URL",
 ]) {
   if (name in core) throw new Error(name + " leaked into the core entry");
 }
@@ -896,6 +913,9 @@ try {
   // still constructs the connector below.
   if (existsSync(join(work, "node_modules", "cloudflare"))) {
     throw new Error("Cloudflare SDK was installed with the package");
+  }
+  if (existsSync(join(work, "node_modules", "@vercel", "sdk"))) {
+    throw new Error("Vercel SDK was installed with the package");
   }
   run(process.execPath, ["smoke.mjs"], work);
 
