@@ -136,11 +136,11 @@ few things both shapes fully own:
 
 - [Hand-written HTTP providers](./provider-conventions.md#hand-written-http-providers)
   (H1–H14) — `api()` surfaces where Connecta owns every name, schema,
-  projection, and error. Cloudflare and Notion.
+  projection, and error. Cloudflare, Notion, and Vercel.
 - [Hosted-MCP proxies](./provider-conventions.md#hosted-mcp-proxies) (P1–P13) —
   `remoteMcp()` wrappers where the downstream owns the catalog and Connecta
   owns the endpoint, credential, classification, guide, and budget. Linear,
-  Stripe, and Mixpanel.
+  Stripe, Mixpanel, and RevenueCat.
 
 Both sets are judged by one measure: what the convention saves the model that
 interacts with connecta, priced in discovery tokens, wrong-tool selection,

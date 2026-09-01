@@ -307,4 +307,17 @@ describe("public package boundary", () => {
       expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
     }
   });
+
+  it("keeps the Vercel provider dependency-free and out of the root entry", () => {
+    expect(packageJson.dependencies).not.toHaveProperty("@vercel/sdk");
+    expect(packageJson.peerDependencies).not.toHaveProperty("@vercel/sdk");
+    expect(packageJson.devDependencies).not.toHaveProperty("@vercel/sdk");
+    const source = readFileSync(
+      join(ROOT, "src", "providers", "vercel.ts"),
+      "utf8",
+    );
+    for (const match of source.matchAll(/from\s+"([^"]+)"/g)) {
+      expect(match[1], `${match[1]} is not a relative import`).toMatch(/^\./);
+    }
+  });
 });

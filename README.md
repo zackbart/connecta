@@ -33,7 +33,7 @@ flowchart TB
         Explicit["call_destructive_tool<br/>one visible call per write<br/>your client can ask you first"]
     end
 
-    Integrations["The integrations you chose<br/>Linear · Stripe · Notion · your HTTP API · any MCP server"]
+    Integrations["The integrations you chose<br/>Linear · Stripe · Notion · Vercel · your HTTP API · any MCP server"]
 
     Client -->|"one connection"| Sandbox
     Client --> Explicit
@@ -63,8 +63,8 @@ Fifty issues in, one small object out. Your context window notices.
 - **Wrap any HTTP API by hand.** A few lines per tool. No OpenAPI conversion —
   generated tool sprawl is the problem, not the fix.
 - **Use maintained connections** for Cloudflare, Linear, Mixpanel, Notion,
-  RevenueCat, and Stripe — known endpoints, auth defaults, and vetted read/write
-  classifications, imported one at a time.
+  RevenueCat, Stripe, and Vercel — known endpoints, auth defaults, and vetted
+  read/write classifications, imported one at a time.
 - **Let the agent work in code.** Search, chain, filter, join, and reduce
   inside the sandbox instead of round-tripping every call through the model.
 - **Teach undeclared result shapes by using them.** Successful read-only calls

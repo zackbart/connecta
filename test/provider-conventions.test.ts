@@ -3,7 +3,7 @@
 //
 // `documentation/provider-conventions.md` names H1–H14 and P1–P13, and its
 // table marks which of them a machine can decide. This suite decides those for
-// the two `api()` providers — the ones where connecta owns every name, schema,
+// the three `api()` providers — the ones where connecta owns every name, schema,
 // description, and budget, and where a miss is therefore ours. The proxies'
 // mechanical bar lives in their own suites, because it is about the wrapper's
 // identity and classification rather than about tool shapes it does not own.
@@ -18,6 +18,7 @@ import {
 } from "../src/catalog.js";
 import { cloudflare } from "../src/providers/cloudflare.js";
 import { notion } from "../src/providers/notion.js";
+import { vercel } from "../src/providers/vercel.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { validateToolInput } from "../src/validate.js";
 import { silentLogger } from "./helpers.js";
@@ -76,6 +77,19 @@ const VERBS: Readonly<Record<string, readonly string[]>> = {
     "query",
     "trash",
   ],
+  vercel: [
+    "list",
+    "get",
+    "add",
+    "verify",
+    "remove",
+    "upsert",
+    "update",
+    "delete",
+    "promote",
+    "cancel",
+    "vercel",
+  ],
 };
 
 /**
@@ -124,6 +138,7 @@ const NESTED_DESCRIPTION_EXCEPTIONS: Readonly<
     "cloudflare_api_upload.files[].base64",
   ],
   notion: [],
+  vercel: [],
 };
 
 interface SchemaNode {
@@ -193,6 +208,10 @@ const providers = await Promise.all([
   surface(
     "notion",
     notion("nt", { purpose: "Engineering wiki and roadmap questions" }),
+  ),
+  surface(
+    "vercel",
+    vercel("vc", { purpose: "Production web applications" }),
   ),
 ]);
 

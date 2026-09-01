@@ -1,7 +1,7 @@
 # Provider audit
 
 [`provider-conventions.md`](../documentation/provider-conventions.md) wrote the bar down. This
-document runs it against the six maintained prebuilt connections and returns a
+document runs it against the seven maintained prebuilt connections and returns a
 verdict for every applicable convention: **meets**, **misses** (with the fix),
 or **n/a** (with the reason). A convention is never quietly skipped, and an
 accepted miss is recorded as a provider-specific exception with its argument
@@ -15,7 +15,7 @@ Every miss below is fixed in the same change that recorded it
 ([#342](https://github.com/zackbart/connecta/issues/342)), except where the row
 says otherwise. The mechanically checkable half of the hand-written bar is now
 a test — [`test/provider-conventions.test.ts`](https://github.com/zackbart/connecta/blob/main/test/provider-conventions.test.ts)
-walks the shipped surface of both `api()` providers on every run, so these
+walks the shipped surface of all three `api()` providers on every run, so these
 verdicts cannot rot quietly back into prose. The proxies' mechanical rows live
 in their own suites, because what they assert is the wrapper's identity,
 classification, and budget rather than tool shapes the wrapper does not own.
@@ -88,6 +88,37 @@ They are separate ownership, ordering, asynchronous, coordination, file, or
 deletion workflows rather than missing fields on the five existing writes
 ([#408](https://github.com/zackbart/connecta/issues/408),
 [#409](https://github.com/zackbart/connecta/issues/409)).
+
+## Vercel — hand-written HTTP
+
+Twenty-one tools over the public REST API: eighteen named, two guarded request
+hatches, and one guarded upload hatch. The named tools deliberately go past
+Vercel MCP on project domains, environment variables, and deployment lifecycle.
+
+| Convention | Verdict | Notes |
+| --- | --- | --- |
+| H1 identity | meets | `id`, required `purpose` (blank throws), optional `title`, default `teamId`, and `instructions` appended under `## Account instructions` |
+| H2 names | meets | every name is `snake_case`, opens with its safety verb, and the three generic tools sort together as `vercel_api_*` |
+| H3 budgets | meets | every selection sentence fits 160 characters and every full description fits 240, asserted with the other hand-written providers |
+| H4 disqualifiers | meets | project and deployment reads state what their logs and actions do not include; the mutate hatch says JSON and no uploads; the upload hatch says explicit bytes and no local files |
+| H5 schemas | meets | all 21 tools use closed plain-object input schemas with explicit required lists, described nested fields, local bounds, and construction-time validator compilation |
+| H6 whose bound | meets | list sizes name the connector's 1–100 cap and configured default; build logs name the 1,000-event cap; runtime logs name the 500-row and 10-second connector bounds; environment values name Vercel's 64 KB total |
+| H7 compact fit | meets | every input and output remains complete under the 1,024-byte compact renderer budget |
+| H8 output schemas | meets | 21 of 21; the endpoint-generic hatches alone keep an open `result` |
+| H9 projection | meets | project, deployment, domain, and build-log reads project and offer `raw: true`; environment reads never decrypt or return values, and writes also strip values from their result |
+| H10 pagination | meets | teams, projects, deployments, and domains expose the same `page.hasMore` and opaque `page.nextCursor`; environment listing honestly has no page in Vercel's contract |
+| H11 errors | meets | 401/403 auth, 404 absence, 400/409/422 arguments, 429 rate limit with either reset header, and 5xx availability are asserted by code and retryability |
+| H12 credential | meets | one labeled access-token field; `testCredential` calls `/v2/user` and reports the identity the token authenticated |
+| H13 guide | meets | structured, declared summary, `required: true` because personal-versus-team scope and build-versus-runtime log selection are cross-tool rules no one schema can carry |
+| H14 hatch | meets | split GET, JSON mutation, and raw upload; only GET is read-only, all paths are provider-relative and confined, personal-account scope is explicit, and upload bytes and transport-owned headers stay guarded |
+
+The initial drift review used Vercel's live OpenAPI document rather than the
+generated SDK as authority. It caught two version changes before this provider
+shipped: deployment listing is `/v7/deployments`, and environment-variable
+list/create are `/v10/projects/{idOrName}/env` while update/delete remain on
+v9. The reviewed 19 fixed operations now live in
+`scripts/drift/vercel-endpoints.json`; the dynamic hatches do not pretend to
+have a fixed endpoint manifest.
 
 ## Linear — hosted-MCP proxy
 
@@ -179,6 +210,7 @@ documented tools, ninety-five classified, one deliberately not.
 | Stripe | 10 | 3 | — | — |
 | Mixpanel | 7 | 5 | P10 half n/a | — |
 | RevenueCat | 12 | 0 | P4 n/a (one endpoint); P3 met with a purpose-bearing summary | — |
+| Vercel | 14 | 0 | — | — |
 
 Nineteen misses, nineteen fixes, six recorded exceptions, one judgment left to
 the issue that owns it. The pattern in the misses is worth naming: sixteen of
@@ -190,8 +222,8 @@ The conventions are mostly not asking for different behavior. They are asking
 for the behavior to reach the agent, which is a different problem and, on this
 evidence, the one the providers were losing.
 
-RevenueCat is the first connection written *after* the conventions and adds no
-misses to those nineteen, which is the least interesting thing about its row.
+RevenueCat and Vercel were written *after* the conventions and add no misses to
+those nineteen, which is the least interesting thing about their rows.
 The interesting part is that two conventions came out somewhere other than
 their obvious reading — P4 has no endpoint to select and P12 declines a number
 the provider actually publishes — and both had to be argued rather than
