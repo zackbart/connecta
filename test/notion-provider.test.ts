@@ -1,8 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
 import { ConnectorCallError } from "../src/errors.js";
+import type { ToolDef } from "../src/types.js";
+import {
+  itClassifiesLikeARelease,
+  mockRemoteMcp,
+} from "./fixtures/hosted-provider.js";
+
+const mcpMocks = vi.hoisted(() => ({
+  listTools: vi.fn<() => Promise<ToolDef[]>>(),
+  remoteMcp: vi.fn(),
+}));
+
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
+  remoteMcp: mcpMocks.remoteMcp,
+}));
+
 import {
   NOTION_API_BASE_URL,
   NOTION_API_VERSION,
+  NOTION_MCP_ENDPOINT,
+  NOTION_MCP_VETTED_CATALOG,
   notion,
 } from "../src/providers/notion.js";
 import { isExplicitlyReadOnly } from "../src/tool-safety.js";
@@ -39,6 +57,7 @@ const realFetch = globalThis.fetch;
 beforeEach(() => {
   calls.length = 0;
   queued = [];
+  mockRemoteMcp(mcpMocks);
   globalThis.fetch = vi.fn(async (input: any, init: any = {}) => {
     calls.push({
       url: String(input),
@@ -296,6 +315,60 @@ describe("notion() tool surface", () => {
       "Docs token",
     );
     expect(build().credential?.description).toContain("shared with that integration");
+  });
+});
+
+describe("notion() MCP interface", () => {
+  function mcp(): Connector {
+    return notion("workspace_mcp", {
+      surface: "mcp",
+      purpose: "Team knowledge base",
+    });
+  }
+
+  it("binds the explicit MCP interface to Notion's OAuth endpoint", () => {
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
+    const connector = notion("workspace_mcp", {
+      surface: "mcp",
+      purpose: "Team knowledge base",
+      callAdmission,
+    });
+    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
+      "workspace_mcp",
+      expect.objectContaining({
+        url: NOTION_MCP_ENDPOINT,
+        title: "Notion (MCP)",
+        auth: { type: "oauth" },
+        callAdmission,
+        requireHttps: true,
+      }),
+    );
+    expect(connector.kind).toBe("mcp");
+    expect(connector.credential).toBeUndefined();
+    expect((connector.usageGuide as { content: string }).content).toContain(
+      "live server",
+    );
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("classifies every tool in Notion's published MCP reference", () => {
+    const counts = { "read-only": 0, additive: 0, destructive: 0 };
+    for (const { verdict } of NOTION_MCP_VETTED_CATALOG.tools.values()) {
+      counts[verdict] += 1;
+    }
+    expect(NOTION_MCP_VETTED_CATALOG.tools.size).toBe(34);
+    expect(counts).toEqual({
+      "read-only": 18,
+      additive: 10,
+      destructive: 6,
+    });
+  });
+
+  itClassifiesLikeARelease(mcp, mcpMocks, {
+    read: ["notion-search", "notion-fetch", "notion-get-users"],
+    write: "notion-create-comment",
+    destructive: "notion-update-page",
+    unknown: ["notion-new-tool", "notion-new-read", "notion-new-write"],
   });
 });
 

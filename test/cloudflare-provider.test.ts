@@ -2,10 +2,25 @@
 // is the request it builds and the result it projects. `fetch` is stubbed for
 // the whole file; nothing here reaches the network.
 import { afterEach, beforeEach, describe, expect, it, it as test, vi } from "vitest";
+import type { ToolDef } from "../src/types.js";
+import { mockRemoteMcp } from "./fixtures/hosted-provider.js";
+
+const mcpMocks = vi.hoisted(() => ({
+  listTools: vi.fn<() => Promise<ToolDef[]>>(),
+  remoteMcp: vi.fn(),
+}));
+
+vi.mock("../src/connectors/remote-mcp.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/connectors/remote-mcp.js")>()),
+  remoteMcp: mcpMocks.remoteMcp,
+}));
+
 import {
   CLOUDFLARE_API_BASE,
   CLOUDFLARE_CONTENT_DNS_RECORD_TYPES,
   CLOUDFLARE_DNS_RECORD_TYPES,
+  CLOUDFLARE_MCP_ENDPOINT,
+  CLOUDFLARE_MCP_VETTED_CATALOG,
   cloudflare,
 } from "../src/providers/cloudflare.js";
 import { ConnectorCallError } from "../src/errors.js";
@@ -15,7 +30,6 @@ import type {
   Connector,
   ConnectorContext,
   ConnectorUsageGuide,
-  ToolDef,
 } from "../src/types.js";
 
 const TOKEN = "cf-token";
@@ -98,6 +112,7 @@ const realFetch = globalThis.fetch;
 
 beforeEach(() => {
   calls = [];
+  mockRemoteMcp(mcpMocks);
 });
 
 afterEach(() => {
@@ -151,6 +166,49 @@ describe("cloudflare() construction", () => {
         },
       ],
     });
+  });
+
+  it("binds the explicit MCP interface to Cloudflare's whole-API endpoint", () => {
+    const callAdmission = { rules: [{ maxConcurrency: 2 }] };
+    const connector = connection({ surface: "mcp", callAdmission });
+    expect(mcpMocks.remoteMcp).toHaveBeenCalledWith(
+      "edge",
+      expect.objectContaining({
+        url: CLOUDFLARE_MCP_ENDPOINT,
+        title: "Cloudflare (MCP)",
+        auth: { type: "oauth" },
+        callAdmission,
+        requireHttps: true,
+      }),
+    );
+    expect(connector.kind).toBe("mcp");
+    expect(structuredGuide(connector).content).toContain("search");
+    expect(structuredGuide(connector).content).toContain("approval");
+    expect(calls).toEqual([]);
+  });
+
+  it("classifies Cloudflare's two code-mode tools fail-closed", async () => {
+    expect([...CLOUDFLARE_MCP_VETTED_CATALOG.tools.entries()]).toEqual([
+      ["search", { verdict: "read-only" }],
+      ["execute", { verdict: "destructive" }],
+    ]);
+    mcpMocks.listTools.mockResolvedValue([
+      { name: "search" },
+      { name: "execute", annotations: { readOnlyHint: true } },
+      { name: "new-cloudflare-tool" },
+    ]);
+    const tools = await connection({ surface: "mcp" }).listTools(
+      contextWithToken(),
+    );
+    expect(tools[0]?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+    expect(tools[1]?.annotations).toEqual({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+    expect(tools[2]?.annotations).toEqual({ readOnlyHint: false });
   });
 
   it("declares the two fields required by legacy Global API Key authentication", () => {

@@ -199,6 +199,38 @@ describe("detectCatalogDrift()", () => {
 });
 
 describe("withVettedCatalog()", () => {
+  it("preserves the downstream MCP schemas byte-for-byte in memory", async () => {
+    const inputSchema = {
+      type: "object",
+      properties: {
+        issueId: { type: "string", pattern: "^ISSUE-[0-9]+$" },
+      },
+      required: ["issueId"],
+      additionalProperties: false,
+    } as const;
+    const outputSchema = {
+      type: "object",
+      properties: { state: { enum: ["open", "closed"] } },
+      required: ["state"],
+    } as const;
+    const definition: ToolDef = {
+      name: "get_issue",
+      description: "Provider-owned definition",
+      inputSchema,
+      outputSchema,
+    };
+    const { connector } = proxy("linear_test", () => [definition]);
+    const [served] = await connector.listTools(context);
+
+    expect(served?.inputSchema).toBe(inputSchema);
+    expect(served?.outputSchema).toBe(outputSchema);
+    expect(served?.description).toBe(definition.description);
+    expect(served?.annotations).toEqual({
+      readOnlyHint: true,
+      destructiveHint: false,
+    });
+  });
+
   it("classifies exactly as the provider lists say", async () => {
     const { connector } = proxy("linear_test", () => [
       ...currentCatalog(),

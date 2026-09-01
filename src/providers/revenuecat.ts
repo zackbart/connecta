@@ -145,9 +145,20 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["update-audience", "destructive"],
 
   // Paywalls
+  ["attach-offering-to-paywall", "destructive"],
+  ["detach-offering-from-paywall", "destructive"],
   ["duplicate-paywall", "additive"],
   ["publish-paywall", "destructive"],
   ["unpublish-paywall", "destructive"],
+
+  // Offerings and experiments added to the published reference after #512.
+  ["duplicate-offering", "additive"],
+  ["create-experiment", "additive"],
+  ["pause-experiment", "destructive"],
+  ["resume-experiment", "destructive"],
+  ["start-experiment", "destructive"],
+  ["stop-experiment", "destructive"],
+  ["update-experiment", "destructive"],
 
   // Customers and subscriptions
   ["assign-customer-offering", "destructive"],

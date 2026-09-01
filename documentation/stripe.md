@@ -247,6 +247,13 @@ about rather than read:
   tools' arguments is not documented. The guide states them because an agent
   that ignores them is wrong either way.
 
+`npm run drift:check -- --docs --provider stripe` compares Stripe's official
+16-tool table with the vetted manifest and checks the hosted endpoint plus OAuth
+support. `list_available_accounts_or_orgs` and `manage_stripe_accounts` remain
+classified from an authenticated review even though the current public table
+does not list them. The command prints that discrepancy without treating docs
+silence as proof that a live account no longer serves them.
+
 ## Conventions
 
 This connection is audited against

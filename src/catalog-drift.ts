@@ -65,9 +65,9 @@ interface VettedToolRecord {
    * Digest of the input and output schemas that release read, or undefined
    * when no release has recorded them. Undefined is not "unchanged": a
    * manifest with no digest cannot report a schema change, and says so by
-   * counting none. `npm run drift:check -- --record` reads them from a live
-   * catalog and prints the block a release pastes in
-   * ([#351](https://github.com/zackbart/connecta/issues/351)).
+   * counting none. The credential-free provider check does not create or
+   * update schema digests; the live `tools/list` response remains the schema
+   * agents receive ([#351](https://github.com/zackbart/connecta/issues/351)).
    */
   schemaDigest?: string;
 }

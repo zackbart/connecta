@@ -2,6 +2,48 @@
 
 All notable changes to this package are documented here.
 
+## 0.22.2 — 2026-09-01
+
+This patch makes the maintained-provider release check credential-free and
+adds explicit official-MCP alternatives beside the existing Cloudflare,
+Notion, and Vercel API connections. Existing declarations still select the
+hand-written API interface by default. Linear, Mixpanel, RevenueCat, and Stripe
+remain MCP-only, and deployments that do not select a new interface need no
+configuration or credential change.
+
+### Added
+
+- **Selectable API and MCP interfaces.** Cloudflare, Notion, and Vercel accept
+  `surface: "mcp"` for their official hosted server while preserving the API
+  default. Each MCP wrapper supplies release-reviewed safety classifications,
+  keeps unknown tools fail-closed, and leaves provider descriptions and input
+  and output schemas untouched.
+- **Credential-free provider validation.** `npm run providers:check` compares
+  every maintained provider with official public evidence: touched OpenAPI
+  operations for the three hand-written interfaces, and endpoint, OAuth, and
+  documented tool inventories for the seven hosted interfaces. It reads no
+  provider credential and generates no runtime tool.
+
+### Changed
+
+- **Public evidence replaces authenticated drift setup.** The lower-level
+  `drift:check` command now defaults to the same specification and documentation
+  checks; the credential helper and `--hosted` mode are removed. Live
+  `tools/list` responses remain authoritative for MCP schemas.
+- **Hosted safety manifests refreshed.** Stripe and RevenueCat classifications
+  now cover their current official tool references. Vercel URL fetching is
+  approval-gated because an application GET route is not guaranteed to be
+  observational.
+
+### Fixed
+
+- **Reviewed Vercel event drift.** Build-log projection accepts the expanded
+  deployment-event variants, including events without a published timestamp,
+  and the touched-endpoint digest records the reviewed contract (#520).
+- **Schema ownership stays intact.** Deterministic coverage now proves the
+  safety wrapper preserves each provider description, input schema, and output
+  schema by reference instead of substituting a vendored definition (#521).
+
 ## 0.22.1 — 2026-08-31
 
 This patch adds a maintained Vercel connection over the public REST API. It is

@@ -296,14 +296,14 @@ describe("revenuecat()", () => {
     const verdicts = REVENUECAT_VETTED_CATALOG.tools;
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    // The 2026-08-30 reading of RevenueCat's tool reference: 96 tools, of
-    // which 95 carry an access column.
+    // The 2026-09-01 reading of RevenueCat's tool reference: 105 tools, of
+    // which 104 carry an access column.
     expect(counts).toEqual({
       "read-only": 51,
-      additive: 15,
-      destructive: 29,
+      additive: 17,
+      destructive: 36,
     });
-    expect(verdicts.size).toBe(95);
+    expect(verdicts.size).toBe(104);
     expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe(
       "read-only",
     );

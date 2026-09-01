@@ -4,11 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { hostedAuthorizationHeader } from "../scripts/drift/hosted-auth.mjs";
+import {
+  CLOUDFLARE_MCP_ENDPOINT,
+  CLOUDFLARE_MCP_VETTED_CATALOG,
+} from "../src/providers/cloudflare.js";
+import { LINEAR_MCP_ENDPOINTS } from "../src/providers/linear.js";
+import {
+  NOTION_MCP_ENDPOINT,
+  NOTION_MCP_VETTED_CATALOG,
+} from "../src/providers/notion.js";
+import {
+  STRIPE_MCP_ENDPOINT,
+  STRIPE_VETTED_CATALOG,
+} from "../src/providers/stripe.js";
+import {
+  VERCEL_MCP_ENDPOINT,
+  VERCEL_MCP_VETTED_CATALOG,
+} from "../src/providers/vercel.js";
 
 const checker = fileURLToPath(
   new URL("../scripts/drift-check.mjs", import.meta.url),
 );
+const tsx = fileURLToPath(new URL("../node_modules/tsx/dist/cli.mjs", import.meta.url));
 const manifestDirectory = fileURLToPath(new URL("../scripts/drift", import.meta.url));
 const temporary: string[] = [];
 
@@ -116,7 +133,6 @@ function run(
   directory: string,
   providers: string[],
   extra: string[] = [],
-  environment: Record<string, string | undefined> = {},
 ) {
   const result = spawnSync(
     process.execPath,
@@ -133,16 +149,7 @@ function run(
       ]),
       ...extra,
     ],
-    {
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        CONNECTA_DRIFT_LINEAR_KEY: undefined,
-        CONNECTA_DRIFT_STRIPE_KEY: undefined,
-        CONNECTA_DRIFT_MIXPANEL_KEY: undefined,
-        ...environment,
-      } as NodeJS.ProcessEnv,
-    },
+    { encoding: "utf8" },
   );
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
@@ -152,6 +159,52 @@ function findings(output: string, provider: string): Finding[] {
   return report.specs.find((entry: any) => entry.provider === provider).findings;
 }
 
+async function documentedVercelWorkspace(): Promise<{
+  directory: string;
+  toolReference: string;
+  setupReference: string;
+}> {
+  const directory = await mkdtemp(join(tmpdir(), "connecta-drift-docs-"));
+  temporary.push(directory);
+  const toolReference = join(directory, "vercel-tools.md");
+  const setupReference = join(directory, "vercel-setup.md");
+  const headings = [...VERCEL_MCP_VETTED_CATALOG.tools.keys()]
+    .sort()
+    .map((name) => `### ${name.replaceAll("_", "\\_")}`)
+    .join("\n\n");
+  await writeFile(toolReference, `# Vercel tools\n\n${headings}\n`);
+  await writeFile(
+    setupReference,
+    `# Vercel MCP setup\n\nEndpoint: ${VERCEL_MCP_ENDPOINT}\n\nOAuth is required.\n`,
+  );
+  return { directory, toolReference, setupReference };
+}
+
+function runDocumented(
+  provider: string,
+  toolReference: string,
+  setupReference: string,
+) {
+  const result = spawnSync(
+    process.execPath,
+    [
+      tsx,
+      checker,
+      "--docs",
+      "--provider",
+      provider,
+      ...(toolReference
+        ? ["--tool-reference", `${provider}=${toolReference}`]
+        : []),
+      "--setup-reference",
+      `${provider}=${setupReference}`,
+      "--json",
+    ],
+    { encoding: "utf8" },
+  );
+  return { status: result.status, output: `${result.stdout}${result.stderr}` };
+}
+
 afterEach(async () => {
   await Promise.all(
     temporary.splice(0).map((path) => rm(path, { recursive: true, force: true })),
@@ -159,21 +212,6 @@ afterEach(async () => {
 });
 
 describe("maintainer drift check", () => {
-  it("frames each hosted provider's documented credential shape", () => {
-    expect(hostedAuthorizationHeader("linear", "lin_api_key")).toBe(
-      "Bearer lin_api_key",
-    );
-    expect(hostedAuthorizationHeader("stripe", "user:secret")).toBe(
-      `Basic ${Buffer.from("user:secret").toString("base64")}`,
-    );
-    expect(hostedAuthorizationHeader("mixpanel", "user:secret")).toBe(
-      `Bearer Basic ${Buffer.from("user:secret").toString("base64")}`,
-    );
-    expect(hostedAuthorizationHeader("mixpanel", "Bearer Basic encoded")).toBe(
-      "Bearer Basic encoded",
-    );
-  });
-
   it("records the touched endpoints and then reports no drift against them", async () => {
     const { directory } = await workspace(["cloudflare", "notion"]);
     const recorded = run(directory, ["cloudflare", "notion"], ["--record"]);
@@ -319,19 +357,13 @@ describe("maintainer drift check", () => {
     );
   });
 
-  it("fails clearly when no local hosted credential is exported", async () => {
+  it("has no credentialed hosted mode", () => {
     const result = spawnSync(process.execPath, [checker, "--hosted"], {
       encoding: "utf8",
-      env: {
-        ...process.env,
-        CONNECTA_DRIFT_LINEAR_KEY: undefined,
-        CONNECTA_DRIFT_STRIPE_KEY: undefined,
-        CONNECTA_DRIFT_MIXPANEL_KEY: undefined,
-      } as NodeJS.ProcessEnv,
     });
     expect(result.status).toBe(2);
     expect(`${result.stdout}${result.stderr}`).toContain(
-      "no hosted credentials are set",
+      "unknown argument: --hosted",
     );
   });
 
@@ -457,10 +489,10 @@ describe("maintainer drift check", () => {
   });
 
   it.each([
-    ["--specs", "linear", "--hosted"],
-    ["--hosted", "notion", "--specs"],
+    ["--specs", "linear", "--docs"],
+    ["--specs", "stripe", "--docs"],
   ])(
-    "refuses %s narrowed to %s, which only %s checks",
+    "refuses %s narrowed to %s, which %s checks",
     async (half, provider, other) => {
       const result = spawnSync(
         process.execPath,
@@ -470,11 +502,145 @@ describe("maintainer drift check", () => {
       // Silently checking nothing and exiting 0 is the wrong failure mode for a
       // command whose whole value is its exit code.
       expect(result.status).toBe(2);
-      expect(`${result.stdout}${result.stderr}`).toContain(
-        `${provider} is only checked by ${other}`,
-      );
+      const output = `${result.stdout}${result.stderr}`;
+      expect(output).toContain(`${provider} is `);
+      expect(output).toContain(other);
+      expect(output).toContain("which this run did not select");
     },
   );
+
+  it("checks Vercel's public MCP inventory while naming live schema ownership", async () => {
+    const { toolReference, setupReference } =
+      await documentedVercelWorkspace();
+    const clean = runDocumented("vercel", toolReference, setupReference);
+    expect(clean.status).toBe(0);
+    const cleanReport = JSON.parse(clean.output).docs[0];
+    expect(cleanReport).toMatchObject({
+      provider: "vercel",
+      documentedTools: 32,
+      added: [],
+      removed: [],
+      findings: [],
+      schemaAuthority: "live-tools-list",
+      schemasVendored: false,
+    });
+
+    await writeFile(
+      toolReference,
+      `${await readFile(toolReference, "utf8")}\n### new\\_vercel\\_tool\n`,
+    );
+    const drifted = runDocumented("vercel", toolReference, setupReference);
+    expect(drifted.status).toBe(1);
+    expect(JSON.parse(drifted.output).docs[0].added).toEqual([
+      "new_vercel_tool",
+    ]);
+  });
+
+  it("reads table inventories and treats documented additions as findings", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-table-"));
+    temporary.push(directory);
+    const reference = join(directory, "stripe.md");
+    const rows = [...STRIPE_VETTED_CATALOG.tools.keys()]
+      .sort()
+      .map((name) => `| Account | \`${name}\` | Fixture |`)
+      .join("\n");
+    await writeFile(
+      reference,
+      `# Stripe MCP\n\n${STRIPE_MCP_ENDPOINT}\n\nOAuth\n\n## Tools\n\n| Resource | Tool | Description |\n| --- | --- | --- |\n${rows}\n\n### Supported API methods\n`,
+    );
+    const clean = runDocumented("stripe", reference, reference);
+    expect(clean.status).toBe(0);
+    expect(JSON.parse(clean.output).docs[0]).toMatchObject({
+      inventoryChecked: true,
+      added: [],
+      schemaAuthority: "live-tools-list",
+      schemasVendored: false,
+    });
+
+    await writeFile(
+      reference,
+      `${await readFile(reference, "utf8")}\n| Other | \`new_stripe_tool\` | New |\n`,
+    );
+    // The row landed after the configured section boundary, so move the
+    // boundary too. This proves the parser checks the named section only.
+    expect(runDocumented("stripe", reference, reference).status).toBe(0);
+    const content = await readFile(reference, "utf8");
+    await writeFile(
+      reference,
+      content.replace(
+        "### Supported API methods",
+        "| Other | `new_stripe_tool` | New |\n\n### Supported API methods",
+      ),
+    );
+    const drifted = runDocumented("stripe", reference, reference);
+    expect(drifted.status).toBe(1);
+    expect(JSON.parse(drifted.output).docs[0].added).toContain(
+      "new_stripe_tool",
+    );
+  });
+
+  it("reads inline names from Cloudflare and Notion's official doc shapes", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-inline-"));
+    temporary.push(directory);
+
+    const cloudflare = join(directory, "cloudflare.md");
+    await writeFile(
+      cloudflare,
+      `# Cloudflare MCP\n\nOAuth\n\n## Cloudflare API MCP server\n\nTwo tools: \`search()\` and \`execute()\`.\n\n### Connect to the Cloudflare API MCP server\n\n${CLOUDFLARE_MCP_ENDPOINT}\n`,
+    );
+    const cloudflareResult = runDocumented(
+      "cloudflare",
+      cloudflare,
+      cloudflare,
+    );
+    expect(cloudflareResult.status).toBe(0);
+    expect(JSON.parse(cloudflareResult.output).docs[0]).toMatchObject({
+      documentedTools: CLOUDFLARE_MCP_VETTED_CATALOG.tools.size,
+      added: [],
+      findings: [],
+    });
+
+    const notionTools = join(directory, "notion-tools.md");
+    const notionSetup = join(directory, "notion-setup.md");
+    await writeFile(
+      notionTools,
+      [...NOTION_MCP_VETTED_CATALOG.tools.keys()]
+        .sort()
+        .map((name) => `\`${name}\``)
+        .join("\n\n"),
+    );
+    await writeFile(
+      notionSetup,
+      `# Notion MCP\n\n${NOTION_MCP_ENDPOINT}\n\nOAuth setup.\n`,
+    );
+    const notionResult = runDocumented("notion", notionTools, notionSetup);
+    expect(notionResult.status).toBe(0);
+    expect(JSON.parse(notionResult.output).docs[0]).toMatchObject({
+      documentedTools: NOTION_MCP_VETTED_CATALOG.tools.size,
+      added: [],
+      findings: [],
+    });
+  });
+
+  it("checks endpoint and OAuth docs when a provider publishes no tool inventory", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "connecta-drift-setup-"));
+    temporary.push(directory);
+    const setup = join(directory, "linear.md");
+    await writeFile(
+      setup,
+      `# Linear MCP\n\n${LINEAR_MCP_ENDPOINTS["read-write"]}\n\nOAuth setup.\n`,
+    );
+    const result = runDocumented("linear", "", setup);
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.output).docs[0]).toMatchObject({
+      inventoryChecked: false,
+      added: [],
+      removed: [],
+      findings: [],
+      schemaAuthority: "live-tools-list",
+      schemasVendored: false,
+    });
+  });
 
   it("commits one well-formed row per touched endpoint", async () => {
     for (const provider of ["cloudflare", "notion"]) {
