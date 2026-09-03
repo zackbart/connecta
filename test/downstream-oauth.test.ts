@@ -3,6 +3,7 @@ import type {
   FetchLike,
   OAuthClientInformationContext,
   OAuthClientInformationFull,
+  OAuthDiscoveryState,
   OAuthTokens,
   Transport,
 } from "@modelcontextprotocol/client";
@@ -90,6 +91,99 @@ describe("KvOAuthProvider over memoryStorage", () => {
     };
     await p.saveTokens(tokens);
     expect(await p.tokens()).toEqual(tokens);
+  });
+
+  it("persists discovery state across OAuth callback request scopes", async () => {
+    const storage = memoryStorage();
+    const start = new KvOAuthProvider("svc", storage, REDIRECT);
+    const discovery: OAuthDiscoveryState = {
+      authorizationServerUrl: "https://auth.example",
+      resourceMetadataUrl:
+        "https://downstream.example/.well-known/custom-protected-resource",
+      resourceMetadata: {
+        resource: "https://downstream.example/mcp",
+        authorization_servers: ["https://auth.example"],
+      },
+    };
+
+    await start.saveDiscoveryState(discovery);
+
+    const callback = new KvOAuthProvider("svc", storage, REDIRECT);
+    await expect(callback.discoveryState()).resolves.toEqual(discovery);
+  });
+
+  it("finishes OAuth from a non-default protected-resource metadata URL", async () => {
+    const storage = memoryStorage();
+    const issuer = "https://auth.example";
+    const mcpUrl = "https://downstream.example/mcp";
+    const metadataUrl =
+      "https://downstream.example/.well-known/custom-protected-resource/mcp";
+    const fetchStub: FetchLike = async (input, init = {}) => {
+      const url = new URL(input);
+      if (url.href === metadataUrl) {
+        return Response.json({
+          resource: mcpUrl,
+          authorization_servers: [issuer],
+        });
+      }
+      if (url.href === `${issuer}/.well-known/oauth-authorization-server`) {
+        return Response.json({
+          issuer,
+          authorization_endpoint: `${issuer}/authorize`,
+          token_endpoint: `${issuer}/token`,
+          registration_endpoint: `${issuer}/register`,
+          response_types_supported: ["code"],
+          grant_types_supported: ["authorization_code", "refresh_token"],
+          code_challenge_methods_supported: ["S256"],
+          token_endpoint_auth_methods_supported: ["none"],
+        });
+      }
+      if (url.href === `${issuer}/register`) {
+        expect(init.method).toBe("POST");
+        return Response.json({
+          client_id: "registered-client",
+          redirect_uris: [REDIRECT],
+          token_endpoint_auth_method: "none",
+          grant_types: ["authorization_code", "refresh_token"],
+          response_types: ["code"],
+        });
+      }
+      if (url.href === `${issuer}/token`) {
+        expect(init.method).toBe("POST");
+        expect(init.body).toBeInstanceOf(URLSearchParams);
+        expect((init.body as URLSearchParams).get("code")).toBe("auth-code");
+        return Response.json({
+          access_token: "access-token",
+          token_type: "Bearer",
+        });
+      }
+      throw new Error(`Unexpected OAuth test request: ${url.href}`);
+    };
+
+    const start = new KvOAuthProvider("svc", storage, REDIRECT);
+    await expect(
+      auth(start, {
+        serverUrl: mcpUrl,
+        resourceMetadataUrl: new URL(metadataUrl),
+        fetchFn: fetchStub,
+      }),
+    ).resolves.toBe("REDIRECT");
+    const pending = new URL((await start.pendingAuthorizationUrl())!);
+
+    const callback = new KvOAuthProvider("svc", storage, REDIRECT);
+    expect(await callback.verifyState(pending.searchParams.get("state"))).toBe(
+      true,
+    );
+    await expect(
+      auth(callback, {
+        serverUrl: mcpUrl,
+        authorizationCode: "auth-code",
+        fetchFn: fetchStub,
+      }),
+    ).resolves.toBe("AUTHORIZED");
+    await expect(callback.tokens()).resolves.toMatchObject({
+      access_token: "access-token",
+    });
   });
 
   it("binds client registration and tokens to the validated authorization issuer", async () => {
@@ -381,6 +475,7 @@ describe("KvOAuthProvider over memoryStorage", () => {
       "oauth:pending",
       "oauth:verifier",
       "oauth:state",
+      "oauth:discovery",
     ]) {
       await backing.set(key, key);
     }
@@ -396,12 +491,14 @@ describe("KvOAuthProvider over memoryStorage", () => {
       "oauth:pending",
       "oauth:verifier",
       "oauth:state",
+      "oauth:discovery",
     ]);
     expect(await backing.get("oauth:client")).toBeNull();
     expect(await backing.get("oauth:tokens")).toBe("oauth:tokens");
     expect(await backing.get("oauth:pending")).toBeNull();
     expect(await backing.get("oauth:verifier")).toBeNull();
     expect(await backing.get("oauth:state")).toBeNull();
+    expect(await backing.get("oauth:discovery")).toBeNull();
     // The surviving physical token is legacy residue outside the active
     // generation namespace, so it is no longer a usable credential.
     expect(await p.tokens()).toBeUndefined();
@@ -713,6 +810,9 @@ describe("KvOAuthProvider over memoryStorage", () => {
       });
       await p.saveTokens({ access_token: "at", token_type: "Bearer" });
       await p.saveCodeVerifier("v-123");
+      await p.saveDiscoveryState({
+        authorizationServerUrl: "https://auth.example",
+      });
     };
 
     const pTokens = provider();
@@ -721,24 +821,35 @@ describe("KvOAuthProvider over memoryStorage", () => {
     expect(await pTokens.tokens()).toBeUndefined();
     expect(await pTokens.clientInformation()).toBeDefined();
     expect(await pTokens.codeVerifier()).toBe("v-123");
+    expect(await pTokens.discoveryState()).toBeDefined();
 
     const pClient = provider();
     await seed(pClient);
     await pClient.invalidateCredentials("client");
     expect(await pClient.clientInformation()).toBeUndefined();
     expect(await pClient.tokens()).toBeDefined();
+    expect(await pClient.discoveryState()).toBeDefined();
 
     const pVerifier = provider();
     await seed(pVerifier);
     await pVerifier.invalidateCredentials("verifier");
     await expect(pVerifier.codeVerifier()).rejects.toThrow();
     expect(await pVerifier.tokens()).toBeDefined();
+    expect(await pVerifier.discoveryState()).toBeDefined();
+
+    const pDiscovery = provider();
+    await seed(pDiscovery);
+    await pDiscovery.invalidateCredentials("discovery");
+    expect(await pDiscovery.discoveryState()).toBeUndefined();
+    expect(await pDiscovery.clientInformation()).toBeDefined();
+    expect(await pDiscovery.tokens()).toBeDefined();
 
     const pAll = provider();
     await seed(pAll);
     await pAll.invalidateCredentials("all");
     expect(await pAll.clientInformation()).toBeUndefined();
     expect(await pAll.tokens()).toBeUndefined();
+    expect(await pAll.discoveryState()).toBeUndefined();
     await expect(pAll.codeVerifier()).rejects.toThrow();
   });
 });
