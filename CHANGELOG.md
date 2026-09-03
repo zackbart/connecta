@@ -2,6 +2,23 @@
 
 All notable changes to this package are documented here.
 
+## 0.22.3 — 2026-09-03
+
+This patch carries OAuth discovery across the browser redirect. It matters for
+downstream MCP servers whose authentication challenge names a protected-resource
+metadata URL outside the RFC 9728 default path, including Cloudflare Access
+Managed OAuth. Existing grants and connectors using the default path require no
+configuration or storage migration.
+
+### Fixed
+
+- **Non-default OAuth discovery survives callbacks.** The KV OAuth provider now
+  persists the SDK's discovery state in the authorization generation, restores
+  it in the callback's fresh request scope, and deletes it through discovery,
+  all-credential, and generation cleanup. A callback therefore exchanges its
+  code against the same validated authorization-server issuer that registered
+  the client instead of invalidating that client after rediscovery (#523).
+
 ## 0.22.2 — 2026-09-01
 
 This patch makes the maintained-provider release check credential-free and

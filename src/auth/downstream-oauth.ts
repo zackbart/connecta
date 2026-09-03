@@ -4,6 +4,7 @@ import type {
   OAuthClientInformationMixed,
   OAuthClientMetadata,
   OAuthClientProvider,
+  OAuthDiscoveryState,
   OAuthTokens,
 } from "@modelcontextprotocol/client";
 import type { KVStorage } from "../types.js";
@@ -34,6 +35,7 @@ const OAUTH_VALUE_KEYS = [
   "oauth:pending",
   "oauth:verifier",
   "oauth:state",
+  "oauth:discovery",
 ] as const;
 const MAX_CLEANUP_BACKLOG = 1_000;
 
@@ -807,6 +809,23 @@ export class KvOAuthProvider implements OAuthClientProvider {
     );
   }
 
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    return (
+      await this.readValue(
+        "oauth:discovery",
+        (raw) => JSON.parse(raw) as OAuthDiscoveryState,
+      )
+    )?.value;
+  }
+
+  async saveDiscoveryState(state: OAuthDiscoveryState): Promise<void> {
+    await this.writeValue(
+      "oauth:discovery",
+      state,
+      (value) => JSON.stringify(value),
+    );
+  }
+
   async tokens(
     ctx?: OAuthClientInformationContext,
   ): Promise<OAuthTokens | undefined> {
@@ -1028,6 +1047,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
           oauthValueStorageKey("oauth:client", generation),
           oauthValueStorageKey("oauth:tokens", generation),
           oauthValueStorageKey("oauth:verifier", generation),
+          oauthValueStorageKey("oauth:discovery", generation),
         ]);
       } else if (scope === "client") {
         await this.storage.delete(
@@ -1040,6 +1060,10 @@ export class KvOAuthProvider implements OAuthClientProvider {
       } else if (scope === "verifier") {
         await this.storage.delete(
           oauthValueStorageKey("oauth:verifier", generation),
+        );
+      } else if (scope === "discovery") {
+        await this.storage.delete(
+          oauthValueStorageKey("oauth:discovery", generation),
         );
       }
       if (endsRefresh) {
