@@ -114,6 +114,34 @@ describe("optional deployment modules", () => {
     expect(await callback.text()).not.toContain('href="/"');
   });
 
+  it.each([true, false])("keeps shared OAuth capability after details load for a namespaced human (admin=%s)", async admin => {
+    const oauth: Connector = {
+      ...connector("oauth"),
+      startAuth: vi.fn(async () => ({ state: "ok" as const })),
+      disconnectAuth: vi.fn(async () => {}),
+    };
+    const app = createConnecta({
+      connectors: [oauth],
+      executor,
+      auth,
+      ui: operatorUi(),
+      logger: "silent",
+      identity: { credentialAdministration: () => admin ? "all" : "none" },
+    });
+    const list = await app.fetch(new Request(BASE + "/ui/data", { headers }));
+    const configured = (await list.json() as any).connectors[0];
+    const details = await app.fetch(new Request(BASE + "/ui/connectors/oauth", { headers }));
+    const loaded = await details.json();
+    const expected = {
+      oauth: true,
+      permissions: { use: true, manageSharedAuth: admin, connectPersonal: false },
+    };
+    expect(configured).toMatchObject(expected);
+    expect(loaded).toMatchObject(expected);
+    expect(oauth.startAuth).not.toHaveBeenCalled();
+    expect(oauth.disconnectAuth).not.toHaveBeenCalled();
+  });
+
   it("never starts OAuth for a use-only identity or a revoked browser grant", async () => {
     const oauth: Connector = { ...connector("oauth"), startAuth: vi.fn(async () => ({ state: "ok" as const })), verifyState: async () => true, finishAuth: vi.fn(async () => {}) };
     const app = createConnecta({ connectors: [oauth], executor, auth, logger: "silent", publicUrl: BASE });

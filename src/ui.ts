@@ -239,13 +239,7 @@ export async function buildUiData(
             ...(status.catalogAccess
               ? { catalogAccess: status.catalogAccess }
               : {}),
-            ...(c.disconnectAuth &&
-            c.startAuth &&
-            (oauthManagement ||
-              c.authScope === "personal" ||
-              !personalCredentialOwner)
-              ? { oauth: true }
-              : {}),
+            oauth: Boolean(c.startAuth && c.disconnectAuth),
             ...(credential ? { credential } : {}),
           };
         }, {
@@ -259,6 +253,7 @@ export async function buildUiData(
           ...(c.title ? { title: c.title } : {}),
           authScope: c.authScope ?? "shared",
           status: "error",
+          oauth: Boolean(c.startAuth && c.disconnectAuth),
           message: error instanceof Error ? error.message : "Connection details unavailable",
           toolCount: 0,
           tools: [],
