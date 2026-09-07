@@ -147,7 +147,7 @@ describe("the advertised surface", () => {
     }
   });
 
-  it("locates connecta.ui before an agent chooses catalog search (U13)", async () => {
+  it("keeps route guidance bounded without rendering instructions", async () => {
     const connecta = makeDeployment(deploymentConfig);
     const initialized = await readJsonRpc(await mcpRpc(connecta, "initialize", {
       protocolVersion: "2025-06-18",
@@ -156,11 +156,7 @@ describe("the advertised surface", () => {
     }, { token: TOKEN }));
     const instructions = initialized.result.instructions as string;
     expect(instructions).toBe(CONNECTA_INSTRUCTIONS);
-    expect(instructions).toContain("connecta.ui(html) exists only inside execute_code");
-    expect(instructions).toContain("not in connector search");
-    expect(instructions).toContain(
-      "return the same summary data the HTML renders",
-    );
+    expect(instructions).not.toContain("connecta.ui");
     // Always-loaded guidance is a context tax. Keep its total explicit rather
     // than letting one successful experiment license unbounded additions.
     expect(instructions.length).toBeLessThanOrEqual(1_000);

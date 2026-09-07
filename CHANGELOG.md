@@ -2,6 +2,31 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+This release removes server-owned program views, connector HTTP routes, and
+three convenience APIs.
+Programs use canonical tool addresses and JavaScript promises; callers own
+retry timing. Stored programs using shortcut globals, `connecta.batch`, or
+`connecta.ui` need migration. Direct calls must omit `maxRetries`. Deployments
+using none of these need no configuration or storage changes. The seven tools,
+operator pages, credentials, and emitted media remain. Cloudflare Global API
+Key authentication and multi-field credentials remain supported.
+
+### Changed
+
+- Remove connector `handleRequest` routes. Stale declarations fail at
+  construction; custom routes belong to the existing deployment fetch handler.
+- Remove MCP Apps rendering, its HTML shell, resource handlers, extension
+  declaration, and tool UI metadata. Clients render returned data.
+- Remove connector shortcut globals and their sanitization and collision rules.
+  Programs call the canonical address through `connecta.call`.
+- Remove `connecta.batch`. Use `Promise.all` or `Promise.allSettled` under the
+  same host-call and connector admission limits.
+- Remove automatic retries and backoff timing from direct calls. Failures keep
+  their classification and provider retry hint. Direct-call schemas reject
+  unknown arguments, including the removed `maxRetries` option.
+
 ## 0.22.3 — 2026-09-03
 
 This patch carries OAuth discovery across the browser redirect. It matters for

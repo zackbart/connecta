@@ -623,7 +623,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         );
       } catch (err) {
         // The guest reads this text, so it names the address the program called
-        // rather than the internal dispatcher every shortcut namespace shares.
+        // rather than only the generic connecta.call bridge function.
         const label = hostCallLabel(payload);
         const detail =
           err instanceof RangeError

@@ -1,5 +1,8 @@
 # Bounded reads from program UI — superseded decision record
 
+Historical record. MCP Apps rendering is now removed; see the
+[pruning decision](../ethos.md) and [migration guide](../documentation/upgrading.md#unreleased-program-api-pruning).
+
 Decision note for [#287](https://github.com/zackbart/connecta/issues/287),
 2026-08-02. Issue [#484](https://github.com/zackbart/connecta/issues/484)
 superseded it on 2026-08-26. The `V1`–`V8` clauses below describe the removed

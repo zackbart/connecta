@@ -21,8 +21,7 @@ export type { ServerOptions } from "./routes/shared.js";
  * Build the Web-standard fetch handler.
  *
  * Route ordering is the contract: private mutation routes precede wildcard
- * OPTIONS, every built-in precedes connector-owned routes, and the security
- * wrapper is applied to every response.
+ * OPTIONS, and the security wrapper is applied to every response, including 404s.
  */
 export function createFetchHandler(
   opts: ServerOptions,
@@ -176,27 +175,6 @@ export function createFetchHandler(
 
       const mcp = await routeMcp(context);
       if (mcp) return mcp;
-
-      // Connector-owned public routes, dispatched last: a connector can add a
-      // route but never shadow one of connecta's own. A throw here is the
-      // connector's bug, not a missing route, so it surfaces as 500 rather
-      // than falling through to 404.
-      for (const connector of registry.listConnectors()) {
-        if (!connector.handleRequest) continue;
-        try {
-          const response = await connector.handleRequest(
-            request,
-            registry.contextFor(connector.id, baseUrl),
-          );
-          if (response) return response;
-        } catch (error) {
-          opts.logger.error(
-            `[connecta] connector "${connector.id}" handleRequest failed`,
-            error,
-          );
-          return new Response("Internal Server Error", { status: 500 });
-        }
-      }
 
       return new Response("Not Found", { status: 404 });
     };

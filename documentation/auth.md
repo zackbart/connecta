@@ -133,14 +133,13 @@ through the
 
 Worker-level Access runs before every connecta route. Consequently:
 
-- `/health`, operator pages, downstream OAuth callbacks, connector-owned
-  routes, and `/mcp` all require Access unless a more-specific hostname/path
+- `/health`, operator pages, downstream OAuth callbacks, and `/mcp` all require Access unless a more-specific hostname/path
   policy says otherwise;
 - a static connecta bearer and a `cta_…` token are not standalone edge
   credentials, because Cloudflare rejects them before connecta sees them; and
-- a connector that intentionally exposes a public webhook needs a
-  more-specific Access application and bypass policy. Do not bypass connecta's
-  OAuth discovery paths when Managed OAuth is enabled.
+- custom public webhooks belong to the deployment outside Connecta and need
+  their own Access routing policy. Keep Connecta's OAuth discovery paths
+  protected when Managed OAuth is enabled.
 
 The [Worker example](../examples/worker/) carries the complete deployment shape
 and the [upgrade guide](./upgrading.md#0200--0212) gives the reversible Clerk

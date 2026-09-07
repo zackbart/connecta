@@ -7,7 +7,6 @@ import {
 import { isCallAdmissionError } from "./call-admission.js";
 import {
   CatalogService,
-  type CatalogResolution,
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import {
@@ -21,8 +20,7 @@ import {
 import { unwrapMcpResult } from "./mcp-result.js";
 import { splitAddress, type RegistryView } from "./registry.js";
 import { isExplicitlyReadOnly } from "./tool-safety.js";
-import { sleep, withDeadline } from "./timeout.js";
-import type { ToolDef } from "./types.js";
+import { withDeadline } from "./timeout.js";
 import { validateToolInput } from "./validate.js";
 
 function defined<T extends object>(
@@ -43,48 +41,6 @@ async function timed<T>(
   } finally {
     bucket(Date.now() - started);
   }
-}
-
-/**
- * The longest the engine will park a synchronous inbound request in *waiting
- * alone*. The engine already treats ~15 s as the outer bound of one reasonable
- * connector call (EXECUTE_HOST_CALL_TIMEOUT_MS), so sleeping for minutes trades
- * a fast, informative failure for a hung one. A connector-reported window this
- * long isn't truncated — it's declined (see `retryBackoffMs`) and reported
- * verbatim as `error.retryAfterMs`, so the agent, which can afford to wait,
- * decides when to re-issue.
- */
-export const MAX_RETRY_BACKOFF_MS = 10_000;
-
-/**
- * How long to wait before the next attempt, or `undefined` for "don't retry".
- *
- * A connector that read a `Retry-After` header knows the window exactly, so it
- * is honoured **exactly or not at all**: truncating an exponential *guess* is
- * harmless, but truncating a *known* window means deliberately retrying inside
- * a rate limit — the harm this channel exists to prevent. A window longer than
- * `MAX_RETRY_BACKOFF_MS` therefore declines the retry rather than shortening
- * it. (`retryAfterMs` is normalized non-negative, so `0` means "retry now".)
- * Connectors that report no window keep the historical exponential guess.
- *
- * Waits are per attempt, matching the per-attempt `timeoutMs` race in
- * `InvocationService.invoke`. Exported for direct testing.
- */
-export function retryBackoffMs(
-  attempt: number,
-  retryAfterMs: number | undefined,
-): number | undefined {
-  if (retryAfterMs === undefined) {
-    return Math.min(250 * 2 ** (attempt - 1), 1_000);
-  }
-  return retryAfterMs <= MAX_RETRY_BACKOFF_MS ? retryAfterMs : undefined;
-}
-
-function retrySafe(definition: ToolDef): boolean {
-  return (
-    definition.annotations?.readOnlyHint === true ||
-    definition.annotations?.idempotentHint === true
-  );
 }
 
 function callerCancelledDetails(): CallErrorDetails {
@@ -142,7 +98,6 @@ export interface InvocationTiming {
   catalogMs: number;
   admissionMs: number;
   connectorMs: number;
-  backoffMs: number;
   resultProcessingMs: number;
   totalMs: number;
 }
@@ -162,7 +117,6 @@ export interface InvocationContext<T> {
   source: ActivityCallSource;
   allowDestructive?: boolean;
   timeoutMs?: number;
-  maxRetries?: number;
   requestSignal?: AbortSignal;
   unwrapResult?: boolean;
   /**
@@ -228,49 +182,10 @@ export class InvocationService {
     args: unknown,
     context: InvocationContext<T>,
   ): Promise<InvocationOutcome<T>> {
-    const options = defined({ signal: context.requestSignal });
-    return this.invokeWithResolution(address, args, context, () =>
-      this.catalog.resolveTool(address, options),
-    );
-  }
-
-  /**
-   * Code-mode namespace dispatch preserves JavaScript-safe tool aliases while
-   * still feeding the resolved catalog entry through the one invocation path.
-   */
-  async invokeToolAlias<T = unknown>(
-    connectorId: string,
-    toolAlias: string,
-    aliasFor: (toolName: string) => string,
-    args: unknown,
-    context: InvocationContext<T>,
-  ): Promise<InvocationOutcome<T>> {
-    const options = defined({ signal: context.requestSignal });
-    return this.invokeWithResolution(
-      `${connectorId}.${toolAlias}`,
-      args,
-      context,
-      () =>
-        this.catalog.resolveToolAlias(
-          connectorId,
-          toolAlias,
-          aliasFor,
-          options,
-        ),
-    );
-  }
-
-  private async invokeWithResolution<T>(
-    address: string,
-    args: unknown,
-    context: InvocationContext<T>,
-    resolve: () => Promise<CatalogResolution>,
-  ): Promise<InvocationOutcome<T>> {
     const started = Date.now();
     let catalogMs = 0;
     let admissionMs = 0;
     let connectorMs = 0;
-    let backoffMs = 0;
     let resultProcessingMs = 0;
     let attempts = 0;
     let resolved: ResolvedCatalogTool | undefined;
@@ -285,7 +200,6 @@ export class InvocationService {
       catalogMs,
       admissionMs,
       connectorMs,
-      backoffMs,
       resultProcessingMs,
       totalMs: Date.now() - started,
     });
@@ -400,7 +314,9 @@ export class InvocationService {
       };
     };
 
-    const resolution = await resolve();
+    const resolution = await this.catalog.resolveTool(
+      address, defined({ signal: context.requestSignal }),
+    );
     catalogMs += resolution.catalogMs;
     if (!resolution.ok) {
       if (resolution.connector && resolution.toolName) {
@@ -461,110 +377,84 @@ export class InvocationService {
       );
     }
 
-    const maxRetries = Math.min(
-      2,
-      Math.max(0, Math.trunc(context.maxRetries ?? 0)),
-    );
     let result: unknown;
     let observedResult: unknown;
-    while (true) {
-      attempts++;
-      let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-      let attemptError: unknown;
-      let attemptFailed = false;
-      try {
-        permit = await timed(
-          (elapsed) => { admissionMs += elapsed; },
-          () => this.registry.admitCall(resolved.connector.id, {
-            toolName: resolved.toolName,
-            args: args ?? {},
-            ...defined({ signal: context.requestSignal }),
-          }),
-        );
-        const raw = await timed(
-          (elapsed) => { connectorMs += elapsed; },
-          () => {
-            const call = (callSignal?: AbortSignal) => {
-              const connectorContext = this.registry.contextFor(
-                resolved.connector.id,
-                this.catalog.baseUrl,
-                this.catalog.requestScope,
-                defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
-              );
-              if (
-                resolved.connector.credential &&
-                !connectorContext.credential
-              ) {
-                throw new ConnectorCallError(
-                  "auth_required",
-                  "Operator-managed credential storage is not configured. Call " +
-                    `authorize_connector({ connector: "${resolved.connector.id}" }).`,
-                );
-              }
-              // Cancellation can arrive during admission or context construction.
-              if (callSignal?.aborted) throw callSignal.reason;
-              return resolved.connector.callTool(
-                resolved.toolName,
-                args ?? {},
-                connectorContext,
-              );
-            };
-            if (!context.timeoutMs && !context.requestSignal) return call();
-            return withDeadline(call, {
-              ...defined({
-                timeoutMs: context.timeoutMs,
-                signal: context.requestSignal,
-              }),
-              timeoutError: new ConnectorCallError(
-                "timeout",
-                `Tool call timed out after ${context.timeoutMs}ms`,
-              ),
-            });
-          },
-        );
-        // isError is checked here for BOTH result shapes so every adapter
-        // reports the same downstream-failure wording, and the throw lands
-        // inside the attempt where it stays retry-eligible and feeds health.
-        assertRawMcpSuccess(resolved.connector.kind, raw);
-        observedResult = unwrapMcpResult(resolved.connector.kind, raw);
-        result = context.unwrapResult ? observedResult : raw;
-      } catch (error) {
-        attemptFailed = true;
-        attemptError = error;
-      } finally {
-        permit?.release();
-      }
-
-      if (attemptFailed) {
-        const callerCancelled = isCallerCancellation(
-          attemptError,
-          context.requestSignal,
-        );
-        const details = callerCancelled
-          ? callerCancelledDetails()
-          : classifyCallError(attemptError);
-        if (
-          !callerCancelled &&
-          attempts <= maxRetries &&
-          retrySafe(resolved.definition) &&
-          details.retryable
-        ) {
-          const wait = retryBackoffMs(attempts, details.retryAfterMs);
-          if (wait !== undefined) {
-            const completed = await timed(
-              (elapsed) => { backoffMs += elapsed; },
-              () => sleep(wait, context.requestSignal),
+    attempts = 1;
+    let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
+    let attemptError: unknown;
+    let attemptFailed = false;
+    try {
+      permit = await timed(
+        (elapsed) => { admissionMs += elapsed; },
+        () => this.registry.admitCall(resolved.connector.id, {
+          toolName: resolved.toolName,
+          args: args ?? {},
+          ...defined({ signal: context.requestSignal }),
+        }),
+      );
+      const raw = await timed(
+        (elapsed) => { connectorMs += elapsed; },
+        () => {
+          const call = (callSignal?: AbortSignal) => {
+            const connectorContext = this.registry.contextFor(
+              resolved.connector.id,
+              this.catalog.baseUrl,
+              this.catalog.requestScope,
+              defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
             );
-            if (!completed) return failed(callerCancelledDetails());
-            continue;
-          }
-          // The reported window is longer than the engine will park a
-          // synchronous request for. Fall through to failure with
-          // retryAfterMs reported verbatim so the agent can re-issue.
-        }
-        return failed(details);
-      }
-      break;
+            if (
+              resolved.connector.credential &&
+              !connectorContext.credential
+            ) {
+              throw new ConnectorCallError(
+                "auth_required",
+                "Operator-managed credential storage is not configured. Call " +
+                  `authorize_connector({ connector: "${resolved.connector.id}" }).`,
+              );
+            }
+            // Cancellation can arrive during admission or context construction.
+            if (callSignal?.aborted) throw callSignal.reason;
+            return resolved.connector.callTool(
+              resolved.toolName,
+              args ?? {},
+              connectorContext,
+            );
+          };
+          if (!context.timeoutMs && !context.requestSignal) return call();
+          return withDeadline(call, {
+            ...defined({
+              timeoutMs: context.timeoutMs,
+              signal: context.requestSignal,
+            }),
+            timeoutError: new ConnectorCallError(
+              "timeout",
+              `Tool call timed out after ${context.timeoutMs}ms`,
+            ),
+          });
+        },
+      );
+      // isError is checked here for BOTH result shapes so every adapter
+      // reports the same downstream-failure wording, and the throw lands
+      // inside the attempt where it feeds health.
+      assertRawMcpSuccess(resolved.connector.kind, raw);
+      observedResult = unwrapMcpResult(resolved.connector.kind, raw);
+      result = context.unwrapResult ? observedResult : raw;
+    } catch (error) {
+      attemptFailed = true;
+      attemptError = error;
+    } finally {
+      permit?.release();
+    }
+
+    if (attemptFailed) {
+      const callerCancelled = isCallerCancellation(
+        attemptError,
+        context.requestSignal,
+      );
+      const details = callerCancelled
+        ? callerCancelledDetails()
+        : classifyCallError(attemptError);
+      return failed(details);
     }
 
     try {

@@ -89,7 +89,7 @@ describe("Node listen adapter", () => {
       async execute(_code, providers) {
         const value = await required(providers
           .find((provider) => provider.name === "connecta")!
-          .fns.__callNamespace)("slow", "wait", {});
+          .fns.call)("slow.wait", {});
         return { result: value };
       },
     };
@@ -127,7 +127,7 @@ describe("Node listen adapter", () => {
         method: "tools/call",
         params: {
           name: "execute_code",
-          arguments: { code: "async () => slow.wait({})" },
+          arguments: { code: "async () => connecta.call(\"slow.wait\", {})" },
         },
       }),
     );

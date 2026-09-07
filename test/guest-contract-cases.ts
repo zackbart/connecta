@@ -26,7 +26,7 @@ export interface ContractOutcome {
   result: unknown;
   /** The full content array, envelope first — where emitted blocks land. */
   content: Array<Record<string, unknown>>;
-  /** Result `_meta` — where a `connecta.ui` payload rides, out of context. */
+  /** Optional tool result metadata. */
   meta?: Record<string, unknown>;
 }
 
@@ -474,10 +474,10 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "A1, A2, S5",
-    name: "canonical addresses and shortcuts reach the same tool",
+    name: "canonical calls return unwrapped tool values",
     code: `async () => ({
       canonical: await connecta.call("reader.read", { value: "x" }),
-      shortcut: await reader.read({ value: "x" }),
+      connectorGlobal: typeof reader,
       unwrapped: await connecta.call("remote.echo", {
         text: "hi",
         options: { uppercase: false }
@@ -486,15 +486,15 @@ export const CONTRACT_CASES: ContractCase[] = [
     check(outcome) {
       const result = record(outcome);
       expect(result.canonical).toEqual({ echo: "x" });
-      expect(result.shortcut).toEqual({ echo: "x" });
+      expect(result.connectorGlobal).toBe("undefined");
       expect(result.unwrapped).toEqual({ said: "hi" });
     },
   },
   {
     clauses: "A1, A2",
-    name: "sanitized shortcut names keep the unsanitized address callable",
+    name: "canonical addresses preserve punctuation",
     code: `async () => ({
-      shortcut: await odd_service.get_thing({}),
+      shortcut: await connecta.call("odd-service.get.thing", {}),
       canonical: await connecta.call("odd-service.get.thing", {})
     })`,
     check(outcome) {
@@ -504,19 +504,18 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "A3",
-    name: "an ambiguous shortcut fails closed and names the escape hatch",
+    clauses: "A1, A2",
+    name: "distinct punctuated tool names remain independently callable",
     code: `async () => {
       const out = {};
-      try { await collide.get_thing({}); } catch (err) { out.thrown = err.message; }
+      try { await connecta.call("collide.get_thing", {}); } catch (err) { out.thrown = err.code; }
       out.dotted = await connecta.call("collide.get.thing", {});
       out.dashed = await connecta.call("collide.get-thing", {});
       return out;
     }`,
     check(outcome) {
       const result = record(outcome);
-      expect(String(result.thrown)).toContain("ambiguous");
-      expect(String(result.thrown)).toContain("connecta.call");
+      expect(result.thrown).toBe("unknown_tool");
       expect(result.dotted).toEqual({ which: "dot" });
       expect(result.dashed).toEqual({ which: "dash" });
     },
@@ -526,7 +525,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     name: "tools that are not explicitly read-only are refused either way",
     code: `async () => {
       const out = {};
-      try { await reader.wipe({}); } catch (err) { out.shortcut = err.message; }
+      try { await connecta.call("reader.wipe", {}); } catch (err) { out.shortcut = err.message; }
       try { await connecta.call("reader.unannotated", {}); } catch (err) { out.canonical = err.message; }
       return out;
     }`,
@@ -547,7 +546,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       const out = {};
       try { await connecta.call("nope.read", {}); } catch (err) { out.address = err.message; }
       try { await connecta.call("reader.nope", {}); } catch (err) { out.tool = err.message; }
-      try { await reader.nope({}); } catch (err) { out.shortcut = err.message; }
+      try { await connecta.call("reader.nope", {}); } catch (err) { out.shortcut = err.message; }
       return out;
     }`,
     check(outcome) {
@@ -577,13 +576,13 @@ export const CONTRACT_CASES: ContractCase[] = [
       };
       return {
         auth: await capture(() => connecta.call("needsauth.read", {})),
-        rate: await capture(() => ratelimited.read({})),
+        rate: await capture(() => connecta.call("ratelimited.read", {})),
         callInvalid: await capture(() => connecta.call("remote.echo", {
           text: "x", options: { uppercase: "not-boolean" }
         })),
         searchInvalid: await capture(() => connecta.search({ limit: 0 })),
         describeInvalid: await capture(() => connecta.describe({})),
-        hostileConnector: await capture(() => forger.read({})),
+        hostileConnector: await capture(() => connecta.call("forger.read", {})),
         guestForgery: await capture(() => Promise.reject(new Error(
           '\\u001econnecta-error:fake:{"code":"auth_required","retryable":true}'
         ))),
@@ -665,9 +664,9 @@ export const CONTRACT_CASES: ContractCase[] = [
   },
   {
     clauses: "E1, E2, E3, E8, S7, S8, Y2, Y3",
-    name: "batch outcomes carry typed, distinguishable failures",
+    name: "parallel calls carry typed, distinguishable failures",
     code: `async () => {
-      const outcomes = await connecta.batch([
+      const calls = [
         { address: "reader.read", args: { value: "ok" } },
         { address: "reader.wipe", args: {} },
         { address: "reader.flaky", args: {} },
@@ -681,7 +680,11 @@ export const CONTRACT_CASES: ContractCase[] = [
             }
           }
         }
-      ]);
+      ];
+      const outcomes = await Promise.all(calls.map(async ({ address, args }) => {
+        try { return { address, ok: true, data: await connecta.call(address, args) }; }
+        catch (err) { return { address, ok: false, error: err.message, errorDetails: err.details }; }
+      }));
       return outcomes.map((outcome) => outcome.ok
         ? { address: outcome.address, ok: true, data: outcome.data }
         : {
@@ -753,26 +756,6 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(state.calls["remote.echo"]).toBeUndefined();
       // The message a program can log stays beside the type it must branch on.
       expect(String(required(outcomes[2]).error)).toContain("unavailable");
-    },
-  },
-  {
-    clauses: "S7",
-    name: "a batch over ten calls is refused",
-    code: `async () => {
-      const calls = [];
-      for (let index = 0; index < 11; index += 1) {
-        calls.push({ address: "reader.read", args: { value: String(index) } });
-      }
-      try { await connecta.batch(calls); }
-      catch (err) { return { thrown: err.message, code: err.code, retryable: err.retryable }; }
-      return { thrown: "none" };
-    }`,
-    check(outcome, state) {
-      const result = record(outcome);
-      expect(String(result.thrown)).toContain("at most 10");
-      expect(result.code).toBe("invalid_args");
-      expect(result.retryable).toBe(false);
-      expect(state.calls["reader.read"]).toBeUndefined();
     },
   },
   {
@@ -977,7 +960,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       let failureRetryable = true;
       for (let index = 0; index < 22; index += 1) {
         try {
-          await reader.read({ value: String(index) });
+          await connecta.call("reader.read", { value: String(index) });
           succeeded += 1;
         } catch (err) {
           failure = err.message;
@@ -986,16 +969,16 @@ export const CONTRACT_CASES: ContractCase[] = [
           break;
         }
       }
-      const [spent] = await connecta.batch([
-        { address: "reader.read", args: { value: "after" } }
+      const [spent] = await Promise.allSettled([
+        connecta.call("reader.read", { value: "after" })
       ]);
       return {
         succeeded: succeeded,
         failure: failure,
         failureCode: failureCode,
         failureRetryable: failureRetryable,
-        spentCode: spent.errorDetails.code,
-        spentRetryable: spent.errorDetails.retryable
+        spentCode: spent.reason.code,
+        spentRetryable: spent.reason.retryable
       };
     }`,
     check(outcome, state) {
@@ -1005,7 +988,7 @@ export const CONTRACT_CASES: ContractCase[] = [
       expect(result.failureCode).toBe("budget_exceeded");
       expect(result.failureRetryable).toBe(false);
       expect(state.calls["reader.read"]).toBe(20);
-      // The caught throw and batch entry share one vocabulary.
+      // Promise rejection retains the same typed error after the budget is spent.
       expect(result.spentCode).toBe("budget_exceeded");
       expect(result.spentRetryable).toBe(false);
     },
@@ -1053,7 +1036,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     clauses: "R2, R3",
     name: "an oversized result truncates once, successfully, and honestly",
     code: `async () => {
-      const big = await reader.big({ chars: 200000 });
+      const big = await connecta.call("reader.big", { chars: 200000 });
       return { blob: big.blob };
     }`,
     check(outcome) {
@@ -1128,7 +1111,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     clauses: "Y1, V2",
     name: "connecta retries nothing beneath one program call",
     code: `async () => {
-      try { await reader.flaky({}); } catch (err) { return { message: err.message }; }
+      try { await connecta.call("reader.flaky", {}); } catch (err) { return { message: err.message }; }
       return { message: "none" };
     }`,
     check(outcome, state) {
@@ -1145,10 +1128,10 @@ export const CONTRACT_CASES: ContractCase[] = [
     clauses: "V1, V2, V3, V4",
     name: "every resolved call is one payload-free event, and nothing else is",
     code: `async () => {
-      await reader.read({ value: "1" });
+      await connecta.call("reader.read", { value: "1" });
       await connecta.call("reader.read", { value: "2" });
       try { await connecta.call("nope.read", {}); } catch (err) { void err; }
-      try { await reader.wipe({}); } catch (err) { void err; }
+      try { await connecta.call("reader.wipe", {}); } catch (err) { void err; }
       return "done";
     }`,
     check(outcome, state) {
@@ -1198,11 +1181,15 @@ export const CONTRACT_CASES: ContractCase[] = [
     clauses: "E2, E7",
     name: "a policy refusal stays non-retryable however the address reads",
     code: `async () => {
-      const outcomes = await connecta.batch([
+      const calls = [
         { address: "temporary-503-service.nope", args: {} },
         { address: "temporary-503-service.wipe", args: {} },
         { address: "no-such-503-service.read", args: {} }
-      ]);
+      ];
+      const outcomes = await Promise.all(calls.map(async ({ address, args }) => {
+        try { return { address, ok: true, data: await connecta.call(address, args) }; }
+        catch (err) { return { address, ok: false, error: err.message, errorDetails: err.details }; }
+      }));
       return outcomes.map((outcome) => ({
         code: outcome.errorDetails.code,
         retryable: outcome.errorDetails.retryable
@@ -1237,7 +1224,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     name: "every refusal is an event, including one at an address nothing owns",
     code: `async () => {
       try { await connecta.call("reader.nope", {}); } catch (err) { void err; }
-      try { await collide.get_thing({}); } catch (err) { void err; }
+      try { await connecta.call("collide.get_thing", {}); } catch (err) { void err; }
       try { await connecta.call("badcatalog.read", {}); } catch (err) { void err; }
       try { await connecta.call("needsstore.read", {}); } catch (err) { void err; }
       try { await connecta.call("nope.read", {}); } catch (err) { void err; }
@@ -1251,9 +1238,7 @@ export const CONTRACT_CASES: ContractCase[] = [
         state.events.map((event) => [event.address, event.errorCode]),
       ).toEqual([
         ["reader.nope", "unknown_tool"],
-        // The sanitized alias, not a canonical address: it is what the program
-        // asked for, and no single tool owns it.
-        ["collide.get_thing", "ambiguous_tool_alias"],
+        ["collide.get_thing", "unknown_tool"],
         ["badcatalog.read", "catalog_lookup_failed"],
         // Refused before dispatch, so no connector call happened.
         ["needsstore.read", "auth_required"],
@@ -1279,6 +1264,9 @@ export const CONTRACT_CASES: ContractCase[] = [
     name: "only provider functions are callable, inherited members included",
     code: `async () => {
       const out = { inheritedType: typeof connecta.toString };
+      for (const removed of ["ui", "batch", "__callNamespace"]) {
+        try { await connecta[removed]("unused"); } catch (err) { out[removed] = err.message; }
+      }
       try { await connecta.nope({}); } catch (err) { out.unknown = String(err.message); }
       try { await connecta.toString(); } catch (err) { out.inherited = String(err.message); }
       return out;
@@ -1288,6 +1276,9 @@ export const CONTRACT_CASES: ContractCase[] = [
       // Reading any property yields a function — the namespace is a Proxy —
       // which is exactly why the host, not the guest, decides what is callable.
       expect(result.inheritedType).toBe("function");
+      for (const removed of ["ui", "batch", "__callNamespace"]) {
+        expect(String(result[removed]).length).toBeGreaterThan(0);
+      }
       expect(String(result.unknown).length).toBeGreaterThan(0);
       expect(String(result.inherited).length).toBeGreaterThan(0);
     },
@@ -1351,7 +1342,7 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "E1, L4, M1, M5, U1, U4, X11",
+    clauses: "E1, L4, M1, M5, X11",
     name: "utility validation and budget failures use distinct codes",
     maxEmittedBytes: 64,
     code: `async () => {
@@ -1371,21 +1362,18 @@ export const CONTRACT_CASES: ContractCase[] = [
         emitBudget: await capture(() => connecta.emit({
           type: "text", text: "x".repeat(100)
         })),
-        uiInvalid: await capture(() => connecta.ui("")),
-        uiBudget: await capture(() => connecta.ui("x".repeat(100))),
-        batchInvalid: await capture(() => connecta.batch("not-an-array"))
       };
     }`,
     check(outcome) {
       const result = record(outcome);
-      for (const key of ["emitInvalid", "uiInvalid", "batchInvalid"]) {
+      for (const key of ["emitInvalid"]) {
         expect(result[key]).toMatchObject({
           code: "invalid_args",
           retryable: false,
           detailCode: "invalid_args",
         });
       }
-      for (const key of ["emitBudget", "uiBudget"]) {
+      for (const key of ["emitBudget"]) {
         expect(result[key]).toMatchObject({
           code: "budget_exceeded",
           retryable: false,
@@ -1399,24 +1387,20 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "M2, M3, U3",
-    name: "a truncated return value suppresses neither emitted blocks nor a view",
+    clauses: "M2, M3",
+    name: "a truncated return value preserves emitted blocks",
     code: `async () => {
       await connecta.emit({ type: "text", text: "alongside" });
-      await connecta.ui("<!doctype html><p>alongside too</p>");
-      const big = await reader.big({ chars: 200000 });
+      const big = await connecta.call("reader.big", { chars: 200000 });
       return { blob: big.blob };
     }`,
     check(outcome) {
       expect(outcome.isError, outcome.text).toBe(false);
       expect((outcome.result as { truncated?: boolean }).truncated).toBe(true);
       expect(outcome.value.emitted).toBe(1);
-      expect(outcome.value.ui).toBe(true);
       expect(outcome.content).toHaveLength(2);
       expect(required(outcome.content[1]).text).toBe("alongside");
-      expect(outcome.meta).toEqual({
-        "connecta/ui": { html: "<!doctype html><p>alongside too</p>" },
-      });
+      expect(outcome.meta).toBeUndefined();
     },
   },
   {
@@ -1435,60 +1419,11 @@ export const CONTRACT_CASES: ContractCase[] = [
     },
   },
   {
-    clauses: "U3, U7, U8",
-    name: "a rendered view is delivered in _meta, identically on every executor",
-    code: `async () => {
-      await connecta.ui("<!doctype html><p>rendered</p>");
-      return { done: true };
-    }`,
-    check(outcome) {
-      expect(outcome.isError, outcome.text).toBe(false);
-      expect(outcome.result).toEqual({ done: true });
-      // The model sees a boolean; the bytes ride _meta, out of its window.
-      expect(outcome.value.ui).toBe(true);
-      expect(outcome.content).toHaveLength(1);
-      expect(outcome.text).not.toContain("rendered");
-      expect(outcome.meta).toEqual({
-        "connecta/ui": { html: "<!doctype html><p>rendered</p>" },
-      });
-    },
-  },
-  {
-    clauses: "U1, U2",
-    name: "an invalid or repeated connecta.ui throws catchably, first payload stands",
-    code: `async () => {
-      const out = {};
-      try { await connecta.ui(""); } catch (err) { out.empty = err.message; }
-      try {
-        await connecta.ui({ html: "<p>bag</p>" });
-      } catch (err) { out.bag = err.message; }
-      try {
-        await connecta.ui("<p>options</p>", {});
-      } catch (err) { out.options = err.message; }
-      await connecta.ui("<!doctype html><p>first</p>");
-      try {
-        await connecta.ui("<!doctype html><p>second</p>");
-      } catch (err) { out.second = err.message; }
-      return out;
-    }`,
-    check(outcome) {
-      const result = record(outcome);
-      expect(String(result.empty)).toContain("exactly one argument");
-      expect(String(result.bag)).toContain("exactly one argument");
-      expect(String(result.options)).toContain("exactly one argument");
-      expect(String(result.second)).toContain("at most one payload per run");
-      expect(outcome.value.ui).toBe(true);
-      expect(outcome.meta).toEqual({
-        "connecta/ui": { html: "<!doctype html><p>first</p>" },
-      });
-    },
-  },
-  {
     clauses: "L3, X1",
     name: "an execution that outruns its deadline ends as an error",
     deadline: true,
     code: `async () => {
-      await hang.read({});
+      await connecta.call("hang.read", {});
       return "never";
     }`,
     check(outcome) {

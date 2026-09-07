@@ -12,12 +12,6 @@ import {
 } from "@modelcontextprotocol/client";
 import { describe, expect, it, vi } from "vitest";
 import { CONNECTOR_INVENTORY_MAX_BYTES } from "../src/execute.js";
-import {
-  MCP_APPS_EXTENSION,
-  PROGRAM_UI_MIME_TYPE,
-  PROGRAM_UI_RESOURCE_URI,
-  PROGRAM_UI_SHELL_HTML,
-} from "../src/apps-shell.js";
 
 // True under @cloudflare/vitest-pool-workers. quickJsExecutor() is the Node
 // executor (emscripten WASM loaded from disk) — Workers deployments use
@@ -150,15 +144,6 @@ describe("server /mcp end-to-end", () => {
     expect(body.result.instructions).toContain(
       "discovers, calls, and returns the answer",
     );
-    expect(body.result.instructions).toContain(
-      "connecta.ui(html) exists only inside execute_code",
-    );
-    expect(body.result.instructions).toContain(
-      "not in connector search",
-    );
-    expect(body.result.instructions).toContain(
-      "return the same summary data the HTML renders",
-    );
     expect(body.result.instructions).toContain("only when");
   });
 
@@ -260,7 +245,27 @@ describe("server /mcp end-to-end", () => {
     ]);
   });
 
-  it("declares the Apps template only on execute_code", async () => {
+  it("rejects removed retry arguments before dispatching either direct-call tool", async () => {
+    const call = vi.fn(async () => ({ done: true }));
+    const c = createTestConnecta({
+      connectors: [api("counter", { tools: [{
+        name: "read", description: "Count reads",
+        annotations: { readOnlyHint: true }, handler: call,
+      }] })],
+      auth: bearerToken(TOKEN),
+      publicUrl: BASE,
+    });
+    for (const name of ["call_tool", "call_destructive_tool"]) {
+      const body = await readJsonRpc(await mcpRpc(c, "tools/call", {
+        name, arguments: { address: "counter.read", maxRetries: 1 },
+      }, { token: TOKEN }));
+      expect(body.result?.isError || body.error).toBeTruthy();
+      expect(JSON.stringify(body)).toContain("maxRetries");
+    }
+    expect(call).not.toHaveBeenCalled();
+  });
+
+  it("advertises no rendering metadata on any tool", async () => {
     const body = await readJsonRpc(
       await mcpRpc(makeDeployment(), "tools/list", {}, { token: TOKEN }),
     );
@@ -272,25 +277,13 @@ describe("server /mcp end-to-end", () => {
     const execute = required(
       tools.find((tool) => tool.name === "execute_code"),
     );
-    expect(execute._meta).toEqual({
-      ui: {
-        resourceUri: PROGRAM_UI_RESOURCE_URI,
-        visibility: ["model"],
-      },
-    });
-    expect(execute.description).toContain("connecta.ui(html)");
-    expect(execute.description).toContain("display-only");
-    expect(execute.description).not.toContain("connecta.ui(html, options?)");
-
+    expect(execute.description).not.toContain("connecta.ui");
     for (const tool of tools) {
-      if (tool.name === "execute_code") continue;
-      expect(tool._meta, tool.name).toEqual({
-        ui: { visibility: ["model"] },
-      });
+      expect(tool._meta ?? {}).not.toHaveProperty("ui");
     }
   });
 
-  it("declares exactly one extension, the MCP Apps one (U11)", async () => {
+  it("advertises tools without Apps or resources", async () => {
     const c = makeDeployment();
     const body = await readJsonRpc(
       await mcpRpc(
@@ -304,109 +297,12 @@ describe("server /mcp end-to-end", () => {
         { token: TOKEN },
       ),
     );
-    const extensions = body.result.capabilities.extensions as Record<
-      string,
-      unknown
-    >;
-    expect(Object.keys(extensions)).toEqual([MCP_APPS_EXTENSION]);
-    expect(extensions[MCP_APPS_EXTENSION]).toEqual({
-      mimeTypes: [PROGRAM_UI_MIME_TYPE],
-    });
-    // Registering the shell is what puts `resources` on the wire; without it
-    // `resources/list` would be an undeclared method. `listChanged: false` is
-    // declared rather than defaulted: connecta serves one build-time template
-    // and never sends a list_changed notification, so a client that subscribed
-    // on the strength of that flag would wait forever.
-    expect(body.result.capabilities.resources).toEqual({ listChanged: false });
-  });
-
-  it("serves exactly the shell URI and lists nothing (U5)", async () => {
-    const c = makeDeployment();
-    const read = await readJsonRpc(
-      await mcpRpc(
-        c,
-        "resources/read",
-        { uri: PROGRAM_UI_RESOURCE_URI },
-        { token: TOKEN },
-      ),
-    );
-    expect(read.result.contents).toHaveLength(1);
-    const [shell] = read.result.contents;
-    expect(shell.uri).toBe(PROGRAM_UI_RESOURCE_URI);
-    expect(shell.mimeType).toBe(PROGRAM_UI_MIME_TYPE);
-    expect(shell.text).toBe(PROGRAM_UI_SHELL_HTML);
-    expect(String(shell.text).startsWith("<!doctype html>")).toBe(true);
-
-    for (const uri of [
-      "ui://connecta/program-ui/v2",
-      "ui://connecta/program-ui/v1",
-      "ui://connecta/program-ui",
-      "ui://elsewhere/view",
-      "https://connecta.test/mcp",
-      "file:///etc/passwd",
-    ]) {
-      const missing = await readJsonRpc(
-        await mcpRpc(c, "resources/read", { uri }, { token: TOKEN }),
-      );
-      expect(missing.result, uri).toBeUndefined();
-      expect(missing.error, uri).toBeDefined();
-    }
-
-    // The method answers — the capability stays honest — and carries nothing.
-    const listed = await readJsonRpc(
-      await mcpRpc(c, "resources/list", {}, { token: TOKEN }),
-    );
-    expect(listed.result.resources).toEqual([]);
-
-    // The sibling listing has to survive the `resources/list` override: the
-    // resources capability covers both methods, and a client that probes for
-    // templates must get an empty list rather than "method not found".
-    const templates = await readJsonRpc(
-      await mcpRpc(c, "resources/templates/list", {}, { token: TOKEN }),
-    );
-    expect(templates.error).toBeUndefined();
-    expect(templates.result.resourceTemplates).toEqual([]);
-  });
-
-  it("delivers the UI payload in result _meta over the wire (U3)", async () => {
-    // The unit tests call the handler directly. This one is the whole path:
-    // an execute_code tools/call through the transport, so a serialization
-    // step that dropped `_meta` — the only channel the shell reads — would be
-    // caught here rather than in a host.
-    const view = "<!doctype html><p>over the wire</p>";
-    const c = createTestConnecta({
-      connectors: [calcApi()],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      executor: {
-        execute: async (_code, providers) => {
-          const fns = required(
-            providers.find((provider) => provider.name === "connecta"),
-          ).fns;
-          await required(fns.ui)(view);
-          return { result: { rendered: true } };
-        },
-      },
-    });
-    const body = await readJsonRpc(
-      await mcpRpc(
-        c,
-        "tools/call",
-        { name: "execute_code", arguments: { code: "async () => null" } },
-        { token: TOKEN },
-      ),
-    );
-    expect(body.result.isError).toBeFalsy();
-    // Assert the key, not the whole object: the SDK stamps its own
-    // `io.modelcontextprotocol/serverInfo` into the same `_meta`.
-    expect(body.result._meta["connecta/ui"]).toEqual({ html: view });
-    expect(body.result.structuredContent).toEqual({
-      result: { rendered: true },
-      ui: true,
-    });
-    // The model's channel says a view rendered and never carries its bytes.
-    expect(body.result.content[0].text).not.toContain("over the wire");
+    expect(body.result.capabilities.extensions).toBeUndefined();
+    expect(body.result.capabilities.resources).toBeUndefined();
+    const read = await readJsonRpc(await mcpRpc(c, "resources/read", {
+      uri: "ui://connecta/program-ui/v3",
+    }, { token: TOKEN }));
+    expect(read.error).toBeDefined();
   });
 
   it("treats an empty call_destructive_tool reason as absent, not invalid", async () => {
@@ -532,7 +428,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain('`resultMode: "value"` unwraps the result');
     expect(skill).toContain("`timeoutMs` sets its deadline");
     expect(skill).toContain(
-      "`maxRetries` is honored only for safely annotated tools",
+      "Every call makes one attempt",
     );
     expect(skill).toContain("`diagnostics: true` adds timing");
     expect(skill).toContain(
@@ -544,14 +440,9 @@ describe("server /mcp end-to-end", () => {
       "offset inside a multi-byte character moves back to its first byte",
     );
     expect(skill).toContain("unknown or expired id is an error");
-    // #484: program views are local snapshots again. No app-to-host call
-    // grammar is taught, while rendering still shares the rich-output budget.
-    expect(skill).toContain("no network, connector calls, discovery");
-    expect(skill).not.toContain("connecta.read");
-    expect(skill).not.toContain("fixedArgs");
-    expect(skill).toContain(
-      "One shared budget applies to the UI and emitted content, not separate budgets",
-    );
+    expect(skill).toContain("## Media output");
+    expect(skill).not.toContain("connecta.ui");
+    expect(skill).not.toContain("connecta.batch");
     expect(skill).toContain("## Examples");
     expect(skill).toContain("crm.get_account");
 
@@ -667,7 +558,7 @@ describe("server /mcp end-to-end", () => {
 
     expect(await inventory([])).toBe("Connectors: none.");
     expect(await inventory(["calc", "my-service", "email_api"])).toBe(
-      "Connectors: calc, my-service (shortcut my_service), email_api.",
+      "Connectors: calc, my-service, email_api.",
     );
     const ids = Array.from(
       { length: 104 },
@@ -678,8 +569,8 @@ describe("server /mcp end-to-end", () => {
     const first = await inventory(ids);
     const second = await inventory(ids);
     expect(first).toBe(second);
-    expect(first).toMatch(/; \+100 more\.$/);
-    expect(new TextEncoder().encode(first).length).toBe(
+    expect(first).toMatch(/; \+95 more\.$/);
+    expect(new TextEncoder().encode(first).length).toBeLessThanOrEqual(
       CONNECTOR_INVENTORY_MAX_BYTES,
     );
     expect((await executeDescription(ids)).length).toBeLessThan(1_800);
@@ -1485,87 +1376,32 @@ describe("server open routes", () => {
     }
   });
 
-  it("dispatches connector-owned routes, inside the security headers", async () => {
-    const withRoute: Connector = {
-      ...calcApi(),
-      id: "files",
-      async handleRequest(request) {
-        const url = new URL(request.url);
-        if (url.pathname !== "/download/report.txt") return null;
-        return new Response("body", { headers: { "Content-Type": "text/plain" } });
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [withRoute],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const res = await c.fetch(new Request(`${BASE}/download/report.txt`));
-    expect(res.status).toBe(200);
-    expect(await res.text()).toBe("body");
-    // The seam exists so these routes stop bypassing the wrapper every other
-    // route goes through.
-    expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
-    expect(res.headers.get("Strict-Transport-Security")).toBe(
-      "max-age=31536000",
+  it("rejects removed connector HTTP hooks at construction without invoking them", () => {
+    const handleRequest = vi.fn(async () => new Response("private"));
+    const ownHook = { ...calcApi(), handleRequest };
+    const inheritedHook = Object.assign(
+      Object.create({ handleRequest }) as Connector,
+      calcApi(),
     );
-  });
-
-  it("declining connector routes fall through to 404", async () => {
-    const c = createTestConnecta({
-      connectors: [{ ...calcApi(), async handleRequest() { return null; } }],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    expect((await c.fetch(new Request(`${BASE}/nope`))).status).toBe(404);
-  });
-
-  it("a connector route cannot shadow a built-in route", async () => {
-    const greedy: Connector = {
-      ...calcApi(),
-      async handleRequest() {
-        return new Response("hijacked", { status: 200 });
-      },
-    };
-    const c = createTestConnecta({
-      connectors: [greedy],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-    });
-    const health = await c.fetch(new Request(`${BASE}/health`));
-    expect(await health.text()).toContain('"status":"ok"');
-    const mcp = await c.fetch(new Request(`${BASE}/mcp`, { method: "POST" }));
-    expect(mcp.status).toBe(401);
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
-      const shell = await c.fetch(new Request(`${BASE}${path}`));
-      expect(shell.status).toBe(200);
-      expect(await shell.text()).not.toBe("hijacked");
-      const write = await c.fetch(
-        new Request(`${BASE}${path}`, { method: "POST" }),
+    for (const connector of [ownHook, inheritedHook]) {
+      expect(() => createTestConnecta({ connectors: [connector] })).toThrow(
+        'Connector "calc" declares removed handleRequest',
       );
-      expect(write.status).toBe(405);
     }
+    expect(handleRequest).not.toHaveBeenCalled();
   });
 
-  it("a throwing connector route is a 500, not a 404", async () => {
-    const c = createTestConnecta({
-      connectors: [
-        {
-          ...calcApi(),
-          async handleRequest() {
-            throw new Error("boom");
-          },
-        },
-      ],
-      auth: bearerToken(TOKEN),
-      storage: memoryStorage(),
-      publicUrl: BASE,
-      logger: { debug() {}, info() {}, warn() {}, error() {} },
-    });
-    expect((await c.fetch(new Request(`${BASE}/anything`))).status).toBe(500);
+  it("returns a secured 404 for custom paths with or without MCP authentication", async () => {
+    const c = makeDeployment();
+    for (const token of [undefined, TOKEN]) {
+      const response = await c.fetch(new Request(`${BASE}/download/report.txt`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      }));
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("Not Found");
+      expect(response.headers.get("X-Content-Type-Options")).toBe("nosniff");
+      expect(response.headers.get("Strict-Transport-Security")).toBe("max-age=31536000");
+    }
   });
 
   it("serves /health over HTTP without redirecting to the public URL", async () => {
@@ -1810,7 +1646,7 @@ describe("execute_code registration (code mode)", () => {
     // address is "callable" without showing the parentheses teaches nothing,
     // and the sanitization rule two clauses later makes "as written" false.
     expect(executeTool.description).toContain(
-      "<connectorId>.<toolName>(args)",
+      "connecta.call(address, args)",
     );
     // #418 deliberately replaces the former 4.4 KiB ceiling. The detailed
     // selection rules and examples now live only in the on-demand usage skill.
@@ -1867,7 +1703,7 @@ describe("execute_code registration (code mode)", () => {
         arguments: {
           code: `async () => {
             const sums = await Promise.all(
-              [1, 2, 3].map((n) => calc.add({ a: n, b: n }))
+              [1, 2, 3].map((n) => connecta.call("calc.add", { a: n, b: n }))
             );
             console.log("done");
             return sums.map((s) => s.sum);

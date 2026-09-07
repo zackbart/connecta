@@ -20,8 +20,6 @@ import { msg, type CallErrorDetails } from "./errors.js";
 import { serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
-  MAX_RETRY_BACKOFF_MS,
-  retryBackoffMs,
   type InvocationTiming,
 } from "./invocation.js";
 import {
@@ -44,9 +42,7 @@ import type { KVStorage } from "./types.js";
 export {
   MAX_DESCRIBE_ADDRESSES,
   MAX_DISCOVERY_RESULT_BYTES,
-  MAX_RETRY_BACKOFF_MS,
   MAX_SEARCH_LIMIT,
-  retryBackoffMs,
 };
 
 interface TextContent {
@@ -347,8 +343,6 @@ export interface CallArgs {
   args?: Record<string, unknown>;
   resultMode?: ResultMode;
   timeoutMs?: number;
-  /** Retries after the first attempt; honored only for safely annotated tools. */
-  maxRetries?: number;
   /** Include connector/catalog/result-processing timing segments. */
   diagnostics?: boolean;
 }
@@ -473,9 +467,6 @@ export function createMetaTools(
           ? { allowDestructive: options.allowDestructive }
           : {}),
         ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-        ...(call.maxRetries !== undefined
-          ? { maxRetries: call.maxRetries }
-          : {}),
         ...(opts.requestSignal !== undefined
           ? { requestSignal: opts.requestSignal }
           : {}),
@@ -851,15 +842,14 @@ const CALL_INPUT_SCHEMA = {
   args: z.record(z.string(), z.unknown()).optional(),
   resultMode: z.enum(["mcp", "value"]).optional(),
   timeoutMs: z.number().int().positive().optional(),
-  maxRetries: z.number().int().min(0).max(2).optional(),
   diagnostics: z.boolean().optional(),
 };
 
 /**
  * Register the six explicit meta-tools onto an McpServer instance.
  * `registerExecuteTool` adds the seventh, `execute_code`. Broad discovery and
- * multi-call work is reached through `connecta.search` / `connecta.describe` /
- * `connecta.batch` inside a program, which `execute_code` builds over the same
+ * multi-call work uses discovery and ordinary JavaScript promises inside a
+ * program, which `execute_code` builds over the same
  * `CatalogService` and `InvocationService` these handlers use — one shared
  * services layer, two adapters above it.
  */
@@ -891,7 +881,6 @@ export function registerMetaTools(
       description: describedFor(registry, SKILLS_DESC, "skills"),
       inputSchema: z.object({ name: z.string().optional() }),
       annotations: READ_ONLY_LOCAL,
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.skills(args as SkillArgs),
   );
@@ -916,7 +905,6 @@ export function registerMetaTools(
         includeSchemas: z.enum(["compact", "json"]).optional(),
       }),
       annotations: READ_ONLY_REMOTE,
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.searchTools(args as SearchArgs),
   );
@@ -925,12 +913,10 @@ export function registerMetaTools(
     "call_tool",
     {
       description: CALL_DESC,
-      inputSchema: z.object(CALL_INPUT_SCHEMA),
+      inputSchema: z.strictObject(CALL_INPUT_SCHEMA),
       // call_tool admits only tools that are themselves explicitly read-only;
       // anything else is refused and routed to call_destructive_tool.
       annotations: READ_ONLY_REMOTE,
-      // Omission defaults to model + app. Display-only views may call no tool.
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.callTool(args as CallArgs),
   );
@@ -943,7 +929,7 @@ export function registerMetaTools(
         CALL_DESTRUCTIVE_DESC,
         "destructive",
       ),
-      inputSchema: z.object({
+      inputSchema: z.strictObject({
         ...CALL_INPUT_SCHEMA,
         // Bounded above, but with no lower bound: a model that sends `""` or
         // whitespace has written no reason, and failing an entire consequential
@@ -956,7 +942,6 @@ export function registerMetaTools(
         readOnlyHint: false,
         openWorldHint: true,
       },
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => {
       // `reason` is the host's to display and connecta's to keep out of the
@@ -984,7 +969,6 @@ export function registerMetaTools(
         destructiveHint: false,
         openWorldHint: true,
       },
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.authorizeConnector(args as AuthorizeArgs),
   );
@@ -1003,7 +987,6 @@ export function registerMetaTools(
         maxBytes: z.number().int().min(MIN_MAX_RESULT_BYTES).optional(),
       }),
       annotations: READ_ONLY_LOCAL,
-      _meta: { ui: { visibility: ["model"] } },
     },
     async (args) => mt.getResult(args as GetResultArgs),
   );

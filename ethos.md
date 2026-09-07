@@ -1,7 +1,6 @@
 # connecta — ethos
 
-What connecta is, what it refuses to be, and the invariants every change must
-preserve. A contradiction needs a design decision, not a drive-by edit.
+Connecta’s scope, refusals, and invariants. Contradictions require a design decision.
 
 ## What this is
 
@@ -40,9 +39,8 @@ preserve. A contradiction needs a design decision, not a drive-by edit.
 
 ## Decisions
 
-Shapes considered and turned down. Proposing one again without a new argument
-is not allowed. Accepted designs live in their subsystem guide and the
-CHANGELOG, not here.
+Revisiting a verdict requires a new argument. Accepted designs live in
+subsystem guides and the CHANGELOG.
 
 | Decision | Verdict | Why |
 | --- | --- | --- |
@@ -53,7 +51,7 @@ CHANGELOG, not here.
 | Provider registry / marketplace | refused | prebuilt connections are imports; discovery happens in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
 | Expanded Notion page create/update options | refused | different workflows, not missing fields; use `api()` ([#408](https://github.com/zackbart/connecta/issues/408)) |
 | Protocol sessions & server push | refused | stateless per request |
-| Resources & prompts aggregation | refused | tools only; the Apps shell is the one `resources/read` carve-out ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Resources & prompts aggregation | refused | tools only; clients own presentation ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Elicitation passthrough | refused | no route through a stateless aggregator |
 | Repository formatter | refused | style is authored, not enforced |
 | Host-side projection of program results | refused | a program projects; a heuristic drops fields invisibly ([#223](https://github.com/zackbart/connecta/issues/223)) |
@@ -67,6 +65,11 @@ CHANGELOG, not here.
 | Legacy embedded `UIResource` delivery | refused | superseded upstream, rendered by no client we face ([#266](https://github.com/zackbart/connecta/issues/266)) |
 | Effect as the core effect system | refused | −4% of the core for +75 KB gzip and a second async paradigm; re-measure at v4 stable ([#470](https://github.com/zackbart/connecta/issues/470)) |
 | Shared bounded queue under both admission controllers | refused | built and measured −17 lines for a hook-parameterised abstraction ([#453](https://github.com/zackbart/connecta/issues/453)) |
+| MCP Apps rendering and `connecta.ui` | removed | clients render returned data |
+| Connector shortcut globals | removed | canonical addresses need no sanitization |
+| `connecta.batch` | removed | JavaScript promises suffice |
+| Automatic direct-call retries | removed | callers own retry timing |
+| Connector HTTP routes | removed | deployments own custom routes |
 | Caller-selected toolkits | removed | only config may derive an identity's connector view ([#178](https://github.com/zackbart/connecta/issues/178)) |
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Classic (executor-free) surface | removed | an executor is mandatory ([#273](https://github.com/zackbart/connecta/issues/273)) |
@@ -75,14 +78,14 @@ CHANGELOG, not here.
 | Semantic tool search | gated | keyword search has not been shown to fail ([#27](https://github.com/zackbart/connecta/issues/27)) |
 | MRTR / `input_required` passthrough | gated | relayable statelessly; no host or downstream emits it yet ([#176](https://github.com/zackbart/connecta/issues/176)) |
 | Downstream `ttlMs` cache hints | gated | needs refresh-churn evidence ([#206](https://github.com/zackbart/connecta/issues/206)) |
-| Downstream MCP Apps template passthrough | gated | needs a downstream that ships one ([#266](https://github.com/zackbart/connecta/issues/266)) |
+| Downstream MCP Apps template passthrough | refused | clients own presentation; Connecta serves tools and data |
 | Worker Access inbound auth | provisional | Managed OAuth and Clerk migration need production evidence ([#506](https://github.com/zackbart/connecta/issues/506)) |
-| Program UI tool calls | removed | the read bridge added a second contract without improving agent data retrieval; views are display-only again ([#287](https://github.com/zackbart/connecta/issues/287), [#484](https://github.com/zackbart/connecta/issues/484)) |
+| Program UI tool calls | removed | duplicated calls without improving retrieval ([#287](https://github.com/zackbart/connecta/issues/287), [#484](https://github.com/zackbart/connecta/issues/484)) |
 
 ## Invariants
 
-One line each; the enforcing tests live beside the subsystem documentation.
-Breaking one is a design change wearing a disguise.
+Tests beside subsystem documentation enforce these invariants. Breaking one
+requires a design decision.
 
 - **Fail-closed read-only.** A missing, false, or contradictory annotation never gets the benefit of the doubt.
 - **Generated code cannot mint capabilities.** Admission, credentials, and classification are enforced below the sandbox.
@@ -97,6 +100,4 @@ Breaking one is a design change wearing a disguise.
 - **Human routes manage auth, never capability.** Signed-in humans manage auth for visible connectors; operators also manage tokens and global activity.
 - **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
 
-Connecta began as a radical simplification of
-[executor](https://github.com/UsefulSoftwareCo/executor); this file is the
-record of that simplification holding.
+Connecta simplifies [executor](https://github.com/UsefulSoftwareCo/executor).

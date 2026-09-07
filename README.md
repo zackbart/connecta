@@ -45,7 +45,7 @@ This is the kind of thing the agent writes, not you:
 
 ```js
 async () => {
-  const { nodes } = await tracker.list_issues({ state: "started" });
+  const { nodes } = await connecta.call("tracker.list_issues", { state: "started" });
   const byOwner = {};
   for (const issue of nodes) {
     (byOwner[issue.assignee?.name ?? "unassigned"] ??= []).push(issue.identifier);

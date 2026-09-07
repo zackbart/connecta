@@ -1,5 +1,8 @@
 # MCP UI from programs — design record
 
+Historical record. MCP Apps rendering is now removed; see the
+[pruning decision](../ethos.md) and [migration guide](../documentation/upgrading.md#unreleased-program-api-pruning).
+
 The decision record for
 [#266](https://github.com/zackbart/connecta/issues/266): whether and how an
 `execute_code` program may deliver a *rendered view* to the client, and what a

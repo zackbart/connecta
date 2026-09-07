@@ -229,7 +229,7 @@ export class ConnectorCallError extends Error {
   }
 }
 
-/** The `error` object surfaced in value-mode call results and connecta.batch entries. */
+/** The `error` object surfaced in value-mode call results and rejected promises. */
 export interface CallErrorDetails {
   code: string;
   message: string;

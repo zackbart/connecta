@@ -98,7 +98,7 @@ export interface ConnectaCallsConfig {
    * `timeoutMs`. An explicit per-call value wins. Opt-in: unset by default, so
    * existing long-running calls gain no surprise deadline.
    *
-   * This bounds one attempt, not all retries. `execute_code` host calls are
+   * Each call makes one attempt. `execute_code` host calls are
    * unaffected because they already carry their own bound.
    */
   defaultTimeoutMs?: number;

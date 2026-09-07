@@ -21,6 +21,10 @@ produce ordinary `Connector` instances and pass through the same catalog,
 read-only admission, credentials, storage, invocation, result-size, and
 activity paths.
 
+Custom HTTP routes belong to the deployment fetch handler. Connectors expose
+tools and the documented OAuth hooks; a removed `handleRequest` declaration
+refuses construction.
+
 Connector instances are deployment configuration. They are not registered or
 reconfigured at runtime. Request-local clients, transports, abort signals, and
 catalogs must be released with the request that created them.
@@ -292,9 +296,8 @@ Connecta deliberately sits between protocol generations
   five-minute fingerprinted catalog cache; that remains gated in
   [#206](https://github.com/zackbart/connecta/issues/206).
 - **Multi-round-trip results:** a downstream `input_required` result becomes a
-  non-retryable `input_required_unsupported` failure. `call_tool`, the
-  `execute_code` host bridge and internal batch path both preserve the
-  structured code. Relaying the
+  non-retryable `input_required_unsupported` failure. `call_tool` and the
+  `execute_code` host bridge preserve the structured code. Relaying the
   opaque `requestState` is architecturally possible but gated until real hosts
   and downstreams adopt it.
 
@@ -320,8 +323,7 @@ freshness. The operator page reports whether the last agent read in this runtime
 was fresh or stale; this payload-free timestamp is not persisted. No timer or
 idle warmup originates downstream traffic.
 
-Tool calls must use the shared invocation path. That keeps direct calls, batch
-children, and code-mode host calls aligned on safety, retries, admission,
+Tool calls must use the shared invocation path. That keeps direct calls and code-mode host calls aligned on safety, retry hints, admission,
 timeouts, validation, result guards, and typed failures.
 
 That path also learns an observed output schema after a successful explicitly

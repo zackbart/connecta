@@ -340,6 +340,12 @@ export class Registry implements RegistryView {
       DEFAULT_MAX_RESULT_BYTES,
     );
     for (const c of connectors) {
+      if ("handleRequest" in c) {
+        throw new Error(
+          `Connector "${c.id}" declares removed handleRequest. ` +
+            "Move custom HTTP routes into the deployment's fetch handler.",
+        );
+      }
       if (!ID_RE.test(c.id)) {
         throw new Error(
           `Invalid connector id "${c.id}": must match ${ID_RE.source}`,

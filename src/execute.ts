@@ -2,10 +2,6 @@ import type { McpServer } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import type { ActivityRequestContext } from "./activity.js";
 import {
-  PROGRAM_UI_META_KEY,
-  PROGRAM_UI_RESOURCE_URI,
-} from "./apps-shell.js";
-import {
   boundedDiscoveryText,
   CatalogService,
   DiscoveryPolicyError,
@@ -23,7 +19,7 @@ import {
   ExecutorExecutionError,
   isAdmittingExecutor,
 } from "./executor-admission.js";
-import { boundedEchoText, classifyCallError, msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import {
   InvocationFailure,
   InvocationService,
@@ -43,7 +39,6 @@ import type {
 
 /** Keep one model-written program from amplifying into an unbounded fan-out. */
 const EXECUTE_MAX_HOST_CALLS = 20;
-export const EXECUTE_MAX_BATCH_CALLS = 10;
 const EXECUTE_HOST_CALL_TIMEOUT_MS = 15_000;
 /** Complete entries plus an exact omission count, all inside this byte cap. */
 export const CONNECTOR_INVENTORY_MAX_BYTES = 256;
@@ -58,7 +53,7 @@ export const EXECUTE_MAX_EMITTED_BYTES = 4_000_000;
 export const EXECUTE_MAX_EMITTED_BLOCKS = 32;
 const diagnosticsEncoder = new TextEncoder();
 
-type ExecuteDiagnosticOperation = "search" | "describe" | "call" | "batch";
+type ExecuteDiagnosticOperation = "search" | "describe" | "call";
 
 interface ExecuteOperationDiagnostics {
   operation: ExecuteDiagnosticOperation;
@@ -68,7 +63,6 @@ interface ExecuteOperationDiagnostics {
   resultBytes: number;
   catalogMs: number;
   connectorMs: number;
-  calls?: number;
 }
 
 class ExecuteDiagnostics {
@@ -81,21 +75,11 @@ class ExecuteDiagnostics {
   setupMs = 0;
   executorWallMs = 0;
   private emitted?: { count: number; bytes: number };
-  private ui?: number;
 
   /** Numbers only, per R8 — and only once something was emitted, so a
    * non-emitting run's diagnostics stay byte-for-byte what they were. */
   recordEmitted(count: number, bytes: number): void {
     if (count > 0) this.emitted = { count, bytes };
-  }
-
-  /**
-   * U9: the UI payload gets its own aggregate — one number, the payload's
-   * serialized size. Folding it into `emitted` would desync that aggregate's
-   * pair, which reports the bytes a specific block count cost.
-   */
-  recordUi(bytes: number): void {
-    this.ui = bytes;
   }
 
   private stats(operation: ExecuteDiagnosticOperation) {
@@ -130,7 +114,6 @@ class ExecuteDiagnostics {
   }
 
   recordCall(
-    operation: "call" | "batch",
     outcome: {
       ok: boolean;
       durationMs: number;
@@ -138,35 +121,13 @@ class ExecuteDiagnostics {
       value?: unknown;
     },
   ): void {
-    const stats = this.stats(operation);
-    if (operation === "call") {
-      stats.count++;
-      if (outcome.ok) {
-        stats.resultBytes += serializedDiagnosticBytes(outcome.value);
-      }
-    } else {
-      stats.calls = (stats.calls ?? 0) + 1;
-    }
+    const stats = this.stats("call");
+    stats.count++;
+    if (outcome.ok) stats.resultBytes += serializedDiagnosticBytes(outcome.value);
     stats.failures += outcome.ok ? 0 : 1;
-    if (operation === "call") stats.durationMs += outcome.durationMs;
+    stats.durationMs += outcome.durationMs;
     stats.catalogMs += outcome.timing.catalogMs;
     stats.connectorMs += outcome.timing.connectorMs;
-  }
-
-  recordBatch(
-    durationMs: number,
-    ok: boolean,
-    calls: number,
-    result?: unknown,
-  ): void {
-    const stats = this.stats("batch");
-    stats.count++;
-    // Calls normally accrue while each child runs. Invalid batch input never
-    // starts children, so retain the attempted cardinality here.
-    if (!ok) stats.calls = Math.max(stats.calls ?? 0, calls);
-    stats.durationMs += durationMs;
-    if (!ok) stats.failures++;
-    else stats.resultBytes += serializedDiagnosticBytes(result);
   }
 
   finish(): {
@@ -180,7 +141,6 @@ class ExecuteDiagnostics {
     };
     operations: ExecuteOperationDiagnostics[];
     emitted?: { count: number; bytes: number };
-    ui?: number;
   } {
     const operations = [...this.operations.values()];
     return {
@@ -197,7 +157,6 @@ class ExecuteDiagnostics {
       },
       operations,
       ...(this.emitted ? { emitted: this.emitted } : {}),
-      ...(this.ui !== undefined ? { ui: this.ui } : {}),
     };
   }
 }
@@ -259,66 +218,9 @@ function requireEmittedBlock(raw: unknown): EmittedBlock {
   return raw as EmittedBlock;
 }
 
-const UI_SHAPE_HINT =
-  "connecta.ui accepts exactly one argument: a non-empty string of HTML";
-
-interface UiPayload {
-  html: string;
-}
-
-/** What the argument was, named the way the emit validator names a bad field. */
-function describeUiArgument(raw: unknown): string {
-  if (raw === null) return "null";
-  if (raw === undefined) return "undefined";
-  if (Array.isArray(raw)) return "an array";
-  if (typeof raw === "string") return "an empty string";
-  const kind = typeof raw;
-  return `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`;
-}
-
-/**
- * Strict U1 validation. There is no options parameter and no sugar form, for
- * M1's reason: sugar is how a one-shape contract grows hair. An options bag or
- * an MCP block object is just a non-string, and fails as one.
- */
-function requireUiHtml(raw: unknown): string {
-  if (typeof raw !== "string" || raw.length === 0) {
-    throw guestFailure(
-      "invalid_args",
-      `${UI_SHAPE_HINT}; got ${describeUiArgument(raw)}`,
-    );
-  }
-  return raw;
-}
-
-function requireUiPayload(values: unknown[]): UiPayload {
-  if (values.length !== 1) {
-    throw guestFailure(
-      "invalid_args",
-      `${UI_SHAPE_HINT}; got ${values.length} arguments`,
-    );
-  }
-  return { html: requireUiHtml(values[0]) };
-}
-
-/**
- * Request-local collection for `connecta.emit` and `connecta.ui`. Budgets fail
- * loudly at the crossing call — nothing is partially accepted and prior blocks
- * are unaffected — so a program learns it is over budget while it can still
- * choose differently (M5, U4). Accepted output never rides `ExecuteResult`; the
- * handler that owns this collector delivers it on the final tool result.
- *
- * The two channels share the byte aggregate and nothing else: a UI payload is
- * not a block, so it spends no block count, and at most one is ever accepted.
- */
 export class EmitCollector {
   readonly blocks: EmittedBlock[] = [];
-  /** The shared transport aggregate: emitted blocks plus the UI payload. */
   bytes = 0;
-  /** The one accepted UI payload (U2), delivered in result `_meta` on success. */
-  ui?: UiPayload;
-  /** What the blocks alone cost, so the `emitted` aggregate stays a true pair. */
-  private blockBytes = 0;
   constructor(
     private readonly maxBytes: number,
     private readonly maxBlocks: number,
@@ -342,57 +244,9 @@ export class EmitCollector {
     }
     this.blocks.push(block);
     this.bytes += size;
-    this.blockBytes += size;
-    this.diagnostics?.recordEmitted(this.blocks.length, this.blockBytes);
+    this.diagnostics?.recordEmitted(this.blocks.length, this.bytes);
   }
 
-  /**
-   * U2 and U4: one payload per run, measured as the serialized bytes of
-   * `{ html }` against the same aggregate emit spends. A second call throws
-   * naming the constraint rather than replacing the first — one tool result
-   * renders one view, and last-wins would silently discard a payload the
-   * program deliberately supplied.
-   *
-   * Multiplicity is checked before shape, so the second call is told what it
-   * actually broke. A program whose second payload is also malformed has one
-   * problem worth naming — that there is a second payload at all — and a
-   * complaint about its type would send the author to fix the wrong thing.
-   */
-  acceptUi(...values: unknown[]): void {
-    this.assertUiVacant();
-    this.acceptUiPayload(requireUiPayload(values));
-  }
-
-  private assertUiVacant(): void {
-    if (this.ui) {
-      throw guestFailure(
-        "invalid_args",
-        "connecta.ui accepts at most one payload per run: a view was already accepted and stands",
-      );
-    }
-  }
-
-  private acceptUiPayload(payload: UiPayload): void {
-    let serialized: string;
-    try {
-      serialized = JSON.stringify(payload);
-    } catch {
-      throw guestFailure(
-        "invalid_args",
-        "connecta.ui payload must be JSON-serializable",
-      );
-    }
-    const size = diagnosticsEncoder.encode(serialized).byteLength;
-    if (this.bytes + size > this.maxBytes) {
-      throw guestFailure(
-        "budget_exceeded",
-        `connecta.ui byte budget exceeded: payload is ${size} serialized bytes with ${this.maxBytes - this.bytes} of ${this.maxBytes} remaining`,
-      );
-    }
-    this.ui = payload;
-    this.bytes += size;
-    this.diagnostics?.recordUi(size);
-  }
 }
 
 /** A configured emit budget must be a finite number >= 1; anything else falls back. */
@@ -417,86 +271,6 @@ function serializedDiagnosticBytes(value: unknown): number {
     return 0;
   }
 }
-
-// deno-fmt-ignore
-const RESERVED = new Set([
-  "break",
-  "case",
-  "catch",
-  "class",
-  "const",
-  "continue",
-  "debugger",
-  "default",
-  "delete",
-  "do",
-  "else",
-  "enum",
-  "export",
-  "extends",
-  "false",
-  "finally",
-  "for",
-  "function",
-  "if",
-  "import",
-  "in",
-  "instanceof",
-  "let",
-  "new",
-  "null",
-  "return",
-  "static",
-  "super",
-  "switch",
-  "this",
-  "throw",
-  "true",
-  "try",
-  "typeof",
-  "var",
-  "void",
-  "while",
-  "with",
-  "yield",
-  "await",
-  "async",
-]);
-
-/** Convert a connector/tool name into a valid JS identifier. */
-export function sanitizeIdentifier(name: string): string {
-  let id = name.replace(/[^A-Za-z0-9_$]/g, "_");
-  if (/^[0-9]/.test(id)) id = `_${id}`;
-  if (RESERVED.has(id)) id = `${id}_`;
-  return id;
-}
-
-const SANDBOX_RESERVED_NAMES = new Set([
-  "connecta",
-  "console",
-  "arguments",
-  "result",
-  "undefined",
-  "setTimeout",
-  "Promise",
-  "Error",
-  "WorkerEntrypoint",
-  "CodeExecutor",
-  "__invoke",
-  "__namespace",
-  "__call",
-  "__log",
-  "__dispatchers",
-  "__connectors",
-  "__logs",
-  "__CODEMODE_BINARY_TAG",
-  "__bytesToBase64",
-  "__base64ToBytes",
-  "__encodeCodemodeValue",
-  "__decodeCodemodeValue",
-  "__stringifyForCodemode",
-  "__parseForCodemode",
-]);
 
 function guestFailure(
   code: string,
@@ -527,21 +301,8 @@ function framedGuestFailure(
   return framed;
 }
 
-/**
- * Rebuilds host failures as guest Error instances, then installs connector
- * shortcuts. The random frame is hidden in this closure and Error is locked:
- * connector prose and model code can neither collide with nor forge its frame.
- */
-function lazyNamespacePrelude(
-  connectors: Array<{ id: string; namespace: string }>,
-  failureSecret: string,
-): string {
-  const declarations = connectors
-    .map(
-      ({ id, namespace }) =>
-        `globalThis[${JSON.stringify(namespace)}] = __makeConnectaNamespace(${JSON.stringify(id)});`,
-    )
-    .join("\n");
+/** Rebuild host failures as guest errors without exposing the private frame. */
+function guestErrorPrelude(failureSecret: string): string {
   return `((failurePrefix) => {
   const NativeError = globalThis.Error;
   const startsWith = Function.prototype.call.bind(String.prototype.startsWith);
@@ -577,24 +338,17 @@ function lazyNamespacePrelude(
     writable: false,
     configurable: false
   });
-  const __makeConnectaNamespace = (connectorId) => Object.freeze(new Proxy(Object.create(null), {
-    get: (_target, toolName) => typeof toolName === "string"
-      ? (args) => connecta.__callNamespace(connectorId, toolName, args)
-      : undefined
-  }));
-${declarations}
 })(${JSON.stringify(`${GUEST_FAILURE_FRAME}${failureSecret}:`)});`;
 }
 
 /**
- * Expose one fixed host provider plus trusted sandbox setup that creates a
- * lazy proxy global per connector. No connector catalog is touched until code
- * calls that namespace or explicitly asks search/describe.
+ * Expose one host provider and typed guest errors. Catalogs load only when
+ * the program calls a tool or asks search/describe.
  */
 export async function buildSandboxProviders(
   registry: RegistryView,
   baseUrl: string,
-  logger: Logger,
+  _logger: Logger,
   activity?: ActivityRequestContext,
   limits: {
     signal?: AbortSignal | undefined;
@@ -637,25 +391,6 @@ export async function buildSandboxProviders(
   );
   const failureSecret = guestFailureSecret();
   let hostCalls = 0;
-  const connectors = registry.listConnectors();
-  const namespaces: Array<{ id: string; namespace: string }> = [];
-  const namespaceOwners = new Map<string, string>();
-  for (const connector of connectors) {
-    const namespace = sanitizeIdentifier(connector.id);
-    const owner = namespaceOwners.get(namespace);
-    const problem = SANDBOX_RESERVED_NAMES.has(namespace)
-      ? `Connector "${connector.id}" sanitizes to reserved execute_code namespace "${namespace}". Rename or exclude the connector before using execute_code.`
-      : owner
-        ? `Connector ids "${owner}" and "${connector.id}" both sanitize to execute_code namespace "${namespace}". Rename or exclude one connector before using execute_code.`
-        : undefined;
-    if (problem) {
-      logger.warn(`[connecta] execute_code: ${problem}`);
-      throw new Error(problem);
-    }
-    namespaceOwners.set(namespace, connector.id);
-    namespaces.push({ id: connector.id, namespace });
-  }
-
   const invocationContext = () => ({
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
@@ -708,42 +443,14 @@ export async function buildSandboxProviders(
       throw err;
     }
   };
-  const called = async <T>(
-    operation: "call" | "batch",
-    invoke: () => Promise<Awaited<ReturnType<InvocationService["invoke"]>>>,
-  ): Promise<T> => {
-    const outcome = await invoke();
-    limits.diagnostics?.recordCall(operation, outcome);
+  const callAddress = async (address: unknown, args: unknown) => {
+    const outcome = await invocation.invoke(String(address), args ?? {}, invocationContext());
+    limits.diagnostics?.recordCall(outcome);
     if (!outcome.ok) throw new InvocationFailure(outcome.error);
-    return outcome.value as T;
-  };
-  const callAddress = async (
-    address: unknown,
-    args: unknown,
-    diagnosticOperation: "call" | "batch" = "call",
-  ) => {
-    return called(diagnosticOperation, () =>
-      invocation.invoke(String(address), args ?? {}, invocationContext()),
-    );
-  };
-  const callNamespace = async (
-    connectorId: unknown,
-    toolAlias: unknown,
-    args: unknown,
-  ) => {
-    return called("call", () =>
-      invocation.invokeToolAlias(
-        String(connectorId),
-        String(toolAlias),
-        sanitizeIdentifier,
-        args ?? {},
-        invocationContext(),
-      ),
-    );
+    return outcome.value;
   };
 
   const fns: ExecutorProvider["fns"] = {
-    __callNamespace: callNamespace,
     call: (address: unknown, args: unknown) =>
       callAddress(address, args),
     // Emission is a provider function, never an ExecuteResult field —
@@ -759,76 +466,6 @@ export async function buildSandboxProviders(
         );
       }
       limits.emitCollector.accept(block);
-    },
-    // The rendered-output channel rides the same bridge for the same
-    // reason (U7): one more provider fn, no change to ExecuteResult or
-    // the Executor contract. Delivery is the handler's job, not the
-    // guest's — nothing here becomes addressable.
-    ui: async (...values: unknown[]) => {
-      if (!limits.emitCollector) {
-        throw guestFailure(
-          "unavailable",
-          "connecta.ui is unavailable: no emission collector was configured for this execution",
-          true,
-        );
-      }
-      limits.emitCollector.acceptUi(...values);
-    },
-    batch: async (calls: unknown) => {
-      const started = Date.now();
-      const callCount = Array.isArray(calls) ? calls.length : 0;
-      try {
-        if (!Array.isArray(calls)) {
-          throw guestFailure("invalid_args", "calls must be an array");
-        }
-        if (calls.length > EXECUTE_MAX_BATCH_CALLS) {
-          throw guestFailure(
-            "invalid_args",
-            `connecta.batch accepts at most ${EXECUTE_MAX_BATCH_CALLS} calls`,
-          );
-        }
-        const result = await Promise.all(
-          calls.map(async (call) => {
-            const item = call as { address?: unknown; args?: unknown };
-            try {
-              return {
-                address: String(item.address),
-                ok: true,
-                data: await callAddress(
-                  item.address,
-                  item.args,
-                  "batch",
-                ),
-              };
-            } catch (err) {
-              const details =
-                err instanceof InvocationFailure
-                  ? err.details
-                  : classifyCallError(err, "batch_call_failed");
-              return {
-                address: String(item.address),
-                ok: false,
-                error: details.message,
-                errorDetails: details,
-              };
-            }
-          }),
-        );
-        limits.diagnostics?.recordBatch(
-          Date.now() - started,
-          true,
-          callCount,
-          result,
-        );
-        return result;
-      } catch (err) {
-        limits.diagnostics?.recordBatch(
-          Date.now() - started,
-          false,
-          callCount,
-        );
-        throw err;
-      }
     },
     search: async (raw: unknown) =>
       timedCatalog("search", () =>
@@ -894,7 +531,7 @@ export async function buildSandboxProviders(
   return [
     {
       name: "connecta",
-      prelude: lazyNamespacePrelude(namespaces, failureSecret),
+      prelude: guestErrorPrelude(failureSecret),
       fns: transportedFns,
     },
   ];
@@ -1106,19 +743,9 @@ export function createExecuteTool(
     const response = jsonResult({
       result,
       ...(emitted.blocks.length > 0 ? { emitted: emitted.blocks.length } : {}),
-      // U3: the model learns a view rendered without seeing its bytes. Spread
-      // conditionally so a program that never called connecta.ui produces
-      // today's byte-for-byte response.
-      ...(emitted.ui ? { ui: true } : {}),
       ...(logs ? { logs } : {}),
       ...(diagnostics ? { diagnostics: diagnostics.finish() } : {}),
     });
-    if (emitted.ui) {
-      // _meta is where the Apps spec's best practices put data "not intended
-      // for model context", and how shipped hosts behave. The shell reads
-      // exactly this key out of the tool result the host delivers to it.
-      response._meta = { [PROGRAM_UI_META_KEY]: emitted.ui };
-    }
     if (emitted.blocks.length > 0) {
       // Emitted image/audio blocks are valid MCP content that ToolResult's
       // text-only typing does not model — the same acknowledged gap
@@ -1160,30 +787,21 @@ function failureResponse(
 }
 
 /**
- * M4 and U3: a failed program delivers no blocks and no view, but each
- * discard is visible — and one failure can discard both.
+ * A failed program delivers no blocks and reports how many were discarded.
  */
 function discardedEmits(emitted: EmitCollector): {
   emittedDiscarded?: number;
-  uiDiscarded?: true;
 } {
-  return {
-    ...(emitted.blocks.length > 0
-      ? { emittedDiscarded: emitted.blocks.length }
-      : {}),
-    ...(emitted.ui ? { uiDiscarded: true as const } : {}),
-  };
+  return emitted.blocks.length > 0
+    ? { emittedDiscarded: emitted.blocks.length }
+    : {};
 }
 
 /** The same visibility for the plain-text error paths. */
 function discardedEmitsText(emitted: EmitCollector): string {
-  const lines = [
-    ...(emitted.blocks.length > 0
-      ? [`emittedDiscarded: ${emitted.blocks.length}`]
-      : []),
-    ...(emitted.ui ? ["uiDiscarded: true"] : []),
-  ];
-  return lines.length > 0 ? `\n\n${lines.join("\n")}` : "";
+  return emitted.blocks.length > 0
+    ? `\n\nemittedDiscarded: ${emitted.blocks.length}`
+    : "";
 }
 
 function connectorInventory(
@@ -1192,10 +810,7 @@ function connectorInventory(
   const prefix = "Connectors: ";
   if (connectors.length === 0) return `${prefix}none.`;
   const entries = connectors.map((connector) => {
-    const shortcut = sanitizeIdentifier(connector.id);
-    const address = shortcut === connector.id
-      ? connector.id
-      : `${connector.id} (shortcut ${shortcut})`;
+    const address = connector.id;
     if (!connectorGuide(connector)) return address;
     const requirement = connectorGuideRequired(connector)
       ? "required guide"
@@ -1226,15 +841,14 @@ const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Choose the route before discovery. A known address uses call_tool. Unknown-address and wider read-only work use exactly one execute_code call that discovers, calls, and returns the answer. Finish in that program; don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_MAX_BATCH_CALLS} per batch, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
+) => `Choose the route before discovery. A known address uses call_tool. Unknown-address and wider read-only work use exactly one execute_code call that discovers, calls, and returns the answer. Finish in that program; don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
 
 ${connectorInventory(connectors)}
 
 Fetch required guides named above before executing. Write one plain-JavaScript async arrow function. Use only:
-- <connectorId>.<toolName>(args) for a sanitized shortcut, or connecta.call(address, args) for a canonical address.
-- connecta.search(args) returns { tools }; connecta.describe(args) returns { tools }; use entry key lists. connecta.batch(calls) accepts canonical connector addresses only.
+- connecta.call(address, args) for a canonical connector tool address. Use Promise.all or Promise.allSettled for independent calls.
+- connecta.search(args) returns { tools }; connecta.describe(args) returns { tools }; use entry key lists.
 - connecta.emit(block) — { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }. Success-only; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; invalid/over-budget throws.
-- connecta.ui(html) for one display-only, success-only view; return the same summary the HTML renders.
 - console.log(...) — captured.
 
 No portable ambient capabilities. Return JSON; reduce large results before truncation. Build arguments from required input keys and schemas, never descriptions or output keys. Fetch skills({ name: "usage" }) only when this is insufficient or repair is needed; it has full rules, examples${connectorGuides ? ", guide handling" : ""}, and runtime details.`;
@@ -1316,14 +930,6 @@ export function registerExecuteTool(
         readOnlyHint: true,
         destructiveHint: false,
         openWorldHint: true,
-      },
-      // U5 and U10 are specified in documentation/code-mode.md; explicit model
-      // visibility prevents hosts from offering execute_code to the view.
-      _meta: {
-        ui: {
-          resourceUri: PROGRAM_UI_RESOURCE_URI,
-          visibility: ["model"],
-        },
       },
     },
     async (args, extra) => {

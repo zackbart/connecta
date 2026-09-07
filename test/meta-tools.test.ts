@@ -408,16 +408,11 @@ Prefer \`notion.search\` over listing databases.
     expect(textFrom(fetched)).toContain("crm.get_account");
     expect(textFrom(fetched)).toContain("## Errors and repair");
     expect(textFrom(fetched)).toContain("## Runtime portability");
-    // The guarded-render recipe, whose whole point is the branch that does not
-    // render: a program that finds the data is not what it expected hands the
-    // model the record instead of a confident, empty view (#282).
-    expect(textFrom(fetched)).toContain("## Rendering a view");
+    expect(textFrom(fetched)).toContain("## Media output");
     expect(textFrom(fetched)).toContain(
-      "return a trimmed first record instead of rendering",
+      "Return data for the client to render as a view",
     );
-    expect(textFrom(fetched)).toContain(
-      "the model reads the return value, not the view",
-    );
+    expect(textFrom(fetched)).not.toContain("connecta.ui");
   });
 
   it("serves byte-identical shared usage guidance across deployments", async () => {

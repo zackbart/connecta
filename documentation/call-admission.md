@@ -1,7 +1,7 @@
 # Downstream call admission
 
 One admitted MCP request can fan out into many downstream calls. A program
-calls tools from loops, from `connecta.batch`, and from branches the caller
+calls tools from loops, from parallel `connecta.call` calls, and from branches the caller
 never saw. The deployment-wide request pool
 ([request admission](./request-admission.md)) bounds the envelope; it cannot
 see anything inside it. A provider that publishes "60 requests per minute"
@@ -76,16 +76,15 @@ not be a way to reset a live budget. Exhausted partition capacity is
 
 The registry owns the limiter, and `InvocationService.invoke` acquires a permit
 immediately before `Connector.callTool` and releases it in `finally`. Both call
-paths — top-level `call_tool` and a program's `connecta.call` or
-`connecta.batch` — reach that same seam, so a program cannot buy itself a
+paths, top-level `call_tool` and program calls through `connecta.call`,
+reach that same seam, so a program cannot buy itself a
 second limit by taking the other route.
 
-- **A retry is another attempt.** It reacquires and can consume another budget
-  entry, because the provider counts it that way. Backoff never holds a
-  concurrency permit.
-- **A proactive short-window `rate_limited` refusal** participates in the
-  ordinary retry policy and counts as an attempt. Activity records the final
-  outcome and the attempt count.
+- **A caller retry is another call.** It reacquires and can consume another
+  budget entry. Connecta returns retry hints without waiting or retrying.
+- **A proactive short-window `rate_limited` refusal** returns its retry hint
+  without waiting or dispatching. Activity records one failed admission attempt;
+  a caller may reissue after the window.
 - **A queued cancellation consumes nothing.** It is removed from the queue with
   no rolling-window entry charged.
 - **Caller cancellation is terminal.** It is non-retryable, releases its
@@ -114,7 +113,7 @@ from "we are throttling ourselves".
 ## Enforcement scope
 
 This is deliberately **per-runtime**. It completely contains fan-out inside one
-request, including a wide `connecta.batch` in one Worker isolate. A rolling
+request, including parallel `connecta.call` calls in one Worker isolate. A rolling
 budget is exact inside one Node process or Worker isolate, and best-effort
 across isolates, replicas, and restarts.
 
@@ -139,5 +138,5 @@ typed error code.
 | Invariant | Suite |
 | --- | --- |
 | Independent partitions, exact rolling-window reset and retry, queued cancellation charging no budget, synchronous cancel during partition derivation, validated values snapshotted rather than read from mutable config, bounded partition state and contained `partitionKey` failures, empty and multi-rule policies refused | `test/call-admission.test.ts` (controller) |
-| One base-registry limiter shared by direct and program calls, batch bounds with input order preserved, cancellation threading, no dispatch or retry or health poisoning after cancellation, short proactive windows retried without poisoning health, payload-free `/health` aggregates | `test/call-admission.test.ts` (integration, Node + Workers) |
+| One base-registry limiter shared by direct and program calls, promise concurrency with input order preserved, cancellation threading, no dispatch or retry or health poisoning after cancellation, retry hints returned without waiting or poisoning health, payload-free `/health` aggregates | `test/call-admission.test.ts` (integration, Node + Workers) |
 | Where provider budgets are allowed to come from at all | [provider conventions P12](./provider-conventions.md#p12--declare-an-admission-budget-only-when-the-provider-documents-a-number), [provider audit](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md) |

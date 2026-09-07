@@ -237,8 +237,8 @@ not send the agent to `authorize_connector`, you do not repair the argument
 object. You re-address — look the id up again, or accept the absence and carry
 on — and a program looping over ids inside `execute_code` can continue past
 `not_found` where `connector_call_failed` would have to abort the run, reading
-the code off a `connecta.batch` entry's `errorDetails` rather than off a caught
-error, which the guest bridge has already stripped to prose. That
+the code from a caught error or a rejected promise. The guest bridge preserves
+the typed classification. That
 control-flow difference is the H11 test being met; it is not a label for the
 cause.
 

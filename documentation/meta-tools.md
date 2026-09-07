@@ -8,9 +8,8 @@ annotations, and `get_result` pages bounded results.
 
 Every deployment requires an executor and `tools/list` is exactly seven:
 `execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
-`authorize_connector`, `get_result`, and `skills`. Discovery breadth and
-batching live in `connecta.search`, `connecta.describe`, and `connecta.batch`
-inside a program ([#273](https://github.com/zackbart/connecta/issues/273)).
+`authorize_connector`, `get_result`, and `skills`. Discovery uses `connecta.search` and `connecta.describe`; programs compose
+calls with JavaScript promises ([#273](https://github.com/zackbart/connecta/issues/273)).
 
 Code-first is what a model sees. Read-only work has two routes: `call_tool` for
 one known address, and `execute_code` when discovery or any wider work is
@@ -41,8 +40,8 @@ The measurements never contain program source, arguments, values, addresses,
 credentials, logs, or raw error text.
 
 Nothing became unreachable. `connecta.describe` takes the same addresses and
-formats as the internal catalog service, `connecta.batch` runs 1–10 parallel
-read-only calls and returns typed outcomes, and an unfiltered
+formats as the internal catalog service, ordinary promises compose read-only
+calls, and an unfiltered
 `connecta.search({})` browses every catalog a program can reach. Live connector
 probing is an operator concern: the operator pages and `/health` own it.
 
@@ -62,7 +61,7 @@ their smallest successful one-tool shapes:
 
 The deployment-derived `execute_code` description includes a live connector
 inventory before any catalog search. It preserves registry order and uses each
-canonical id, adding `shortcut <name>` only when the program namespace differs.
+canonical id without generating a second name for programs.
 The complete inventory line is capped at 256 UTF-8 bytes. Entries stay whole,
 and a truncated line ends with the exact `+N more` count. This reads only the
 configured registry: it loads no catalog, probes no credential, grants no
@@ -338,8 +337,7 @@ That route echoes the caller's own arguments back only while they fit a
 512-byte budget, and then whole — never clipped. An error envelope is not
 size-guarded the way a result is, so an unbounded echo would let a large
 argument object produce a refusal many times the deployment's result cap, on
-both `call_tool` and calls a program routes through `connecta.call` or
-`connecta.batch`. Over budget, `args` is absent and the `purpose` says to
+both `call_tool` and program calls through `connecta.call`. Over budget, `args` is absent and the `purpose` says to
 re-send what was just sent: the agent already holds its own arguments, and half
 of them would describe a call nobody made.
 
@@ -352,9 +350,7 @@ recovery query, each of which lands in both the text content and
 the address is the thing being corrected, a clipped one still identifies the
 mistake, and a short one — every real one — comes back exact and untagged.
 
-Shortcut ambiguity inside `execute_code` returns every colliding canonical
-address and points at `connecta.call`; the program or model must still choose
-which one matches the user's intent. `call_destructive_tool` accepts an optional
+`call_destructive_tool` accepts an optional
 `reason` of at most 500 characters for the host's human approval view. It is
 outer-call context only: Connecta neither treats it as authority nor passes it
 to the downstream connector, and an empty or whitespace-only one is read as no
@@ -395,7 +391,7 @@ about the mistake as all 40,000 would.
 A remote MCP tool's advertised `inputSchema` is checked in the shared
 invocation path before admission and provider dispatch. A mismatch is the
 non-retryable `invalid_args`, consistently across `call_tool`,
-`call_destructive_tool`, batch outcomes, and generated-code failures. The error
+`call_destructive_tool`, generated-code failures, and rejected promises. The error
 names the connector and operation and carries bounded `validation.issues`:
 JSON Pointer `path`, schema-keyword `code`, and expected shape. Submitted
 values are never copied into those findings.

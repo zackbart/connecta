@@ -83,30 +83,23 @@ interface ExecuteResult {
 Connecta passes exactly one provider, named `connecta`. An executor must:
 
 1. **Expose each provider as a guest global** whose properties are its `fns`,
-   called with the program's arguments and awaited. Connecta's provider carries
-   `search`, `describe`, `call`, `batch`, `emit`, and `__callNamespace` — see
-   point 3.
+   called with the program's arguments and awaited. Connecta supplies `search`,
+   `describe`, `call`, and `emit`.
 2. **Evaluate `prelude` after the provider globals exist and before the
-   program**, in a scope where those globals are reachable. It is host-authored
-   trusted code, never model input, and skipping it is not an option: connecta's
-   prelude is what installs the lazy connector shortcuts.
-3. **Let the prelude reach the provider.** That prelude
-   (`lazyNamespacePrelude` in `src/execute.ts`) assigns one
-   `globalThis[<connectorId>]` Proxy per connector, each forwarding to
-   `connecta.__callNamespace(connectorId, toolName, args)`. An executor exposing
-   only the four documented functions leaves every shortcut dead and breaks `A2`.
-4. **Marshal values as JSON** in both directions (`P3`), and reject a host call
+   program.** This is trusted host code. Connecta uses it to restore typed host
+   errors in the guest without exposing the private error frame.
+3. **Marshal values as JSON** in both directions (`P3`), and reject a host call
    whose function is not an own property of `fns` — the guest can ask for
    anything, including inherited members.
-5. **Return, never throw, for a failed program**: set `error` to the guest's
+4. **Return, never throw, for a failed program**: set `error` to the guest's
    message, leave `result` undefined. `createExecuteTool` reads `error` first and
    matches it back to the failures recorded during the run, which is how an
    uncaught tool failure keeps its type (`E1`).
-6. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
+5. **Capture `console.log`, `console.warn`, and `console.error`** into `logs` in
    call order (`R5`), bounding what it retains.
-7. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`). Keep
+6. **Bound the guest**: wall clock, memory, stack, and CPU (`L3`, `L5`). Keep
    ambient capabilities within the documented and tested `P2`/`X5` boundary.
-8. **Grant no ambient authority of its own.** Never back this with `eval` or
+7. **Grant no ambient authority of its own.** Never back this with `eval` or
    `node:vm`: the sandbox is a containment layer on top of connecta's boundary,
    not a replacement for it, and every capability arrives through `fns`.
 
@@ -130,13 +123,8 @@ reinterpreted, so do not rely on it.
 
 **P2.** The only capabilities in the contract are:
 
-- one lazy global per connector (see [Addressing](#addressing));
-- `connecta.search`, `connecta.describe`, `connecta.call`, `connecta.batch`;
+- `connecta.search`, `connecta.describe`, `connecta.call`, `connecta.emit`;
 - `console.log`, `console.warn`, `console.error`, captured and returned.
-
-`connecta` also carries the `__`-prefixed dispatcher the shortcut prelude uses.
-It is host plumbing, callable but not contract: it takes a connector id and an
-unsanitized-or-sanitized tool name and can change shape without notice.
 
 Anything else a runtime happens to expose is outside the portable contract and
 must not be used. QuickJS grants none of it. A loader-only Dynamic Worker denies
@@ -157,49 +145,21 @@ runtime modules. Neither executor exposes `require`.
 
 ## Addressing
 
-**A1.** The canonical address `<connectorId>.<toolName>` — byte-for-byte what
-`search_tools` and `connecta.search` print — is always callable through
-`connecta.call` and `connecta.batch`. This is never optional and never
-sanitized. It is what prevents sanitized-name collisions and what gives a
-generated program a stable escape hatch when a shortcut is ambiguous, absent, or
-wrong. A program that can only reach a tool through a convenience name is one
-rename away from broken.
+**A1.** A tool has one canonical address, `<connectorId>.<toolName>`, exactly
+as discovery returns it. Call it with `connecta.call(address, args)`. Punctuation
+is preserved; no JavaScript identifier conversion takes place.
 
-**A2.** Shortcut namespaces are sugar over `A1`: every connector gets one lazy
-global whose properties are its tools, so `<connectorId>.<toolName>(args)` works
-with both parts sanitized into JavaScript identifiers — characters outside
-`[A-Za-z0-9_$]` become `_`, a leading digit gets `_` prefixed, and a reserved
-word gets `_` appended (`my-service.get.thing` → `my_service.get_thing`). The
-globals are lazy: no catalog is fetched until a program touches one. The
-bounded deployment inventory in the `execute_code` description shows each
-canonical connector id and labels the shortcut only when it differs; the
-[discovery guide](./meta-tools.md#discovery-context) defines that bound. The sugar is frozen: every expansion invents a collision class `A1` already solves ([#223](https://github.com/zackbart/connecta/issues/223)).
+**A2.** Connectors create no guest globals. Connector ids that resemble a
+JavaScript builtin, or would collide after sanitization, remain usable through
+their canonical addresses. The bounded connector inventory in the tool
+description shows canonical ids only.
 
-**A3.** A shortcut that resolves to more than one tool fails closed with
-`ambiguous_tool_alias`, naming the colliding tool names and pointing at
-`connecta.call`. It never picks one. The canonical addresses of both tools
-remain callable.
-
-**A4.** A deployment whose connector ids collide with each other after
-sanitization, or that sanitize onto a name the sandbox reserves, fails *every*
-`execute_code` request with an error naming the offending ids. Failing loudly on
-the deployment's mistake beats silently answering from whichever connector
-sorted first.
-
-**A5 (verdict: shortcut namespaces are kept, and frozen).** They cost nothing to
-keep, a working ergonomic surface should not be removed mid-arc, and the
-exploration's cold-start sample used them naturally. Frozen means no typed method
-lists, no per-tool closures, no generated `.d.ts`, no second sanitization rule —
-every expansion invents a collision class the addressing in `A1` already solves.
-The default has since flipped without revisiting them
-([#224](https://github.com/zackbart/connecta/issues/224)), so evidence rather
-than a gate would take them away: if programs reach for `connecta.call` anyway,
-or shortcut ambiguity shows up in failures, they lose.
+Clauses A3–A5 belonged to shortcut dispatch and are retired. Clients and stored
+programs should follow the [migration guide](./upgrading.md#unreleased-program-api-pruning).
 
 ## The surface
 
-Four functions, all `async`, plus the host-internal `__`-prefixed dispatcher
-(`P2`) that is callable but not contract. Nothing else works: reading any other
+Four functions, all `async`: `search`, `describe`, `call`, and `emit`. Nothing else works: reading any other
 property yields a function — the guest namespace is a Proxy, so `typeof
 connecta.toString` is `"function"` — but *calling* it fails, because the host
 resolves only own members of the provider's `fns`. A program must treat the four
@@ -222,7 +182,7 @@ const page = await connecta.search({
 
 **S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Top-level `search_tools` is different: it returns `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. An output shape learned under `S9` also carries `outputSchemaSource: "observed"`; provider declarations carry no source marker. Tool rows expose neither lexical scores nor per-result coverage. An empty or whitespace-only query browses. Non-empty input with no ASCII lexical terms returns no tools and bounded no-match analysis; mixed input searches with its ASCII terms. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes. Each enum node gets 256 of those bytes. About three near-cap enum nodes can therefore coexist while leaving the final quarter for surrounding syntax; the unchanged global fallback still applies above 1,024 bytes. A capped enum preserves whole values before `unknown` and an exact omitted-value count, while an empty enum renders as `never`. Either cap carries `inputSchemaTruncated` or `outputSchemaTruncated`; a shape-wide cap remains structurally valid with `unknown` types plus `/* truncated */`. Small enums remain complete. Use `connecta.describe` (or JSON search) for omitted exact constraints.
 
-**S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`, connector shortcuts, and `connecta.batch`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
+**S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
 
 **S2.** A requested object schema carries `inputKeys`, `requiredInputKeys`, and `outputKeys`: the same names the rendered schema shows, ready to check before building arguments. Match inputs, truncation, safety, and outputs, not lexical
 rank; search distinct operations separately and use `outputKeys`, not guessed roots. A non-object schema — a union, an array, an
@@ -276,30 +236,33 @@ when present, otherwise text content JSON-parsed when it parses and the raw text
 when it does not; a downstream result flagged `isError` throws. Omitted `args`
 is treated as `{}`.
 
-**S6.** Every call — canonical or shortcut — goes through the same catalog,
+**S6.** Every call goes through the same catalog,
 fail-closed read-only predicate, admission, credential containment, timeout
 classification, health accounting, and activity recording as an ordinary
 meta-tool call. The sandbox is an additional containment layer, not a second
 implementation of the boundary, and nothing a program does widens what it can
 reach.
 
-### connecta.batch
+### Parallel calls
+
+**S7.** Use `Promise.all` for independent calls when any failure should fail the
+program, or `Promise.allSettled` to retain every outcome in input order. Both
+use the same per-call admission, host-call budget, deadlines, and activity path
+as sequential calls. There is no separate batch size or result contract.
 
 ```js
-const outcomes = await connecta.batch([
-  { address: "ci.get_run", args: { runId: 42 } },
-  { address: "ci.list_jobs", args: { runId: 42 } },
+const outcomes = await Promise.allSettled([
+  connecta.call("ci.get_run", { runId: 42 }),
+  connecta.call("ci.list_jobs", { runId: 42 }),
 ]);
+return outcomes.map((outcome) => outcome.status === "fulfilled"
+  ? { ok: true, data: outcome.value }
+  : { ok: false, code: outcome.reason.code, message: outcome.reason.message });
 ```
 
-**S7.** Runs 1–10 independent calls in parallel and returns their outcomes in
-order. A success is `{ address, ok: true, data }`. A failure is
-`{ address, ok: false, error, errorDetails }`, where `error` is the message and
-`errorDetails` is the typed object described in [Errors](#errors) — the same two
-field names the host's internal batch path uses. One failing call never rejects
-the batch, and more than ten calls throws.
-
-**S8.** Batch and thrown failures share one vocabulary (`E1`): an entry's `errorDetails.code` and `retryable` equal the fields on the error the same call would throw. Use batch for independent concurrency, not to recover lost type.
+**S8.** A rejected promise retains the caught error's `code`, `retryable`, and
+`details`. Project those fields before returning; an Error object itself is
+not a JSON result contract.
 
 **S9.** A successful explicitly read-only call whose provider declared no `outputSchema` passively learns one from the unwrapped result. The observation retains field names and broad JSON types only: no arguments, scalar values, raw results, code, credentials, or errors. Property names may be user-authored. Objects stay open, every field stays optional, and search or describe labels the shape `outputSchemaSource: "observed"` so a model cannot mistake runtime evidence for a provider contract. Later observations merge fields and types in a process-local 256-entry LRU; a provider declaration always wins. Inference stops at depth 6, 128 schema nodes, 48 properties per object, 32 inspected array items, and 128 UTF-8 bytes per property name; `__proto__`, `constructor`, and `prototype` names are discarded. A tool definition over 64 KiB or an observed schema over 16 KiB is ignored. An entry expires after 24 hours and carries the exact serialized tool definition, so a changed catalog entry, process restart, or Worker isolate eviction starts cold. A failed call or failed result-processing step learns nothing, and any observation failure is discarded without changing a successful call. No discovery read, timer, refresh, background job, or storage adapter executes or persists work for this cache: the result-sampling refusal in [#282](https://github.com/zackbart/connecta/issues/282) stands.
 
@@ -314,17 +277,16 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 
 ## Errors
 
-**E1.** There are four error channels. Connecta failures are typed whether caught or uncaught.
+**E1.** There are three error channels. Connecta failures are typed whether caught or uncaught.
 
 | Channel | Shape | Typed? |
 | --- | --- | --- |
 | A caught Connecta host failure | `Error` with `message`, `code`, `retryable`, and `details` | yes |
-| `connecta.batch` outcome | `{ ok: false, error, errorDetails }` | yes |
 | An uncaught **tool or discovery** failure, as the model sees it | `{ error: { code, message, retryable, … } }` with `isError` | yes |
 | Program or execution failure (`E5`, `E6`, a bridge bound in `L6`) | error text | no |
 
 Both executor bridges reduce a rejected host call to `new Error(message)`. Connecta restores the typed failure in a trusted prelude with a per-execution authenticated frame (`X11`), without turning the rejection into a returned value.
-`message` remains the human text. `code` and `retryable` are the stable branch fields; `details` is the complete host classification. This covers `call`, connector shortcuts, `search`, `describe`, `emit`, `ui`, rejected batch input, and the host-call budget.
+`message` remains the human text. `code` and `retryable` are the stable branch fields; `details` is the complete host classification. This covers `call`, `search`, `describe`, `emit`, and the host-call budget.
 Program-authored errors stay untyped, and code must never parse error prose.
 
 **E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program may do.
@@ -333,7 +295,6 @@ Program-authored errors stay untyped, and code must never parse error prose.
 | --- | --- | --- |
 | `unknown_address` | no connector owns the address | false |
 | `unknown_tool` | the connector has no such tool | false |
-| `ambiguous_tool_alias` | a shortcut matches two tools (`A3`) | false |
 | `destructive_tool_requires_approval` | the tool is not explicitly read-only | false |
 | `auth_required` | the credential is missing, expired, or rejected | false |
 | `invalid_args` | arguments or discovery bounds were rejected | false |
@@ -344,7 +305,6 @@ Program-authored errors stay untyped, and code must never parse error prose.
 | `timeout` | the per-call 15-second deadline expired | true |
 | `cancelled` | the run ended while this call was in flight (`E5`) | false |
 | `connector_call_failed` | anything else the connector threw | per message |
-| `batch_call_failed` | a `connecta.batch` entry connecta could not even attempt | per message |
 | `catalog_lookup_failed` | the connector's catalog could not be loaded | per cause |
 | `result_processing_failed` | the result could not be prepared | per message |
 | `result_too_large` | a discovery response exceeded its byte bound | false |
@@ -370,8 +330,7 @@ guest: admission rejection (`executor_overloaded`, retryable, with
 reported to the model as an error result. One seam: a host call still in flight
 when the run is cancelled fails with `cancelled`, catchable on the way out but
 never worth acting on (`Y3`). When shutdown tears down a program that had
-already started, accepted blocks and UI are reported as discarded under `M4`
-and `U3`; a failure before execution started carries no discard fields.
+already started, accepted blocks are reported as discarded under `M4`; a failure before execution started carries no discard fields.
 
 **E6.** An error the program raises itself — a `TypeError`, a call to a
 `connecta` member that is not a provider function (including an inherited one
@@ -382,7 +341,7 @@ exactly first, by containment second — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
 type beats keeping the prose.
 
-**E7.** `retryable` for `unknown_address`, `unknown_tool`, `ambiguous_tool_alias`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. The message, the derived `query`, and a failed describe entry's `address` clamp caller-authored text to 512 UTF-8 bytes with an `…` marker. Those values land in the text content and `structuredContent`, so an invented 50 KB address would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake by its position; a short one — the common case — is exact and untagged.
+**E7.** `retryable` for `unknown_address`, `unknown_tool`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. The message, the derived `query`, and a failed describe entry's `address` clamp caller-authored text to 512 UTF-8 bytes with an `…` marker. Those values land in the text content and `structuredContent`, so an invented 50 KB address would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake by its position; a short one — the common case — is exact and untagged.
 
 **E8.** A remote MCP tool whose advertised schema rejects the call fails before provider dispatch with `invalid_args`, carrying bounded, value-free `{ path, code, expected }` findings and scoped search recovery keyed `function: "connecta.search"` like every other in-program miss. A declared property reports the schema keyword that failed, never the validator's duplicate `additionalProperties` branch; a truly undeclared property still reports `additionalProperties`. Unsupported schemas pass through; unrecognized provider prose remains `connector_call_failed`.
 
@@ -428,7 +387,7 @@ on data nobody asked for.
 
 **R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; a program that emitted adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are byte-for-byte the ordinary response path. Diagnostics exist so catalog, connector, and executor costs are distinguishable without persisting payloads or charging normal responses ([#247](https://github.com/zackbart/connecta/issues/247)).
 
-**R7.** Timing separates admission, provider setup, total executor wall time, catalog work, and connector work. Catalog and connector values are cumulative, so parallel work can exceed executor wall time. Each used operation kind (`search`, `describe`, `call`, `batch`) gets one aggregate with count, failures, duration, returned serialized bytes, and catalog/connector time; batch adds only its total child count.
+**R7.** Timing separates admission, provider setup, total executor wall time, catalog work, and connector work. Catalog and connector values are cumulative, so parallel work can exceed executor wall time. Each used operation kind (`search`, `describe`, `call`) gets one aggregate with count, failures, duration, returned serialized bytes, and catalog/connector time.
 
 **R8.** Diagnostics contain measurements and fixed operation names only: no addresses, arguments, results, code, credentials, logs, or raw errors. Result sizes are numbers, never previews. The collector exists only for the opted-in request; it is not activity, a session, or a stream.
 
@@ -490,125 +449,13 @@ response, and `emit` resolving means "accepted," never "delivered."
 aggregate — count and serialized bytes, numbers only (`R8`), present only
 when something was emitted.
 
-## Rendered output
-
-`connecta.emit` gave programs pixels; it did not give them a *view*. This is the
-one the human looks at directly while the model keeps its cheap textual summary:
-one MCP Apps view per successful run, assembled where composition already
-happens. Programs supply HTML content and nothing else — the only `ui://` URI in
-the system is connecta's build-time shell, so nothing a client could dereference
-is derived from anything a program said. The argument, the refused shapes, and
-the security posture live in the [design record](https://github.com/zackbart/connecta/blob/main/records/mcp-ui-design.md)
-([#266](https://github.com/zackbart/connecta/issues/266),
-[#277](https://github.com/zackbart/connecta/issues/277)); this section is the
-contract, and it wins where the two disagree.
-
-**U1.** `connecta.ui(html)` accepts exactly one non-empty HTML string. There is
-no options parameter, read manifest, or sugar form. Every other shape throws
-catchably and accepts nothing.
-
-**U2.** At most one payload per run. A second call throws catchably, naming the
-constraint; the first accepted payload stands. One tool result renders one view,
-and last-wins would silently discard a payload the program deliberately
-supplied.
-
-**U3.** Delivered on success only, and out of model context: the tool result
-gains `_meta["connecta/ui"] = { html }` and the JSON envelope gains `ui: true`,
-so the model learns a view rendered without seeing its bytes. `structuredContent`
-stays the envelope alone. The single-label `connecta/ui` prefix is deliberate —
-connecta has no domain to reverse, and fabricating one to satisfy MCP's
-reverse-DNS SHOULD would be a worse answer than the shape the key format's MUST
-already permits. A program that never calls `connecta.ui` produces the
-byte-for-byte ordinary response (`R6`). A failed program delivers nothing and
-reports `uiDiscarded: true` *only* when a payload had been accepted — a field on
-the structured envelope, a trailing line on the plain-text paths — coexisting
-with `emittedDiscarded: N` when one failure discards both.
-
-**U4.** The payload spends the aggregate emit byte budget
-(`ConnectaConfig.execute.maxEmittedBytes`), measured at the call as the
-serialized bytes of `{ html }` — `M5`'s measurement. Over budget throws
-catchably, naming the budget and the room remaining, with nothing partially
-accepted. It spends no block count (`maxEmittedBlocks`: it is not a block) and no
-host-call budget (`L4`). One transport bound covers everything rich a program
-delivers.
-
-**U5.** One static shell: a connecta-authored HTML5 document at
-`ui://connecta/program-ui/v3`, mimeType `text/html;profile=mcp-app`, declared on
-`execute_code` via `_meta.ui.resourceUri` together with an explicit
-`_meta.ui.visibility: ["model"]`. The other six tools declare the same
-model-only visibility without a resource URI. Omission defaults to model and
-app visibility, which would let a display-only view call them. A
-`resources/read` handler answers exactly that URI and fails on any other;
-`resources/list` is served and returns an empty list.
-The version segment bumps whenever the shell's bytes change, because hosts cache
-templates by URI.
-
-**U6.** The shell renders the payload in a nested iframe
-(`srcdoc`, `sandbox="allow-scripts"`, no `allow-same-origin`) and declares no CSP
-domains, so the host applies its restrictive default and the `about:srcdoc` frame
-inherits `default-src 'none'; connect-src 'none'`. The shell offers no direct
-network, tool calls, discovery, conversation messages, writes, or links. It
-participates in the Apps lifecycle — initialize, tool-result, size-changed,
-resource-teardown — and forwards no channel whatsoever from the inner frame to
-the host. That isolation makes
-program views fixed-height by construction: with no bridge there is no
-content-height signal, the shell reports only its own box, and content taller
-than that scrolls inside the inner frame rather than growing the view.
-
-**U7.** Structural executor parity, per `M8`: `connecta.ui` is a provider
-function, `ExecuteResult` and the `Executor` interface are unchanged, and both
-executors get it through the bridge they already have.
-
-**U8.** Request-local and unstreamed, per `M9`. The payload exists only in the
-finished response, and `connecta.ui` resolving means "accepted," never
-"rendered."
-
-**U9.** `diagnostics: true` adds a distinct `ui` aggregate — the payload's byte
-size, a number and nothing else (`R8`), present only when a payload was accepted.
-UI bytes are not folded into `emitted`: that aggregate pairs a block count with
-the bytes those blocks cost, and bytes without a block would desync the pair.
-
-**U10.** `_meta.ui.resourceUri` is declared unconditionally. A host without the
-extension ignores unknown `_meta` and sees the ordinary envelope, which *is* the
-text fallback the Apps spec mandates; `connecta.ui` never fails because a client
-cannot render. A stateless aggregator cannot reliably know, and connecta is not a
-nanny.
-
-**U11.** connecta declares `io.modelcontextprotocol/ui` in its server capability
-declaration, and that is the one extension it advertises. The Apps extension must
-be explicitly negotiated and a conforming client acts on one only when both sides
-declare it, so without this declaration no host reads `_meta.ui.resourceUri`, no
-host fetches the shell, and the whole design is inert. Reading the *client's*
-declaration in order to register tool metadata conditionally stays refused
-(`U10`), knowingly against a spec SHOULD.
-
-**U12.** The return value, not the view, is what the model reads. `U3` puts the
-view out of model context, so a program that renders one also returns the summary
-the model should reason over, built from the same variables the initial view renders — a
-view the return value does not mirror is a view nobody in the loop can check.
-This binds program authors and nothing else: connecta never reads the HTML, diffs
-it against the return, or enforces the correspondence. A heuristic there would be
-the same mistake as automatic host-side projection, refused in `ethos.md`
-([#282](https://github.com/zackbart/connecta/issues/282)).
-
-**U13.** The always-loaded MCP instructions locate `connecta.ui(html)` before an
-agent chooses a route: it exists only inside `execute_code`, never in connector
-search, and carries `U12`'s mirrored-return duty. The detailed call, budget,
-and repair rules live in the on-demand `usage` skill. The location
-distinction rides `initialize`, under a 1,000-character ceiling for the complete
-instructions string. This promotes existing contract, not capability: the
-seven-tool surface, guest API, catalog, Apps delivery, and runtime do not change
-([#286](https://github.com/zackbart/connecta/issues/286),
-[#418](https://github.com/zackbart/connecta/issues/418)).
-
 ## Retry semantics
 
-**Y1.** Connecta retries nothing beneath a program. `call_tool` accepts an
-annotation-gated `maxRetries`; code mode fixes it at zero, so one
-`connecta.call` is exactly one downstream attempt. The program is the retry
-loop, and its budget is visible to it (`L4`).
+**Y1.** Connecta makes one downstream attempt per admitted call, both inside a
+program and through either direct-call tool. It never waits and retries on the
+caller's behalf. An admission refusal may prevent even that attempt.
 
-**Y2.** A program may retry a caught failure whose `retryable` is true, or a batch failure whose `errorDetails.retryable` is true (`S8`). Every attempt spends host-call budget, so an unchecked loop converts a transient failure into `budget_exceeded`.
+**Y2.** A program may retry a caught failure whose `retryable` is true, or a rejected promise whose `reason.retryable` is true (`S8`). Every attempt spends host-call budget, so an unchecked loop converts a transient failure into `budget_exceeded`.
 
 **Y3.** What must never be retried automatically:
 
@@ -620,10 +467,9 @@ loop, and its budget is visible to it (`L4`).
   re-issue with `retryAfterMs` in hand.
 - a cancelled or timed-out *execution*: it is already over (`L1`).
 
-**Y4.** Connecta's own retry machinery beneath the meta-tools honours a
-connector-reported `Retry-After` exactly or not at all, and declines windows
-longer than 10 seconds rather than shortening them. A program sees the window
-verbatim as `err.details.retryAfterMs` or `errorDetails.retryAfterMs`.
+**Y4.** A provider's `retryAfterMs` is returned unchanged. The caller decides
+whether and when to reissue. A later call receives its own deadline and
+admission decision.
 
 ## Cancellation and limits
 
@@ -646,7 +492,6 @@ because connecta enforces them above the sandbox:
 | Bound | Value |
 | --- | --- |
 | Host calls per execution | 20 |
-| Calls per `connecta.batch` | 10 |
 | Deadline per host call | 15 s |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
 | `describe` addresses | ≤ 100 |
@@ -669,7 +514,7 @@ code safe to run at all.
 bounded — QuickJS caps both at 256 KiB (`X10`) — and exceeding either fails that
 call, not the execution, so a program can catch it and ask for less. The failure
 is executor-owned untyped text, not a Connecta host failure (`E1`). An over-bound *result* names the address the program
-called, not the internal dispatcher behind the shortcut namespaces; an over-bound
+called, rather than only the generic bridge function; an over-bound
 *argument* payload is refused before it is parsed, so it names no address at
 all — parsing it to write a better message would spend exactly the work the bound
 exists to refuse.
@@ -680,8 +525,7 @@ carrying `retryAfterMs`; cancellation and shutdown are terminal. Admission happe
 *before* any catalog or provider is built, so a queued request holds no state.
 
 **L8.** Bounds are deployment configuration, not program inputs: a program cannot
-raise one by asking. `execute_code`'s description states the host-call budget, the
-batch maximum, and the per-call deadline — the ones a program must plan around
+raise one by asking. `execute_code`'s description states the host-call budget and the per-call deadline — the ones a program must plan around
 before it runs. The result and log caps live here and in the truncation notice
 itself (`R2`, `R5`).
 
@@ -689,7 +533,7 @@ itself (`R2`, `R5`).
 
 **V1.** One payload-free activity event per attempted call, with
 `source: "execute_code"` — every dispatched call plus every local refusal: a
-read-only refusal, an unknown tool, an ambiguous shortcut, an unloadable
+read-only refusal, an unknown tool, an unloadable
 catalog, a missing credential, an exhausted host-call budget, an address no
 connector owns. Ten tools called is ten events, as legible as ten `call_tool`
 calls — which makes moving work into the sandbox an optimization, not a blindfold.
@@ -705,7 +549,7 @@ return is refused paging by design rather than truncated into friction. There is
 nowhere to put arguments, results, program source, or
 raw error text; a caught failure is still recorded. `address` is
 canonical (`A1`) where a tool resolved, otherwise the name the program used —
-for a shortcut its sanitized alias, the honest record of what was attempted.
+the honest record of what was attempted.
 
 **V3.** A call whose connector does not exist is recorded at the address as
 written, *provided* it split into the two fields activity keeps — one with no
@@ -785,37 +629,10 @@ The human message is unchanged; a mismatched frame is ordinary untyped prose.
 
 ## Changes from earlier code mode
 
-Six behaviors changed with this contract, matching the 0.10.0 release notes.
-Programs that ran before still run.
-
-- **Caught Connecta failures expose their classification** (`E1`, `X11`). Their human message and thrown semantics stay unchanged; `code`, `retryable`, and `details` are additive.
-
-- **`connecta.batch` failures gained `errorDetails`** (`S7`). They carried only a
-  message, which left a program unable to tell a policy refusal from a transient
-  failure. Additive, and it reuses the host's internal batch field names, so a
-  program and the host describe a failed call the same way.
-- **A policy refusal can no longer look retryable** (`E7`). Pinned in code rather
-  than read out of message text, so a connector named `svc-503` stops flipping a
-  permanent refusal to `retryable: true`. This reaches the call tools too.
-- **An uncaught discovery-bound failure is typed** (`S3`): `invalid_args` or
-  `result_too_large` rather than prose, the same envelope a failed call gets.
-- **A bridge-bound failure names the address** (`L6`), not the internal
-  dispatcher every shortcut namespace shares.
-- **An oversized result is truncated once** (`R2`). The envelope is sized so its
-  *serialized* form fits the cap; the QuickJS path previously truncated in the
-  child and again in the parent, reporting the inner envelope's length as
-  `totalChars`. Previews are shorter now; `totalChars` is the real size.
-
-The middle three were places where the contract described behavior the code did
-not quite have. The code moved, because the described behavior is the one worth
-having.
-
-Two surfaces were added since, both additive by construction and each with its
-byte-for-byte no-call promise pinned by test:
-[emitted output](#emitted-output) (`M1`–`M10`,
-[#270](https://github.com/zackbart/connecta/issues/270)) and
-[rendered output](#rendered-output) (`U1`–`U12`,
-[#277](https://github.com/zackbart/connecta/issues/277)).
+MCP Apps rendering, connector shortcut globals, and `connecta.batch` are
+removed. Direct calls also lose automatic retries. The seven top-level tools,
+read-only boundary, JSON projection, and emitted media remain. See the
+[migration guide](./upgrading.md#unreleased-program-api-pruning).
 
 ## Verification
 
@@ -835,19 +652,16 @@ the upstream `Executor` shape assignable.
 | `P2`, `X5` | `test/guest-api-contract.test.ts` (Dynamic globals plus loader-only filesystem, HTTP, environment, egress, DNS, and local `data:` boundaries), `test/guest-api-contract-quickjs.test.ts` (exact absent globals and blocked imports), `test/quickjs-child-stderr.test.ts` (empty child-process environment), `test/deployment-shapes.test.ts` (loader-only Worker construction) |
 | `P3`, `X9` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` |
 | `P4` | `test/guest-api-contract.test.ts` (no cross-run leakage), `test/execute.test.ts` (one catalog load per connector per execution) |
-| `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (sanitizing), `test/server.test.ts` (bounded live connector inventory) |
-| `A3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (colliding alias) |
-| `A4` | `test/execute.test.ts` (namespace collisions, reserved namespace) |
-| `A5` | verdict; `A1`–`A3` are its enforcement |
+| `A1`, `A2` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (canonical addressing), `test/server.test.ts` (bounded live connector inventory) |
 | `S1`, `S2` | `test/guest-api-contract.test.ts` (flat page, connector guides, schema keys, and the unfiltered browse that replaces `list_connectors`), `test/execute.test.ts` (guide pagination/partial/no-match behavior and `$ref`/`allOf`), `test/meta-tools.test.ts` (mixed complete/partial ranking and stable pagination) |
 | `S3` | `test/guest-api-contract.test.ts` (typed uncaught bound), `test/execute.test.ts` (count limits, fan-out bound) |
 | `S4` | both guest-contract executors (ordered mixed describe results with unknown-address, unknown-tool suggestion, and catalog-failure details), `test/meta-tools.test.ts` (top-level routing, no-suggestion, catalog-failure, and hostile-input bounds) |
 | `S5` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`unwrapMcpResult`) |
 | `S6` | `test/execute.test.ts` (fail-closed annotations, activity parity) |
-| `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (batch cap) |
-| `S8`, `E1`, `X11` | both guest-contract executors (caught call, namespace, discovery, utility, batch-validation, budget, and forgery cases; typed batch equivalence) |
+| `S7` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (parallel calls and shared admission) |
+| `S8`, `E1`, `X11` | both guest-contract executors (caught call, discovery, utility, budget, removed-function, and forgery cases; typed promise rejections) |
 | `S9` | `test/result-shapes.test.ts` (value exclusion, bounds, merging, LRU and time expiry, runtime isolation, read-only admission, declared precedence, definition invalidation, unwrapped MCP results, discovery provenance, copy isolation, and failure isolation) |
-| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, batch, and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, batch, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
+| `E2`, `E8` | `test/guest-api-contract.test.ts` (code → `retryable`, caught, parallel, and uncaught validation recovery), `test/meta-tools.test.ts` (direct, destructive, provider fallback), `test/validate.test.ts` (bounded payload-free findings), `test/errors.test.ts` |
 | `E3` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (`auth_required`) |
 | `E4` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (destructive) |
 | `E5` | `test/guest-api-contract.test.ts` (execution-failure channel, in-flight `cancelled`), `test/execute.test.ts` (admission), `test/executor-admission.test.ts`, `test/quickjs-executor.test.ts` (mid-run shutdown) |
@@ -860,7 +674,7 @@ the upstream `Executor` shape assignable.
 | `R6`–`R8` | `test/guest-api-contract.test.ts` (normal result keys), `test/execute.test.ts` (opt-in operation aggregates, failure paths, payload exclusion) |
 | `Y1` | `test/guest-api-contract.test.ts` (one attempt per call) |
 | `Y2`, `Y3` | `test/guest-api-contract.test.ts` (retryable flags by code) |
-| `Y4` | `test/meta-tools.test.ts` (`retryBackoffMs`, `MAX_RETRY_BACKOFF_MS`) |
+| `Y4` | `test/meta-tools-call.test.ts`, `test/call-admission.test.ts` (one attempt, retry hints, caller reissue) |
 | `L1`, `L2` | `test/guest-api-contract.test.ts` (in-flight call fails `cancelled`), `test/execute.test.ts` (cancels outstanding host calls) |
 | `L3`, `X1` | `test/guest-api-contract.test.ts` (short-deadline executors) |
 | `L4`, `L8` | `test/guest-api-contract.test.ts`, `test/execute.test.ts` (budgets) |
@@ -875,15 +689,6 @@ the upstream `Executor` shape assignable.
 | `M6`, `M9` | verdicts; `M1`'s strict typing and `M2`'s collect-then-deliver are their enforcement |
 | `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
-| `U1`, `U2` | `test/guest-api-contract.test.ts` (invalid and repeated calls throw catchably, first payload stands), `test/execute-ui.test.ts` (every rejected shape) |
-| `U3` | `test/guest-api-contract.test.ts` (`_meta` payload and `ui: true`, identical on both executors), `test/execute-ui.test.ts` (`structuredContent`, byte-for-byte no-call path, discard structured and plain, coexistence with `emittedDiscarded`), `test/quickjs-executor.test.ts` (mid-run shutdown) |
-| `U4` | `test/execute-ui.test.ts` (one shared byte aggregate crossed in either order; block count and host-call budget untouched) |
-| `U5`, `U10`, `U11` | `test/server.test.ts` (the shell URI, mimeType, and body; every other URI fails; empty listing; exact model-only `_meta.ui` on all seven tools; exactly one declared extension) |
-| `U6` | `test/execute-ui.test.ts` (valid HTML5, `srcdoc` and sandbox attributes, no `allow-same-origin`, no path from the inner frame to the host) |
-| `U7`, `U8` | two arms passing one case table, `test/codemode-compat.test.ts` |
-| `U9` | `test/execute-ui.test.ts` (a `ui` byte aggregate distinct from `emitted`, absent when nothing was accepted) |
-| `U12` | `test/server.test.ts` (the `connecta.ui` bullet carries the return-value clause); a duty on program authors, so the description is the only place it can be enforced |
-| `U13` | `test/code-first-surface.test.ts`, `test/server.test.ts` (served `initialize.instructions` locate UI inside `execute_code`, exclude it from connector search, state the mirrored-return duty, and stay within the complete 1,000-character budget; the usage skill carries detailed call rules) |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
 | `X4` | `test/guest-api-contract.test.ts` (string logs only) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
