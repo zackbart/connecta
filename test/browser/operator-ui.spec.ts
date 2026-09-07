@@ -391,7 +391,7 @@ test("adds, tests, replaces, and removes a credential", async ({ page }) => {
   await openAuthenticated(page);
 
   await page.getByRole("button", { name: "Add credential" }).click();
-  await page.getByLabel("API token").fill("first-secret");
+  await page.locator('input[aria-label="API token"]').fill("first-secret");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("configured · ••••cret")).toBeVisible();
 
@@ -401,7 +401,7 @@ test("adds, tests, replaces, and removes a credential", async ({ page }) => {
   );
 
   await page.getByRole("button", { name: "Replace" }).click();
-  await page.getByLabel("API token").fill("replacement-token");
+  await page.locator('input[aria-label="API token"]').fill("replacement-token");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("configured · ••••oken")).toBeVisible();
 
@@ -529,12 +529,12 @@ test("keeps a rejected credential save on screen and retryable", async ({
   await openAuthenticated(page);
 
   await page.getByRole("button", { name: "Add credential" }).click();
-  await page.getByLabel("API token").fill("first-secret");
+  await page.locator('input[aria-label="API token"]').fill("first-secret");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.locator("#credentialNotice")).toHaveText("vault unavailable");
   // No dead end: the form stays open holding what was typed, so the operator
   // retries with one click rather than re-entering a secret.
-  await expect(page.getByLabel("API token")).toHaveValue("first-secret");
+  await expect(page.locator('input[aria-label="API token"]')).toHaveValue("first-secret");
 
   faults.clear();
   await page.getByRole("button", { name: "Save" }).click();
@@ -589,11 +589,11 @@ test("acknowledges a credential save before its refreshed details arrive", async
   await openAuthenticated(page);
   await page.getByRole("button", { name: "Add credential" }).click();
   const release = holdDetails("vaulted");
-  await page.getByLabel("API token").fill("saved-without-waiting");
+  await page.locator('input[aria-label="API token"]').fill("saved-without-waiting");
   await page.getByRole("button", { name: "Save", exact: true }).click();
 
   await expect(page.locator("#credentialNotice")).toHaveText("Credential saved.");
-  await expect(page.getByLabel("API token")).toHaveCount(0);
+  await expect(page.locator('input[aria-label="API token"]')).toHaveCount(0);
   expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
 
   release();
@@ -615,12 +615,12 @@ test("keeps connection auth usable on a narrow screen", async ({ page }) => {
   await page.setViewportSize({ width: 375, height: 812 });
   await openAuthenticated(page);
   await page.getByRole("button", { name: "Add credential" }).click();
-  await expect(page.getByLabel("API token")).toBeVisible();
+  await expect(page.locator('input[aria-label="API token"]')).toBeVisible();
   const fits = await page.evaluate(
     "document.documentElement.scrollWidth <= window.innerWidth",
   );
   expect(fits).toBe(true);
-  await page.getByLabel("API token").fill("mobile-secret");
+  await page.locator('input[aria-label="API token"]').fill("mobile-secret");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator("#credentialNotice")).toHaveText("Credential saved.");
 });
