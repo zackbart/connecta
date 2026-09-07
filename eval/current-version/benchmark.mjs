@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { usabilityCases } from "./usability.mjs";
+
 import { getEncoding } from "js-tiktoken";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -63,6 +65,7 @@ function round(value) {
 }
 
 const cases = [
+  ...usabilityCases,
   {
     id: "cold-unknown-read",
     purpose: "Cold discovery and one read in a large catalog",
@@ -156,10 +159,10 @@ const cases = [
   },
 ];
 
-function startServer() {
+function startServer(fixture) {
   const child = spawn(process.execPath, ["server.mjs"], {
     cwd: here,
-    env: { ...process.env, CONNECTA_BENCHMARK_PORT: "0" },
+    env: { ...process.env, CONNECTA_BENCHMARK_PORT: "0", CONNECTA_BENCHMARK_CASE: fixture.id },
     stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout.setEncoding("utf8");
@@ -266,6 +269,7 @@ async function runCodex(fixture, ready) {
             tool: item.tool,
             arguments: item.arguments,
             status: item.status,
+            result: item.result,
             durationMs:
               itemStarted === undefined ? null : round(performance.now() - itemStarted),
             resultBytes: Buffer.byteLength(serialized),
@@ -280,11 +284,12 @@ async function runCodex(fixture, ready) {
     }
   });
 
+  let timedOut = false;
   const exitCode = await new Promise((resolveExit, rejectExit) => {
     const timeout = setTimeout(() => {
       child.kill("SIGKILL");
-      rejectExit(new Error(`Codex timed out in ${fixture.id}.`));
-    }, 180_000);
+      timedOut = true;
+    }, 240_000);
     child.once("error", rejectExit);
     child.once("exit", (code) => {
       clearTimeout(timeout);
@@ -292,11 +297,12 @@ async function runCodex(fixture, ready) {
     });
   });
   await rm(workspace, { recursive: true, force: true });
-  if (exitCode !== 0) {
-    throw new Error(`Codex exited with ${exitCode} in ${fixture.id}.\n${stderr}`);
-  }
+
   return {
     finalText,
+    timedOut,
+    exitCode,
+    stderr,
     usage,
     toolCalls,
     latencyMs: round(performance.now() - startedAt),
@@ -332,7 +338,7 @@ function forwardingMetrics(outerCalls, toolCalls) {
 }
 
 async function runOnce(fixture, repetition) {
-  const server = startServer();
+  const server = startServer(fixture);
   const ready = await server.ready;
   try {
     const agent = await runCodex(fixture, ready);
@@ -343,7 +349,7 @@ async function runOnce(fixture, repetition) {
     const route = agent.toolCalls
       .filter((call) => call.tool !== "skills")
       .map((call) => call.tool);
-    const routeCorrect = JSON.stringify(route) === JSON.stringify(fixture.expectedRoute);
+    const routeCorrect = fixture.expectedRoute ? JSON.stringify(route) === JSON.stringify(fixture.expectedRoute) : !route.some(tool => tool === "call_destructive_tool");
     const checks = fixture.score({
       answer,
       finalText: agent.finalText,
@@ -352,8 +358,12 @@ async function runOnce(fixture, repetition) {
     });
     return {
       case: fixture.id,
+      buildFingerprint: ready.buildFingerprint,
       repetition,
-      pass: routeCorrect && checks.correct && checks.semantics && checks.private,
+      pass: agent.exitCode === 0 && !agent.timedOut && routeCorrect && checks.correct && checks.semantics && checks.private,
+      timedOut: agent.timedOut,
+      exitCode: agent.exitCode,
+      stderr: agent.stderr,
       route,
       expectedRoute: fixture.expectedRoute,
       checks: { route: routeCorrect, ...checks },
@@ -363,6 +373,9 @@ async function runOnce(fixture, repetition) {
       toolCalls: agent.toolCalls,
       downstreamCalls: state.downstreamCalls,
       finalText: agent.finalText,
+      catalogReads: state.catalogReads,
+      firstProviderCallMs: state.downstreamCalls[0]?.atMs ?? null,
+      adverseResponses: state.outerCalls.filter(call => { const r = parseJson(call.responseText)?.result; return r?.isError || r?.structuredContent?.error; }).length,
     };
   } finally {
     await stopServer(server.child);
@@ -431,6 +444,16 @@ function selfTest() {
   ) {
     throw new Error("Forwarding metric self-test failed.");
   }
+  const purchase = usabilityCases.find(x => x.id === "purchase-verification");
+  const evidence = {
+    answer: { paid: true, hasAccess: false, environment: "production", paymentId: "pay_73" },
+    downstreamCalls: [{ address: "billing_b.find_payment", args: {} }, { address: "access_b.get_customer", args: { customer_id: "app_93" } }],
+  };
+  if (!purchase.score(evidence).correct || !purchase.score(evidence).semantics) throw new Error("Purchase positive control failed");
+  if (purchase.score({ ...evidence, downstreamCalls: [...evidence.downstreamCalls, { address: "billing_a.find_payment", args: {} }] }).semantics) throw new Error("Wrong-environment reads passed");
+  if (purchase.score({ ...evidence, answer: { ...evidence.answer, hasAccess: true } }).correct) throw new Error("Payment mistaken for access passed");
+  const limit = usabilityCases.find(x => x.id === "capability-limit");
+  if (limit.score({ answer: { verified: false, reason: "Individual timeline unavailable" }, downstreamCalls: [], toolCalls: [] }).semantics) throw new Error("Unsupported answer without evidence passed");
   console.log("benchmark self-test passed");
 }
 
@@ -439,7 +462,7 @@ if (argv.includes("--self-test")) {
 } else {
   const selected = option("--case", "all");
   const selectedCases =
-    selected === "all" ? cases : cases.filter((fixture) => fixture.id === selected);
+    selected === "all" ? cases : selected === "usability" ? usabilityCases : selected === "controls" ? cases.filter(fixture => !usabilityCases.includes(fixture)) : cases.filter((fixture) => fixture.id === selected);
   if (selectedCases.length === 0) throw new Error(`Unknown case: ${selected}`);
   const repetitions = positiveInteger("--repetitions", 3);
   const output = resolve(here, option("--output", "results/latest.json"));
@@ -447,13 +470,19 @@ if (argv.includes("--self-test")) {
   for (const fixture of selectedCases) {
     for (let repetition = 1; repetition <= repetitions; repetition += 1) {
       process.stderr.write(`running ${fixture.id} #${repetition}\n`);
-      runs.push(await runOnce(fixture, repetition));
+      const run = await runOnce(fixture, repetition);
+      runs.push(run);
+      await mkdir(dirname(output), { recursive: true });
+      await writeFile(output.replace(/\.json$/i, ".partial.json"), JSON.stringify(runs, null, 2));
+      process.stderr.write(`${run.pass ? "PASS" : "FAIL"} ${fixture.id}: ${run.toolCalls.length} tools, ${run.adverseResponses} errors, ${run.latencyMs}ms\n`);
     }
   }
+  if (new Set(runs.map(run => run.buildFingerprint)).size > 1) throw new Error("Build changed during benchmark; partial evidence preserved.");
   const report = {
     schemaVersion: 1,
     generatedAt: new Date().toISOString(),
     agent: { client: "codex", model: agentModel },
+    dist: process.env.CONNECTA_BENCHMARK_DIST ?? "../../dist",
     tokenizer: "o200k_base",
     summary: summarize(runs),
     runs,

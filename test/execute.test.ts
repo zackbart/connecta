@@ -537,6 +537,25 @@ describe("buildSandboxProviders", () => {
     });
   });
 
+  it("keeps account titles in program discovery without granting or calling a capability", async () => {
+    let calls = 0;
+    const tool = { name: "read", description: "Read a payment", annotations: { readOnlyHint: true } };
+    const providers = await buildSandboxProviders(makeRegistry([
+      connectorWith({ id: "a", title: "Android sandbox", tools: [tool], call: async () => { calls++; } }),
+      connectorWith({ id: "b", title: "Android production", tools: [tool], call: async () => { calls++; } }),
+      connectorWith({ id: "long", title: "日本語".repeat(80), tools: [tool] }),
+    ]), BASE, silentLogger);
+    const page = await required(connectaProvider(providers).fns.search)({ query: "read payment", safety: "readOnly" }) as {
+      tools: Array<{ address: string; connectorTitle: string }>;
+    };
+    expect(page.tools.find(tool => tool.address === "a.read")?.connectorTitle).toBe("Android sandbox");
+    expect(page.tools.find(tool => tool.address === "b.read")?.connectorTitle).toBe("Android production");
+    const title = required(page.tools.find(tool => tool.address === "long.read")).connectorTitle;
+    expect(new TextEncoder().encode(title).length).toBeLessThanOrEqual(120);
+    expect(title).not.toContain("\uFFFD");
+    expect(calls).toBe(0);
+  });
+
   it("exposes tool-agnostic search and describe catalog helpers", async () => {
     const providers = await buildSandboxProviders(
       makeRegistry([calcConnector, remoteConnector]),

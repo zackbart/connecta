@@ -1274,6 +1274,9 @@ export function flatSearchResult(page: CatalogSearchPage) {
   return {
     tools: page.entries.map((entry) => ({
       ...entry.tool,
+      ...(entry.connector.title
+        ? { connectorTitle: boundedEchoText(entry.connector.title.replace(/\s+/g, " ").trim(), 117) }
+        : {}),
       ...(entry.guide ? { guide: entry.guide } : {}),
       ...(entry.guideSummary
         ? { guideSummary: entry.guideSummary }

@@ -1,3 +1,5 @@
+import { api } from "../src/connectors/api.js";
+import { USAGE_SKILL } from "../src/skills.js";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 import { createExecuteTool } from "../src/execute.js";
@@ -739,4 +741,47 @@ describe("quickJsExecutor", () => {
     expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
     expect(out.structuredContent).toEqual(expected);
   });
+});
+
+
+describe("the advertised investigation example", () => {
+  it.each(["available", "missing", "approval-required"] as const)(
+    "finds dependent evidence with %s logs and never reads the other account",
+    async (mode) => {
+      // Execute the published example, not a separately maintained imitation.
+      const code = required(USAGE_SKILL.match(/```js\n([\s\S]*?)\n```/)?.[1]);
+      const calls: string[] = [];
+      let unrelatedCatalogReads = 0;
+      const run = {
+        name: "get_run", description: "Get a deployment run",
+        inputSchema: { type: "object" as const, properties: { runId: { type: "integer" as const } }, required: ["runId"], additionalProperties: false },
+        annotations: { readOnlyHint: true },
+        handler: (args: Record<string, unknown>) => {
+          expect(args).toEqual({ runId: 42 }); calls.push("run");
+          return { status: "failed", failedJobId: 7 };
+        },
+      };
+      const logs = {
+        name: "get_job_logs", description: "Get logs for a job",
+        inputSchema: { type: "object" as const, properties: { jobId: { type: "integer" as const } }, required: ["jobId"], additionalProperties: false },
+        annotations: { readOnlyHint: mode !== "approval-required" },
+        handler: (args: Record<string, unknown>) => {
+          expect(args).toEqual({ jobId: 7 }); calls.push("logs");
+          return [{ level: "info", message: "private noise", timestamp: "1" }, { level: "error", message: "Build failed", timestamp: "2" }];
+        },
+      };
+      const registry = makeRegistry([
+        api("ci", { tools: mode === "missing" ? [run] : [run, logs] }),
+        { id: "ci_sandbox", listTools: async () => { unrelatedCatalogReads++; throw new Error("wrong account searched"); }, callTool: async () => { throw new Error("wrong account called"); } },
+      ]);
+      const out = await createExecuteTool(registry, "https://connecta.test", quickJsExecutor(), silentLogger)({ code });
+      const payload = JSON.parse(required(out.content[0]).text);
+      expect(out.isError).toBeFalsy();
+      expect(payload.result).toEqual(mode === "available"
+        ? [{ timestamp: "2", message: "Build failed" }]
+        : { status: "failed", gap: "Job logs not resolved" });
+      expect(calls).toEqual(mode === "available" ? ["run", "logs"] : ["run"]);
+      expect(unrelatedCatalogReads).toBe(0);
+    },
+  );
 });
