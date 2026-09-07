@@ -82,6 +82,11 @@ Two boundaries CI enforces that are not obvious from reading a file:
   unreachable from the root entry. `test/purity.test.ts` walks the import graph
   and fails otherwise. Need a Node API? It goes behind an explicit Node-only
   subpath (`/node` or `/quickjs`), never the root.
+- **Optional modules.** Core owns catalog discovery, execution, invocation, and
+  enforcement. UI, activity history, encrypted credentials, and bearer auth
+  implementations stay behind explicit subpaths and outside the root import
+  graph. Use the typed `ui`, `activity`, and `vault` slots; do not add a generic
+  plugin registry or runtime installation.
 - **The published surface.** Platform-specific storage adapters live in
   `examples/worker/`, never in `src/` and never in the `exports` map. That
   example does ship in the tarball, Cloudflare KV and D1 adapters included —

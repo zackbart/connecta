@@ -1,3 +1,7 @@
+import { bearerToken } from "@zackbart/connecta/auth/bearer";
+import { operatorUi } from "@zackbart/connecta/ui";
+// import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
+// import { activityHistory } from "@zackbart/connecta/activity";
 /**
  * Prescribed Connecta deployment.
  *
@@ -20,7 +24,7 @@
  *   CONNECTA_CREDENTIAL_KEY  vault key, once the credentials block is on
  *   CONNECTA_ACTIVITY_FILE   activity log, once the activity block is on
  */
-import { api, bearerToken, createConnecta } from "@zackbart/connecta";
+import { api, createConnecta } from "@zackbart/connecta";
 import { fileStorage, listen } from "@zackbart/connecta/node";
 import { quickJsExecutor } from "@zackbart/connecta/quickjs";
 // Operator sign-in. Needs `npm install @clerk/backend` — it is an optional
@@ -74,7 +78,7 @@ const connecta = createConnecta({
   // identity: {
   //   connectorAccess: ({ principal }) =>
   //     principal?.id === "user_admin" ? "all" : ["time"],
-  //   operatorAccess: ({ id }) => id === "user_admin",
+  //   activityAccess: ({ id }) => id === "user_admin",
   // },
   publicUrl,
   // Required: model-written programs run in a bounded QuickJS child.
@@ -84,24 +88,19 @@ const connecta = createConnecta({
   // with this key — so keep the key out of that file and out of source:
   //   node -e "console.log(crypto.randomBytes(32).toString('base64'))"
   // Rotating a credential takes effect on the next call; no restart.
-  // credentials: { encryptionKey: process.env.CONNECTA_CREDENTIAL_KEY },
-  //
-  // Named, revocable Bearer tokens for MCP clients, issued at /tokens by a
-  // signed-in operator. Secrets are shown once; only their hashes are stored.
-  // Requires the Clerk block above — there is nobody to authorize issuance
-  // otherwise.
-  // accessTokens: {},
-  //
+  // vault: encryptedCredentialVault(storage, process.env.CONNECTA_CREDENTIAL_KEY!),
   // Payload-free activity history at /activity: who called what, when, how
   // long it took, and whether it worked. Never arguments, results, generated
   // code, or raw error messages. Commented because retention is yours to
   // choose — see src/file-activity.ts.
-  // activity: {
+  // activity: activityHistory({
   //   store: fileActivityStore(
   //     process.env.CONNECTA_ACTIVITY_FILE || "./.connecta-activity.jsonl",
   //   ),
   //   deploymentId: "production",
-  // },
+  // }),
+  ui: operatorUi(),
+  identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
   connectors: [
     api("time", {
       description: "Time — current timestamp",

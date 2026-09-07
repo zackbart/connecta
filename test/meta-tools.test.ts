@@ -1,3 +1,4 @@
+import { CredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import {
@@ -9,11 +10,10 @@ import {
 import { api } from "../src/connectors/api.js";
 import { CatalogService } from "../src/catalog-service.js";
 import {
-  CredentialVault,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-} from "../src/credentials.js";
+} from "../src/credential-rules.js";
 import { ConnectorCallError } from "../src/errors.js";
-import { createMetaTools } from "../src/meta-tools.js";
+import { createMetaTools as buildMetaTools } from "../src/meta-tools.js";
 import {
   connectorGuideSummary,
   GUIDE_SUMMARY_LENGTH,
@@ -1010,7 +1010,7 @@ describe("authorize_connector", () => {
           { name: "apiKey", guidance: "API key" },
         ],
       },
-      operatorUrl: `${BASE}/credentials`,
+      operatorUrl: `${BASE}/`,
       instructions:
         "Have the operator open operatorUrl, set and test the credential, " +
         "then retry the original call. No redeploy is needed. Shared " +
@@ -1047,7 +1047,7 @@ describe("authorize_connector", () => {
       recovery: "unavailable",
     });
     expect(required(result.content[0]).text).toContain(
-      "credentials.encryptionKey",
+      "vault and ui",
     );
     expect(
       textOf(
@@ -1532,3 +1532,7 @@ describe("empty-query browse of an unconfigured connector", () => {
     expect(unscoped.queryAnalysis).toBeUndefined();
   });
 });
+
+function createMetaTools(...args: Parameters<typeof buildMetaTools>) {
+  return buildMetaTools(args[0], args[1], { canManageAuth: () => true, credentialHandoffUrl: new URL("/", args[1]).toString(), ...args[2] });
+}

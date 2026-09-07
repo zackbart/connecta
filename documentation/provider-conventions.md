@@ -416,13 +416,15 @@ default. The provider's own headless credential — a personal API key, a
 restricted key, a service account — is supported two ways: explicit `headers`
 auth, documented as a secret rather than configuration, and `{ type:
 "credential" }`, which declares an operator slot and takes the same secret from
-`/credentials` instead. Either way it is paired with the narrowest mode the
+the connection UI at `/` instead. Either way it is paired with the narrowest mode the
 deployment can use, and the framing matches the provider's *published* contract
 for the MCP endpoint — not a convention borrowed from that provider's other
 APIs, and not this repository's earlier example, which is the same claim wearing
 a circle. `requireHttps` is set. Recovery from an expired authorization is the
 ordinary `auth_required` → `authorize_connector` route, which returns the
-consent URL for OAuth and the `/credentials` handoff for a declared slot.
+consent URL for permitted OAuth starts and a connection UI handoff at `/` for
+a declared slot when UI and vault are mounted. Missing modules yield
+`unavailable`; never advertise a route the deployment cannot serve.
 
 *Why:* one route back from an expired credential is what keeps a failed call
 from becoming an abandoned task. *Cost:* wrong-tool selection.
@@ -442,7 +444,7 @@ deployment file to read — and a dead, revoked, or absent credential fails loud
 at use as `auth_required` with the `authorize_connector` route attached (P9).
 
 `testCredential` exists only behind the operator-pressed Test action on
-`/credentials`, and only for a declared slot. It connects with the stored value
+the connection UI at `/`, and only for a declared slot. It connects with the stored value
 and reports how many tools the downstream served, which is the whole honest
 check for a proxy: which account, project, or mode a key reaches is the
 provider's answer, not Connecta's. That is not the shape

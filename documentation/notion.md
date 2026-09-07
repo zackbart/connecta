@@ -58,7 +58,7 @@ it does not assume the REST interface's endpoint budget describes MCP traffic.
 
 One operator-managed credential: an internal integration token from
 [notion.so/profile/integrations](https://www.notion.so/profile/integrations).
-The deployment needs `credentials.encryptionKey` configured, or the token
+The deployment needs `vault: encryptedCredentialVault(storage, encryptionKey)` configured, or the token
 cannot be stored and every call fails `auth_required` at use.
 
 Two Notion-specific facts decide whether a working token is enough:
@@ -69,7 +69,7 @@ Two Notion-specific facts decide whether a working token is enough:
   default. `list_comments` and `add_comment` fail with 403 until an operator
   turns them on in Notion.
 
-`/credentials` offers a Test action, which calls `GET /v1/users/me` — the
+The connection UI at `/` offers a Test action, which calls `GET /v1/users/me` — the
 cheapest call that proves a token is live — and reports the workspace it
 authenticated into.
 

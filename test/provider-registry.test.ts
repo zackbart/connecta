@@ -1,3 +1,4 @@
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { CatalogService } from "../src/catalog-service.js";
 import { CredentialVault } from "../src/credentials.js";
@@ -40,7 +41,7 @@ function deployment(storage: KVStorage, connectors: Connector[], credentials = f
     logger: silentLogger,
     publicUrl: BASE_URL,
     discovery: { persistCatalog: true },
-    ...(credentials ? { credentials: { encryptionKey: CREDENTIAL_KEY } } : {}),
+    ...(credentials ? { vault: encryptedCredentialVault(storage, CREDENTIAL_KEY) } : {}),
     connectors,
   });
 }

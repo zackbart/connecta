@@ -17,6 +17,8 @@ import { msg } from "../errors.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
+  mayManageConnector,
+  validateAuthPermissions,
   type RouteContext,
   type RuntimeExecutionContext,
   type ServerOptions,
@@ -191,6 +193,7 @@ async function serveMcp(
   baseUrl: string,
   actor: ActivityActor,
   registry: RegistryView,
+  canManageAuth: (connectorId: string) => boolean,
   runtimeContext?: RuntimeExecutionContext,
 ): Promise<Response> {
   const createServer = (): McpServer => {
@@ -206,6 +209,7 @@ async function serveMcp(
     const activity: ActivityRequestContext | undefined = opts.activity
       ? {
           sink: opts.activity,
+          recordTool: opts.activityModule?.recordTool,
           actor,
           requestId: crypto.randomUUID(),
           serverInfo: opts.serverInfo,
@@ -220,6 +224,8 @@ async function serveMcp(
       : undefined;
     registerMetaTools(server, registry, {
       baseUrl,
+      canManageAuth,
+      credentialHandoffUrl: opts.ui?.credentialHandoffUrl(baseUrl),
       ...(activity ? { activity } : {}),
       ...(opts.defaultToolTimeoutMs !== undefined
         ? { defaultToolTimeoutMs: opts.defaultToolTimeoutMs }
@@ -355,6 +361,7 @@ export function createMcpRoute(
       }
       let scopedRegistry: RegistryView;
       try {
+        validateAuthPermissions(authz, opts.registry);
         scopedRegistry = opts.registry.scoped({
           connectorIds: authz.connectorIds,
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
@@ -387,6 +394,7 @@ export function createMcpRoute(
             baseUrl,
             authz.actor,
             scopedRegistry,
+            id => { const connector = scopedRegistry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); },
             runtimeContext,
           ),
         ),

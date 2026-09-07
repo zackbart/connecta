@@ -78,18 +78,26 @@ Fifty issues in, one small object out. Your context window notices.
 - **Run it where you like.** Node, a Docker container, or a Cloudflare Worker,
   from the same small deployment file.
 
-There is also an operator surface, off until you turn it on: sign-in, an
-encrypted credential vault with rotation, revocable per-client tokens, and a
-payload-free activity log. Worker deployments can use Cloudflare Access for
-both MCP and operator identity; Node deployments and existing Workers can use
-Clerk.
+Deployments explicitly compose optional features: `operatorUi()` from
+`@zackbart/connecta/ui`, `encryptedCredentialVault()` from `/credentials`,
+`activityHistory()` from `/activity`, and inbound authentication adapters from
+`/auth/*`. Omit a module and its implementation does no runtime work. Core
+keeps connector discovery, execution, invocation, and enforcement together.
+
+The optional UI shows each person's connections and effective permissions.
+Authentication controls live inside each connection, with optional activity
+history. The configured connection list loads before downstream checks finish;
+a slow provider does not hold up the page. Connector selection and access rules
+remain in deployment code.
 
 One deployment may serve several authenticated people inside the same tenant.
-Configuration can derive connector visibility from the admitted identity, and
-each connector may keep one shared downstream grant or a separate encrypted
-grant per human. Connecta does not own accounts or groups; Clerk or Cloudflare
-Access remains the identity provider. See [inbound auth](./documentation/auth.md#principals-visibility-and-operators)
-and [shared and personal auth](./documentation/storage-and-credentials.md#shared-and-personal-auth).
+Cloudflare Access supplies Worker identity; Node can use Clerk or the optional
+configured bearer adapter. Connecta owns no accounts or groups and issues no
+client access tokens. Shared-credential administration and personal connection
+setup require separate explicit permissions, both denied by default. See
+[inbound auth](./documentation/auth.md#principals-visibility-and-operators),
+[shared and personal auth](./documentation/storage-and-credentials.md#shared-and-personal-auth),
+and the [module migration guide](./documentation/upgrading.md#0240-optional-modules).
 
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one

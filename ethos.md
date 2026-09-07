@@ -4,38 +4,25 @@ Connecta’s scope, refusals, and invariants. Contradictions require a design de
 
 ## What this is
 
-- **One MCP endpoint, one programmable surface.** Every integration you chose
-  sits behind a capability catalog that agents reach by writing JavaScript,
-  ringed by a few explicit tools for the boundaries code must not cross.
-- **A deployment is config-as-code.** One tenant and connector set; principals
-  receive config-derived views.
-- **Curated when available, open when not.** Prefer a maintained prebuilt
-  connection; `remoteMcp()` and `api()` stay first-class for everything else.
-  Every path yields the same `Connector` with the same rules.
-- **Seven tools, an executor required.** The primary surface is a program, so
-  every deployment runs an executor and one without refuses to boot. A
-  capability earns a top-level tool only by being inexpressible as a program.
-- **Safe by default.** Only tools explicitly annotated read-only run without
-  crossing `call_destructive_tool`, where the host can ask a human. Approval is
-  the host's job; connecta makes the question visible.
-- **One fetch-native core, two runtimes.** Web APIs only in the core; Node
-  touches live behind explicit subpaths. Cloudflare Worker or Docker, your pick.
-- **Observable, actionable only over authentication material.** Operator pages
-  show status and payload-free activity and may rotate credentials, issue
-  tokens, and run OAuth. Declared capability they cannot touch.
+- **One MCP endpoint.** Agents reach configured connectors through JavaScript
+  and seven meta-tools. Every deployment requires an executor.
+- **Config-as-code.** One tenant and connector set; identities receive
+  config-derived views. Maintained providers, `remoteMcp()`, and `api()` obey
+  the same connector contract.
+- **Safe by default.** Only explicitly read-only tools run inside a program.
+  Others cross `call_destructive_tool`; the host owns human approval.
+- **One fetch-native core.** Web APIs support Node and Workers. Platform code
+  and optional features use explicit subpath imports.
+- **Human auth management.** Optional pages show status and payload-free history.
+  Explicit permissions allow credential changes and OAuth. Capabilities stay in code.
 
 ## What this isn't
 
-- **Not a platform.** No runtime registration, admin-editable capability,
-  policy engine, approvals, or pauses.
-- **Not a schema ingester.** No OpenAPI or GraphQL → tools.
-- **Not multi-tenant.** No accounts, groups, or sessions. Inbound auth owns
-  identity; personal state stays within one tenant.
-- **Not stateful.** No protocol sessions, no server push; scope resolves per
-  request.
-- **Not a nanny.** Credentials fail loudly at use; nothing probes one.
-- **Not a promise to strangers — yet.** Breaking changes are cheap; the version
-  number signals change, not stability.
+No runtime registration, admin-editable capabilities, policy engine, approvals,
+or pauses. No schema ingestion, accounts, groups, protocol sessions, or server
+push. Inbound providers own identity; personal state remains within one tenant.
+Credentials fail at use, without background probes. Breaking changes remain
+acceptable; version numbers signal change, not stability.
 
 ## Decisions
 
@@ -48,6 +35,9 @@ subsystem guides and the CHANGELOG.
 | Multi-tenancy / account model | refused | one deployment per tenant; inbound auth owns identity |
 | Policy engine, approvals, pauses | refused | the host asks the human; connecta only annotates |
 | Runtime connector registration | refused | config-as-code is the security model |
+| Optional deployment modules | accepted | explicit imports and typed config slots select UI, activity history, credential vault, and inbound auth; discovery, execution, invocation, and enforcement stay in core |
+| Generic plugin lifecycle or marketplace | refused | modules organize deployment code; runtime installation and discovery add no required behavior |
+| Connecta-issued access tokens | removed | inbound identity providers own client authentication; configured bearer auth remains an optional adapter |
 | Provider registry / marketplace | refused | prebuilt connections are imports; discovery happens in docs ([#297](https://github.com/zackbart/connecta/issues/297)) |
 | Expanded Notion page create/update options | refused | different workflows, not missing fields; use `api()` ([#408](https://github.com/zackbart/connecta/issues/408)) |
 | Protocol sessions & server push | refused | stateless per request |
@@ -97,7 +87,9 @@ requires a design decision.
 - **Credentials never leave the host.** Encrypted at rest, readable only by the owning connector and, for personal auth, its owning principal; rendered by nothing.
 - **Import-graph purity.** Nothing reachable from the root entry imports a `node:` builtin.
 - **The published surface is a boundary.** Heavyweight or platform-bound code goes behind an optional-peer subpath.
-- **Human routes manage auth, never capability.** Signed-in humans manage auth for visible connectors; operators also manage tokens and global activity.
+- **Human routes manage auth, never capability.** Visibility grants use, not credential administration. Shared and personal auth mutations require separate config-derived permissions, both denied by default. Activity has its own read permission.
+- **Omitted modules do no work.** Core imports no UI bundle, encrypted vault implementation, activity implementation, or bearer adapter. OAuth callbacks remain available without UI.
+- **Status reads do not start authorization.** OAuth starts through an explicit authorized action; loading the UI never creates a consent flow.
 - **Structural mistakes throw at construction.** Booting into the wrong shape is worse than not booting.
 
 Connecta simplifies [executor](https://github.com/UsefulSoftwareCo/executor).

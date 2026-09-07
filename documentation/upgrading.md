@@ -17,6 +17,21 @@ the release notes broke, and prove it with `connecta doctor`.
 Work on a branch. Every step below is reversible until you delete the old
 lockfile, and you want the diff reviewable by whoever owns this deployment.
 
+## 0.24.0 optional modules
+
+UI, encrypted credentials, activity history, and configured bearer auth now use
+explicit module imports. Core keeps the same seven tools and enforcement.
+Connecta-issued tokens are removed. Shared and personal auth management require
+separate explicit permissions, both denied by default; visibility alone grants
+neither. `activityAccess` replaces `operatorAccess` for global history reads.
+
+Follow the [optional-module migration](./optional-modules-upgrade.md) before
+upgrading. It includes the complete before-and-after configuration, team Worker
+and personal Node permission examples, issued-token client migration, disabling
+features, and verification. Preserve existing connector ids, identity namespaces,
+storage, and encryption key. Vault and OAuth records need no format migration;
+old issued-token records remain inert rather than being deleted automatically.
+
 ## 0.23.0 program API pruning
 
 This update removes MCP Apps rendering, connector shortcut globals,
@@ -102,7 +117,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.23.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.24.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -151,7 +166,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.23.0
+npm pkg set dependencies.@zackbart/connecta=0.24.0
 npm install
 ```
 
@@ -175,7 +190,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.23.0 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.24.0 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -231,7 +246,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.23.0 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.24.0 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -251,6 +266,12 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.23.0 → 0.24.0
+
+Use the [optional-module migration](./optional-modules-upgrade.md) to select
+modules, grant auth-management permissions, and migrate issued-token clients.
+Preserve storage, encryption keys, and identity namespaces.
 
 ### 0.22.3 → 0.23.0
 
@@ -637,6 +658,10 @@ the migration map:
 
 | Option | Removed in | Do |
 | --- | --- | --- |
+| `accessTokens` | 0.24.0 | migrate issued-token clients to provider OAuth or configured bearer auth; old records become inert |
+| `credentials` | 0.24.0 | `vault: encryptedCredentialVault(storage, encryptionKey)` from `/credentials` |
+| `branding` | 0.24.0 | `ui: operatorUi({ branding })` from `/ui` |
+| `identity.operatorAccess` | 0.24.0 | `identity.activityAccess`; grant shared and personal auth management separately |
 | `toolkits`, `unscoped` | 0.8.1 (#178) | delete; deploy one instance per audience |
 | `credentials.health`, `credentialHealth` | 0.8.1 (#179) | delete; credentials fail at use |
 | `surface` | 0.11.0 (#273) | delete; there is one seven-tool surface |

@@ -1,3 +1,6 @@
+import { operatorUi } from "@zackbart/connecta/ui";
+// import { activityHistory } from "@zackbart/connecta/activity";
+import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 /**
  * connecta on Cloudflare Workers.
  *
@@ -63,9 +66,10 @@ interface Env {
 }
 
 function build(env: Env) {
+  const storage = cloudflareKvStorage(env.CONNECTA_KV);
   return createConnecta({
     publicUrl: env.PUBLIC_URL,
-    storage: cloudflareKvStorage(env.CONNECTA_KV),
+    storage,
     executor: new DynamicWorkerExecutor({ loader: env.LOADER }),
     auth: [
       // Access owns admission policy. A human identity may use MCP and the
@@ -83,7 +87,7 @@ function build(env: Env) {
     //     principal?.id === "ACCESS_USER_UUID"
     //       ? ["notion", "echo"]
     //       : ["echo"],
-    //   operatorAccess: ({ id }) => id === "ACCESS_USER_UUID",
+    //   activityAccess: ({ id }) => id === "ACCESS_USER_UUID",
     // },
     // Connectors that declare a `credential` slot become editable by every
     // signed-in human who can see that connector at /credentials, encrypted
@@ -98,19 +102,20 @@ function build(env: Env) {
     // ready and the page empty. Declare a slot (see the commented shape on
     // `echo`, or use a provider connector like `notion()`, which declares its
     // own) and the page appears on the next load.
-    credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },
+    vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
     // Eligible human operators can create named, revocable MCP Bearer tokens
     // at /tokens. Under Worker-level Access those tokens are a rollback tool,
     // not standalone edge credentials: Access still runs before connecta.
-    accessTokens: {},
+    ui: operatorUi(),
+    identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
     // Payload-free activity at /activity, off until a database exists to hold
     // it. Uncomment the `d1_databases` binding in wrangler.jsonc, apply the
     // schema in README.md § "Activity history", then these three lines and the
     // import above.
-    // activity: {
+    // activity: activityHistory({
     //   store: d1ActivityStore(env.ACTIVITY_DB),
     //   deploymentId: "production",
-    // },
+    // }),
     connectors: [
       remoteMcp("notion", {
         url: "https://mcp.notion.com/mcp",

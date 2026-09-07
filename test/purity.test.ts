@@ -1,3 +1,4 @@
+import ts from "typescript";
 import { required } from "./helpers.js";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -59,7 +60,7 @@ function importGraph(entry: string): Set<string> {
     const file = queue.pop()!;
     if (visited.has(file)) continue;
     visited.add(file);
-    const source = readFileSync(file, "utf8");
+    const source = ts.transpileModule(readFileSync(file, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext } }).outputText;
     for (const spec of relativeSpecifiers(source)) {
       const target = resolveToTs(file, spec);
       if (!visited.has(target)) queue.push(target);
@@ -105,6 +106,9 @@ describe("src/index.ts import purity (Workers-clean entry)", () => {
     expect(graph.has(quickJsExecutor)).toBe(false);
     expect(graph.has(quickJsChild)).toBe(false);
     expect(graph.has(clerkAdapter)).toBe(false);
+    for (const file of ["ui.ts", "operator-ui/generated.ts", "credentials.ts", "activity.ts", "auth/bearer.ts"]) expect(graph.has(join(SRC, file)), file).toBe(false);
+    const withUi = importGraph(join(SRC, "ui.ts"));
+    for (const file of ["credentials.ts", "activity.ts", "routes/activity.ts"]) expect(withUi.has(join(SRC, file)), `UI imports ${file}`).toBe(false);
   });
 
   it("never imports this package by its own name", () => {

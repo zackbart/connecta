@@ -1,11 +1,11 @@
+import { CredentialVault } from "../src/credentials.js";
 import { required } from "./helpers.js";
 import { describe, expect, it } from "vitest";
 import {
-  CredentialVault,
   describeUndeclaredCredentialFields,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
   storedCredentialShape,
-} from "../src/credentials.js";
+} from "../src/credential-rules.js";
 import type { ConnectorCredentialConfig } from "../src/types.js";
 import { memoryStorage } from "../src/storage/memory.js";
 

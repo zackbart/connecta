@@ -10,6 +10,7 @@
     "baseUrl": ".",
     "paths": {
       "@zackbart/connecta": ["./dist/index.d.ts"],
+      "@zackbart/connecta/*": ["./dist/*"],
       "@zackbart/connecta/node": ["./dist/node.d.ts"],
       "@zackbart/connecta/quickjs": ["./dist/executors/quickjs.d.ts"]
     }

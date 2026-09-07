@@ -81,7 +81,7 @@ connectors: [
 ```
 
 Neither key has to be a runtime secret. Declare the slot instead and each
-connector's key is pasted, tested, and rotated on `/credentials`:
+connector's key is pasted, tested, and rotated on the connection UI at `/`:
 
 ```ts
 connectors: [

@@ -12,12 +12,14 @@ This repository is deployment configuration, not a copy of Connecta itself.
   Do not copy or modify Connecta package internals here.
 - Prefer `api()` when the agent must see an exact reviewed capability surface;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
-- The operator surface — Clerk sign-in, credential vault, access tokens,
-  activity — ships as commented blocks in `src/index.ts`. Enable one by
-  uncommenting it and setting the variables it names in `.env`, never by
-  inventing a parallel configuration path. `README.md` § "Turn on the operator
-  surface" is the walkthrough; `src/file-activity.ts` is the deployment-owned
-  activity store the activity block wires.
+- The UI, encrypted credential vault, and activity history use explicit module
+  imports and typed `ui`, `vault`, and `activity` options in `src/index.ts`.
+  Follow README "Select optional modules". Auth management requires explicit
+  `credentialAdministration` or `personalConnection` permissions; visibility
+  alone never grants it. Configured bearer auth is a client option, not a human
+  management identity. Connecta-issued access tokens are removed.
+  `src/file-activity.ts` remains the deployment-owned history store.
+
 - Run `npm run typecheck` after configuration changes. With the server running,
   run `CONNECTA_TOKEN=... npm run doctor` before calling setup complete.
 - `Dockerfile` and `docker-compose.yml` containerize *this* source; they are

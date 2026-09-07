@@ -88,7 +88,7 @@ configuration. A personal API key carries the acting user's full workspace
 permissions, so pair it with `access: "read-only"` unless the deployment
 genuinely writes.
 
-The same key can arrive from `/credentials` instead, which is what a deployment
+The same key can arrive from the connection UI at `/` instead, which is what a deployment
 with no secret store — or an operator who rotates keys without a redeploy —
 wants:
 

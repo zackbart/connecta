@@ -15,15 +15,12 @@ import {
 import { auth, productDescription, titleSuffix } from "./config.js";
 import { ActivityPage } from "./activity.js";
 import { ConnectionsPage } from "./connections.js";
-import { CredentialsPage } from "./credentials.js";
-import { TokensPage } from "./tokens.js";
 import { NoticeLine, PageLink } from "./parts.js";
 import {
   boot,
   focusHandled,
   forgetBearer,
   getState,
-  loadAccessTokens,
   loadActivity,
   signIn,
   signInWithBearer,
@@ -56,12 +53,6 @@ function useOperatorState(): OperatorState {
 /** Pages an identity may actually open. Hidden is the honest state for the rest. */
 function visiblePages(state: OperatorState): OperatorPage[] {
   return OPERATOR_PAGES.filter((page) => {
-    if (page === "credentials") {
-      return state.data?.credentialManagement === "available";
-    }
-    if (page === "tokens") {
-      return state.data?.accessTokenManagement === "available";
-    }
     if (page === "activity") return Boolean(state.data?.activityEnabled);
     return true;
   });
@@ -166,8 +157,6 @@ function Gate({ state }: { state: OperatorState }) {
 }
 
 function CurrentPage({ state }: { state: OperatorState }) {
-  if (state.page === "credentials") return <CredentialsPage state={state} />;
-  if (state.page === "tokens") return <TokensPage state={state} />;
   if (state.page === "activity") return <ActivityPage state={state} />;
   return <ConnectionsPage state={state} />;
 }
@@ -184,13 +173,6 @@ function OperatorApp() {
   // identity opens it, and again after an identity change resets it to idle.
   useEffect(() => {
     if (!ready) return;
-    if (
-      state.page === "tokens" &&
-      state.data?.accessTokenManagement === "available" &&
-      state.tokenPhase === "idle"
-    ) {
-      void loadAccessTokens();
-    }
     if (
       state.page === "activity" &&
       state.data?.activityEnabled &&

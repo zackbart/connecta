@@ -23,13 +23,6 @@ let server: Server;
 let origin: string;
 let credentialValue: string | undefined;
 let oauthConnected = true;
-let accessTokens: Array<{
-  id: string;
-  name: string;
-  tokenPrefix: string;
-  createdAt: string;
-  revokedAt?: string;
-}> = [];
 let requests: RecordedRequest[] = [];
 /** `METHOD /path` → the failure that route should answer with, once armed. */
 let faults = new Map<string, string>();
@@ -37,18 +30,22 @@ let faults = new Map<string, string>();
 let emptyDeployment = false;
 let clerkLoaderFails = false;
 let clerkLoaderRequests: string[] = [];
+let activityEnabled = true;
+let authManagement = true;
+let detailBarriers = new Map<string, Promise<void>>();
+let releaseDetails: Array<() => void> = [];
 
 function data(): UiData {
   return {
     serverInfo: { name: "browser-test", version: "host" },
     connectaVersion: "package",
     credentialManagement: "available",
-    accessTokenManagement: "available",
     oauthManagement: true,
-    activityEnabled: true,
+    activityEnabled,
     connectors: emptyDeployment ? [] : [
       {
         id: "vaulted",
+        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
         title: "Vaulted service",
         status: credentialValue ? "ok" : "auth_required",
         toolCount: credentialValue ? 1 : 0,
@@ -74,6 +71,7 @@ function data(): UiData {
       },
       {
         id: "drifted",
+        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
         title: "Hosted proxy",
         status: "ok",
         toolCount: 0,
@@ -88,11 +86,9 @@ function data(): UiData {
       },
       {
         id: "oauth",
+        permissions: { use: true, manageSharedAuth: authManagement, connectPersonal: false },
         title: "CRM",
         status: oauthConnected ? "ok" : "auth_required",
-        ...(oauthConnected
-          ? {}
-          : { authorizationUrl: "https://accounts.example.test/authorize" }),
         toolCount: oauthConnected ? 1 : 0,
         tools: oauthConnected
           ? [{ name: "contacts", address: "oauth.contacts" }]
@@ -214,7 +210,22 @@ test.beforeAll(async () => {
     }
 
     if (method === "GET" && url.pathname === "/ui/data") {
-      sendJson(response, 200, data());
+      const full = data();
+      sendJson(response, 200, {
+        ...full,
+        connectors: full.connectors.map(({ id, title, permissions, oauth }) => ({
+          id, title, permissions, oauth, status: "loading", toolCount: 0, tools: [],
+        })),
+      });
+      return;
+    }
+    const detailMatch = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(url.pathname);
+    if (method === "GET" && detailMatch) {
+      await detailBarriers.get(detailMatch[1]!);
+      const connector = data().connectors.find(item => item.id === detailMatch[1]);
+      if (!connector) { sendJson(response, 404, { error: "unknown connector" }); return; }
+      if (!authManagement) delete connector.credential;
+      sendJson(response, 200, connector);
       return;
     }
     if (method === "GET" && url.pathname === "/ui/activity") {
@@ -244,48 +255,6 @@ test.beforeAll(async () => {
         ],
       });
       return;
-    }
-    if (url.pathname === "/ui/access-tokens") {
-      if (method === "GET") {
-        sendJson(response, 200, { accessTokens });
-        return;
-      }
-      if (method === "POST") {
-        const name = (body as { name?: string } | undefined)?.name ?? "";
-        const accessToken = {
-          id: "00000000-0000-4000-8000-000000000001",
-          name,
-          tokenPrefix: "cta_browser1",
-          createdAt: "2026-07-30T12:00:00.000Z",
-        };
-        accessTokens = [accessToken, ...accessTokens];
-        sendJson(response, 201, {
-          token: "cta_browser_test_secret_value",
-          accessToken,
-        });
-        return;
-      }
-    }
-    const tokenMatch =
-      /^\/ui\/access-tokens\/([0-9a-f-]{36})$/.exec(url.pathname);
-    if (tokenMatch) {
-      const id = tokenMatch[1]!;
-      const current = accessTokens.find((token) => token.id === id);
-      if (!current) {
-        sendJson(response, 404, { error: "unknown access token" });
-        return;
-      }
-      if (method === "PUT") {
-        current.name =
-          (body as { name?: string } | undefined)?.name ?? current.name;
-        sendJson(response, 200, { accessToken: current });
-        return;
-      }
-      if (method === "DELETE") {
-        current.revokedAt = "2026-07-30T12:05:00.000Z";
-        sendJson(response, 200, { accessToken: current });
-        return;
-      }
     }
     if (url.pathname === "/ui/credentials/vaulted") {
       if (method === "PUT") {
@@ -336,6 +305,10 @@ test.beforeAll(async () => {
   origin = `http://127.0.0.1:${address.port}`;
 });
 
+test.afterEach(() => {
+  for (const release of releaseDetails) release();
+});
+
 test.afterAll(async () => {
   server.close();
   await once(server, "close");
@@ -344,12 +317,15 @@ test.afterAll(async () => {
 test.beforeEach(() => {
   credentialValue = undefined;
   oauthConnected = true;
-  accessTokens = [];
   requests = [];
   faults = new Map();
   emptyDeployment = false;
   clerkLoaderFails = false;
   clerkLoaderRequests = [];
+  activityEnabled = true;
+  authManagement = true;
+  detailBarriers = new Map();
+  releaseDetails = [];
 });
 
 async function openAuthenticated(
@@ -412,10 +388,10 @@ test("keeps the shell open and loads private data only after authentication", as
 });
 
 test("adds, tests, replaces, and removes a credential", async ({ page }) => {
-  await openAuthenticated(page, "/credentials");
+  await openAuthenticated(page);
 
   await page.getByRole("button", { name: "Add credential" }).click();
-  await page.getByLabel("API token").fill("first-secret");
+  await page.locator('input[aria-label="API token"]').fill("first-secret");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("configured · ••••cret")).toBeVisible();
 
@@ -425,7 +401,7 @@ test("adds, tests, replaces, and removes a credential", async ({ page }) => {
   );
 
   await page.getByRole("button", { name: "Replace" }).click();
-  await page.getByLabel("API token").fill("replacement-token");
+  await page.locator('input[aria-label="API token"]').fill("replacement-token");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("configured · ••••oken")).toBeVisible();
 
@@ -456,6 +432,10 @@ test("shows clean, warning, and unobserved drift without naming a tool", async (
 }) => {
   await openAuthenticated(page);
 
+  await expect(page.getByRole("button", { name: "Add credential" })).toBeVisible();
+  for (const summary of await page.getByText("Connection diagnostics", { exact: true }).all()) {
+    await summary.click();
+  }
   const clean = page.locator("#drift-vaulted");
   await expect(clean).toHaveAttribute("data-drift", "clean");
   await expect(clean).toContainText("Matches the reviewed manifest");
@@ -506,66 +486,6 @@ test("disconnects and restarts downstream OAuth", async ({ page }) => {
   ]);
 });
 
-test("creates, reveals once, renames, and revokes an access token", async ({
-  page,
-}) => {
-  await openAuthenticated(page, "/tokens");
-
-  await expect(page.getByText("No access tokens yet")).toBeVisible();
-  await page.getByLabel("Client name").fill("Claude desktop");
-  await page.getByRole("button", { name: "Create token" }).click();
-
-  await expect(page.locator("#tokenReveal")).toBeVisible();
-  await expect(page.locator("#createdToken")).toHaveText(
-    "cta_browser_test_secret_value",
-  );
-  await expect(page.locator("#tokenCreateForm")).toBeHidden();
-  await expect(page.getByRole("heading", { name: "Claude desktop" }))
-    .toBeVisible();
-
-  await page.getByRole("link", { name: "Connections" }).click();
-  // Gone rather than blanked: leaving the page unmounts the reveal entirely.
-  await expect(page.locator("#tokenReveal")).toHaveCount(0);
-  await expect(page.locator("#createdToken")).toHaveCount(0);
-
-  await page.getByRole("link", { name: "Access tokens" }).click();
-  await expect(page.locator("#tokenCreateForm")).toBeVisible();
-
-  await page.getByRole("button", { name: "Rename" }).click();
-  await page.getByLabel("Token name").fill("ChatGPT production");
-  await page.getByRole("button", { name: "Save name" }).click();
-  await expect(page.getByRole("heading", { name: "ChatGPT production" }))
-    .toBeVisible();
-
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.getByRole("button", { name: "Revoke" }).click();
-  await expect(page.getByText(/Revoked/)).toBeVisible();
-  await expect(page.getByRole("button", { name: "Revoke" })).toHaveCount(0);
-
-  expect(
-    requests
-      .filter((request) => request.path.startsWith("/ui/access-tokens"))
-      .map(({ method }) => method),
-  ).toEqual(["GET", "POST", "PUT", "DELETE"]);
-});
-
-test("clears a one-time access token before the document is cached", async ({
-  page,
-}) => {
-  await openAuthenticated(page, "/tokens");
-  await page.getByLabel("Client name").fill("Claude desktop");
-  await page.getByRole("button", { name: "Create token" }).click();
-  await expect(page.locator("#createdToken")).not.toHaveText("");
-
-  await page.evaluate(
-    "window.dispatchEvent(new PageTransitionEvent('pagehide'))",
-  );
-
-  await expect(page.locator("#tokenReveal")).toHaveCount(0);
-  await expect(page.locator("#createdToken")).toHaveCount(0);
-  await expect(page.locator("#tokenCreateForm")).toBeVisible();
-});
-
 test("navigates to the activity list and back without a shell reload", async ({
   page,
 }) => {
@@ -596,9 +516,6 @@ test("names the empty state of every collection a new deployment has", async ({
     page.getByText("No connectors are declared in this deployment."),
   ).toBeVisible();
 
-  await page.getByRole("link", { name: "Access tokens" }).click();
-  await expect(page.getByText("No access tokens yet")).toBeVisible();
-
   await page.getByRole("link", { name: "Activity" }).click();
   await expect(
     page.getByText("No connector tool calls recorded yet."),
@@ -609,64 +526,19 @@ test("keeps a rejected credential save on screen and retryable", async ({
   page,
 }) => {
   faults.set("PUT /ui/credentials/vaulted", "vault unavailable");
-  await openAuthenticated(page, "/credentials");
+  await openAuthenticated(page);
 
   await page.getByRole("button", { name: "Add credential" }).click();
-  await page.getByLabel("API token").fill("first-secret");
+  await page.locator('input[aria-label="API token"]').fill("first-secret");
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.locator("#credentialNotice")).toHaveText("vault unavailable");
   // No dead end: the form stays open holding what was typed, so the operator
   // retries with one click rather than re-entering a secret.
-  await expect(page.getByLabel("API token")).toHaveValue("first-secret");
+  await expect(page.locator('input[aria-label="API token"]')).toHaveValue("first-secret");
 
   faults.clear();
   await page.getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("configured · ••••cret")).toBeVisible();
-});
-
-test("offers a retry when the access-token list cannot be loaded", async ({
-  page,
-}) => {
-  faults.set("GET /ui/access-tokens", "token store unavailable");
-  await openAuthenticated(page, "/tokens");
-  await expect(page.locator("#tokenNotice")).toHaveText(
-    "token store unavailable",
-  );
-
-  faults.clear();
-  await page
-    .getByRole("button", { name: "Try loading access tokens again" })
-    .click();
-  await expect(page.getByText("No access tokens yet")).toBeVisible();
-});
-
-test("keeps the typed client name after a rejected token creation", async ({
-  page,
-}) => {
-  faults.set("POST /ui/access-tokens", "token store unavailable");
-  await openAuthenticated(page, "/tokens");
-
-  await page.getByLabel("Client name").fill("Claude desktop");
-  await page.getByRole("button", { name: "Create token" }).click();
-  await expect(page.locator("#tokenNotice")).toHaveText(
-    "token store unavailable",
-  );
-  // No dead end: the failure kept the name, so the retry does not ask the
-  // operator to type it again.
-  await expect(page.getByLabel("Client name")).toHaveValue("Claude desktop");
-  await expect(page.locator("#tokenReveal")).toHaveCount(0);
-
-  faults.clear();
-  await page.getByRole("button", { name: "Create token" }).click();
-  await expect(page.locator("#createdToken")).toHaveText(
-    "cta_browser_test_secret_value",
-  );
-  expect(
-    requests.filter(
-      (request) =>
-        request.method === "POST" && request.path === "/ui/access-tokens",
-    ).length,
-  ).toBe(2);
 });
 
 test("reports a failed OAuth restart and re-enables the control", async ({
@@ -680,11 +552,88 @@ test("reports a failed OAuth restart and re-enables the control", async ({
   await expect(page.locator("#oauthNotice")).toHaveText(
     "downstream unavailable",
   );
-  // The failure refreshed the ledger and gave the button back.
+  // Failure leaves the action retryable without reloading the connection list.
   await expect(
     page.getByRole("button", { name: "Reconnect OAuth for CRM" }),
   ).toBeEnabled();
   expect(
     requests.filter((request) => request.path === "/ui/data").length,
-  ).toBeGreaterThan(1);
+  ).toBe(1);
+});
+
+function holdDetails(id: string): () => void {
+  let release!: () => void;
+  detailBarriers.set(id, new Promise<void>((resolve) => { release = resolve; }));
+  releaseDetails.push(release);
+  return release;
+}
+
+test("shows connections and usable controls while one provider is still loading", async ({ page }) => {
+  const release = holdDetails("drifted");
+  await openAuthenticated(page);
+
+  const slow = page.locator(".card").filter({
+    has: page.getByRole("heading", { name: "Hosted proxy", exact: true }),
+  });
+  await expect(slow).toContainText("Loading details");
+  await expect(page.getByRole("button", { name: "Add credential" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Reconnect OAuth for CRM" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Credentials", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Access tokens", exact: true })).toHaveCount(0);
+
+  release();
+  await expect(slow).toContainText("Connected");
+});
+
+test("acknowledges a credential save before its refreshed details arrive", async ({ page }) => {
+  await openAuthenticated(page);
+  await page.getByRole("button", { name: "Add credential" }).click();
+  const release = holdDetails("vaulted");
+  await page.locator('input[aria-label="API token"]').fill("saved-without-waiting");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+
+  await expect(page.locator("#credentialNotice")).toHaveText("Credential saved.");
+  await expect(page.locator('input[aria-label="API token"]')).toHaveCount(0);
+  expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
+
+  release();
+  await expect(page.getByRole("button", { name: "Replace", exact: true })).toBeVisible();
+});
+
+test("shows effective access without exposing auth controls to a reader", async ({ page }) => {
+  authManagement = false;
+  activityEnabled = false;
+  await openAuthenticated(page);
+  await expect(page.getByRole("heading", { name: "CRM", exact: true })).toBeVisible();
+  await expect(page.getByText("Authentication managed by your deployment", { exact: false })).toHaveCount(3);
+  await expect(page.getByRole("button", { name: /credential|OAuth|authorization|Connect account/i })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Activity", exact: true })).toHaveCount(0);
+  expect(requests.some(request => request.path.startsWith("/ui/access-tokens"))).toBe(false);
+});
+
+test("keeps connection auth usable on a narrow screen", async ({ page }) => {
+  await page.setViewportSize({ width: 375, height: 812 });
+  await openAuthenticated(page);
+  await page.getByRole("button", { name: "Add credential" }).click();
+  await expect(page.locator('input[aria-label="API token"]')).toBeVisible();
+  const fits = await page.evaluate(
+    "document.documentElement.scrollWidth <= window.innerWidth",
+  );
+  expect(fits).toBe(true);
+  await page.locator('input[aria-label="API token"]').fill("mobile-secret");
+  await page.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.locator("#credentialNotice")).toHaveText("Credential saved.");
+});
+
+test("retries a failed connection without reloading the list", async ({ page }) => {
+  faults.set("GET /ui/connectors/drifted", "provider unavailable");
+  await openAuthenticated(page);
+  const card = page.locator(".card").filter({
+    has: page.getByRole("heading", { name: "Hosted proxy", exact: true }),
+  });
+  await expect(card).toContainText("Connection details unavailable (502)");
+  faults.clear();
+  await card.getByRole("button", { name: "Refresh connection" }).click();
+  await expect(card).toContainText("Connected");
+  expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
 });

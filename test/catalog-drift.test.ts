@@ -1,3 +1,4 @@
+import { recordCatalogDriftActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { createConnecta, CONNECTA_VERSION } from "../src/index.js";
@@ -354,6 +355,7 @@ describe("drift on the registry surface", () => {
       logger: silentLogger,
       toolCacheTtlSeconds: 0,
       catalogDriftActivity: {
+        recordDrift: recordCatalogDriftActivity,
         sink: {
           record() {},
           recordCatalogDrift(event) {
@@ -422,6 +424,7 @@ describe("drift on the registry surface", () => {
       logger: silentLogger,
       toolCacheTtlSeconds: 0,
       catalogDriftActivity: {
+        recordDrift: recordCatalogDriftActivity,
         sink: {
           record() {},
           recordCatalogDrift() {

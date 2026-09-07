@@ -52,6 +52,7 @@ describe("activity delivery", () => {
     const deferred: Promise<unknown>[] = [];
     const warnings: unknown[][] = [];
     const context: ActivityRequestContext = {
+      recordTool: recordToolActivity,
       sink: {
         async record() {
           throw new Error("D1 unavailable");
@@ -98,6 +99,7 @@ describe("activity delivery", () => {
       ],
     });
     const activity: ActivityRequestContext = {
+      recordTool: recordToolActivity,
       sink: {
         record(event) {
           events.push(event);
@@ -137,6 +139,7 @@ describe("activity delivery", () => {
       ],
     });
     const activity: ActivityRequestContext = {
+      recordTool: recordToolActivity,
       sink: {
         record(event) {
           events.push(event);
@@ -171,6 +174,7 @@ describe("activity delivery", () => {
   it("records a hallucinated connector id as attempted, with no payload", async () => {
     const events: ToolCallActivityEvent[] = [];
     const activity: ActivityRequestContext = {
+      recordTool: recordToolActivity,
       sink: {
         record(event) {
           events.push(event);
@@ -225,6 +229,7 @@ describe("activity delivery", () => {
     // connector id is a payload wearing an id's clothing.
     const events: ToolCallActivityEvent[] = [];
     const activity: ActivityRequestContext = {
+      recordTool: recordToolActivity,
       sink: {
         record(event) {
           events.push(event);

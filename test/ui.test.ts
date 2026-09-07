@@ -1,3 +1,7 @@
+import { fetchTestUiDetails } from "./helpers.js";
+import { activityHistory } from "../src/activity.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { operatorUi } from "../src/ui.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
@@ -87,9 +91,6 @@ describe("status UI", () => {
     const c = makeDeployment(uiDeploymentConfig());
     for (const [path, page, label] of [
       ["/", "connections", "Connections"],
-      ["/credentials", "credentials", "Credentials"],
-      ["/tokens", "tokens", "Access tokens"],
-      ["/activity", "activity", "Activity"],
     ] as const) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       expect(res.status).toBe(200);
@@ -120,7 +121,7 @@ describe("status UI", () => {
 
   it("serves bodyless HEAD responses for every operator page", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
+    for (const path of ["/"]) {
       const get = await c.fetch(new Request(`${BASE}${path}`));
       const head = await c.fetch(
         new Request(`${BASE}${path}`, { method: "HEAD" }),
@@ -165,7 +166,7 @@ describe("status UI", () => {
       publicUrl: BASE,
       deploymentInfo: { id: "SENTINEL_DEPLOYMENT" },
     });
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
+    for (const path of ["/"]) {
       const body = await (
         await c.fetch(new Request(`${BASE}${path}`))
       ).text();
@@ -233,11 +234,11 @@ describe("status UI", () => {
       connectors: [calcApi(CALC_OPTIONS)],
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
-      branding: {
+      ui: operatorUi({ branding: {
         ownerName: "Acme & Co.",
         ownerUrl: "https://example.com",
         description: "Manage Acme agent connections.",
-      },
+      } }),
     });
     const res = await c.fetch(new Request(`${BASE}/`));
     const body = await res.text();
@@ -293,7 +294,7 @@ describe("status UI", () => {
   it("operator shells set nonce-based CSP and nonce every script tag", async () => {
     const c = makeDeployment(uiDeploymentConfig());
     const nonces = new Set<string>();
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
+    for (const path of ["/"]) {
       const res = await c.fetch(new Request(`${BASE}${path}`));
       const csp = res.headers.get("content-security-policy") ?? "";
       expect(csp).toContain("'strict-dynamic'");
@@ -313,7 +314,7 @@ describe("status UI", () => {
         expect(tag).toContain(`nonce="${nonce}"`);
       }
     }
-    expect(nonces.size).toBe(4);
+    expect(nonces.size).toBe(1);
   });
 
   it("/ui nonces the Clerk loader script under the same CSP nonce", async () => {
@@ -478,15 +479,14 @@ describe("status UI", () => {
 
   it("/ui/data 401s without a token and includes WWW-Authenticate", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(new Request(`${BASE}/ui/data`));
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`));
     expect(res.status).toBe(401);
     expect(res.headers.get("WWW-Authenticate")).toBeTruthy();
   });
 
   it("/ui/data with a bearer returns connectors with tools and isolates a broken one", async () => {
     const c = makeDeployment(uiDeploymentConfig());
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -518,8 +518,7 @@ describe("status UI", () => {
   it("/ui/data exposes only the credential capability allowed for this identity", async () => {
     const { connecta } = makeCredentialConnecta();
     const bearer = (await (
-      await connecta.fetch(
-        new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
       )
@@ -528,8 +527,7 @@ describe("status UI", () => {
     expect(bearer.connectors[0].credential).toBeUndefined();
 
     const clerk = (await (
-      await connecta.fetch(
-        new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -544,8 +542,7 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
     const noSlots = (await (
-      await withoutSlots.fetch(
-        new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(withoutSlots, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -584,8 +581,7 @@ describe("status UI", () => {
     });
 
     const bearer = (await (
-      await connecta.fetch(
-        new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
       )
@@ -594,8 +590,7 @@ describe("status UI", () => {
     expect(bearer.connectors[0].oauth).toBe(true);
 
     const clerk = (await (
-      await connecta.fetch(
-        new Request(`${BASE}/ui/data`, {
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -806,12 +801,12 @@ describe("status UI", () => {
       auth: handRolledClerk,
       storage: memoryStorage(),
       publicUrl: BASE,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
     const headers = { Authorization: "Bearer hand-rolled" };
 
     const data = (await (
-      await connecta.fetch(new Request(`${BASE}/ui/data`, { headers }))
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, { headers }))
     ).json()) as any;
     expect(data.credentialManagement).toBe("requires_operator");
     expect(data.connectors[0].credential).toBeUndefined();
@@ -853,8 +848,7 @@ describe("status UI", () => {
       publicUrl: BASE,
     });
 
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -894,8 +888,7 @@ describe("status UI", () => {
     });
 
     const res = await withAbortableTimeout(
-      () => c.fetch(
-        new Request(`${BASE}/ui/data`, {
+      () => fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
       ),
@@ -938,8 +931,7 @@ describe("status UI", () => {
     });
 
     const res = await withAbortableTimeout(
-      () => c.fetch(
-        new Request(`${BASE}/ui/data`, {
+      () => fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
           headers: { Authorization: `Bearer ${TOKEN}` },
         }),
         undefined,
@@ -995,13 +987,12 @@ describe("status UI", () => {
       publicUrl: BASE,
       discovery: { concurrency: 2 },
     });
-    const response = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const response = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
     expect(response.status).toBe(200);
-    expect(maxActive).toBe(2);
+    expect(maxActive).toBe(connectors.length);
   });
 
   it("/ui/data waits for every sibling probe before teardown after a rejection", async () => {
@@ -1063,7 +1054,10 @@ describe("status UI", () => {
     expect(closedMidProbe).toBe(false);
 
     releaseSlow();
-    await expect(loading).rejects.toThrow("future unguarded rejection");
+    await expect(loading).resolves.toMatchObject({ connectors: [
+      { id: "rejecting", status: "error", message: "future unguarded rejection" },
+      { id: "slow", status: "ok" },
+    ] });
     expect(slowFinished).toBe(true);
     expect(closedMidProbe).toBe(false);
   });
@@ -1095,14 +1089,13 @@ describe("status UI", () => {
     };
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: bearerToken(TOKEN),
+      auth: fakeClerkAuth({ token: TOKEN }),
       storage: memoryStorage(),
       publicUrl: BASE,
-      activity: { store: activity },
+      activity: activityHistory({ store: activity }),
     });
 
-    const data = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1130,6 +1123,7 @@ describe("status UI", () => {
     });
     const auth: InboundAuth = {
       kind: "clerk",
+      interactiveOperator: true,
       activityActorLabel: actorLabel,
       authorize(request) {
         return request.headers.get("authorization") === "Bearer clerk-token"
@@ -1171,14 +1165,14 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth,
-      activity: {
+      activity: activityHistory({
         store: {
           record() {},
           async list() {
             return { events: stored };
           },
         },
-      },
+      }),
       publicUrl: BASE,
     });
 
@@ -1218,12 +1212,14 @@ describe("status UI", () => {
     });
     const providerA: InboundAuth = {
       kind: "oidc",
+      interactiveOperator: true,
       activityActorNamespace: "https://id-a.example",
       activityActorLabel: directoryA,
       authorize: denied,
     };
     const providerB: InboundAuth = {
       kind: "oidc",
+      interactiveOperator: true,
       activityActorNamespace: "https://id-b.example",
       activityActorLabel: directoryB,
       authorize(request) {
@@ -1234,6 +1230,7 @@ describe("status UI", () => {
     };
     const providerBSecondGate: InboundAuth = {
       kind: "oidc",
+      interactiveOperator: true,
       activityActorNamespace: "https://id-b.example",
       activityActorLabel: duplicateDirectoryB,
       authorize: denied,
@@ -1244,6 +1241,7 @@ describe("status UI", () => {
       occurredAt: "2026-07-23T12:00:00.000Z",
       requestId: "request",
       actor: {
+        interactiveOperator: true,
         kind: "oidc",
         id: "local-user-1",
         namespace: "https://id-b.example",
@@ -1262,7 +1260,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [providerA, providerB, providerBSecondGate],
-      activity: {
+      activity: activityHistory({
         store: {
           record() {},
           async list() {
@@ -1273,7 +1271,8 @@ describe("status UI", () => {
                   ...baseEvent,
                   id: "event-legacy",
                   actor: {
-                    kind: "oidc",
+                    interactiveOperator: true,
+        kind: "oidc",
                     id: "legacy-local-id",
                     label: "Forged Legacy Label",
                   } as ToolCallActivityEvent["actor"],
@@ -1282,7 +1281,7 @@ describe("status UI", () => {
             };
           },
         },
-      },
+      }),
       publicUrl: BASE,
     });
 
@@ -1319,6 +1318,7 @@ describe("status UI", () => {
     ]) {
       const wrongDirectory = vi.fn(async () => "Wrong Person");
       const ownerWithoutResolver: InboundAuth = {
+        interactiveOperator: true,
         kind: "oidc",
         ...(ownerNamespace
           ? { activityActorNamespace: ownerNamespace }
@@ -1326,6 +1326,7 @@ describe("status UI", () => {
         authorize: denied,
       };
       const otherDirectory: InboundAuth = {
+        interactiveOperator: true,
         kind: "oidc",
         activityActorNamespace: "https://id-b.example",
         activityActorLabel: wrongDirectory,
@@ -1354,14 +1355,14 @@ describe("status UI", () => {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
         auth: [ownerWithoutResolver, otherDirectory],
-        activity: {
+        activity: activityHistory({
           store: {
             record() {},
             async list() {
               return { events: [event] };
             },
           },
-        },
+        }),
         publicUrl: BASE,
       });
 
@@ -1381,6 +1382,7 @@ describe("status UI", () => {
     vi.useFakeTimers();
     try {
       const auth: InboundAuth = {
+        interactiveOperator: true,
         kind: "oidc",
         activityActorNamespace: "https://identity.example",
         activityActorLabel: () => new Promise(() => {}),
@@ -1392,7 +1394,7 @@ describe("status UI", () => {
         occurredAt: "2026-07-23T12:00:00.000Z",
         requestId: "request",
         actor: {
-          kind: "oidc",
+        kind: "oidc",
           id: "local-user",
           namespace: "https://identity.example",
         },
@@ -1409,14 +1411,14 @@ describe("status UI", () => {
       const c = createTestConnecta({
         connectors: [calcApi(CALC_OPTIONS)],
         auth,
-        activity: {
+        activity: activityHistory({
           store: {
             record() {},
             async list() {
               return { events: [event] };
             },
           },
-        },
+        }),
         publicUrl: BASE,
       });
 
@@ -1438,7 +1440,7 @@ describe("status UI", () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
-      activity: {
+      activity: activityHistory({
         store: {
           record() {},
           async list() {
@@ -1447,7 +1449,7 @@ describe("status UI", () => {
         },
         readGate: (actor) =>
           actor.kind === "clerk" && Boolean(actor.id),
-      },
+      }),
       publicUrl: BASE,
     });
 
@@ -1469,15 +1471,15 @@ describe("status UI", () => {
   it("returns 400 for an invalid activity cursor", async () => {
     const c = createTestConnecta({
       connectors: [calcApi(CALC_OPTIONS)],
-      auth: bearerToken(TOKEN),
-      activity: {
+      auth: fakeClerkAuth({ token: TOKEN }),
+      activity: activityHistory({
         store: {
           record() {},
           async list() {
             throw new InvalidActivityCursorError();
           },
         },
-      },
+      }),
       publicUrl: BASE,
     });
 
@@ -1512,15 +1514,14 @@ describe("status UI", () => {
     };
     const c = makeDeployment(uiDeploymentConfig([connector]));
 
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
     const body = (await res.json()) as any;
     const oauth = body.connectors.find((x: any) => x.id === "oauth");
 
-    expect(oauth.authorizationUrl).toContain("state=first");
+    expect(oauth.authorizationUrl).toBeUndefined();
     expect(oauth.toolCount).toBe(0);
     expect(listToolsCalls).toBe(0);
   });
@@ -1530,8 +1531,7 @@ describe("status UI", () => {
       authUrlConnector("safe", "https://provider.test/oauth?x=1"),
       authUrlConnector("evil", "javascript:alert(document.cookie)"),
     ]));
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1539,7 +1539,7 @@ describe("status UI", () => {
     const byId = Object.fromEntries(
       body.connectors.map((x: any) => [x.id, x]),
     );
-    expect(byId.safe.authorizationUrl).toBe("https://provider.test/oauth?x=1");
+    expect(byId.safe.authorizationUrl).toBeUndefined();
     expect(byId.evil.authorizationUrl).toBeUndefined();
   });
 
@@ -1567,8 +1567,7 @@ describe("status UI", () => {
       },
     };
     const c = makeDeployment(uiDeploymentConfig([drifting]));
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1612,8 +1611,7 @@ describe("status UI", () => {
       },
     };
     const c = makeDeployment(uiDeploymentConfig([hostile]));
-    const res = await c.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const res = await fetchTestUiDetails(c, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -1626,13 +1624,13 @@ describe("status UI", () => {
     expect(JSON.stringify(body)).not.toContain("exfiltrate-this");
   });
 
-  it("keeps credential controls in Credentials and secrets out of every shell", async () => {
+  it("keeps credential controls in Connections and secrets out of every shell", async () => {
     const { connecta } = makeCredentialConnecta();
     const connections = await (
       await connecta.fetch(new Request(`${BASE}/`))
     ).text();
     const credentials = await (
-      await connecta.fetch(new Request(`${BASE}/credentials`))
+      await connecta.fetch(new Request(`${BASE}/`))
     ).text();
     // Everything between <body> and the bundle: the served markup, without the
     // stylesheet that names classes the app has not drawn yet.

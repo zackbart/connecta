@@ -1,3 +1,5 @@
+import { operatorUi } from "../src/ui.js";
+import { activityHistory } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -10,7 +12,6 @@ const BASE = "https://connecta.test";
 /** Every branded operator shell plus the OAuth result page. */
 const PAGES = [
   "/",
-  "/credentials",
   "/activity",
   "/oauth/callback/unknown-connector",
 ];
@@ -24,7 +25,8 @@ function brandingConfig(
     auth: bearerToken("test-token-123"),
     storage: memoryStorage(),
     publicUrl: BASE,
-    ...(branding ? { branding } : {}),
+    ui: operatorUi(branding ? { branding } : {}),
+    activity: activityHistory({ store: { record() {}, async list() { return { events: [] }; } } }),
     ...extra,
   };
 }

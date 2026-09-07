@@ -1,3 +1,4 @@
+import { encryptedCredentialVault } from "../../src/credentials.js";
 import { vi } from "vitest";
 import { bearerToken } from "../../src/auth/bearer.js";
 import { api } from "../../src/connectors/api.js";
@@ -55,7 +56,7 @@ export function makeCredentialConnecta() {
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
   });
   return { connecta, storage };
 }
@@ -99,7 +100,7 @@ export function makeMultiCredentialConnecta() {
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
   });
   return { connecta, storage };
 }
@@ -128,7 +129,7 @@ export function makeFieldsWithSingleHookConnecta() {
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     logger: silentLogger,
   });
   return { connecta, testCredential };
@@ -152,7 +153,7 @@ export function makeSingleWithFieldsHookConnecta() {
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     logger: silentLogger,
   });
   return { connecta, testCredentials };
@@ -193,7 +194,7 @@ export function makeBothHooksConnecta(shape: CredentialShape) {
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage: memoryStorage(),
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
   });
   return { connecta, testCredential, testCredentials };
 }
@@ -229,7 +230,7 @@ export function makeShapeDriftConnecta(
     auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
     storage,
     publicUrl: BASE,
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
   });
   return { connecta, testCredential, testCredentials };
 }

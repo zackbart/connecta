@@ -135,7 +135,7 @@ Dashboard and API tabs.
 
 `verify_api_token` needs no permission beyond the token existing. In legacy
 mode, `verify_global_api_key` reads `/user` to confirm the email and key pair.
-The `/credentials` Test action runs the matching check before storage.
+The connection UI Test action at `/` runs the matching check before storage.
 
 Cloudflare rate-limits *authentication failures* aggressively and separately
 from the global limit: a few requests with a bad token return HTTP 429 with

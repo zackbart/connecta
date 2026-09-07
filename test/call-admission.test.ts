@@ -1,3 +1,4 @@
+import { recordToolActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import {
@@ -463,6 +464,7 @@ describe("connector call admission integration", () => {
     });
     const registry = makeRegistry([connector]);
     const activity = {
+      recordTool: recordToolActivity,
       sink: {
         record(event: (typeof events)[number]) {
           events.push(event);
@@ -625,7 +627,8 @@ describe("connector call admission integration", () => {
       });
       const registry = makeRegistry([connector]);
       const activity = {
-        sink: {
+        recordTool: recordToolActivity,
+      sink: {
           record(event: (typeof events)[number]) {
             events.push(event);
           },

@@ -1,147 +1,17 @@
 import { oauthValueStorageKey } from "../auth/downstream-oauth.js";
-import { closeConnectorScope } from "../connector-scope.js";
 import type {
   ConnectorContext,
-  ConnectorStatus,
   ConnectaBranding,
 } from "../types.js";
-import { isSafeHttpUrl, resolveBranding } from "../ui.js";
+import { resolveBranding } from "../branding.js";
 import {
   authorizeUiIdentity,
-  isSameOrigin,
+  mayManageConnector,
+  validateAuthPermissions,
   loggableValue,
   msg,
-  privateJson,
   type RouteContext,
 } from "./shared.js";
-
-async function handleOAuthManagementRequest(
-  context: RouteContext,
-  connectorId: string,
-): Promise<Response> {
-  const { request, baseUrl, opts, defer } = context;
-  if (!isSameOrigin(request, baseUrl)) {
-    return privateJson(
-      { error: "same-origin request required" },
-      { status: 403 },
-    );
-  }
-  const authz = await authorizeUiIdentity(
-    request,
-    baseUrl,
-    opts.auth,
-    "OAuth management",
-    context.runtimeContext,
-    opts.identity,
-  );
-  if (!authz.ok) return authz.response;
-  let registry;
-  try {
-    registry = opts.registry.scoped({
-      connectorIds: authz.connectorIds,
-      ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
-      ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-    });
-  } catch (error) {
-    return privateJson({ error: msg(error) }, { status: 403 });
-  }
-
-  const connector = registry.getConnector(connectorId);
-  if (!connector?.disconnectAuth || !connector.startAuth) {
-    return privateJson(
-      { error: "unknown OAuth connector" },
-      { status: 404 },
-    );
-  }
-  if (connector.authScope === "personal" && !authz.principalKey) {
-    return privateJson({ error: "forbidden" }, { status: 403 });
-  }
-  if (request.method !== "DELETE" && request.method !== "POST") {
-    return privateJson({ error: "method not allowed" }, { status: 405 });
-  }
-
-  const requestScope = {};
-  const ctx = registry.contextFor(connectorId, baseUrl, requestScope);
-  try {
-    let result: ConnectorStatus | undefined;
-    let operationError: unknown;
-    try {
-      if (request.method === "DELETE") {
-        await connector.disconnectAuth(ctx);
-      } else {
-        result = await connector.startAuth(ctx, { force: true });
-        if (result.authorizationUrl) {
-          await registry.bindOAuthHandoff(
-            connectorId,
-            result.authorizationUrl,
-          );
-        }
-      }
-    } catch (error) {
-      operationError = error;
-    }
-
-    // The old grant and its cached catalog are invalid after either operation,
-    // including a partially failed physical cleanup whose epoch fence succeeded.
-    try {
-      await registry.invalidateStored(connectorId);
-    } catch (error) {
-      operationError ??= error;
-    }
-    if (operationError) {
-      return privateJson({ error: msg(operationError) }, { status: 400 });
-    }
-    if (request.method === "DELETE") {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          "Cache-Control": "no-store",
-          "Referrer-Policy": "no-referrer",
-        },
-      });
-    }
-
-    const authorizationUrl = isSafeHttpUrl(result!.authorizationUrl)
-      ? result!.authorizationUrl
-      : undefined;
-    if (result!.state === "error") {
-      return privateJson(
-        { error: result!.message || "OAuth authorization could not start" },
-        { status: 502 },
-      );
-    }
-    if (result!.state === "auth_required" && !authorizationUrl) {
-      return privateJson(
-        {
-          error:
-            result!.message ||
-            "OAuth authorization requires consent but no safe URL is available",
-        },
-        { status: 502 },
-      );
-    }
-    return privateJson({
-      state: result!.state,
-      ...(result!.message ? { message: result!.message } : {}),
-      ...(authorizationUrl ? { authorizationUrl } : {}),
-    });
-  } finally {
-    await closeConnectorScope(connector, ctx, defer);
-  }
-}
-
-export async function routeOAuthManagement(
-  context: RouteContext,
-): Promise<Response | null> {
-  const match = /^\/ui\/oauth\/([a-z0-9_-]+)$/.exec(context.path);
-  if (!match) return null;
-  const connectorId = match[1];
-  if (!connectorId) return null;
-  if (context.request.method === "OPTIONS") {
-    return privateJson({ error: "method not allowed" }, { status: 405 });
-  }
-  return handleOAuthManagementRequest(context, connectorId);
-}
 
 function escapeHtml(value: string): string {
   return value
@@ -156,6 +26,7 @@ function html(
   body: string,
   status = 200,
   branding?: ConnectaBranding,
+  hasUi = false,
 ): Response {
   const brand = resolveBranding(branding);
   const title = brand.pageTitle;
@@ -218,7 +89,7 @@ function html(
     <h1>Connection status</h1>
     <div class="copy">
       <p>${escapeHtml(body)}</p>
-      <p><a href="/">Return to ${escapeHtml(brand.productName)}</a></p>
+      ${hasUi ? `<p><a href="/">Return to ${escapeHtml(brand.productName)}</a></p>` : ""}
     </div>
   </main>
 </body>
@@ -268,9 +139,9 @@ export async function routeOAuthCallback(
   const { path, url, baseUrl, opts } = context;
   if (!path.startsWith("/oauth/callback/")) return null;
   const error = url.searchParams.get("error");
-  if (error) return html(`Authorization denied: ${error}`, 400, opts.branding);
+  if (error) return html(`Authorization denied: ${error}`, 400, opts.branding, Boolean(opts.ui));
   const code = url.searchParams.get("code");
-  if (!code) return html("Missing authorization code.", 400, opts.branding);
+  if (!code) return html("Missing authorization code.", 400, opts.branding, Boolean(opts.ui));
   const id = path.slice("/oauth/callback/".length);
   const state = url.searchParams.get("state");
   const callbackTarget = await opts.registry.oauthCallbackView(id, state);
@@ -289,34 +160,19 @@ export async function routeOAuthCallback(
       "Authorization could not be completed. Re-run authorization from " +
         "connecta and try again.",
       400,
-      opts.branding,
+      opts.branding, Boolean(opts.ui),
     );
   if (!connector || !connector.finishAuth) {
     await equalizeRefusalCost(connectorContext);
     return refused();
   }
   const expectedPrincipalKey = callbackTarget?.principalKey;
-  if (expectedPrincipalKey) {
-    const browserIdentity = await authorizeUiIdentity(
-      context.request,
-      baseUrl,
-      opts.auth,
-      "OAuth callback",
-      context.runtimeContext,
-      opts.identity,
-    );
-    if (
-      browserIdentity.ok &&
-      browserIdentity.principalKey !== expectedPrincipalKey
-    ) {
-      opts.logger.warn(
-        `[connecta] refused an OAuth callback for connector ` +
-          `${loggableValue(id)} with 400: the authenticated browser identity ` +
-          "did not start this personal authorization flow. No authorization " +
-          "code was exchanged.",
-      );
-      return refused();
-    }
+  const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
+  if (browserIdentity.ok) {
+    try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }
+    if (!mayManageConnector(browserIdentity, connector) || (expectedPrincipalKey && browserIdentity.principalKey !== expectedPrincipalKey)) return refused();
+  } else if (browserIdentity.response.status === 403 && opts.auth.some(provider => provider.interactiveOperator)) {
+    return refused();
   }
   // CSRF / login-fixation guard: this route is intentionally public, so verify
   // the `state` matches the flow connecta started BEFORE exchanging the code.
@@ -365,7 +221,7 @@ export async function routeOAuthCallback(
           `${loggableValue(id)} with 500: its principal handoff could not be ` +
           `consumed (${loggableValue(msg(err))}). No authorization code was exchanged.`,
       );
-      return html("Authorization could not be completed.", 500, opts.branding);
+      return html("Authorization could not be completed.", 500, opts.branding, Boolean(opts.ui));
     }
   }
   try {
@@ -374,9 +230,9 @@ export async function routeOAuthCallback(
     return html(
       `Connected "${id}". You can close this window.`,
       200,
-      opts.branding,
+      opts.branding, Boolean(opts.ui),
     );
   } catch (err) {
-    return html(`Authorization failed: ${msg(err)}`, 500, opts.branding);
+    return html(`Authorization failed: ${msg(err)}`, 500, opts.branding, Boolean(opts.ui));
   }
 }

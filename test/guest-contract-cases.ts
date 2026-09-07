@@ -1,3 +1,4 @@
+import { recordToolActivity } from "../src/activity.js";
 // The guest API contract cases from documentation/code-mode.md, written once
 // and run against every executor. Each case names the clauses it verifies; a
 // case that behaves differently under two executors is either a bug or a
@@ -390,6 +391,7 @@ export function contractHarness(): {
 } {
   const state: ContractState = { calls: {}, events: [] };
   const activity: ActivityRequestContext = {
+    recordTool: recordToolActivity,
     sink: {
       record: (event) => {
         state.events.push(event);

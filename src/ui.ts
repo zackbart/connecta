@@ -1,9 +1,14 @@
+import type { OperatorSurface } from "./module-contracts.js";
+import { routeUi } from "./routes/ui.js";
+import { routeCredentials } from "./routes/credentials.js";
+import { routeOAuthManagement } from "./routes/oauth-management.js";
+import { withDeadline } from "./timeout.js";
 import {
   credentialTestRule,
   describeUndeclaredCredentialFields,
   storedCredentialShape,
-} from "./credentials.js";
-import type { CredentialVault } from "./credentials.js";
+} from "./credential-rules.js";
+import type { CredentialVault } from "./credential-contract.js";
 import {
   closeConnectorScope,
   type DeferredWork,
@@ -14,7 +19,6 @@ import {
 } from "./concurrency.js";
 import {
   type CredentialManagementCapability,
-  type AccessTokenManagementCapability,
   type UiConnector,
   type UiData,
   type UiTool,
@@ -33,90 +37,13 @@ import { CONNECTA_VERSION } from "./version.js";
 
 export {
   filterUiConnectors,
-  type AccessTokenManagementCapability,
   type CredentialManagementCapability,
   type UiConnector,
   type UiData,
 } from "./operator-ui/model.js";
 
-/** Connecta's default monochrome "C" mark. */
-export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <style>
-    .fg { fill: #000 }
-    @media (prefers-color-scheme: dark) { .fg { fill: #fff } }
-  </style>
-  <path class="fg" d="M27 9.4A13 13 0 1 0 27 22.6l-4.4-2.5a8 8 0 1 1 0-8.2z"/>
-</svg>`;
-
-interface ResolvedBranding {
-  productName: string;
-  productUrl?: string;
-  ownerName?: string;
-  ownerUrl?: string;
-  description: string;
-  /** Browser tab title and page meta name. */
-  pageTitle: string;
-  /** href for the page's icon link. */
-  faviconHref: string;
-  themeColor: string;
-}
-
-const DEFAULT_FAVICON_HREF = "/favicon.svg";
-
-/**
- * Branding arrives from operator config, which is untyped at a JS call site, so
- * every field is treated as `unknown`: a non-string is read as unset rather than
- * throwing on `.trim()`. Rendering must degrade to defaults for a malformed
- * value, never fail — `createConnecta` calls this during construction.
- */
-function trimmedString(value: unknown): string | undefined {
-  return typeof value === "string" ? value.trim() || undefined : undefined;
-}
-
-export function resolveBranding(
-  branding?: ConnectaBranding,
-): ResolvedBranding {
-  const productName = trimmedString(branding?.productName) ?? "Connecta";
-  const ownerName = trimmedString(branding?.ownerName);
-  // Operator branding URLs become masthead/callback hrefs, so a non-http(s)
-  // scheme (javascript:, data:) is dropped the same as an unset URL — the
-  // callers already render a <span> instead of an <a> when it is absent.
-  const productUrl = trimmedString(branding?.productUrl);
-  const ownerUrl = trimmedString(branding?.ownerUrl);
-  const faviconHref = trimmedString(branding?.favicon?.href);
-  return {
-    productName,
-    ...(productUrl && isSafeHttpUrl(productUrl) ? { productUrl } : {}),
-    ...(ownerName ? { ownerName } : {}),
-    ...(ownerUrl && isSafeHttpUrl(ownerUrl) ? { ownerUrl } : {}),
-    description:
-      trimmedString(branding?.description) ??
-      `Manage the services this ${productName} instance makes available to agents.`,
-    pageTitle:
-      trimmedString(branding?.pageTitle) ??
-      (ownerName ? `${productName} — ${ownerName}` : productName),
-    faviconHref:
-      faviconHref && isSafeIconHref(faviconHref)
-        ? faviconHref
-        : DEFAULT_FAVICON_HREF,
-    themeColor: trimmedString(branding?.themeColor) ?? "#ffffff",
-  };
-}
-
-/**
- * Whether the operator meant to supply a value here — the question every
- * dropped-URL warning asks before naming a field, and one definition so the
- * branding and `uiAuth` warnings cannot answer it differently. A non-string
- * counts as set: the intent was there and is exactly what the warning reports
- * on. A blank or whitespace-only string does not; that is indistinguishable
- * from leaving the field alone, and both take the default silently.
- */
-function isSetUrlValue(value: unknown): boolean {
-  return typeof value === "string"
-    ? trimmedString(value) !== undefined
-    : value !== undefined && value !== null;
-}
-
+import { resolveBranding, isSafeHttpsUrl } from "./branding.js";
+export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 /**
  * A JS string literal safe to inline in a script element. Escaping `/` keeps
  * an operator-supplied `</script>` from terminating the element early.
@@ -125,144 +52,17 @@ function stringForInlineScript(value: string): string {
   return JSON.stringify(value).replace(/\//g, "\\/");
 }
 
-/**
- * Names of the branding URLs the operator set that failed their gate and were
- * replaced by a default. Lives beside the gates so the startup warning cannot
- * drift from them, and takes `unknown` fields for the same reason
- * `resolveBranding` does — a warning helper must never throw.
- */
-export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
-  if (!branding) return [];
-  const resolved = resolveBranding(branding);
-  const faviconHref = branding.favicon?.href;
-  return [
-    ...(isSetUrlValue(branding.productUrl) && !resolved.productUrl
-      ? ["productUrl"]
-      : []),
-    ...(isSetUrlValue(branding.ownerUrl) && !resolved.ownerUrl
-      ? ["ownerUrl"]
-      : []),
-    ...(isSetUrlValue(faviconHref) &&
-    trimmedString(faviconHref) !== resolved.faviconHref
-      ? ["favicon.href"]
-      : []),
-  ];
-}
-
-/**
- * True only for absolute `http:`/`https:` URLs. Downstream connectors control
- * their `authorizationUrl`, so a hostile/misconfigured one could hand back a
- * `javascript:` (or other) scheme; gate it before it can become an href.
- */
-function safeUrl(url: unknown, schemes: string[]): boolean {
-  if (typeof url !== "string") return false;
-  try {
-    return schemes.includes(new URL(url).protocol);
-  } catch {
-    return false;
-  }
-}
-
-export function isSafeHttpUrl(url: unknown): boolean {
-  return safeUrl(url, ["http:", "https:"]);
-}
-
-/**
- * Only the second check's base; any origin works because the check is whether
- * the href stays on whatever origin it is resolved against. It is deliberately
- * never the sole gate: a value whose own authority equals this host (say
- * `//connecta.invalid/x`) would resolve to this exact origin and pass, so the
- * structural check below runs first and is what actually rejects `//host`.
- */
-const SAME_ORIGIN_PROBE = "https://connecta.invalid";
-
-/** Removed anywhere in a URL by the parser, so a gate must ignore them too. */
-const URL_STRIPPED_CHARS = /[\t\n\r]/g;
-
-/**
- * True for values allowed in the page's `<link rel="icon" href>`: an absolute
- * `http(s)` URL (an icon the operator hosts elsewhere) or a path rooted at this
- * origin. The relative carve-out is deliberate rather than accidental — the
- * default href is the relative `/favicon.svg`, which `isSafeHttpUrl` alone would
- * reject — and it is kept narrow on both ends.
- *
- * Root-relative only, because operator and OAuth callback pages sit at
- * different depths and a document-relative path would resolve differently.
- *
- * "Root-relative" is enforced structurally: exactly one leading `/` followed by
- * a character that is neither `/` nor `\`. Both of those would make the value an
- * authority (`//host`, and `/\host` because the URL parser folds `\` to `/` in
- * special schemes), pointing at an origin this server does not control. The test
- * runs on a copy with tab/newline/CR removed, since the parser strips those
- * anywhere and `/\t/host` would otherwise slip through as single-slash. The
- * origin comparison that follows is defense in depth, not the authority check —
- * on its own it would accept an authority that happened to equal the probe host.
- */
-export function isSafeIconHref(href: unknown): boolean {
-  if (typeof href !== "string") return false;
-  if (isSafeHttpUrl(href)) return true;
-  if (!/^\/(?![/\\])/.test(href.replace(URL_STRIPPED_CHARS, ""))) return false;
-  try {
-    return new URL(href, SAME_ORIGIN_PROBE).origin === SAME_ORIGIN_PROBE;
-  } catch {
-    return false;
-  }
-}
-
-/** Absolute HTTPS gate for the `UiAuthConfig` URL fields documented in types.ts. */
-export function isSafeHttpsUrl(url: unknown): boolean {
-  return safeUrl(url, ["https:"]);
-}
-
-/**
- * Names of the `uiAuth` URLs an inbound-auth provider supplied that failed their
- * gate. Lives beside the gate for the same reason `droppedBrandingUrls` does: the
- * startup warning cannot then drift from what rendering actually drops. Every
- * field is read defensively rather than trusted, because a custom `InboundAuth`
- * is untyped at a JS call site — `isSafeHttpsUrl` takes `unknown`, and a
- * `uiAuth` that is not the clerk shape is reported as nothing to warn about.
- *
- * `frontendApiUrl` is required, so anything that fails its gate is a drop.
- * `signInUrl` and `signUpUrl` are optional, so only a value the operator
- * *supplied* and the gate then rejected is worth a warning — an unset field
- * took no default away from anyone. `isSetUrlValue` decides that, the same way
- * and for the same reasons it decides it for the branding URLs: a warning that
- * fires for one and not the other would be reporting on the field rather than
- * on the operator's intent. Rendering is not consulted for this: it drops on
- * the gate alone, and a blank string fails that gate too — it is simply not
- * *reported*, because a blank is indistinguishable from leaving the field
- * alone.
- */
-export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
-  if (!uiAuth || uiAuth.kind !== "clerk") return [];
-  return [
-    ...(isSafeHttpsUrl(uiAuth.frontendApiUrl) ? [] : ["uiAuth.frontendApiUrl"]),
-    ...(isSetUrlValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl)
-      ? ["uiAuth.signInUrl"]
-      : []),
-    ...(isSetUrlValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl)
-      ? ["uiAuth.signUpUrl"]
-      : []),
-  ];
-}
-
 export type OperatorPage =
   | "connections"
-  | "credentials"
-  | "tokens"
   | "activity";
 
 const OPERATOR_PAGE_LABELS: Readonly<Record<OperatorPage, string>> = {
   connections: "Connections",
-  credentials: "Credentials",
-  tokens: "Access tokens",
   activity: "Activity",
 };
 
 export function operatorPageForPath(path: string): OperatorPage | undefined {
   if (path === "/") return "connections";
-  if (path === "/credentials") return "credentials";
-  if (path === "/tokens") return "tokens";
   if (path === "/activity") return "activity";
   return undefined;
 }
@@ -302,8 +102,8 @@ export async function buildUiData(
   defer?: DeferredWork,
   oauthManagement = false,
   discoveryConcurrency?: number,
-  accessTokenManagement: AccessTokenManagementCapability = "not_configured",
   personalCredentialOwner?: string,
+  detailOptions: { mayManage?: (id: string) => boolean; timeoutMs?: number; signal?: AbortSignal } = {},
 ): Promise<UiData> {
   const requestScope = {};
   const connectorSet = registry.listConnectors();
@@ -312,167 +112,160 @@ export async function buildUiData(
     connectorSet,
     concurrency,
     async (c): Promise<UiConnector> => {
-      const drift = await registry.credentialDriftFor(c.id);
-      const status: ConnectorStatus = drift
-        ? { state: "auth_required", message: drift }
-        : await registry.statusFor(c.id, baseUrl, requestScope);
-      if (status.authorizationUrl) {
-        await registry.bindOAuthHandoff(c.id, status.authorizationUrl);
-      }
-      let tools: UiTool[] = [];
-      // `status()` on an unauthenticated remote connector starts OAuth and
-      // stores its state + PKCE verifier. Probing listTools immediately
-      // afterward would start a second flow, overwrite that state, and return
-      // the now-stale first URL to the operator. Only inspect tools after
-      // status proves the connector is healthy.
-      if (status.state === "ok") {
-        try {
-          tools = (
-            await registry.getTools(c.id, baseUrl, requestScope)
-          ).map((t) => ({
-            name: t.name,
-            address: `${c.id}.${t.name}`,
-            ...(t.description !== undefined
-              ? { description: t.description }
-              : {}),
-          }));
-        } catch {
-          // broken connector: reported via status "error", tools stay empty
-        }
-      }
-      let credential: UiConnector["credential"];
-      const mayManageAuth = c.authScope === "personal"
-        ? Boolean(personalCredentialOwner)
-        : oauthManagement;
-      if (c.credential && credentialVault && mayManageAuth) {
-        // One rule, shared with the test route: only the hook matching the
-        // declared credential shape can run, so the button is offered only
-        // where a click can succeed (src/credentials.ts).
-        const testRule = credentialTestRule(c);
-        const credentialFields = (
-          metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
-        ) =>
-          c.credential?.fields?.map((field) => {
-            const fieldMetadata = metadata?.fields?.[field.name];
-            return {
-              name: field.name,
-              label: field.label,
-              ...(field.description
-                ? { description: field.description }
+      try {
+        return await withDeadline(async outerSignal => {
+          const drift = await registry.credentialDriftFor(c.id);
+          outerSignal.throwIfAborted();
+          let tools: UiTool[] = [];
+          let status: ConnectorStatus;
+          try {
+            status = await withDeadline(async signal => {
+              if (drift) return { state: "auth_required", message: drift } as ConnectorStatus;
+              const current = await registry.statusFor(c.id, baseUrl, requestScope, { signal });
+              if (current.state === "ok" && !signal.aborted) {
+                try {
+                  tools = (await registry.getTools(c.id, baseUrl, requestScope, { signal })).map(t => ({ name: t.name, address: `${c.id}.${t.name}`, ...(t.description ? { description: t.description } : {}) }));
+                } catch { /* The registry owns the failed catalog observation. */ }
+              }
+              return current;
+            }, { timeoutMs: detailOptions.timeoutMs ?? 30_000, signal: outerSignal, timeoutError: new Error("Connection details timed out. Retry this connection.") });
+          } catch (error) { status = { state: "error", message: error instanceof Error ? error.message : "Connection details unavailable" }; }
+          let credential: UiConnector["credential"];
+          const mayManageAuth = detailOptions.mayManage?.(c.id) ?? (c.authScope === "personal" ? Boolean(personalCredentialOwner) : oauthManagement);
+          if (c.credential && credentialVault && mayManageAuth) {
+            // One rule, shared with the test route: only the hook matching the
+            // declared credential shape can run, so the button is offered only
+            // where a click can succeed (src/credentials.ts).
+            const testRule = credentialTestRule(c);
+            const credentialFields = (
+              metadata?: Awaited<ReturnType<CredentialVault["metadata"]>>,
+            ) =>
+              c.credential?.fields?.map((field) => {
+                const fieldMetadata = metadata?.fields?.[field.name];
+                return {
+                  name: field.name,
+                  label: field.label,
+                  ...(field.description
+                    ? { description: field.description }
+                    : {}),
+                  ...(field.placeholder
+                    ? { placeholder: field.placeholder }
+                    : {}),
+                  inputType: field.inputType ?? "password",
+                  configured: Boolean(fieldMetadata),
+                  ...(fieldMetadata
+                    ? {
+                        lastFour: fieldMetadata.lastFour,
+                        updatedAt: fieldMetadata.updatedAt,
+                      }
+                    : {}),
+                };
+              });
+            const credentialCard = {
+              label: c.credential.label,
+              ...(c.credential.description
+                ? { description: c.credential.description }
                 : {}),
-              ...(field.placeholder
-                ? { placeholder: field.placeholder }
-                : {}),
-              inputType: field.inputType ?? "password",
-              configured: Boolean(fieldMetadata),
-              ...(fieldMetadata
-                ? {
-                    lastFour: fieldMetadata.lastFour,
-                    updatedAt: fieldMetadata.updatedAt,
-                  }
+              ...(c.credential.placeholder
+                ? { placeholder: c.credential.placeholder }
                 : {}),
             };
-          });
-        const credentialCard = {
-          label: c.credential.label,
-          ...(c.credential.description
-            ? { description: c.credential.description }
-            : {}),
-          ...(c.credential.placeholder
-            ? { placeholder: c.credential.placeholder }
-            : {}),
+            try {
+              const metadata = await credentialVault.metadata(
+                c.id,
+                c.authScope === "personal" ? personalCredentialOwner : undefined,
+              );
+              const fields = credentialFields(metadata);
+              const shape = storedCredentialShape(
+                c.credential,
+                metadata?.fields ?? null,
+              );
+              credential = {
+                ...credentialCard,
+                ...(fields?.length ? { fields } : {}),
+                configured: shape.state === "valid",
+                removable: Boolean(metadata),
+                ...(metadata
+                  ? {
+                      lastFour: metadata.lastFour,
+                      updatedAt: metadata.updatedAt,
+                    }
+                  : {}),
+                testable:
+                  testRule.mode !== null && shape.state !== "mismatch",
+                ...(shape.state === "mismatch"
+                  ? { error: shape.message }
+                  : {}),
+                // A dropped field leaves its secret in the vault, and the field
+                // list below only renders fields the connector still declares —
+                // so without this line there is nowhere an operator could see it.
+                ...(shape.state === "valid" && shape.undeclared.length
+                  ? {
+                      notice: describeUndeclaredCredentialFields(
+                        shape.undeclared,
+                      ),
+                    }
+                  : {}),
+              };
+            } catch {
+              const fields = credentialFields();
+              credential = {
+                ...credentialCard,
+                ...(fields?.length ? { fields } : {}),
+                configured: false,
+                removable: true,
+                testable: testRule.mode !== null,
+                error: "Stored credential could not be read.",
+              };
+            }
+          }
+          outerSignal.throwIfAborted();
+          return {
+            id: c.id,
+            authScope: c.authScope ?? "shared",
+            ...(c.title ? { title: c.title } : {}),
+            ...(c.description !== undefined
+              ? { description: c.description }
+              : {}),
+            status: status.state,
+            ...(status.message ? { message: status.message } : {}),
+            toolCount: tools.length,
+            tools,
+            // Counts only, and only when a refresh in this runtime produced them.
+            // `Registry.statusFor` already rebuilt the report through
+            // `boundedCatalogDrift`, so what lands here cannot carry a name or a
+            // schema even if the plugin seam returned one.
+            ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
+            ...(status.catalogAccess
+              ? { catalogAccess: status.catalogAccess }
+              : {}),
+            oauth: Boolean(c.startAuth && c.disconnectAuth),
+            ...(credential ? { credential } : {}),
+          };
+        }, {
+          timeoutMs: detailOptions.timeoutMs ?? 30_000,
+          ...(detailOptions.signal ? { signal: detailOptions.signal } : {}),
+          timeoutError: new Error("Connection details timed out. Retry this connection."),
+        });
+      } catch (error) {
+        return {
+          id: c.id,
+          ...(c.title ? { title: c.title } : {}),
+          authScope: c.authScope ?? "shared",
+          status: "error",
+          oauth: Boolean(c.startAuth && c.disconnectAuth),
+          message: error instanceof Error ? error.message : "Connection details unavailable",
+          toolCount: 0,
+          tools: [],
         };
-        try {
-          const metadata = await credentialVault.metadata(
-            c.id,
-            c.authScope === "personal" ? personalCredentialOwner : undefined,
-          );
-          const fields = credentialFields(metadata);
-          const shape = storedCredentialShape(
-            c.credential,
-            metadata?.fields ?? null,
-          );
-          credential = {
-            ...credentialCard,
-            ...(fields?.length ? { fields } : {}),
-            configured: shape.state === "valid",
-            removable: Boolean(metadata),
-            ...(metadata
-              ? {
-                  lastFour: metadata.lastFour,
-                  updatedAt: metadata.updatedAt,
-                }
-              : {}),
-            testable:
-              testRule.mode !== null && shape.state !== "mismatch",
-            ...(shape.state === "mismatch"
-              ? { error: shape.message }
-              : {}),
-            // A dropped field leaves its secret in the vault, and the field
-            // list below only renders fields the connector still declares —
-            // so without this line there is nowhere an operator could see it.
-            ...(shape.state === "valid" && shape.undeclared.length
-              ? {
-                  notice: describeUndeclaredCredentialFields(
-                    shape.undeclared,
-                  ),
-                }
-              : {}),
-          };
-        } catch {
-          const fields = credentialFields();
-          credential = {
-            ...credentialCard,
-            ...(fields?.length ? { fields } : {}),
-            configured: false,
-            removable: true,
-            testable: testRule.mode !== null,
-            error: "Stored credential could not be read.",
-          };
-        }
+      } finally {
+        await closeConnectorScope(
+          c,
+          registry.contextFor(c.id, baseUrl, requestScope),
+          defer,
+        );
       }
-      return {
-        id: c.id,
-        authScope: c.authScope ?? "shared",
-        ...(c.title ? { title: c.title } : {}),
-        ...(c.description !== undefined
-          ? { description: c.description }
-          : {}),
-        status: status.state,
-        ...(status.message ? { message: status.message } : {}),
-        ...(isSafeHttpUrl(status.authorizationUrl)
-          ? { authorizationUrl: status.authorizationUrl }
-          : {}),
-        toolCount: tools.length,
-        tools,
-        // Counts only, and only when a refresh in this runtime produced them.
-        // `Registry.statusFor` already rebuilt the report through
-        // `boundedCatalogDrift`, so what lands here cannot carry a name or a
-        // schema even if the plugin seam returned one.
-        ...(status.catalogDrift ? { catalogDrift: status.catalogDrift } : {}),
-        ...(status.catalogAccess
-          ? { catalogAccess: status.catalogAccess }
-          : {}),
-        ...(c.disconnectAuth &&
-        c.startAuth &&
-        (oauthManagement ||
-          c.authScope === "personal" ||
-          !personalCredentialOwner)
-          ? { oauth: true }
-          : {}),
-        ...(credential ? { credential } : {}),
-      };
     },
-  );
-  await mapSettledWithConcurrency(
-    connectorSet,
-    concurrency,
-    (connector) =>
-      closeConnectorScope(
-        connector,
-        registry.contextFor(connector.id, baseUrl, requestScope),
-        defer,
-      ),
   );
   const connectors = settled.map((result) => {
     if (result.status === "rejected") throw result.reason;
@@ -484,7 +277,6 @@ export async function buildUiData(
     connectors,
     activityEnabled,
     credentialManagement,
-    accessTokenManagement,
     oauthManagement: oauthManagement || Boolean(personalCredentialOwner),
   };
 }
@@ -614,4 +406,37 @@ const PRODUCT_OPERATOR_LABEL = ${stringForInlineScript(brand.productName + " ope
 ${OPERATOR_UI_SCRIPT}</script>
 </body>
 </html>`;
+}
+
+/** Mount the connection UI without enabling any storage or activity module. */
+export function operatorUi(
+  options: { branding?: ConnectaBranding } = {},
+): OperatorSurface {
+  return {
+    ...options,
+    reservedPaths: ["/", "/ui", "/ui/*", "/favicon.svg", "/favicon.ico"],
+    credentialHandoffUrl(baseUrl) {
+      return new URL("/", baseUrl).toString();
+    },
+    async handle(context) {
+      const routes = [
+        ...(context.opts.credentialVault ? [routeCredentials] : []),
+        routeOAuthManagement,
+        routeUi,
+      ];
+      for (const route of routes) {
+        const response = await route(context);
+        if (response) {
+          if (operatorPageForPath(context.path) || context.path === "/ui") {
+            response.headers.set("X-Frame-Options", "DENY");
+            if (!response.headers.has("Content-Security-Policy")) {
+              response.headers.set("Content-Security-Policy", "frame-ancestors 'none'");
+            }
+          }
+          return response;
+        }
+      }
+      return context.opts.activityModule?.handle(context) ?? null;
+    },
+  };
 }

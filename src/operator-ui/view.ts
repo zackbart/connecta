@@ -1,6 +1,5 @@
 import type { CatalogDriftReport } from "../types.js";
 import type {
-  AccessTokenManagementCapability,
   CredentialManagementCapability,
   UiData,
 } from "./model.js";
@@ -16,14 +15,10 @@ import type {
 
 export type OperatorPage =
   | "connections"
-  | "credentials"
-  | "tokens"
   | "activity";
 
 export const OPERATOR_PAGES: readonly OperatorPage[] = [
   "connections",
-  "credentials",
-  "tokens",
   "activity",
 ];
 
@@ -31,8 +26,6 @@ export const PAGE_META: Readonly<
   Record<OperatorPage, { path: string; label: string }>
 > = {
   connections: { path: "/", label: "Connections" },
-  credentials: { path: "/credentials", label: "Credentials" },
-  tokens: { path: "/tokens", label: "Access tokens" },
   activity: { path: "/activity", label: "Activity" },
 };
 
@@ -60,14 +53,6 @@ export interface UiActivityEvent {
   attempts: number;
   errorCode?: string;
   friction?: string;
-}
-
-export interface UiAccessToken {
-  id: string;
-  name: string;
-  tokenPrefix: string;
-  createdAt: string;
-  revokedAt?: string;
 }
 
 /** A message with the tone that decides its live region: status or alert. */
@@ -120,14 +105,6 @@ export interface OperatorState {
   credentialEditing: string | null;
   /** Connector id whose credential mutation is in flight. */
   credentialBusy: string | null;
-  tokenPhase: LoadPhase;
-  tokenNotice: Notice | null;
-  tokens: UiAccessToken[];
-  /** Shown once, never re-fetchable, and cleared by anything that navigates. */
-  createdToken: string | null;
-  /** Access-token id whose rename form is open. */
-  tokenRenaming: string | null;
-  tokenBusy: boolean;
   activityPhase: LoadPhase;
   activityNotice: Notice | null;
   activityEvents: UiActivityEvent[];
@@ -161,12 +138,6 @@ function identityScopedState() {
     credentialNotice: null,
     credentialEditing: null,
     credentialBusy: null,
-    tokenPhase: "idle" as LoadPhase,
-    tokenNotice: null,
-    tokens: [],
-    createdToken: null,
-    tokenRenaming: null,
-    tokenBusy: false,
     activityPhase: "idle" as LoadPhase,
     activityNotice: null,
     activityEvents: [],
@@ -206,9 +177,6 @@ export function withPage(
   return {
     ...state,
     page,
-    createdToken: null,
-    tokenRenaming: null,
-    tokenNotice: null,
     credentialEditing: null,
     credentialNotice: null,
   };
@@ -221,21 +189,13 @@ export function credentialUnavailableCopy(
     return "No connectors declare operator-managed credential slots. Connector credentials remain configuration-as-code until a slot is declared.";
   }
   if (capability === "vault_not_configured") {
-    return "Credential storage is not configured. Set credentials.encryptionKey before managing connector credentials here.";
+    return "Credential storage is not configured. Configure a vault before managing connector credentials here.";
   }
   return "Credential management requires an interactive user. Bearer-authenticated sessions can inspect connections but cannot manage stored credentials.";
 }
 
-export function accessTokenUnavailableCopy(
-  capability?: AccessTokenManagementCapability,
-): string {
-  if (capability === "not_configured") {
-    return "Access tokens are not configured for this deployment. Add accessTokens to the deployment configuration to enable them.";
-  }
-  return "Access token management requires an eligible interactive operator. A Bearer token can connect to MCP, but it cannot create or revoke other tokens.";
-}
-
 export function connectorStatusLabel(status: string): string {
+  if (status === "loading") return "Loading details";
   if (status === "ok") return "Connected";
   if (status === "auth_required") return "Authorization needed";
   return "Unavailable";

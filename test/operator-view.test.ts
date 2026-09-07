@@ -7,7 +7,6 @@ import {
   type UiConnector,
 } from "../src/ui.js";
 import {
-  accessTokenUnavailableCopy,
   activitySummary,
   actorLabel,
   actorStableId,
@@ -75,13 +74,13 @@ describe("status UI filtering", () => {
 describe("operator page routing and capabilities", () => {
   it("maps only canonical shell paths and builds page-specific titles", () => {
     expect(operatorPageForPath("/")).toBe("connections");
-    expect(operatorPageForPath("/credentials")).toBe("credentials");
-    expect(operatorPageForPath("/tokens")).toBe("tokens");
+    expect(operatorPageForPath("/credentials")).toBeUndefined();
+    expect(operatorPageForPath("/tokens")).toBeUndefined();
     expect(operatorPageForPath("/activity")).toBe("activity");
     expect(operatorPageForPath("/ui")).toBeUndefined();
     expect(operatorPageForPath("/ui/data")).toBeUndefined();
-    expect(operatorPageTitle("credentials", "Acme Connecta")).toBe(
-      "Credentials — Acme Connecta",
+    expect(operatorPageTitle("connections", "Acme Connecta")).toBe(
+      "Connections — Acme Connecta",
     );
   });
 
@@ -118,12 +117,7 @@ describe("operator page routing and capabilities", () => {
 });
 
 describe("operator app state", () => {
-  const token = {
-    id: "token-1",
-    name: "Claude desktop",
-    tokenPrefix: "cta_abc",
-    createdAt: "2026-07-30T12:00:00.000Z",
-  };
+
 
   function event(address: string, actor?: UiActivityEvent["actor"]) {
     return {
@@ -142,7 +136,7 @@ describe("operator app state", () => {
   /** Every identity-scoped field carrying something an operator could read. */
   function loaded(): OperatorState {
     return {
-      ...initialState("tokens"),
+      ...initialState("activity"),
       session: "ready",
       pendingFocus: "tokenNotice",
       data: {
@@ -151,7 +145,6 @@ describe("operator app state", () => {
         connectors: [],
         activityEnabled: true,
         credentialManagement: "available",
-        accessTokenManagement: "available",
         oauthManagement: true,
       },
       connectorFilter: "billing",
@@ -160,12 +153,6 @@ describe("operator app state", () => {
       credentialNotice: info("identity-a secret-shaped notice"),
       credentialEditing: "vaulted",
       credentialBusy: "vaulted",
-      tokenPhase: "ready",
-      tokenNotice: info("Access token created."),
-      tokens: [token],
-      createdToken: "cta_one_time_secret",
-      tokenRenaming: "token-1",
-      tokenBusy: true,
       activityPhase: "ready",
       activityNotice: info("loaded"),
       activityEvents: [event("calc.add")],
@@ -194,12 +181,6 @@ describe("operator app state", () => {
       credentialEditing: null,
       credentialBusy: null,
       pendingFocus: null,
-      tokenPhase: "idle",
-      tokenNotice: null,
-      tokens: [],
-      createdToken: null,
-      tokenRenaming: null,
-      tokenBusy: false,
       activityPhase: "idle",
       activityNotice: null,
       activityEvents: [],
@@ -207,27 +188,22 @@ describe("operator app state", () => {
       activitySearch: "",
     });
     // The page survives an identity change; only what the page *showed* does not.
-    expect(after.page).toBe("tokens");
+    expect(after.page).toBe("activity");
     expect(JSON.stringify(after)).not.toContain("cta_one_time_secret");
     expect(JSON.stringify(after)).not.toContain("identity-a");
   });
 
   it("re-idles deferred collections so a new identity refetches its own", () => {
     const after = resetIdentity(loaded());
-    expect(after.tokenPhase).toBe("idle");
     expect(after.activityPhase).toBe("idle");
   });
 
   it("drops the one-time secret and the open credential form when a page changes", () => {
     const after = withPage(loaded(), "connections");
     expect(after.page).toBe("connections");
-    expect(after.createdToken).toBeNull();
-    expect(after.tokenRenaming).toBeNull();
     expect(after.credentialEditing).toBeNull();
     expect(after.credentialNotice).toBeNull();
-    expect(after.tokenNotice).toBeNull();
     // Loaded collections are this identity's own, so navigation keeps them.
-    expect(after.tokens).toEqual([token]);
   });
 
   it("labels activity actors and shows a stable id only when it disambiguates", () => {
@@ -391,16 +367,12 @@ describe("operator app state", () => {
       "No connectors declare operator-managed credential slots",
     );
     expect(credentialUnavailableCopy("vault_not_configured")).toContain(
-      "credentials.encryptionKey",
+      "Configure a vault",
     );
     expect(credentialUnavailableCopy("requires_operator")).toContain(
       "interactive user",
     );
-    expect(accessTokenUnavailableCopy("not_configured")).toContain(
-      "not configured for this deployment",
-    );
-    expect(accessTokenUnavailableCopy("requires_operator")).toContain(
-      "cannot create or revoke other tokens",
-    );
+
+
   });
 });

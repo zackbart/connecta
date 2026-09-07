@@ -136,9 +136,9 @@
   .linklike:focus-visible { text-decoration-color: transparent; }
 
   .page { padding-bottom: 5rem; }
-  .lead { margin-top: 6rem; }
+  .lead { margin-top: 3rem; }
   .section,
-  .section + .section { margin-top: 3rem; }
+  .section + .section { margin-top: 2rem; }
   .lead-copy,
   .body-copy { max-width: 34em; }
   .lead-copy > * + *,
@@ -419,7 +419,7 @@
       font-size: .875rem;
       gap: .25rem;
     }
-    .lead { margin-top: 4rem; }
+    .lead { margin-top: 2rem; }
     .section,
     .section + .section { margin-top: 2.5rem; }
     .connector-head,

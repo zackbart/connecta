@@ -1,4 +1,4 @@
-import type { UiData } from "../model.js";
+import type { UiConnector, UiData } from "../model.js";
 import {
   failure,
   info,
@@ -9,7 +9,6 @@ import {
   type Notice,
   type OperatorPage,
   type OperatorState,
-  type UiAccessToken,
   type UiActivityEvent,
 } from "../view.js";
 import { auth, initialPage, TOKEN_KEY } from "./config.js";
@@ -81,9 +80,7 @@ interface OperatorResponse {
   ok?: boolean;
   message?: string;
   error?: string;
-  token?: string;
-  accessToken?: UiAccessToken;
-  accessTokens?: UiAccessToken[];
+  authorizationUrl?: string;
   events?: UiActivityEvent[];
   nextCursor?: string;
 }
@@ -178,7 +175,9 @@ async function loadData(): Promise<void> {
     return gate(failure("Operator data could not be read."));
   }
   if (!current()) return;
+  if (!Array.isArray(data.connectors)) return gate(failure("Connection list could not be read."));
   set({ data, session: "ready", gate: null, refreshing: false });
+  void loadConnectorDetails(data, current, token);
 }
 
 /**
@@ -193,27 +192,21 @@ async function mutate(options: {
   done: (payload: OperatorResponse | null) => Partial<OperatorState>;
   failed: (notice: Notice) => Partial<OperatorState>;
   fallback: string;
-  reload?: boolean;
+  reload?: string | undefined;
 }): Promise<void> {
   const current = fence();
+  if (options.reload) detailRevisions.set(options.reload, (detailRevisions.get(options.reload) ?? 0) + 1);
   set(options.busy);
   try {
     const payload = await options.request(current);
     if (!current()) return;
-    if (options.reload) await loadData();
     if (!current()) return;
     set(options.done(payload));
+    if (options.reload) void refreshConnector(options.reload);
   } catch (error) {
     if (!current()) return;
-    if (options.reload) {
-      try {
-        await loadData();
-      } catch {
-        // The mutation error is the actionable one; loadData owns its gate.
-      }
-      if (!current()) return;
-    }
     set(options.failed(failure(message(error, options.fallback))));
+
   }
 }
 
@@ -284,6 +277,11 @@ export function oauthAction(
       ),
     busy: { oauthNotice: null, oauthBusy: connector },
     done: (payload) => ({
+      ...(state.data ? { data: { ...state.data, connectors: state.data.connectors.map(c => {
+        if (c.id !== connector) return c;
+        const { authorizationUrl: _old, ...rest } = c;
+        return { ...rest, status: "auth_required" as const, tools: [], toolCount: 0, ...(!disconnecting && payload?.authorizationUrl ? { authorizationUrl: payload.authorizationUrl } : {}) };
+      }) } } : {}),
       oauthBusy: null,
       pendingFocus: "oauthNotice",
       oauthNotice: info(
@@ -299,7 +297,7 @@ export function oauthAction(
       pendingFocus: "oauthNotice",
     }),
     fallback: "OAuth action failed.",
-    reload: true,
+    reload: connector,
   });
 }
 
@@ -331,7 +329,7 @@ function credentialMutation(
     done: (payload) => land(done(payload)),
     failed: land,
     fallback: "Credential action failed.",
-    reload,
+    reload: reload ? connector : undefined,
   });
 }
 
@@ -388,137 +386,6 @@ export function testCredential(connector: string): Promise<void> {
       return payload?.ok ? info(copy) : failure(copy);
     },
     false,
-  );
-}
-
-/* Access tokens ----------------------------------------------------------- */
-
-export async function loadAccessTokens(): Promise<void> {
-  const current = fence();
-  set({ tokenPhase: "loading", tokenNotice: null });
-  try {
-    const payload = await operatorRequest("/ui/access-tokens", "GET", current);
-    if (!current()) return;
-    set({ tokenPhase: "ready", tokens: payload?.accessTokens ?? [] });
-  } catch (error) {
-    if (!current()) return;
-    set({
-      tokenPhase: "error",
-      tokenNotice: failure(
-        message(error, "Access tokens could not be loaded."),
-      ),
-    });
-  }
-}
-
-function tokenFailure(tokenNotice: Notice): Partial<OperatorState> {
-  return { tokenBusy: false, tokenNotice, pendingFocus: "tokenNotice" };
-}
-
-/**
- * Resolves true only when the token exists. `mutate` lands a handled failure in
- * state and resolves like any other outcome, so a caller that clears its form on
- * resolution would throw away what the operator typed the moment the POST
- * failed — the dead end every other flow here avoids. The form clears on this
- * boolean instead.
- */
-export function createAccessToken(name: string): Promise<boolean> {
-  if (!name) {
-    set(tokenFailure(failure("Name the MCP client before creating a token.")));
-    return Promise.resolve(false);
-  }
-  let created = false;
-  return mutate({
-    request: (current) =>
-      operatorRequest("/ui/access-tokens", "POST", current, { name }),
-    busy: { tokenBusy: true, tokenNotice: null },
-    done: (payload) => {
-      const issued = payload?.accessToken;
-      if (!payload?.token || !issued) {
-        throw new Error("The created token was not returned.");
-      }
-      created = true;
-      return {
-        tokenBusy: false,
-        tokenPhase: "ready",
-        tokens: [
-          issued,
-          ...state.tokens.filter((token) => token.id !== issued.id),
-        ],
-        createdToken: payload.token,
-        tokenNotice: info("Access token created."),
-        pendingFocus: "tokenRevealHeading",
-      };
-    },
-    failed: tokenFailure,
-    fallback: "Access token could not be created.",
-  }).then(() => created);
-}
-
-export function dismissCreatedToken(): void {
-  set({ createdToken: null });
-}
-
-export function renameAccessToken(id: string | null): void {
-  set({ tokenRenaming: id });
-}
-
-function accessTokenMutation(
-  id: string,
-  method: "DELETE" | "PUT",
-  body: object | undefined,
-  success: string,
-  fallback: string,
-): Promise<void> {
-  return mutate({
-    request: (current) =>
-      operatorRequest(
-        `/ui/access-tokens/${encodeURIComponent(id)}`,
-        method,
-        current,
-        body,
-      ),
-    busy: { tokenBusy: true, tokenNotice: null },
-    done: (payload) => ({
-      tokenBusy: false,
-      tokenRenaming: null,
-      tokenNotice: info(success),
-      pendingFocus: "tokenNotice",
-      ...(payload?.accessToken
-        ? {
-            tokens: state.tokens.map((token) =>
-              token.id === id ? payload.accessToken! : token,
-            ),
-          }
-        : {}),
-    }),
-    failed: tokenFailure,
-    fallback,
-  });
-}
-
-export function saveAccessTokenName(id: string, name: string): Promise<void> {
-  return accessTokenMutation(
-    id,
-    "PUT",
-    { name },
-    "Access token renamed.",
-    "Access token could not be renamed.",
-  );
-}
-
-export function revokeAccessToken(id: string): Promise<void> {
-  const named = state.tokens.find((token) => token.id === id);
-  const confirmed = window.confirm(
-    `Revoke ${named?.name || "this access token"}? Its MCP client will immediately lose access.`,
-  );
-  if (!confirmed) return Promise.resolve();
-  return accessTokenMutation(
-    id,
-    "DELETE",
-    undefined,
-    "Access token revoked.",
-    "Access token could not be revoked.",
   );
 }
 
@@ -584,7 +451,6 @@ export async function boot(): Promise<void> {
   const onPop = () => setPage(pageForPath(window.location.pathname), true);
   window.addEventListener("popstate", onPop);
   // A document restored from the back-forward cache must not restore a secret.
-  window.addEventListener("pagehide", dismissCreatedToken);
   if (auth.kind === "clerk") {
     const clerk = window.Clerk;
     if (!clerk) {
@@ -616,4 +482,47 @@ export async function boot(): Promise<void> {
     }
   }
   await loadData();
+}
+
+let detailGeneration = 0;
+const detailRevisions = new Map<string, number>();
+async function loadConnectorDetails(data: UiData, current: () => boolean, token: string | null | undefined): Promise<void> {
+  const generation = ++detailGeneration;
+  let next = 0;
+  const worker = async () => {
+    while (next < data.connectors.length && current() && generation === detailGeneration) {
+      const connector = data.connectors[next++]!;
+      const revision = (detailRevisions.get(connector.id) ?? 0) + 1;
+      detailRevisions.set(connector.id, revision);
+      let detail: UiConnector;
+      try {
+        const response = await fetch(`/ui/connectors/${encodeURIComponent(connector.id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
+        if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
+        detail = await response.json() as UiConnector;
+      } catch (error) { detail = { ...connector, status: "error", message: message(error, "Connection details unavailable") }; }
+      if (!current() || generation !== detailGeneration || !state.data) return;
+      if (detailRevisions.get(connector.id) !== revision) continue;
+      set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === connector.id ? detail : c) } });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, data.connectors.length) }, worker));
+}
+
+export async function refreshConnector(id: string): Promise<void> {
+  const current = fence();
+  const revision = (detailRevisions.get(id) ?? 0) + 1;
+  detailRevisions.set(id, revision);
+  if (state.data) set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "loading" } : c) } });
+  try {
+    const token = await sessionToken();
+    if (!current()) return;
+    const response = await fetch(`/ui/connectors/${encodeURIComponent(id)}`, { headers: requestHeaders(token), credentials: "same-origin" });
+    if (!response.ok) throw new Error(`Connection details unavailable (${response.status})`);
+    const detail = await response.json() as UiConnector;
+    if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
+    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...detail, ...(detail.status === "auth_required" && c.authorizationUrl ? { authorizationUrl: c.authorizationUrl } : {}) } : c) } });
+  } catch (error) {
+    if (!current() || !state.data || detailRevisions.get(id) !== revision) return;
+    set({ data: { ...state.data, connectors: state.data.connectors.map(c => c.id === id ? { ...c, status: "error", message: message(error, "Connection details unavailable") } : c) } });
+  }
 }

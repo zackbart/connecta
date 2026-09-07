@@ -1,3 +1,5 @@
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { activityHistory } from "../src/activity.js";
 import { createTestConnecta, required } from "./helpers.js";
 import {
   calcApi,
@@ -792,7 +794,7 @@ describe("server /mcp end-to-end", () => {
       auth: bearerToken(TOKEN, { subjectId: "cli-zack" }),
       storage: memoryStorage(),
       publicUrl: BASE,
-      activity: { store: activity, deploymentId: "test" },
+      activity: activityHistory({ store: activity, deploymentId: "test" }),
     });
 
     await mcpRpc(
@@ -864,13 +866,13 @@ describe("server /mcp end-to-end", () => {
       auth,
       storage: memoryStorage(),
       publicUrl: BASE,
-      activity: {
+      activity: activityHistory({
         store: {
           record(event) {
             events.push(event);
           },
         },
-      },
+      }),
     });
 
     await mcpRpc(
@@ -905,13 +907,13 @@ describe("server /mcp end-to-end", () => {
     const c = createTestConnecta({
       connectors: [failing],
       auth: bearerToken(TOKEN),
-      activity: {
+      activity: activityHistory({
         store: {
           record(event) {
             events.push(event);
           },
         },
-      },
+      }),
       publicUrl: BASE,
     });
 
@@ -953,7 +955,7 @@ describe("server /mcp end-to-end", () => {
     };
     const c = createTestConnecta({
       connectors: [calcApi(), authConn],
-      auth: bearerToken(TOKEN),
+      auth: fakeClerkAuth({ token: TOKEN }),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -982,7 +984,7 @@ describe("server /mcp end-to-end", () => {
       auth: bearerToken(TOKEN),
       storage: memoryStorage(),
       publicUrl: BASE,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
     const response = await mcpRpc(
       c,
@@ -995,7 +997,7 @@ describe("server /mcp end-to-end", () => {
     expect(recovery).toMatchObject({
       connector: "static",
       recovery: "operator_config",
-      operatorUrl: `${BASE}/credentials`,
+      operatorUrl: `${BASE}/`,
     });
     expect(recovery.instructions).toContain(
       "signed-in human with access to this connector",
@@ -1026,7 +1028,7 @@ describe("server /mcp end-to-end", () => {
       auth: [bearerToken(TOKEN), fakeClerkAuth({ frontendApiUrl: "https://clerk.example.com", token: "operator-token", userId: "operator_1" })],
       storage: memoryStorage(),
       publicUrl: BASE,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
     const failed = await readJsonRpc(
@@ -1073,7 +1075,7 @@ describe("server /mcp end-to-end", () => {
     const handoffPayload = JSON.parse(handoff.result.content[0].text);
     expect(handoffPayload).toMatchObject({
       recovery: "operator_config",
-      operatorUrl: `${BASE}/credentials`,
+      operatorUrl: `${BASE}/`,
       credential: {
         label: "Service credentials",
         fields: [
@@ -1465,7 +1467,7 @@ describe("server open routes", () => {
 
   it("protects the UI from framing without applying UI CSP to MCP routes", async () => {
     const c = makeDeployment();
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
+    for (const path of ["/"]) {
       const ui = await c.fetch(new Request(`${BASE}${path}`));
       const csp = ui.headers.get("Content-Security-Policy") ?? "";
       expect(csp).toContain("script-src 'nonce-");
@@ -1716,13 +1718,13 @@ describe("execute_code registration (code mode)", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       executor: quickJsExecutor(),
-      activity: {
+      activity: activityHistory({
         store: {
           record(event) {
             events.push(event);
           },
         },
-      },
+      }),
     });
     const res = await mcpRpc(
       c,

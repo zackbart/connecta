@@ -26,7 +26,8 @@
     // shipped declarations.
     "baseUrl": ".",
     "paths": {
-      "@zackbart/connecta": ["./src/index.ts"]
+      "@zackbart/connecta": ["./src/index.ts"],
+      "@zackbart/connecta/*": ["./src/*"]
     }
   },
   "include": ["src/**/*.ts", "test/**/*.ts"],

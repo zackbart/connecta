@@ -98,7 +98,7 @@ describe("cloudflareAccessAuth", () => {
   it("admits MCP service calls but refuses service-token operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
-      accessTokens: {},
+      connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
     });
     const context = workerRuntime();
 
@@ -107,7 +107,7 @@ describe("cloudflareAccessAuth", () => {
     expect(mcp.status).toBe(200);
 
     const mutation = await deployment.fetch(
-      new Request(`${BASE}/ui/access-tokens`, {
+      new Request(`${BASE}/ui/oauth/oauth`, {
         method: "POST",
         headers: {
           Origin: BASE,
@@ -127,11 +127,11 @@ describe("cloudflareAccessAuth", () => {
   it("lets a human Access identity use same-origin operator mutation", async () => {
     const deployment = makeDeployment({
       auth: cloudflareAccessAuth(),
-      accessTokens: {},
+      connectors: [{ id: "oauth", kind: "mcp", listTools: async () => [], callTool: async () => null, startAuth: async () => ({ state: "ok" }), disconnectAuth: async () => {} }],
     });
     const context = workerRuntime({ user_uuid: "operator-1" });
     const crossOrigin = await deployment.fetch(
-      new Request(`${BASE}/ui/access-tokens`, {
+      new Request(`${BASE}/ui/oauth/oauth`, {
         method: "POST",
         headers: {
           Origin: "https://attacker.example",
@@ -145,7 +145,7 @@ describe("cloudflareAccessAuth", () => {
     expect(crossOrigin.status).toBe(403);
 
     const response = await deployment.fetch(
-      new Request(`${BASE}/ui/access-tokens`, {
+      new Request(`${BASE}/ui/oauth/oauth`, {
         method: "POST",
         headers: {
           Origin: BASE,
@@ -156,7 +156,7 @@ describe("cloudflareAccessAuth", () => {
       undefined,
       context,
     );
-    expect(response.status).toBe(201);
+    expect(response.status).toBe(200);
   });
 
   it("keeps Clerk as the pre-Access shell and switches to ambient auth at the edge", async () => {

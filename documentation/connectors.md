@@ -367,7 +367,7 @@ A remote MCP connector that authenticates with a static key has two ways to
 receive one. `{ type: "headers", headers }` bakes the literal value into the
 deployment file, which suits a secret the runtime already holds.
 `{ type: "credential" }` declares the slot instead and lets an operator paste
-the key at `/credentials`, where it is encrypted at rest and rotatable without
+the key at the connection UI at `/`, where it is encrypted at rest and rotatable without
 a redeploy:
 
 ```ts

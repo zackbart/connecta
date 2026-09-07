@@ -1,3 +1,4 @@
+import type { CredentialVault } from "./credential-contract.js";
 import type {
   CatalogAccessObservation,
   CatalogDriftCounts,
@@ -14,13 +15,11 @@ import {
   type DeferredWork,
 } from "./connector-scope.js";
 import {
-  recordCatalogDriftActivity,
   type CatalogDriftActivityContext,
 } from "./activity.js";
 import {
   storedCredentialShape,
-  type CredentialVault,
-} from "./credentials.js";
+} from "./credential-rules.js";
 import { ConnectorCallError, msg } from "./errors.js";
 import {
   ConnectorCallAdmissionController,
@@ -151,6 +150,7 @@ export interface RegistryOptions {
   storage: KVStorage;
   logger: Logger;
   credentialVault?: CredentialVault | undefined;
+  credentialUi?: boolean | undefined;
   /** Internal owner partition used by a personal registry. */
   credentialOwner?: string | undefined;
   /** Internal child registries skip deployment-wide construction warnings. */
@@ -212,6 +212,7 @@ export interface CatalogReadOptions {
  * or its construction-only methods.
  */
 export interface RegistryView {
+  credentialUiAvailable(): boolean;
   /** Deployment-wide result-size cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
   listConnectors(): Connector[];
@@ -684,7 +685,7 @@ export class Registry implements RegistryView {
       counts.schemaChanges === 0;
     this.reportedDrift.set(connector.id, counts);
     if (previous === undefined && clean) return;
-    recordCatalogDriftActivity(
+    this.opts.catalogDriftActivity?.recordDrift?.(
       this.opts.catalogDriftActivity
         ? { ...this.opts.catalogDriftActivity, logger: this.opts.logger }
         : undefined,
@@ -704,6 +705,8 @@ export class Registry implements RegistryView {
   resultsStorage(): KVStorage {
     return namespaced(this.opts.storage, "results:");
   }
+
+  credentialUiAvailable(): boolean { return Boolean(this.opts.credentialUi); }
 
   async bindOAuthHandoff(): Promise<void> {
     // Shared OAuth already resolves in deployment-wide connector storage.
@@ -1462,9 +1465,6 @@ export class Registry implements RegistryView {
       // observation when this runtime has not made one.
       const boundedStatus: ConnectorStatus = {
         state: status.state,
-        ...(status.authorizationUrl !== undefined
-          ? { authorizationUrl: status.authorizationUrl }
-          : {}),
         ...(status.message !== undefined ? { message: status.message } : {}),
       };
       return {
@@ -1633,6 +1633,8 @@ class ScopedRegistryView implements RegistryView {
     const registry = this.registryFor(id);
     return registry ? registry.invalidateStored(id) : Promise.resolve();
   }
+
+  credentialUiAvailable(): boolean { return this.root.credentialUiAvailable(); }
 
   async bindOAuthHandoff(
     id: string,

@@ -33,8 +33,7 @@ and `test/package-surface.test.ts` fails if the two ever drift apart.
 There are exactly two deployment shapes.
 [`templates/node/`](../templates/node/) is what `connecta init` copies — the
 one standalone Node project, Docker-ready rather than Docker-only — and
-[`examples/worker/`](../examples/worker/) is the Cloudflare shape. Both ship
-the whole operator feature set; each README walks through its own enablement.
+[`examples/worker/`](../examples/worker/) is the Cloudflare shape. Both show explicit optional modules; each README walks through enablement.
 A third scaffold that is a diff away from either is the shape
 [#344](https://github.com/zackbart/connecta/issues/344) deleted, so do not add
 one.
@@ -84,16 +83,15 @@ optional.
 | `connectors` | — (required) | the connector set ([connectors](./connectors.md)) |
 | `executor` | — (required) | the sandbox `execute_code` runs in ([code mode](./code-mode.md#what-an-executor-must-implement)) |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before interactive providers ([inbound auth](./auth.md)) |
-| `identity?` | all connectors; every interactive human is an operator | `{ connectorAccess?, operatorAccess? }` derives the request's connector view and shared-auth authority from its authenticated identity ([principals](./auth.md#principals-visibility-and-operators)) |
-| `storage?` | `memoryStorage()` | the one state seam for catalogs, result paging, credentials, and access tokens ([storage](./storage-and-credentials.md)) |
+| `identity?` | all visible; auth management denied; interactive activity reads | `{ connectorAccess?, credentialAdministration?, personalConnection?, activityAccess? }` derives separate use and management permissions ([identity](./auth.md#principals-visibility-and-operators)) |
+| `storage?` | `memoryStorage()` | connector state, catalogs, and result paging; pass storage explicitly to the optional vault ([storage](./storage-and-credentials.md)) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
-| `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }` |
-| `branding?` | neutral Connecta defaults | operator-page and OAuth result-page labels and marks |
+| `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }`, or `"silent"` to suppress diagnostic output; independent of activity history |
+| `ui?` | unset | `operatorUi({ branding? })` from `/ui`; omitted means no browser UI routes or bundle imports |
 | `serverInfo?` | `connecta` / package version | `{ name, version, title?, websiteUrl?, icons? }` per the MCP icons spec |
 | `deploymentInfo?` | unset | arbitrary metadata exposed by `/health` |
-| `activity?` | unset | `{ store, readGate?, deploymentId? }` — payload-free activity storage, an optional operator-read gate, and a stable event label |
-| `credentials.encryptionKey?` | unset | base64 32-byte AES key for the connector vault. Without it, connectors declaring `credential` warn and their slots stay unmanageable |
-| `accessTokens?` | unset | `{ maxActive? }` (default 100) for operator-issued MCP bearer tokens. Requires an interactive operator provider, or construction throws ([access tokens](./auth.md#operator-issued-access-tokens)) |
+| `activity?` | unset | `activityHistory({ store, readGate?, deploymentId? })` from `/activity`; omitted means no event recording or history reads |
+| `vault?` | unset | `CredentialVault`; `encryptedCredentialVault(storage, encryptionKey)` from `/credentials` supplies the built-in encrypted implementation |
 | `discovery.concurrency?` | 4 | connector catalogs/status probes in flight at once |
 | `discovery.catalogTtlSeconds?` | 300 | fresh TTL for cached tool lists |
 | `discovery.persistCatalog?` | true | persist serializable catalogs as a manifest plus revision-addressed chunks |
@@ -229,7 +227,6 @@ in.
 
 | Suite | Covers |
 | --- | --- |
-| `access-tokens.test.ts` | the `AccessTokenManager` — a one-time secret created, authenticated, renamed, and revoked, bounded names and active count, enumerable storage required, a deployment with no interactive operator refused — and the operator-only routes, down to historical activity still resolving a revoked token's name |
 | `activity.test.ts` | payload-free delivery: a rejected async write attaches to `waitUntil` instead of throwing, approved destructive calls record under their real entry point, result-size friction records without retaining the result, and a hallucinated connector id or invented identity is clamped so the event still cannot carry a payload |
 | `api-connector.test.ts` | `api()` — kind, description, tool defs, dispatch, default args, unknown tools, handler throws, argument validation, and the construction contract |
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the retired audience options refusing rather than silently unbinding |
@@ -252,7 +249,7 @@ in.
 | `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
 | `guest-api-contract.test.ts` | the shared guest contract on the Dynamic Worker, including caught call, typed inline describe recovery, discovery, utility, parallel-call, and budget failure codes; plus the real authority boundary — local `data:` fetch, denied egress, unresolved DNS, empty environment paths, unavailable filesystem/HTTP builtins, and present runtime globals |
-| `identity-scope.test.ts` | identity-derived connector visibility, personal credential isolation, shared-auth operator control, and personal OAuth callback ownership |
+| `identity-scope.test.ts` | identity-derived connector visibility, personal credential isolation, separate shared-auth and personal-auth management permissions, and personal OAuth callback ownership |
 | `linear-provider.test.ts` | the Linear proxy's construction, guide, plan-aware catalog superset, and current workspace, template, and issue-sharing classifications |
 | `meta-tools-call.test.ts` | registry-backed calls: structured errors, truncation and `get_result`, per-connector result bounds, JSON representation failures, MCP content bounds, and offset alignment |
 | `meta-tools-search.test.ts` | registry-backed discovery: bounded search with page and address maxima, compact and JSON schemas with constraints, typed describe recovery and suggestions, and structured-result compatibility |
@@ -261,11 +258,12 @@ in.
 | `notion-provider.test.ts` | Notion's API and MCP construction, the hosted safety manifest and drift behavior, the deliberate REST surface including declined expanded page inputs, request construction, lean projections, both pagination conventions, error mapping, and writes |
 | `operator-boundary.test.ts` | the operator row of the decisions table, after every mutation route: authentication material managed without moving a declared structure, and the one honest exception — a credential write making a remote catalog appear, which is discovery arriving, not an operator editing the deployment |
 | `operator-store.test.ts` | `src/operator-ui/app/store.ts` against a fake browser: the Clerk listener, ambient Access requests without a browser-readable token, `gate()`, the generation fence, and the request path |
+| `optional-modules.test.ts` | absent modules, UI-free OAuth, fast lists and independent detail deadlines, explicit auth-management grants, invalid-resolver refusal, and passive OAuth consent-state protection |
 | `provider-conventions.test.ts` | the conventions a test can hold: hand-written providers refusing schemas they cannot enforce (H5), their compact discovery schemas staying complete (H7), Cloudflare stating its second pagination convention in the schema (H10), and Notion saying it has no escape hatch (H14) |
 | `provider-registry.test.ts` | all seven maintained providers inside real deployments: boot, description, address, catalog, storage, credential, admission, and activity isolation; plus provider-specific discovery and guide contracts |
 | `registry.test.ts` | construction and id validation, startup warnings, address resolution, version 2 catalog TTL/persistence/completeness, agent-only stale-while-revalidate with cross-request single-flight shared with blocking reads in both start orders, owned teardown, invalidation/fingerprint guards, blocking diagnostics, and broken-connector isolation |
 | `remote-mcp.test.ts` | `remoteMcp()` against an in-process server through the `_transportFactory` seam: passthrough, downstream `isError`, Workers-safe output-schema validation, request-scoped client reuse and at-most-once scope close; plus the real transport's manual redirect policy, destination guard, credential containment, and downstream session termination |
-| `remote-mcp-credential.test.ts` | `remoteMcp()` drawing a static key from `/credentials`: the declared slot and its refusal of named fields and bad header names, header framing (bearer, bare, and the two `Basic` forms) observed on the wire, an empty slot failing as `auth_required` rather than reaching the downstream, a value carrying a control character refused before framing and absent from every surface — `call_tool`, `status`, the Test result, the payload-free activity event, and the thrown error — rotation replacing the cached client and a connect already in flight while a wiped value fails the next call, the Test action's catalog probe and scope close, the cleartext-destination warning, and the vault and `authorize_connector` handoff end to end |
+| `remote-mcp-credential.test.ts` | `remoteMcp()` drawing a static key from the connection UI: the declared slot and its refusal of named fields and bad header names, header framing (bearer, bare, and the two `Basic` forms) observed on the wire, an empty slot failing as `auth_required` rather than reaching the downstream, a value carrying a control character refused before framing and absent from every surface — `call_tool`, `status`, the Test result, the payload-free activity event, and the thrown error — rotation replacing the cached client and a connect already in flight while a wiped value fails the next call, the Test action's catalog probe and scope close, the cleartext-destination warning, and the vault and `authorize_connector` handoff end to end |
 | `remote-mcp-pagination.test.ts` | the `tools/list` cursor chain in both directions — exact cursor handoff, first-wins dedup, a failed later page rejecting rather than returning its prefix, the runaway backstops, the tool-metadata re-prime across pages, and paginated catalogs reaching the discovery path |
 | `request-admission.test.ts` | `/mcp` bounded before auth, the stable 503 and `Retry-After`, health and operator responsiveness under saturation, payload-free counters, queued cancellation, shutdown rejection while active work drains, and the separate fallback code pool |
 | `result-shapes.test.ts` | passive output-shape learning: value-free bounded inference, merging, 256-entry LRU eviction, 24-hour expiry, runtime isolation, read-only admission, declared-schema precedence, definition-change invalidation, discovery provenance, and failure isolation |
@@ -287,7 +285,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 
 | Suite | Covers | Why Node |
 | --- | --- | --- |
-| `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, its agent instructions and setup guide pinning Claude and both ChatGPT Managed OAuth callback forms, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, the full operator surface in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
+| `deployment-shapes.test.ts` | the Worker as the only example with a loader-only sandbox, its agent instructions and setup guide pinning Claude and both ChatGPT Managed OAuth callback forms, one Node template that is also its own container, the same source running locally and in the container, the Node template's pinned esbuild install-script approval, explicit optional modules in both, a template that cannot start on its own `.env.example`, a Worker README naming every optional peer its entrypoint imports, and the initializer's `.gitignore` staying in step | walks the template and example trees with Node filesystem APIs |
 | `doc-links.test.ts` | the documentation checker itself — local file and fragment resolution, repository URLs resolved back to the checkout, duplicate heading slugs, fenced-code exclusion, and useful failures | spawns the Node checker against filesystem fixtures |
 | `doctor-cli.test.ts` | `connecta doctor`'s executor line and credentials end to end — the sandbox the deployment reports is the one named, an unidentifiable executor gets an executor-neutral line, a hostile name is bounded, and a complete Cloudflare Access service-token pair is accepted while a partial pair is refused | spawns the CLI against a Node HTTP deployment over real sockets |
 | `drift-check.test.ts` | the credential-free maintainer drift checker: recorded touched endpoints, heading, table, and inline MCP inventories, setup-only providers, live-schema ownership, a quiet revision bump, clear failures for unavailable inputs, `$ref` traversal, and one well-formed row per endpoint | spawns the checker against filesystem fixtures |
@@ -310,7 +308,7 @@ justification for *not* re-running it in workerd, so "it was easier" is not one.
 
 | Suite | Covers |
 | --- | --- |
-| `browser/operator-ui.spec.ts` | the operator wiring in a real browser: Clerk loader order across its version redirect and a real load failure, the shell staying open until authentication, credential and access-token and OAuth flows end to end, drift shown without naming a tool, and every failure and empty state |
+| `browser/operator-ui.spec.ts` | the operator wiring in a real browser: Clerk loader order across its version redirect and a real load failure, the shell staying open until authentication, credential and OAuth flows end to end, drift shown without naming a tool, and every failure and empty state |
 
 **The `_transportFactory` seam.** `RemoteMcpOptions._transportFactory` is
 internal, not public API: when set, `remoteMcp()` uses that `Transport` instead
