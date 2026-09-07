@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with one execute_code program that discovers, calls, and returns the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with execute_code to discover, call, and return the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Keep discovery and calls together when schemas suffice; do not return catalog matches alone. Inspect unfamiliar result shapes with a small sample before proceeding. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
@@ -9,11 +9,11 @@ const USAGE_SKILL_BASE = `# Connecta usage
 
 Seven tools: \`execute_code\`, \`search_tools\`, \`call_tool\`, \`call_destructive_tool\`, \`authorize_connector\`, \`get_result\`, \`skills\`. Read-only discovery and multi-call work live in a program. Top-level search remains for catalog inspection and approval-required work.
 
-The always-loaded MCP instructions are authoritative for choosing the top-level route. Read this skill at most once, and only when their program workflow is insufficient or a run needs repair.
+Follow the MCP instructions for routing. Read at most once for syntax or repair.
 
 ## Inside a program
 
-Write one plain-JavaScript async arrow function. TypeScript syntax and portable imports do not work. Return JSON-shaped data and reduce large results before returning.
+Write one plain-JavaScript async arrow function, without TypeScript or imports. Return reduced JSON-shaped data.
 
 The minimum guest API is:
 
@@ -24,15 +24,15 @@ The minimum guest API is:
 
 ## Discover and select
 
-Search inside the run and finish the task there. A discovery-only program wastes a round trip. Use 2–4 distinctive action/object terms, not the full request. Use separate short searches for distinct operations.
+Search and call in one run when schemas suffice. For unfamiliar result formats, return a small sample and continue; do not guess a parser. Use 2–4 distinctive action/object terms; search distinct operations separately.
 
-For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 10), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An observed shape carries \`outputSchemaSource: "observed"\`; treat it as routing evidence rather than a provider contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
+For top-level catalog inspection or approval-required discovery, omit \`limit\` initially (the default is 8), then page with a limit up to 50 if needed. Empty or whitespace-only queries browse all tools. A non-empty query with no ASCII terms returns no matches; mixed input searches with its ASCII terms. \`includeSchemas: "compact"\` adds bounded input and available output shapes. An \`outputSchemaSource: "observed"\` shape is a hint, not a contract. Plain objects expose \`inputKeys\`, \`requiredInputKeys\`, and \`outputKeys\`; truncation flags mark incomplete shapes; matches also carry declared annotations.
 
 - \`connecta.search({})\` loads all catalogs. Pass \`connector: "<id>"\` when the integration is obvious. Use \`safety: "readOnly"\` for program calls. These inputs filter discovery; they grant no authority.
-- Request \`includeSchemas: "compact"\`. Check address, purpose, annotations, required inputs, truncation, safety, and available outputs. Never select only because a result ranks first or has fewer required inputs.
+- Use \`includeSchemas: "json"\` for programmatic schema inspection; compact schemas are text, not objects with \`.properties\`. Check connectorTitle for the account/environment, then address, purpose, annotations, inputs, and outputs. Never select only because a result ranks first or has fewer required inputs.
 - Supply every \`requiredInputKey\` from the task or a prior result. For dependencies, match the earlier \`outputKey\` to the later required key. An empty required-key list does not permit invented arguments. Missing \`outputKeys\` means inspect \`outputSchema\`.
 - Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
-- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as \`items\` or \`results\`. If a match or result key is missing, inspect, re-search, or describe inside the same run instead of returning discovery for another call.
+- Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as \`items\` or \`results\`. If a match is missing, re-search or describe. If a result shape is unclear, return a small sample for inspection before continuing.
 - Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.
 - Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
@@ -41,7 +41,7 @@ Only tools explicitly annotated \`readOnlyHint: true\` are reachable. The catalo
 
 ## Errors and repair
 
-Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
+Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. After a shared argument failure, repair one call before repeating it across other records. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
 - \`destructive_tool_requires_approval\`: stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
@@ -64,9 +64,25 @@ One read-only call at a known address:
 
 \`async () => await connecta.call("crm.get_account", { id: "acct_42" })\`
 
-Dependent calls, only when the second needs a value from the first:
+Dependent lookup: verify connector \`ci\`, run 42, and these schema fields first.
 
-\`async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", safety: "readOnly", includeSchemas: "compact" }); const address = (suffix) => { const tool = tools.find((entry) => entry.address.endsWith(suffix)); if (!tool) throw new Error("missing " + suffix); return tool.address; }; const run = await connecta.call(address(".get_run"), { runId: 42 }); const logs = await connecta.call(address(".get_job_logs"), { jobId: run.failedJobId }); return logs.map(({ timestamp, message }) => ({ timestamp, message })); }\`
+\`\`\`js
+async () => {
+  const find = async name => {
+    const page = await connecta.search({ connector: "ci", query: name, safety: "readOnly", includeSchemas: "compact" });
+    if (page.queryAnalysis?.catalogError) throw new Error(JSON.stringify(page.queryAnalysis.catalogError));
+    return page.tools.find(tool => tool.name === name);
+  };
+  const runTool = await find("get_run");
+  if (!runTool) return { gap: "Run lookup not resolved" };
+  const run = await connecta.call(runTool.address, { runId: 42 });
+  if (!run.failedJobId) return { status: run.status, gap: "No failed job identified" };
+  const logsTool = await find("get_job_logs");
+  if (!logsTool) return { status: run.status, gap: "Job logs not resolved" };
+  const logs = await connecta.call(logsTool.address, { jobId: run.failedJobId });
+  return logs.filter(row => row.level === "error").map(({ timestamp, message }) => ({ timestamp, message }));
+}
+\`\`\`
 
 ## Media output
 
@@ -106,12 +122,34 @@ function usageSkill(_connectors: readonly Connector[]): string {
   return USAGE_SKILL;
 }
 
+const INVESTIGATE_SKILL = `# Investigate across services
+
+## Plan the investigation
+
+Start from the user's question and the evidence that would answer it. Select the app, account, and environment from connector titles, purposes, and relevant guides before looking up records. Reuse verified ids within the task; never carry an id across connectors just because its name matches.
+
+- Purchase verification: resolve the same customer and environment across payment, subscription access, and analytics. Check each separately; a recorded payment does not prove access, and a missing analytics event does not prove payment failure.
+- Experiment checks: confirm the project, experiment, time window, and exposure population before comparing outcomes. Return the requested comparison and any missing evidence; do not expand into an unrelated analytics audit.
+- Customer or deployment investigations: locate the exact customer or deployment first, then follow only the records needed to explain the reported symptom. Use provider links or ids so the answer can be checked.
+
+Establish capability limits early. A partial search is not proof that a tool is absent, and an unavailable catalog is not an empty dataset. Try a scoped search for the missing operation, inspect its guide when relevant, and distinguish unsupported work from missing data or authorization. If the required evidence is unavailable, return what was verified and the specific gap instead of approximating a different question through repeated calls.
+
+A host transport error that requires reconnecting this MCP server cannot be repaired by a downstream tool. Reconnect in the host; do not repeatedly call \`authorize_connector\` through the failed connection.
+
+Return the answer first, then the evidence and any unresolved gap. Include the app/environment, time window, and source ids or links needed to check it. Separate observed facts from inferences. Stop when the requested evidence is sufficient.
+`;
+
 const AVAILABLE_SKILLS = [
   {
     name: "usage",
     description:
       "How to route work between one execute_code program and Connecta's explicit call, authorization, and result tools.",
     content: usageSkill,
+  },
+  {
+    name: "investigate",
+    description: "Plan purchase verification, experiment checks, and customer or deployment investigations across services; resolve scope and capability limits before querying.",
+    content: () => INVESTIGATE_SKILL,
   },
 ] as const;
 

@@ -20,8 +20,11 @@ The [guest API contract](./code-mode.md) is what a program is promised.
 
 The route is chosen before discovery. An unknown address, a result that will be
 reduced, a call whose arguments depend on an earlier result, or work with
-multiple operations starts with one `execute_code` call and keeps discovery,
-calls, and reduction inside it. Distinct operations get distinct short
+multiple operations starts with `execute_code` and keeps discovery, calls, and reduction inside it
+when the schemas and result shapes suffice. An unfamiliar provider result may
+return a small sample for inspection before continuing in another call. This
+exception avoids repeated guesses at text formats or collection roots; it does
+not restore a mandatory discovery-only round trip. Distinct operations get distinct short
 `connecta.search` queries in that program. A known address needs only
 `call_tool`.
 
@@ -45,6 +48,8 @@ calls, and an unfiltered
 `connecta.search({})` browses every catalog a program can reach. Live connector
 probing is an operator concern: the operator pages and `/health` own it.
 
+Program search includes a bounded `connectorTitle` on each tool when configured, so choosing an account or environment does not require a provider read. It is context, not a ranking input or proof of live access.
+
 The three discovery routes use deliberately different envelopes. These are
 their smallest successful one-tool shapes:
 
@@ -61,7 +66,7 @@ their smallest successful one-tool shapes:
 
 The deployment-derived `execute_code` description includes a live connector
 inventory before any catalog search. It preserves registry order and uses each
-canonical id without generating a second name for programs.
+canonical id and a distinct configured title without generating a second name for programs. Titles normalize whitespace and are capped at 48 UTF-8 bytes, so account and environment hints cannot consume the entire inventory.
 The complete inventory line is capped at 256 UTF-8 bytes. Entries stay whole,
 and a truncated line ends with the exact `+N more` count. This reads only the
 configured registry: it loads no catalog, probes no credential, grants no
@@ -175,6 +180,22 @@ program selection detail, examples, runtime differences, and repair guidance.
 This split avoids two normative copies while preserving a valid first program
 for clients that never fetch the skill. Deployments without connector guides
 receive none of the short conditional guide pointers in their definitions.
+
+## Task guidance
+
+`skills({ name: "investigate" })` provides on-demand guidance for purchase
+verification, experiment checks, and customer or deployment investigations.
+The execute description points to it when planning is unclear; routine reads need no additional guide fetch. It explains how to
+resolve app/account/environment, follow evidence across services, establish
+capability limits, and stop with a clear answer or a specific gap. It is shared
+guidance, not a saved workflow or a source of deployment-specific ids. Existing
+connector titles, purposes, and guides still own those distinctions.
+
+The usage skill keeps the executable mechanics. Its dependent-call example
+searches each operation separately, uses the page's `tools` array and canonical
+addresses, and reports unresolved evidence instead of inventing an address or
+querying another account. Its source runs against local fixtures in the QuickJS
+suite, including missing and approval-required evidence.
 
 ## Result representation
 

@@ -132,17 +132,17 @@ describe("server /mcp end-to-end", () => {
     const body = await readJsonRpc(res);
     expect(body.result.serverInfo.name).toBe("connecta");
     expect(body.result.instructions).toContain(
-      "Unknown-address read-only work starts with one execute_code program",
+      "Unknown-address read-only work starts with execute_code",
     );
     expect(body.result.instructions).toContain('skills({ name: "usage" })');
     expect(body.result.instructions).toContain(
       "Guidance is on demand",
     );
     expect(body.result.instructions).toContain(
-      "starts with one execute_code program",
+      "Inspect unfamiliar result shapes with a small sample",
     );
     expect(body.result.instructions).toContain(
-      "discovers, calls, and returns the answer",
+      "discover, call, and return the answer",
     );
     expect(body.result.instructions).toContain("only when");
   });
@@ -399,7 +399,7 @@ describe("server /mcp end-to-end", () => {
     const fetchedBody = await readJsonRpc(fetched);
     const skill = fetchedBody.result.content[0].text as string;
     expect(skill).toContain("# Connecta usage");
-    expect(skill).toContain("always-loaded MCP instructions are authoritative");
+    expect(skill).toContain("Follow the MCP instructions for routing");
     expect(skill).toContain("## Discover and select");
     expect(skill).toContain("## Errors and repair");
     expect(skill).toContain(
@@ -413,7 +413,7 @@ describe("server /mcp end-to-end", () => {
     expect(skill).toContain("2–4 distinctive action/object terms");
     // #418: top-level search defaults, paging, compact row semantics, and
     // non-ASCII behavior moved here from the always-loaded definition.
-    expect(skill).toContain("omit `limit` initially (the default is 10)");
+    expect(skill).toContain("omit `limit` initially (the default is 8)");
     expect(skill).toContain("page with a limit up to 50");
     expect(skill).toContain(
       "Plain objects expose `inputKeys`, `requiredInputKeys`, and `outputKeys`",
@@ -576,6 +576,35 @@ describe("server /mcp end-to-end", () => {
     expect((await executeDescription(ids)).length).toBeLessThan(1_800);
     expect(listTools).not.toHaveBeenCalled();
     expect(callTool).not.toHaveBeenCalled();
+  });
+
+  it("orients agents with account titles without loading either catalog", async () => {
+    const listTools = vi.fn(async () => { throw new Error("no catalog read"); });
+    const callTool = vi.fn(async () => { throw new Error("no provider call"); });
+    const c = createTestConnecta({
+      connectors: [
+        { id: "billing", title: "Android production", listTools, callTool },
+        { id: "billing_test", title: "Android sandbox", listTools, callTool },
+        { id: "international", title: "日本語".repeat(40), listTools, callTool },
+      ],
+      auth: bearerToken(TOKEN), storage: memoryStorage(), publicUrl: BASE,
+    });
+    const listed = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
+    const description = listed.result.tools.find((tool: { name: string }) => tool.name === "execute_code").description;
+    const inventory = description.match(/^Connectors: .*$/m)[0];
+    expect(inventory).toContain("billing: Android production");
+    expect(inventory).toContain("billing_test: Android sandbox");
+    expect(new TextEncoder().encode(inventory).length).toBeLessThanOrEqual(CONNECTOR_INVENTORY_MAX_BYTES);
+    expect(inventory).not.toContain("\uFFFD");
+    expect(description).toContain('skills({ name: "investigate" })');
+    const guide = await readJsonRpc(await mcpRpc(c, "tools/call", {
+      name: "skills", arguments: { name: "investigate" },
+    }, { token: TOKEN }));
+    expect(guide.result.isError).toBeFalsy();
+    expect(guide.result.content[0].text).toContain("Purchase verification");
+    expect(listTools).not.toHaveBeenCalled();
+    expect(callTool).not.toHaveBeenCalled();
+    await c.close();
   });
 
   it("tools/call search_tools returns its grouped discovery envelope", async () => {
@@ -1621,21 +1650,21 @@ describe("execute_code registration (code mode)", () => {
       (tool: { name: string }) => tool.name === "execute_code",
     );
     expect(executeTool.description).toContain(
-      "Choose the route before discovery",
+      "Use the configured services below to answer the task",
     );
     expect(executeTool.description).toContain(
       "Unknown-address and wider read-only work",
     );
-    expect(executeTool.description).toContain("use exactly one execute_code call");
+    expect(executeTool.description).toContain("uses one execute_code program");
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
     expect(executeTool.description).toContain(
-      "Finish in that program; don't return catalog matches for a later call",
+      "return a small sample and continue in another call",
     );
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(
-      "Unknown-address and wider read-only work use exactly one execute_code call",
+      "Unknown-address and wider read-only work uses one execute_code program",
     );
     expect(executeTool.description).toContain("No portable ambient capabilities");
     expect(executeTool.description).toContain('skills({ name: "usage" })');

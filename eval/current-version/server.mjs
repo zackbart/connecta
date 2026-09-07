@@ -1,14 +1,28 @@
 import { once } from "node:events";
+import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 
-import { api, bearerToken, createConnecta } from "../../dist/index.js";
-import { quickJsExecutor } from "../../dist/executors/quickjs.js";
-import { listen } from "../../dist/node.js";
+import { resolve } from "node:path";
+import { pathToFileURL, fileURLToPath } from "node:url";
+import { usabilityConnectors } from "./usability.mjs";
+
+const dist = pathToFileURL(resolve(process.env.CONNECTA_BENCHMARK_DIST ?? fileURLToPath(new URL("../../dist/", import.meta.url))) + "/");
+const buildFingerprint = createHash("sha256");
+for (const file of ["execute.js", "skills.js", "catalog-service.js"]) {
+  buildFingerprint.update(file).update(await readFile(new URL(file, dist)));
+}
+const fingerprint = buildFingerprint.digest("hex");
+const { api, bearerToken, createConnecta } = await import(new URL("index.js", dist));
+const { quickJsExecutor } = await import(new URL("executors/quickjs.js", dist));
+const { listen } = await import(new URL("node.js", dist));
 
 const host = "127.0.0.1";
 const port = Number(process.env.CONNECTA_BENCHMARK_PORT ?? "0");
 const token = process.env.CONNECTA_BENCHMARK_TOKEN ?? "connecta-benchmark-token";
 const downstreamCalls = [];
 const outerCalls = [];
+const catalogReads = [];
+const startedAt = performance.now();
 
 const objectSchema = {
   type: "object",
@@ -32,11 +46,17 @@ function connector(id, options) {
   const tools = options.tools.map((tool) => ({
     ...tool,
     handler: async (args) => {
-      downstreamCalls.push({ address: `${id}.${tool.name}`, args });
+      downstreamCalls.push({ address: `${id}.${tool.name}`, args, atMs: performance.now() - startedAt });
       return tool.handler(args);
     },
   }));
-  return api(id, { ...options, tools });
+  const built = api(id, { ...options, tools });
+  const listTools = built.listTools.bind(built);
+  built.listTools = async (...args) => {
+    catalogReads.push(id);
+    return listTools(...args);
+  };
+  return built;
 }
 
 const projectTools = [
@@ -184,7 +204,7 @@ const connectors = [
 
 const app = createConnecta({
   auth: bearerToken(token, { subjectId: "benchmark-agent" }),
-  connectors,
+  connectors: usabilityConnectors(process.env.CONNECTA_BENCHMARK_CASE, { connector, readTool }) ?? connectors,
   executor: quickJsExecutor({ timeoutMs: 10_000, cpuTimeMs: 2_000 }),
   calls: { defaultTimeoutMs: 10_000, maxResultBytes: 64_000 },
   serverInfo: {
@@ -197,7 +217,7 @@ const app = createConnecta({
 async function benchmarkFetch(request, env, ctx) {
   const url = new URL(request.url);
   if (url.pathname === "/__benchmark/state") {
-    return Response.json({ downstreamCalls, outerCalls });
+    return Response.json({ downstreamCalls, outerCalls, catalogReads });
   }
 
   let requestJson;
@@ -233,6 +253,7 @@ if (!address || typeof address === "string") {
 
 console.log(JSON.stringify({
   event: "ready",
+  buildFingerprint: fingerprint,
   url: `http://${host}:${address.port}/mcp`,
   stateUrl: `http://${host}:${address.port}/__benchmark/state`,
   token,

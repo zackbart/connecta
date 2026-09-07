@@ -811,11 +811,15 @@ function connectorInventory(
   if (connectors.length === 0) return `${prefix}none.`;
   const entries = connectors.map((connector) => {
     const address = connector.id;
-    if (!connectorGuide(connector)) return address;
+    const title = connector.title?.replace(/\s+/g, " ").trim();
+    const label = title && title !== connector.id
+      ? `${address}: ${boundedEchoText(title, 45)}`
+      : address;
+    if (!connectorGuide(connector)) return label;
     const requirement = connectorGuideRequired(connector)
       ? "required guide"
       : "guide";
-    return `${address} (${requirement} ${connectorSkillName(connector.id)})`;
+    return `${label} (${requirement} ${connectorSkillName(connector.id)})`;
   });
   const shown: string[] = [];
   for (let index = 0; index < entries.length; index++) {
@@ -841,17 +845,19 @@ const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Choose the route before discovery. A known address uses call_tool. Unknown-address and wider read-only work use exactly one execute_code call that discovers, calls, and returns the answer. Finish in that program; don't return catalog matches for a later call. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls per run, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}-second host deadline.
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
-Fetch required guides named above before executing. Write one plain-JavaScript async arrow function. Use only:
-- connecta.call(address, args) for a canonical connector tool address. Use Promise.all or Promise.allSettled for independent calls.
-- connecta.search(args) returns { tools }; connecta.describe(args) returns { tools }; use entry key lists.
-- connecta.emit(block) — { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }. Success-only; ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes; invalid/over-budget throws.
-- console.log(...) — captured.
+Read relevant guides using top-level skills, not sandbox code. Write a plain-JavaScript async arrow:
+- connecta.search({ connector, query, safety: "readOnly", includeSchemas: "json" }) returns { tools }. Search each operation separately; choose by connectorTitle and schemas. Use schema.required and .properties to build args, never guessed fields. Compact schemas are text.
+- connecta.describe({ address }) returns { tools } for unclear schemas.
+- connecta.call(address, args) returns the provider value directly.
+- Use Promise.all for independent calls, or Promise.allSettled to retain failures. Check status before reading value; rejected calls and missing fields are unknown, never false or zero.
+- connecta.emit(block): { type: "text", text } or { type: "image" | "audio", data (base64), mimeType }; success-only, ${emitBudgets.maxBlocks} blocks/${emitBudgets.maxBytes} bytes.
+- console.log(...) is captured. Return data for the client to render.
 
-No portable ambient capabilities. Return JSON; reduce large results before truncation. Build arguments from required input keys and schemas, never descriptions or output keys. Fetch skills({ name: "usage" }) only when this is insufficient or repair is needed; it has full rules, examples${connectorGuides ? ", guide handling" : ""}, and runtime details.`;
+No portable ambient capabilities. Return reduced JSON. If a provider result has an unfamiliar shape, return a small sample and continue in another call; never guess fields or use the whole text as an id. Top-level skills({ name: "usage" }): repair${connectorGuides ? ", guide handling" : ""}; skills({ name: "investigate" }): task planning.`;
 
 /** Register the execute_code meta-tool. Only called when an executor is configured. */
 export function registerExecuteTool(
