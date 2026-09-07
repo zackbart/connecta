@@ -616,11 +616,24 @@ test("keeps connection auth usable on a narrow screen", async ({ page }) => {
   await openAuthenticated(page);
   await page.getByRole("button", { name: "Add credential" }).click();
   await expect(page.getByLabel("API token")).toBeVisible();
-  const fits = await page.evaluate(() =>
-    document.documentElement.scrollWidth <= window.innerWidth,
+  const fits = await page.evaluate(
+    "document.documentElement.scrollWidth <= window.innerWidth",
   );
   expect(fits).toBe(true);
   await page.getByLabel("API token").fill("mobile-secret");
   await page.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.locator("#credentialNotice")).toHaveText("Credential saved.");
+});
+
+test("retries a failed connection without reloading the list", async ({ page }) => {
+  faults.set("GET /ui/connectors/drifted", "provider unavailable");
+  await openAuthenticated(page);
+  const card = page.locator(".card").filter({
+    has: page.getByRole("heading", { name: "Hosted proxy", exact: true }),
+  });
+  await expect(card).toContainText("Connection details unavailable (502)");
+  faults.clear();
+  await card.getByRole("button", { name: "Refresh connection" }).click();
+  await expect(card).toContainText("Connected");
+  expect(requests.filter(request => request.path === "/ui/data")).toHaveLength(1);
 });
