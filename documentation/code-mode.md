@@ -155,7 +155,7 @@ their canonical addresses. The bounded connector inventory in the tool
 description shows canonical ids with bounded configured titles when present.
 
 Clauses A3–A5 belonged to shortcut dispatch and are retired. Clients and stored
-programs should follow the [migration guide](./upgrading.md#unreleased-program-api-pruning).
+programs should follow the [migration guide](./upgrading.md#0230-program-api-pruning).
 
 ## The surface
 
@@ -632,7 +632,7 @@ The human message is unchanged; a mismatched frame is ordinary untyped prose.
 MCP Apps rendering, connector shortcut globals, and `connecta.batch` are
 removed. Direct calls also lose automatic retries. The seven top-level tools,
 read-only boundary, JSON projection, and emitted media remain. See the
-[migration guide](./upgrading.md#unreleased-program-api-pruning).
+[migration guide](./upgrading.md#0230-program-api-pruning).
 
 ## Verification
 
