@@ -2,16 +2,25 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.23.0 — 2026-09-07
 
 This release removes server-owned program views, connector HTTP routes, and
-three convenience APIs.
+three convenience APIs. It also exposes configured account titles during
+discovery and clarifies schema inspection and dependent calls.
 Programs use canonical tool addresses and JavaScript promises; callers own
 retry timing. Stored programs using shortcut globals, `connecta.batch`, or
 `connecta.ui` need migration. Direct calls must omit `maxRetries`. Deployments
 using none of these need no configuration or storage changes. The seven tools,
 operator pages, credentials, and emitted media remain. Cloudflare Global API
 Key authentication and multi-field credentials remain supported.
+
+### Added
+
+- Optional `investigate` guidance for purchase verification, experiments, and
+  customer or deployment investigations. It explains account selection,
+  evidence requirements, and when to stop with an unresolved gap (#527).
+- Bounded configured account titles in the initial connector inventory and
+  program search results, without provider calls or changes to ranking (#527).
 
 ### Changed
 
@@ -26,6 +35,14 @@ Key authentication and multi-field credentials remain supported.
 - Remove automatic retries and backoff timing from direct calls. Failures keep
   their classification and provider retry hint. Direct-call schemas reject
   unknown arguments, including the removed `maxRetries` option.
+- Clarify JSON schema inspection, provider result shapes, and promise failures.
+  Keep discovery and calls together when schemas suffice; allow a small sample
+  for unfamiliar results before continuing in another program (#527).
+
+### Fixed
+
+- Remove the stale CI invocation of the retired evaluation `audit` script.
+  The benchmark self-tests remain in CI; whole-agent comparisons run locally.
 
 ## 0.22.3 — 2026-09-03
 

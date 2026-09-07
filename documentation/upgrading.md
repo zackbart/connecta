@@ -17,7 +17,7 @@ the release notes broke, and prove it with `connecta doctor`.
 Work on a branch. Every step below is reversible until you delete the old
 lockfile, and you want the diff reviewable by whoever owns this deployment.
 
-## Unreleased program API pruning
+## 0.23.0 program API pruning
 
 This update removes MCP Apps rendering, connector shortcut globals,
 `connecta.batch`, automatic direct-call retries, and connector-owned HTTP routes. Refresh the client's MCP
@@ -102,7 +102,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.22.3 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.23.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -151,7 +151,7 @@ know what to preserve, once to know what to re-verify at the end.
 ### Bump the pin and install
 
 ```sh
-npm pkg set dependencies.@zackbart/connecta=0.22.3
+npm pkg set dependencies.@zackbart/connecta=0.23.0
 npm install
 ```
 
@@ -175,7 +175,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.22.3 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.23.0 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -231,7 +231,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.22.3 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.23.0 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -251,6 +251,13 @@ list is a boundary you can cross with a version bump. The sections run newest
 first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
+
+### 0.22.3 → 0.23.0
+
+Migrate stored programs and custom connector routes using the
+[0.23.0 migration](#0230-program-api-pruning). Refresh client instructions
+and tool definitions so account titles and the revised discovery guidance take
+effect. No storage migration is required.
 
 ### 0.21.2 → 0.22.3
 
@@ -618,7 +625,7 @@ previously fell through to connector `handleRequest` and then to a 404, so a
 connector that served any of the three is now shadowed without warning. `GET /`
 returns the operator shell where 0.6.1 returned 404, and a non-GET on those
 routes or on `/ui` returns 405 instead of falling through. For the current release, move custom handlers into the deployment: connector
-`handleRequest` is now removed. See the [current migration](#unreleased-program-api-pruning).
+`handleRequest` is now removed. See the [current migration](#0230-program-api-pruning).
 
 ### Removed options that throw
 

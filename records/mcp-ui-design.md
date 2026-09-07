@@ -1,7 +1,7 @@
 # MCP UI from programs — design record
 
 Historical record. MCP Apps rendering is now removed; see the
-[pruning decision](../ethos.md) and [migration guide](../documentation/upgrading.md#unreleased-program-api-pruning).
+[pruning decision](../ethos.md) and [migration guide](../documentation/upgrading.md#0230-program-api-pruning).
 
 The decision record for
 [#266](https://github.com/zackbart/connecta/issues/266): whether and how an

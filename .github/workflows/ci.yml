@@ -24,7 +24,7 @@ jobs:
       # when CI is set — so there is no separate image job to drift from it.
       - run: npm run release:check
 
-  current-version-eval:
+  benchmark-self-test:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -39,8 +39,3 @@ jobs:
       - run: npm ci
       - run: npm ci --prefix eval/current-version
       - run: npm --prefix eval/current-version run check
-      - name: Run the current-version release audit
-        run: |
-          npm --prefix eval/current-version run audit -- \
-            --output "$RUNNER_TEMP/current-version.json" \
-            --report "$RUNNER_TEMP/current-version.md"
