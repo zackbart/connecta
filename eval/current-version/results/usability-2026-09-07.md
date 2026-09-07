@@ -105,6 +105,9 @@ of four controls failed their strict route gate while returning correct answers.
 The final guidance keeps discovery and calls together when schemas suffice,
 while allowing a small sample of an unfamiliar provider result.
 
+For the current-main comparison and independent review, see
+[PR #527](https://github.com/zackbart/connecta/pull/527).
+
 ## Limits
 
 These evaluations measure behavior within the supplied connection. They do not
