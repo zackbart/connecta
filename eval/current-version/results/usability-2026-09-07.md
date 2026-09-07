@@ -105,8 +105,11 @@ of four controls failed their strict route gate while returning correct answers.
 The final guidance keeps discovery and calls together when schemas suffice,
 while allowing a small sample of an unfamiliar provider result.
 
-For the current-main comparison and independent review, see
-[PR #527](https://github.com/zackbart/connecta/pull/527).
+At merge review, no current-main whole-agent comparison or independent Opus
+review was attached to [PR #527](https://github.com/zackbart/connecta/pull/527).
+The initial measurements above do not establish performance gains for the final
+patch. Source review, the repository check, and benchmark self-tests validate
+the final patch's implementation; they do not replace a fresh agent comparison.
 
 ## Limits
 

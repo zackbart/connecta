@@ -152,7 +152,7 @@ is preserved; no JavaScript identifier conversion takes place.
 **A2.** Connectors create no guest globals. Connector ids that resemble a
 JavaScript builtin, or would collide after sanitization, remain usable through
 their canonical addresses. The bounded connector inventory in the tool
-description shows canonical ids only.
+description shows canonical ids with bounded configured titles when present.
 
 Clauses A3–A5 belonged to shortcut dispatch and are retired. Clients and stored
 programs should follow the [migration guide](./upgrading.md#unreleased-program-api-pruning).
