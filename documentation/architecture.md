@@ -71,11 +71,10 @@ read top to bottom.
 | 3 | `/.well-known/*` | Auth providers' `handleMetadata`, open. 404 when none handles it. |
 | 4 | `/health` | Open JSON: status, connector count, `serverInfo`, the configured executor's sanitized name when it has one, catalog-drift counts, admission snapshots, reserved route names, and `deployment` when `deploymentInfo` is set. Payload-free by construction, and it never joins the MCP queue. |
 | 5 | `/oauth/callback/<connectorId>` | Downstream-OAuth completion, open, `verifyState` before `finishAuth`. Personal flows first resolve the short-lived state hash to the principal partition. |
-| 6 | `/favicon.*`, `/ui` → `/`, the operator shells, `/ui/data` | The operator surface ([operator UI](./operator-ui.md)). The shells are open and data-free; `/ui/data` behind them is gated. Built-ins are matched before connector routes, so a connector cannot shadow a page. |
+| 6 | `/favicon.*`, `/ui` → `/`, the operator shells, `/ui/data` | The operator surface ([operator UI](./operator-ui.md)). The shells are open and data-free; `/ui/data` behind them is gated. |
 | 7 | `/ui/activity` | Gated, plus the optional `activity.readGate`. `GET` only; 404 with no `activity.store.list`. |
 | 8 | `/mcp` | **Admission before auth**, then the auth gate, then a fresh MCP server. |
-| 9 | connector `handleRequest` | Registration order, open. Dispatched only after every built-in misses, so a connector can *add* a route and never shadow one of connecta's. First non-null response wins; a throw is a 500, not a fall-through. |
-| 10 | — | 404. |
+| 9 | — | 404. Custom HTTP routes belong to the deployment. |
 
 Every response leaves through `withSecurityHeaders`: `nosniff`, a no-referrer
 policy, HSTS on HTTPS, and — on the operator shells — a nonce-based script CSP
@@ -83,7 +82,7 @@ and framing denial. `test/server-route-contracts.test.ts` pins this ordering
 and the exact refusal bodies; it exists because the ordering is invisible in
 any one file and a reordering reads like a harmless refactor.
 
-`/mcp` itself is four steps, in this order and for these reasons:
+`/mcp` itself is five steps, in this order and for these reasons:
 
 1. **Admit.** One permit from the deployment-wide FIFO pool, taken before auth
    so an unauthenticated flood costs a permit rather than a Clerk lookup
@@ -102,8 +101,7 @@ any one file and a reordering reads like a harmless refactor.
    than silently serving the full registry. Retiring a scoping boundary into
    fail-open is the one outcome worse than the 404.
 5. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
-   against the registry, the Apps shell resource registered (and
-   `resources/list` deliberately answering with nothing), and the response
+   against the registry and the response
    handed back.
 
 ## Layers below the meta-tools
@@ -115,7 +113,7 @@ owns or hands out, and a change usually belongs in exactly one of them:
 | --- | --- |
 | `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, catalog TTL/persistence/completeness, refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
 | `src/catalog-service.ts` | Request-local tool listing, search, and describe. It coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
-| `src/invocation.ts` | One tool call: argument validation, call admission, per-attempt timeout, retry with the connector's own `Retry-After` honoured exactly or declined, result unwrapping, size capping, and the activity record. |
+| `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
 
@@ -162,8 +160,7 @@ src/
   server.ts           route ordering, HTTPS upgrade, security wrapper
   routes/             one file per surface; shared.ts holds the auth gate
   meta-tools.ts       the six non-execute meta-tools over the registry
-  execute.ts          execute_code, the sandbox host bridge, emit and ui
-  apps-shell.ts       the one build-time MCP Apps template
+  execute.ts          execute_code, the sandbox host bridge, emitted media
   skills.ts           MCP instructions, the usage skill, connector guides
   registry.ts         connector set, addresses, health, call limiters
   catalog-service.ts  request-local catalog access, search, and describe
@@ -194,8 +191,7 @@ src/
   authenticated subject. Anything cached per request still dies with it.
   Putting a downstream client or credential on the wrong side of those lines
   is the highest-severity mistake available here.
-- **Route order is behavior.** Moving a built-in below the connector dispatch
-  hands a connector the ability to shadow it. Moving a mutation route below the
+- **Route order is behavior.** Moving a mutation route below the
   wildcard `OPTIONS` opts it into CORS preflight.
 - **Admission runs before auth, on purpose.** Reordering them to "authenticate
   first" makes the cheapest possible attack the most expensive request.

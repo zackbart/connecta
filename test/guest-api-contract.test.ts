@@ -173,9 +173,7 @@ describe("guest API contract (executor-independent)", () => {
         const connecta = required(
           providers.find((provider) => provider.name === "connecta"),
         );
-        pending = required(connecta.fns.__callNamespace)(
-          "hanging",
-          "read",
+        pending = required(connecta.fns.call)("hanging.read",
           {},
         );
         return { result: "returned without waiting" };

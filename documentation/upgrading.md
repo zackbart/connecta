@@ -17,6 +17,51 @@ the release notes broke, and prove it with `connecta doctor`.
 Work on a branch. Every step below is reversible until you delete the old
 lockfile, and you want the diff reviewable by whoever owns this deployment.
 
+## Unreleased program API pruning
+
+This update removes MCP Apps rendering, connector shortcut globals,
+`connecta.batch`, automatic direct-call retries, and connector-owned HTTP routes. Refresh the client's MCP
+instructions and tool definitions after upgrading. The seven top-level tools,
+operator pages, credentials, result paging, and media emission remain.
+
+| Before | After |
+| --- | --- |
+| Connector `handleRequest(request, ctx)` | Move custom HTTP routes into the existing deployment fetch handler |
+| `await tracker.list_issues(args)` | `await connecta.call("tracker.list_issues", args)` using the exact address from discovery |
+| `await connecta.batch(calls)` | `Promise.all` over `connecta.call`, or `Promise.allSettled` to keep failures alongside successes |
+| `await connecta.ui(html)` | Return the data the client needs to render its own view |
+| `call_tool` or `call_destructive_tool` with `maxRetries` | Omit the removed argument; each call makes one attempt and returns typed failures with provider retry hints |
+
+A connector that still declares `handleRequest` refuses construction. Handle
+custom routes in the existing Node or Worker deployment before delegating other
+requests to `connecta.fetch`. The deployment owns authentication and security
+headers for its custom responses. Connecta returns 404 for unknown paths.
+Cloudflare Global API Key authentication and multi-field credentials remain
+supported; they need no migration.
+
+The direct-call schemas reject unknown arguments, including `maxRetries`, before
+invocation. Review stored programs and deployment-owned usage guides for the
+removed guest functions. Canonical addresses preserve punctuation; do not copy
+the old sanitized shortcut into the address string.
+
+```js
+async () => {
+  const outcomes = await Promise.allSettled([
+    connecta.call("tracker.list_issues", { state: "started" }),
+    connecta.call("tracker.list_projects", {}),
+  ]);
+  return outcomes.map((outcome) => outcome.status === "fulfilled"
+    ? { ok: true, data: outcome.value }
+    : { ok: false, code: outcome.reason.code, message: outcome.reason.message });
+}
+```
+
+Reduce large successful values before returning. Promise rejection reasons are
+Error objects; explicitly select their fields for JSON output. Every call still
+passes through the existing read-only checks, admission limits, deadlines, and
+20-call program budget. Rate-limited calls return `retryAfterMs` without waiting;
+the client can reissue after that delay. No storage migration is required.
+
 ## Read what you have first
 
 Three questions, in order. Answer all three before editing anything — the
@@ -572,10 +617,8 @@ all, so this is not a hook to stub out with `() => true`.
 previously fell through to connector `handleRequest` and then to a 404, so a
 connector that served any of the three is now shadowed without warning. `GET /`
 returns the operator shell where 0.6.1 returned 404, and a non-GET on those
-routes or on `/ui` returns 405 instead of falling through. Move such a handler
-to a path the core does not own: `handleRequest` still runs for everything the
-built-in routes miss, so it can add a route and never shadow one
-([architecture](./architecture.md)).
+routes or on `/ui` returns 405 instead of falling through. For the current release, move custom handlers into the deployment: connector
+`handleRequest` is now removed. See the [current migration](#unreleased-program-api-pruning).
 
 ### Removed options that throw
 

@@ -1,7 +1,7 @@
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
-  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with one execute_code program that discovers, calls, and returns the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. connecta.ui(html) exists only inside execute_code, not in connector search; return the same summary data the HTML renders. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
+  'Choose a route before discovery. A known-address read needs only call_tool. Unknown-address read-only work starts with one execute_code program that discovers, calls, and returns the answer; use the same route for reduction, multiple or dependent calls, loops, joins, or branches. Only readOnlyHint: true tools run there. Keep catalog inspection and unannotated, write-capable, or destructive work top level: search_tools then call_destructive_tool when a call is needed. After auth_required use authorize_connector. After a truncated direct result use get_result. Guidance is on demand: fetch skills({ name: "usage" }) only when these instructions and the tool description are insufficient or a run needs repair.';
 
 const USAGE_SKILL_BASE = `# Connecta usage
 
@@ -17,11 +17,10 @@ Write one plain-JavaScript async arrow function. TypeScript syntax and portable 
 
 The minimum guest API is:
 
-- \`<connectorId>.<toolName>(args)\` calls a sanitized shortcut. Non-identifier characters become \`_\`; leading digits gain \`_\`; reserved words gain a trailing \`_\`.
 - \`connecta.call("connector.tool", args)\` uses the canonical address and returns the unwrapped value.
 - \`connecta.search(args)\` returns \`{ tools, total, offset, limit, hasMore }\`; \`connecta.describe(args)\` returns \`{ tools }\`.
-- \`connecta.batch(calls)\` runs 2–10 independent calls. Each outcome is \`{ address, ok: true, data }\` or \`{ address, ok: false, error, errorDetails }\`.
-- \`console.log(...)\` is captured. \`connecta.emit(block)\` and \`connecta.ui(html)\` produce rich output.
+- Use \`Promise.all\` for independent calls, or \`Promise.allSettled\` to keep successes and failures.
+- \`console.log(...)\` is captured. \`connecta.emit(block)\` produces rich output.
 
 ## Discover and select
 
@@ -35,29 +34,29 @@ For top-level catalog inspection or approval-required discovery, omit \`limit\` 
 - Use \`connecta.describe({ address })\` or \`{ addresses }\` when a compact schema is truncated or insufficient. Use \`format: "json"\` only for exact constraints. Write the property names the schema displays; never guess positions or aliases.
 - Reduce through available output keys. Treat an observed key as a hint, since later results may omit it or add others. Do not guess collection roots such as \`items\` or \`results\`. If a match or result key is missing, inspect, re-search, or describe inside the same run instead of returning discovery for another call.
 - Match provider identifiers and names exactly after resolving them from source data or a connector guide. A broad regular expression that merely finds a plausible value is not identity resolution.
-- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string. Call the search and describe functions directly; batch accepts canonical connector tool addresses, not guest API function names.
+- Preserve the schema's JSON types exactly: a numeric id is a number, not a numeric-looking string.
 - Validate tabular headers, row arrays, and row widths before mapping them. Never let a header or partial row become data.
 
 Only tools explicitly annotated \`readOnlyHint: true\` are reachable. The catalog, credential, admission, and read-only gates run below the sandbox; code cannot widen its authority.
 
 ## Errors and repair
 
-Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Batch failures expose the same classification in \`errorDetails\`. Branch on fields, never prose. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
+Caught Connecta errors expose \`message\`, \`code\`, \`retryable\`, and \`details\`. Promise rejections retain these fields. Branch on fields, never prose. Do not retry \`retryable: false\`, and do not retry \`rate_limited\` immediately because portable code has no timer.
 
 - \`destructive_tool_requires_approval\`: stop the program and use the returned canonical address with top-level \`call_destructive_tool\`.
 - \`auth_required\`: let the failure reach the model, then use top-level \`authorize_connector\`, give its handoff to the operator, and retry after recovery.
 - A truncated direct-call result: follow its \`get_result\` action. A truncated program result has no page handle; filter, map, or slice inside a new program.
 - Unknown addresses and tools carry scoped search recovery. Use it inside the current run. Do not invent an address.
 
-For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. \`maxRetries\` is honored only for safely annotated tools. \`diagnostics: true\` adds timing.
+For a direct call, \`resultMode: "value"\` unwraps the result. \`timeoutMs\` sets its deadline. Every call makes one attempt; use the returned error classification and retry hint to decide whether to reissue. \`diagnostics: true\` adds timing.
 
 \`get_result({ id, offset?, maxBytes? })\` returns \`{ text, offset, nextOffset?, totalBytes }\` for a direct-call result. Both sizes are byte counts: \`maxBytes\` must be a whole number at least 1 and defaults to the deployment cap; \`offset\` must be a whole number at least 0 and defaults to 0. An offset inside a multi-byte character moves back to its first byte, and the response reports the served offset. Follow \`nextOffset\` to reassemble pages. An unknown or expired id is an error.
 
-Limits: 20 host calls per run, 10 calls per batch, and a 15-second deadline per host call.
+Limits: 20 host calls per run and a 15-second deadline per host call.
 
 ## Runtime portability
 
-Portable code uses only connector globals, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
+Portable code uses standard JavaScript builtins, \`connecta\`, and \`console.*\`. QuickJS blocks imports and lacks fetch, process, timers, crypto, and WebSocket. Dynamic Workers must use only \`{ loader }\`; bindings, modules, or globalOutbound grant ambient authority. With loader only, environment maps are empty; node:fs/http/https are absent; outbound fetch, WebSocket, node:net, and node:tls are denied; DNS is unresolved. Runtime builtins remain through \`import()\` and \`process.getBuiltinModule()\`, including node:path and cloudflare:workers; this set can drift. Timers, process, crypto, WebSocket, and data: fetch remain. Avoid every runtime-only capability because QuickJS fails.
 
 ## Examples
 
@@ -69,9 +68,9 @@ Dependent calls, only when the second needs a value from the first:
 
 \`async () => { const { tools } = await connecta.search({ query: "pipeline run job logs", safety: "readOnly", includeSchemas: "compact" }); const address = (suffix) => { const tool = tools.find((entry) => entry.address.endsWith(suffix)); if (!tool) throw new Error("missing " + suffix); return tool.address; }; const run = await connecta.call(address(".get_run"), { runId: 42 }); const logs = await connecta.call(address(".get_job_logs"), { jobId: run.failedJobId }); return logs.map(({ timestamp, message }) => ({ timestamp, message })); }\`
 
-## Rendering a view
+## Media output
 
-\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. \`connecta.ui(html)\` renders one success-only display view outside model context. The view has local HTML and JavaScript only: no network, connector calls, discovery, conversation messages, or host links. One shared budget applies to the UI and emitted content, not separate budgets. Fetch and check the data shape first. On empty or missing data, return a trimmed first record instead of rendering. Otherwise render returned variables and return the same summary because the model reads the return value, not the view. A second, invalid, or over-budget UI call throws catchably.
+\`connecta.emit\` accepts text, image, or audio blocks and delivers them only on success. Its byte and block budgets are separate from the JSON return budget. Return data for the client to render as a view.
 
 `;
 

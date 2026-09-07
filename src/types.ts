@@ -353,22 +353,6 @@ export interface Connector {
     ctx: ConnectorContext,
     callbackParams?: URLSearchParams,
   ): Promise<void>;
-  /**
-   * Optional: serve a connector-owned HTTP route — for example a signed
-   * download link minted by one of the connector's tools. Called only after
-   * every built-in route misses, so a connector can never shadow `/mcp`,
-   * `/`, `/credentials`, `/activity`, `/health`, or the credential API. The
-   * first connector to return a Response wins, in registration order; return
-   * null to decline. See documentation/architecture.md route 9.
-   *
-   * These routes are PUBLIC: connecta applies no auth gate to them. A
-   * connector that serves data here MUST authenticate the request itself — for
-   * example with a signed capability token in the URL.
-   */
-  handleRequest?(
-    request: Request,
-    ctx: ConnectorContext,
-  ): Promise<Response | null>;
 }
 
 export interface ConnectorUsageGuide {
@@ -402,8 +386,7 @@ export interface ExecutorProvider {
   fns: Record<string, (...args: unknown[]) => Promise<unknown>>;
   /**
    * Optional trusted sandbox-side setup run after provider globals exist.
-   * Connecta uses this to install lazy connector namespace proxies without
-   * materializing one host closure per tool. This is host-authored code, never
+   * Connecta uses this to restore typed host errors. This is host-authored code, never
    * model input. See documentation/code-mode.md#what-an-executor-must-implement.
    */
   prelude?: string;

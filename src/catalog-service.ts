@@ -660,69 +660,6 @@ export class CatalogService {
     };
   }
 
-  /**
-   * Resolve the JavaScript-safe property used by a lazy code-mode namespace
-   * back to exactly one catalog tool. Ambiguous aliases fail with an explicit
-   * escape hatch instead of silently choosing the first tool.
-   */
-  async resolveToolAlias(
-    connectorId: string,
-    alias: string,
-    aliasFor: (toolName: string) => string,
-    callOptions: ConnectorOperationOptions = {},
-  ): Promise<CatalogResolution> {
-    const connector = this.registry.getConnector(connectorId);
-    if (!connector) {
-      return this.unknownAddressFailure(`${connectorId}.${alias}`, alias);
-    }
-    const started = Date.now();
-    let tools: ToolDef[];
-    try {
-      tools = await this.loadConnector(connector.id, callOptions);
-    } catch (cause) {
-      return this.catalogLoadFailure(cause, started, connector, alias);
-    }
-    const [definition, ...collisions] = tools.filter(
-      (tool) => aliasFor(tool.name) === alias,
-    );
-    if (!definition) {
-      return this.unknownToolFailure(alias, connector, started);
-    }
-    if (collisions.length > 0) {
-      const names = [definition, ...collisions]
-        .map((tool) => `"${tool.name}"`)
-        .join(", ");
-      return {
-        ok: false,
-        error: {
-          code: "ambiguous_tool_alias",
-          message: `Tool alias "${boundedEchoText(alias)}" is ambiguous on connector "${connector.id}" because ${names} sanitize to the same name. Use connecta.call with an exact address.`,
-          retryable: false,
-          nextAction: {
-            function: "connecta.call",
-            addresses: [definition, ...collisions].map(
-              (tool) => `${connector.id}.${tool.name}`,
-            ),
-            purpose:
-              "Choose the intended canonical address and call it with the original arguments.",
-          },
-        },
-        catalogMs: Date.now() - started,
-        connector,
-        toolName: alias,
-      };
-    }
-    return {
-      ok: true,
-      resolved: {
-        connector,
-        toolName: definition.name,
-        definition,
-      },
-      catalogMs: Date.now() - started,
-    };
-  }
-
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
     const query = args.query ?? "";
     const retrievalQuery = lexicalSearchQuery(query);

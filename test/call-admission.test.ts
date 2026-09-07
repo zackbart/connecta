@@ -295,7 +295,7 @@ describe("connector call admission controller", () => {
 });
 
 describe("connector call admission integration", () => {
-  it("bounds concurrent batch children and preserves input order", async () => {
+  it("bounds concurrent promise calls and preserves input order", async () => {
     let active = 0;
     let maxActive = 0;
     const releases: Array<() => void> = [];
@@ -321,12 +321,9 @@ describe("connector call admission integration", () => {
       silentLogger,
     );
     const connecta = providers.find(({ name }) => name === "connecta")!;
-    const batch = required(connecta.fns.batch)(
-      [0, 1, 2, 3].map((index) => ({
-        address: "limited.read",
-        args: { index },
-      })),
-    );
+    const parallel = Promise.all([0, 1, 2, 3].map((index) =>
+      required(connecta.fns.call)("limited.read", { index }),
+    ));
 
     await waitFor(() => releases.length === 2);
     expect(registry.callAdmissionSnapshot().limited).toMatchObject({
@@ -337,12 +334,9 @@ describe("connector call admission integration", () => {
     await waitFor(() => releases.length === 2);
     releases.splice(0, 2).forEach((release) => release());
 
-    const results = (await batch) as Array<{
-      ok: boolean;
-      data: { index: number };
-    }>;
+    const results = (await parallel) as Array<{ index: number }>;
     expect(maxActive).toBe(2);
-    expect(results.map((entry) => entry.data.index)).toEqual([0, 1, 2, 3]);
+    expect(results.map((entry) => entry.index)).toEqual([0, 1, 2, 3]);
   });
 
   it("shares one base-registry limiter between direct and code-mode calls", async () => {
@@ -377,9 +371,7 @@ describe("connector call admission integration", () => {
       silentLogger,
     );
     const connecta = providers.find(({ name }) => name === "connecta")!;
-    const codeMode = required(connecta.fns.__callNamespace)(
-      "limited",
-      "read",
+    const codeMode = required(connecta.fns.call)("limited.read",
       { source: "code" },
     );
     await waitFor(
@@ -487,7 +479,7 @@ describe("connector call admission integration", () => {
       activity,
     }).callTool({
       address: "limited.read",
-      maxRetries: 2,
+
       resultMode: "value",
     });
     await waitFor(() => calls === 1);
@@ -539,7 +531,7 @@ describe("connector call admission integration", () => {
       activity: observed.activity,
     }).callTool({
       address: "limited.read",
-      maxRetries: 2,
+
       resultMode: "value",
     });
 
@@ -606,7 +598,7 @@ describe("connector call admission integration", () => {
     await connecta.close();
   });
 
-  it("retries short proactive windows and does not poison connector health", async () => {
+  it("returns admission retry hints without waiting or poisoning connector health", async () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(1_000);
@@ -646,23 +638,6 @@ describe("connector call admission integration", () => {
       const tools = createMetaTools(registry, BASE, { activity });
       await tools.callTool({ address: "budgeted.read" });
 
-      const retried = tools.callTool({
-        address: "budgeted.read",
-        maxRetries: 1,
-        resultMode: "value",
-      });
-      await vi.advanceTimersByTimeAsync(50);
-      const body = JSON.parse(required((await retried).content[0]).text) as {
-        ok: boolean;
-        attempts: number;
-      };
-      expect(body).toMatchObject({ ok: true, attempts: 2 });
-      expect(calls).toBe(2);
-      expect(events.at(-1)).toMatchObject({
-        outcome: "success",
-        attempts: 2,
-      });
-
       const refused = await tools.callTool({
         address: "budgeted.read",
         resultMode: "value",
@@ -684,9 +659,13 @@ describe("connector call admission integration", () => {
       expect(events.map(({ outcome, attempts }) => ({ outcome, attempts })))
         .toEqual([
           { outcome: "success", attempts: 1 },
-          { outcome: "success", attempts: 2 },
           { outcome: "error", attempts: 1 },
         ]);
+      expect(calls).toBe(1);
+      await vi.advanceTimersByTimeAsync(50);
+      const retried = await tools.callTool({ address: "budgeted.read", resultMode: "value" });
+      expect(JSON.parse(required(retried.content[0]).text)).toMatchObject({ ok: true, attempts: 1 });
+      expect(calls).toBe(2);
     } finally {
       vi.useRealTimers();
     }

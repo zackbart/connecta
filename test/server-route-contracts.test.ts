@@ -81,14 +81,8 @@ async function responseShape(response: Response) {
 }
 
 describe("server route contracts", () => {
-  it("keeps every built-in ahead of connector-owned routes and inside the security wrapper", async () => {
-    const handledPaths: string[] = [];
-    const connector = surfaceConnector({
-      async handleRequest(request) {
-        handledPaths.push(new URL(request.url).pathname);
-        return new Response("connector-owned");
-      },
-    });
+  it("keeps every built-in and the final 404 inside the security wrapper", async () => {
+    const connector = surfaceConnector();
     const connecta = createTestConnecta({
       connectors: [connector],
       auth: bearerToken(TOKEN),
@@ -144,13 +138,11 @@ describe("server route contracts", () => {
     expect(mcp.status).toBe(401);
     expectMcpCors(mcp);
     expect(await mcp.text()).toBe('{"error":"unauthorized"}');
-    expect(handledPaths).toEqual([]);
 
     const owned = await connecta.fetch(new Request(`${BASE}/owned`));
-    expect(owned.status).toBe(200);
+    expect(owned.status).toBe(404);
     expectGlobalSecurityHeaders(owned);
-    expect(await owned.text()).toBe("connector-owned");
-    expect(handledPaths).toEqual(["/owned"]);
+    expect(await owned.text()).toBe("Not Found");
   });
 
   it("keeps operator shells open, framed off, and data-free", async () => {

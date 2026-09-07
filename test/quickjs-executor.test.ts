@@ -506,7 +506,7 @@ describe("quickJsExecutor", () => {
     });
   });
 
-  it("executes a lazily resolved connector namespace end to end", async () => {
+  it("loads only the canonically called connector end to end", async () => {
     const catalogs: string[] = [];
     const countedCalc: Connector = {
       ...calcConnector,
@@ -540,13 +540,13 @@ describe("quickJsExecutor", () => {
       silentLogger,
     )({
       code: `async () => ({
-        keys: Object.keys(calc),
-        sum: (await calc.add({ a: 20, b: 22 })).sum
+        connectorGlobal: typeof calc,
+        sum: (await connecta.call("calc.add", { a: 20, b: 22 })).sum
       })`,
     });
     expect(out.isError).toBeUndefined();
     expect(out.structuredContent).toEqual({
-      result: { keys: [], sum: 42 },
+      result: { connectorGlobal: "undefined", sum: 42 },
     });
     expect(catalogs).toEqual(["calc"]);
   });
@@ -574,7 +574,7 @@ describe("quickJsExecutor", () => {
       silentLogger,
     )({
       code: `async () => {
-        try { await reader.big({}); } catch (err) { return err.message; }
+        try { await connecta.call("reader.big", {}); } catch (err) { return err.message; }
         return "no failure";
       }`,
     });
@@ -686,7 +686,7 @@ describe("quickJsExecutor", () => {
     });
   });
 
-  it("reports emitted blocks and UI discarded by mid-run shutdown", async () => {
+  it("reports emitted blocks discarded by mid-run shutdown", async () => {
     const { promise: started, resolve: callStarted } = deferred<void>();
     const connector: Connector = {
       id: "blocking",
@@ -720,8 +720,7 @@ describe("quickJsExecutor", () => {
     const running = handler({
       code: `async () => {
         await connecta.emit({ type: "text", text: "doomed" });
-        await connecta.ui("<p>doomed</p>");
-        return blocking.read({});
+        return connecta.call("blocking.read", {});
       }`,
     });
     await started;
@@ -736,7 +735,6 @@ describe("quickJsExecutor", () => {
         retryable: false,
       },
       emittedDiscarded: 1,
-      uiDiscarded: true,
     };
     expect(JSON.parse(required(out.content[0]).text ?? "")).toEqual(expected);
     expect(out.structuredContent).toEqual(expected);

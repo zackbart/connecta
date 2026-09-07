@@ -27,7 +27,6 @@ export const WORKERS_SUITES = [
   "test/executor-admission.test.ts",
   "test/execute.test.ts",
   "test/execute-emit.test.ts",
-  "test/execute-ui.test.ts",
   "test/guarded-fetch.test.ts",
   "test/guest-api-contract.test.ts",
   "test/identity-scope.test.ts",
