@@ -242,4 +242,3 @@ does not load them merely because the package is installed.
 Keep the old pin, configuration, and storage backup available until these checks
 pass. This guide changes package configuration; it does not authorize or perform
 any deployment, credential rotation, or storage deletion.
-

@@ -20,4 +20,3 @@ export function agentFrictionForCode(
       return undefined;
   }
 }
-

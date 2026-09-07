@@ -156,4 +156,3 @@ export function describeCredentialTestMismatch(
         "`testCredential(value, ctx)` can test, but implements " +
         "`testCredentials`";
 }
-
