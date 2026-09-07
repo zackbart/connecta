@@ -1655,7 +1655,7 @@ describe("execute_code registration (code mode)", () => {
     expect(executeTool.description).toContain(
       "Unknown-address and wider read-only work",
     );
-    expect(executeTool.description).toContain("starts with execute_code");
+    expect(executeTool.description).toContain("uses one execute_code program");
     // Advice, not a validity claim: nothing rejects a program that returns
     // catalog matches, and a description that says otherwise teaches the model
     // a rule the server does not enforce (#295).
@@ -1664,7 +1664,7 @@ describe("execute_code registration (code mode)", () => {
     );
     expect(executeTool.description).not.toContain("Never make a discovery-only");
     expect(executeTool.description).toContain(
-      "Unknown-address and wider read-only work starts with execute_code",
+      "Unknown-address and wider read-only work uses one execute_code program",
     );
     expect(executeTool.description).toContain("No portable ambient capabilities");
     expect(executeTool.description).toContain('skills({ name: "usage" })');

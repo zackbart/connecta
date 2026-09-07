@@ -845,7 +845,7 @@ const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work starts with execute_code: discover, call, and reduce. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}s/host call.
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
