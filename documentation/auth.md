@@ -163,5 +163,5 @@ and principal ownership independently of the optional browser application.
 
 See [meta-tools](./meta-tools.md#authorization-recovery) and
 [storage and credentials](./storage-and-credentials.md). The
-[upgrade guide](./upgrading.md#unreleased-optional-modules) covers moving clients
+[upgrade guide](./upgrading.md#0240-optional-modules) covers moving clients
 off removed Connecta-issued tokens before changing deployment configuration.

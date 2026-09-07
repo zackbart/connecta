@@ -97,7 +97,7 @@ client access tokens. Shared-credential administration and personal connection
 setup require separate explicit permissions, both denied by default. See
 [inbound auth](./documentation/auth.md#principals-visibility-and-operators),
 [shared and personal auth](./documentation/storage-and-credentials.md#shared-and-personal-auth),
-and the [module migration guide](./documentation/upgrading.md#unreleased-optional-modules).
+and the [module migration guide](./documentation/upgrading.md#0240-optional-modules).
 
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one

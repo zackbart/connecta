@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.24.0 — 2026-09-07
 
 Deployments now select UI, encrypted credentials, activity history, and inbound
 auth through explicit module imports. Core keeps discovery, execution,
@@ -10,7 +10,7 @@ invocation, and enforcement together. This breaks configuration and removes
 Connecta-issued client tokens; migrate those clients before upgrading. Shared
 and personal auth management now require explicit permissions. Existing vault
 and OAuth state need no format migration. See the
-[detailed migration guide](./documentation/upgrading.md#unreleased-optional-modules)
+[detailed migration guide](./documentation/upgrading.md#0240-optional-modules)
 for before-and-after configuration, team and personal deployment examples,
 client migration, and verification.
 

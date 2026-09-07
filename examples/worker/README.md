@@ -172,7 +172,7 @@ does not create credentials or permissions by itself.
 Interactive MCP clients use Access Managed OAuth. Unattended clients use Access
 service tokens when needed. Connecta-issued `cta_` tokens and their management
 routes are removed; a configured Connecta bearer cannot cross the Access edge
-alone. See the [migration guide](../../documentation/upgrading.md#unreleased-optional-modules)
+alone. See the [migration guide](../../documentation/upgrading.md#0240-optional-modules)
 if an older deployment still issues tokens.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.ACTIVITY_DB) })`

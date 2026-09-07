@@ -1,4 +1,4 @@
-# Upgrade to optional modules
+# Upgrade to 0.24.0 optional modules
 
 This is a breaking configuration change. Core still owns the same seven tools,
 connector discovery, execution, invocation, and enforcement. UI, encrypted
@@ -9,8 +9,7 @@ there is no runtime plugin installation or registration.
 Do this migration in the deployment repository on a branch. Do not re-run
 `connecta init`, replace the connector set, or copy a template over local code.
 The examples below omit unchanged connectors, executors, and storage adapters.
-Install and pin the release version once it is published; this Unreleased guide
-does not name a version to install yet.
+Install and pin `@zackbart/connecta@0.24.0` after completing the migration.
 
 ### Configuration and import changes
 
