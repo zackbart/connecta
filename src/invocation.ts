@@ -1,5 +1,4 @@
 import {
-  recordToolActivity,
   type ActivityCallSource,
   type ActivityRequestContext,
   type AgentFriction,
@@ -58,7 +57,7 @@ function recoveryMode(
 ): AuthRecoveryMode {
   if (connector.startAuth) return "oauth";
   if (
-    connector.credential &&
+    registry.credentialUiAvailable() && connector.credential &&
     registry.contextFor(connector.id, baseUrl).credential
   ) {
     return "operator_config";
@@ -214,7 +213,7 @@ export class InvocationService {
           }
         : attempted;
       if (!identity) return;
-      recordToolActivity(this.activity, {
+      this.activity?.recordTool?.(this.activity, {
         connectorId: identity.connectorId,
         toolName: identity.toolName,
         address: `${identity.connectorId}.${identity.toolName}`,

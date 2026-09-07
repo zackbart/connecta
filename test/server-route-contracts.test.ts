@@ -1,3 +1,4 @@
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { api } from "../src/connectors/api.js";
@@ -89,7 +90,7 @@ describe("server route contracts", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
     const builtIns: Array<{
@@ -99,12 +100,12 @@ describe("server route contracts", () => {
     }> = [
       { path: "/health", status: 200 },
       { path: "/", status: 200 },
-      { path: "/credentials", status: 200 },
-      { path: "/activity", status: 200 },
-      { path: "/tokens", status: 200 },
+      { path: "/credentials", status: 404 },
+      { path: "/activity", status: 404 },
+      { path: "/tokens", status: 404 },
       { path: "/ui", status: 308 },
       { path: "/ui/data", status: 401 },
-      { path: "/ui/activity", status: 401 },
+      { path: "/ui/activity", status: 404 },
       {
         path: "/ui/credentials/surface",
         init: { method: "OPTIONS" },
@@ -152,10 +153,10 @@ describe("server route contracts", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
-    for (const path of ["/", "/credentials", "/tokens", "/activity"]) {
+    for (const path of ["/"]) {
       const response = await connecta.fetch(new Request(`${BASE}${path}`));
       const body = await response.text();
       expect(response.status).toBe(200);
@@ -188,10 +189,10 @@ describe("server route contracts", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: silentLogger,
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
-    for (const path of ["/ui/data", "/ui/activity"]) {
+    for (const path of ["/ui/data"]) {
       const response = await connecta.fetch(new Request(`${BASE}${path}`));
       expect(response.status).toBe(401);
       expectGlobalSecurityHeaders(response);
@@ -306,7 +307,7 @@ describe("server route contracts", () => {
       storage: memoryStorage(),
       publicUrl: BASE,
       logger: { ...silentLogger, warn },
-      credentials: { encryptionKey: CREDENTIAL_KEY },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
     // Every ?toolkit= value — a formerly configured name, garbage, or empty —

@@ -2,13 +2,15 @@ import {
   credentialTestRule,
   describeCredentialTestMismatch,
   storedCredentialShape,
-} from "../credentials.js";
+} from "../credential-rules.js";
 import type {
   ConnectorCredentialConfig,
   ConnectorCredentialValues,
 } from "../types.js";
 import {
   authorizeUiIdentity,
+  mayManageConnector,
+  validateAuthPermissions,
   isSameOrigin,
   msg,
   privateJson,
@@ -145,6 +147,7 @@ async function handleCredentialRequest(
   if (!authz.ok) return authz.response;
   let registry;
   try {
+    validateAuthPermissions(authz, opts.registry);
     registry = opts.registry.scoped({
       connectorIds: authz.connectorIds,
       ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
@@ -158,6 +161,7 @@ async function handleCredentialRequest(
   if (!connector?.credential) {
     return privateJson({ error: "unknown credential slot" }, { status: 404 });
   }
+  if (!mayManageConnector(authz, connector)) return privateJson({ error: "credential management is not permitted" }, { status: 403 });
   const personal = connector.authScope === "personal";
   if (personal && !authz.principalKey) {
     return privateJson({ error: "forbidden" }, { status: 403 });

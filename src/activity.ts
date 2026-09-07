@@ -1,3 +1,5 @@
+import { routeActivity } from "./routes/activity.js";
+import type { ActivityModule } from "./module-contracts.js";
 import { boundedEchoText } from "./errors.js";
 import type { CatalogDriftCounts, Logger } from "./types.js";
 
@@ -44,28 +46,8 @@ export type AgentFriction =
   | "auth_required"
   | "result_too_large";
 
-/** Coarse recovery class derived without inspecting payloads or error prose. */
-export function agentFrictionForCode(
-  code: string | undefined,
-): AgentFriction | undefined {
-  switch (code) {
-    case "unknown_address":
-    case "unknown_tool":
-    case "ambiguous_tool_alias":
-      return "tool_not_found";
-    case "invalid_args":
-      return "schema_retry";
-    case "destructive_tool_requires_approval":
-      return "destructive_reroute";
-    case "auth_required":
-      return "auth_required";
-    case "result_too_large":
-      return "result_too_large";
-    default:
-      return undefined;
-  }
-}
-
+import { agentFrictionForCode } from "./activity-friction.js";
+export { agentFrictionForCode } from "./activity-friction.js";
 /**
  * Authenticated identity attached to an activity event. `id` is intentionally
  * optional: open deployments and shared bearer tokens cannot honestly identify
@@ -195,6 +177,7 @@ export type ActivityReadGate = (
  * did, so it carries no actor and no request id to attribute it to one.
  */
 export interface CatalogDriftActivityContext {
+  recordDrift?: typeof recordCatalogDriftActivity;
   sink: ActivitySink;
   serverInfo: { name: string; version: string };
   deploymentId?: string;
@@ -203,6 +186,7 @@ export interface CatalogDriftActivityContext {
 
 /** Request-scoped context shared by direct, batch, and code-mode call paths. */
 export interface ActivityRequestContext {
+  recordTool?: typeof recordToolActivity | undefined;
   sink: ActivitySink;
   actor: ActivityActor;
   requestId: string;
@@ -307,4 +291,22 @@ export function recordCatalogDriftActivity(
   } catch (error) {
     context.logger.warn("[connecta] catalog drift record failed", error);
   }
+}
+
+export interface ActivityHistoryOptions {
+  store: ActivityStore;
+  deploymentId?: string;
+  readGate?: ActivityReadGate;
+}
+/** Attach payload-free history without changing tool results on store failure. */
+export function activityHistory(options: ActivityHistoryOptions): ActivityModule {
+  if (!options || typeof options.store?.record !== "function") {
+    throw new Error("activityHistory.store must implement record(event)");
+  }
+  return {
+    ...options,
+    handle: routeActivity,
+    recordTool: recordToolActivity,
+    recordDrift: recordCatalogDriftActivity,
+  };
 }

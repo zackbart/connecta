@@ -2,11 +2,8 @@ import { useState } from "preact/hooks";
 import type { UiConnector } from "../model.js";
 import {
   credentialStateLabel,
-  credentialUnavailableCopy,
   formatDate,
-  type OperatorState,
 } from "../view.js";
-import { Empty, NoticeLine, Unavailable } from "./parts.js";
 import {
   editCredential,
   refuseCredential,
@@ -115,7 +112,7 @@ function CredentialForm({
   );
 }
 
-function CredentialCard({
+export function CredentialCard({
   connector,
   credential,
   editing,
@@ -136,19 +133,12 @@ function CredentialCard({
     >
       <div class="credential-head">
         <div class="connector-title">
-          <span
-            class={`dot ${configured ? "ok" : "auth_required"}`}
-            aria-hidden="true"
-          />
           <h2 id={`credential-title-${connector.id}`}>
-            {connector.title || connector.id}
+            {credential.label}
           </h2>
         </div>
         <span class="credential-state">{credentialStateLabel(credential)}</span>
       </div>
-      <p class="mono">
-        {connector.id} · {connector.authScope === "personal" ? "personal" : "shared"} · {credential.label}
-      </p>
       {credential.description ? (
         <p class="credential-copy meta">{credential.description}</p>
       ) : null}
@@ -213,58 +203,6 @@ function CredentialCard({
           busy={busy}
         />
       ) : null}
-    </section>
-  );
-}
-
-export function CredentialsPage({ state }: { state: OperatorState }) {
-  const data = state.data;
-  const available = data?.credentialManagement === "available";
-  const slots = (data?.connectors ?? []).filter(
-    (connector): connector is UiConnector & { credential: Credential } =>
-      Boolean(connector.credential),
-  );
-  return (
-    <section id="credentialsView">
-      <div class="lead pgrid">
-        <h1 id="credentialsHeading" class="pcap" tabIndex={-1}>
-          Credentials
-        </h1>
-        <div class="pbody">
-          <p class="activity-copy">
-            Manage shared or personal connector credentials. Stored values are
-            never returned or displayed.
-          </p>
-          <NoticeLine id="credentialNotice" notice={state.credentialNotice} />
-          {!available ? (
-            <Unavailable>
-              {credentialUnavailableCopy(data?.credentialManagement)}
-            </Unavailable>
-          ) : (
-            <div
-              id="credentialList"
-              class="credential-ledger"
-              aria-busy={state.credentialBusy ? "true" : "false"}
-            >
-              {slots.length === 0 ? (
-                <Empty>
-                  No connector in this deployment declares a credential slot yet.
-                </Empty>
-              ) : (
-                slots.map((connector) => (
-                  <CredentialCard
-                    key={connector.id}
-                    connector={connector}
-                    credential={connector.credential}
-                    editing={state.credentialEditing === connector.id}
-                    busy={state.credentialBusy === connector.id}
-                  />
-                ))
-              )}
-            </div>
-          )}
-        </div>
-      </div>
     </section>
   );
 }

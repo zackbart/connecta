@@ -183,7 +183,7 @@ export async function routeActivity(
     false,
   );
   if (!authz.ok) return authz.response;
-  if (opts.identity?.operatorAccess && !authz.operator) {
+  if (!authz.operator) {
     return privateJson({ error: "operator access required" }, { status: 403 });
   }
   if (

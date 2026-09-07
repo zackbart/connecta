@@ -2,7 +2,7 @@ import type {
   ActivityPage,
   ActivityStore,
 } from "@zackbart/connecta";
-import { InvalidActivityCursorError } from "@zackbart/connecta";
+import { InvalidActivityCursorError } from "@zackbart/connecta/activity";
 import {
   activityEventToRow,
   activityRowToEvent,

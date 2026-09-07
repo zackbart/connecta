@@ -402,6 +402,8 @@ export function createMetaTools(
     /** Maximum simultaneous connector discovery operations. Default 4. */
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
+    canManageAuth?: ((id: string) => boolean) | undefined;
+    credentialHandoffUrl?: string | undefined;
     /** Inbound request cancellation shared by every call this request makes. */
     requestSignal?: AbortSignal | undefined;
     /** Runtime-owned tail for stale catalog refreshes. */
@@ -697,13 +699,13 @@ export function createMetaTools(
           baseUrl,
           requestScope,
         );
-        if (!ctx.credential) {
+        if (!ctx.credential || !opts.credentialHandoffUrl) {
           return jsonResult({
             connector: connector.id,
             recovery: "unavailable",
             message:
-              "Credential storage is not configured. Configure " +
-              "credentials.encryptionKey, redeploy, then call " +
+              "Credential recovery needs both a vault and the optional UI. Configure " +
+              "vault and ui in deployment code, then call " +
               "authorize_connector again.",
           });
         }
@@ -725,7 +727,7 @@ export function createMetaTools(
             label: connector.credential.label,
             fields,
           },
-          operatorUrl: new URL("/credentials", baseUrl).toString(),
+          operatorUrl: opts.credentialHandoffUrl,
           instructions:
             "Have the operator open operatorUrl, set and test the credential, " +
             "then retry the original call. No redeploy is needed. " +
@@ -734,6 +736,7 @@ export function createMetaTools(
               : "Shared credential mutation requires a signed-in human with access to this connector."),
         });
       }
+      if (!opts.canManageAuth?.(connector.id)) return jsonResult({ connector: connector.id, recovery: "unavailable", message: "Your identity is not permitted to manage authentication for this connection." });
       const ctx = registry.contextFor(connector.id, baseUrl, requestScope);
       try {
         const status = await connector.startAuth(
@@ -862,6 +865,8 @@ export function registerMetaTools(
     probeTimeoutMs?: number | undefined;
     discoveryConcurrency?: number | undefined;
     activity?: ActivityRequestContext | undefined;
+    canManageAuth?: ((id: string) => boolean) | undefined;
+    credentialHandoffUrl?: string | undefined;
     requestSignal?: AbortSignal | undefined;
     defer?: DeferredWork | undefined;
   },
@@ -871,6 +876,8 @@ export function registerMetaTools(
     probeTimeoutMs: ctx.probeTimeoutMs,
     discoveryConcurrency: ctx.discoveryConcurrency,
     activity: ctx.activity,
+    canManageAuth: ctx.canManageAuth,
+    credentialHandoffUrl: ctx.credentialHandoffUrl,
     requestSignal: ctx.requestSignal,
     defer: ctx.defer,
   });

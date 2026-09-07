@@ -1,11 +1,7 @@
 import { isAdmittingExecutor } from "./executor-admission.js";
-import { routeAccessTokens } from "./routes/access-tokens.js";
-import { routeActivity } from "./routes/activity.js";
-import { routeCredentials } from "./routes/credentials.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
 import {
   routeOAuthCallback,
-  routeOAuthManagement,
 } from "./routes/oauth.js";
 import {
   withSecurityHeaders,
@@ -13,7 +9,6 @@ import {
   type RuntimeExecutionContext,
   type ServerOptions,
 } from "./routes/shared.js";
-import { routeUi } from "./routes/ui.js";
 
 export type { ServerOptions } from "./routes/shared.js";
 
@@ -88,14 +83,8 @@ export function createFetchHandler(
 
     const route = async (): Promise<Response> => {
       // Private mutations own OPTIONS so they never inherit wildcard CORS.
-      const accessTokens = await routeAccessTokens(context);
-      if (accessTokens) return accessTokens;
-
-      const credentials = await routeCredentials(context);
-      if (credentials) return credentials;
-
-      const oauthManagement = await routeOAuthManagement(context);
-      if (oauthManagement) return oauthManagement;
+      const uiResponse = await opts.ui?.handle(context);
+      if (uiResponse) return uiResponse;
 
       if (request.method === "OPTIONS") {
         for (const provider of auth) {
@@ -152,12 +141,8 @@ export function createFetchHandler(
             },
             reservedRoutes: [
               "/health",
-              "/",
-              "/credentials",
-              "/tokens",
-              "/activity",
-              "/ui",
-              "/ui/*",
+              ...(opts.ui?.reservedPaths ?? []),
+              ...(opts.ui && opts.activity?.list ? ["/activity"] : []),
             ],
           },
           ...(opts.deploymentInfo ? { deployment: opts.deploymentInfo } : {}),
@@ -166,12 +151,6 @@ export function createFetchHandler(
 
       const oauthCallback = await routeOAuthCallback(context);
       if (oauthCallback) return oauthCallback;
-
-      const ui = await routeUi(context);
-      if (ui) return ui;
-
-      const activity = await routeActivity(context);
-      if (activity) return activity;
 
       const mcp = await routeMcp(context);
       if (mcp) return mcp;

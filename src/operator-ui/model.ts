@@ -46,7 +46,8 @@ export interface UiConnector {
   authScope?: "shared" | "personal";
   title?: string;
   description?: string;
-  status: "ok" | "auth_required" | "error";
+  status: "loading" | "ok" | "auth_required" | "error";
+  permissions?: { use: boolean; manageSharedAuth: boolean; connectPersonal: boolean };
   message?: string;
   authorizationUrl?: string;
   toolCount: number;
@@ -73,11 +74,6 @@ export type CredentialManagementCapability =
   | "vault_not_configured"
   | "no_slots";
 
-export type AccessTokenManagementCapability =
-  | "available"
-  | "requires_operator"
-  | "not_configured";
-
 export interface UiData {
   serverInfo: { name: string; version: string };
   /** Version of the installed @zackbart/connecta package. */
@@ -85,7 +81,6 @@ export interface UiData {
   connectors: UiConnector[];
   activityEnabled: boolean;
   credentialManagement: CredentialManagementCapability;
-  accessTokenManagement: AccessTokenManagementCapability;
   /** True when this interactive human may manage any visible OAuth connector. */
   oauthManagement: boolean;
 }

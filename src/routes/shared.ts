@@ -1,7 +1,7 @@
 import type { Implementation } from "@modelcontextprotocol/server";
-import type { AccessTokenManager } from "../access-tokens.js";
+import type { ActivityModule, OperatorSurface } from "../module-contracts.js";
 import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity.js";
-import type { CredentialVault } from "../credentials.js";
+import type { CredentialVault } from "../credential-contract.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { AdmissionController } from "../executor-admission.js";
 import type { Registry } from "../registry.js";
@@ -9,14 +9,12 @@ import type {
   AuthenticatedIdentity,
   ConnectaBranding,
   Executor,
-  IdentityReference,
   InboundAuth,
   InboundAuthRuntimeContext,
   Logger,
 } from "../types.js";
 import { identityStorageKey, validIdentityReference } from "../identity.js";
-import type { ConnectaIdentityConfig } from "../index.js";
-import { operatorPageForPath } from "../ui.js";
+import type { ConnectorPermission, ConnectaIdentityConfig } from "../index.js";
 export { msg } from "../errors.js";
 
 export interface ServerOptions {
@@ -50,8 +48,9 @@ export interface ServerOptions {
   requestAdmission: AdmissionController;
   /** Encrypted connector-credential storage backing the Credentials page. */
   credentialVault?: CredentialVault | undefined;
-  /** Hashed deployment access tokens backing MCP admission and the Tokens page. */
-  accessTokens?: AccessTokenManager | undefined;
+  /** Optional browser routes, with no implementation import in core. */
+  ui?: OperatorSurface | undefined;
+  activityModule?: ActivityModule | undefined;
   /** Optional browser UI and OAuth result-page labels. */
   branding?: ConnectaBranding | undefined;
 }
@@ -128,6 +127,8 @@ export async function authorize(
       principalKey?: string;
       connectorIds: "all" | readonly string[];
       operator: boolean;
+      credentialAdministration: ConnectorPermission;
+      personalConnection: ConnectorPermission;
       /** Backward-compatible name used by operator views. */
       uiAdminEligible?: boolean;
     }
@@ -138,14 +139,15 @@ export async function authorize(
     const identity: AuthenticatedIdentity = { actor, interactive: false };
     let connectorIds: "all" | readonly string[] = "all";
     try {
-      connectorIds = await identityConfig?.connectorAccess?.(identity) ?? "all";
+      connectorIds = identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all";
+      if (connectorIds !== "all" && (!Array.isArray(connectorIds) || !connectorIds.every(id => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))) throw new Error("invalid connector permission");
     } catch {
       return {
         ok: false,
         response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
       };
     }
-    return { ok: true, actor, identity, connectorIds, operator: false };
+    return { ok: true, actor, identity, connectorIds, operator: false, credentialAdministration: "none", personalConnection: "none" };
   }
   let lastResponse: Response | null = null;
   for (const provider of auth) {
@@ -175,14 +177,24 @@ export async function authorize(
         interactive,
       };
       let operator = interactive;
+      let credentialAdministration: ConnectorPermission = "none";
+      let personalConnection: ConnectorPermission = "none";
       let connectorIds: "all" | readonly string[] = "all";
       try {
-        if (identityConfig?.operatorAccess) {
+        if (identityConfig?.activityAccess) {
           operator = interactive && principal
-            ? await identityConfig.operatorAccess(principal)
+            ? await identityConfig.activityAccess(principal)
             : false;
         }
-        connectorIds = await identityConfig?.connectorAccess?.(identity) ?? "all";
+        connectorIds = identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all";
+        if (interactive) {
+          credentialAdministration = identityConfig?.credentialAdministration ? await identityConfig.credentialAdministration(identity) : "none";
+          personalConnection = principal && identityConfig?.personalConnection ? await identityConfig.personalConnection(identity) : "none";
+        }
+        if (typeof operator !== "boolean") throw new Error("invalid activity permission");
+        for (const permission of [connectorIds, credentialAdministration, personalConnection]) {
+          if (permission !== "all" && permission !== "none" && (!Array.isArray(permission) || !permission.every(id => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))) throw new Error("invalid identity permission");
+        }
       } catch {
         return {
           ok: false,
@@ -203,6 +215,8 @@ export async function authorize(
           ? { principalKey: await identityStorageKey(principal) }
           : {}),
         connectorIds,
+        credentialAdministration,
+        personalConnection,
         operator,
         ...(operator ? { uiAdminEligible: true } : {}),
       };
@@ -220,57 +234,6 @@ export async function authorize(
           "WWW-Authenticate": "Bearer",
         },
       }),
-  };
-}
-
-export async function authorizeUiAdmin(
-  request: Request,
-  baseUrl: string,
-  auth: InboundAuth[],
-  purpose = "credential management",
-  runtimeContext?: RuntimeExecutionContext,
-  identityConfig?: ConnectaIdentityConfig,
-): Promise<
-  | {
-      ok: true;
-      userId: string;
-      principal?: IdentityReference;
-      principalKey?: string;
-      connectorIds: "all" | readonly string[];
-    }
-  | { ok: false; response: Response }
-> {
-  // Operator mutation is intentionally narrower than /mcp and /ui/data: only
-  // an interactive provider may admit it. A static bearer token is useful
-  // for headless tool calls but must not become a deployment-admin key.
-  //
-  // Every interactive provider gets a turn, the way the /mcp gate does.
-  // Stopping at the first would make admission depend on config order: a failed gate or
-  // missing user may simply mean a later provider is the one meant to admit.
-  // The last refusal is returned if none do.
-  const authz = await authorizeUiIdentity(
-    request,
-    baseUrl,
-    auth,
-    purpose,
-    runtimeContext,
-    identityConfig,
-  );
-  if (!authz.ok) return authz;
-  if (!authz.operator || !authz.actor.id) {
-    return {
-      ok: false,
-      response: privateJson({ error: `${purpose} requires operator access` }, { status: 403 }),
-    };
-  }
-  return {
-    ok: true,
-    userId: authz.identity.principal?.id ?? authz.actor.id,
-    ...(authz.identity.principal
-      ? { principal: authz.identity.principal }
-      : {}),
-    ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
-    connectorIds: authz.connectorIds,
   };
 }
 
@@ -336,7 +299,7 @@ export function isSameOrigin(request: Request, baseUrl: string): boolean {
 export function withSecurityHeaders(
   response: Response,
   requestUrl: URL,
-  path: string,
+  _path: string,
 ): Response {
   const headers = new Headers(response.headers);
   headers.set("X-Content-Type-Options", "nosniff");
@@ -344,18 +307,43 @@ export function withSecurityHeaders(
   if (requestUrl.protocol === "https:") {
     headers.set("Strict-Transport-Security", "max-age=31536000");
   }
-  if (operatorPageForPath(path) || path === "/ui") {
-    // Operator HTML responses ship their own nonce-based script CSP (which
-    // already includes frame-ancestors 'none'); only fall back to the
-    // framing-only directive when no CSP is present (for example redirects).
-    if (!headers.has("Content-Security-Policy")) {
-      headers.set("Content-Security-Policy", "frame-ancestors 'none'");
-    }
-    headers.set("X-Frame-Options", "DENY");
-  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,
     headers,
   });
+}
+
+type AuthorizedIdentity = Extract<Awaited<ReturnType<typeof authorize>>, { ok: true }>;
+
+/** Unknown configured ids refuse the complete view, including management rights. */
+export function validateAuthPermissions(
+  authz: AuthorizedIdentity,
+  registry: Registry,
+): void {
+  for (const value of [
+    authz.connectorIds,
+    authz.credentialAdministration,
+    authz.personalConnection,
+  ]) {
+    if (value === "all" || value === "none") continue;
+    if (!Array.isArray(value) || value.some(id => !registry.getConnector(id))) {
+      throw new Error("invalid identity permission connector ids");
+    }
+  }
+}
+
+export function mayManageConnector(
+  authz: AuthorizedIdentity,
+  connector: { id: string; authScope?: "shared" | "personal" },
+): boolean {
+  if (!authz.identity.interactive) return false;
+  if (authz.connectorIds !== "all" && !authz.connectorIds.includes(connector.id)) {
+    return false;
+  }
+  const permission = connector.authScope === "personal"
+    ? authz.personalConnection
+    : authz.credentialAdministration;
+  return permission === "all" ||
+    (permission !== "none" && permission.includes(connector.id));
 }

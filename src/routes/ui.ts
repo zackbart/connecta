@@ -1,13 +1,15 @@
+import { CONNECTA_VERSION } from "../version.js";
 import { CONNECTA_FAVICON_ICO } from "../favicon.js";
 import {
   buildUiData,
   CONNECTA_FAVICON_SVG,
-  credentialManagementCapability,
   operatorPageForPath,
   renderUiHtml,
 } from "../ui.js";
 import {
   authorize,
+  mayManageConnector,
+  validateAuthPermissions,
   msg,
   privateJson,
   type RouteContext,
@@ -84,7 +86,7 @@ export async function routeUi(
   }
 
   const operatorPage = operatorPageForPath(path);
-  if (operatorPage) {
+  if (operatorPage && (operatorPage !== "activity" || opts.activity?.list)) {
     if (request.method !== "GET" && request.method !== "HEAD") {
       return privateJson({ error: "method not allowed" }, { status: 405 });
     }
@@ -123,7 +125,9 @@ export async function routeUi(
       },
     );
   }
-  if (path !== "/ui/data") return null;
+  const detail = /^\/ui\/connectors\/([a-z0-9_-]+)$/.exec(path);
+  if (path !== "/ui/data" && !detail) return null;
+  if (request.method !== "GET") return privateJson({ error: "method not allowed" }, { status: 405 });
 
   const authz = await authorize(
     request,
@@ -135,6 +139,7 @@ export async function routeUi(
   if (!authz.ok) return authz.response;
   let registry;
   try {
+    validateAuthPermissions(authz, opts.registry);
     registry = opts.registry.scoped({
       connectorIds: authz.connectorIds,
       ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
@@ -143,50 +148,30 @@ export async function routeUi(
   } catch (error) {
     return privateJson({ error: msg(error) }, { status: 403 });
   }
-  const eligibleOperator = authz.uiAdminEligible === true;
-  const interactiveManager = authz.identity.interactive;
-  const personalManager = Boolean(
-    interactiveManager && authz.principalKey,
-  );
-  const visibleConnectors = registry.listConnectors();
-  const hasManageableCredentialSlot = visibleConnectors.some(
-    (connector) => Boolean(connector.credential) &&
-      (connector.authScope !== "personal" || personalManager),
-  );
-  const credentialManagement = interactiveManager && hasManageableCredentialSlot
-    ? opts.credentialVault
-      ? "available" as const
-      : "vault_not_configured" as const
-    : credentialManagementCapability({
-        eligibleOperator: interactiveManager,
-        hasCredentialSlots: visibleConnectors.some((connector) =>
-          Boolean(connector.credential)
-        ),
-        hasCredentialVault: Boolean(opts.credentialVault),
-      });
-  // As with connector credentials, a Bearer-authenticated observer learns
-  // only that an interactive operator is required, not whether this deployment has opted into
-  // token issuance. Configuration topology is operator data.
-  const accessTokenManagement = !eligibleOperator
-    ? "requires_operator" as const
-    : opts.accessTokens
-      ? "available" as const
-      : "not_configured" as const;
-  const data = await buildUiData(
-    registry,
-    baseUrl,
-    opts.serverInfo,
-    // A static headless bearer may read connector health, but only an
-    // interactive human receives credential metadata for visible connectors.
-    interactiveManager ? opts.credentialVault : undefined,
-    Boolean(opts.activity?.list) &&
-      (!opts.identity?.operatorAccess || eligibleOperator),
+  const visible = registry.listConnectors();
+  const mayManage = (id: string) => { const connector = registry.getConnector(id); return Boolean(connector && mayManageConnector(authz, connector)); };
+  const permissions = (connector: typeof visible[number]) => ({
+    use: true,
+    manageSharedAuth: connector.authScope !== "personal" && mayManage(connector.id),
+    connectPersonal: connector.authScope === "personal" && mayManage(connector.id),
+  });
+  const activityEnabled = Boolean(opts.activity?.list) && authz.operator;
+  const credentialManagement = visible.some(c => c.credential && mayManage(c.id))
+    ? opts.credentialVault ? "available" as const : "vault_not_configured" as const
+    : authz.identity.interactive && !visible.some(c => c.credential) ? "no_slots" as const : "requires_operator" as const;
+  if (detail) {
+    const connector = registry.getConnector(detail[1]!);
+    if (!connector) return privateJson({ error: "unknown connector" }, { status: 404 });
+    const one = opts.registry.scoped({ connectorIds: [connector.id], ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}), ...(authz.principalKey ? { principalKey: authz.principalKey } : {}) });
+    const data = await buildUiData(one, baseUrl, opts.serverInfo, opts.credentialVault, activityEnabled, credentialManagement, defer, false, 1, authz.principalKey, { mayManage, timeoutMs: opts.probeTimeoutMs ?? 30_000, signal: request.signal });
+    return privateJson({ ...data.connectors[0], permissions: permissions(connector) });
+  }
+  return privateJson({
+    serverInfo: opts.serverInfo,
+    connectaVersion: CONNECTA_VERSION,
+    activityEnabled,
     credentialManagement,
-    defer,
-    interactiveManager,
-    opts.discoveryConcurrency,
-    accessTokenManagement,
-    personalManager ? authz.principalKey : undefined,
-  );
-  return privateJson(data);
+    oauthManagement: visible.some(c => mayManage(c.id)),
+    connectors: visible.map(c => ({ id: c.id, ...(c.title ? { title: c.title } : {}), ...(c.description ? { description: c.description } : {}), authScope: c.authScope ?? "shared", status: "loading", toolCount: 0, tools: [], oauth: Boolean(c.startAuth && c.disconnectAuth), permissions: permissions(c) })),
+  });
 }

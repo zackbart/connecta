@@ -152,6 +152,8 @@ export interface CredentialTestResult {
 }
 
 export interface ConnectorContext {
+  /** Explicit downstream consent initiation, never set by status/catalog/calls. */
+  allowAuthorization?: boolean;
   /** Storage namespaced to this connector. */
   storage: KVStorage;
   logger: Logger;

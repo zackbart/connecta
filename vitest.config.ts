@@ -6,7 +6,6 @@ import { cloudflareTest } from "@cloudflare/vitest-pool-workers";
 // project runs both; the Workers project runs only the portable list.
 // test/suite-partition.test.ts guards the partition, including itself.
 export const WORKERS_SUITES = [
-  "test/access-tokens.test.ts",
   "test/activity.test.ts",
   "test/api-connector.test.ts",
   "test/bearer.test.ts",
@@ -20,6 +19,7 @@ export const WORKERS_SUITES = [
   "test/code-first-surface.test.ts",
   "test/codemode-compat.test.ts",
   "test/config.test.ts",
+  "test/optional-modules.test.ts",
   "test/credentials.test.ts",
   "test/d1-activity-example.test.ts",
   "test/downstream-oauth.test.ts",
@@ -152,6 +152,7 @@ export default defineConfig({
         // belong to the Node-only entries the template's own tsconfig maps.
         resolve: {
           alias: [
+            { find: "@zackbart/connecta/activity", replacement: fileURLToPath(new URL("./src/activity.ts", import.meta.url)) },
             {
               find: /^@zackbart\/connecta$/,
               replacement: fileURLToPath(new URL("./src/index.ts", import.meta.url)),

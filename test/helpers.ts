@@ -1,3 +1,5 @@
+import { operatorUi } from "../src/ui.js";
+import { recordToolActivity } from "../src/activity.js";
 import { Registry } from "../src/registry.js";
 import {
   createConnecta as createRuntimeConnecta,
@@ -32,7 +34,9 @@ export function createTestConnecta(
   config: Omit<ConnectaConfig, "executor"> & { executor?: Executor },
 ) {
   return createRuntimeConnecta({
+    ui: operatorUi(),
     ...config,
+    identity: { credentialAdministration: () => "all", personalConnection: () => "all", ...config.identity },
     executor: config.executor ?? stubExecutor,
   });
 }
@@ -52,6 +56,7 @@ export function activitySink(requestId = "test-request"): {
   return {
     events,
     activity: {
+      recordTool: recordToolActivity,
       sink: { record: (event) => { events.push(event); } },
       actor: { kind: "test" },
       requestId,
@@ -242,3 +247,16 @@ export const authConnector: Connector & { startAuthCalls: unknown[] } = {
     };
   },
 };
+
+/** Follow the same list-then-detail sequence as the browser for detailed assertions. */
+export async function fetchTestUiDetails(deployment: { fetch(request: Request, env?: unknown, ctx?: unknown): Promise<Response> }, request: Request, env?: unknown, ctx?: unknown): Promise<Response> {
+  const response = await deployment.fetch(request, env, ctx);
+  if (!response.ok) return response;
+  const data = await response.json() as import("../src/operator-ui/model.js").UiData;
+  data.connectors = await Promise.all(data.connectors.map(async connector => {
+    const detail = await deployment.fetch(new Request(new URL(`/ui/connectors/${connector.id}`, request.url), { headers: request.headers }), env, ctx);
+    if (!detail.ok) throw new Error(`detail request failed: ${detail.status}`);
+    return await detail.json() as import("../src/operator-ui/model.js").UiConnector;
+  }));
+  return Response.json(data);
+}

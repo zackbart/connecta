@@ -27,7 +27,7 @@ import type {
   ActivityStore,
   ToolCallActivityEvent,
 } from "@zackbart/connecta";
-import { InvalidActivityCursorError } from "@zackbart/connecta";
+import { InvalidActivityCursorError } from "@zackbart/connecta/activity";
 
 /**
  * Events allowed past `maxEvents` before the log is rewritten. Trimming on the

@@ -801,12 +801,6 @@ try {
     "utf8",
   );
   for (const declaration of [
-    "export interface ConnectaActivityConfig {",
-    "    store: ActivityStore;",
-    "    readGate?: ActivityReadGate;",
-    "    deploymentId?: string;",
-    "export interface ConnectaCredentialsConfig {",
-    "    encryptionKey?: string;",
     "export interface ConnectaDiscoveryConfig {",
     "    catalogTtlSeconds?: number;",
     "    persistCatalog?: boolean;",
@@ -815,8 +809,9 @@ try {
     "export interface ConnectaCallsConfig {",
     "    defaultTimeoutMs?: number;",
     "    maxResultBytes?: number;",
-    "    activity?: ConnectaActivityConfig;",
-    "    credentials?: ConnectaCredentialsConfig;",
+    "    activity?: ActivityModule;",
+    "    vault?: CredentialVault;",
+    "    ui?: OperatorSurface;",
     "    discovery?: ConnectaDiscoveryConfig;",
     "    calls?: ConnectaCallsConfig;",
     "    close: () => Promise<void>;",
@@ -835,6 +830,7 @@ try {
     "CredentialCheckResult",
     "CredentialHealthConfig",
     "CredentialHealthRecord",
+    "ConnectaAccessTokensConfig", "CreatedAccessToken", "ConnectaCredentialsConfig",
   ]) {
     if (coreDeclarations.includes(removedDeclaration)) {
       throw new Error(

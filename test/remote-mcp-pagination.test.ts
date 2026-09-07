@@ -354,7 +354,6 @@ describe("remoteMcp() tools/list pagination", () => {
     expect(err).toMatchObject({ code: "auth_required" });
     await expect(connector.status!(context)).resolves.toMatchObject({
       state: "auth_required",
-      authorizationUrl: authUrl,
     });
   });
 
@@ -938,7 +937,7 @@ describe("paginated catalogs through the discovery path", () => {
     // An agent meets it as a call failure carrying the route to the URL: the
     // catalog is unreachable, so the recovery is authorize_connector, and that
     // is what hands back the address an operator has to open.
-    const mt = createMetaTools(registry, BASE);
+    const mt = createMetaTools(registry, BASE, { canManageAuth: () => true });
     const called = JSON.parse(
       required(
         (await mt.callTool({ address: "paged.gamma", resultMode: "value" }))

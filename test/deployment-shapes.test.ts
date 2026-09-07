@@ -109,9 +109,9 @@ describe("deployment shapes", () => {
       '// import { clerkAuth } from "@zackbart/connecta/auth/clerk";',
       '// import { fileActivityStore } from "./file-activity.js";',
       "// clerkAuth({",
-      "// credentials: { encryptionKey: process.env.CONNECTA_CREDENTIAL_KEY },",
-      "// accessTokens: {},",
-      "// activity: {",
+      "// vault: encryptedCredentialVault(storage, process.env.CONNECTA_CREDENTIAL_KEY!),",
+      "ui: operatorUi(),",
+      "// activity: activityHistory({",
     ]) {
       expect(source).toContain(fragment);
     }
@@ -137,13 +137,13 @@ describe("deployment shapes", () => {
       "ENV CONNECTA_ACTIVITY_FILE=/data/connecta-activity.jsonl",
     );
     expect(read(".gitignore")).toContain(".connecta-activity.jsonl");
-    expect(read("README.md")).toContain("## Turn on the operator surface");
+    expect(read("README.md")).toContain("## Select optional modules");
     // A vault is not a page: /credentials lists connector slots, and neither
     // shape's shipped connectors need one. Both carry the slot's shape in
     // place so nobody follows the vault step and finds a hidden page (#345).
     expect(source).toContain('//   credential: { label: "API token" },');
     expect(read("README.md")).toContain(
-      "The shipped `time`\nconnector declares none",
+      "Connections",
     );
   });
 
@@ -157,10 +157,10 @@ describe("deployment shapes", () => {
     expect(worker).toContain("// identity: {");
     expect(worker).toContain('// Use `authScope: "personal"`');
     expect(worker).toContain(
-      "credentials: { encryptionKey: env.CREDENTIAL_ENCRYPTION_KEY },",
+      "vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),",
     );
-    expect(worker).toContain("accessTokens: {},");
-    expect(worker).toContain("// activity: {");
+    expect(worker).toContain("ui: operatorUi(),");
+    expect(worker).toContain("// activity: activityHistory({");
     expect(worker).toContain('// import { d1ActivityStore } from "./d1-activity.js";');
     // The commented binding is what makes the commented wiring resolvable.
     expect(
@@ -171,11 +171,11 @@ describe("deployment shapes", () => {
       join(ROOT, "examples", "worker", "README.md"),
       "utf8",
     );
-    expect(workerReadme).toContain("## The operator surface");
+    expect(workerReadme).toContain("## Select optional modules");
     // The walkthrough may not end on a check that fails as deployed: this
     // example has no credential slot and its activity store waits on D1.
     expect(workerReadme).toContain(
-      "The vault is ready here, and the Credentials page is still hidden",
+      "Connections",
     );
     expect(workerReadme).not.toContain(
       "checking that Credentials, Tokens, and Activity are live",

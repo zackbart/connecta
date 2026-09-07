@@ -1,3 +1,6 @@
+import { operatorUi } from "../src/ui.js";
+import { memoryStorage } from "../src/storage/memory.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { createTestConnecta } from "./helpers.js";
@@ -73,7 +76,7 @@ describe("open-mode credential-exposure warning", () => {
       const logger = spyLogger();
       createTestConnecta({
         connectors: [credentialConnector],
-        credentials: { encryptionKey: CREDENTIAL_KEY },
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
       });
       expect(warnings(logger)).toContain("no inbound authentication");
@@ -142,11 +145,11 @@ describe("dropped-branding-URL warning", () => {
         auth: bearerToken("secret"),
         publicUrl: BASE,
         logger,
-        branding: {
+        ui: operatorUi({ branding: {
           productUrl: "javascript:alert(1)",
           ownerUrl: "javascript:alert(2)",
           favicon: { href: "javascript:alert(3)" },
-        },
+        } }),
       });
       const text = warnings(logger);
       expect(text).toContain("branding productUrl, ownerUrl, favicon.href");
@@ -160,11 +163,11 @@ describe("dropped-branding-URL warning", () => {
         auth: bearerToken("secret"),
         publicUrl: BASE,
         logger,
-        branding: {
+        ui: operatorUi({ branding: {
           productUrl: "https://acme.example",
           ownerUrl: "https://acme.example/about",
           favicon: { href: "/assets/acme.svg" },
-        },
+        } }),
       });
       expect(warnings(logger)).not.toContain("branding");
     }],
@@ -177,11 +180,11 @@ describe("dropped-branding-URL warning", () => {
           auth: bearerToken("secret"),
           publicUrl: BASE,
           logger,
-          branding: {
+          ui: operatorUi({ branding: {
             productUrl: 1 as unknown as string,
             ownerUrl: {} as unknown as string,
             favicon: { href: 42 as unknown as string },
-          },
+          } }),
         }),
       ).not.toThrow();
       expect(warnings(logger)).toContain(
@@ -389,7 +392,7 @@ describe("credential test-hook mismatch warning", () => {
         connectors: [fieldsWithSingleHook],
         auth: bearerToken("secret"),
         publicUrl: BASE,
-        credentials: { encryptionKey: CREDENTIAL_KEY },
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
       });
       const text = warnings(logger);
@@ -404,7 +407,7 @@ describe("credential test-hook mismatch warning", () => {
         connectors: [singleWithFieldsHook],
         auth: bearerToken("secret"),
         publicUrl: BASE,
-        credentials: { encryptionKey: CREDENTIAL_KEY },
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
       });
       const text = warnings(logger);
@@ -433,7 +436,7 @@ describe("credential test-hook mismatch warning", () => {
         ],
         auth: bearerToken("secret"),
         publicUrl: BASE,
-        credentials: { encryptionKey: CREDENTIAL_KEY },
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
       });
       expect(warnings(logger)).not.toContain("cannot test its credential");
@@ -465,7 +468,7 @@ describe("credential test-hook mismatch warning", () => {
         ],
         auth: bearerToken("secret"),
         publicUrl: BASE,
-        credentials: { encryptionKey: CREDENTIAL_KEY },
+        vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
         logger,
       });
       expect(warnings(logger)).not.toContain("cannot test its credential");

@@ -1,3 +1,4 @@
+import { UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   FetchLike,
   OAuthClientInformationContext,
@@ -511,6 +512,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
     private readonly storage: KVStorage,
     private readonly redirectUri: string,
     private readonly refreshCoordinator?: OAuthRefreshCoordinator,
+    private readonly allowAuthorization = true,
   ) {}
 
   /**
@@ -881,6 +883,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
    * clearPending() once the flow completes.
    */
   async state(): Promise<string> {
+    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
     const value = randomState();
     await this.writeValue("oauth:state", value, (raw) => raw);
     return value;
@@ -899,6 +902,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async saveCodeVerifier(verifier: string): Promise<void> {
+    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
     await this.writeValue("oauth:verifier", verifier, (raw) => raw);
   }
 
@@ -911,6 +915,7 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
+    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
     try {
       await this.writeValue(
         "oauth:pending",

@@ -1,3 +1,4 @@
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { memoryStorage } from "../src/storage/memory.js";
@@ -144,8 +145,7 @@ function boundaryConfig(connectors: Connector[]) {
     connectors,
     auth: [fakeClerkAuth({ token: OPERATOR_TOKEN })],
     storage: memoryStorage(),
-    accessTokens: {},
-    credentials: { encryptionKey: CREDENTIAL_KEY },
+    vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     publicUrl: BASE,
     // No cached catalog may stand in for a live one here: a TTL would let a
     // dynamic connector's tools be served from memory and quietly turn this
@@ -344,58 +344,14 @@ describe("the operator boundary", () => {
 
     // Recorded as the mutations run so a failure names the route that moved.
     const drifted: string[] = [];
-    let issuedTokenId = "";
-    let issuedTokenSecret = "";
 
     const mutations: Mutation[] = [
       // `alpha` declares a static catalog, `gamma` a dynamic one; every
       // connector-scoped route runs against both, so each one is measured
       // against a catalog that `invalidateStored()` really re-loads.
       ...credentialAndOAuthMutations(connecta, "alpha"),
-      {
-        label: "access token issue",
-        status: 201,
-        run: async () => {
-          const response = await connecta.fetch(
-            new Request(`${BASE}/ui/access-tokens`, {
-              method: "POST",
-              headers: operatorHeaders(),
-              body: JSON.stringify({ name: "Claude desktop" }),
-            }),
-          );
-          const issued = (await response.clone().json()) as {
-            token: string;
-            accessToken: { id: string };
-          };
-          issuedTokenId = issued.accessToken.id;
-          issuedTokenSecret = issued.token;
-          return response;
-        },
-      },
       ...credentialAndOAuthMutations(connecta, "gamma"),
-      {
-        label: "access token rename",
-        status: 200,
-        run: () =>
-          connecta.fetch(
-            new Request(`${BASE}/ui/access-tokens/${issuedTokenId}`, {
-              method: "PUT",
-              headers: operatorHeaders(),
-              body: JSON.stringify({ name: "Claude desktop, renamed" }),
-            }),
-          ),
-      },
-      {
-        label: "access token revoke",
-        status: 200,
-        run: () =>
-          connecta.fetch(
-            new Request(`${BASE}/ui/access-tokens/${issuedTokenId}`, {
-              method: "DELETE",
-              headers: operatorHeaders(),
-            }),
-          ),
-      },
+
     ];
 
     for (const mutation of mutations) {
@@ -412,13 +368,7 @@ describe("the operator boundary", () => {
       expect(catalog.listings, mutation.label).toBeGreaterThan(listedBefore);
       if (after !== before) drifted.push(mutation.label);
 
-      // An issued access token identifies a caller; it never scopes one. The
-      // scope it sees is the scope the operator sees, for as long as it lives.
-      if (mutation.label === "access token issue") {
-        expect(await callerToolScope(connecta, issuedTokenSecret)).toEqual(
-          await callerToolScope(connecta, OPERATOR_TOKEN),
-        );
-      }
+
     }
 
     expect(drifted).toEqual([]);

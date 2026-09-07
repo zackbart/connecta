@@ -1,3 +1,4 @@
+import { fetchTestUiDetails } from "./helpers.js";
 import { auth, UnauthorizedError } from "@modelcontextprotocol/client";
 import type {
   FetchLike,
@@ -2834,7 +2835,7 @@ describe("remoteMcp() oauth status via _transportFactory", () => {
 
     const status = await connector.status!(c);
     expect(status.state).toBe("auth_required");
-    expect(status.authorizationUrl).toBe(authUrl);
+    expect(status.authorizationUrl).toBeUndefined();
   });
 
   it("a plain network error → error, NOT auth_required", async () => {
@@ -2987,7 +2988,7 @@ describe("remoteMcp() startAuth", () => {
 
     expect((await operatorRequest("/ui/oauth/svc", "DELETE")).status).toBe(204);
     const data = (await (
-      await operatorRequest("/ui/data")
+      await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, { headers: { Authorization: "Bearer clerk-token" } }))
     ).json()) as {
       connectors: Array<{
         status: string;
@@ -3379,7 +3380,7 @@ describe("remoteMcp() cross-isolate force re-auth", () => {
     // instead of silently keeping the revoked token alive.
     const after = await a.status!(ctxA);
     expect(after.state).toBe("auth_required");
-    expect(after.authorizationUrl).toBe("https://auth.example/reauth");
+    expect(after.authorizationUrl).toBeUndefined();
     expect(aBuilds).toBe(2);
   });
 

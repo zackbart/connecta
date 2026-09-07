@@ -1,3 +1,5 @@
+import { fetchTestUiDetails } from "./helpers.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { remoteMcp } from "../src/connectors/remote-mcp.js";
@@ -67,8 +69,8 @@ describe("identity-scoped connectors", () => {
       publicUrl: BASE,
     });
 
-    const alice = await connecta.fetch(request("/ui/data", "alice"));
-    const bob = await connecta.fetch(request("/ui/data", "bob"));
+    const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
+    const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
     expect(((await alice.json()) as any).connectors.map((item: Connector) => item.id))
       .toEqual(["common", "alice_only"]);
     expect(((await bob.json()) as any).connectors.map((item: Connector) => item.id))
@@ -108,10 +110,9 @@ describe("identity-scoped connectors", () => {
       connectors: [personal, shared],
       auth: users(),
       identity: {
-        operatorAccess: (principal) => principal.id === "alice",
+        activityAccess: (principal) => principal.id === "alice",
       },
-      credentials: { encryptionKey: ENCRYPTION_KEY },
-      accessTokens: {},
+      vault: encryptedCredentialVault(memoryStorage(), ENCRYPTION_KEY),
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -129,8 +130,8 @@ describe("identity-scoped connectors", () => {
     expect((await put("shared", "bob", "shared-secret-3333")).status).toBe(200);
     expect((await put("shared", "alice", "shared-secret-4444")).status).toBe(200);
 
-    const alice = await connecta.fetch(request("/ui/data", "alice"));
-    const bob = await connecta.fetch(request("/ui/data", "bob"));
+    const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
+    const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
     const aliceData = await alice.json() as any;
     const bobData = await bob.json() as any;
     expect(aliceData.connectors.find((item: any) => item.id === "personal")
@@ -140,25 +141,9 @@ describe("identity-scoped connectors", () => {
     expect(bobData.connectors.find((item: any) => item.id === "shared")
       .credential.lastFour).toBe("4444");
 
-    const tokenResponse = await connecta.fetch(
-      request("/ui/access-tokens", "alice", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Origin: BASE },
-        body: JSON.stringify({ name: "Alice agent" }),
-      }),
-    );
-    const token = (await tokenResponse.json() as any).token as string;
-    const tokenView = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
-        headers: { Authorization: `Bearer ${token}` },
-      }),
-    );
-    const tokenData = await tokenView.json() as any;
-    expect(tokenData.accessTokenManagement).toBe("requires_operator");
-    expect(tokenData.connectors.find((item: any) => item.id === "shared")
-      .credential).toBeUndefined();
-    expect(tokenData.connectors.find((item: any) => item.id === "personal")
-      .message).toBe("1111");
+    const retired = await connecta.fetch(request("/ui/access-tokens", "alice"));
+    expect(retired.status).toBe(404);
+
   });
 
   it("returns a personal OAuth callback to the principal that started it", async () => {
@@ -198,7 +183,7 @@ describe("identity-scoped connectors", () => {
     const connecta = createTestConnecta({
       connectors: [oauth],
       auth: users(),
-      identity: { operatorAccess: () => false },
+      identity: { activityAccess: () => false },
       storage: memoryStorage(),
       publicUrl: BASE,
     });
@@ -225,8 +210,8 @@ describe("identity-scoped connectors", () => {
     );
     expect(replay.status).toBe(400);
 
-    const alice = await connecta.fetch(request("/ui/data", "alice"));
-    const bob = await connecta.fetch(request("/ui/data", "bob"));
+    const alice = await fetchTestUiDetails(connecta, request("/ui/data", "alice"));
+    const bob = await fetchTestUiDetails(connecta, request("/ui/data", "bob"));
     expect(((await alice.json()) as any).connectors[0].status).toBe("ok");
     expect(((await bob.json()) as any).connectors[0].status).toBe("auth_required");
   });

@@ -801,6 +801,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       ctx.storage,
       `${ctx.baseUrl}/oauth/callback/${id}`,
       refreshCoordinator,
+      ctx.allowAuthorization === true,
     );
     if (state) state.provider = provider;
     return provider;
@@ -1355,12 +1356,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // Only an OAuth connector has a pending consent URL to offer. A
           // credential connector's downstream 401 is repaired on /credentials,
           // so do not reach into OAuth storage to look for one.
-          const url = isOauth
-            ? await newProvider(ctx, state).pendingAuthorizationUrl()
-            : undefined;
           return {
             state: "auth_required",
-            ...(url !== undefined ? { authorizationUrl: url } : {}),
             message: credentialAuth
               ? "Authorization required — the downstream rejected this connector's stored credential."
               : "Authorization required — open the URL to connect.",
@@ -1403,7 +1400,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     };
 
     connector.startAuth = async (ctx, startOpts) => {
+      ctx = { ...ctx, requestScope: ctx.requestScope ?? ctx, allowAuthorization: true };
       const state = stateFor(ctx);
+      state.provider = null;
       const p = newProvider(ctx, state);
       if (startOpts?.force || (await p.operatorDisconnected())) {
         await disconnectAuthorization(ctx, state);

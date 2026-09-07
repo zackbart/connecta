@@ -659,6 +659,7 @@ describe("remoteMcp() credential auth — through the deployment", () => {
     const result = await createMetaTools(
       makeRegistry([connector], { storage, credentialVault: vault }),
       BASE,
+      { credentialHandoffUrl: new URL("/", BASE).toString() },
     ).authorizeConnector({ connector: "down" });
 
     expect(result.isError).toBeFalsy();
@@ -670,7 +671,7 @@ describe("remoteMcp() credential auth — through the deployment", () => {
         label: "API v2 secret key",
         fields: [{ name: "value", guidance: "The key for this project." }],
       },
-      operatorUrl: `${BASE}/credentials`,
+      operatorUrl: `${BASE}/`,
     });
     expect(text).not.toContain("do-not-return-this-secret");
   });

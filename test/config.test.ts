@@ -1,3 +1,6 @@
+import { operatorUi } from "../src/ui.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
+import { activityHistory } from "../src/activity.js";
 import { describe, expect, it } from "vitest";
 import {
   createConnecta,
@@ -25,20 +28,17 @@ describe("ConnectaConfig boundary", () => {
       auth: fakeClerkAuth(),
       identity: {
         connectorAccess: () => "all",
-        operatorAccess: () => true,
+        activityAccess: () => true,
       },
       storage: memoryStorage(),
       publicUrl: "https://connecta.test",
       executor,
-      activity: {
+      activity: activityHistory({
         store: { record() {} },
         readGate: () => true,
         deploymentId: "test",
-      },
-      credentials: {
-        encryptionKey: "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc=",
-      },
-      accessTokens: { maxActive: 3 },
+      }),
+      vault: encryptedCredentialVault(memoryStorage(), "BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
       discovery: {
         concurrency: 4,
         catalogTtlSeconds: 10,
@@ -68,7 +68,7 @@ describe("ConnectaConfig boundary", () => {
           retryAfterMs: 10,
         },
       },
-      branding: {
+      ui: operatorUi({ branding: {
         productName: "Connecta test",
         productUrl: "https://connecta.test",
         ownerName: "Test owner",
@@ -81,7 +81,7 @@ describe("ConnectaConfig boundary", () => {
           href: "/favicon.svg",
         },
         themeColor: "#ffffff",
-      },
+      } }),
       logger: silentLogger,
       serverInfo: {
         name: "connecta-test",
@@ -200,10 +200,10 @@ describe("ConnectaConfig boundary", () => {
   });
 
   it.each([
-    ["activity", { store: { record() {} }, typo: true }, "activity.typo"],
+    ["activity", { store: { record() {} }, typo: true }, "activity must be created"],
     ["identity", { typo: true }, "identity.typo"],
-    ["credentials", { typo: true }, "credentials.typo"],
-    ["accessTokens", { typo: true }, "accessTokens.typo"],
+    ["credentials", { typo: true }, "credentials"],
+    ["accessTokens", { typo: true }, "accessTokens"],
     ["discovery", { typo: true }, "discovery.typo"],
     ["calls", { typo: true }, "calls.typo"],
     ["execute", { typo: true }, "execute.typo"],
@@ -214,11 +214,11 @@ describe("ConnectaConfig boundary", () => {
       "admission.requests.typo",
     ],
     ["admission", { code: { typo: true } }, "admission.code.typo"],
-    ["branding", { typo: true }, "branding.typo"],
+    ["branding", { typo: true }, "branding"],
     [
       "branding",
       { favicon: { typo: true } },
-      "branding.favicon.typo",
+      "branding",
     ],
     ["serverInfo", { typo: true }, "serverInfo.typo"],
     [
@@ -248,7 +248,7 @@ describe("ConnectaConfig boundary", () => {
   });
 
   it.each([
-    ["credentials", "health"],
+    ["credentials", ""],
     ["calls", "maxBatchResultBytes"],
   ] as const)("rejects the removed %s.%s option", (group, path) => {
     expect(() =>
@@ -257,7 +257,7 @@ describe("ConnectaConfig boundary", () => {
         executor,
         [group]: { [path]: undefined },
       }),
-    ).toThrow(`ConnectaConfig.${group}.${path}`);
+    ).toThrow(`ConnectaConfig.${group}${path ? `.${path}` : ""}`);
   });
 
   it("ignores inherited names because only own properties are config", () => {
@@ -287,7 +287,7 @@ describe("ConnectaConfig boundary", () => {
         executor,
         activity: new LegacyActivityStore(),
       }),
-    ).toThrow("activity.store");
+    ).toThrow("activity must be created");
   });
 });
 
@@ -330,10 +330,8 @@ if (false) {
   createConnecta({
     connectors: [],
     executor,
-    credentials: {
-      // @ts-expect-error removed in v0.9
-      health: {},
-    },
+    // @ts-expect-error removed modular configuration
+    credentials: { health: {} },
   });
   createConnecta({
     connectors: [],

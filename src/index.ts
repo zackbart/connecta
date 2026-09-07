@@ -1,12 +1,11 @@
+import type { CredentialVault } from "./credential-contract.js";
 import {
-  CredentialVault,
   credentialTestRule,
   describeCredentialTestMismatch,
-} from "./credentials.js";
-import { AccessTokenManager } from "./access-tokens.js";
+} from "./credential-rules.js";
 import { Registry } from "./registry.js";
 import { createFetchHandler } from "./server.js";
-import { droppedBrandingUrls, droppedUiAuthUrls } from "./ui.js";
+import { droppedBrandingUrls, droppedUiAuthUrls } from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import {
@@ -15,11 +14,12 @@ import {
   isAdmittingExecutor,
   withExecutorAdmission,
 } from "./executor-admission.js";
-import type { ActivityReadGate, ActivityStore } from "./activity.js";
+import type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+export type { ActivityModule, OperatorSurface } from "./module-contracts.js";
+export type { CredentialVault, CredentialMetadata } from "./credential-contract.js";
 import type {
   AuthenticatedIdentity,
   Connector,
-  ConnectaBranding,
   Executor,
   IdentityReference,
   InboundAuth,
@@ -29,37 +29,6 @@ import type {
 
 // Configuration defaults and operator-facing meanings are canonical in
 // documentation/operations.md#configuration; these types only define intake.
-
-/** Payload-free activity storage and operator-read policy. */
-export interface ConnectaActivityConfig {
-  /**
-   * Privacy-minimal downstream tool activity storage. Writes are best-effort
-   * and never change tool results. Implement `list` to enable the Activity UI.
-   */
-  store: ActivityStore;
-  /**
-   * Optional authorization gate for the Activity read API. MCP authentication
-   * is still required first. Omit to admit every authenticated actor.
-   */
-  readGate?: ActivityReadGate;
-  /** Stable deployment label included in activity events, e.g. "production". */
-  deploymentId?: string;
-}
-
-/** Operator-vault encryption. */
-export interface ConnectaCredentialsConfig {
-  /**
-   * Base64-encoded 32-byte AES key for credentials managed on /credentials.
-   * Keep this in the runtime's secret store, never in KV or source control.
-   */
-  encryptionKey?: string;
-}
-
-/** Operator-issued credentials for clients connecting to this deployment. */
-export interface ConnectaAccessTokensConfig {
-  /** Maximum simultaneously active access tokens. Defaults to 100. */
-  maxActive?: number;
-}
 
 /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
 export interface ConnectaDiscoveryConfig {
@@ -153,27 +122,33 @@ export interface ConnectaAdmissionConfig {
 }
 
 /** Config-owned identity rules for one deployment and tenant. */
+export type ConnectorPermission = "all" | "none" | readonly string[];
+
 export interface ConnectaIdentityConfig {
   /** Connector ids this admitted identity may discover and call. */
   connectorAccess?(
     identity: Readonly<AuthenticatedIdentity>,
   ): "all" | readonly string[] | Promise<"all" | readonly string[]>;
-  /**
-   * Whether a human may manage deployment access tokens and global activity.
-   * Connector access already permits that human to manage the visible
-   * connector's shared or personal auth. Omit to preserve the existing
-   * all-interactive-humans operator rule.
-   */
-  operatorAccess?(
+  /** Global payload-free activity reads. Defaults to interactive humans. */
+  activityAccess?(
     principal: Readonly<IdentityReference>,
   ): boolean | Promise<boolean>;
+  /** Shared credential and OAuth administration. Defaults to none. */
+  credentialAdministration?(
+    identity: Readonly<AuthenticatedIdentity>,
+  ): ConnectorPermission | Promise<ConnectorPermission>;
+  /** Connecting or changing the caller's personal account. Defaults to none. */
+  personalConnection?(
+    identity: Readonly<AuthenticatedIdentity>,
+  ): ConnectorPermission | Promise<ConnectorPermission>;
+
 }
 
 export interface ConnectaConfig {
   connectors: Connector[];
   /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
-  /** Identity-derived connector visibility and deployment operator membership. */
+  /** Code-derived connection visibility and independent management permissions. */
   identity?: ConnectaIdentityConfig;
   /** KVStorage impl. Defaults to memoryStorage(). */
   storage?: KVStorage;
@@ -182,15 +157,12 @@ export interface ConnectaConfig {
    * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl?: string;
-  /** Payload-free tool activity storage and operator-read policy. */
-  activity?: ConnectaActivityConfig;
-  /** Operator credential vault settings. */
-  credentials?: ConnectaCredentialsConfig;
-  /**
-   * Named, revocable Bearer tokens for MCP clients. Creation and mutation
-   * require an eligible interactive operator; token secrets are returned once.
-   */
-  accessTokens?: ConnectaAccessTokensConfig;
+  /** Optional recorder and reader, created by activityHistory() from /activity. */
+  activity?: ActivityModule;
+  /** Replaceable owner-partitioned credential storage. Omit for config-owned secrets. */
+  vault?: CredentialVault;
+  /** Optional connection UI, created by operatorUi() from /ui. */
+  ui?: OperatorSurface;
   /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
@@ -199,9 +171,8 @@ export interface ConnectaConfig {
   execute?: ConnectaExecuteConfig;
   /** Bounded MCP and fallback code-mode admission. */
   admission?: ConnectaAdmissionConfig;
-  /** Optional browser UI and OAuth result-page labels. */
-  branding?: ConnectaBranding;
-  logger?: Logger;
+  /** Diagnostic output. Use "silent" to disable all diagnostic logging. */
+  logger?: Logger | "silent";
   serverInfo?: {
     name?: string;
     version?: string;
@@ -296,21 +267,15 @@ const CONFIG_SCHEMA = {
   auth: null,
   identity: {
     connectorAccess: null,
-    operatorAccess: null,
+    activityAccess: null,
+    credentialAdministration: null,
+    personalConnection: null,
   } satisfies ClosedOptionSchema<ConnectaIdentityConfig>,
   storage: null,
   publicUrl: null,
-  activity: {
-    store: null,
-    readGate: null,
-    deploymentId: null,
-  } satisfies ClosedOptionSchema<ConnectaActivityConfig>,
-  credentials: {
-    encryptionKey: null,
-  } satisfies ClosedOptionSchema<ConnectaCredentialsConfig>,
-  accessTokens: {
-    maxActive: null,
-  } satisfies ClosedOptionSchema<ConnectaAccessTokensConfig>,
+  activity: null,
+  vault: null,
+  ui: null,
   discovery: {
     concurrency: null,
     catalogTtlSeconds: null,
@@ -330,20 +295,6 @@ const CONFIG_SCHEMA = {
     requests: admissionPoolSchema,
     code: admissionPoolSchema,
   } satisfies ClosedOptionSchema<ConnectaAdmissionConfig>,
-  branding: {
-    productName: null,
-    productUrl: null,
-    ownerName: null,
-    ownerUrl: null,
-    description: null,
-    pageTitle: null,
-    favicon: {
-      svg: null,
-      ico: null,
-      href: null,
-    } satisfies ClosedOptionSchema<NonNullable<ConnectaBranding["favicon"]>>,
-    themeColor: null,
-  } satisfies ClosedOptionSchema<ConnectaBranding>,
   logger: null,
   serverInfo: {
     name: null,
@@ -399,7 +350,10 @@ function rejectUnknownOptions(paths: string[]): void {
   if (paths.length === 0) return;
   throw new Error(
     `Unknown Connecta configuration option${paths.length === 1 ? "" : "s"}:\n` +
-      paths.map((path) => `- ${path}`).join("\n"),
+      paths.map((path) => `- ${path}`).join("\n") +
+      (paths.includes("ConnectaConfig.credentials") ? "\nUse vault: encryptedCredentialVault(storage, key) from @zackbart/connecta/credentials." : "") +
+      (paths.includes("ConnectaConfig.accessTokens") ? "\nConnecta-issued tokens were removed. Configure an inbound auth adapter instead." : "") +
+      (paths.includes("ConnectaConfig.branding") ? "\nMove branding into ui: operatorUi({ branding }) from @zackbart/connecta/ui." : ""),
   );
 }
 
@@ -408,15 +362,17 @@ function assertKnownConfig(config: ConnectaConfig): void {
   rejectUnknownOptions(
     unknownOptionPaths(config, "ConnectaConfig", CONFIG_SCHEMA),
   );
+  if (config.vault && ["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function")) throw new Error("ConnectaConfig.vault must implement CredentialVault");
+  if (config.ui && (typeof config.ui.handle !== "function" || typeof config.ui.credentialHandoffUrl !== "function" || !Array.isArray(config.ui.reservedPaths))) throw new Error("ConnectaConfig.ui must be created with operatorUi(...)");
   const activity = config.activity as unknown;
   if (
     activity !== undefined &&
     (typeof activity !== "object" ||
       activity === null ||
-      typeof (activity as ConnectaActivityConfig).store?.record !== "function")
+      typeof (activity as ActivityModule).recordTool !== "function")
   ) {
     throw new Error(
-      "ConnectaConfig.activity.store must implement record(event)",
+      "ConnectaConfig.activity must be created with activityHistory(...)",
     );
   }
 }
@@ -443,7 +399,7 @@ function warnInsecureConfig(
   ) {
     logger.warn(
       "[connecta] running with no inbound authentication: any caller can " +
-        "invoke every connector and read or overwrite stored credentials. " +
+        "invoke every shared connector. " +
         "Configure `auth` (for example bearerToken(...) or Clerk) to gate access.",
     );
   }
@@ -463,7 +419,7 @@ function warnInsecureConfig(
   // Branding URLs that failed their scheme gate. Rendering silently falls back
   // (a bad URL must not take the page down), so this warning is the only way an
   // operator learns their value never reached the page.
-  const dropped = droppedBrandingUrls(config.branding);
+  const dropped = droppedBrandingUrls(config.ui?.branding);
   if (dropped.length > 0) {
     logger.warn(
       `[connecta] branding ${dropped.join(", ")} dropped: a branding URL is ` +
@@ -540,32 +496,11 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     );
   }
   const storage = config.storage ?? memoryStorage();
-  const logger = config.logger ?? defaultLogger();
-  const credentialConnectors = config.connectors.filter((c) => c.credential);
-  const encryptionKey = config.credentials?.encryptionKey;
-  if (credentialConnectors.length > 0 && !encryptionKey) {
-    logger.warn(
-      "Human-managed credentials are unavailable because " +
-        "credentials.encryptionKey is not configured for connectors: " +
-        credentialConnectors.map((c) => c.id).join(", "),
-    );
-  }
-  const credentialVault = encryptionKey
-    ? new CredentialVault(storage, encryptionKey)
-    : undefined;
+  const logger = config.logger === "silent"
+    ? { debug() {}, info() {}, warn() {}, error() {} }
+    : config.logger ?? defaultLogger();
+  const credentialVault = config.vault;
   const configuredAuth = normalizeAuth(config.auth);
-  const accessTokens = config.accessTokens
-    ? new AccessTokenManager(storage, config.accessTokens)
-    : undefined;
-  if (
-    accessTokens &&
-    !configuredAuth.some((provider) => provider.interactiveOperator)
-  ) {
-    throw new Error(
-      "accessTokens requires an interactive operator auth provider: only an eligible " +
-        "operator may create, rename, or revoke deployment access tokens",
-    );
-  }
   const serverInfo = {
     ...config.serverInfo,
     name: config.serverInfo?.name ?? "connecta",
@@ -575,9 +510,11 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     storage,
     logger,
     credentialVault,
+    credentialUi: Boolean(config.ui),
     catalogDriftActivity: config.activity?.store
       ? {
           sink: config.activity.store,
+          recordDrift: config.activity.recordDrift,
           serverInfo,
           ...(config.activity.deploymentId !== undefined
             ? { deploymentId: config.activity.deploymentId }
@@ -589,9 +526,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
     maxResultBytes: config.calls?.maxResultBytes,
   });
-  const inboundAuth = normalizeAuth(
-    accessTokens ? [accessTokens.auth, ...configuredAuth] : configuredAuth,
-  );
+  const inboundAuth = configuredAuth;
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
@@ -624,6 +559,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     serverInfo,
     logger,
     activity: config.activity?.store,
+    activityModule: config.activity,
     activityReadGate: config.activity?.readGate,
     activityDeploymentId: config.activity?.deploymentId,
     executor,
@@ -635,9 +571,9 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxEmittedBytes: config.execute?.maxEmittedBytes,
     maxEmittedBlocks: config.execute?.maxEmittedBlocks,
     credentialVault,
-    accessTokens,
+    ui: config.ui,
     deploymentInfo: config.deploymentInfo,
-    branding: config.branding,
+    branding: config.ui?.branding,
   });
   let closePromise: Promise<void> | undefined;
   return {
@@ -670,12 +606,6 @@ export type { ConnectorCallErrorCode, CallErrorDetails } from "./errors.js";
 // throwing so the caller decides what to do with it.
 export { validateToolInput } from "./validate.js";
 export type { ValidateToolInputOptions } from "./validate.js";
-export { bearerToken } from "./auth/bearer.js";
-export type { BearerTokenOptions } from "./auth/bearer.js";
-export type {
-  AccessTokenMetadata,
-  CreatedAccessToken,
-} from "./access-tokens.js";
 export { memoryStorage } from "./storage/memory.js";
 export { CONNECTA_VERSION } from "./version.js";
 // Registry is reachable through `Connecta.registry`, so its type is public;
@@ -692,12 +622,12 @@ export type { ApiOptions, ApiTool } from "./connectors/api.js";
 export type {
   CatalogDriftCounts,
   CatalogDriftReport,
+  ConnectaBranding,
   Connector,
   ConnectorCallAdmissionInput,
   ConnectorCallAdmissionPolicy,
   ConnectorCallAdmissionRule,
   ConnectorRollingWindowBudget,
-  ConnectaBranding,
   ConnectorCredentialAccess,
   ConnectorCredentialConfig,
   ConnectorCredentialFieldConfig,
@@ -740,4 +670,3 @@ export type {
   CatalogDriftActivityEvent,
   ToolCallActivityEvent,
 } from "./activity.js";
-export { InvalidActivityCursorError } from "./activity.js";

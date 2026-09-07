@@ -1,3 +1,4 @@
+import { recordToolActivity } from "../src/activity.js";
 import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import {
@@ -42,6 +43,7 @@ function activityRecorder(requestId: string): {
   return {
     events,
     activity: {
+      recordTool: recordToolActivity,
       sink: {
         record: (event) => {
           events.push(event);

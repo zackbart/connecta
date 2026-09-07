@@ -1,3 +1,4 @@
+import { CredentialCard } from "./credentials.js";
 import { filterUiConnectors, type UiConnector } from "../model.js";
 import {
   connectorStatusLabel,
@@ -9,8 +10,8 @@ import {
   type OperatorState,
 } from "../view.js";
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
-import { CopyButton, Empty, NoticeLine, PageLink } from "./parts.js";
-import { oauthAction, setConnectorFilter } from "./store.js";
+import { CopyButton, Empty, NoticeLine } from "./parts.js";
+import { oauthAction, refreshConnector, setConnectorFilter } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
   clean: "Catalog drift · none",
@@ -57,12 +58,14 @@ function ConnectorCard({
   expanded,
   oauthManagement,
   busy,
+  state,
 }: {
   connector: UiConnector;
   tools: UiConnector["tools"];
   expanded: boolean;
   oauthManagement: boolean;
   busy: boolean;
+  state: OperatorState;
 }) {
   const name = connector.title || connector.id;
   const authorization = safeHttpHref(connector.authorizationUrl);
@@ -80,7 +83,7 @@ function ConnectorCard({
         </div>
         <div class="connector-state cap">
           {connectorStatusLabel(connector.status)} ·{" "}
-          {toolCountLabel(connector.toolCount)}
+          {connector.status === "loading" ? "Tools not loaded" : toolCountLabel(connector.toolCount)}
           <br />
           <span class="mono">{connector.id}</span>
           <br />
@@ -108,15 +111,10 @@ function ConnectorCard({
           )}
         </p>
       ) : null}
-      <DriftPanel connector={connector} />
-      {connector.catalogAccess ? (
-        <p class="meta">
-          Last agent catalog read · {connector.catalogAccess.state} ·{" "}
-          {new Date(connector.catalogAccess.observedAt).toLocaleString()}
-        </p>
-      ) : null}
+      <p class="meta">Can use this connection · {connector.permissions?.manageSharedAuth ? "Can manage shared authentication" : connector.permissions?.connectPersonal ? "Can connect your account" : "Authentication managed by your deployment"}</p>
       {connector.oauth && oauthManagement ? (
         <div class="credential-actions">
+          {connector.status === "ok" ? (
           <button
             type="button"
             class="linklike danger"
@@ -126,6 +124,7 @@ function ConnectorCard({
           >
             Disconnect OAuth
           </button>
+          ) : null}
           <button
             type="button"
             class="linklike"
@@ -139,15 +138,17 @@ function ConnectorCard({
           >
             {connector.status === "ok"
               ? "Reconnect OAuth"
-              : "Restart authorization"}
+              : "Connect account"}
           </button>
         </div>
       ) : null}
-      {connector.credential ? (
-        <p class="connector-auth">
-          <PageLink page="credentials" class="linklike">
-            Manage credential →
-          </PageLink>
+      {connector.credential ? <CredentialCard connector={connector} credential={connector.credential} editing={state.credentialEditing === connector.id} busy={state.credentialBusy === connector.id} /> : null}
+      <button class="linklike" type="button" disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh connection</button>
+      <details><summary class="linklike">Connection diagnostics</summary><DriftPanel connector={connector} /></details>
+      {connector.catalogAccess ? (
+        <p class="meta">
+          Last agent catalog read · {connector.catalogAccess.state} ·{" "}
+          {new Date(connector.catalogAccess.observedAt).toLocaleString()}
         </p>
       ) : null}
       {tools.length ? (
@@ -195,6 +196,7 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
               : productOperatorLabel}
           </p>
           <NoticeLine id="oauthNotice" notice={state.oauthNotice} />
+          <NoticeLine id="credentialNotice" notice={state.credentialNotice} />
         </div>
       </div>
       <section class="section pgrid" aria-labelledby="connectorLedgerHeading">
@@ -234,7 +236,8 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
                   connector={connector}
                   tools={tools}
                   expanded={Boolean(query)}
-                  oauthManagement={data.oauthManagement}
+                  oauthManagement={Boolean(connector.permissions?.manageSharedAuth || connector.permissions?.connectPersonal)}
+                  state={state}
                   busy={state.oauthBusy === connector.id}
                 />
               ))

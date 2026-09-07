@@ -1,10 +1,12 @@
+import { fetchTestUiDetails } from "./helpers.js";
+import { CredentialVault } from "../src/credentials.js";
+import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it, vi } from "vitest";
 import { api } from "../src/connectors/api.js";
 import { bearerToken } from "../src/auth/bearer.js";
 import {
-  CredentialVault,
   STORED_CREDENTIAL_SHAPE_MISMATCH_ERROR,
-} from "../src/credentials.js";
+} from "../src/credential-rules.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { createTestConnecta } from "./helpers.js";
 import { fakeClerkAuth } from "./fixtures/http.js";
@@ -51,13 +53,10 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage,
       publicUrl: BASE,
-      credentials: {
-        encryptionKey: CREDENTIAL_KEY,
-      },
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
     });
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -75,7 +74,7 @@ describe("status UI credential management", () => {
 
     const html = await (
       await connecta.fetch(
-        new Request(`${BASE}/credentials`, {
+        new Request(`${BASE}/`, {
           headers: { Authorization: "Bearer clerk-token" },
         }),
       )
@@ -121,13 +120,10 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage,
       publicUrl: BASE,
-      credentials: {
-        encryptionKey: CREDENTIAL_KEY,
-      },
+      vault: encryptedCredentialVault(storage, CREDENTIAL_KEY),
     });
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -171,9 +167,7 @@ describe("status UI credential management", () => {
       auth: [bearerToken(TOKEN), fakeClerkAuth(CLERK_OPTIONS)],
       storage: memoryStorage(),
       publicUrl: BASE,
-      credentials: {
-        encryptionKey: CREDENTIAL_KEY,
-      },
+      vault: encryptedCredentialVault(memoryStorage(), CREDENTIAL_KEY),
     });
 
     const save = await credentialRequest(
@@ -189,8 +183,7 @@ describe("status UI credential management", () => {
     );
     expect(save.status).toBe(200);
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -234,8 +227,7 @@ describe("status UI credential management", () => {
       "single",
     );
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -273,8 +265,7 @@ describe("status UI credential management", () => {
       },
     );
     expect(replacement.status).toBe(200);
-    const recoveredData = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const recoveredData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -312,8 +303,7 @@ describe("status UI credential management", () => {
       "multiple",
     );
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -354,8 +344,7 @@ describe("status UI credential management", () => {
       },
     );
     expect(replacement.status).toBe(200);
-    const recoveredData = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const recoveredData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -397,8 +386,7 @@ describe("status UI credential management", () => {
     const raw = await storage.get("conn:vaulted:credential:v1");
     expect(raw).not.toContain("valid-secret-9876");
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -467,8 +455,7 @@ describe("status UI credential management", () => {
       "operator@example.com",
     );
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -515,8 +502,7 @@ describe("status UI credential management", () => {
     );
     expect(save.status).toBe(200);
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -591,8 +577,7 @@ describe("status UI credential management", () => {
     );
     expect(save.status).toBe(200);
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -630,8 +615,7 @@ describe("status UI credential management", () => {
     );
     expect(save.status).toBe(200);
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -658,8 +642,7 @@ describe("status UI credential management", () => {
     const { connecta, storage } = makeMultiCredentialConnecta();
     await storage.set("conn:multi:credential:v1", "corrupt-ciphertext");
 
-    const data = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const data = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );
@@ -725,8 +708,7 @@ describe("status UI credential management", () => {
     );
     expect(noOrigin.status).toBe(403);
 
-    const bearerData = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const bearerData = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: `Bearer ${TOKEN}` },
       }),
     );
@@ -771,15 +753,12 @@ describe("status UI credential management", () => {
         error() {},
       },
     });
-    expect(warn).toHaveBeenCalledWith(
-      expect.stringContaining("credentials.encryptionKey is not configured"),
-    );
+    expect(warn).not.toHaveBeenCalled();
     expect(
       connecta.registry.contextFor("vaulted", BASE).credential,
     ).toBeUndefined();
 
-    const response = await connecta.fetch(
-      new Request(`${BASE}/ui/data`, {
+    const response = await fetchTestUiDetails(connecta, new Request(`${BASE}/ui/data`, {
         headers: { Authorization: "Bearer clerk-token" },
       }),
     );

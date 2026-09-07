@@ -41,24 +41,14 @@ function uiData(identity: string): UiData {
   return {
     serverInfo: { name: identity, version: "host" },
     connectaVersion: "package",
-    connectors: [
-      { id: identity, title: identity, status: "ok", toolCount: 0, tools: [] },
-    ],
+    connectors: [],
     activityEnabled: true,
     credentialManagement: "available",
-    accessTokenManagement: "available",
     oauthManagement: true,
   };
 }
 
-function accessToken(name: string) {
-  return {
-    id: `token-${name}`,
-    name,
-    tokenPrefix: "cta_abc",
-    createdAt: "2026-07-30T12:00:00.000Z",
-  };
-}
+
 
 /**
  * A fake browser, then a fresh copy of the store module. The store reads its
@@ -150,10 +140,6 @@ describe("operator store identity wiring", () => {
 
     // Fill the rest of the identity-scoped state the way a working page does.
     fetchMock.mockResolvedValueOnce(
-      Response.json({ accessTokens: [accessToken("identity-a client")] }),
-    );
-    await store.loadAccessTokens();
-    fetchMock.mockResolvedValueOnce(
       Response.json({
         events: [
           {
@@ -171,7 +157,6 @@ describe("operator store identity wiring", () => {
     );
     await store.loadActivity(true);
     store.setConnectorFilter("identity-a");
-    expect(store.getState().tokens).toHaveLength(1);
     expect(store.getState().activityEvents).toHaveLength(1);
 
     // The replacement identity's /ui/data is held open, so the assertions below
@@ -186,15 +171,11 @@ describe("operator store identity wiring", () => {
     expect(gated.generation).toBe(before + 1);
     expect(gated.session).toBe("gated");
     expect(gated.data).toBeNull();
-    expect(gated.tokens).toEqual([]);
     expect(gated.activityEvents).toEqual([]);
     expect(gated.connectorFilter).toBe("");
-    expect(gated.tokenPhase).toBe("idle");
     expect(gated.activityPhase).toBe("idle");
-    expect(gated.tokenNotice).toBeNull();
     expect(gated.credentialNotice).toBeNull();
     expect(gated.oauthNotice).toBeNull();
-    expect(gated.createdToken).toBeNull();
     expect(JSON.stringify(gated)).not.toContain("identity-a");
 
     second.resolve(Response.json(uiData("identity-b")));
@@ -222,21 +203,19 @@ describe("operator store identity wiring", () => {
     // identity-a asks for its access tokens and the answer is slow.
     const slow = deferred<Response>();
     fetchMock.mockImplementationOnce(() => slow.promise);
-    const inFlight = store.loadAccessTokens();
+    const inFlight = store.loadActivity(true);
 
     // identity-b arrives first, and its own /ui/data never settles here.
     fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}));
     changeSession({ id: "sess_b", getToken: async () => "token-b" });
 
     slow.resolve(
-      Response.json({ accessTokens: [accessToken("identity-a client")] }),
+      Response.json({ events: [{ connectorId: "identity-a client" }] }),
     );
     await inFlight;
 
     // The fence, not a race: identity-a's tokens never land on identity-b's
     // screen, and the collection stays idle so the new identity refetches.
-    expect(store.getState().tokens).toEqual([]);
-    expect(store.getState().tokenPhase).toBe("idle");
     expect(JSON.stringify(store.getState())).not.toContain("identity-a client");
   });
 
