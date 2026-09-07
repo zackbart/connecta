@@ -316,19 +316,21 @@ Every typed `auth_required` call failure uses the same envelope:
 handoff:
 
 - `oauth`: an `authorizationUrl` and consent instructions;
-- `operator_config`: an `operatorUrl` ending in `/credentials`, plus the
+- `operator_config`: an `operatorUrl` to the mounted connection UI, plus the
   declared credential label and field names/guidance; or
 - `unavailable`: an honest deployment/configuration message.
 
 The class follows what the connector declares, not how it was authored: a
 `remoteMcp()` connection using `auth: { type: "credential" }` declares a slot
-and no OAuth flow, so it lands in `operator_config` beside every `api()`
-credential.
+and no OAuth flow, so it uses `operator_config` when both vault and UI are
+configured. Without either it returns `unavailable`, never a dead UI link.
 
 The tool accepts no secret. `force` applies only to OAuth and may discard its
 stored grant before restarting consent. Static credential values are written
 only through the same-origin interactive-user credential route, and only for a
-connector visible to that user. After OAuth consent or a human update, retry
+connector visible to that user with the relevant shared or personal management
+permission. OAuth start, including `force`, requires that permission too. Core
+callbacks work without the UI for authorized interactive callers. After OAuth consent or a human update, retry
 the original operation; a static update is read from the vault on the next call
 and needs no redeploy.
 

@@ -17,6 +17,21 @@ the release notes broke, and prove it with `connecta doctor`.
 Work on a branch. Every step below is reversible until you delete the old
 lockfile, and you want the diff reviewable by whoever owns this deployment.
 
+## Unreleased: optional modules
+
+UI, encrypted credentials, activity history, and configured bearer auth now use
+explicit module imports. Core keeps the same seven tools and enforcement.
+Connecta-issued tokens are removed. Shared and personal auth management require
+separate explicit permissions, both denied by default; visibility alone grants
+neither. `activityAccess` replaces `operatorAccess` for global history reads.
+
+Follow the [optional-module migration](./optional-modules-upgrade.md) before
+upgrading. It includes the complete before-and-after configuration, team Worker
+and personal Node permission examples, issued-token client migration, disabling
+features, and verification. Preserve existing connector ids, identity namespaces,
+storage, and encryption key. Vault and OAuth records need no format migration;
+old issued-token records remain inert rather than being deleted automatically.
+
 ## 0.23.0 program API pruning
 
 This update removes MCP Apps rendering, connector shortcut globals,
@@ -637,6 +652,10 @@ the migration map:
 
 | Option | Removed in | Do |
 | --- | --- | --- |
+| `accessTokens` | Unreleased | migrate issued-token clients to provider OAuth or configured bearer auth; old records become inert |
+| `credentials` | Unreleased | `vault: encryptedCredentialVault(storage, encryptionKey)` from `/credentials` |
+| `branding` | Unreleased | `ui: operatorUi({ branding })` from `/ui` |
+| `identity.operatorAccess` | Unreleased | `identity.activityAccess`; grant shared and personal auth management separately |
 | `toolkits`, `unscoped` | 0.8.1 (#178) | delete; deploy one instance per audience |
 | `credentials.health`, `credentialHealth` | 0.8.1 (#179) | delete; credentials fail at use |
 | `surface` | 0.11.0 (#273) | delete; there is one seven-tool surface |

@@ -2,6 +2,46 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+Deployments now select UI, encrypted credentials, activity history, and inbound
+auth through explicit module imports. Core keeps discovery, execution,
+invocation, and enforcement together. This breaks configuration and removes
+Connecta-issued client tokens; migrate those clients before upgrading. Shared
+and personal auth management now require explicit permissions. Existing vault
+and OAuth state need no format migration. See the
+[detailed migration guide](./documentation/upgrading.md#unreleased-optional-modules)
+for before-and-after configuration, team and personal deployment examples,
+client migration, and verification.
+
+### Added
+
+- Optional `operatorUi`, `encryptedCredentialVault`, and `activityHistory`
+  factories behind `/ui`, `/credentials`, and `/activity`, with contracts in core.
+- Separate config-derived `credentialAdministration` and `personalConnection`
+  permissions, both denied by default; `activityAccess` controls history reads.
+- Explicit `logger: "silent"`, independent of activity recording.
+
+### Changed
+
+- Move configured bearer authentication to `/auth/bearer`. Remove Connecta-issued
+  tokens and their management routes; old records remain inert in storage.
+- Move root branding into UI options, replace `credentials` with `vault`, and
+  construct activity through its factory. Removed configuration fails at startup.
+- Put credential and OAuth controls inside Connections; remove separate
+  Credentials and Tokens tabs. Show the current user's effective permissions.
+- Keep optional implementations outside the root import graph. Omitted modules
+  contribute no runtime work or UI routes; OAuth callbacks remain in core.
+
+### Fixed
+
+- Return the configured connection list without awaiting provider checks, then
+  load bounded connection details independently. Auth action feedback no longer
+  waits for an unrelated catalog reload.
+- Start OAuth only through explicit authorized actions, never status reads.
+- Return unavailable credential recovery when no UI or vault is mounted, and
+  complete UI-free OAuth without a dead return link.
+
 ## 0.23.0 — 2026-09-07
 
 This release removes server-owned program views, connector HTTP routes, and

@@ -1,67 +1,60 @@
 # Inbound auth
 
-Inbound auth decides who may reach the MCP endpoint. A deployment may admit a
-static bearer, operator-issued access tokens, Clerk identities, Cloudflare
-Access identities on Workers, or a mixture. Static bearers are checked first;
-the remaining providers keep configuration order. The first successful
-identity owns the activity actor for that request.
+Inbound auth decides who may reach the MCP endpoint. Import configured bearer
+support from `@zackbart/connecta/auth/bearer`, Clerk from `/auth/clerk`, or
+Cloudflare Access from `/auth/cloudflare-access`. Providers may be combined;
+static bearers are checked first, then other providers in configuration order.
+Connecta no longer issues `cta_` tokens or serves token-management routes.
 
 ## Principals, visibility, and operators
 
-Connecta distinguishes three identities. The actor is the exact caller written
-to activity. The subject is any stable authenticated caller and owns transient
-results such as `get_result` pages. The principal is the human owner of personal
+The actor identifies the caller in activity. The subject owns transient results
+such as `get_result` pages. The principal is the human owner of personal
 connector auth. An interactive Clerk or Access user supplies all three. A
-Cloudflare service identity has an actor and subject but no principal. A
-connecta access token has its own actor and subject and inherits the principal
-that created it, so agents using that token reach the creator's personal
-connections without becoming operators.
+Cloudflare service identity has an actor and subject but no principal.
 
-`identity.connectorAccess` derives the connector ids a caller may discover and
-invoke. The resolver receives authenticated identity data, never request input,
-and returns `"all"` or a list of ids declared in `connectors`. An unknown id or
-a thrown resolver fails the request closed.
+`identity.connectorAccess` returns `"all"` or declared connector ids. It governs
+discovery and use, and defaults to all connectors. Visibility alone grants no
+authentication-management permission. Two independent resolvers return
+`"all"`, `"none"`, or declared connector ids:
 
-`identity.connectorAccess` is also the credential-management boundary. A
-signed-in human may save, test, disconnect, and authorize every visible
-connector: personal auth changes only that principal's partition, while shared
-auth changes the deployment-wide grant for everyone who can see the connector.
-Use `authScope: "personal"` when one member must not rotate another member's
-connection.
+- `credentialAdministration` allows an interactive human to manage shared
+  credentials and shared OAuth grants.
+- `personalConnection` allows an interactive human to manage their own
+  credentials and OAuth grants on personal connectors.
 
-`identity.operatorAccess` separately reserves deployment-wide administration:
-access-token creation and global activity history. Omit the resolver to
-preserve the prior rule that every interactive human is an operator. When it is
-configured, activity history is operator-only because its global event stream
-contains other principals' connector names and actors.
+Both default to `"none"`. Each action requires visibility and the relevant
+permission. Personal actions also require a stable namespaced principal and
+always use that principal's partition. Resolver exceptions and unknown ids
+fail closed. Permissions come from authenticated identity, never caller input.
+
+The management resolvers receive `Readonly<AuthenticatedIdentity>`.
+`identity.activityAccess` receives `Readonly<IdentityReference>` with `id` and
+`namespace`, and controls reading global activity. Its default admits
+interactive humans, so team deployments should set it explicitly if the event
+stream should be restricted. It replaces `operatorAccess`; there is no general
+administrator role or token-management authority.
 
 ```ts
 createConnecta({
   auth: cloudflareAccessAuth(),
   identity: {
     connectorAccess: ({ principal }) =>
-      principal?.id === "user_a"
-        ? ["shared_docs", "personal_linear"]
-        : ["shared_docs"],
-    operatorAccess: ({ id }) => id === "user_a",
+      principal?.id === "owner-id" ? "all" : ["shared_docs", "personal_linear"],
+    credentialAdministration: ({ principal }) =>
+      principal?.id === "owner-id" ? "all" : "none",
+    personalConnection: () => ["personal_linear"],
+    activityAccess: ({ id }) => id === "owner-id",
   },
-  connectors: [
-    remoteMcp("shared_docs", { url: "https://example.com/mcp" }),
-    remoteMcp("personal_linear", {
-      url: "https://mcp.linear.app/mcp",
-      authScope: "personal",
-      auth: { type: "oauth" },
-    }),
-  ],
+  connectors,
   executor,
 });
 ```
 
-Identity namespaces matter. Built-in Clerk and Access providers supply one.
-A custom interactive provider must set `activityActorNamespace` before its
-users can own personal auth. It may still use the legacy operator behavior
-without one, but connecta will not merge unnamespaced users into personal
-storage.
+Built-in Clerk and Access providers supply identity namespaces. A custom
+interactive provider must set `activityActorNamespace` before its users can
+own personal auth. Keep the namespace and principal ids stable across upgrades;
+changing them selects different personal storage partitions.
 
 ## Cloudflare Access on Workers
 
@@ -92,12 +85,11 @@ also means it is deliberately not a Node or `cloudflared` origin adapter, and
 it does not survive a Service Binding hop: those shapes need their own explicit
 trust boundary.
 
-A human identity gets MCP and personal-connection access. It gets operator
-access unless `identity.operatorAccess` says otherwise. A Cloudflare service-token
-identity gets MCP access and a stable activity subject, but no `userId`, so it
-cannot write credentials, run downstream OAuth mutations, or issue connecta
-tokens. Access policy decides who reaches the Worker; connecta does not mirror
-email domains, groups, or device posture into a second policy layer.
+A human identity gets a code-derived MCP view. Managing connection auth requires
+an explicit `credentialAdministration` or `personalConnection` grant. An Access
+service identity has no human principal and cannot mutate connection auth.
+Access decides admission and identity; Connecta configuration selects connector
+access and these narrower permissions.
 
 Protect the Worker with a Worker-level Access application whose destination is
 `{ "type": "worker", "worker_id": "<the Worker script tag>" }`. A traditional
@@ -135,8 +127,7 @@ Worker-level Access runs before every connecta route. Consequently:
 
 - `/health`, operator pages, downstream OAuth callbacks, and `/mcp` all require Access unless a more-specific hostname/path
   policy says otherwise;
-- a static connecta bearer and a `cta_…` token are not standalone edge
-  credentials, because Cloudflare rejects them before connecta sees them; and
+- a static Connecta bearer is not a standalone edge credential, because Cloudflare rejects them before connecta sees them; and
 - custom public webhooks belong to the deployment outside Connecta and need
   their own Access routing policy. Keep Connecta's OAuth discovery paths
   protected when Managed OAuth is enabled.
@@ -156,57 +147,21 @@ publishable slot, and a startup error is a log line. A deployment that builds
 per request, as the Workers shape does, sees the same error on its first
 request instead of a base64 stack on every route.
 
-## Operator-issued access tokens
+## Human authentication management
 
-Set `accessTokens: {}` to let eligible interactive operators create named Bearer
-tokens at `/tokens`:
+Credential and OAuth mutation require an admitted interactive human, connector
+visibility, the appropriate shared or personal permission, and an exact
+same-origin `Origin` for browser requests. A configured MCP bearer never becomes
+a browser management credential.
 
-```ts
-createConnecta({
-  storage,
-  auth: clerkAuth({ /* ... */ }),
-  accessTokens: {},
-  connectors,
-});
-```
+With `ui: operatorUi()` and a vault, static credential recovery can return a
+secret-free handoff to the connection UI. Without the UI, that recovery is
+`unavailable`; Connecta does not return a link to a missing page. An authorized
+interactive MCP caller can still start downstream OAuth through
+`authorize_connector` without the UI. Core owns the callback and verifies state
+and principal ownership independently of the optional browser application.
 
-The storage adapter must implement `list(prefix)`. Connecta returns each
-`cta_…` secret once and stores only its SHA-256 digest plus non-secret metadata.
-The operator can rename or revoke a token later. Revocation removes admission
-before updating its display metadata, so a partial storage failure fails
-secure.
-
-Each token has an immutable ID. Activity records store that ID and resolve its
-current friendly name only while an authorized operator reads activity.
-Revoked records remain as metadata tombstones so historical calls keep their
-friendly attribution. New tokens also retain the creating principal. Their MCP
-requests use that principal's connector visibility and personal auth while the
-token itself remains the activity actor and result owner.
-
-Access tokens authenticate MCP clients; they are never operator credentials.
-Creation, rename, and revocation require the same eligible human identity and
-same-origin mutation boundary as connector credentials. `maxActive` defaults
-to 100 and can be set from 1 through 1,000.
-
-Issuance and revocation inherit the consistency guarantees of the configured
-storage adapter. Use strongly consistent storage when either change must take
-effect globally without a convergence window.
-
-Human credential mutation is a separate, narrower boundary. The
-`/credentials` shell contains no secret data before authentication, and the
-mutation API requires same-origin requests from an admitted interactive human.
-That human may mutate only visible connector slots. An MCP bearer is never
-treated as a browser credential, even when it can call every connector.
-
-This split is visible in recovery:
-
-- a bearer-authenticated agent may receive `recovery: "operator_config"` and
-  pass its `operatorUrl` to a human;
-- an interactive human with connector access opens that URL, signs in, and updates the
-  credential; and
-- a bearer-only deployment still returns the handoff honestly, but mutation
-  remains unavailable until interactive user auth is configured.
-
-See [meta-tools](./meta-tools.md#authorization-recovery) for the stable recovery
-envelope and [storage and credentials](./storage-and-credentials.md) for vault
-rules.
+See [meta-tools](./meta-tools.md#authorization-recovery) and
+[storage and credentials](./storage-and-credentials.md). The
+[upgrade guide](./upgrading.md#unreleased-optional-modules) covers moving clients
+off removed Connecta-issued tokens before changing deployment configuration.

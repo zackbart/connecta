@@ -4,109 +4,87 @@ The browser surface a human uses to see what a deployment exposes and to manage
 the authentication material behind it. It is a small Preact app compiled by the
 repository's own esbuild step and inlined into a data-free server shell.
 
-Read [`ethos.md`](../ethos.md) first. The boundary this subsystem lives inside
-is the human-management invariant: **members may manage authentication material
-for every connector their code-derived view includes, operators may also manage
-deployment tokens and global activity, and neither may change the connector set, tool catalog,
-annotations, requested OAuth scopes, admission policy, or identity rules.**
-`test/operator-boundary.test.ts` proves it after every mutation route.
+Read [`ethos.md`](../ethos.md) first. Code declares capabilities and access;
+the UI displays the current user's effective permissions and manages only
+authentication material explicitly permitted by that code. It never edits the
+connector set, tool catalog, annotations, OAuth scopes, or permission rules.
 
-Both deployment shapes ship the whole feature set behind it, because pages for
-things a deployment cannot do are worse than no pages
-([#345](https://github.com/zackbart/connecta/issues/345)). The
-[Node template](../templates/node/) carries sign-in, vault, tokens, and
-activity as commented blocks in `src/index.ts` — plus a deployment-owned
-`src/file-activity.ts` that is compiled rather than commented — and the
-[Worker example](../examples/worker/) wires the first three and comments the
-fourth, which needs a D1 database. Each README walks through its own
-enablement.
+## Enable the UI
 
-The vault is the one whose page needs a second thing. `/credentials` lists
-connector credential slots, so `credentialManagement` stays `no_slots` — and
-the nav entry stays hidden — until a connector declares `credential`, however
-well-configured the vault is. Neither shape's shipped connectors need a secret,
-so both carry the slot's shape as a comment beside a connector and say so in
-their walkthrough, which is the honest version of the same page count.
+```ts
+import { operatorUi } from "@zackbart/connecta/ui";
 
-## The shape
+createConnecta({
+  connectors,
+  executor,
+  auth,
+  ui: operatorUi({ branding: { productName: "Team connections" } }),
+});
+```
 
-| Piece | What it owns |
-| --- | --- |
-| `src/ui.ts` | The served HTML: branding, gated URLs, CSP-nonced script tags, the four page titles, and `buildUiData` — the `/ui/data` payload. |
-| `src/operator-ui/model.ts` | The transport types both sides share, plus connector filtering. |
-| `src/operator-ui/view.ts` | The app's state shape and every pure rule over it. No DOM, so `test/ui.test.ts` calls it directly. |
-| `src/operator-ui/app/` | The browser app: `store.ts` (state and every request), `main.tsx` (shell, gate, router), and one component file per page. |
-| `src/operator-ui/browser.css` | One stylesheet, inlined into the shell. |
-| `src/operator-ui/generated.ts` | The build output: the bundle and the stylesheet as two exported strings. |
+The UI module owns its browser bundle and routes. Omit `ui` to omit those
+routes and runtime imports. OAuth callbacks remain in core; authorized
+interactive MCP callers can complete consent without the UI. Branding belongs
+to `operatorUi` options, with neutral callback branding when no UI is mounted.
 
-The server renders a mount point, not a page. Branding, the optional Clerk
-loader, and every operator-configured URL stay in `src/ui.ts`, where they are
-gated before they can become an attribute; the bundle renders everything that
-has a state. Two roots share one store: `#operatorNav` and `#operatorContent`.
+## Connections and activity
 
-Cloudflare Access is ambient browser auth. When the current Worker invocation
-has `ctx.access`, the shell selects the `cloudflare-access` UI mode, emits no
-Clerk loader, and sends no browser-readable token. Same-origin fetch includes
-the HttpOnly `CF_Authorization` cookie, Access admits it at the edge, and the
-server reads the resulting runtime identity. Sign out navigates to
-`/cdn-cgi/access/logout`. Mutations still require an exact same-origin
-`Origin`; an ambient cookie does not weaken the CSRF boundary.
+Connections is the main page. Each connection combines its status, effective
+permissions, credential metadata, and permitted OAuth or credential actions.
+There is no separate Credentials or Tokens tab. A user may see and invoke a
+shared connector without permission to replace the grant everyone uses.
+`identity.credentialAdministration` and `identity.personalConnection` select
+shared and personal management rights, and both default to none.
 
-The shell is shared by members and operators. `/ui/data` uses the same
-identity-scoped registry view as `/mcp`, so it cannot list a connector the
-current caller cannot discover. A member sees credential and OAuth controls for
-every visible connector. Personal actions resolve to that member's principal
-partition; shared actions change the deployment-wide grant. The access-token
-and global activity pages require `identity.operatorAccess`. Existing
-deployments that omit that resolver keep every interactive human as an
-operator.
+Activity appears only when the optional history module has a readable store
+and the caller passes `identity.activityAccess` and any additional read gate.
+It is a global history, so permission to use one connector does not imply
+permission to inspect that history. There is no member roster or policy editor.
 
-This runtime selection is the Clerk migration seam. A deployment may contain
-both providers: before Worker-level Access is attached, the data-free shell
-selects Clerk; after Access supplies `ctx.access`, it selects ambient auth. That
-is not two same-hostname gates running in parallel. Access is upstream and a
-request it rejects never reaches Clerk. Keeping Clerk in the array preserves a
-code-level rollback after Access is detached.
+The Node and Worker deployment READMEs show how to enable the modules and grant
+the intended identities access. The configured bearer in the Node template can
+read connection status but never mutate credentials as an interactive human.
 
-The Clerk loader is intentionally blocking. The inline operator bundle calls
-`boot()` as soon as the parser reaches the end of the body, so a deferred Clerk
-script would make an expected parse-time gap look like a permanent network
-failure. Blocking also preserves the existing failure path: after a real
-loader error, the parser continues and `boot()` renders the Clerk load message.
-Clerk's redirect from the major-version loader URL to its pinned asset keeps
-the same ordering.
+## Loading and request lifetime
 
-## Rules that are not obvious
+The server shell contains no connector or credential data. Authenticated
+`/ui/data` returns the configured visible connection list without waiting for
+provider status or tool discovery. Details load through `GET /ui/connectors/<id>`, independently,
+under a bounded request lifetime. Unknown and loading states stay explicit;
+a provider failure leaves the other connections usable.
 
-- **No operator data in the shell.** Every page serves the same markup. Connector,
-  credential, token, and activity data arrives only through the authenticated
-  `/ui/*` APIs, and the shell is identical whether or not a caller is signed in.
-- **One store, one identity.** `store.ts` is the only file that touches `fetch`,
-  `localStorage`, Clerk, or the ambient Access mode. Every token-bearing request carries the current session's token,
-  while Access requests deliberately carry none,
-  and every response is dropped unless the identity that asked for it is still
-  the one on screen. `resetIdentity` replaces all identity-scoped state at once
-  and bumps a generation that work already in flight compares itself against.
-- **Escaping is structural.** Components return elements; nothing builds HTML
-  from strings. A value that could be a URL passes `safeHttpHref` before it may
-  become an `href`, mirroring the server-side gate in `src/ui.ts`.
-- **Secrets are shown once.** A created access token lives in state only, and
-  leaving the page — by navigation or by `pagehide`, which covers the
-  back-forward cache — unmounts it.
-- **Every flow has four states.** Loading, error, empty, and success, with no
-  dead end: a failed save keeps the form and its typed value, a failed list
-  offers a retry, and an empty collection says what would fill it. A mutation
-  that fails is still a resolved promise — `mutate` lands the failure in state
-  rather than rejecting — so a caller that clears a form must clear it on a
-  confirmed success, never on resolution. `createAccessToken` returns that
-  answer as a boolean for exactly this reason.
-- **Drift is counts, and absence is its own answer.** The connector card reads
-  `catalogDrift` ([#343](https://github.com/zackbart/connecta/issues/343)) as
-  four category counts and a timestamp. There is no drill-down, because a tool
-  name or a schema here would make an operator page the payload surface the
-  drift model refuses to be. A connector with no report renders as *not
-  observed*, never as clean: this runtime having seen no refresh is not the
-  same claim as a refresh having found nothing.
+A status read does not start OAuth or create authorization handoffs. Connect is
+an explicit authorized POST. Successful save, reconnect, and disconnect actions
+show their result without waiting for an unrelated full-catalog reload. Server
+mutations still await catalog invalidation before replying, so another request
+cannot consume a persisted catalog from before a credential change.
+
+Each details request owns and closes its downstream connector scope. Never
+cache a transport, request signal, or awaited promise in the UI module.
+
+## Browser identity and security
+
+Cloudflare Access is ambient browser auth. When the Worker invocation has
+`ctx.access`, the shell emits no Clerk loader or browser-readable token.
+Same-origin fetch carries the HttpOnly Access cookie, and the server uses the
+trusted runtime identity. Sign out navigates to `/cdn-cgi/access/logout`.
+Clerk deployments use their configured interactive provider.
+
+Mutation requires exact same-origin `Origin`, an interactive identity,
+connector visibility, and the relevant management permission. Personal actions
+resolve only to the current principal's partition. Credential reads return
+metadata, never saved values or masked fragments. Mutation cannot change any
+declared capability. `test/operator-boundary.test.ts` checks that boundary.
+
+The browser store fences responses by identity generation. Switching identity
+clears the prior identity's state and discards its outstanding responses.
+Components render elements, not HTML strings; links pass the shared URL gate.
+Loading, failure, empty, and success states must all provide a useful next
+step. A failed mutation preserves form input and does not masquerade as success.
+
+Catalog drift remains counts and a timestamp. A missing observation means
+"not observed", not that the downstream catalog is unchanged. The UI does not
+expose tool schemas or raw payloads as diagnostics.
 
 ## Working on it
 
@@ -127,7 +105,7 @@ well as Node and there is no DOM in either:
   DOM-lib program (`tsconfig.operator-ui.json`) because it imports the store.
 - `test/browser/operator-ui.spec.ts` — the wiring, in a real browser:
   Clerk loader order across its version redirect and a real load failure, plus
-  credential, token, and OAuth flows end to end, including their failure and
+  credential and OAuth flows end to end, including their failure and
   empty states. Run it with `npm run test:browser`
   (`npm run test:browser:install` once, for Chromium). It is not part of
   `npm run check`.

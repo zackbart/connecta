@@ -44,79 +44,72 @@ So commit the `package-lock.json` that the `npm install` above wrote on this
 machine: from then on the build context carries it and every build takes the
 reproducible `npm ci` path.
 
-## Turn on the operator surface
+## Select optional modules
 
-Out of the box this deployment serves the seven-tool MCP surface and a
-read-only operator UI: open `http://localhost:8787/`, paste the bearer, and you
-get Connections. The other three pages are configuration away, and each one is
-a commented block in `src/index.ts` — uncomment it, set the variables it names
-in `.env`, restart. Do them in this order; the last two lean on the first, and
-Credentials wants one thing more than a block, called out in step 2.
+The template explicitly enables `ui: operatorUi()` from
+`@zackbart/connecta/ui`. Open `http://localhost:8787/` and supply the configured
+bearer to inspect Connections. Omit that option and import for an API-only
+server. OAuth callbacks remain in core even with no UI.
 
-**1. Operator sign-in (Clerk).** A bearer token is a client key. It may call
-tools and read connector status, but it may not write a credential or issue an
-access token — that would make one shared secret a deployment-admin key. An
-interactive identity is what unlocks the actionable half:
+Connection management needs an interactive identity. A configured bearer is a
+client key and never authorizes browser credential mutations. To enable Clerk:
 
 ```sh
-npm install @clerk/backend    # optional peer; it does not install with Connecta
+npm install @clerk/backend
 ```
 
-Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, uncomment the `clerkAuth`
-import, the two `process.env.CLERK_*` reads, and the `clerkAuth({ … })` entry in
-`auth`. Enable Dynamic Client Registration on the Clerk instance (OAuth
-Applications → DCR) if MCP clients should sign in through it too, and set
-`PUBLIC_URL` first — Clerk redirects back to it.
+Set `CLERK_PUBLISHABLE_KEY` and `CLERK_SECRET_KEY`, enable the corresponding
+`clerkAuth` import and auth entry in `src/index.ts`, and set `PUBLIC_URL`.
+Enable Dynamic Client Registration on the Clerk instance if MCP clients should
+sign in with OAuth. Connecta no longer issues named client access tokens; keep
+the configured bearer only for clients that need it.
 
-Clerk remains the identity provider when several people share this Docker
-deployment. Uncomment the `identity` block in `src/index.ts` to give each Clerk
-principal a config-derived connector view and to choose operators. Add
-`authScope: "personal"` to a connector when each person should supply their own
-credential or finish their own downstream OAuth flow. Without those options,
-all connectors and auth stay shared exactly as before.
+Set the code-owned identity resolvers deliberately. `connectorAccess` governs
+use; `credentialAdministration` permits shared-auth changes, and
+`personalConnection` permits the signed-in principal's personal-auth changes.
+Both management permissions default to none. Use `authScope: "personal"` for a
+connector where each person should connect their own downstream account.
+`activityAccess` separately selects readers of global activity.
 
-**2. Credential vault.** Uncomment `credentials` and set
+### Credential vault
+
+Import `encryptedCredentialVault` from `@zackbart/connecta/credentials`, then
+set `vault: encryptedCredentialVault(storage, credentialKey)`. Set
 `CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
 
 ```sh
 node -e "console.log(crypto.randomBytes(32).toString('base64'))"
 ```
 
-Every connector that declares a `credential` slot then becomes editable at
-`/credentials`, with values encrypted in the state file. The shipped `time`
-connector declares none — telling the time needs no secret — so the key alone
-leaves the page hidden, which is the honest state for a page with nothing on
-it. Add `credential: { label: "API token" }` to an `api()` connector (the
-commented shape is in `src/index.ts`) and read it in a handler with
-`await ctx.credential?.get()`, or use a provider connector such as `notion()`,
-which declares its own; Credentials appears for a signed-in operator on the
-next restart. Keep the key anywhere
-except that file — it is the only thing standing between a copied state file
-and the secrets in it — and note that losing it makes stored values
-unreadable. A saved replacement takes effect on the next call; nothing
-restarts, and the deployment never probes a credential to see whether it still
-works. It fails at use, loudly, and the agent is routed to `/credentials`.
+Keep this key outside the state file. Losing it makes saved values unreadable;
+upgrades must reuse it. The shipped `time` connector declares no credential
+slot. Add `credential: { label: "API token" }` to an `api()` connector and read
+it through `await ctx.credential?.get()`, or use a provider such as `notion()`
+that declares its own slot. Authorized humans manage the slot inside that
+connection on `/`; there is no separate Credentials tab.
 
-**3. Access tokens.** Uncomment `accessTokens: {}`. A signed-in operator can
-then mint named, revocable Bearer tokens at `/tokens` for header-capable
-clients that will not do OAuth. Secrets are shown once and only their hashes
-are stored, so a lost token is reissued, never recovered.
+A saved replacement takes effect on the next call. Connecta tests credentials
+only on an explicit action and otherwise fails at use. Without a vault or UI,
+static credential recovery reports unavailable instead of offering a dead link.
 
-**4. Activity.** Uncomment the `activity` block and the `fileActivityStore`
-import. `/activity` then answers with who called what, when, how long it took,
-and whether it worked — never arguments, results, generated code, or raw error
-messages, because the store is never handed one. `src/file-activity.ts` is
-yours: it appends a line per call and rewrites the log down to the newest 5,000
-events once it runs a slack window past that, so the file holds a few hundred
-more than the ceiling between rewrites rather than being rewritten on every
-call. That is a retention policy chosen for a single container and worth
-revisiting for anything busier. In Docker the log lands on the same volume as
-the state file.
+### Activity history and diagnostics
 
-None of this changes what agents can reach. Operator pages manage the
-authentication material behind capabilities this file already declares; the
-connector set, the tool catalog, and its annotations are `src/index.ts`'s
-business and stay that way.
+Import `activityHistory` from `@zackbart/connecta/activity` and wire the template's
+`fileActivityStore` through `activity: activityHistory({ store })`. The Activity
+tab appears for authorized readers when the store supports listing. Omit this
+option and its store wiring to record no activity.
+
+`src/file-activity.ts` belongs to the deployment. It appends payload-free events
+and periodically retains the newest 5,000, allowing a small slack window between
+rewrites. Docker stores the log on the state volume. It records no arguments,
+results, generated code, or raw errors. Adjust retention in that file if needed.
+
+Diagnostics are independent. Keep the default logger or provide your own;
+`logger: "silent"` suppresses diagnostic output explicitly.
+
+The UI displays connections and current permissions. Configuration still owns
+the connector set, tool definitions, and access rules. There is no token tab,
+team roster, or policy editor.
 
 ## Deployment contract
 
@@ -153,11 +146,7 @@ Connecta doctor passed: 1 connector(s), QuickJS executed, prescribed seven-tool 
 `QuickJS` is this deployment's sandbox, reported by the deployment itself —
 swap the executor and doctor names the one that actually ran the program.
 
-That is deliberate. Doctor holds a bearer, and a bearer learns the model-facing
-surface, not the deployment's configuration topology: whether this deployment
-issues access tokens or keeps a credential vault is operator data, and a client
-key is not an operator. Confirm the operator surface the way an operator will —
-sign in at `/` and check that the pages you turned on are there: Tokens and
-Activity once their blocks are uncommented, and Credentials once the vault has
-a connector credential slot to show. The nav lists a page only when this
-deployment can serve it, so an absent page is a report, not a fault.
+Doctor verifies the MCP contract. Verify UI behavior separately: sign in at `/`,
+confirm the visible connections and their permitted auth controls, and check
+Activity only when you enabled a readable history store. A missing optional
+feature should not leave a tab behind.

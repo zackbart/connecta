@@ -95,7 +95,7 @@ Use a restricted key, not a secret key, and scope it to the operations the
 agent actually needs; Stripe's own guidance is to "limit your agent's access to
 exactly the functionality it requires". Keep it in the runtime's secret store.
 
-The same key can come from `/credentials` instead:
+The same key can come from the connection UI at `/` instead:
 
 ```ts
 stripe("stripe_sandbox", {

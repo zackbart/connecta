@@ -34,7 +34,9 @@ This repository is deployment configuration, not a copy of Connecta itself.
 - Prefer `api()` when the agent must see an exact reviewed capability set;
   `remoteMcp()` follows the downstream server's evolving tool catalog.
 - Use Access service credentials for `connecta doctor` and unattended clients.
-  A `cta_` token or static Connecta bearer cannot cross the Access edge alone.
+  A configured Connecta bearer cannot cross the Access edge alone. Connecta-issued
+  tokens are removed. UI, vault, and activity use explicit optional imports;
+  auth changes require code-derived shared or personal management permissions.
 - Run the repository's `npm run check:examples` after configuration changes.
   After deployment, connect both Claude and ChatGPT to `<PUBLIC_URL>/mcp` and
   complete their browser authorization flows before calling setup complete.

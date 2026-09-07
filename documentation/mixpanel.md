@@ -50,7 +50,7 @@ password, not ordinary configuration. Mixpanel currently labels service-account
 MCP authentication beta. Prefer OAuth unless the deployment is intentionally
 headless.
 
-The same service account can arrive from `/credentials` instead, and there the
+The same service account can arrive from the connection UI at `/` instead, and there the
 operator pastes the readable pair rather than an encoded blob:
 
 ```ts

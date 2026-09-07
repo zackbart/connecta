@@ -120,96 +120,80 @@ discover the skew in production ([#376](https://github.com/zackbart/connecta/iss
 no Clerk import, secret, package, or fallback provider. Docker deployments keep
 the Clerk path in the Node template.
 
-Then point an MCP client at `<PUBLIC_URL>/mcp`, and open `<PUBLIC_URL>/` for
-Connections. Credentials is at `/credentials`, named MCP access tokens are at
-`/tokens`, Activity is at `/activity`, and legacy `/ui` redirects to `/`. Each
-of those three appears in the nav only when this deployment can serve it — see
-the next section for what turns each one on.
+Then point an MCP client at `<PUBLIC_URL>/mcp`. The example explicitly enables
+`ui: operatorUi()`; open `<PUBLIC_URL>/` for Connections and each connection's
+authentication controls. There is no separate Credentials or Tokens tab.
 
-## The operator surface
+## Select optional modules
 
-This example ships the whole operator feature set. Three quarters of it is on
-as deployed; the fourth needs a database, so it is commented in place.
+`cloudflareAccessAuth()` reads trusted identity after Access admits the Worker
+request. Humans may use their code-derived connector view; service identities
+can use MCP but cannot manage personal or shared auth as an interactive human.
+Keep users, groups, and admission in Access. Connector visibility and management
+permissions belong in `src/index.ts`.
 
-**Operator sign-in** is the `cloudflareAccessAuth()` entry in `src/index.ts`.
-Access authenticates before the Worker runs. A human Access identity can use
-MCP and human-management pages; a service-token identity can use MCP but cannot
-write a credential, run downstream OAuth, or issue a connecta token. Cloudflare
-still owns the outer application admission policy, but Connecta's user roster,
-connector access, and deployment roles stay in `src/index.ts`.
+`identity.connectorAccess` selects discoverable and callable connectors.
+`credentialAdministration` separately allows shared credential and OAuth
+management, while `personalConnection` allows a human to connect their own
+account. Both management permissions default to none. Grant the intended
+owner's shared permissions explicitly, and grant users personal permissions
+only for connectors configured with `authScope: "personal"`. Static headers
+remain deployment configuration. `activityAccess` governs global history reads.
+See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators).
 
-**Several users** need no second auth system or Connecta account dashboard.
-Uncomment the `identity` block in `src/index.ts` to derive connector ids and
-deployment-operator membership from the Access principal. Connectors remain
-visible to everyone and every human remains an operator when that block is
-absent. A signed-in human may edit auth for every connector their view includes.
-Add `authScope: "personal"` when each user should connect a different downstream
-account; leave it shared only when any user with connector access may rotate the
-deployment-wide grant. Static headers stay shared because their value lives in
-deployment configuration. See [inbound identity](../../documentation/auth.md#principals-visibility-and-operators)
-for the resolver contract.
+### UI and encrypted credentials
 
-**The credential vault** is `credentials: { encryptionKey: … }`, backed by the
-same KV namespace as everything else and encrypted with the
-`CREDENTIAL_ENCRYPTION_KEY` secret before a value reaches it. Generate one with:
+Import `operatorUi` from `@zackbart/connecta/ui` and set `ui: operatorUi()`.
+Branding belongs in `operatorUi({ branding })`. Omit the import and option to
+serve no UI routes; OAuth callbacks still work in core for authorized
+interactive MCP callers.
+
+Import `encryptedCredentialVault` from `@zackbart/connecta/credentials` and set
+`vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY)` when
+the secret is configured. Keep this base64 32-byte key in Worker secrets:
 
 ```sh
 node -e "console.log(crypto.randomBytes(32).toString('base64'))"
 ```
 
-Leave the secret unset and the deployment still runs — `/credentials` stays
-read-only and connecta says so at startup. Keep the key in Worker secrets and
-nowhere near KV: it is the only thing that makes a copied namespace useless.
-Rotation takes effect on the next call, with no redeploy and no liveness probe,
-because credentials fail at use.
+Reuse the same key and KV namespace during upgrades. Without the secret, omit
+the vault; declared credential slots remain unmanageable. Keep the key outside
+KV because it protects a copied namespace. Credential replacement takes effect
+on the next call without redeploying; no liveness probe runs in the background.
 
-The vault is ready here, and the Credentials page is still hidden, because that
-page lists connector credential slots rather than deployments. Neither
-connector in `src/index.ts` declares one — Notion carries a deployment-owned
-static header and echo has no secret — so nothing would be on the page. Add
-`credential: { label: "API token" }` to an `api()` connector (the commented
-shape on `echo` is exactly it) or use a provider connector such as `notion()`,
-which declares its own, and Credentials appears for a signed-in operator on the
-next load.
+The shipped Notion connector uses a deployment-owned static header and echo
+needs no secret. To exercise vault controls, declare a `credential` slot on an
+`api()` connector or use a provider such as `notion()` that declares its own.
+Authorized users manage that slot inside the connection. Configuring a vault
+does not create credentials or permissions by itself.
 
-**Access tokens** are `accessTokens: {}`. A signed-in human operator mints named,
-revocable Bearer tokens at `/tokens` for header-capable clients that will not do
-OAuth. Secrets are shown once and only their hashes enter KV; a lost token is
-reissued, never recovered. Note the KV caveat above — revocation is visible
-everywhere only as fast as the namespace converges.
+### Client authentication and activity
 
-Worker-level Access still runs before these tokens. A `cta_…` token therefore
-does not reach connecta by itself; retain the feature as a rollback path or for
-a caller that already supplies separate Access service-token headers. Normal
-interactive MCP clients should use Managed OAuth, and unattended clients should
-use Access service tokens.
+Interactive MCP clients use Access Managed OAuth. Unattended clients use Access
+service tokens when needed. Connecta-issued `cta_` tokens and their management
+routes are removed; a configured Connecta bearer cannot cross the Access edge
+alone. See the [migration guide](../../documentation/upgrading.md#unreleased-optional-modules)
+if an older deployment still issues tokens.
 
-**Activity** is the commented block in `src/index.ts` and the commented
-`d1_databases` binding in `wrangler.jsonc`; the section below creates the
-database and applies the schema.
+Activity uses `activityHistory({ store: d1ActivityStore(env.ACTIVITY_DB) })`
+from `@zackbart/connecta/activity`. Enable the database and bindings described
+below. Omit the module and store wiring to record no history and show no
+Activity tab. Diagnostics remain independent; `logger: "silent"` suppresses
+them explicitly.
 
-None of these change what agents can reach. Operator routes manage the
-authentication material behind capabilities `src/index.ts` already declares —
-never the connector set, the tool catalog, or its annotations.
-
-`connecta doctor` reports the same line here as for a deployment with none of
-this on: connector count, executor, seven tools. The executor it names is this
-one — `DynamicWorkerExecutor executed`, not the Node template's QuickJS, which
-is what doctor used to claim everywhere
-([#368](https://github.com/zackbart/connecta/issues/368)). Against Access it
-carries `CF_ACCESS_CLIENT_ID` and `CF_ACCESS_CLIENT_SECRET`, and the service
-identity learns the model-facing surface rather than deployment topology:
+Verify MCP health and the exact seven tools with:
 
 ```sh
 CF_ACCESS_CLIENT_ID=… CF_ACCESS_CLIENT_SECRET=… \
   npx connecta doctor --url "$PUBLIC_URL"
 ```
 
-Confirm the operator surface the way an operator will: sign in at
-`<PUBLIC_URL>/` and check that Tokens is live. Credentials joins it
-once a connector declares a `credential` slot, and Activity once the D1 wiring
-below is on — the nav shows a page when the deployment can actually serve it,
-so a missing page is the honest report that its half is still off.
+Doctor reports the configured `DynamicWorkerExecutor`, not a presumed Node
+executor. Verify the UI separately as a human: check visible connections,
+explicit shared and personal auth permissions, and Activity only when enabled.
+The configured list loads before live connector checks; a slow provider must
+not prevent other connections from appearing. All capability and access changes
+still require a deployment-code change.
 
 ## Code mode
 
@@ -295,19 +279,19 @@ To enable it:
    the failure and returns the tool result unharmed — so the symptom is not an
    error your agent sees, it is an activity log that quietly stops recording.
 
-3. In `src/index.ts`, uncomment the `d1ActivityStore` import, the `ACTIVITY_DB`
-   field on `Env`, and the `activity` block — the three commented fragments
-   that together read:
+3. In `src/index.ts`, enable the `activityHistory` and `d1ActivityStore` imports,
+   the `ACTIVITY_DB` field on `Env`, and the `activity` option:
 
    ```ts
+   import { activityHistory } from "@zackbart/connecta/activity";
    import { d1ActivityStore } from "./d1-activity.js";
 
    createConnecta({
      // …
-     activity: {
+     activity: activityHistory({
        store: d1ActivityStore(env.ACTIVITY_DB),
        deploymentId: "production",
-     },
+     }),
    });
    ```
 

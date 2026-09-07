@@ -66,19 +66,17 @@ read top to bottom.
 | --- | --- | --- |
 | 0 | HTTPS upgrade | 308 to `publicUrl` when it is HTTPS and the request arrived over HTTP. Path and query are *assigned* onto the configured URL, never resolved against it, so a `//host` pathname cannot replace the deployment origin. `/health` is exempt: a loopback container probe must not depend on public DNS and TLS. `/ui` is canonicalized to `/` while upgrading. |
 | 0 | Cloudflare Access (Worker deployment, when enabled) | Edge admission before this route table. Managed OAuth owns its challenge and discovery metadata; an admitted direct invocation carries trusted identity in `ctx.access`. |
-| 1 | `/ui/access-tokens[/<id>]`, `/ui/credentials/<id>[/<action>]`, `/ui/oauth/<id>` | Private mutation routes, matched **first** so nothing can shadow them and so they own their own `OPTIONS` — they answer it with a refusal rather than inheriting the wildcard CORS preflight. |
-| 2 | `OPTIONS` | Each auth provider's `handleMetadata` gets a chance (CORS preflight for browser MCP clients); otherwise 204 with MCP CORS. |
-| 3 | `/.well-known/*` | Auth providers' `handleMetadata`, open. 404 when none handles it. |
-| 4 | `/health` | Open JSON: status, connector count, `serverInfo`, the configured executor's sanitized name when it has one, catalog-drift counts, admission snapshots, reserved route names, and `deployment` when `deploymentInfo` is set. Payload-free by construction, and it never joins the MCP queue. |
-| 5 | `/oauth/callback/<connectorId>` | Downstream-OAuth completion, open, `verifyState` before `finishAuth`. Personal flows first resolve the short-lived state hash to the principal partition. |
-| 6 | `/favicon.*`, `/ui` → `/`, the operator shells, `/ui/data` | The operator surface ([operator UI](./operator-ui.md)). The shells are open and data-free; `/ui/data` behind them is gated. |
-| 7 | `/ui/activity` | Gated, plus the optional `activity.readGate`. `GET` only; 404 with no `activity.store.list`. |
-| 8 | `/mcp` | **Admission before auth**, then the auth gate, then a fresh MCP server. |
-| 9 | — | 404. Custom HTTP routes belong to the deployment. |
+| 1 | Mounted UI routes | The optional UI handles its shells, assets, data, details, and auth mutations before wildcard OPTIONS. Mutation routes refuse preflight rather than inheriting MCP CORS. No UI module means none of these routes. |
+| 2 | `OPTIONS` | Auth metadata gets a chance, otherwise MCP CORS preflight. |
+| 3 | `/.well-known/*` | Auth metadata, or 404. |
+| 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; reserved routes reflect installed modules. |
+| 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state verification and personal ownership checks; independent of UI. |
+| 6 | `/mcp` | Admission before auth, then a request-local MCP server. |
+| 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
+
 
 Every response leaves through `withSecurityHeaders`: `nosniff`, a no-referrer
-policy, HSTS on HTTPS, and — on the operator shells — a nonce-based script CSP
-and framing denial. `test/server-route-contracts.test.ts` pins this ordering
+policy, HSTS on HTTPS, while the UI module adds a nonce-based script CSP and framing denial to its shells. `test/server-route-contracts.test.ts` pins this ordering
 and the exact refusal bodies; it exists because the ordering is invisible in
 any one file and a reordering reads like a harmless refactor.
 
@@ -125,6 +123,19 @@ read-only check. `test/execute.test.ts` asserts that parity directly, because
 the alternative — a sandbox path that quietly diverges — is how generated code
 would mint a capability.
 
+## Optional deployment modules
+
+`createConnecta` takes closed typed `ui`, `vault`, and `activity` slots. Factories
+live at `/ui`, `/credentials`, and `/activity`; bearer auth lives at
+`/auth/bearer`. Root exports the contracts, never these implementations. There
+is no module array, runtime registration, or plugin lifecycle.
+
+Core keeps connector discovery, the executor contract, invocation, permissions,
+and OAuth callback verification together. Optional modules contribute no
+runtime work when omitted. The UI supplies credential handoff URLs only while
+mounted. Status reads never initiate OAuth, and each lazy details request owns
+its downstream scope. See [operator UI](./operator-ui.md).
+
 ## Import-graph purity
 
 Nothing reachable from `src/index.ts` may import a `node:` builtin. The core is
@@ -142,8 +153,8 @@ specific to a direct Worker invocation carrying `ctx.access`.
 
 `test/purity.test.ts` walks the relative-import graph from `src/index.ts` and
 fails on (a) any `node:` specifier in a reachable file and (b) the Node
-adapter, file storage, QuickJS parent or child, or the Clerk adapter being
-reachable at all. `test/package-surface.test.ts` and
+adapter, file storage, QuickJS parent or child, auth adapters, UI bundle,
+encrypted vault implementation, or activity implementation being reachable at all. `test/package-surface.test.ts` and
 `scripts/check-package.mjs` guard the other half — that the published tarball
 matches the same boundary.
 
@@ -169,8 +180,7 @@ src/
   invocation.ts       one tool call, end to end
   catalog-drift.ts    vetted manifests and the counts a refresh produces
   credentials.ts      the AES-GCM connector vault over KVStorage
-  access-tokens.ts    operator-issued MCP bearer tokens
-  activity.ts         payload-free event contracts + best-effort recorder
+  activity.ts         optional history factory and best-effort recorder
   call-admission.ts   connector-partitioned downstream permits and budgets
   executor-admission.ts  the portable bounded queue both pools use
   ui.ts               the served operator shell and /ui/data payload
@@ -199,8 +209,7 @@ src/
   the connector limiters, then the executor. Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
-  invalid admission rule, `accessTokens` without an interactive operator provider, a missing
-  executor: all refuse to boot. A deployment that starts in the wrong shape is
+  invalid admission rule, removed `accessTokens` option, or missing executor: all refuse to boot. A deployment that starts in the wrong shape is
   worse than one that does not start.
 
 ## Tests that enforce this

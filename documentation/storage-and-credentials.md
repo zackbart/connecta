@@ -1,39 +1,59 @@
 # Storage and credentials
 
-The core `KVStorage` seam supports `get`, `set`, and `delete`; adapters may also
-implement `list(prefix)`. Named access tokens require listing because every
-token is an independent record rather than one shared, race-prone manifest.
-The built-in memory and file adapters implement it, as does the Cloudflare KV
-example.
+The core `KVStorage` contract supports `get`, `set`, and `delete`; adapters may
+also implement `list(prefix)`. Core uses storage for connector state, catalogs,
+and result paging. The vault is an explicit independent option:
 
-Connectors may declare a human-managed `credential` slot. When
-`credentials.encryptionKey` is configured, Connecta encrypts values in the
-deployment storage and exposes read-only access only through that connector's
-`ctx.credential`. Values, masked values, call arguments, and raw errors never
-enter model-facing recovery responses or activity records.
+```ts
+import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
 
-Proactive credential liveness probing was **removed in 0.9** by ethos decision
-([#179](https://github.com/zackbart/connecta/issues/179)). The vault, local
-credential-shape drift detection, and operator-triggered credential tests remain.
+createConnecta({
+  connectors,
+  executor,
+  storage,
+  vault: encryptedCredentialVault(storage, encryptionKey),
+});
+```
 
-Credentials fail at use. A typed `auth_required` response directs the agent to
-`authorize_connector`, which returns one of the recovery modes documented in
-[meta-tools](./meta-tools.md#authorization-recovery). A declared slot with a
-configured vault returns a secret-free `/credentials` handoff. A missing vault
-returns `recovery: "unavailable"` and names `credentials.encryptionKey`;
-Connecta also warns at startup.
+`encryptionKey` is a base64 32-byte AES key. The factory implements the
+root-exported `CredentialVault` contract. Core depends on the contract without
+importing the encrypted implementation; deployments may supply their own.
+A replacement must isolate both connector id and optional owner, preserve
+metadata-only reads for the UI, and keep plaintext confined to host credential
+resolution. The built-in AES-GCM implementation binds connector and owner into
+authenticated encryption context. Sharing a backend is not permission to share
+a principal's credentials.
 
-Credential mutation is intentionally narrower than MCP access:
+Connectors declare a human-managed `credential` slot in code. The vault exposes
+read access only through that connector's `ctx.credential`. Values, masked
+values, call arguments, and raw errors never enter model recovery or activity.
+Omitting the vault leaves literal deployment-provided secrets and downstream
+OAuth available, but declared vault slots cannot be managed.
 
-- a static bearer may call tools and receive the operator handoff, but it
-  cannot write credentials;
-- an admitted interactive human may mutate credentials for every visible
-  connector: their own partition for personal auth, or the deployment-wide
-  value for shared auth; and
-- saving, replacing, testing, or removing a value never returns that value.
+Credentials fail at use. Proactive liveness probing remains removed by
+[the 0.9 decision](../ethos.md). Operator-triggered tests and local credential
+shape checks remain. `authorize_connector` returns a human credential handoff
+only when both a vault and the UI are configured. Without either, recovery is
+`unavailable` and explains the missing configuration.
 
-The vault is read for each call. Once a signed-in human saves a replacement,
-the agent can retry immediately without restarting or redeploying Connecta.
+A static bearer may invoke a connector but never mutate its auth as a browser
+user. Interactive users need visibility plus `credentialAdministration` for
+shared auth or `personalConnection` for their own personal auth. Both management
+permissions default to none. Saving, testing, replacing, or removing a value
+never returns it. The vault is read for each call, so a saved replacement takes
+effect without restarting the deployment.
+
+## Storage continuity
+
+This module extraction changes no encrypted record keys, owner partitions, or
+OAuth storage format. Reuse the existing storage and encryption key when
+constructing `encryptedCredentialVault`. Keep connector ids, principal ids, and
+identity namespaces unchanged. Losing the encryption key makes old vault
+values unreadable; changing identity context selects another personal partition.
+
+Removed Connecta-issued token records remain inert in storage. This upgrade
+does not delete them, convert them to another credential, or migrate their
+clients automatically.
 
 ## Shared and personal auth
 
@@ -54,8 +74,7 @@ Personal connectors disappear from a request that has no stable human
 principal. For a principal that can see one, connecta partitions connector
 storage, encrypted vault records, catalog caches, OAuth generations, and
 observed result shapes under an opaque SHA-256 identity key. Results used by
-`get_result` are partitioned by the authenticated subject, so one token cannot
-page another token's call even when both tokens belong to the same principal.
+`get_result` are partitioned by the authenticated subject, so one authenticated subject cannot page another subject's call.
 
 Literal `auth: { type: "headers" }` cannot be personal because its secret lives
 in deployment code. `remoteMcp()` refuses that combination at construction.
@@ -73,7 +92,7 @@ remoteMcp("revenuecat_bepresent", {
 ```
 
 The connector, its endpoint, and the credential *slot* stay declared in code;
-only the secret arrives through `/credentials`. That is the same boundary
+only the secret arrives through the connection UI at `/`. That is the same boundary
 `api()` has always had, and the reason a project-wide key no longer has to be a
 Worker secret or an environment variable
 ([#439](https://github.com/zackbart/connecta/issues/439)).
@@ -99,8 +118,8 @@ redaction that keeps part of a secret is still a leak.
 An empty slot is not a boot failure and not a silently absent connector. The
 connector is present, its status reads `auth_required`, calls fail with the same
 typed error a missing OAuth grant produces, and `authorize_connector` returns
-the `/credentials` handoff. With no vault configured at all, the failure names
-`credentials.encryptionKey`, and Connecta already warned at startup.
+a connection UI handoff at `/` when UI and vault are configured. Without either,
+it returns `unavailable` and explains what is missing.
 
 The vault is read before any cached downstream client is trusted, so a rotation
 lands on the next call rather than the next deploy. Connecta compares a SHA-256
@@ -111,7 +130,7 @@ message. A cleartext `http://` destination warns at construction here exactly as
 it does for literal headers — who owns the secret changed, not what the wire
 carries.
 
-`/credentials`' Test action connects with the stored value and reports how many
+The connection UI Test action connects with the stored value and reports how many
 tools the downstream served. That is the whole honest check for a proxy: which
 account, project, or mode the key reaches is the provider's answer, not
 Connecta's.
