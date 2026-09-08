@@ -294,7 +294,27 @@ export class InvocationService {
     };
     const failed = (error: CallErrorDetails): InvocationOutcome<T> => {
       const diagnostics = timing();
-      const details = enrich(error, resolved ?? activityTarget);
+      const target = resolved ?? activityTarget;
+      const details = enrich(error, target);
+      // Activity rows stay payload-free by construction; the operator's log is
+      // where the downstream reason goes, bounded and without arguments.
+      if (target && details.code !== "destructive_tool_requires_approval") {
+        this.registry
+          .contextFor(
+            target.connector.id,
+            this.catalog.baseUrl,
+            this.catalog.requestScope,
+          )
+          .logger.warn("[connecta] call failed", {
+            connector: target.connector.id,
+            tool: target.toolName,
+            source: context.source,
+            code: details.code,
+            attempts,
+            durationMs: Date.now() - started,
+            message: String(details.message ?? "").slice(0, 300),
+          });
+      }
       record(
         details.code === "timeout"
           ? "timeout"

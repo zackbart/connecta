@@ -262,6 +262,12 @@ async function serveMcp(
       ...(opts.maxEmittedBlocks !== undefined
         ? { maxEmittedBlocks: opts.maxEmittedBlocks }
         : {}),
+      ...(opts.maxHostCalls !== undefined
+        ? { maxHostCalls: opts.maxHostCalls }
+        : {}),
+      ...(opts.hostCallTimeoutMs !== undefined
+        ? { hostCallTimeoutMs: opts.hostCallTimeoutMs }
+        : {}),
     });
     return server;
   };

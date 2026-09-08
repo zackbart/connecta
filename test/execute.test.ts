@@ -1008,6 +1008,65 @@ describe("buildSandboxProviders", () => {
   });
 });
 
+describe("execute_code host-call limits from configuration", () => {
+  it("honors a configured host-call deadline through the handler", async () => {
+    const never = new Promise<never>(() => {});
+    const slow: Connector = connectorWith({
+      id: "slow",
+      kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => never,
+    });
+    const executor: Executor = {
+      execute: async (_code, providers) => {
+        try {
+          return { result: await callCanonical(providers, "slow", "read") };
+        } catch (err) {
+          return { result: { failed: (err as Error).message } };
+        }
+      },
+    };
+    const out = await createExecuteTool(
+      makeRegistry([slow]),
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      { hostCallTimeoutMs: 10 },
+    )({ code: "async () => null" });
+    expect(required(out.content[0]).text).toContain("timed out after 10ms");
+  });
+
+  it("honors a configured host-call budget through the handler", async () => {
+    let calls = 0;
+    const executor: Executor = {
+      execute: async (_code, providers) => {
+        const outcomes: string[] = [];
+        for (let i = 0; i < 3; i++) {
+          try {
+            await callCanonical(providers, "calc", "add", { a: 1, b: 1 });
+            calls++;
+            outcomes.push("ok");
+          } catch (err) {
+            outcomes.push((err as Error).message);
+          }
+        }
+        return { result: outcomes };
+      },
+    };
+    const out = await createExecuteTool(
+      makeRegistry([calcConnector]),
+      BASE,
+      executor,
+      silentLogger,
+      undefined,
+      { maxHostCalls: 2 },
+    )({ code: "async () => null" });
+    expect(calls).toBe(2);
+    expect(required(out.content[0]).text).toContain("2 calls maximum");
+  });
+});
+
 describe("MCP and code-mode invocation parity", () => {
   async function failuresFor(
     connector: Connector,

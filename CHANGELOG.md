@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## 0.24.1 — 2026-09-08
+
+### Added
+
+- `execute.maxHostCalls` and `execute.hostCallTimeoutMs` configure the
+  `execute_code` host-call budget and per-call deadline, previously fixed at
+  20 calls and 15 seconds. The tool description advertises the configured
+  values. Analytics providers such as Mixpanel routinely need 15 to 35 seconds
+  for funnel and experiment queries.
+- A `warn` log line for every failed connector call, carrying the connector,
+  tool, source, error code, attempts, duration, and a bounded downstream
+  message. Activity rows remain payload-free; the log is where the reason goes.
+
 ## 0.24.0 — 2026-09-07
 
 Deployments now select UI, encrypted credentials, activity history, and inbound

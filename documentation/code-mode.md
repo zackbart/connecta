@@ -302,7 +302,7 @@ Program-authored errors stay untyped, and code must never parse error prose.
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
 | `unavailable` | the downstream is down or unreachable | true |
-| `timeout` | the per-call 15-second deadline expired | true |
+| `timeout` | the per-call deadline (`execute.hostCallTimeoutMs`, default 15 s) expired | true |
 | `cancelled` | the run ended while this call was in flight (`E5`) | false |
 | `connector_call_failed` | anything else the connector threw | per message |
 | `catalog_lookup_failed` | the connector's catalog could not be loaded | per cause |
@@ -492,7 +492,7 @@ because connecta enforces them above the sandbox:
 | Bound | Value |
 | --- | --- |
 | Host calls per execution | 20 |
-| Deadline per host call | 15 s |
+| Deadline per host call | 15 s, `execute.hostCallTimeoutMs` |
 | Discovery page | ≤ 100 tools, ≤ 256,000 serialized bytes |
 | `describe` addresses | ≤ 100 |
 | `describe` nearby suggestions | ≤ 3 canonical addresses per failed entry |

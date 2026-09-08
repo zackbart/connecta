@@ -53,6 +53,8 @@ describe("ConnectaConfig boundary", () => {
       execute: {
         maxEmittedBytes: 1_000,
         maxEmittedBlocks: 2,
+        maxHostCalls: 5,
+        hostCallTimeoutMs: 2_000,
       },
       admission: {
         requests: {

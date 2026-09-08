@@ -249,8 +249,8 @@ export class EmitCollector {
 
 }
 
-/** A configured emit budget must be a finite number >= 1; anything else falls back. */
-function resolveEmitBudget(
+/** A positive whole-number budget, or the default when the value is unusable. */
+function resolveBudget(
   value: number | undefined,
   fallback: number,
 ): number {
@@ -549,6 +549,8 @@ export function createExecuteTool(
     probeTimeoutMs?: number | undefined;
     maxEmittedBytes?: number | undefined;
     maxEmittedBlocks?: number | undefined;
+    maxHostCalls?: number | undefined;
+    hostCallTimeoutMs?: number | undefined;
     defer?: DeferredWork | undefined;
   } = {},
 ) {
@@ -569,8 +571,8 @@ export function createExecuteTool(
     let outcome;
     const diagnostics = diagnosticsRequested ? new ExecuteDiagnostics() : undefined;
     const emitted = new EmitCollector(
-      resolveEmitBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
-      resolveEmitBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
+      resolveBudget(config.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
+      resolveBudget(config.maxEmittedBlocks, EXECUTE_MAX_EMITTED_BLOCKS),
       diagnostics,
     );
     const invocationFailures: InvocationFailure[] = [];
@@ -609,6 +611,8 @@ export function createExecuteTool(
             ...(diagnostics ? { diagnostics } : {}),
             discoveryConcurrency: config.discoveryConcurrency,
             probeTimeoutMs: config.probeTimeoutMs,
+            maxHostCalls: config.maxHostCalls,
+            hostCallTimeoutMs: config.hostCallTimeoutMs,
             defer: config.defer,
           },
         );
@@ -843,9 +847,10 @@ function connectorInventory(
 
 const executeDescription = (
   emitBudgets: { maxBytes: number; maxBlocks: number },
+  hostLimits: { maxHostCalls: number; hostCallTimeoutMs: number },
   connectorGuides: boolean,
   connectors: ReturnType<RegistryView["listConnectors"]>,
-) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools are available. Limits: ${EXECUTE_MAX_HOST_CALLS} host calls, ${EXECUTE_HOST_CALL_TIMEOUT_MS / 1_000}s/host call.
+) => `Use the configured services below to answer the task. A known address uses call_tool. Unknown-address and wider read-only work uses one execute_code program for discovery, calls, and reduction. Do not return catalog matches alone. Only readOnlyHint: true tools are available. Limits: ${hostLimits.maxHostCalls} host calls, ${hostLimits.hostCallTimeoutMs / 1_000}s/host call.
 
 ${connectorInventory(connectors)}
 
@@ -881,16 +886,29 @@ export function registerExecuteTool(
     maxEmittedBytes?: number | undefined;
     /** Block-count budget for connecta.emit. Default 32. */
     maxEmittedBlocks?: number | undefined;
+    /** Host calls one program may make. Default 20. */
+    maxHostCalls?: number | undefined;
+    /** Deadline per host call in milliseconds. Default 15_000. */
+    hostCallTimeoutMs?: number | undefined;
     defer?: DeferredWork | undefined;
   },
 ): void {
   // Resolved once so the description and the collector cannot disagree about
   // the budgets this deployment actually enforces.
   const emitBudgets = {
-    maxBytes: resolveEmitBudget(ctx.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
-    maxBlocks: resolveEmitBudget(
+    maxBytes: resolveBudget(ctx.maxEmittedBytes, EXECUTE_MAX_EMITTED_BYTES),
+    maxBlocks: resolveBudget(
       ctx.maxEmittedBlocks,
       EXECUTE_MAX_EMITTED_BLOCKS,
+    ),
+  };
+  // Same rule for host-call limits: the description advertises exactly what
+  // the sandbox enforces, so a raised deadline is visible to the model.
+  const hostLimits = {
+    maxHostCalls: resolveBudget(ctx.maxHostCalls, EXECUTE_MAX_HOST_CALLS),
+    hostCallTimeoutMs: resolveBudget(
+      ctx.hostCallTimeoutMs,
+      EXECUTE_HOST_CALL_TIMEOUT_MS,
     ),
   };
   const connectors = registry.listConnectors();
@@ -905,6 +923,8 @@ export function registerExecuteTool(
       probeTimeoutMs: ctx.probeTimeoutMs,
       maxEmittedBytes: emitBudgets.maxBytes,
       maxEmittedBlocks: emitBudgets.maxBlocks,
+      maxHostCalls: hostLimits.maxHostCalls,
+      hostCallTimeoutMs: hostLimits.hostCallTimeoutMs,
       defer: ctx.defer,
     },
   );
@@ -913,6 +933,7 @@ export function registerExecuteTool(
     {
       description: executeDescription(
         emitBudgets,
+        hostLimits,
         hasConnectorGuides(connectors),
         connectors,
       ),

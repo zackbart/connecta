@@ -19,6 +19,7 @@ export const WORKERS_SUITES = [
   "test/code-first-surface.test.ts",
   "test/codemode-compat.test.ts",
   "test/config.test.ts",
+  "test/invocation-log.test.ts",
   "test/optional-modules.test.ts",
   "test/credentials.test.ts",
   "test/d1-activity-example.test.ts",
