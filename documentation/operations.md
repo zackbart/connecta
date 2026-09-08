@@ -101,6 +101,8 @@ optional.
 | `calls.maxResultBytes?` | 50_000 | inline result cap before truncation and `get_result` paging; a connector may override it. Invalid values warn and fall back |
 | `execute.maxEmittedBytes?` | 4_000_000 | aggregate `connecta.emit` bytes per run — a transport bound, not a context bound |
 | `execute.maxEmittedBlocks?` | 32 | content blocks `connecta.emit` accepts per run |
+| `execute.maxHostCalls?` | 20 | connector calls one `execute_code` program may make |
+| `execute.hostCallTimeoutMs?` | 15_000 | deadline per `execute_code` host call; raise it for providers whose legitimate calls run longer. `call_tool`'s `timeoutMs` is separate |
 | `admission.requests?` | 16 active / 32 queued / 5 s / 1 s | global FIFO `/mcp` capacity, taken before auth ([request admission](./request-admission.md)) |
 | `admission.code?` | 2 active / 8 queued / 5 s / 1 s | fallback pool for an executor that owns no `acquire()`; ignored with a warning when it does |
 

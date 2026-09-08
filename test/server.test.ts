@@ -1619,6 +1619,36 @@ describe("clerk metadata routes (no network)", () => {
 });
 
 describe("execute_code registration (code mode)", () => {
+  it("advertises the host-call limits the sandbox enforces", async () => {
+    async function executeDescription(
+      execute?: { maxHostCalls?: number; hostCallTimeoutMs?: number },
+    ): Promise<string> {
+      const connecta = createTestConnecta({
+        connectors: [calcApi()],
+        auth: bearerToken(TOKEN),
+        storage: memoryStorage(),
+        publicUrl: BASE,
+        ...(execute ? { execute } : {}),
+      });
+      const listed = await readJsonRpc(
+        await mcpRpc(connecta, "tools/list", {}, { token: TOKEN }),
+      );
+      return listed.result.tools.find(
+        (tool: { name: string }) => tool.name === "execute_code",
+      ).description as string;
+    }
+    expect(await executeDescription()).toContain(
+      "Limits: 20 host calls, 15s/host call.",
+    );
+    expect(
+      await executeDescription({ maxHostCalls: 7, hostCallTimeoutMs: 45_000 }),
+    ).toContain("Limits: 7 host calls, 45s/host call.");
+    // Unusable values fall back rather than advertise a limit nobody enforces.
+    expect(
+      await executeDescription({ maxHostCalls: 0, hostCallTimeoutMs: Number.NaN }),
+    ).toContain("Limits: 20 host calls, 15s/host call.");
+  });
+
   it("advertises and runs execute_code on the seven-tool surface", async () => {
     let executions = 0;
     const withExec = createTestConnecta({

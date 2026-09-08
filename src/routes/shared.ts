@@ -40,6 +40,10 @@ export interface ServerOptions {
   maxEmittedBytes?: number | undefined;
   /** Block-count budget for connecta.emit per run. Default 32. */
   maxEmittedBlocks?: number | undefined;
+  /** Host calls one execute_code program may make. Default 20. */
+  maxHostCalls?: number | undefined;
+  /** Deadline per execute_code host call. Default 15_000. */
+  hostCallTimeoutMs?: number | undefined;
   /** Required sandbox backing the execute_code meta-tool. */
   executor: Executor;
   /** Sanitized identity of the configured sandbox, when it has one. */

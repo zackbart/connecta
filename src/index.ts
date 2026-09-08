@@ -79,7 +79,7 @@ export interface ConnectaCallsConfig {
   maxResultBytes?: number;
 }
 
-/** Budgets for rich output emitted by execute_code programs (`connecta.emit`). */
+/** Budgets for execute_code programs: host calls and rich output (`connecta.emit`). */
 export interface ConnectaExecuteConfig {
   /**
    * Aggregate serialized bytes `connecta.emit` accepts per run. Default
@@ -90,6 +90,18 @@ export interface ConnectaExecuteConfig {
   maxEmittedBytes?: number;
   /** Content blocks `connecta.emit` accepts per run. Default 32. */
   maxEmittedBlocks?: number;
+  /**
+   * Host calls one program may make. Default 20. Invalid values fall back to
+   * the default.
+   */
+  maxHostCalls?: number;
+  /**
+   * Deadline for each host call a program makes, in milliseconds. Default
+   * 15_000. Raise it for providers whose legitimate calls run longer, such as
+   * analytics queries; `call_tool`'s own `timeoutMs` is unaffected. Invalid
+   * values fall back to the default.
+   */
+  hostCallTimeoutMs?: number;
 }
 
 export interface AdmissionPoolConfig {
@@ -290,6 +302,8 @@ const CONFIG_SCHEMA = {
   execute: {
     maxEmittedBytes: null,
     maxEmittedBlocks: null,
+    maxHostCalls: null,
+    hostCallTimeoutMs: null,
   } satisfies ClosedOptionSchema<ConnectaExecuteConfig>,
   admission: {
     requests: admissionPoolSchema,
@@ -570,6 +584,8 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     discoveryConcurrency: config.discovery?.concurrency,
     maxEmittedBytes: config.execute?.maxEmittedBytes,
     maxEmittedBlocks: config.execute?.maxEmittedBlocks,
+    maxHostCalls: config.execute?.maxHostCalls,
+    hostCallTimeoutMs: config.execute?.hostCallTimeoutMs,
     credentialVault,
     ui: config.ui,
     deploymentInfo: config.deploymentInfo,

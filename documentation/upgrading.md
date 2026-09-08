@@ -117,7 +117,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.24.0 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.24.1 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -190,7 +190,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.24.0 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.24.1 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -246,7 +246,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.24.0 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.24.1 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -267,11 +267,15 @@ first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
 
-### 0.23.0 → 0.24.0
+### 0.23.0 → 0.24.1
 
 Use the [optional-module migration](./optional-modules-upgrade.md) to select
 modules, grant auth-management permissions, and migrate issued-token clients.
-Preserve storage, encryption keys, and identity namespaces.
+Preserve storage, encryption keys, and identity namespaces. 0.24.1 adds two
+optional settings, `execute.maxHostCalls` and `execute.hostCallTimeoutMs`, for
+deployments whose providers legitimately run past the 20-call and 15-second
+`execute_code` defaults, and one bounded `warn` log line per failed connector
+call; neither needs migration.
 
 ### 0.22.3 → 0.23.0
 
