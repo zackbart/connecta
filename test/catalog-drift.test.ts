@@ -594,3 +594,23 @@ describe("the drift types are on the public surface", () => {
     ]);
   });
 });
+
+it("bounds canonicalization depth for deeply nested downstream schemas", async () => {
+  const deepSchema = (leaf: string) => {
+    let schema: Record<string, unknown> = { type: leaf };
+    for (let depth = 0; depth < 10_000; depth += 1) {
+      schema = { items: schema };
+    }
+    return schema;
+  };
+  const first = await vettedSchemaDigest({
+    name: "deep", inputSchema: deepSchema("string"),
+  });
+  expect(first).toMatch(/^sha256:[a-f0-9]{64}$/);
+  expect(await vettedSchemaDigest({
+    name: "deep", inputSchema: deepSchema("number"),
+  })).toBe(first);
+  expect(await vettedSchemaDigest({
+    name: "deep", inputSchema: { type: "number" },
+  })).not.toBe(first);
+});

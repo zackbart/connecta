@@ -1,5 +1,5 @@
 import { Validator } from "@cfworker/json-schema";
-import { ConnectorCallError } from "./errors.js";
+import { boundedEchoText, ConnectorCallError } from "./errors.js";
 import type {
   ArgumentValidationDetails,
   ArgumentValidationIssue,
@@ -353,12 +353,15 @@ export function validateToolInput(
   if (result && !result.valid) {
     const units = normalizedValidationUnits(schema, result.errors);
     const nestedUnits = units.filter((unit) => unit.instanceLocation !== "#");
-    const detail = (nestedUnits.length > 0 ? nestedUnits : units)
-      .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
-      .map((unit) =>
-        `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
-      )
-      .join("; ");
+    const detail = boundedEchoText(
+      (nestedUnits.length > 0 ? nestedUnits : units)
+        .slice(0, MAX_ARGUMENT_VALIDATION_ISSUES)
+        .map((unit) =>
+          `${unit.instanceLocation}: ${agentFacingValidationError(unit)}`,
+        )
+        .join("; "),
+      256,
+    );
     return new ConnectorCallError(
       "invalid_args",
       `Invalid arguments for "${opts.address}": ${detail || "input does not match the tool's inputSchema"}`,
