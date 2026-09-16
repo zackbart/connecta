@@ -276,6 +276,12 @@ open CORS); clients that send no `Origin`, which is every server-side and CLI
 client, are unaffected. The overload and shutdown JSON-RPC error codes moved
 from `-32001`/`-32002` to `-31001`/`-31002`; the `data.code` strings are
 unchanged. See [request admission](./request-admission.md#origin-before-admission).
+`fileStorage` now holds an exclusive lock on its state file: a second process
+opening the same file fails at construction, so a deployment that shared one
+file between two processes must give each its own. The returned store gained
+`close()`. `get_result` stashes are bounded per runtime by the new `results`
+config (8 MiB and 64 entries by default) and partitioned by any authenticated
+subject, not only by providers that declare an activity namespace.
 
 Use the [optional-module migration](./optional-modules-upgrade.md) to select
 modules, grant auth-management permissions, and migrate issued-token clients.

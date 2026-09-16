@@ -11,7 +11,9 @@ deployment: `/mcp` now validates the browser `Origin` header, so a browser MCP
 client hosted on an origin other than `publicUrl` or loopback needs
 `allowedOrigins`; and the overload and shutdown JSON-RPC error codes moved
 from `-32001`/`-32002` to `-31001`/`-31002`. Everything else is a fix a
-deployment can take without action. No storage format changed.
+deployment can take without action. No storage format changed, but
+`fileStorage` now refuses a second process on the same state file, which a
+deployment sharing one file between two processes was never safe doing.
 
 ### Added
 
@@ -40,6 +42,30 @@ deployment can take without action. No storage format changed.
 - `records/mcp-2026-07-28.md` gains rows for Origin validation, deterministic
   `tools/list` order, the bearer challenge, SEP-2243 parameter headers, and
   trace propagation, and corrects the stale extensions row.
+- **Bounded `get_result` stash.** `results.maxStashBytes` (default 8 MiB)
+  and `results.maxStashEntries` (default 64) bound the paging stash per
+  runtime, with accounting that reserves capacity before concurrent writes
+  finish and reclaims expired entries before reuse. A refused stash keeps the
+  call successful with its preview and the paging-unavailable notice.
+- **Byte-range paging.** Stashed results are stored as a byte-addressable
+  envelope, so `get_result` decodes only the requested page instead of
+  re-encoding the whole result on every call. Entries stashed before the
+  upgrade still page until their TTL expires.
+- **Identity-partitioned results.** The stash partition derives from any
+  authenticated subject or principal, no longer only from providers that
+  declare `activityActorNamespace`. Open deployments share one partition.
+- **Sanitized `unavailable` detail.** Unreachable downstreams may carry
+  `details.host` (origin only) and `details.code` (a closed allowlist of
+  network errnos, or `timeout`) so an outage is distinguishable from a typo
+  without leaking a path, query, or credential. Activity stays payload-free.
+- **`fileStorage` writer lock.** A second instance or process opening the
+  same state file fails at construction naming the holder. The lock is
+  heartbeat-based, so a container restart that reuses a pid cannot wedge a
+  deployment, and each write uses a unique temp file. The returned store now
+  has `close()`.
+- **Logs survive every executor failure.** QuickJS streams console entries
+  to the parent, so a program that is cancelled, killed at the deadline,
+  crashed, or lost to an IPC failure still returns what it printed.
 
 ### Changed
 
@@ -106,6 +132,16 @@ deployment can take without action. No storage format changed.
 - Containment matching for escaped failures ignores messages under eight
   characters, and a QuickJS host-result reply that cannot be serialized settles
   the call instead of hanging until the wall deadline.
+- Every `connecta.call` attempt spends one host call on entry, so unknown
+  addresses cannot loop for free; the escaped-failure list keeps the most
+  recent 64; an empty terminal error string is a failure, not a success.
+- The compact renderer renders `prefixItems` as a tuple, marks
+  `dependentSchemas` and `if`/`then`/`else` shapes conditional with the
+  truncation flag, and resolves `$dynamicRef` like `$ref`.
+- The guarded transport's no-body-stream path enforces the byte ceiling on
+  `text()` and `json()`.
+- The pool-name timing oracle is accepted and documented; `authorize_connector`
+  honoring tool-level grants is documented and pinned.
 
 ## 0.24.2 — 2026-09-16
 
