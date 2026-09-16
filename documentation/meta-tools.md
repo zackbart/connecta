@@ -121,8 +121,11 @@ bytes. Within that unchanged total, each enum node and each constraint
 annotation may spend at most 256 UTF-8 bytes. Numeric bounds, string length
 bounds, patterns, and formats render beside their type. A constraint that does
 not fit is dropped whole. If constraints push the full shape over 1,024 bytes,
-search retries the shape without them. Compact describe keeps all declared
-constraints. A large enum keeps the longest whole-value prefix that fits, then
+search retries the shape without them. Compact describe keeps declared
+constraints and property prose within its own 8,192-byte shape cap, sharing
+search's 2,000-visit rendering budget; a capped shape sets
+`inputSchemaTruncated` or `outputSchemaTruncated`, and `format: "json"` or
+JSON search returns the exact schema. A large enum keeps the longest whole-value prefix that fits, then
 adds `unknown` and a comment with the exact omitted-value count. An empty enum
 renders as the valid `never` type. A capped object becomes a valid
 required-first shape with `unknown` types; other shapes become

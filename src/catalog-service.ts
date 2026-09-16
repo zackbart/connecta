@@ -665,6 +665,17 @@ export class CatalogService {
         "query must be a string. Omit it or use an empty string to browse the catalog.",
       );
     }
+    if (
+      args.connector !== undefined &&
+      boundedEchoText(args.connector) !== args.connector
+    ) {
+      // The scope is echoed back as `queryAnalysis.connectorScope`; a clipped
+      // copy could name a different connector, so refuse instead of clamping.
+      throw new DiscoveryPolicyError(
+        "invalid_args",
+        "connector must be at most 512 UTF-8 bytes.",
+      );
+    }
     const query = args.query ?? "";
     const retrievalQuery = lexicalSearchQuery(query);
     const safety = discoverySafety(args.safety);

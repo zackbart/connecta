@@ -574,6 +574,17 @@ describe("catalog search argument validation", () => {
     },
   );
 
+  it("refuses an oversized connector scope instead of echoing a clipped one", async () => {
+    const service = new CatalogService(makeRegistry([calcConnector]), BASE);
+    await expect(service.search({ connector: "c".repeat(50_000) })).rejects.toMatchObject({
+      code: "invalid_args",
+      message: "connector must be at most 512 UTF-8 bytes.",
+    });
+    // Exactly 512 bytes is still an ordinary (unknown) scope, not a refusal.
+    const analysed = await service.search({ query: "add", connector: "x".repeat(512) });
+    expect(analysed.total).toBe(0);
+  });
+
   it("keeps omitted and whole-number offsets", async () => {
     const service = new CatalogService(makeRegistry([calcConnector]), BASE);
     expect((await service.search({})).offset).toBe(0);
