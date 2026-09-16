@@ -142,6 +142,7 @@ export async function routeUi(
     validateAuthPermissions(authz, opts.registry);
     registry = opts.registry.scoped({
       connectorIds: authz.connectorIds,
+      ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
       ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
       ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
     });
@@ -162,7 +163,7 @@ export async function routeUi(
   if (detail) {
     const connector = registry.getConnector(detail[1]!);
     if (!connector) return privateJson({ error: "unknown connector" }, { status: 404 });
-    const one = opts.registry.scoped({ connectorIds: [connector.id], ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}), ...(authz.principalKey ? { principalKey: authz.principalKey } : {}) });
+    const one = opts.registry.scoped({ connectorIds: [connector.id], ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}), ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}), ...(authz.principalKey ? { principalKey: authz.principalKey } : {}) });
     const data = await buildUiData(one, baseUrl, opts.serverInfo, opts.credentialVault, activityEnabled, credentialManagement, defer, false, 1, authz.principalKey, { mayManage, timeoutMs: opts.probeTimeoutMs ?? 30_000, signal: request.signal });
     return privateJson({ ...data.connectors[0], permissions: permissions(connector) });
   }

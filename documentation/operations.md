@@ -84,6 +84,7 @@ optional.
 | `executor` | — (required) | the sandbox `execute_code` runs in ([code mode](./code-mode.md#what-an-executor-must-implement)) |
 | `auth?` | none ⇒ open (dev only) | one `InboundAuth` or an array; bearer providers are checked before interactive providers ([inbound auth](./auth.md)) |
 | `identity?` | all visible; auth management denied; interactive activity reads | `{ connectorAccess?, credentialAdministration?, personalConnection?, activityAccess? }` derives separate use and management permissions ([identity](./auth.md#principals-visibility-and-operators)) |
+| `pools?` | none | `{ <name>: { tools, grant? } }` named slices served at `/mcp/<name>`, each intersected with the identity view and denied unless `grant` admits ([pools](./auth.md#pools)) |
 | `storage?` | `memoryStorage()` | connector state, catalogs, and result paging; pass storage explicitly to the optional vault ([storage](./storage-and-credentials.md)) |
 | `publicUrl?` | per-request origin | public base URL; an HTTPS value also redirects inbound HTTP |
 | `logger?` | `console`, prefixed `[connecta]` | `{ debug, info, warn, error }`, or `"silent"` to suppress diagnostic output; independent of activity history |
@@ -251,7 +252,7 @@ in.
 | `executor-admission.test.ts` | the portable bounded FIFO both pools use: active and queue ceilings, stable retryable overload, queue timeout, cancellation removal, idempotent release, shutdown |
 | `guarded-fetch.test.ts` | the guarded transport — construction, request building, destination confinement, and response handling |
 | `guest-api-contract.test.ts` | the shared guest contract on the Dynamic Worker, including caught call, typed inline describe recovery, discovery, utility, parallel-call, and budget failure codes; plus the real authority boundary — local `data:` fetch, denied egress, unresolved DNS, empty environment paths, unavailable filesystem/HTTP builtins, and present runtime globals |
-| `identity-scope.test.ts` | identity-derived connector visibility, personal credential isolation, separate shared-auth and personal-auth management permissions, and personal OAuth callback ownership |
+| `identity-scope.test.ts` | identity-derived connector visibility, named pools at `/mcp/<pool>` (grant-gated, intersected with the identity ceiling, identical 404 for undeclared, refused, and throwing grants, construction-time refusals), exact `connector.tool` grants enforced identically across discovery, direct calls, the program host bridge, and the connection UI, fail-closed grant parsing, the once-per-isolate absent-grant warning, personal credential isolation, separate shared-auth and personal-auth management permissions, and personal OAuth callback ownership |
 | `linear-provider.test.ts` | the Linear proxy's construction, guide, plan-aware catalog superset, and current workspace, template, and issue-sharing classifications |
 | `meta-tools-call.test.ts` | registry-backed calls: structured errors, truncation and `get_result`, per-connector result bounds, JSON representation failures, MCP content bounds, and offset alignment |
 | `meta-tools-search.test.ts` | registry-backed discovery: bounded search with page and address maxima, compact and JSON schemas with constraints, typed describe recovery and suggestions, and structured-result compatibility |

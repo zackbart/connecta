@@ -12,11 +12,14 @@ import {
 } from "../executor-admission.js";
 import { registerMetaTools } from "../meta-tools.js";
 import type { RegistryView } from "../registry.js";
+import { intersectAccess } from "../connector-access.js";
+import type { ConnectorAccess } from "../connector-access.js";
 import { instructionsFor } from "../skills.js";
 import { msg } from "../errors.js";
 import type { Logger } from "../types.js";
 import {
   authorize,
+  loggableValue,
   mayManageConnector,
   validateAuthPermissions,
   type RouteContext,
@@ -322,7 +325,9 @@ export function createMcpRoute(
       baseUrl,
       runtimeContext,
     } = context;
-    if (path !== "/mcp") return null;
+    const poolPath = /^\/mcp\/([a-z0-9_-]+)$/.exec(path);
+    if (path !== "/mcp" && !poolPath) return null;
+    const poolName = poolPath?.[1];
     let admission: AdmissionLease;
     try {
       admission = await opts.requestAdmission.acquire({
@@ -365,11 +370,42 @@ export function createMcpRoute(
           request.signal,
         );
       }
+      // A pool endpoint narrows the identity's own view and nothing else. An
+      // undeclared name, a grant that refuses, and a grant that throws are
+      // one identical 404 so a credential never enumerates the other pools;
+      // the operator log is where the reason lives.
+      let access: ConnectorAccess = authz;
+      if (poolName !== undefined) {
+        const pool = opts.pools?.get(poolName);
+        let granted = false;
+        let reason = "undeclared";
+        if (pool) {
+          try {
+            granted = (await pool.grant(authz.identity)) === true;
+            reason = granted ? "granted" : "refused";
+          } catch {
+            reason = "grant threw";
+          }
+        }
+        if (!pool || !granted) {
+          opts.logger.warn(
+            `[connecta] refused /mcp/${poolName} with 404: pool ${reason}` +
+              (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
+          );
+          return releaseAdmissionWithResponse(
+            withMcpCors(new Response("Not Found", { status: 404 })),
+            admission,
+            request.signal,
+          );
+        }
+        access = intersectAccess(authz, pool.access);
+      }
       let scopedRegistry: RegistryView;
       try {
         validateAuthPermissions(authz, opts.registry);
         scopedRegistry = opts.registry.scoped({
-          connectorIds: authz.connectorIds,
+          connectorIds: access.connectorIds,
+          ...(access.toolAccess ? { toolAccess: access.toolAccess } : {}),
           ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
           ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
         });

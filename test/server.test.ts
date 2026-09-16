@@ -1599,6 +1599,32 @@ describe("clerk metadata routes (no network)", () => {
     expect(body.resource).toBe(`${BASE}/mcp`);
   });
 
+  it("serves pool-specific protected-resource metadata and challenges with it", async () => {
+    const c = makeClerkConnecta();
+    const meta = await c.fetch(
+      new Request(`${BASE}/.well-known/oauth-protected-resource/mcp/support`),
+    );
+    expect(meta.status).toBe(200);
+    expect(((await meta.json()) as any).resource).toBe(`${BASE}/mcp/support`);
+    const challenge = await c.fetch(
+      new Request(`${BASE}/mcp/support`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      }),
+    );
+    expect(challenge.status).toBe(401);
+    expect(challenge.headers.get("WWW-Authenticate")).toContain(
+      `resource_metadata="${BASE}/.well-known/oauth-protected-resource/mcp/support"`,
+    );
+    const plain = await c.fetch(
+      new Request(`${BASE}/mcp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }),
+    );
+    expect(plain.headers.get("WWW-Authenticate")).toContain(
+      `resource_metadata="${BASE}/.well-known/oauth-protected-resource"`,
+    );
+  });
+
   it("OPTIONS on a .well-known route returns 204 with CORS", async () => {
     const c = makeClerkConnecta();
     const res = await c.fetch(

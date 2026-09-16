@@ -281,6 +281,12 @@ function emailDomain(email: string): string | null {
  *
  * `allowedDomains` and `gate` decide who is admitted; both must pass.
  */
+/** `"/<pool>"` for a pool endpoint path, null for `/mcp` and anything else. */
+function mcpPoolSuffix(pathname: string): string | null {
+  const match = /^\/mcp(\/[a-z0-9_-]+)$/.exec(pathname);
+  return match ? match[1]! : null;
+}
+
 export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
   assertNoRetiredToolkitOptions("clerkAuth", opts);
   // Before the Clerk client, so a malformed key fails as a connecta
@@ -374,9 +380,13 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
     return lookup;
   };
 
-  const unauthorized = (baseUrl: string, tokenPresent: boolean): Response => {
+  const unauthorized = (baseUrl: string, tokenPresent: boolean, request: Request): Response => {
     const error = tokenPresent ? `error="invalid_token", ` : "";
-    const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource`;
+    // A pool endpoint is its own protected resource: the challenge names the
+    // metadata document whose `resource` matches the URL the client used, or
+    // RFC 9728 tells it to reject the mismatch.
+    const pool = mcpPoolSuffix(new URL(request.url).pathname);
+    const meta = `${resolveBase(baseUrl)}/.well-known/oauth-protected-resource${pool ? `/mcp${pool}` : ""}`;
     return new Response(
       JSON.stringify({ error: "unauthorized" }),
       {
@@ -493,13 +503,17 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
       }
 
       const base = resolveBase(baseUrl);
+      const pool = pathname.startsWith("/.well-known/oauth-protected-resource/mcp/")
+        ? mcpPoolSuffix(pathname.slice("/.well-known/oauth-protected-resource".length))
+        : null;
       if (
         pathname === "/.well-known/oauth-protected-resource" ||
-        pathname === "/.well-known/oauth-protected-resource/mcp"
+        pathname === "/.well-known/oauth-protected-resource/mcp" ||
+        pool
       ) {
         return Response.json(
           {
-            resource: `${base}/mcp`,
+            resource: `${base}/mcp${pool ?? ""}`,
             authorization_servers: [frontendApiUrl],
             bearer_methods_supported: ["header"],
             scopes_supported: scopes,
@@ -556,7 +570,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
           );
           return {
             ok: false,
-            response: unauthorized(baseUrl, tokenPresent),
+            response: unauthorized(baseUrl, tokenPresent, request),
           };
         }
         // Session JWTs carry `azp` (the origin they were minted for); pin it
@@ -576,7 +590,7 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             );
             return {
               ok: false,
-              response: unauthorized(baseUrl, tokenPresent),
+              response: unauthorized(baseUrl, tokenPresent, request),
             };
           }
         }
@@ -587,10 +601,10 @@ export function clerkAuth(opts: ClerkAuthOptions): InboundAuth {
             error instanceof Error ? error.message : String(error)
           } tokenShape=${tokenShape(request)}`,
         );
-        return { ok: false, response: unauthorized(baseUrl, true) };
+        return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!userId) {
-        return { ok: false, response: unauthorized(baseUrl, true) };
+        return { ok: false, response: unauthorized(baseUrl, true, request) };
       }
       if (!(await checkGate(userId))) {
         return { ok: false, response: forbidden() };

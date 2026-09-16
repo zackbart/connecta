@@ -2,6 +2,34 @@
 
 All notable changes to this package are documented here.
 
+## 0.24.2 — 2026-09-16
+
+`connectorAccess` can now grant individual tools, and a deployment can declare
+named pools served at `/mcp/<pool>`. Nothing changes for a deployment that
+returns `"all"` or connector ids and declares no pools.
+
+### Added
+
+- **Named tool pools at `/mcp/<pool>`.** `ConnectaConfig.pools` declares a
+  slice of connector ids and exact `connector.tool` addresses plus a `grant`
+  predicate over the authenticated identity, denied by default. The endpoint
+  serves the pool intersected with the identity's `connectorAccess`, so it can
+  only narrow. An undeclared name, a refusing grant, and a throwing grant are
+  one identical 404. Misdeclared pools refuse to boot. Clerk's 401 challenge
+  and protected-resource metadata follow the pool path so OAuth discovery
+  matches the URL the client used. Ethos records the decision.
+
+- **Tool-level grants in `identity.connectorAccess`.** Entries may be a
+  connector id (every tool) or an exact `connector.tool` address (that tool
+  only); grants are additive. The scoped registry view filters below the
+  catalog service, so `search_tools`, `describe_tools`, `call_tool`,
+  `call_destructive_tool`, a program's `connecta.search` and `connecta.call`,
+  and the connection UI all see the same list, and an ungranted tool fails as
+  `unknown_tool` exactly like an absent one. There is no wildcard: a remote
+  catalog that drifts cannot widen a grant. An address the catalog lacks is
+  unreachable and warned once per isolate. An unparseable entry refuses the
+  request with 403 rather than failing open.
+
 ## 0.24.1 — 2026-09-08
 
 ### Added

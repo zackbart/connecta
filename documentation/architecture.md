@@ -71,7 +71,7 @@ read top to bottom.
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
 | 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; reserved routes reflect installed modules. |
 | 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state verification and personal ownership checks; independent of UI. |
-| 6 | `/mcp` | Admission before auth, then a request-local MCP server. |
+| 6 | `/mcp`, `/mcp/<pool>` | Admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; an undeclared name, a refusing grant, and a throwing grant are one identical 404. |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
 
@@ -80,7 +80,7 @@ policy, HSTS on HTTPS, while the UI module adds a nonce-based script CSP and fra
 and the exact refusal bodies; it exists because the ordering is invisible in
 any one file and a reordering reads like a harmless refactor.
 
-`/mcp` itself is five steps, in this order and for these reasons:
+`/mcp` itself is six steps, in this order and for these reasons:
 
 1. **Admit.** One permit from the deployment-wide FIFO pool, taken before auth
    so an unauthenticated flood costs a permit rather than a Clerk lookup
@@ -92,13 +92,18 @@ any one file and a reordering reads like a harmless refactor.
    only, and it warns at construction.
 3. **Derive the registry view.** Auth supplies a namespaced subject and, for a
    human, a principal. `identity.connectorAccess` selects declared connector
-   ids. Personal connectors use the principal partition; result paging uses
+   ids and, for a narrower slice, exact `connector.tool` addresses; the
+   scoped view filters every catalog read through them. Personal connectors use the principal partition; result paging uses
    the subject partition. No caller parameter selects either.
-4. **Refuse `?toolkit=`.** Caller-selected toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
+4. **Narrow to the pool.** On `/mcp/<pool>`, look the name up in the
+   declared pools and run its grant against the authenticated identity. The
+   view becomes the pool intersected with the identity's `connectorAccess`;
+   a pool can never widen it. Anything else is a 404 that names no pool.
+5. **Refuse `?toolkit=`.** Caller-selected toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
    but the URLs naming them were handed out, so the parameter is a 404 rather
    than silently serving the full registry. Retiring a scoping boundary into
    fail-open is the one outcome worse than the 404.
-5. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
+6. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
    against the registry and the response
    handed back.
 
