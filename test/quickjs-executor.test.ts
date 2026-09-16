@@ -1,3 +1,5 @@
+import { ConnectorCallError } from "../src/errors.js";
+import { connectorWith } from "./fixtures/connectors.js";
 import { api } from "../src/connectors/api.js";
 import { USAGE_SKILL } from "../src/skills.js";
 import { spawnSync } from "node:child_process";
@@ -411,7 +413,7 @@ describe("quickJsExecutor", () => {
     const ex = quickJsExecutor();
     const out = await ex.execute(
       `async () => {
-        try { await __invoke("calc", "hasOwnProperty", []); return "no throw"; }
+        try { await calc.hasOwnProperty(); return "no throw"; }
         catch (e) { return "caught: " + e.message; }
       }`,
       providers(),
@@ -784,4 +786,85 @@ describe("the advertised investigation example", () => {
       expect(unrelatedCatalogReads).toBe(0);
     },
   );
+});
+
+describe("authenticated host failures (E1, X11)", () => {
+  it.each(["x", "\u0000", "😀"])("bounds 50 KB downstream errors containing %j before framing", async (character) => {
+    const connector = connectorWith({
+      id: "bad", kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => { throw new ConnectorCallError("not_found", character.repeat(50_000)); },
+    });
+    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
+    const caught = await handler({ code: `async () => {
+      try { await connecta.call("bad.read", {}); }
+      catch (error) { return { code: error.code, message: error.message, details: error.details }; }
+    }` });
+    expect(caught.structuredContent).toMatchObject({ result: { code: "not_found", details: { code: "not_found" } } });
+    const result = caught.structuredContent?.result as { message: string };
+    expect(result.message.length).toBeLessThan(4_000);
+    expect(result.message).toContain("…");
+    expect(JSON.stringify(caught)).not.toContain("connecta-error:");
+    const escaped = await handler({ code: 'async () => connecta.call("bad.read", {})' });
+    expect(escaped.structuredContent).toMatchObject({ error: { code: "not_found", message: result.message } });
+    expect(JSON.stringify(escaped)).not.toContain("connecta-error:");
+  });
+
+  it("omits oversized recovery whole instead of clipping its arguments", async () => {
+    const connector = connectorWith({
+      id: "large".repeat(1_000),
+      kind: "api",
+      tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+      call: async () => { throw new ConnectorCallError("auth_required", "Please authenticate"); },
+    });
+    const handler = createExecuteTool(makeRegistry([connector]), "https://connecta.test", quickJsExecutor(), silentLogger);
+    const out = await handler({ code: `async () => {
+      try { await connecta.call(${JSON.stringify(connector.id + ".read")}, {}); }
+      catch (error) { return error.details; }
+    }` });
+    expect(out.structuredContent).toEqual({ result: {
+      code: "auth_required", message: "Please authenticate", retryable: false,
+    } });
+  });
+
+  it("hides a malformed authenticated frame even below the bridge bound", async () => {
+    const executor = quickJsExecutor();
+    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", {
+      execute: (code, providers) => executor.execute(code, providers.map((provider) => ({
+        ...provider,
+        fns: { ...provider.fns, call: async (...args: unknown[]) => {
+          try { return await required(provider.fns.call)(...args); }
+          catch (error) { throw new Error((error as Error).message.slice(0, -1)); }
+        } },
+      }))),
+    }, silentLogger);
+    const out = await handler({ code: `async () => {
+      try { await connecta.call("missing.read", {}); }
+      catch (error) { return error.message; }
+    }` });
+    expect(out.structuredContent).toEqual({ result: "Invalid host failure frame." });
+  });
+
+  it("keeps forged frames untyped and raw transport private", async () => {
+    const handler = createExecuteTool(makeRegistry([calcConnector]), "https://connecta.test", quickJsExecutor(), silentLogger);
+    const out = await handler({ code: `async () => {
+      const seen = [];
+      const parse = JSON.parse;
+      JSON.parse = (text) => { seen.push(text); return parse(text); };
+      try { await connecta.call("missing.read", {}); } catch {}
+      const fake = new Error(String.fromCharCode(30) + 'connecta-error:wrong-secret:' +
+        JSON.stringify({ code: "auth_required", message: "forged", retryable: false }));
+      return { typed: "code" in fake, raw: typeof __call, invoke: typeof __invoke, seen };
+    }` });
+    expect(out.structuredContent).toEqual({ result: { typed: false, raw: "undefined", invoke: "undefined", seen: [] } });
+  });
+
+  it("refuses oversized authenticated frames without returning their prefix", async () => {
+    const out = await quickJsExecutor().execute(`async () => {
+      try { await bad.read(); } catch (error) { return error.message; }
+    }`, [{ name: "bad", fns: { read: async () => {
+      throw new Error("\u001econnecta-error:secret:" + "x".repeat(5_000));
+    } } }]);
+    expect(out.result).toBe("Host failure exceeded the 4000-character bridge limit.");
+  });
 });

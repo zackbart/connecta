@@ -230,9 +230,10 @@ export class EmitCollector {
   accept(raw: unknown): void {
     const block = requireEmittedBlock(raw);
     if (this.blocks.length >= this.maxBlocks) {
+      // M5: distinguish exhausted block slots from the remaining byte budget.
       throw guestFailure(
         "budget_exceeded",
-        `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 remaining`,
+        `connecta.emit block-count budget exceeded: ${this.maxBlocks} block(s) maximum, 0 blocks remaining; ${this.maxBytes - this.bytes} of ${this.maxBytes} serialized bytes remaining`,
       );
     }
     const size = diagnosticsEncoder.encode(JSON.stringify(block)).byteLength;
@@ -290,6 +291,45 @@ function guestFailureSecret(): string {
   return Array.from(words, (word) => word.toString(16).padStart(8, "0")).join("");
 }
 
+/**
+ * E1/X11: bound the serialized frame, including JSON escapes, before transport.
+ * Keep optional recovery whole: clipping an address or echoed args could turn
+ * recovery into a different call. Oversized metadata is omitted instead.
+ */
+function boundedGuestFailure(failure: InvocationFailure): InvocationFailure {
+  const boundText = (text: string, maxChars: number): string => {
+    if (JSON.stringify(text).length <= maxChars) return text;
+    let low = 0;
+    let high = Math.min(text.length, maxChars);
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (JSON.stringify(`${text.slice(0, mid)}…`).length <= maxChars) low = mid;
+      else high = mid - 1;
+    }
+    // Do not manufacture a lone surrogate when clipping a Unicode message.
+    if (low > 0 && /[\uD800-\uDBFF]/.test(text[low - 1]!)) low--;
+    return `${text.slice(0, low)}…`;
+  };
+  let details: CallErrorDetails = {
+    ...failure.details,
+    code: boundText(failure.details.code, 128),
+    message: boundText(failure.details.message, 2_000),
+  };
+  // 3,700 plus the prefix and 32-character secret stays below QuickJS's
+  // 4,000-character error bound, with room for bridge-added context.
+  if (JSON.stringify(details).length > 3_700) {
+    details = {
+      code: details.code,
+      message: details.message,
+      retryable: details.retryable,
+      ...(details.retryAfterMs !== undefined
+        ? { retryAfterMs: details.retryAfterMs }
+        : {}),
+    };
+  }
+  return new InvocationFailure(details);
+}
+
 function framedGuestFailure(
   secret: string,
   failure: InvocationFailure,
@@ -314,7 +354,8 @@ function guestErrorPrelude(failureSecret: string): string {
   function ConnectaError(message, options) {
     let details;
     if (typeof message === "string" && startsWith(message, failurePrefix)) {
-      try { details = parse(slice(message, failurePrefix.length)); } catch {}
+      try { details = parse(slice(message, failurePrefix.length)); }
+      catch { message = "Invalid host failure frame."; }
     }
     const error = construct(
       NativeError,
@@ -391,20 +432,22 @@ export async function buildSandboxProviders(
   );
   const failureSecret = guestFailureSecret();
   let hostCalls = 0;
+  // L4/M7: discovery and invocation spend the same budget; emit does not.
+  const spendHostCall = () => {
+    hostCalls++;
+    if (hostCalls > maxHostCalls) {
+      throw guestFailure(
+        "budget_exceeded",
+        `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
+      );
+    }
+  };
   const invocationContext = () => ({
     source: "execute_code" as const,
     timeoutMs: hostCallTimeoutMs,
     ...(limits.signal !== undefined ? { requestSignal: limits.signal } : {}),
     unwrapResult: true,
-    beforeDispatch: () => {
-      hostCalls++;
-      if (hostCalls > maxHostCalls) {
-        throw guestFailure(
-          "budget_exceeded",
-          `execute_code host-call budget exceeded (${maxHostCalls} calls maximum)`,
-        );
-      }
-    },
+    beforeDispatch: spendHostCall,
   });
   /**
    * Discovery policy failures use the same thrown vocabulary as calls and
@@ -426,6 +469,7 @@ export async function buildSandboxProviders(
   ): Promise<T> => {
     const started = Date.now();
     try {
+      spendHostCall();
       const result = await fn();
       limits.diagnostics?.recordCatalog(
         operation,
@@ -467,7 +511,9 @@ export async function buildSandboxProviders(
       }
       limits.emitCollector.accept(block);
     },
-    search: async (raw: unknown) =>
+    // Not `async`: a synchronous budget refusal must reject the same promise
+    // the transport wrapper awaits, or workerd reports an unhandled rejection.
+    search: (raw: unknown) =>
       timedCatalog("search", () =>
         typedDiscovery(async () => {
           const args = (raw ?? {}) as {
@@ -493,7 +539,7 @@ export async function buildSandboxProviders(
           return result;
         }),
       ),
-    describe: async (raw: unknown) =>
+    describe: (raw: unknown) =>
       timedCatalog("describe", () =>
         typedDiscovery(async () => {
           const args = (raw ?? {}) as {
@@ -519,8 +565,9 @@ export async function buildSandboxProviders(
           return await fn(...args);
         } catch (err) {
           if (err instanceof InvocationFailure) {
-            const framed = framedGuestFailure(failureSecret, err);
-            limits.onInvocationFailure?.(err);
+            const failure = boundedGuestFailure(err);
+            const framed = framedGuestFailure(failureSecret, failure);
+            limits.onInvocationFailure?.(failure);
             throw framed;
           }
           throw err;
@@ -697,7 +744,10 @@ export function createExecuteTool(
         (candidate: InvocationFailure) =>
           [candidate.message, guestFailureFrames.get(candidate)].some(
             (message) =>
-              message !== undefined && outcome.error?.includes(message) === true,
+              // E6: empty or tiny prose cannot identify a wrapped failure.
+              message !== undefined &&
+              message.length >= 8 &&
+              outcome.error?.includes(message) === true,
           ),
       ]) {
         for (let i = invocationFailures.length - 1; i >= 0; i--) {
@@ -710,10 +760,7 @@ export function createExecuteTool(
         if (invocationFailure) break;
       }
       if (invocationFailure) {
-        // Handed back whole, with no size guard of its own — the failure was
-        // framed with bounded caller text (`boundedEchoText`) precisely so
-        // this path never needs one. Adding a cap here instead would leave the
-        // top-level surfaces, which have the same amplification, uncovered.
+        // E1/X11: return the same bounded details the guest received.
         return failureResponse(invocationFailure.details.message, {
           logs,
           emitted,

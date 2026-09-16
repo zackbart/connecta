@@ -146,9 +146,15 @@ function nonNegativeWhole(
 }
 
 function errorPayload(error: string): string {
+  // X11: a partial authenticated frame exposes its secret instead of decoding.
+  // Refuse it whole if a host ever bypasses execute.ts's framing bound.
+  const message =
+    error.length > MAX_ERROR_CHARS && error.includes("\u001econnecta-error:")
+      ? `Host failure exceeded the ${MAX_ERROR_CHARS}-character bridge limit.`
+      : error.slice(0, MAX_ERROR_CHARS);
   return JSON.stringify({
     ok: false,
-    error: error.slice(0, MAX_ERROR_CHARS),
+    error: message,
   } satisfies HostResultPayload);
 }
 
@@ -554,7 +560,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (typeof message.payloadJson !== "string") return;
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
-      await this.handleHostCall(child, active, message);
+      await this.handleHostCall(slot, child, active, message);
       return;
     }
     if (message.type !== "result" || message.jobId !== active.id) return;
@@ -588,6 +594,7 @@ class QuickJsChildPool implements AdmittingExecutor {
   }
 
   private async handleHostCall(
+    slot: ChildSlot,
     child: ChildProcess,
     active: ActiveRun,
     message: Extract<ChildToParentMessage, { type: "host-call" }>,
@@ -634,19 +641,31 @@ class QuickJsChildPool implements AdmittingExecutor {
     } catch (err) {
       payloadJson = errorPayload(msg(err));
     }
-    if (!child.connected) return;
+    if (!child.connected || slot.active !== active) return;
+    const response = {
+      type: "host-result",
+      jobId: message.jobId,
+      callId: message.callId,
+      payloadJson,
+    } satisfies ParentToChildMessage;
     try {
-      const response = {
-        type: "host-result",
-        jobId: message.jobId,
-        callId: message.callId,
-        payloadJson,
-      } satisfies ParentToChildMessage;
       stringifyBounded(response, "QuickJS host-result IPC envelope");
-      child.send(response);
     } catch {
-      // The execution has already ended or the child is exiting. Its exit
-      // handler owns the structured failure for any still-active job.
+      // L6/X10: settle the rejected call even if the outer encoding overflows.
+      response.payloadJson = errorPayload(
+        `QuickJS host-result IPC envelope could not be serialized within the ${MAX_QUICKJS_IPC_BYTES}-byte IPC limit.`,
+      );
+    }
+    const failedSend = (error: Error | null) => {
+      if (!error || slot.active !== active) return;
+      this.rejectActive(slot, error);
+      this.recycle(slot);
+    };
+    try {
+      stringifyBounded(response, "QuickJS host-result IPC envelope");
+      child.send(response, failedSend);
+    } catch (err) {
+      failedSend(err instanceof Error ? err : new Error(msg(err)));
     }
   }
 

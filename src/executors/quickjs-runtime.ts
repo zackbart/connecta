@@ -102,29 +102,42 @@ export function normalizeCode(code: string): string {
  * and fail closed there.
  */
 function setupScript(providers: ExecutorProvider[]): string {
+  // X11: raw replies carry an authenticated frame. Capture the bridge and
+  // codec before guest code runs, and expose only the decoded provider calls.
   const lines: string[] = [
-    `globalThis.console = (() => {
-  const fmt = (x) => { if (typeof x === "string") return x; try { return JSON.stringify(x); } catch { return String(x); } };
-  const emit = (...a) => __log(a.map(fmt).join(" "));
-  return { log: emit, info: emit, warn: emit, error: emit, debug: emit };
-})();`,
-    `globalThis.__invoke = async (ns, fn, args) => {
-  const r = JSON.parse(await __call(ns, fn, JSON.stringify(args)));
-  if (!r.ok) throw new Error(r.error);
-  return r.value;
-};`,
-    `globalThis.__namespace = (ns) => Object.freeze(new Proxy(Object.create(null), {
-  get: (_target, key) => typeof key === "string" ? (...args) => __invoke(ns, key, args) : undefined
-}));`,
+    `(() => {
+  const call = globalThis.__call;
+  const log = globalThis.__log;
+  const parse = JSON.parse;
+  const stringify = JSON.stringify;
+  const freeze = Object.freeze;
+  const ProxyConstructor = Proxy;
+  const create = Object.create;
+  delete globalThis.__call;
+  delete globalThis.__log;
+  globalThis.console = (() => {
+    const fmt = (x) => { if (typeof x === "string") return x; try { return stringify(x); } catch { return String(x); } };
+    const emit = (...a) => log(a.map(fmt).join(" "));
+    return { log: emit, info: emit, warn: emit, error: emit, debug: emit };
+  })();
+  const invoke = async (ns, fn, args) => {
+    const r = parse(await call(ns, fn, stringify(args)));
+    if (!r.ok) throw new GuestError(r.error);
+    return r.value;
+  };
+  const namespace = (ns) => freeze(new ProxyConstructor(create(null), {
+    get: (_target, key) => typeof key === "string" ? (...args) => invoke(ns, key, args) : undefined
+  }));`,
   ];
   for (const p of providers) {
     const ns = JSON.stringify(p.name);
-    lines.push(`globalThis[${ns}] = __namespace(${ns});`);
+    lines.push(`globalThis[${ns}] = namespace(${ns});`);
   }
   for (const p of providers) {
     if (p.prelude) lines.push(p.prelude);
   }
-  lines.push(`delete globalThis.__namespace;`);
+  lines.push(`const GuestError = globalThis.Error;
+})();`);
   return lines.join("\n");
 }
 
