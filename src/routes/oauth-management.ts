@@ -38,6 +38,7 @@ async function handleOAuthManagementRequest(
     validateAuthPermissions(authz, opts.registry);
     registry = opts.registry.scoped({
       connectorIds: authz.connectorIds,
+      ...(authz.toolAccess ? { toolAccess: authz.toolAccess } : {}),
       ...(authz.subjectKey ? { subjectKey: authz.subjectKey } : {}),
       ...(authz.principalKey ? { principalKey: authz.principalKey } : {}),
     });

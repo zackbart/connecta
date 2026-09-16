@@ -60,7 +60,7 @@ subsystem guides and the CHANGELOG.
 | `connecta.batch` | removed | JavaScript promises suffice |
 | Automatic direct-call retries | removed | callers own retry timing |
 | Connector HTTP routes | removed | deployments own custom routes |
-| Caller-selected toolkits | removed | only config may derive an identity's connector view ([#178](https://github.com/zackbart/connecta/issues/178)) |
+| Caller-selected toolkits | removed | config derives every view; config-declared, grant-gated pools at `/mcp/<pool>` are not caller-selected ([#178](https://github.com/zackbart/connecta/issues/178), [#531](https://github.com/zackbart/connecta/issues/531)) |
 | Proactive credential liveness | removed | fail-at-use is enough ([#179](https://github.com/zackbart/connecta/issues/179)) |
 | Classic (executor-free) surface | removed | an executor is mandatory ([#273](https://github.com/zackbart/connecta/issues/273)) |
 | Per-result lexical query coverage | removed | did not earn its response bytes in a precommitted gate ([#323](https://github.com/zackbart/connecta/issues/323)) |

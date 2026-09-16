@@ -4,7 +4,9 @@ import type { ActivityActor, ActivityReadGate, ActivityStore } from "../activity
 import type { CredentialVault } from "../credential-contract.js";
 import type { DeferredWork } from "../connector-scope.js";
 import type { AdmissionController } from "../executor-admission.js";
-import type { Registry } from "../registry.js";
+import type { Registry, ToolAccess } from "../registry.js";
+import { parseConnectorAccess } from "../connector-access.js";
+import type { ConnectorAccess, ResolvedPool } from "../connector-access.js";
 import type {
   AuthenticatedIdentity,
   ConnectaBranding,
@@ -21,6 +23,8 @@ export interface ServerOptions {
   registry: Registry;
   auth: InboundAuth[];
   identity?: ConnectaIdentityConfig | undefined;
+  /** Validated named pools served at `/mcp/<name>`; empty when none declared. */
+  pools?: ReadonlyMap<string, ResolvedPool> | undefined;
   publicUrl?: string | undefined;
   // The SDK's Implementation shape: name/version plus optional title,
   // websiteUrl, and icons (MCP icons spec) that clients may render.
@@ -130,6 +134,8 @@ export async function authorize(
       subjectKey?: string;
       principalKey?: string;
       connectorIds: "all" | readonly string[];
+      /** Per-connector tool allowlist for connectors granted by address only. */
+      toolAccess?: ToolAccess;
       operator: boolean;
       credentialAdministration: ConnectorPermission;
       personalConnection: ConnectorPermission;
@@ -141,17 +147,18 @@ export async function authorize(
   if (auth.length === 0) {
     const actor = { kind: "anonymous" } as const;
     const identity: AuthenticatedIdentity = { actor, interactive: false };
-    let connectorIds: "all" | readonly string[] = "all";
+    let access: ConnectorAccess;
     try {
-      connectorIds = identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all";
-      if (connectorIds !== "all" && (!Array.isArray(connectorIds) || !connectorIds.every(id => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))) throw new Error("invalid connector permission");
+      access = parseConnectorAccess(
+        identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
+      );
     } catch {
       return {
         ok: false,
         response: privateJson({ error: "identity access resolution failed" }, { status: 403 }),
       };
     }
-    return { ok: true, actor, identity, connectorIds, operator: false, credentialAdministration: "none", personalConnection: "none" };
+    return { ok: true, actor, identity, ...access, operator: false, credentialAdministration: "none", personalConnection: "none" };
   }
   let lastResponse: Response | null = null;
   for (const provider of auth) {
@@ -183,20 +190,22 @@ export async function authorize(
       let operator = interactive;
       let credentialAdministration: ConnectorPermission = "none";
       let personalConnection: ConnectorPermission = "none";
-      let connectorIds: "all" | readonly string[] = "all";
+      let access: ConnectorAccess;
       try {
         if (identityConfig?.activityAccess) {
           operator = interactive && principal
             ? await identityConfig.activityAccess(principal)
             : false;
         }
-        connectorIds = identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all";
+        access = parseConnectorAccess(
+          identityConfig?.connectorAccess ? await identityConfig.connectorAccess(identity) : "all",
+        );
         if (interactive) {
           credentialAdministration = identityConfig?.credentialAdministration ? await identityConfig.credentialAdministration(identity) : "none";
           personalConnection = principal && identityConfig?.personalConnection ? await identityConfig.personalConnection(identity) : "none";
         }
         if (typeof operator !== "boolean") throw new Error("invalid activity permission");
-        for (const permission of [connectorIds, credentialAdministration, personalConnection]) {
+        for (const permission of [credentialAdministration, personalConnection]) {
           if (permission !== "all" && permission !== "none" && (!Array.isArray(permission) || !permission.every(id => typeof id === "string" && /^[a-z0-9_-]+$/.test(id)))) throw new Error("invalid identity permission");
         }
       } catch {
@@ -218,7 +227,7 @@ export async function authorize(
         ...(principal && partitionIdentity
           ? { principalKey: await identityStorageKey(principal) }
           : {}),
-        connectorIds,
+        ...access,
         credentialAdministration,
         personalConnection,
         operator,

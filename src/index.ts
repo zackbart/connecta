@@ -4,6 +4,8 @@ import {
   describeCredentialTestMismatch,
 } from "./credential-rules.js";
 import { Registry } from "./registry.js";
+import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
+import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
 import { droppedBrandingUrls, droppedUiAuthUrls } from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
@@ -137,7 +139,12 @@ export interface ConnectaAdmissionConfig {
 export type ConnectorPermission = "all" | "none" | readonly string[];
 
 export interface ConnectaIdentityConfig {
-  /** Connector ids this admitted identity may discover and call. */
+  /**
+   * What this admitted identity may discover and call: `"all"`, or a list
+   * whose entries are connector ids (the whole connector) and `connector.tool`
+   * addresses (that tool only). Grants are additive. An address naming a tool
+   * the catalog lacks is unreachable and warned once, never widened.
+   */
   connectorAccess?(
     identity: Readonly<AuthenticatedIdentity>,
   ): "all" | readonly string[] | Promise<"all" | readonly string[]>;
@@ -156,12 +163,30 @@ export interface ConnectaIdentityConfig {
 
 }
 
+/**
+ * A named tool pool served at `/mcp/<name>`. The pool is the slice a client
+ * pointed at that endpoint may see; the identity's own `connectorAccess`
+ * remains its ceiling and the pool can only narrow it.
+ */
+export interface ConnectaPoolConfig {
+  /** Connector ids and exact `connector.tool` addresses in this pool. */
+  tools: readonly string[];
+  /**
+   * Whether this admitted identity may open the pool. Denied by default:
+   * a pool with no grant serves nobody. A false return, a throw, and an
+   * undeclared pool name are the same 404.
+   */
+  grant?(identity: Readonly<AuthenticatedIdentity>): boolean | Promise<boolean>;
+}
+
 export interface ConnectaConfig {
   connectors: Connector[];
   /** Inbound auth adapters. Includes bearerToken(...); omit for open (dev). */
   auth?: InboundAuth | InboundAuth[];
   /** Code-derived connection visibility and independent management permissions. */
   identity?: ConnectaIdentityConfig;
+  /** Named tool pools, each served at `/mcp/<name>` to identities its grant admits. */
+  pools?: Record<string, ConnectaPoolConfig>;
   /** KVStorage impl. Defaults to memoryStorage(). */
   storage?: KVStorage;
   /**
@@ -283,6 +308,7 @@ const CONFIG_SCHEMA = {
     credentialAdministration: null,
     personalConnection: null,
   } satisfies ClosedOptionSchema<ConnectaIdentityConfig>,
+  pools: null,
   storage: null,
   publicUrl: null,
   activity: null,
@@ -389,6 +415,60 @@ function assertKnownConfig(config: ConnectaConfig): void {
       "ConnectaConfig.activity must be created with activityHistory(...)",
     );
   }
+}
+
+/**
+ * Validate declared pools against the connector set. Everything checkable at
+ * construction throws here: a malformed name, an unparseable grant, an
+ * unknown connector id, a tool address on an `api()` connector whose static
+ * catalog lacks it. Remote catalogs load lazily, so their addresses are
+ * checked at catalog load instead and stay unreachable until they match.
+ */
+function resolvePools(
+  pools: Record<string, ConnectaPoolConfig> | undefined,
+  registry: Registry,
+): Map<string, ResolvedPool> {
+  const resolved = new Map<string, ResolvedPool>();
+  if (!pools) return resolved;
+  if (typeof pools !== "object" || Array.isArray(pools)) {
+    throw new Error("ConnectaConfig.pools must be an object keyed by pool name");
+  }
+  for (const [name, pool] of Object.entries(pools)) {
+    if (!POOL_NAME_RE.test(name)) {
+      throw new Error(`ConnectaConfig.pools: pool name "${name}" must match [a-z0-9_-]+`);
+    }
+    if (!pool || typeof pool !== "object" || !Array.isArray(pool.tools)) {
+      throw new Error(`ConnectaConfig.pools.${name}: tools must be an array of connector ids or connector.tool addresses`);
+    }
+    if (pool.grant !== undefined && typeof pool.grant !== "function") {
+      throw new Error(`ConnectaConfig.pools.${name}: grant must be a function`);
+    }
+    let access: ConnectorAccess;
+    try {
+      access = parseConnectorAccess(pool.tools);
+    } catch {
+      throw new Error(`ConnectaConfig.pools.${name}: tools must be connector ids or connector.tool addresses`);
+    }
+    if (access.connectorIds === "all" || access.connectorIds.length === 0) {
+      throw new Error(`ConnectaConfig.pools.${name}: a pool must name at least one connector or tool`);
+    }
+    for (const id of access.connectorIds) {
+      const connector = registry.getConnector(id);
+      if (!connector) {
+        throw new Error(`ConnectaConfig.pools.${name}: unknown connector "${id}"`);
+      }
+      const granted = access.toolAccess?.get(id);
+      if (!granted || !connector.staticTools) continue;
+      const known = new Set(connector.staticTools.map((tool) => tool.name));
+      for (const tool of granted) {
+        if (!known.has(tool)) {
+          throw new Error(`ConnectaConfig.pools.${name}: connector "${id}" has no tool "${tool}"`);
+        }
+      }
+    }
+    resolved.set(name, { access, grant: pool.grant ?? (() => false) });
+  }
+  return resolved;
 }
 
 /**
@@ -541,6 +621,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     maxResultBytes: config.calls?.maxResultBytes,
   });
   const inboundAuth = configuredAuth;
+  const pools = resolvePools(config.pools, registry);
   warnInsecureConfig(config, inboundAuth, logger);
   const requestAdmission = admissionController(
     config.admission?.requests,
@@ -569,6 +650,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     registry,
     auth: inboundAuth,
     identity: config.identity,
+    pools,
     publicUrl: config.publicUrl,
     serverInfo,
     logger,

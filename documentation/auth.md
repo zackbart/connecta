@@ -13,10 +13,74 @@ such as `get_result` pages. The principal is the human owner of personal
 connector auth. An interactive Clerk or Access user supplies all three. A
 Cloudflare service identity has an actor and subject but no principal.
 
-`identity.connectorAccess` returns `"all"` or declared connector ids. It governs
-discovery and use, and defaults to all connectors. Visibility alone grants no
-authentication-management permission. Two independent resolvers return
-`"all"`, `"none"`, or declared connector ids:
+`identity.connectorAccess` returns `"all"` or a list of grants. A grant is a
+declared connector id, which opens every tool on it, or a `connector.tool`
+address, which opens that tool alone. Grants are additive, so a bare id beside
+addresses for the same connector means the whole connector. It governs
+discovery and use, and defaults to all connectors.
+
+Tool grants are enforced in the scoped registry view, below the catalog
+service, so `search_tools`, `describe_tools`, both call tools, a program's
+`connecta.search` and `connecta.call`, and the connection UI all read the same
+filtered list. An ungranted tool fails exactly like one the connector never
+had: `unknown_tool`, with no hint that it exists. That is the whole security
+claim, and it lives in one place on purpose. There is no separate endpoint per
+tool set; an identity that should see a narrower slice is a branch in this
+resolver, and a bot that needs its own slice is its own bearer subject.
+
+## Pools
+
+A pool is a named slice of the deployment served at its own endpoint,
+`/mcp/<pool>`, for the case where one identity needs different capability
+sets on different clients: a support agent that sees three Notion tools and
+Linear, a calendar bot that sees one tool, both over the same credentials and
+catalog cache.
+
+```ts
+createConnecta({
+  pools: {
+    support: {
+      tools: ["linear", "notion.search_pages", "notion.fetch_page"],
+      grant: ({ principal }) => supportTeam.has(principal?.id ?? ""),
+    },
+    calendar_bot: {
+      tools: ["calendar.create_event"],
+      grant: ({ actor }) => actor.id === "calendar-bot",
+    },
+  },
+  identity: { connectorAccess },
+  connectors,
+  executor,
+});
+```
+
+The rules, each of which is a test:
+
+- **A pool narrows; it never widens.** The view on `/mcp/<pool>` is the pool
+  intersected with the identity's own `connectorAccess`. Plain `/mcp` is
+  unchanged. The security boundary is still the resolver; the pool decides
+  which part of it a given client sees.
+- **Grant defaults to deny.** A pool with no `grant` serves nobody. A false
+  return, a throw, and an undeclared pool name produce one byte-identical
+  404, so a credential never becomes a directory of the other pools. The
+  operator log carries the reason.
+- **Structural mistakes throw at construction.** A malformed name, an
+  unknown connector, an empty pool, and a `connector.tool` address an
+  `api()` connector's static catalog lacks all refuse to boot. Remote
+  catalogs load lazily, so their addresses are checked at load and stay
+  unreachable until they match.
+- **OAuth discovery follows the path.** On Clerk, the 401 challenge for
+  `/mcp/<pool>` names `/.well-known/oauth-protected-resource/mcp/<pool>`,
+  whose `resource` is the pool URL, so RFC 9728 clients see a match.
+  Cloudflare Managed OAuth is application-level and needs nothing.
+
+A `connector.tool` address the live catalog does not contain is unreachable
+and warned once per isolate. Remote catalogs load lazily, so construction
+cannot check it, and a catalog that drifts later can never widen a grant
+because there is no wildcard: every tool grant is an exact name.
+
+Visibility alone grants no authentication-management permission. Two
+independent resolvers return `"all"`, `"none"`, or declared connector ids:
 
 - `credentialAdministration` allows an interactive human to manage shared
   credentials and shared OAuth grants.
@@ -39,8 +103,12 @@ administrator role or token-management authority.
 createConnecta({
   auth: cloudflareAccessAuth(),
   identity: {
-    connectorAccess: ({ principal }) =>
-      principal?.id === "owner-id" ? "all" : ["shared_docs", "personal_linear"],
+    connectorAccess: ({ principal, actor }) =>
+      principal?.id === "owner-id"
+        ? "all"
+        : actor.id === "calendar-bot"
+          ? ["calendar.create_event"]
+          : ["shared_docs", "personal_linear", "notion.search_pages"],
     credentialAdministration: ({ principal }) =>
       principal?.id === "owner-id" ? "all" : "none",
     personalConnection: () => ["personal_linear"],

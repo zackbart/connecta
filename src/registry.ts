@@ -263,8 +263,16 @@ export interface RegistryView {
   bindOAuthHandoff(id: string, authorizationUrl: string): Promise<void>;
 }
 
+/**
+ * Connector id → the only tool names this view may see on it. A connector
+ * absent from the map is visible whole. Derived from `connectorAccess`
+ * addresses at the auth gate; never from caller input.
+ */
+export type ToolAccess = ReadonlyMap<string, ReadonlySet<string>>;
+
 export interface RegistryScope {
   connectorIds: "all" | readonly string[];
+  toolAccess?: ToolAccess;
   subjectKey?: string;
   principalKey?: string;
 }
@@ -324,6 +332,8 @@ export class Registry implements RegistryView {
   readonly maxResultBytes: number;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
+  /** `connector.tool` grants that matched nothing, warned once per isolate. */
+  private readonly warnedAbsentGrants = new Set<string>();
 
   constructor(
     connectors: Connector[],
@@ -439,6 +449,21 @@ export class Registry implements RegistryView {
 
   scopedStorage(subjectKey: string): KVStorage {
     return namespaced(this.opts.storage, `subject:${subjectKey}:`);
+  }
+
+  /**
+   * A granted `connector.tool` address the live catalog does not contain is
+   * unreachable, which is the fail-closed outcome; this only makes the
+   * misconfiguration visible. Remote catalogs load lazily, so construction
+   * cannot check it, and a catalog that drifts later cannot widen a grant.
+   */
+  noteAbsentGrant(connectorId: string, toolName: string): void {
+    const key = `${connectorId}.${toolName}`;
+    if (this.warnedAbsentGrants.has(key)) return;
+    this.warnedAbsentGrants.add(key);
+    this.opts.logger.warn(
+      `connectorAccess grants "${key}" but connector "${connectorId}" lists no such tool; the grant is unreachable`,
+    );
   }
 
   private oauthHandoffKey(connectorId: string, stateHash: string): string {
@@ -1560,12 +1585,25 @@ class ScopedRegistryView implements RegistryView {
     return connector ? { connector, toolName: parsed.toolName } : null;
   }
 
-  getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
+  async getTools(...args: Parameters<RegistryView["getTools"]>): Promise<ToolDef[]> {
     const registry = this.registryFor(args[0]);
     if (!registry) {
-      return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
+      throw new Error(`Unknown connector "${args[0]}"`);
     }
-    return registry.getTools(...args);
+    const tools = await registry.getTools(...args);
+    const granted = this.scope.toolAccess?.get(args[0]);
+    if (!granted) return tools;
+    // Every consumer — search, describe, call_tool, and a program's
+    // connecta.call — resolves through this list, so an ungranted tool is
+    // indistinguishable from one the connector never had.
+    const visible = tools.filter((tool) => granted.has(tool.name));
+    if (visible.length < granted.size) {
+      const present = new Set(visible.map((tool) => tool.name));
+      for (const name of granted) {
+        if (!present.has(name)) this.root.noteAbsentGrant(args[0], name);
+      }
+    }
+    return visible;
   }
 
   contextFor(
