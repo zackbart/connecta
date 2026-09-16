@@ -200,7 +200,7 @@ can set `includeSchemaKeys: false` to buy the bytes back.
 
 **S3.** Discovery is bounded and the bounds throw rather than silently shrink: a
 `limit` outside 1–100, an `offset` that is not a non-negative integer, or a supplied `query` that is not a string is `invalid_args`. Omitted `offset` starts at 0; omitted `query` browses. A page whose serialized form
-exceeds 256,000 bytes is `result_too_large`. Each error carries a hint for correcting the request. The thrown error carries the stable `code`, `retryable`, and
+exceeds 256,000 bytes is `result_too_large`; a program's page is measured as its serialized value, while top-level `search_tools` measures the complete tool result including both copies and JSON escaping. Each error carries a hint for correcting the request. The thrown error carries the stable `code`, `retryable`, and
 `details` fields (`E1`).
 
 ### connecta.describe

@@ -2,6 +2,111 @@
 
 All notable changes to this package are documented here.
 
+## 0.24.3 — 2026-09-16
+
+A bug-fix release from a full audit of the execution path, invocation, catalog
+rendering, downstream OAuth, and the route table, plus the one MCP 2026-07-28
+requirement the previous inventory had missed. Two changes can be felt by a
+deployment: `/mcp` now validates the browser `Origin` header, so a browser MCP
+client hosted on an origin other than `publicUrl` or loopback needs
+`allowedOrigins`; and the overload and shutdown JSON-RPC error codes moved
+from `-32001`/`-32002` to `-31001`/`-31002`. Everything else is a fix a
+deployment can take without action. No storage format changed.
+
+### Added
+
+- **`allowedOrigins`.** `/mcp` and every `/mcp/<pool>` path refuse a
+  disallowed `Origin` with a fixed 403 before redirects, admission, auth, or
+  preflight, as the Streamable HTTP transport requires against DNS rebinding.
+  The default admits the `publicUrl` origin and HTTP(S) loopback at any port;
+  a list replaces the default; `"*"` keeps unrestricted CORS. Clients that
+  send no `Origin` are unaffected. Allowed preflight now returns 204 without
+  admission or auth and echoes valid requested `mcp-param-*` header names.
+- **Host-owned refresh recovery.** A valid token response is a consumed
+  refresh token. When the request that owned a refresh is cancelled,
+  redirected to authorization, or invalidated before the SDK saves the
+  response, the coordinator persists the rotation itself, holds contenders
+  behind the pending-mutation marker until that write lands, and hands them
+  the saved rotation. A retired refresh token is never redeemed twice, and two
+  deterministic waves of eight overlapping scopes pin one grant per wave
+  (#526).
+- Downstream JSON-RPC `-32602` refusals map to `invalid_args`, and 4xx
+  responses with a JSON message keep that message, bounded, without inferring
+  retryability from prose. 429 stays `rate_limited` and 408 becomes `timeout`.
+- `Retry-After` accepts the HTTP-date form as well as delta-seconds.
+- Personal connectors admit calls through their principal registry's own
+  budget instead of sharing one root budget; shutdown closes both, and
+  eviction never discards a live budget.
+- `records/mcp-2026-07-28.md` gains rows for Origin validation, deterministic
+  `tools/list` order, the bearer challenge, SEP-2243 parameter headers, and
+  trace propagation, and corrects the stale extensions row.
+
+### Changed
+
+- `/health` no longer names connectors: drift reports are keyed by a truncated
+  SHA-256 of the connector id and downstream admission is summed without ids.
+  `connecta doctor` keeps its stale-allowlist signal.
+- Overload and shutdown JSON-RPC codes are `-31001` and `-31002`, outside the
+  reserved range, per the specification's allocation policy.
+- `connecta.search` and `connecta.describe` spend the same host-call budget as
+  `connecta.call`; only `connecta.emit` is exempt (L4, M7).
+- One per-call deadline now covers catalog resolution, admission, and the
+  connector call, so a hung connector fails with a catchable `timeout` instead
+  of consuming the whole execution wall clock.
+- Compact describe caps each shape at 8,192 UTF-8 bytes and sets
+  `inputSchemaTruncated` / `outputSchemaTruncated`; use `format: "json"` for
+  the exact schema.
+- Top-level discovery measures the complete tool result, both copies and JSON
+  escaping, against the 256,000-byte ceiling.
+- Downstream `isError` text is bounded at 512 UTF-8 bytes, and error framing
+  fits the call's result cap in both result modes.
+- Open deployments warn whenever any connector is configured, since `api()`
+  headers can carry secrets without declaring credential hooks.
+
+### Fixed
+
+- **A long downstream error could leak the sandbox's per-run secret to guest
+  code and let a program forge a typed failure.** The QuickJS bridge sliced a
+  rejected host call at 4,000 characters, which clipped the authenticated
+  failure frame mid-JSON. Details are bounded before framing, the bridge
+  refuses an oversized frame whole, the prelude hides a malformed frame, and
+  the raw transport lives in a private closure so guest code cannot swap
+  `Error` or reach the bridge.
+- **A completed destructive call was reported as a retryable failure when the
+  `get_result` stash write failed.** The truncated preview is returned with a
+  paging-unavailable notice, activity records success, and
+  `result_processing_failed` is never retryable.
+- **The OAuth refresh gate wedged permanently** when a token fetch succeeded
+  but the SDK's save never ran, answering 503 to every later refresh in the
+  isolate until a forced reauthorization.
+- **Compact schema rendering went quartic on `allOf`-of-`$ref` schemas.** A
+  3.5 KB downstream schema took over four seconds of synchronous CPU, and the
+  describe path produced a 1.9 MB string from 1.8 KB. Rendering now spends a
+  shared 2,000-visit budget with memoized `$ref` expansion.
+- `call_tool` in MCP result mode returned `{"content":[]}` for a downstream
+  result carrying only `structuredContent`; a text block is now synthesized,
+  and a `null` structured value survives unwrapping.
+- In-program `connecta.search` returned `offset: null` and an empty page for a
+  non-numeric offset, and threw a raw `TypeError` for a non-string query; both
+  are `invalid_args`.
+- Caller-authored text in `get_result`, `authorize_connector`, `skills`, and
+  `search_tools` refusals is bounded; a `connector` over 512 bytes is
+  `invalid_args`. A failed stash read is a typed `unavailable`.
+- Legacy `mcp-session-id` DELETE now runs on credential rotation, generation
+  change, disconnect, and abandoned connects, not only on scope close.
+- Pool names outside `[a-z0-9_-]` fell through to a generic 404 without CORS
+  or authentication; every `/mcp/` suffix now reaches the identical pool 404
+  after auth.
+- The absent-grant warning set was unbounded and keyed by caller-derivable
+  text; it is capped at 1,024 entries.
+- `requiredInputKeys` could name keys the schema did not declare.
+- Validation error detail embedded whole enums; drift digests recursed without
+  a depth bound; refresh token responses were read without a byte ceiling;
+  credential revision races could loop without bound.
+- Containment matching for escaped failures ignores messages under eight
+  characters, and a QuickJS host-result reply that cannot be serialized settles
+  the call instead of hanging until the wall deadline.
+
 ## 0.24.2 — 2026-09-16
 
 `connectorAccess` can now grant individual tools, and a deployment can declare

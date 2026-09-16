@@ -117,7 +117,7 @@ exist so far:
 | --- | --- | --- |
 | **pre-template** | before 0.10.2 | no `connecta init` existed; hand-written, or copied from the retired `examples/node` |
 | **A** | 0.10.2 – 0.15.1 | `.env.example`, `.gitignore`, `AGENTS.md`, `CLAUDE.md`, `README.md`, `package.json`, `src/index.ts`, `tsconfig.json` |
-| **B** | 0.16.0 – 0.24.2 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
+| **B** | 0.16.0 – 0.24.3 | adds `.dockerignore`, `Dockerfile`, `docker-compose.yml`, and `src/file-activity.ts`; `src/index.ts` grows the four commented operator blocks; `.env.example` ships `CONNECTA_TOKEN=` empty |
 
 Generation A is a decade in template years and identifying it precisely does
 not matter, because you are about to reconstruct it exactly rather than guess
@@ -190,7 +190,7 @@ Generate the *current* template beside the base you already made, into the same
 `$SCRATCH`:
 
 ```sh
-(cd "$SCRATCH" && npx @zackbart/connecta@0.24.2 init current)
+(cd "$SCRATCH" && npx @zackbart/connecta@0.24.3 init current)
 ```
 
 You now have a three-way merge with a real base: `$SCRATCH/base` is what this
@@ -246,7 +246,7 @@ A deployment older than 0.10.2 has no base to diff against. Do not try to
 manufacture one. Instead:
 
 1. `SCRATCH=$(mktemp -d)`, then
-   `(cd "$SCRATCH" && npx @zackbart/connecta@0.24.2 init current)` — there is no
+   `(cd "$SCRATCH" && npx @zackbart/connecta@0.24.3 init current)` — there is no
    `base` leg here, only the current template to read from.
 2. Copy `$SCRATCH/current` into the deployment file by file, **skipping
    `src/index.ts`**.
@@ -267,7 +267,15 @@ first, so cross them bottom-up: start at the oldest one still above this
 deployment's pin and work back up the page, because each boundary assumes the
 older ones are already done.
 
-### 0.23.0 → 0.24.2
+### 0.23.0 → 0.24.3
+
+0.24.3 validates the browser `Origin` header on `/mcp`. A browser MCP client
+hosted on an origin other than `publicUrl` or loopback now gets a 403 until
+the deployment lists it in `allowedOrigins` (or sets `"*"` to keep the old
+open CORS); clients that send no `Origin`, which is every server-side and CLI
+client, are unaffected. The overload and shutdown JSON-RPC error codes moved
+from `-32001`/`-32002` to `-31001`/`-31002`; the `data.code` strings are
+unchanged. See [request admission](./request-admission.md#origin-before-admission).
 
 Use the [optional-module migration](./optional-modules-upgrade.md) to select
 modules, grant auth-management permissions, and migrate issued-token clients.

@@ -103,9 +103,10 @@ checks, and authorization operations stay outside the budget: they are not the
 calls a provider is rate-limiting, and charging discovery for them would make
 a program's first search cost it capacity to act.
 
-Queue admission and connector execution have separate clocks. `queueTimeoutMs`
-bounds only the wait for a permit; a per-attempt `timeoutMs` starts after
-admission. A saturated call can therefore take up to their sum. With
+`queueTimeoutMs` bounds only the wait for a permit. The per-call `timeoutMs`
+is one deadline over catalog resolution, the permit wait, and the connector
+call together, so a saturated call can never take longer than `timeoutMs`;
+the queue timeout may only end it sooner. With
 `diagnostics: true`, `admissionMs` reports the permit wait and `connectorMs`
 the admitted attempt — which is the only way to tell "the provider is slow"
 from "we are throttling ourselves".
