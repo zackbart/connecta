@@ -549,6 +549,71 @@ describe("connector call admission integration", () => {
     });
   });
 
+  it("partitions personal budgets by principal while sharing shared budgets", async () => {
+    const connectors = ["personal", "shared"].map(id => connectorWith({
+      id, ...(id === "personal" ? { authScope: "personal" as const } : {}),
+      tools: [READ_TOOL], call: async () => ({}),
+      callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 60_000 } }),
+    }));
+    const registry = makeRegistry(connectors);
+    const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
+    const bob = registry.scoped({ connectorIds: "all", principalKey: "bob" });
+    const input = { toolName: "read", args: {} };
+    (await alice.admitCall("personal", input)).release();
+    (await bob.admitCall("personal", input)).release();
+    for (const view of [alice, bob]) await expect(view.admitCall("personal", input)).rejects.toMatchObject({ code: "rate_limited" });
+    (await alice.admitCall("shared", input)).release();
+    await expect(bob.admitCall("shared", input)).rejects.toMatchObject({ code: "rate_limited" });
+    expect(registry.callAdmissionSnapshot().personal).toMatchObject({ totals: { admitted: 2, rateLimited: 2 } });
+    registry.closeCallAdmission();
+  });
+
+  it("retains personal budgets at the registry cap and evicts only drained controllers", async () => {
+    vi.useFakeTimers();
+    try {
+      const registry = makeRegistry([connectorWith({
+        id: "personal", authScope: "personal", tools: [READ_TOOL], call: async () => ({}),
+        callAdmission: policy({ budget: { kind: "rolling-window", maxCalls: 1, windowMs: 1_000 } }),
+      })]);
+      const input = { toolName: "read", args: {} };
+      const first = registry.scoped({ connectorIds: "all", principalKey: "0" });
+      (await first.admitCall("personal", input)).release();
+      for (let i = 1; i < 1_024; i++) {
+        const view = registry.scoped({ connectorIds: "all", principalKey: String(i) });
+        (await view.admitCall("personal", input)).release();
+      }
+      expect(() => registry.scoped({ connectorIds: "all", principalKey: "overflow" })).toThrow(/capacity is exhausted/);
+      await expect(first.admitCall("personal", input)).rejects.toMatchObject({ code: "rate_limited" });
+      vi.advanceTimersByTime(1_000);
+      const next = registry.scoped({ connectorIds: "all", principalKey: "overflow" });
+      await expect(first.admitCall("personal", input)).rejects.toMatchObject({ admissionKind: "closed" });
+      (await next.admitCall("personal", input)).release();
+      registry.closeCallAdmission();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes queued and future personal admission alongside shared admission", async () => {
+    const connecta = createTestConnecta({ connectors: [connectorWith({
+      id: "personal", authScope: "personal", tools: [READ_TOOL], call: async () => ({}),
+      callAdmission: policy({ maxConcurrency: 1 }),
+    })], logger: silentLogger });
+    const registry = connecta.registry;
+    const alice = registry.scoped({ connectorIds: "all", principalKey: "alice" });
+    const input = { toolName: "read", args: {} };
+    const held = await alice.admitCall("personal", input);
+    const queued = alice.admitCall("personal", input);
+    const rejection = expect(queued).rejects.toMatchObject({ admissionKind: "closed" });
+    await connecta.close();
+    await rejection;
+    await expect(alice.admitCall("personal", input)).rejects.toMatchObject({ admissionKind: "closed" });
+    const bob = registry.scoped({ connectorIds: "all", principalKey: "bob" });
+    await expect(bob.admitCall("personal", input)).rejects.toMatchObject({ admissionKind: "closed" });
+    held.release();
+    expect(registry.callAdmissionSnapshot().personal).toMatchObject({ closed: true, active: 0, queued: 0 });
+  });
+
   it("exposes payload-free connector aggregates on health", async () => {
     const connector: Connector = connectorWith({
       id: "limited",
@@ -578,8 +643,7 @@ describe("connector call admission integration", () => {
       admission: {
         downstreamCalls: {
           policy: "connector-partitioned-per-runtime",
-          connectors: {
-            limited: {
+          aggregate: {
               rules: 1,
               partitions: 1,
               active: 1,
@@ -589,11 +653,11 @@ describe("connector call admission integration", () => {
                 rejected: 0,
                 rateLimited: 0,
               },
-            },
           },
         },
       },
     });
+    expect(text).not.toContain('"limited"');
     expect(text).not.toContain("tenant-visible-only-inside-the-limiter");
     expect(text).not.toContain("never expose me");
     permit.release();

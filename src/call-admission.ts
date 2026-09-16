@@ -85,6 +85,30 @@ export interface ConnectorCallAdmissionSnapshot {
   };
 }
 
+/** Sum gauges and counters without publishing connector or principal keys. */
+export function aggregateCallAdmissionSnapshots(
+  snapshots: readonly ConnectorCallAdmissionSnapshot[],
+): ConnectorCallAdmissionSnapshot {
+  const aggregate: ConnectorCallAdmissionSnapshot = {
+    rules: 0, partitions: 0, active: 0, queued: 0, closed: snapshots.length > 0,
+    totals: { admitted: 0, queued: 0, rejected: 0, rateLimited: 0, cancelled: 0 },
+    queueWaitMs: { count: 0, total: 0, max: 0 },
+  };
+  for (const snapshot of snapshots) {
+    for (const key of ["rules", "partitions", "active", "queued"] as const) {
+      aggregate[key] += snapshot[key];
+    }
+    aggregate.closed &&= snapshot.closed;
+    for (const key of ["admitted", "queued", "rejected", "rateLimited", "cancelled"] as const) {
+      aggregate.totals[key] += snapshot.totals[key];
+    }
+    aggregate.queueWaitMs.count += snapshot.queueWaitMs.count;
+    aggregate.queueWaitMs.total += snapshot.queueWaitMs.total;
+    aggregate.queueWaitMs.max = Math.max(aggregate.queueWaitMs.max, snapshot.queueWaitMs.max);
+  }
+  return aggregate;
+}
+
 function positiveWhole(value: number, name: string): number {
   if (!Number.isFinite(value) || !Number.isInteger(value) || value < 1) {
     throw new TypeError(`${name} must be a positive whole number.`);
@@ -332,6 +356,12 @@ export class ConnectorCallAdmissionController {
       // removable and its timer is installed.
       if (signal?.aborted) waiter.onAbort();
     });
+  }
+
+  /** A principal registry may be evicted only after calls and budgets drain. */
+  isIdle(): boolean {
+    this.evictIdlePartitions(Date.now());
+    return this.partitions.size === 0;
   }
 
   snapshot(): ConnectorCallAdmissionSnapshot {

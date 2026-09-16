@@ -64,7 +64,7 @@ function expectPrivateJson(response: Response): void {
 
 function expectMcpCors(response: Response): void {
   expectGlobalSecurityHeaders(response);
-  expect(response.headers.get("Access-Control-Allow-Origin")).toBe("*");
+  expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
   expect(response.headers.get("Access-Control-Expose-Headers")).toBe(
     "WWW-Authenticate, Retry-After, mcp-session-id, mcp-protocol-version",
   );
@@ -82,6 +82,137 @@ async function responseShape(response: Response) {
 }
 
 describe("server route contracts", () => {
+  it("refuses disallowed origins before auth and admission, including preflight", async () => {
+    const authorize = vi.fn(() => ({ ok: false as const, response: new Response("auth", { status: 401 }) }));
+    const connecta = createTestConnecta({ connectors: [], publicUrl: BASE, auth: { kind: "test", authorize } });
+    for (const path of ["/mcp", "/mcp/Support"]) {
+      for (const method of ["GET", "POST", "DELETE", "OPTIONS"]) {
+        const response = await connecta.fetch(new Request(`${BASE}${path}`, {
+          method, headers: { Origin: "https://attacker.example" },
+        }));
+        expect(response.status).toBe(403);
+        expectGlobalSecurityHeaders(response);
+        expect(response.headers.get("Access-Control-Allow-Origin")).toBeNull();
+        expect(response.headers.get("Cache-Control")).toBe("no-store");
+        expect(await response.text()).toBe('{"error":"origin not allowed"}');
+      }
+    }
+    const http = await connecta.fetch(new Request("http://127.0.0.1/mcp", { headers: { Origin: "https://attacker.example" } }));
+    expect(http.status).toBe(403);
+    expect(await http.text()).toBe('{"error":"origin not allowed"}');
+    expect(authorize).not.toHaveBeenCalled();
+    const health = await (await connecta.fetch(new Request(`${BASE}/health`))).json() as any;
+    expect(health.admission.requests.totals.admitted).toBe(0);
+    await connecta.close();
+    const closed = await connecta.fetch(new Request(`${BASE}/mcp`, { headers: { Origin: "null" } }));
+    expect(closed.status).toBe(403);
+    expect(await closed.text()).toBe('{"error":"origin not allowed"}');
+  });
+
+  it("admits only exact configured origins, defaults to public and loopback, and permits originless clients", async () => {
+    for (const config of [
+      { publicUrl: BASE },
+      {},
+      { allowedOrigins: ["https://client.example"] },
+      { allowedOrigins: "*" as const },
+    ]) {
+      const connecta = createTestConnecta({ connectors: [], auth: bearerToken(TOKEN), ...config });
+      for (const origin of [undefined, BASE, "https://client.example", "http://localhost:4321", "https://127.0.0.1:99", "http://[::1]:4321", "https://attacker.example", "null", "https://localhost.attacker.example", `${BASE}/`, "https://user:pass@localhost"]) {
+        const allowed = origin === undefined || config.allowedOrigins === "*" ||
+          (Array.isArray(config.allowedOrigins) ? config.allowedOrigins.includes(origin) :
+            origin === config.publicUrl || ["http://localhost:4321", "https://127.0.0.1:99", "http://[::1]:4321"].includes(origin));
+        const response = await connecta.fetch(new Request(`${BASE}/mcp`, {
+          headers: origin === undefined ? {} : { Origin: origin },
+        }));
+        expect(response.status, JSON.stringify({ config, origin })).toBe(allowed ? 401 : 403);
+        expect(response.headers.get("Access-Control-Allow-Origin")).toBe(
+          config.allowedOrigins === "*" ? "*" : allowed && origin !== undefined ? origin : null,
+        );
+        await response.text();
+      }
+      await connecta.close();
+    }
+  });
+
+  it("permits MCP preflight without auth and mirrors valid Mcp-Param header names only", async () => {
+    const authorize = vi.fn(() => ({ ok: false as const, response: new Response(null, { status: 401 }) }));
+    const connecta = createTestConnecta({ connectors: [], publicUrl: BASE, auth: { kind: "test", authorize } });
+    const response = await connecta.fetch(new Request(`${BASE}/mcp`, {
+      method: "OPTIONS",
+      headers: { Origin: BASE, "Access-Control-Request-Headers": "Mcp-Param-Region, mcp-param-tenant, unrelated, mcp-param-bad header" },
+    }));
+    expect(response.status).toBe(204);
+    expect(response.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
+    expect(response.headers.get("Access-Control-Allow-Headers")).toBe(
+      "Content-Type, Authorization, mcp-protocol-version, mcp-session-id, mcp-method, mcp-name, mcp-param-region, mcp-param-tenant",
+    );
+    expect(response.headers.get("Vary")).toContain("Origin");
+    expect(response.headers.get("Vary")).toContain("Access-Control-Request-Headers");
+    expect(authorize).not.toHaveBeenCalled();
+    await connecta.close();
+  });
+
+  it("authenticates every pool suffix before returning the same pool refusal", async () => {
+    const connecta = createTestConnecta({
+      connectors: [testConnector("docs")], auth: bearerToken(TOKEN), publicUrl: BASE,
+      pools: { support: { tools: ["docs"], grant: () => false }, broken: { tools: ["docs"], grant: () => { throw new Error("private"); } } },
+    });
+    let baseline: Awaited<ReturnType<typeof responseShape>> | undefined;
+    for (const suffix of ["support", "broken", "missing", "Support", "日本語", "support.extra", "nested/path", ""]) {
+      const url = `${BASE}/mcp/${suffix}`;
+      const unauthenticated = await connecta.fetch(new Request(url));
+      expect(unauthenticated.status).toBe(401);
+      expectMcpCors(unauthenticated);
+      expect(await unauthenticated.text()).toBe('{"error":"unauthorized"}');
+      const response = await connecta.fetch(new Request(url, { headers: { Authorization: `Bearer ${TOKEN}` } }));
+      expectMcpCors(response);
+      const shape = await responseShape(response);
+      expect(shape.status).toBe(404);
+      expect(shape.body).toBe("Not Found");
+      baseline ??= shape;
+      expect(shape).toEqual(baseline);
+    }
+    await connecta.close();
+  });
+
+  it("keeps connector identities out of health while preserving doctor's drift signal", async () => {
+    const connecta = createTestConnecta({ connectors: [{
+      ...testConnector("private_connector_id"),
+      callAdmission: { rules: [{ maxConcurrency: 1 }] },
+      catalogDrift: () => ({ observedAt: "2026-09-16T00:00:00.000Z", unclassifiedTools: 2, unservedTools: 1, annotationConflicts: 0, schemaChanges: 3 }),
+    }], auth: bearerToken(TOKEN), publicUrl: BASE });
+    let previous: unknown;
+    for (let i = 0; i < 2; i++) {
+      const response = await connecta.fetch(new Request(`${BASE}/health`, { headers: { Origin: "https://attacker.example" } }));
+      expect(response.status).toBe(200);
+      const text = await response.text();
+      expect(text).not.toContain("private_connector_id");
+      const body = JSON.parse(text);
+      expect(body.connectors).toBe(1);
+      expect(Object.keys(body.catalogDrift)).toHaveLength(1);
+      expect(Object.keys(body.catalogDrift)[0]).toMatch(/^[a-f0-9]{16}$/);
+      expect(Object.values(body.catalogDrift)).toEqual([{ observedAt: "2026-09-16T00:00:00.000Z", unclassifiedTools: 2, unservedTools: 1, annotationConflicts: 0, schemaChanges: 3 }]);
+      if (previous) expect(body.catalogDrift).toEqual(previous);
+      previous = body.catalogDrift;
+    }
+    await connecta.close();
+  });
+
+  it("pins application error codes for overload and shutdown", async () => {
+    const connecta = createTestConnecta({ connectors: [], admission: { requests: { concurrency: 1, maxQueueSize: 0 } }, auth: {
+      kind: "test", authorize: () => ({ ok: false, response: new Response(new ReadableStream({ pull() {} }), { status: 401 }) }),
+    } });
+    const held = await connecta.fetch(new Request(`${BASE}/mcp`));
+    const overloaded = await connecta.fetch(new Request(`${BASE}/mcp`));
+    expect(overloaded.status).toBe(503);
+    expect(await overloaded.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-31001,"message":"Server capacity is exhausted. Retry later.","data":{"code":"server_overloaded","retryable":true,"retryAfterMs":1000}}}');
+    await held.body?.cancel();
+    await connecta.close();
+    const closed = await connecta.fetch(new Request(`${BASE}/mcp`));
+    expect(closed.status).toBe(503);
+    expect(await closed.text()).toBe('{"jsonrpc":"2.0","id":null,"error":{"code":-31002,"message":"Server is shutting down.","data":{"code":"server_shutting_down","retryable":false}}}');
+  });
+
   it("keeps every built-in and the final 404 inside the security wrapper", async () => {
     const connector = surfaceConnector();
     const connecta = createTestConnecta({

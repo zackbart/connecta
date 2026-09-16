@@ -1,7 +1,9 @@
+import { api } from "../src/connectors/api.js";
+import { bearerToken } from "../src/auth/bearer.js";
 import { operatorUi } from "../src/ui.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { activityHistory } from "../src/activity.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createConnecta,
   type ConnectaConfig,
@@ -22,6 +24,35 @@ const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
+  it("warns for every open deployment with connectors, including static API auth", async () => {
+    const fetchProvider = vi.fn();
+    const connector = api("static_auth", { tools: [{
+      name: "read", description: "Read provider data", annotations: { readOnlyHint: true },
+      handler: () => fetchProvider("https://provider.example", { headers: { Authorization: "Bearer private" } }),
+    }] });
+    for (const connectors of [[], [connector], [{ ...connector, credential: { label: "Token" } }]]) {
+      for (const auth of [undefined, bearerToken("secret")]) {
+        const warn = vi.fn();
+        const connecta = createConnecta({ connectors, executor, ...(auth ? { auth } : {}), logger: { ...silentLogger, warn } });
+        const warnings = warn.mock.calls.filter(([message]) => String(message).includes("no inbound authentication"));
+        expect(warnings).toHaveLength(connectors.length && !auth ? 1 : 0);
+        if (connectors[0]?.credential && !auth) expect(warnings[0]?.[0]).toContain("credentials");
+        expect(JSON.stringify(warnings)).not.toContain("Bearer private");
+        await connecta.close();
+      }
+    }
+  });
+
+  it("validates allowedOrigins as exact HTTP origins or an explicit wildcard", async () => {
+    for (const allowedOrigins of [null, true, "https://client.example", ["*"], ["null"], ["https://client.example/"], ["https://user:secret@client.example"], ["file://host"], [42]]) {
+      expect(() => unsafeCreateConnecta({ connectors: [], executor, allowedOrigins })).toThrow(/allowedOrigins/);
+    }
+    for (const allowedOrigins of [[], ["https://client.example", "http://localhost:1234"], "*" as const]) {
+      const connecta = createConnecta({ connectors: [], executor, allowedOrigins });
+      await connecta.close();
+    }
+  });
+
   it("accepts every declared closed option", () => {
     const config: ConnectaConfig = {
       connectors: [],

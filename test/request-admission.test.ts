@@ -66,12 +66,14 @@ describe("request admission", () => {
     const overloaded = await connecta.fetch(mcpRpc("tools/list", {}, { id: 1 }));
     expect(overloaded.status).toBe(503);
     expect(overloaded.headers.get("Retry-After")).toBe("1");
-    expect(overloaded.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    // An originless request gets no allow-origin header: the reflected origin
+    // policy only answers browsers that sent one.
+    expect(overloaded.headers.get("Access-Control-Allow-Origin")).toBeNull();
     expect(await overloaded.json()).toEqual({
       jsonrpc: "2.0",
       id: null,
       error: {
-        code: -32001,
+        code: -31001,
         message: "Server capacity is exhausted. Retry later.",
         data: {
           code: "server_overloaded",
@@ -232,7 +234,7 @@ describe("request admission", () => {
       expect(response.status).toBe(503);
       expect(await response.json()).toMatchObject({
         error: {
-          code: -32002,
+          code: -31002,
           data: { code: "server_shutting_down", retryable: false },
         },
       });

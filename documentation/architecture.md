@@ -65,22 +65,24 @@ scope resolved from the request rather than remembered.
 
 ## Request lifecycle
 
-`src/server.ts` is the composition root. It does three things in order: upgrade
-the scheme when it must, run the route table, then wrap whatever came back in
+`src/server.ts` is the composition root. It checks MCP origins, upgrades the
+scheme when it must, runs the route table, then wraps whatever came back in
 security headers. Route *order* is the contract — several routes would behave
 differently if they were reachable in another order — so the table below is
 read top to bottom.
 
 | Order | Route | Notes |
 | --- | --- | --- |
+| 0 | MCP Origin check | `/mcp` and every `/mcp/` suffix reject a disallowed `Origin` with a fixed 403 before redirects, admission, auth, or preflight. `allowedOrigins` defaults to the configured public origin plus HTTP(S) loopback origins at any port. Requests without Origin are admitted. |
 | 0 | HTTPS upgrade | 308 to `publicUrl` when it is HTTPS and the request arrived over HTTP. Path and query are *assigned* onto the configured URL, never resolved against it, so a `//host` pathname cannot replace the deployment origin. `/health` is exempt: a loopback container probe must not depend on public DNS and TLS. `/ui` is canonicalized to `/` while upgrading. |
 | 0 | Cloudflare Access (Worker deployment, when enabled) | Edge admission before this route table. Managed OAuth owns its challenge and discovery metadata; an admitted direct invocation carries trusted identity in `ctx.access`. |
 | 1 | Mounted UI routes | The optional UI handles its shells, assets, data, details, and auth mutations before wildcard OPTIONS. Mutation routes refuse preflight rather than inheriting MCP CORS. No UI module means none of these routes. |
-| 2 | `OPTIONS` | Auth metadata gets a chance, otherwise MCP CORS preflight. |
+| 2 | MCP preflight | Allowed `OPTIONS` on `/mcp` or any `/mcp/` suffix returns 204 without admission or auth. Reflect the allowed origin and requested valid `mcp-param-*` header names. |
+| 2 | Other `OPTIONS` | Auth metadata gets a chance, otherwise compatibility CORS preflight. |
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
-| 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; reserved routes reflect installed modules. |
+| 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; connector drift uses stable short hashes and downstream admission sums shared and personal controllers without ids. Reserved routes reflect installed modules. |
 | 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state verification and personal ownership checks; independent of UI. |
-| 6 | `/mcp`, `/mcp/<pool>` | Admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; an undeclared name, a refusing grant, and a throwing grant are one identical 404. |
+| 6 | `/mcp`, `/mcp/<pool>` | Origin check before admission, admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; any undeclared suffix, including malformed names, a refusing grant, and a throwing grant are one identical 404 after auth. |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
 
@@ -89,7 +91,12 @@ policy, HSTS on HTTPS, while the UI module adds a nonce-based script CSP and fra
 and the exact refusal bodies; it exists because the ordering is invisible in
 any one file and a reordering reads like a harmless refactor.
 
-`/mcp` itself is six steps, in this order and for these reasons:
+`/mcp` first checks Origin, including on preflight. A disallowed browser origin
+costs no permit and no auth lookup. The explicit `allowedOrigins: "*"` escape
+hatch preserves open CORS; a list reflects only admitted origins and varies
+responses by Origin. An originless client needs no CORS allow-origin header.
+
+An admitted non-preflight request then takes six steps:
 
 1. **Admit.** One permit from the deployment-wide FIFO pool, taken before auth
    so an unauthenticated flood costs a permit rather than a Clerk lookup

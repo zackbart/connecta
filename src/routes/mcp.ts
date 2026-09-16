@@ -37,10 +37,28 @@ export const MCP_CORS_HEADERS = {
 // Browser-based MCP clients call /mcp cross-origin. Without CORS on every
 // response — errors included — the browser hides the 401, the client cannot
 // read WWW-Authenticate, and OAuth discovery silently never starts.
-function withMcpCors(response: Response): Response {
+function withMcpCors(
+  response: Response,
+  request: Request,
+  allowedOrigin: string | null,
+): Response {
   const headers = new Headers(response.headers);
   for (const [name, value] of Object.entries(MCP_CORS_HEADERS)) {
     headers.set(name, value);
+  }
+  headers.delete("Access-Control-Allow-Origin");
+  if (allowedOrigin !== null) headers.set("Access-Control-Allow-Origin", allowedOrigin);
+  headers.append("Vary", "Origin");
+  if (request.method === "OPTIONS") {
+    // Browsers do not interpret a prefix wildcard in Allow-Headers. Echo only
+    // valid SEP-2243 field names; unrelated requested headers stay disallowed.
+    const paramHeaders = (request.headers.get("Access-Control-Request-Headers") ?? "")
+      .toLowerCase().split(",").map(name => name.trim())
+      .filter(name => /^mcp-param-[!#$%&'*+.^_`|~0-9a-z-]+$/.test(name));
+    if (paramHeaders.length) {
+      headers.append("Access-Control-Allow-Headers", [...new Set(paramHeaders)].join(", "));
+    }
+    headers.append("Vary", "Access-Control-Request-Headers");
   }
   headers.set(
     "Access-Control-Expose-Headers",
@@ -77,7 +95,10 @@ function requestAdmissionFailure(error: ExecutorAdmissionError): Response {
       jsonrpc: "2.0",
       id: null,
       error: {
-        code: overloaded ? -32001 : -32002,
+        // MCP 2026-07-28 basic#error-codes forbids new allocations in the
+        // legacy -32000..-32019 range. Use application codes outside the
+        // JSON-RPC reserved range, avoiding retired protocol meanings.
+        code: overloaded ? -31001 : -31002,
         message: overloaded
           ? "Server capacity is exhausted. Retry later."
           : "Server is shutting down.",
@@ -297,7 +318,47 @@ async function serveMcp(
 
 export function createMcpRoute(
   opts: ServerOptions,
-): (context: RouteContext) => Promise<Response | null> {
+): {
+  handle(context: RouteContext): Promise<Response | null>;
+  rejectOrigin(request: Request): Response | null;
+} {
+  const configuredOrigins = opts.allowedOrigins;
+  const isExactOrigin = (value: unknown): value is string => {
+    if (typeof value !== "string") return false;
+    try {
+      const url = new URL(value);
+      return (url.protocol === "http:" || url.protocol === "https:") && url.origin === value;
+    } catch {
+      return false;
+    }
+  };
+  if (
+    configuredOrigins !== undefined && configuredOrigins !== "*" &&
+    (!Array.isArray(configuredOrigins) || !configuredOrigins.every(isExactOrigin))
+  ) {
+    throw new TypeError('ConnectaConfig.allowedOrigins must be an array of exact HTTP(S) origins or "*".');
+  }
+  const origins = new Set(configuredOrigins === undefined
+    ? opts.publicUrl ? [new URL(opts.publicUrl).origin] : []
+    : configuredOrigins === "*" ? [] : configuredOrigins);
+  const allowsOrigin = (origin: string): boolean => {
+    if (configuredOrigins === "*") return true;
+    if (!isExactOrigin(origin)) return false;
+    if (origins.has(origin)) return true;
+    if (configuredOrigins !== undefined) return false;
+    const hostname = new URL(origin).hostname;
+    return hostname === "localhost" || hostname === "[::1]" || /^127\.\d+\.\d+\.\d+$/.test(hostname);
+  };
+  const rejectOrigin = (request: Request): Response | null => {
+    const path = new URL(request.url).pathname;
+    if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
+    const origin = request.headers.get("Origin");
+    if (origin === null || allowsOrigin(origin)) return null;
+    return withMcpCors(new Response('{"error":"origin not allowed"}', {
+      status: 403,
+      headers: { "Content-Type": "application/json", "Cache-Control": "no-store" },
+    }), request, null);
+  };
   let lastAdmissionWarningAt = 0;
   let suppressedAdmissionWarnings = 0;
   const warnAdmissionRejected = (error: ExecutorAdmissionError): void => {
@@ -316,7 +377,7 @@ export function createMcpRoute(
     suppressedAdmissionWarnings = 0;
   };
 
-  return async function routeMcp(
+  async function routeMcp(
     context: RouteContext,
   ): Promise<Response | null> {
     const {
@@ -325,9 +386,18 @@ export function createMcpRoute(
       baseUrl,
       runtimeContext,
     } = context;
-    const poolPath = /^\/mcp\/([a-z0-9_-]+)$/.exec(path);
-    if (path !== "/mcp" && !poolPath) return null;
-    const poolName = poolPath?.[1];
+    if (path !== "/mcp" && !path.startsWith("/mcp/")) return null;
+    const poolName = path === "/mcp" ? undefined : path.slice("/mcp/".length);
+    const origin = request.headers.get("Origin");
+    const allowed = origin === null || allowsOrigin(origin);
+    const cors = (response: Response): Response => withMcpCors(
+      response, request, configuredOrigins === "*" ? "*" : allowed ? origin : null,
+    );
+    // DNS-rebinding refusals cost neither a permit nor an auth lookup. This
+    // local header check also guards OPTIONS before any provider metadata.
+    const refusal = rejectOrigin(request);
+    if (refusal) return refusal;
+    if (request.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
     let admission: AdmissionLease;
     try {
       admission = await opts.requestAdmission.acquire({
@@ -351,7 +421,7 @@ export function createMcpRoute(
         if (error.code === "executor_overloaded") {
           warnAdmissionRejected(error);
         }
-        return withMcpCors(requestAdmissionFailure(error));
+        return cors(requestAdmissionFailure(error));
       }
       throw error;
     }
@@ -365,7 +435,7 @@ export function createMcpRoute(
       );
       if (!authz.ok) {
         return releaseAdmissionWithResponse(
-          withMcpCors(authz.response),
+          cors(authz.response),
           admission,
           request.signal,
         );
@@ -393,7 +463,7 @@ export function createMcpRoute(
               (authz.actor.id ? ` for ${loggableValue(authz.actor.id)}` : ""),
           );
           return releaseAdmissionWithResponse(
-            withMcpCors(new Response("Not Found", { status: 404 })),
+            cors(new Response("Not Found", { status: 404 })),
             admission,
             request.signal,
           );
@@ -411,7 +481,7 @@ export function createMcpRoute(
         });
       } catch (error) {
         return releaseAdmissionWithResponse(
-          withMcpCors(
+          cors(
             new Response(JSON.stringify({ error: msg(error) }), {
               status: 403,
               headers: { "Content-Type": "application/json" },
@@ -423,13 +493,13 @@ export function createMcpRoute(
       }
       if (new URL(request.url).searchParams.has("toolkit")) {
         return releaseAdmissionWithResponse(
-          withMcpCors(toolkitRetired(opts.logger)),
+          cors(toolkitRetired(opts.logger)),
           admission,
           request.signal,
         );
       }
       return releaseAdmissionWithResponse(
-        withMcpCors(
+        cors(
           await serveMcp(
             request,
             opts,
@@ -447,5 +517,6 @@ export function createMcpRoute(
       admission.release();
       throw error;
     }
-  };
+  }
+  return { handle: routeMcp, rejectOrigin };
 }

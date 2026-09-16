@@ -79,6 +79,17 @@ describe("startup convention warnings", () => {
     };
   }
 
+  it("bounds absent-grant warning deduplication and evicts the oldest name", () => {
+    const { logger, warnings } = spyLogger();
+    const registry = new Registry([], { storage: memoryStorage(), logger });
+    for (let i = 0; i < 1_025; i++) registry.noteAbsentGrant("docs", `missing_${i}`);
+    expect((registry as unknown as { warnedAbsentGrants: Set<string> }).warnedAbsentGrants.size).toBe(1_024);
+    registry.noteAbsentGrant("docs", "missing_1024");
+    expect(warnings).toHaveLength(1_025);
+    registry.noteAbsentGrant("docs", "missing_0");
+    expect(warnings).toHaveLength(1_026);
+  });
+
   it("warns on a connector with no description", () => {
     const { logger, warnings } = spyLogger();
     const noDesc: Connector = connectorWith({
