@@ -231,6 +231,13 @@ convenient reading. A call that can only fail is refused locally as
 `invalid_args` before the round trip. Provider error prose is never parsed to
 invent a classification.
 
+An unreachable transport may report `unavailable` with optional sanitized
+`details.host` and `details.code`. The host is an HTTP(S) origin only, at most
+253 UTF-8 bytes; the code is an allowlisted runtime network code or `timeout`,
+at most 32 bytes. Omit what the runtime cannot establish. The typed error
+constructor strips URL credentials, paths, queries, and fragments, and drops
+invalid or oversized fields. Transport diagnostics never enter activity records.
+
 **A downstream 404 is `not_found` — when the provider means it.** The code
 exists because the next move is none of the others': you do not wait, you do
 not send the agent to `authorize_connector`, you do not repair the argument

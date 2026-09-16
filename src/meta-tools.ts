@@ -567,6 +567,9 @@ export function createMetaTools(
       const structuredRecovery = outcome.error.nextAction !== undefined;
       const recoveryRequired =
         structuredRecovery ||
+        // Sanitized `unavailable` diagnostics ride the structured shape too;
+        // the plain-text path would drop them (#539).
+        outcome.error.details !== undefined ||
         [
           "auth_required",
           "invalid_args",

@@ -371,3 +371,51 @@ describe("Retry-After", () => {
     } finally { vi.restoreAllMocks(); }
   });
 });
+
+
+describe("guarded fetch diagnostics and bodies without streams", () => {
+  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])("preserves sanitized %s diagnostics", async (code) => {
+    stubFetch(() => { throw code === "AbortError"
+      ? new DOMException("deadline", "AbortError")
+      : new TypeError("fetch failed", { cause: { code } }); });
+    const error = await failure(transport()(
+      { method: "GET", path: "/private", query: { token: "secret" } }, context(), asJson,
+    ));
+    expect(error).toMatchObject({ code: "unavailable", retryable: true,
+      details: { host: "https://api.example.com", code: code === "AbortError" ? "timeout" : code } });
+  });
+
+  it("keeps only the known origin for workerd outbound denial", async () => {
+    stubFetch(() => { throw new Error("This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."); });
+    const error = await failure(transport()({ method: "GET", path: "/private" }, context(), asJson));
+    expect(error).toMatchObject({ code: "unavailable", details: { host: "https://api.example.com" } });
+    expect(error.details).not.toHaveProperty("code");
+  });
+
+  it.each(["text", "json", "jsonResult"] as const)("enforces UTF-8 bytes through %s without a stream", async (accessor) => {
+    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null,
+      text: async () => JSON.stringify("é".repeat(600)),
+      json: async () => "trusted incorrectly",
+    }) as Response);
+    const error = await failure(transport()(
+      { method: "GET", path: "/large" }, context(), (response) => response[accessor](),
+    ));
+    expect(error).toMatchObject({ code: "connector_call_failed", retryable: false });
+    expect(error.message).toContain("1024-byte response ceiling");
+  });
+
+  it("parses bounded text rather than trusting json() without a stream", async () => {
+    const text = vi.fn(async () => '{"id":"é"}');
+    const json = vi.fn(async () => ({ wrong: true }));
+    stubFetch(() => ({ status: 200, ok: true, headers: new Headers(), body: null, text, json }) as unknown as Response);
+    await expect(transport({ maxResponseBytes: 11 })(
+      { method: "GET", path: "/small" }, context(), async (response) => {
+        const value = await response.json();
+        await response.text();
+        return value;
+      },
+    )).resolves.toEqual({ id: "é" });
+    expect(json).not.toHaveBeenCalled();
+    expect(text).toHaveBeenCalledTimes(1);
+  });
+});

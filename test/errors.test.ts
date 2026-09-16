@@ -3,6 +3,7 @@ import {
   classifyCallError,
   ConnectorCallError,
   framingError,
+  networkErrorCode,
 } from "../src/errors.js";
 
 describe("ConnectorCallError", () => {
@@ -242,4 +243,48 @@ describe("framingError", () => {
       framingError("catalog_lookup_failed", "field shape mismatch"),
     ).toMatchObject({ retryable: false });
   });
+});
+
+
+describe("unavailable diagnostics", () => {
+  it("sanitizes and forwards only bounded origin and runtime code fields", () => {
+    const error = new ConnectorCallError("unavailable", "unreachable", {
+      details: { host: "https://user:password@example.com:8443/private?q=secret#fragment", code: "ECONNREFUSED" },
+    });
+    expect(classifyCallError(error)).toEqual({
+      code: "unavailable", message: "unreachable", retryable: true,
+      details: { host: "https://example.com:8443", code: "ECONNREFUSED" },
+    });
+  });
+
+  it.each(["https://private/path", "ECONNREFUSED secret", "E" + "X".repeat(32), "not-an-errno"])("drops invalid diagnostic code %s", (code) => {
+    expect(classifyCallError(new ConnectorCallError("unavailable", "x", {
+      details: { host: "not a URL", code },
+    }))).not.toHaveProperty("details");
+  });
+
+  it("drops oversized and opaque origins instead of clipping them", () => {
+    for (const host of ["https://" + "a".repeat(254) + ".test/private", "data:text/plain,secret", "file:///private"]) {
+      expect(classifyCallError(new ConnectorCallError("unavailable", "x", {
+        details: { host, code: "timeout" },
+      }))).toHaveProperty("details", { code: "timeout" });
+    }
+  });
+
+  it("omits absent diagnostics and diagnostics on other failure classes", () => {
+    expect(classifyCallError(new ConnectorCallError("unavailable", "x"))).not.toHaveProperty("details");
+    expect(classifyCallError(new ConnectorCallError("invalid_args", "timeout", {
+      details: { host: "https://example.com", code: "ECONNRESET" },
+    }))).toEqual({ code: "invalid_args", message: "timeout", retryable: false });
+  });
+});
+
+
+it("reads runtime codes without consulting messages or unstructured causes", () => {
+  expect(networkErrorCode(Object.assign(new Error("private"), { code: "ECONNRESET" }))).toBe("ECONNRESET");
+  expect(networkErrorCode(new TypeError("fetch failed", { cause: { code: "UND_ERR_CONNECT_TIMEOUT" } }))).toBe("UND_ERR_CONNECT_TIMEOUT");
+  expect(networkErrorCode(new DOMException("deadline", "TimeoutError"))).toBe("timeout");
+  for (const error of [new Error("ECONNREFUSED timeout"), new Error("fetch failed", { cause: "ENOTFOUND" }), { code: "https://secret/private" }]) {
+    expect(networkErrorCode(error)).toBeUndefined();
+  }
 });

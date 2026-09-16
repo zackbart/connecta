@@ -1,5 +1,5 @@
 /** See documentation/connectors.md#the-guarded-fetch-transport. Web APIs only. */
-import { ConnectorCallError } from "../errors.js";
+import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import type { ConnectorContext } from "../types.js";
 
 // Three of the types below carry no `export`: they are reached through the
@@ -298,12 +298,19 @@ function boundedResponse(
         });
     return read;
   };
+  let readText: Promise<string> | undefined;
+  const text = (): Promise<string> => {
+    readText ??= stream
+      ? bytes().then((body) => decoder.decode(body))
+      : response.text().then((body) => {
+          const size = encoder.encode(body).length;
+          if (size > limit) throw oversized(provider, limit, `${size} bytes`);
+          return body;
+        });
+    return readText;
+  };
   const json = async (): Promise<unknown> => {
-    // No stream means no bytes to count: a stand-in that answers `json()`
-    // directly is taken at its word, which is the one accessor on the one
-    // path where the ceiling cannot be applied.
-    if (!stream) return await response.json();
-    const body = decoder.decode(await bytes());
+    const body = await text();
     return body.trim() === "" ? undefined : JSON.parse(body);
   };
   return {
@@ -311,13 +318,7 @@ function boundedResponse(
     ok: response.ok,
     headers: response.headers,
     bytes,
-    async text() {
-      if (stream) return decoder.decode(await bytes());
-      const body = await response.text();
-      const size = encoder.encode(body).length;
-      if (size > limit) throw oversized(provider, limit, `${size} bytes`);
-      return body;
-    },
+    text,
     json,
     jsonResult: () => jsonResult(json),
   };
@@ -391,13 +392,8 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });
     } catch (cause) {
-      throw new ConnectorCallError(
-        "unavailable",
-        `Could not reach the ${provider} API: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        { cause },
-      );
+      if (cause instanceof ConnectorCallError) throw cause;
+      throw unavailableCallError(cause, url.href, `Could not reach the ${provider} API.`);
     }
     if (REDIRECT_STATUSES.has(response.status)) {
       await response.body?.cancel().catch(() => {});

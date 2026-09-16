@@ -155,6 +155,79 @@ function boundedValidation(
   };
 }
 
+/** Optional transport diagnostics; never a URL path or raw runtime message. */
+interface UnavailableDetails {
+  /** HTTP(S) origin only, at most 253 UTF-8 bytes. */
+  host?: string;
+  /** Validated network errno or `timeout`, at most 32 bytes. */
+  code?: string;
+}
+
+const NETWORK_ERROR_CODES = new Set([
+  "ECONNREFUSED", "ENOTFOUND", "ECONNRESET", "ETIMEDOUT", "EAI_AGAIN",
+  "EAI_FAIL", "EHOSTUNREACH", "ENETUNREACH", "ENETDOWN", "EHOSTDOWN",
+  "ECONNABORTED", "EPIPE", "EACCES", "EPERM",
+  "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT",
+  "UND_ERR_SOCKET", "timeout",
+]);
+
+function networkCode(value: unknown): string | undefined {
+  return typeof value === "string" && value.length <= 32 && NETWORK_ERROR_CODES.has(value)
+    ? value
+    : undefined;
+}
+
+function sanitizedUnavailableDetails(
+  details: UnavailableDetails | undefined,
+): UnavailableDetails | undefined {
+  if (!details) return undefined;
+  let host: string | undefined;
+  if (typeof details.host === "string") {
+    try {
+      const url = new URL(details.host);
+      if (
+        (url.protocol === "https:" || url.protocol === "http:") &&
+        echoEncoder.encode(url.origin).length <= 253
+      ) host = url.origin;
+    } catch {
+      // An invalid or oversized origin is absent, never a clipped destination.
+    }
+  }
+  const code = networkCode(details.code);
+  return host || code ? { ...(host ? { host } : {}), ...(code ? { code } : {}) } : undefined;
+}
+
+/** Runtime fields only: provider prose cannot supply an errno or a deadline. */
+export function networkErrorCode(error: unknown): string | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  if (
+    error instanceof Error &&
+    (error.name === "AbortError" || error.name === "TimeoutError")
+  ) {
+    return "timeout";
+  }
+  const runtime = error as { code?: unknown; cause?: unknown };
+  const cause = runtime.cause;
+  return networkCode(runtime.code) ?? (
+    cause && typeof cause === "object"
+      ? networkCode((cause as { code?: unknown }).code)
+      : undefined
+  );
+}
+
+/** Use at a fetch boundary where the destination and transport failure are known. */
+export function unavailableCallError(
+  cause: unknown,
+  host?: string,
+  message = "Could not reach the downstream service.",
+): ConnectorCallError {
+  const code = networkErrorCode(cause);
+  return new ConnectorCallError("unavailable", message, {
+    cause,
+    details: { ...(host ? { host } : {}), ...(code ? { code } : {}) },
+  });
+}
+
 /** Agent-visible recovery class attached only to `auth_required` failures. */
 export type AuthRecoveryMode =
   | "oauth"
@@ -205,6 +278,8 @@ export class ConnectorCallError extends Error {
   readonly retryAfterMs: number | undefined;
   /** Bounded schema findings for `invalid_args`; never submitted values. */
   readonly validation: ArgumentValidationDetails | undefined;
+  /** Sanitized transport diagnostics for `unavailable` only. */
+  readonly details: UnavailableDetails | undefined;
 
   constructor(
     code: ConnectorCallErrorCode,
@@ -214,6 +289,7 @@ export class ConnectorCallError extends Error {
       retryAfterMs?: number;
       cause?: unknown;
       validation?: ArgumentValidationDetails;
+      details?: UnavailableDetails;
     } = {},
   ) {
     super(
@@ -224,6 +300,8 @@ export class ConnectorCallError extends Error {
     this.code = code;
     this.retryable = opts.retryable ?? RETRYABLE_BY_CODE[code];
     this.retryAfterMs = normalizeRetryAfterMs(opts.retryAfterMs);
+    this.details =
+      code === "unavailable" ? sanitizedUnavailableDetails(opts.details) : undefined;
     this.validation =
       code === "invalid_args" ? boundedValidation(opts.validation) : undefined;
   }
@@ -231,6 +309,8 @@ export class ConnectorCallError extends Error {
 
 /** The `error` object surfaced in value-mode call results and rejected promises. */
 export interface CallErrorDetails {
+  /** Sanitized transport diagnostics, absent when the runtime supplies none. */
+  details?: UnavailableDetails;
   code: string;
   message: string;
   retryable: boolean;
@@ -349,6 +429,7 @@ export function classifyCallError(
         ? { retryAfterMs: err.retryAfterMs }
         : {}),
       ...(err.validation ? { validation: err.validation } : {}),
+      ...(err.details ? { details: err.details } : {}),
     };
   }
   // An aborted fetch rejects with a DOMException named "AbortError" whose

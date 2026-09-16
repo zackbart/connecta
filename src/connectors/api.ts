@@ -1,3 +1,8 @@
+import {
+  ConnectorCallError,
+  networkErrorCode,
+  unavailableCallError,
+} from "../errors.js";
 import { compileValidator, validateToolInput } from "../validate.js";
 import type {
   Connector,
@@ -166,7 +171,14 @@ export function api(id: string, opts: ApiOptions): Connector {
       // its first await never sits handler-less for the thenable-adoption
       // microtask — workerd and vitest both report that gap as an unhandled
       // rejection even though the caller catches the failure.
-      return await tool.handler(input, ctx);
+      try {
+        return await tool.handler(input, ctx);
+      } catch (error) {
+        // A handler owns its destinations. ctx.baseUrl is Connecta's inbound
+        // URL, so it must never masquerade as the failed downstream host.
+        if (error instanceof ConnectorCallError || !networkErrorCode(error)) throw error;
+        throw unavailableCallError(error);
+      }
     },
   };
 }
