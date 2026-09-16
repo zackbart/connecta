@@ -81,6 +81,14 @@ export interface ConnectaCallsConfig {
   maxResultBytes?: number;
 }
 
+/** Runtime-wide bounds for transient direct-call result paging. */
+export interface ConnectaResultsConfig {
+  /** Stored bytes, including the paging envelope. Default 8 MiB. Zero disables stashing. */
+  maxStashBytes?: number;
+  /** Stored or in-flight entries. Default 64. Zero disables stashing. */
+  maxStashEntries?: number;
+}
+
 /** Budgets for execute_code programs: host calls and rich output (`connecta.emit`). */
 export interface ConnectaExecuteConfig {
   /**
@@ -209,6 +217,8 @@ export interface ConnectaConfig {
   discovery?: ConnectaDiscoveryConfig;
   /** Deployment-wide call deadlines and result paging threshold. */
   calls?: ConnectaCallsConfig;
+  /** Runtime-wide transient result stash limits, shared across subjects. */
+  results?: ConnectaResultsConfig;
   /** Budgets for the `connecta.emit` rich-output channel in execute_code. */
   execute?: ConnectaExecuteConfig;
   /** Bounded MCP and fallback code-mode admission. */
@@ -327,6 +337,10 @@ const CONFIG_SCHEMA = {
     staleCatalogSeconds: null,
     probeTimeoutMs: null,
   } satisfies ClosedOptionSchema<ConnectaDiscoveryConfig>,
+  results: {
+    maxStashBytes: null,
+    maxStashEntries: null,
+  } satisfies ClosedOptionSchema<ConnectaResultsConfig>,
   calls: {
     defaultTimeoutMs: null,
     maxResultBytes: null,
@@ -408,6 +422,17 @@ function assertKnownConfig(config: ConnectaConfig): void {
   rejectUnknownOptions(
     unknownOptionPaths(config, "ConnectaConfig", CONFIG_SCHEMA),
   );
+  if (config.results !== undefined) {
+    if (!config.results || typeof config.results !== "object" || Array.isArray(config.results)) {
+      throw new Error("ConnectaConfig.results must be an object");
+    }
+    for (const key of ["maxStashBytes", "maxStashEntries"] as const) {
+      const value = config.results[key];
+      if (value !== undefined && (!Number.isSafeInteger(value) || value < 0)) {
+        throw new Error(`ConnectaConfig.results.${key} must be a non-negative safe integer`);
+      }
+    }
+  }
   if (config.vault && ["get", "getAll", "set", "setAll", "metadata", "delete"].some(key => typeof (config.vault as unknown as Record<string, unknown>)[key] !== "function")) throw new Error("ConnectaConfig.vault must implement CredentialVault");
   if (config.ui && (typeof config.ui.handle !== "function" || typeof config.ui.credentialHandoffUrl !== "function" || !Array.isArray(config.ui.reservedPaths))) throw new Error("ConnectaConfig.ui must be created with operatorUi(...)");
   const activity = config.activity as unknown;
@@ -636,6 +661,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     persistToolCatalog: config.discovery?.persistCatalog,
     toolCatalogStaleSeconds: config.discovery?.staleCatalogSeconds,
     maxResultBytes: config.calls?.maxResultBytes,
+    results: config.results,
   });
   const inboundAuth = configuredAuth;
   const pools = resolvePools(config.pools, registry);

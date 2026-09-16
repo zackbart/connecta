@@ -23,6 +23,14 @@ such as `get_result` pages. The principal is the human owner of personal
 connector auth. An interactive Clerk or Access user supplies all three. A
 Cloudflare service identity has an actor and subject but no principal.
 
+A subject or user id always selects a result-stash partition, even when the
+provider omits `activityActorNamespace`. An explicit namespace remains the
+partition namespace; without one, Connecta uses `connecta:auth:<provider kind>`.
+Subject ids must be distinct within that namespace. This fallback grants no
+personal-auth ownership and changes no activity attribution. Open deployments
+and providers that return no identity share one result partition. A provider
+that supplies only an explicit principal uses that principal as its subject.
+
 `identity.connectorAccess` returns `"all"` or a list of grants. A grant is a
 declared connector id, which opens every tool on it, or a `connector.tool`
 address, which opens that tool alone. Grants are additive, so a bare id beside
@@ -30,10 +38,15 @@ addresses for the same connector means the whole connector. It governs
 discovery and use, and defaults to all connectors.
 
 Tool grants are enforced in the scoped registry view, below the catalog
-service, so `search_tools`, `describe_tools`, both call tools, a program's
-`connecta.search` and `connecta.call`, and the connection UI all read the same
-filtered list. An ungranted tool fails exactly like one the connector never
-had: `unknown_tool`, with no hint that it exists. That is the whole security
+service. Since 0.24.2, `search_tools`, `describe_tools`, both call tools, a
+program's `connecta.search`, `connecta.describe`, and `connecta.call`, and the
+connection UI read that filtered tool list. Connector-level discovery, guides,
+and `authorize_connector` retain a connector when any tool on it is granted.
+In particular, a `docs.read` grant permits the `docs` authorization handoff,
+subject to the separate auth-management permissions below. Without any grant
+on `docs`, `authorize_connector` returns the same "Unknown connector" refusal
+as an absent connector. An ungranted tool fails exactly like one the connector
+never had: `unknown_tool`, with no hint that it exists. That is the whole security
 claim, and it lives in one place on purpose. There is no separate endpoint per
 tool set; an identity that should see a narrower slice is a branch in this
 resolver, and a bot that needs its own slice is its own bearer subject.

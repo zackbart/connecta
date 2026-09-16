@@ -24,6 +24,21 @@ const unsafeCreateConnecta =
   createConnecta as unknown as UnsafeCreateConnecta;
 
 describe("ConnectaConfig boundary", () => {
+  it("validates result stash limits and accepts zero to disable stashing", async () => {
+    for (const field of ["maxStashBytes", "maxStashEntries"]) {
+      for (const value of [-1, 0.5, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1, "64", null]) {
+        expect(() => unsafeCreateConnecta({ connectors: [], executor, results: { [field]: value } }))
+          .toThrow(`results.${field}`);
+      }
+    }
+    for (const results of [null, [], 5]) {
+      expect(() => unsafeCreateConnecta({ connectors: [], executor, results })).toThrow("results");
+    }
+    const app = createConnecta({ connectors: [], executor, results: { maxStashBytes: 0, maxStashEntries: 0 } });
+    expect(await app.registry.stashResult("result:disabled", "body", 900)).toBe(false);
+    await app.close();
+  });
+
   it("warns for every open deployment with connectors, including static API auth", async () => {
     const fetchProvider = vi.fn();
     const connector = api("static_auth", { tools: [{
@@ -239,6 +254,7 @@ describe("ConnectaConfig boundary", () => {
     ["accessTokens", { typo: true }, "accessTokens"],
     ["discovery", { typo: true }, "discovery.typo"],
     ["calls", { typo: true }, "calls.typo"],
+    ["results", { typo: true }, "results.typo"],
     ["execute", { typo: true }, "execute.typo"],
     ["admission", { typo: true }, "admission.typo"],
     [
