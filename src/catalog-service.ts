@@ -1,6 +1,6 @@
 import {
   compactDiscoverySchema,
-  compactSchema,
+  compactDescriptionSchema,
   lexicalCorpusStatistics,
   lexicalQueryTerms,
   lexicalSearchQuery,
@@ -401,6 +401,8 @@ export interface CatalogDescription {
   inputSchema?: unknown;
   outputSchema?: unknown;
   outputSchemaSource?: "observed";
+  inputSchemaTruncated?: true;
+  outputSchemaTruncated?: true;
   annotations?: ToolDef["annotations"];
   error?: string;
   errorDetails?: CatalogDescriptionFailureDetail;
@@ -431,10 +433,6 @@ export type CatalogResolution =
       toolName?: string;
       cause?: unknown;
     };
-
-function renderSchema(schema: JsonSchema, format: "compact" | "json"): unknown {
-  return format === "json" ? schema : compactSchema(schema);
-}
 
 function renderSearchSchema(
   schema: JsonSchema,
@@ -661,11 +659,29 @@ export class CatalogService {
   }
 
   async search(args: CatalogSearchArgs): Promise<CatalogSearchPage> {
+    if (args.query !== undefined && typeof args.query !== "string") {
+      throw new DiscoveryPolicyError(
+        "invalid_args",
+        "query must be a string. Omit it or use an empty string to browse the catalog.",
+      );
+    }
     const query = args.query ?? "";
     const retrievalQuery = lexicalSearchQuery(query);
     const safety = discoverySafety(args.safety);
     const limit = discoverySearchLimit(args.limit);
-    const offset = Math.max(0, Math.trunc(args.offset ?? 0));
+    if (
+      args.offset !== undefined && (
+        typeof args.offset !== "number" ||
+        !Number.isInteger(args.offset) ||
+        args.offset < 0
+      )
+    ) {
+      throw new DiscoveryPolicyError(
+        "invalid_args",
+        "offset must be a non-negative whole number. Start at 0 or use the previous page's nextOffset.",
+      );
+    }
+    const offset = args.offset ?? 0;
     const scopedConnector = args.connector
       ? this.registry.getConnector(args.connector)
       : undefined;
@@ -1189,10 +1205,14 @@ export class CatalogService {
         tool.description,
         args.fullDescriptions === true,
       );
+      const compactInput = format === "compact"
+        ? compactDescriptionSchema(input) : undefined;
+      const compactOutput = format === "compact" && output.schema
+        ? compactDescriptionSchema(output.schema) : undefined;
       const requiredReasons = guideRequiredReasons(
         addressResolution.connector,
         tool,
-        false,
+        compactInput?.truncated === true || compactOutput?.truncated === true,
       );
       const guideSummary = connectorGuideSummary(addressResolution.connector);
       return {
@@ -1211,10 +1231,12 @@ export class CatalogService {
               guideRequiredReasons: requiredReasons,
             }
           : {}),
-        inputSchema: renderSchema(input, format),
+        inputSchema: compactInput?.text ?? input,
+        ...(compactInput?.truncated ? { inputSchemaTruncated: true as const } : {}),
+        ...(compactOutput?.truncated ? { outputSchemaTruncated: true as const } : {}),
         ...(output.schema
           ? {
-              outputSchema: renderSchema(output.schema, format),
+              outputSchema: compactOutput?.text ?? output.schema,
             }
           : {}),
         ...(output.source ? { outputSchemaSource: output.source } : {}),

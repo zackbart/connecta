@@ -448,3 +448,15 @@ describe("compileValidator", () => {
     );
   });
 });
+
+it("bounds raw enum validation detail to 256 UTF-8 bytes plus its marker", () => {
+  const schema = { enum: Array.from({ length: 10_000 }, (_, i) => `選択${i}`) };
+  const error = validateToolInput(schema, "absent", OPTS)!;
+  const prefix = `Invalid arguments for "${OPTS.address}": `;
+  expect(error.code).toBe("invalid_args");
+  expect(error.message.startsWith(prefix)).toBe(true);
+  const detail = error.message.slice(prefix.length);
+  expect(new TextEncoder().encode(detail).length).toBeLessThanOrEqual(259);
+  expect(detail.endsWith("…")).toBe(true);
+  expect(detail).not.toContain("\uFFFD");
+});

@@ -9,6 +9,54 @@ const MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES =
   MAX_COMPACT_DISCOVERY_SCHEMA_BYTES / 4;
 const schemaEncoder = new TextEncoder();
 const COMPACT_DISCOVERY_TRUNCATION = " /* truncated */";
+const MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES = 8_192;
+const MAX_SCHEMA_WORK = 2_000;
+const schemaWorkExceeded = Symbol("schema work budget exceeded");
+const schemaSizeExceeded = Symbol("schema byte budget exceeded");
+
+class SchemaWork {
+  private remaining = MAX_SCHEMA_WORK;
+  truncated = false;
+  readonly refs = new Map<string, string>();
+
+  constructor(readonly byteLimit = MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {}
+
+  visit(): void {
+    if (this.remaining-- <= 0) throw schemaWorkExceeded;
+  }
+
+  text(value: string): string {
+    // Check code units first so encoding a hostile scalar is itself bounded.
+    if (
+      value.length > this.byteLimit ||
+      schemaEncoder.encode(value).length > this.byteLimit
+    ) {
+      throw schemaSizeExceeded;
+    }
+    return value;
+  }
+
+  json(value: unknown): string {
+    // The raw-JSON fallback and const/enum values must spend the same work
+    // budget as schema nodes, including values nested inside unknown keywords.
+    const visit = this.visit.bind(this);
+    const text = this.text.bind(this);
+    const ancestors: object[] = [];
+    return this.text(JSON.stringify(value, function (key, item: unknown) {
+      visit();
+      text(key);
+      if (typeof item === "string") text(item);
+      if (item !== null && typeof item === "object") {
+        while (ancestors.length && ancestors[ancestors.length - 1] !== this) {
+          ancestors.pop();
+        }
+        if (ancestors.length > 32) throw schemaWorkExceeded;
+        ancestors.push(item);
+      }
+      return item;
+    }));
+  }
+}
 
 export function summarizeDescription(
   text: string | undefined,
@@ -448,35 +496,41 @@ function grouped(part: string): string {
 
 function renderEnum(
   values: unknown[],
+  work: SchemaWork,
   byteLimit: number | undefined,
   onTruncated: (() => void) | undefined,
 ): string {
   if (values.length === 0) return "never";
-  const renderedValues = values.map((value) => JSON.stringify(value));
-  const full = renderedValues.join(" | ");
-  if (
-    byteLimit === undefined ||
-    schemaEncoder.encode(full).length <= byteLimit
-  ) {
-    return full;
-  }
-
-  onTruncated?.();
+  const limit = byteLimit ?? MAX_COMPACT_DISCOVERY_ENUM_BYTES;
   const marker = (omitted: number) =>
     `unknown /* ${omitted} enum ${omitted === 1 ? "value" : "values"} omitted */`;
   let rendered = `(${marker(values.length)})`;
   const prefix: string[] = [];
-  for (let index = 0; index < renderedValues.length - 1; index += 1) {
-    prefix.push(renderedValues[index] as string);
-    const omitted = renderedValues.length - prefix.length;
-    const candidate = `(${prefix.join(" | ")} | ${marker(omitted)})`;
-    if (schemaEncoder.encode(candidate).length > byteLimit) break;
-    rendered = candidate;
+  for (let index = 0; index < values.length; index += 1) {
+    let value: string;
+    try {
+      value = work.json(values[index]);
+    } catch (error) {
+      if (error !== schemaSizeExceeded) throw error;
+      break;
+    }
+    prefix.push(value);
+    const full = prefix.join(" | ");
+    if (schemaEncoder.encode(full).length > limit) break;
+    if (index === values.length - 1) return full;
+    const omitted = values.length - prefix.length;
+    const candidate = `(${full} | ${marker(omitted)})`;
+    if (schemaEncoder.encode(candidate).length <= limit) rendered = candidate;
   }
+  onTruncated?.();
   return rendered;
 }
 
 function safeConstraintValue(value: string): string {
+  if (value.length > MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES) {
+    // This placeholder only participates in the byte check and is dropped whole.
+    return "x".repeat(MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES + 1);
+  }
   return JSON.stringify(value).replaceAll("*/", "*\\/");
 }
 
@@ -537,24 +591,38 @@ function renderConstraints(
     : `${grouped(base)} /* ${kept.join("; ")} */`;
 }
 
+interface RenderOptions {
+  work: SchemaWork;
+  propertyDescriptions: boolean;
+  requiredFirst: boolean;
+  enumByteLimit?: number;
+  onEnumTruncated?: () => void;
+  renderConstraints: boolean;
+  constraintByteLimit?: number;
+  onConstraintTruncated?: () => void;
+}
+
 function renderSchema(
   schema: unknown,
-  defs: Record<string, unknown>,
+  defs: JsonSchema,
   seen: Set<string>,
   depth: number,
-  options: {
-    propertyDescriptions: boolean;
-    requiredFirst: boolean;
-    enumByteLimit?: number;
-    onEnumTruncated?: () => void;
-    renderConstraints: boolean;
-    constraintByteLimit?: number;
-    onConstraintTruncated?: () => void;
-  },
+  options: RenderOptions,
+): string {
+  options.work.visit();
+  return options.work.text(renderSchemaNode(schema, defs, seen, depth, options));
+}
+
+function renderSchemaNode(
+  schema: unknown,
+  defs: JsonSchema,
+  seen: Set<string>,
+  depth: number,
+  options: RenderOptions,
 ): string {
   if (depth > 4) return "…";
   if (schema === null || typeof schema !== "object") {
-    return JSON.stringify(schema);
+    return options.work.json(schema);
   }
   const s = schema as Record<string, unknown>;
   const constrain = (rendered: string) =>
@@ -576,7 +644,10 @@ function renderSchema(
   // specific half, and is rendered at the current depth because its members
   // sit at this nesting level, not one below.
   if (Array.isArray(s.allOf)) {
-    const { allOf: _members, ...own } = s;
+    const own: Record<string, unknown> = Object.create(null);
+    for (const key of propertyNames(s, options.work)) {
+      if (key !== "allOf") own[key] = s[key];
+    }
     const parts = declaresShape(own)
       ? [renderSchema(own, defs, seen, depth, options)]
       : [];
@@ -589,13 +660,18 @@ function renderSchema(
   }
 
   if (typeof s.$ref === "string") {
-    const name = refName(s.$ref);
+    const name = refName(options.work.text(s.$ref));
     if (seen.has(name)) return name;
-    const target = defs[name];
+    const target = resolveDefinition(defs, name);
     if (target === undefined) return name;
-    seen.add(name);
-    const rendered = renderSchema(target, defs, seen, depth, options);
-    seen.delete(name);
+    const cacheKey = JSON.stringify([name, depth, [...seen]]);
+    let rendered = options.work.refs.get(cacheKey);
+    if (rendered === undefined) {
+      seen.add(name);
+      rendered = renderSchema(target, defs, seen, depth, options);
+      seen.delete(name);
+      options.work.refs.set(cacheKey, rendered);
+    }
     return constrain(rendered);
   }
 
@@ -611,6 +687,7 @@ function renderSchema(
   if (Array.isArray(s.enum)) {
     const rendered = renderEnum(
       s.enum,
+      options.work,
       options.enumByteLimit,
       options.onEnumTruncated,
     );
@@ -621,7 +698,7 @@ function renderSchema(
   // JSON.stringify(undefined) returns undefined (not a string), so an explicit
   // `const: undefined` must fall through to the regular type rendering.
   if (s.const !== undefined) {
-    const rendered = JSON.stringify(s.const);
+    const rendered = options.work.json(s.const);
     return constrain(rendered);
   }
 
@@ -634,10 +711,8 @@ function renderSchema(
   }
   if (type === "object" || s.properties) {
     const props = (s.properties ?? {}) as Record<string, unknown>;
-    const required = new Set(
-      (Array.isArray(s.required) ? s.required : []) as string[],
-    );
-    const declaredKeys = Object.keys(props);
+    const required = new Set(schemaRequired(s, options.work));
+    const declaredKeys = propertyNames(props, options.work);
     const keys = options.requiredFirst
       ? [
           ...declaredKeys.filter((key) => required.has(key)),
@@ -658,6 +733,10 @@ function renderSchema(
         const description = (
           props[key] as Record<string, unknown> | null
         )?.description;
+        if (options.propertyDescriptions && typeof description === "string") {
+          options.work.text(description);
+        }
+        options.work.text(key);
         const comment =
           options.propertyDescriptions && typeof description === "string"
             ? ` // ${description}`
@@ -667,10 +746,13 @@ function renderSchema(
       .join(", ")} }`;
   }
   if (typeof type === "string") {
-    return constrain(type);
+    return constrain(options.work.text(type));
   }
   if (Array.isArray(type)) {
-    const rendered = type.join(" | ");
+    const rendered = type.map((item) => {
+      options.work.visit();
+      return options.work.text(String(item));
+    }).join(" | ");
     return constrain(rendered);
   }
   if (options.renderConstraints && constraintEntries(s).length > 0) {
@@ -681,35 +763,33 @@ function renderSchema(
       options.onConstraintTruncated,
     );
   }
-  return JSON.stringify(schema);
+  return options.work.json(schema);
 }
 
-const compactSchemas = new WeakMap<JsonSchema, string>();
+const compactSchemas = new WeakMap<JsonSchema, CompactDiscoverySchema>();
 
-function defsOf(schema: JsonSchema): Record<string, unknown> {
-  return {
-    ...(schema.$defs as Record<string, unknown>),
-    ...(schema.definitions as Record<string, unknown>),
-  };
+function resolveDefinition(schema: JsonSchema, name: string): unknown {
+  const definitions = schema.definitions as Record<string, unknown> | undefined;
+  const defs = schema.$defs as Record<string, unknown> | undefined;
+  return definitions && Object.hasOwn(definitions, name)
+    ? definitions[name]
+    : defs && Object.hasOwn(defs, name) ? defs[name] : undefined;
 }
 
 /** Render and cache a compact TypeScript-like representation of JSON Schema. */
 export function compactSchema(schema: JsonSchema): string {
+  return compactDescriptionSchema(schema).text;
+}
+
+/** Describe allows 8 KiB for property prose, with the same work cap as search. */
+export function compactDescriptionSchema(
+  schema: JsonSchema,
+): CompactDiscoverySchema {
   const cached = compactSchemas.get(schema);
   if (cached) return cached;
-  const defs = defsOf(schema);
-  let rendered: string;
-  try {
-    rendered = renderSchema(schema, defs, new Set(), 0, {
-      propertyDescriptions: true,
-      requiredFirst: false,
-      renderConstraints: true,
-    });
-  } catch {
-    rendered = JSON.stringify(schema);
-  }
-  compactSchemas.set(schema, rendered);
-  return rendered;
+  const result = boundedCompactSchema(schema, true);
+  compactSchemas.set(schema, result);
+  return result;
 }
 
 export interface CompactDiscoverySchema {
@@ -730,8 +810,11 @@ const compactDiscoverySchemas = new WeakMap<
  * Types become `unknown`: pretending a severed nested type is exact would be
  * worse than making the existing truncation flag's recovery route explicit.
  */
-function truncatedDiscoverySchema(schema: JsonSchema): string {
-  const keys = schemaObjectKeys(schema);
+function truncatedDiscoverySchema(schema: JsonSchema, work: SchemaWork): string {
+  let keys: SchemaObjectKeys | undefined;
+  try {
+    keys = objectKeys(schema, schema, new Set(), 0, work);
+  } catch { /* An exhausted walk has no reliable key inventory. */ }
   if (!keys) return `unknown${COMPACT_DISCOVERY_TRUNCATION}`;
   const required = new Set(keys.required);
   const ordered = [
@@ -769,62 +852,48 @@ export function compactDiscoverySchema(
 ): CompactDiscoverySchema {
   const cached = compactDiscoverySchemas.get(schema);
   if (cached) return cached;
-  const defs = defsOf(schema);
-  let rendered: string;
-  let enumTruncated = false;
-  let constraintTruncated = false;
-  const base = {
-    propertyDescriptions: false,
-    requiredFirst: true,
-    enumByteLimit: MAX_COMPACT_DISCOVERY_ENUM_BYTES,
-    onEnumTruncated: () => {
-      enumTruncated = true;
-    },
-  };
-  try {
-    rendered = renderSchema(schema, defs, new Set(), 0, {
-      ...base,
-      // Three near-cap enums spend about three quarters of the complete shape
-      // budget, leaving the final quarter for surrounding syntax before the
-      // unchanged global fallback applies. Whole values keep this UTF-8 safe.
-      renderConstraints: true,
-      constraintByteLimit: MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES,
-      onConstraintTruncated: () => {
-        constraintTruncated = true;
-      },
-    });
-  } catch {
-    rendered = JSON.stringify(schema);
-  }
-  if (
-    schemaEncoder.encode(rendered).length >
-    MAX_COMPACT_DISCOVERY_SCHEMA_BYTES
-  ) {
-    try {
-      rendered = renderSchema(schema, defs, new Set(), 0, {
-        ...base,
-        renderConstraints: false,
-      });
-      constraintTruncated = true;
-    } catch {
-      rendered = JSON.stringify(schema);
-    }
-  }
-  const bytes = schemaEncoder.encode(rendered);
-  let result: CompactDiscoverySchema;
-  if (bytes.length <= MAX_COMPACT_DISCOVERY_SCHEMA_BYTES) {
-    result = {
-      text: rendered,
-      truncated: enumTruncated || constraintTruncated,
-    };
-  } else {
-    result = {
-      text: truncatedDiscoverySchema(schema),
-      truncated: true,
-    };
-  }
+  const result = boundedCompactSchema(schema, false);
   compactDiscoverySchemas.set(schema, result);
   return result;
+}
+
+function boundedCompactSchema(
+  schema: JsonSchema,
+  description: boolean,
+): CompactDiscoverySchema {
+  const work = new SchemaWork(
+    description ? MAX_COMPACT_DESCRIPTION_SCHEMA_BYTES : MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
+  );
+  const options: RenderOptions = {
+    work,
+    propertyDescriptions: description,
+    requiredFirst: !description,
+    enumByteLimit: description ? work.byteLimit : MAX_COMPACT_DISCOVERY_ENUM_BYTES,
+    onEnumTruncated: () => { work.truncated = true; },
+    renderConstraints: true,
+    constraintByteLimit: description ? work.byteLimit : MAX_COMPACT_DISCOVERY_CONSTRAINT_BYTES,
+    onConstraintTruncated: () => { work.truncated = true; },
+  };
+  try {
+    const text = renderSchema(schema, schema, new Set(), 0, options);
+    return { text, truncated: work.truncated };
+  } catch (error) {
+    // A constraint-free retry shares the original work budget. Repeated refs
+    // are memoized only within each pass because their text includes constraints.
+    if (error === schemaSizeExceeded && !description) {
+      work.refs.clear();
+      try {
+        return {
+          text: renderSchema(schema, schema, new Set(), 0, {
+            ...options,
+            renderConstraints: false,
+          }),
+          truncated: true,
+        };
+      } catch { /* Fall through to a bounded key-only shape. */ }
+    }
+    return { text: truncatedDiscoverySchema(schema, work), truncated: true };
+  }
 }
 
 /** The property and required names a schema resolves to, or undefined. */
@@ -851,9 +920,8 @@ export function schemaObjectKeys(
   schema: JsonSchema | undefined,
 ): SchemaObjectKeys | undefined {
   if (!schema) return undefined;
-  const defs = defsOf(schema);
   try {
-    return objectKeys(schema, defs, new Set(), 0);
+    return objectKeys(schema, schema, new Set(), 0, new SchemaWork());
   } catch {
     return undefined;
   }
@@ -873,21 +941,28 @@ function mergedKeys(
 /** The key-collecting twin of renderSchema; the branch order must match it. */
 function objectKeys(
   schema: unknown,
-  defs: Record<string, unknown>,
+  defs: JsonSchema,
   seen: Set<string>,
   depth: number,
+  work: SchemaWork,
 ): SchemaObjectKeys | undefined {
+  work.visit();
   if (depth > 4) return undefined;
   if (schema === null || typeof schema !== "object") return undefined;
   const s = schema as Record<string, unknown>;
 
   if (Array.isArray(s.allOf)) {
-    const { allOf: _members, ...own } = s;
+    const own: Record<string, unknown> = Object.create(null);
+    for (const key of propertyNames(s, work)) {
+      if (key !== "allOf") own[key] = s[key];
+    }
     const parts = declaresShape(own)
-      ? [objectKeys(own, defs, seen, depth)]
+      ? [objectKeys(own, defs, seen, depth, work)]
       : [];
     for (const member of s.allOf) {
-      parts.push(objectKeys(member, defs, seen, depth + 1));
+      const keys = objectKeys(member, defs, seen, depth + 1, work);
+      if (!keys) return undefined;
+      parts.push(keys);
     }
     // An allOf whose members are not all object shapes renders as an
     // intersection with a non-object half; no single key list describes it.
@@ -897,12 +972,12 @@ function objectKeys(
   }
 
   if (typeof s.$ref === "string") {
-    const name = refName(s.$ref);
+    const name = refName(work.text(s.$ref));
     if (seen.has(name)) return undefined;
-    const target = defs[name];
+    const target = resolveDefinition(defs, name);
     if (target === undefined) return undefined;
     seen.add(name);
-    const resolved = objectKeys(target, defs, seen, depth);
+    const resolved = objectKeys(target, defs, seen, depth, work);
     seen.delete(name);
     return resolved;
   }
@@ -916,12 +991,31 @@ function objectKeys(
     if (props === null || Array.isArray(props) || typeof props !== "object") {
       return { properties: [], required: [] };
     }
+    const properties = propertyNames(props as Record<string, unknown>, work);
+    const declared = new Set(properties);
     return {
-      properties: Object.keys(props as Record<string, unknown>),
-      required: Array.isArray(s.required)
-        ? s.required.filter((key): key is string => typeof key === "string")
-        : [],
+      properties,
+      required: schemaRequired(s, work).filter((key) => declared.has(key)),
     };
   }
   return undefined;
+}
+
+function propertyNames(props: Record<string, unknown>, work: SchemaWork): string[] {
+  const names: string[] = [];
+  for (const name in props) {
+    work.visit();
+    if (Object.hasOwn(props, name)) names.push(work.text(name));
+  }
+  return names;
+}
+
+function schemaRequired(schema: Record<string, unknown>, work: SchemaWork): string[] {
+  if (!Array.isArray(schema.required)) return [];
+  const names: string[] = [];
+  for (const key of schema.required) {
+    work.visit();
+    if (typeof key === "string") names.push(work.text(key));
+  }
+  return names;
 }

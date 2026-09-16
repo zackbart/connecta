@@ -101,14 +101,19 @@ export interface VettedCatalogInput {
 const encoder = new TextEncoder();
 
 /** Deterministic JSON: object keys sorted, so key order is not a schema change. */
-function canonicalize(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(canonicalize);
+function canonicalize(value: unknown, depth = 0): unknown {
+  // Drift is advisory. Beyond this bound compare an explicit marker instead
+  // of letting a downstream schema exhaust the host stack.
+  if (depth > 64) return "[schema depth truncated]";
+  if (Array.isArray(value)) {
+    return value.map((item) => canonicalize(item, depth + 1));
+  }
   if (value === null || typeof value !== "object") return value;
   const entries = Object.entries(value as Record<string, unknown>)
     .filter(([, item]) => item !== undefined)
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
   return Object.fromEntries(
-    entries.map(([key, item]) => [key, canonicalize(item)]),
+    entries.map(([key, item]) => [key, canonicalize(item, depth + 1)]),
   );
 }
 

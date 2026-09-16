@@ -235,8 +235,8 @@ in.
 | `bearer.test.ts` | constant-time bearer compare, case-insensitive scheme, 401 challenges, and the retired audience options refusing rather than silently unbinding |
 | `branding.test.ts` | branding fallbacks and overrides across the operator shells, OAuth result pages, `/favicon.*`, page titles, and escaping — branding is not an injection vector |
 | `call-admission.test.ts` | connector-scoped per-runtime downstream admission ([call admission](./call-admission.md)): independent partitions, exact rolling-window reset, cancellation that charges no budget, bounded partition state, local-refusal health isolation, one shared limiter across direct and program calls, and payload-free `/health` aggregates |
-| `catalog-drift.test.ts` | `vettedCatalog()`, `detectCatalogDrift()`, and `withVettedCatalog()`; drift on the registry surface and on `/health`; the connector seam projected rather than echoed; and the drift types being public |
-| `catalog.test.ts` | lexical ranking and the compact schema renderer — `const`, `allOf` beside siblings, `$ref`, the depth limit, per-schema caching, and 2020-12 keyword compatibility |
+| `catalog-drift.test.ts` | `vettedCatalog()`, `detectCatalogDrift()`, and `withVettedCatalog()`; bounded schema-digest depth; drift on the registry surface and on `/health`; the connector seam projected rather than echoed; and the drift types being public |
+| `catalog.test.ts` | lexical ranking and the compact schema renderer: `const`, `allOf` beside siblings, memoized `$ref`, node/depth/byte bounds, truncation flags, declared required-key metadata, typed search argument validation, per-schema caching, and 2020-12 keyword compatibility |
 | `clerk.test.ts` | protected-resource metadata, the browser sign-in config, OAuth and session tokens, cached best-effort activity labels with their caps, the hand-applied `azp` rejection, and the `allowedDomains` allowlist including every lookalike that must not be repaired into a match |
 | `cloudflare-access-auth.test.ts` | trusted `ctx.access` human and service identities, absent/error fail-closed behavior, service-token MCP admission without operator mutation, human same-origin mutation, and the Clerk-to-ambient shell switch |
 | `cloudflare-provider.test.ts` | `cloudflare()` API and MCP construction, the code-mode safety manifest, API tool surface, current R2 and KV jurisdictions, useful output declarations, request building, projections including additive provider fields, typed failures, and credential test |
@@ -278,7 +278,7 @@ in.
 | `operator-view.test.ts` | the app's pure state rules from `view.ts`: filtering, page routing, capability states, activity summaries, drift display, and identity reset |
 | `ui-credentials.test.ts` | credential-management routes: save, test, delete, validation, authentication, same-origin checks, and multi-field credential shapes |
 | `ui.test.ts` | the server shell and remaining `/ui/*` routes: gated `/ui/data` with broken-connector isolation and registry-owned catalog-observation containment, plus the URL safety gates |
-| `validate.test.ts` | `validateToolInput()` — a returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, per-schema validator caching, and an unusable schema passed through with one warning |
+| `validate.test.ts` | `validateToolInput()` — a returned (not thrown) `invalid_args` naming the path, `additionalProperties: false` enforcement, bounded UTF-8 validation detail, per-schema validator caching, and an unusable schema passed through with one warning |
 | `vercel-provider.test.ts` | `vercel()` API and MCP construction, MCP inventory classification, team scoping, project and deployment projections, finite build and runtime logs, value-safe environment variables, domains, lifecycle writes, REST hatches, typed failures, and credential test |
 
 ### Node-bound (`NODE_ONLY_SUITES`)
