@@ -1321,7 +1321,95 @@ describe("OAuthRefreshCoordinator", () => {
     });
   });
 
-  it("rechecks a pending mutation after a contender's token read", async () => {
+  it.each(["redirect", "denied-redirect", "invalidate"])("releases a successful fetch when the SDK chooses %s instead of saveTokens", async (ending) => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator, ending !== "denied-redirect");
+    const retry = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    const tokens = { access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" };
+    await owner.saveTokens(tokens);
+    const fetch = vi.fn(async () => Response.json({ ...tokens, access_token: "new" }));
+    await coordinator.coordinatedFetch(owner, fetch)("https://auth.example/token", refreshInit("refresh-old"));
+    if (ending === "invalidate") {
+      await owner.invalidateCredentials("tokens");
+      await retry.saveTokens(tokens);
+    } else if (ending === "denied-redirect") {
+      await expect(owner.redirectToAuthorization(new URL("https://auth.example/authorize"))).rejects.toBeInstanceOf(UnauthorizedError);
+    } else {
+      await owner.redirectToAuthorization(new URL("https://auth.example/authorize"));
+    }
+    const response = await coordinator.coordinatedFetch(retry, fetch)("https://auth.example/token", refreshInit("refresh-old"));
+    expect(response.status).toBe(200);
+    await retry.saveTokens(await response.json() as OAuthTokens);
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(await retry.tokens()).toMatchObject({ access_token: "new" });
+  });
+
+  it("bounds successful token response reads and releases the failed owner", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    const retry = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    const tokens = { access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" };
+    await owner.saveTokens(tokens);
+    let pulled = 0;
+    const fetch = vi.fn(async () => new Response(new ReadableStream({
+      pull(controller) {
+        pulled++;
+        controller.enqueue(new Uint8Array(4096).fill(32));
+        if (pulled === 100) controller.close();
+      },
+    })));
+    await expect(coordinator.coordinatedFetch(owner, fetch)("https://auth.example/token", refreshInit("refresh-old")))
+      .rejects.toThrow("exceeded 65536 bytes");
+    expect(pulled).toBeLessThan(100);
+    const response = await coordinator.coordinatedFetch(retry, async () => Response.json(tokens))(
+      "https://auth.example/token", refreshInit("refresh-old"));
+    expect(response.status).toBe(200);
+    await retry.saveTokens(tokens);
+  });
+
+  it("does not start a token request after its scope is already aborted", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const provider = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    await provider.saveTokens({ access_token: "old", token_type: "Bearer", refresh_token: "refresh-old" });
+    const controller = new AbortController();
+    controller.abort(new Error("scope ended"));
+    const fetch = vi.fn(async () => Response.json({ access_token: "new", token_type: "Bearer" }));
+    await expect(coordinator.coordinatedFetch(provider, fetch, controller.signal)(
+      "https://auth.example/token", refreshInit("refresh-old"))).rejects.toThrow("scope ended");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("bounds repeated revision changes while reading credentials", async () => {
+    const storage = memoryStorage();
+    const coordinator = new OAuthRefreshCoordinator();
+    const provider = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    const tokens = { access_token: "same", token_type: "Bearer", refresh_token: "refresh-old" };
+    await provider.saveTokens(tokens);
+    let interruptions = 0;
+    const read = provider.tokens.bind(provider);
+    provider.tokens = async () => {
+      const snapshot = await read();
+      // Another request finishes a refresh during each read. Stop at 100 so
+      // the old unbounded implementation fails an assertion rather than spins.
+      if (interruptions++ < 100) {
+        const owner = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+        await coordinator.coordinatedFetch(owner, async () => Response.json(tokens))(
+          "https://auth.example/token", refreshInit("refresh-old"));
+        await owner.saveTokens(tokens);
+      }
+      return snapshot;
+    };
+    const response = await coordinator.coordinatedFetch(provider, async () => Response.json(tokens))(
+      "https://auth.example/token", refreshInit("refresh-old"));
+    expect(response.status).toBe(503);
+    expect(interruptions).toBeLessThan(100);
+    expect(await response.json()).toMatchObject({ error: "temporarily_unavailable" });
+  });
+
+  it("persists an aborted owner's accepted rotation and hands it to a contender", async () => {
     const storage = memoryStorage();
     const coordinator = new OAuthRefreshCoordinator();
     const owner = new KvOAuthProvider(
@@ -1345,8 +1433,10 @@ describe("OAuthRefreshCoordinator", () => {
       refresh_token: "refresh-old",
     });
     let upstreamRequests = 0;
-    const baseFetch: FetchLike = async () => {
+    const redeemed: string[] = [];
+    const baseFetch: FetchLike = async (_input, init) => {
       upstreamRequests++;
+      redeemed.push(new URLSearchParams(String(init?.body)).get("refresh_token") ?? "");
       return Response.json({
         access_token: "access-new",
         token_type: "Bearer",
@@ -1354,6 +1444,7 @@ describe("OAuthRefreshCoordinator", () => {
       });
     };
     const trackedOwner = trackedAbortSignal();
+    // The owner has its valid response; the SDK has not saved it yet.
     await coordinator.coordinatedFetch(
       owner,
       baseFetch,
@@ -1380,18 +1471,36 @@ describe("OAuthRefreshCoordinator", () => {
     )("https://auth.example/token", refreshInit("refresh-old"));
     await tokenRead;
 
+    // Cancelling the owner now means its SDK saveTokens never arrives. The
+    // authorization server has already consumed refresh-old, so the host must
+    // persist refresh-new itself and the contender must receive that rotation
+    // rather than redeeming the retired token a second time (#526).
     trackedOwner.controller.abort(
       new DOMException("Owner scope ended", "AbortError"),
     );
     releaseTokenRead();
-    const blocked = await contenderRefresh;
-
-    expect(blocked.status).toBe(503);
-    await expect(blocked.json()).resolves.toMatchObject({
-      error: "temporarily_unavailable",
-    });
+    const recovered = await contenderRefresh;
+    expect(recovered.status).toBe(200);
+    const replayed = await recovered.json() as OAuthTokens;
+    expect(replayed).toMatchObject({ access_token: "access-new", refresh_token: "refresh-new" });
+    await contender.saveTokens(replayed);
+    expect(await contender.tokens()).toMatchObject({ access_token: "access-new" });
     expect(upstreamRequests).toBe(1);
+    expect(redeemed).toEqual(["refresh-old"]);
     expect(trackedOwner.listeners()).toBe(0);
+    // A delayed SDK save from the cancelled owner is a duplicate of the same
+    // rotation, and the gate is free for the next refresh.
+    await expect(owner.saveTokens(replayed)).resolves.toBeUndefined();
+    expect(await contender.tokens()).toMatchObject({ access_token: "access-new" });
+    const later = new KvOAuthProvider("svc", storage, REDIRECT, coordinator);
+    later.captureGeneration("legacy");
+    const next = await coordinator.coordinatedFetch(
+      later,
+      baseFetch,
+    )("https://auth.example/token", refreshInit("refresh-new"));
+    expect(next.status).toBe(200);
+    expect(upstreamRequests).toBe(2);
+    expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
   });
 
   it("surfaces a pending mutation as retryable without starting authorization", async () => {
@@ -1468,6 +1577,18 @@ describe("OAuthRefreshCoordinator", () => {
       baseFetch,
       trackedOwner.signal,
     )(`${issuer}/token`, refreshInit("refresh-old"));
+    const writing = deferred<void>();
+    const writeGate = deferred<void>();
+    const originalSet = storage.set.bind(storage);
+    storage.set = async (key, value, ttl) => {
+      if (key.startsWith("oauth:tokens") && value.includes("access-new")) {
+        writing.resolve();
+        await writeGate.promise;
+      }
+      await originalSet(key, value, ttl);
+    };
+    const saving = owner.saveTokens({ access_token: "access-new", token_type: "Bearer", refresh_token: "refresh-new" });
+    await writing.promise;
     trackedOwner.controller.abort(
       new DOMException("Owner scope ended", "AbortError"),
     );
@@ -1486,6 +1607,9 @@ describe("OAuthRefreshCoordinator", () => {
     expect(classifyCallError(sdkError)).toMatchObject({ retryable: true });
     expect(await contender.pendingAuthorizationUrl()).toBeUndefined();
     expect(tokenRequests).toBe(1);
+    writeGate.resolve();
+    await saving;
+
   });
 
   it("rereads a stale snapshot when an active refresh completes", async () => {
@@ -2659,7 +2783,7 @@ describe("OAuthRefreshCoordinator", () => {
     });
   });
 
-  it("shares one rotating-token redemption across two request scopes", async () => {
+  it("shares exactly one rotating-token grant in each of two waves of eight scopes", async () => {
     const storage = memoryStorage();
     const issuer = "https://auth.example";
     const mcpUrl = "https://downstream.example/mcp";
@@ -2684,12 +2808,13 @@ describe("OAuthRefreshCoordinator", () => {
       issuer,
     );
 
+    let wave = 0;
     let oldTokenRequests = 0;
+    const redeemed: string[] = [];
+    let rejected = deferred<void>();
+    let tokenEntered = deferred<void>();
+    let tokenGate = deferred<void>();
     let refreshRequests = 0;
-    let releaseRefresh!: () => void;
-    const bothScopesRejected = new Promise<void>((resolve) => {
-      releaseRefresh = resolve;
-    });
     const fetchStub: FetchLike = async (input, init = {}) => {
       const url = new URL(input);
       if (url.href === "https://downstream.example/.well-known/oauth-protected-resource") {
@@ -2711,20 +2836,16 @@ describe("OAuthRefreshCoordinator", () => {
       if (url.href === `${issuer}/token`) {
         refreshRequests++;
         expect(init.body).toBeInstanceOf(URLSearchParams);
-        expect((init.body as URLSearchParams).get("refresh_token")).toBe(
-          "refresh-old",
-        );
-        if (refreshRequests > 1) {
-          return Response.json(
-            { error: "invalid_grant", error_description: "already rotated" },
-            { status: 400 },
-          );
-        }
-        await bothScopesRejected;
+        const token = (init.body as URLSearchParams).get("refresh_token")!;
+        expect(redeemed).not.toContain(token);
+        redeemed.push(token);
+        expect(token).toBe(wave === 0 ? "refresh-old" : "refresh-new");
+        tokenEntered.resolve();
+        await tokenGate.promise;
         return Response.json({
-          access_token: "access-new",
+          access_token: wave === 0 ? "access-new" : "access-second",
           token_type: "Bearer",
-          refresh_token: "refresh-new",
+          refresh_token: wave === 0 ? "refresh-new" : "refresh-second",
         });
       }
       if (url.href !== mcpUrl) {
@@ -2733,9 +2854,9 @@ describe("OAuthRefreshCoordinator", () => {
       if (init.method !== "POST") return new Response(null, { status: 405 });
 
       const authorization = new Headers(init.headers).get("authorization");
-      if (authorization === "Bearer access-old") {
+      if (authorization === (wave === 0 ? "Bearer access-old" : "Bearer access-new")) {
         oldTokenRequests++;
-        if (oldTokenRequests === 2) releaseRefresh();
+        if (oldTokenRequests === 8) rejected.resolve();
         return new Response(null, {
           status: 401,
           headers: {
@@ -2744,7 +2865,7 @@ describe("OAuthRefreshCoordinator", () => {
           },
         });
       }
-      expect(authorization).toBe("Bearer access-new");
+      expect(authorization).toBe(wave === 0 ? "Bearer access-new" : "Bearer access-second");
       const message = JSON.parse(String(init.body)) as {
         id?: string | number;
         method: string;
@@ -2770,30 +2891,31 @@ describe("OAuthRefreshCoordinator", () => {
       auth: { type: "oauth" },
       versionNegotiation: "legacy",
     });
-    const first = { ...ctx(storage), requestScope: {} };
-    const second = { ...ctx(storage), requestScope: {} };
-
     vi.stubGlobal("fetch", fetchStub);
     try {
-      await expect(
-        Promise.all([connector.listTools(first), connector.listTools(second)]),
-      ).resolves.toEqual([[], []]);
+      for (wave = 0; wave < 2; wave++) {
+        oldTokenRequests = 0;
+        rejected = deferred<void>();
+        tokenEntered = deferred<void>();
+        tokenGate = deferred<void>();
+        const scopes = Array.from({ length: 8 }, () => ({ ...ctx(storage), requestScope: {} }));
+        const calls = Promise.all(scopes.map(scope => connector.listTools(scope)));
+        await Promise.all([rejected.promise, tokenEntered.promise]);
+        expect(refreshRequests).toBe(wave + 1);
+        tokenGate.resolve();
+        await expect(calls).resolves.toEqual(Array.from({ length: 8 }, () => []));
+        expect(oldTokenRequests).toBe(8);
+        expect(refreshRequests).toBe(wave + 1);
+        expect(await new KvOAuthProvider("svc", storage, REDIRECT).tokens()).toMatchObject({
+          access_token: wave === 0 ? "access-new" : "access-second",
+          refresh_token: wave === 0 ? "refresh-new" : "refresh-second",
+        });
+        await Promise.all(scopes.map(scope => connector.closeScope?.(scope)));
+      }
     } finally {
-      await Promise.all([
-        connector.closeScope?.(first),
-        connector.closeScope?.(second),
-      ]);
       vi.unstubAllGlobals();
     }
-
-    expect(oldTokenRequests).toBe(2);
-    expect(refreshRequests).toBe(1);
-    expect(
-      await new KvOAuthProvider("svc", storage, REDIRECT).tokens(),
-    ).toMatchObject({
-      access_token: "access-new",
-      refresh_token: "refresh-new",
-    });
+    expect(redeemed).toEqual(["refresh-old", "refresh-new"]);
   });
 });
 
@@ -3479,6 +3601,22 @@ describe("/oauth/callback/<id> route", () => {
     const callbackParams = spy.mock.calls[0]?.[0];
     expect(callbackParams).toBeInstanceOf(URLSearchParams);
     expect(callbackParams.get("code")).toBe("abc");
+  });
+
+  it.each([401, 403])("allows an identity-free callback on 401, but refuses an explicit 403 (%i)", async (status) => {
+    const finish = vi.fn(async () => {});
+    const connecta = createTestConnecta({
+      publicUrl: BASE,
+      auth: { kind: "browser-bearer", interactiveOperator: true,
+        authorize: () => ({ ok: false, response: new Response(null, { status }) }) },
+      connectors: [callbackConnector("svc", finish, async state => state === "verified-state")],
+    });
+    const response = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=verified-state`));
+    expect(response.status).toBe(status === 401 ? 200 : 400);
+    expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
+    const invalid = await connecta.fetch(new Request(`${BASE}/oauth/callback/svc?code=abc&state=wrong`));
+    expect(invalid.status).toBe(400);
+    expect(finish).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
   });
 
   it("every unverifiable callback failure is indistinguishable", async () => {

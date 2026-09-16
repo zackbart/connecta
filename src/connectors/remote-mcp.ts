@@ -1,5 +1,7 @@
 import {
   Client,
+  ProtocolError,
+  SdkHttpError,
   isInputRequiredResult,
   specTypeSchemas,
   StreamableHTTPClientTransport,
@@ -17,7 +19,7 @@ import {
   OAuthRefreshCoordinator,
 } from "../auth/downstream-oauth.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
-import { ConnectorCallError, msg } from "../errors.js";
+import { boundedEchoText, ConnectorCallError, msg } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
@@ -312,6 +314,30 @@ async function terminateSession(
       },
     );
   });
+}
+
+/** Classify protocol/status facts; provider prose never decides retryability. */
+function downstreamCallError(error: unknown): unknown {
+  if (error instanceof ProtocolError && error.code === -32602) {
+    return new ConnectorCallError("invalid_args", boundedEchoText(error.message));
+  }
+  if (error instanceof SdkHttpError && error.status >= 400 && error.status < 500) {
+    let message = error.message;
+    if (typeof error.data.text === "string") {
+      try {
+        const body = JSON.parse(error.data.text);
+        const detail = body?.message ?? body?.error?.message ?? body?.error_description;
+        if (typeof detail === "string") message = detail;
+      } catch {
+        // Non-JSON refusals still retain a bounded diagnostic.
+      }
+    }
+    return new ConnectorCallError(
+      error.status === 429 ? "rate_limited" : error.status === 408 ? "timeout" : "connector_call_failed",
+      boundedEchoText(message),
+    );
+  }
+  return error;
 }
 
 const encoder = new TextEncoder();
@@ -855,16 +881,37 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // `closed` is deliberately not cleared — see ConnectionState.
   };
 
-  const closeHalf = async (state: ConnectionState): Promise<void> => {
+  // The context has no deferred-work hook. Detached exits start this bounded
+  // best-effort tail immediately; closeScope awaits its own tail so the core
+  // can pass it to the runtime's deferred channel.
+  const closingSessions = new WeakMap<Transport, Promise<void>>();
+  const closeConnection = (
+    client: Client | null,
+    transport: Transport | null,
+    logger: Logger,
+  ): Promise<void> => {
+    const previous = transport && closingSessions.get(transport);
+    if (previous) return previous;
+    const closing = (async () => {
+      try {
+        if (transport) await terminateSession(transport, logger, id);
+        if (client) await client.close();
+        else await transport?.close();
+      } catch {
+        // Local close cannot replace the operation's result.
+      }
+    })();
+    // A connect can acquire a session after an early close. Deduplicate only
+    // once that session exists, so its late abandonment still sends DELETE.
+    if (transport?.sessionId) closingSessions.set(transport, closing);
+    return closing;
+  };
+
+  const closeHalf = (state: ConnectionState, ctx: ConnectorContext): void => {
     const client = state.client;
     const transport = state.transport;
     reset(state);
-    try {
-      if (client) await client.close();
-      else await transport?.close();
-    } catch {
-      // The discarded state remains authoritative if local close fails.
-    }
+    void closeConnection(client, transport, ctx.logger);
   };
 
   const ensureConnected = async (
@@ -890,7 +937,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (provider.isOperatorDisconnectedGeneration(oauthGeneration)) {
         const connecting = state.connecting;
         void connecting?.catch(() => {});
-        await closeHalf(state);
+        closeHalf(state, ctx);
         throw operatorDisconnectedError();
       }
     }
@@ -900,7 +947,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (state.client && oauthGeneration !== undefined && state.connectedGeneration !== null) {
       if (state.closed) throw scopeEndedError();
       if (oauthGeneration !== state.connectedGeneration) {
-        reset(state);
+        closeHalf(state, ctx);
       }
     }
     // The static-credential counterpart of the epoch read above, and
@@ -930,7 +977,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         if (state.closed) throw scopeEndedError();
         const connecting = state.connecting;
         void connecting?.catch(() => {});
-        await closeHalf(state);
+        closeHalf(state, ctx);
       }
     }
     if (state.closed) throw scopeEndedError();
@@ -940,12 +987,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       attempt = (async () => {
         const ownsAttempt = () =>
           state.connecting === attempt && !state.closed;
-        const abandon = async (owner: Client | Transport) => {
-          try {
-            await owner.close();
-          } catch {
-            // The attempt is detached either way.
-          }
+        const abandon = (client: Client | null, transport: Transport): never => {
+          void closeConnection(client, transport, ctx.logger);
           throw scopeEndedError();
         };
         // Let the assignment immediately below this async IIFE publish
@@ -977,7 +1020,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           },
         );
         const t = buildTransport(ctx, provider, credentialFramed);
-        if (!ownsAttempt()) await abandon(t);
+        if (!ownsAttempt()) abandon(null, t);
         state.transport = t;
         try {
           await c.connect(t);
@@ -985,7 +1028,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           // The transport is closed immediately by closeScope; if connect wins
           // that race anyway, close the resulting client rather than
           // resurrecting a session in the detached state object.
-          if (!ownsAttempt()) await abandon(c);
+          if (!ownsAttempt()) abandon(c, t);
           // A force re-auth that landed WHILE we were connecting wiped the
           // credentials this client just bound to. Discard it rather than
           // cache a stale-isolate connection.
@@ -994,23 +1037,21 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
             // closeScope can land while the generation read is pending, after
             // connect succeeded but before this client is cached. Discard the
             // client on that side of the await too.
-            if (!ownsAttempt()) await abandon(c);
+            if (!ownsAttempt()) abandon(c, t);
             if (generation !== genAtStart) {
-              try {
-                await c.close();
-              } catch {
-                // discarding either way
-              }
+              void closeConnection(c, t, ctx.logger);
               throw new UnauthorizedError(
                 "Connector was re-authorized during connect; reconnect required.",
               );
             }
           }
-          if (!ownsAttempt()) await abandon(c);
+          if (!ownsAttempt()) abandon(c, t);
           state.client = c;
           state.connectedGeneration = genAtStart;
           state.authRequired = false;
         } catch (err) {
+          void closeConnection(c, t, ctx.logger);
+          if (ownsAttempt()) state.transport = null;
           // Only a real 401/UnauthorizedError means auth is the problem — a
           // network error on an oauth connector must surface as "error", not
           // "auth_required".
@@ -1058,7 +1099,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       // client/transport exists. Reset is unconditional because KV may already
       // be fenced behind a newer epoch after a cleanup error.
       void connecting?.catch(() => {});
-      await closeHalf(state);
+      closeHalf(state, ctx);
     }
   };
 
@@ -1306,7 +1347,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
           if (state.client === client) state.authRequired = true;
           throw authRequiredError(err);
         }
-        throw err;
+        throw downstreamCallError(err);
       }
     },
 
@@ -1325,19 +1366,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       const transport = state.transport;
       reset(state);
 
-      // Ask the downstream to drop its session first — closing only aborts our
-      // side, and the DELETE that frees the server's rides on the very
-      // AbortSignal the close is about to trip.
-      if (transport) await terminateSession(transport, ctx.logger, id);
-
-      // Client.close() owns its connected transport. During an unfinished or
-      // failed connect there is no cached client yet, so close the transport
-      // directly to abort/release that half-open session.
-      if (client) {
-        await client.close();
-      } else {
-        await transport?.close();
-      }
+      await closeConnection(client, transport, ctx.logger);
     },
 
     async status(ctx): Promise<ConnectorStatus> {
@@ -1385,7 +1414,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       }
       await provider.clearPending();
       // Reset so the next use reconnects with the freshly stored tokens.
-      reset(state);
+      if (!state.transport) state.transport = t;
+      closeHalf(state, ctx);
     },
   };
 

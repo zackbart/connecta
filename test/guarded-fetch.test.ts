@@ -4,7 +4,7 @@
 // the confinement that only fails on a hostile path, the ceiling that only
 // fires on an absurd response, and the redirect nobody's provider sends.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { guardedFetch, retryAfterMs } from "../src/connectors/guarded-fetch.js";
 import { ConnectorCallError } from "../src/errors.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { ConnectorContext } from "../src/types.js";
@@ -355,5 +355,19 @@ describe("guardedFetch() response handling", () => {
       })({ method: "GET", path: "/self" }, context(), asJson),
     ).rejects.toMatchObject({ code: "auth_required" });
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("Retry-After", () => {
+  it("accepts delta seconds and HTTP dates, clamping past dates to zero", () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.parse("Wed, 16 Sep 2026 12:00:00 GMT"));
+    try {
+      expect(retryAfterMs(new Headers({ "retry-after": "1.5" }))).toBe(1500);
+      expect(retryAfterMs(new Headers({ "retry-after": "Wed, 16 Sep 2026 12:00:03 GMT" }))).toBe(3000);
+      expect(retryAfterMs(new Headers({ "retry-after": "Wed, 16 Sep 2026 11:59:00 GMT" }))).toBe(0);
+      for (const value of ["-1", "junk", "Infinity"]) {
+        expect(retryAfterMs(new Headers({ "retry-after": value }))).toBeUndefined();
+      }
+    } finally { vi.restoreAllMocks(); }
   });
 });

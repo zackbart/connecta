@@ -231,6 +231,11 @@ secret-free handoff to the connection UI. Without the UI, that recovery is
 interactive MCP caller can still start downstream OAuth through
 `authorize_connector` without the UI. Core owns the callback and verifies state
 and principal ownership independently of the optional browser application.
+A browser returning from downstream consent normally carries no MCP
+Authorization header, so an interactive bearer provider's 401 does not reject
+the callback. The verified state and its saved principal handoff select the
+owner; a browser identity, when present, must match that owner and may manage
+the connector. An interactive provider's explicit 403 still refuses the flow.
 
 See [meta-tools](./meta-tools.md#authorization-recovery) and
 [storage and credentials](./storage-and-credentials.md). The
