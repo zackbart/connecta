@@ -443,6 +443,14 @@ function resolvePools(
     if (pool.grant !== undefined && typeof pool.grant !== "function") {
       throw new Error(`ConnectaConfig.pools.${name}: grant must be a function`);
     }
+    // A misspelled `grant` would otherwise boot as a deny-all pool with only a
+    // per-request log line to say so; that is fail-closed, but the rule here
+    // is that structural mistakes refuse to boot.
+    for (const key of Object.keys(pool)) {
+      if (key !== "tools" && key !== "grant") {
+        throw new Error(`ConnectaConfig.pools.${name}: unknown option "${key}"`);
+      }
+    }
     let access: ConnectorAccess;
     try {
       access = parseConnectorAccess(pool.tools);

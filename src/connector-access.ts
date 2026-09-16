@@ -19,7 +19,15 @@ export interface ConnectorAccess {
 }
 
 const CONNECTOR_ID_RE = /^[a-z0-9_-]+$/;
-const TOOL_ADDRESS_RE = /^[a-z0-9_-]+\.[\x21-\x7e]{1,256}$/;
+// MCP does not restrict tool names, and remote servers ship spaced and
+// non-ASCII ones. Only control characters are refused, so a grant for a
+// legitimately named tool cannot 403 the whole identity at request time.
+const TOOL_ADDRESS_RE = /^[a-z0-9_-]+\..{1,256}$/su;
+const hasControlCharacter = (value: string): boolean =>
+  [...value].some((ch) => {
+    const code = ch.codePointAt(0)!;
+    return code < 0x20 || code === 0x7f;
+  });
 
 /**
  * Normalize a grant list. A bare connector id grants every tool on that
@@ -40,7 +48,7 @@ export function parseConnectorAccess(value: unknown): ConnectorAccess {
       whole.add(entry);
       continue;
     }
-    if (!TOOL_ADDRESS_RE.test(entry)) throw new Error("invalid connector permission");
+    if (!TOOL_ADDRESS_RE.test(entry) || hasControlCharacter(entry)) throw new Error("invalid connector permission");
     const dot = entry.indexOf(".");
     const connectorId = entry.slice(0, dot);
     const tools = partial.get(connectorId) ?? new Set<string>();

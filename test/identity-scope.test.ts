@@ -418,7 +418,7 @@ describe("named tool pools", () => {
     for (const name of ["missing", "closed", "broken", "silent"]) {
       const response = await c.fetch(new Request(`${BASE}/mcp/${name}`, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }) }));
       expect(response.status).toBe(404);
-      bodies.add(`${response.status}:${await response.text()}`);
+      bodies.add(`${response.status}:${[...response.headers].sort().map(([k, v]) => `${k}=${v}`).join("|")}:${await response.text()}`);
     }
     expect(bodies.size).toBe(1);
     const unauthenticated = await c.fetch(new Request(`${BASE}/mcp/closed`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }));
@@ -432,5 +432,60 @@ describe("named tool pools", () => {
     expect(attempt({ typo: { tools: ["notes.serach"] } })).toThrow('no tool "serach"');
     expect(attempt({ empty: { tools: [] } })).toThrow("at least one");
     expect(attempt({ shape: { tools: "wiki" } })).toThrow("must be an array");
+    expect(attempt({ typo: { tools: ["wiki"], grants: () => true } })).toThrow('unknown option "grants"');
+  });
+});
+
+describe("named tool pools: calls", () => {
+  it("refuses a direct call outside the pool before any handler runs", async () => {
+    const calls = { read: 0, purge: 0 };
+    const c = createTestConnecta({
+      connectors: [api("docs", { description: "Docs", tools: [
+        { name: "read", description: "Read", annotations: { readOnlyHint: true }, handler: async () => { calls.read += 1; return { ok: true }; } },
+        { name: "purge", description: "Purge", annotations: { readOnlyHint: false, destructiveHint: true }, handler: async () => { calls.purge += 1; return { ok: true }; } },
+      ] })],
+      auth: users(),
+      pools: { readers: { tools: ["docs.read"], grant: () => true } },
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const call = async (path: string, name: string, address: string) => {
+      const response = await c.fetch(new Request(`${BASE}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: { address, args: {} } } }),
+      }));
+      return readJsonRpc(response) as Promise<any>;
+    };
+    const purge = await call("/mcp/readers", "call_destructive_tool", "docs.purge");
+    expect(purge.result.isError).toBe(true);
+    expect(JSON.stringify(purge)).toContain("unknown_tool");
+    const read = await call("/mcp/readers", "call_tool", "docs.read");
+    expect(read.result.isError).toBeFalsy();
+    const unpooled = await call("/mcp", "call_destructive_tool", "docs.purge");
+    expect(unpooled.result.isError).toBeFalsy();
+    expect(calls).toEqual({ read: 1, purge: 1 });
+  });
+
+  it("accepts a grant for a tool whose name has spaces or non-ASCII characters", async () => {
+    const c = createTestConnecta({
+      connectors: [api("intl", { description: "Intl", tools: [
+        { name: "Liste des pages", description: "Lister", annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) },
+        { name: "supprimer", description: "Supprimer", annotations: { readOnlyHint: true }, handler: async () => ({ ok: true }) },
+      ] })],
+      auth: users(),
+      identity: { connectorAccess: () => ["intl.Liste des pages"] },
+      storage: memoryStorage(),
+      publicUrl: BASE,
+    });
+    const response = await c.fetch(new Request(`${BASE}/mcp`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json, text/event-stream", Authorization: "Bearer alice" },
+      body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "search_tools", arguments: { query: "lister supprimer", limit: 20 } } }),
+    }));
+    expect(response.status).toBe(200);
+    const text = JSON.stringify(await readJsonRpc(response));
+    expect(text).toContain("Liste des pages");
+    expect(text).not.toContain("intl.supprimer");
   });
 });

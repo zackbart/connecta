@@ -2,7 +2,7 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.24.2 — 2026-09-16
 
 `connectorAccess` can now grant individual tools, and a deployment can declare
 named pools served at `/mcp/<pool>`. Nothing changes for a deployment that

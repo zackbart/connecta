@@ -461,8 +461,14 @@ export class Registry implements RegistryView {
     const key = `${connectorId}.${toolName}`;
     if (this.warnedAbsentGrants.has(key)) return;
     this.warnedAbsentGrants.add(key);
+    // Grant names are operator data but may carry any non-control character;
+    // quote them so a line terminator a log reader honours cannot forge a line.
+    const quoted = JSON.stringify(key).replace(
+      /[\u2028\u2029]/g,
+      (ch) => `\\u${ch.charCodeAt(0).toString(16)}`,
+    );
     this.opts.logger.warn(
-      `connectorAccess grants "${key}" but connector "${connectorId}" lists no such tool; the grant is unreachable`,
+      `connectorAccess grants ${quoted} but connector "${connectorId}" lists no such tool; the grant is unreachable`,
     );
   }
 
