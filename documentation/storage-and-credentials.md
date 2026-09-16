@@ -67,8 +67,30 @@ storage adapter's format and interface stay unchanged.
 
 `fileStorage` is a single-process development store. It loads one snapshot and
 rewrites the whole state synchronously on each mutation, including result
-stashes; it does not coordinate concurrent processes. Expired entries are
-removed before that write. Large direct-call results therefore increase both
+stashes. It acquires an exclusive `<path>.lock` before loading, so a second
+instance or process opening the same path fails with the holder's pid instead
+of overwriting a stale snapshot. An unref'd timer refreshes the lock's mtime
+every 15 seconds. A heartbeat older than 60 seconds expires regardless of pid,
+so a container restart cannot leave a reused pid holding the file forever.
+The lock records the host/PID namespace as well as the pid. Within that same
+namespace, a dead pid permits immediate recovery; a matching current pid is
+live only when the in-process registry owns that lock. Other namespaces and
+older locks without namespace metadata rely on heartbeat expiry.
+
+Recovery uses a serialized `.lock.reclaim` guard, which also expires after
+60 seconds if its process crashes or pauses. An incomplete lock likewise
+becomes recoverable after 60 seconds. A holder paused long enough to lose its
+lock fails subsequent writes with "lock was lost". Writes check ownership
+before changing state and again before rename; reads use the loaded snapshot
+without filesystem lock checks. This remains an advisory development store
+on a shared local filesystem, not a distributed storage adapter.
+
+The returned store's `close()` releases the lock and refuses further operations.
+Process exit also releases it, including Node `listen()`'s SIGTERM/SIGINT
+shutdown. Each write uses a unique, exclusively created temp file, and the
+state file's JSON format is unchanged.
+
+Expired entries are removed before each write. Large direct-call results therefore increase both
 retained state and write cost. Use `execute_code` to reduce read-only results
 before returning them, and choose a storage adapter suited to the deployment.
 
