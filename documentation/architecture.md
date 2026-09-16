@@ -82,7 +82,7 @@ read top to bottom.
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
 | 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; connector drift uses stable short hashes and downstream admission sums shared and personal controllers without ids. Reserved routes reflect installed modules. |
 | 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state verification and personal ownership checks; independent of UI. |
-| 6 | `/mcp`, `/mcp/<pool>` | Origin check before admission, admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; any undeclared suffix, including malformed names, a refusing grant, and a throwing grant are one identical 404 after auth. |
+| 6 | `/mcp`, `/mcp/<pool>` | Origin check before admission, admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; any undeclared suffix, including malformed names, a refusing grant, and a throwing grant return the same 404 status, body, and headers after auth. Grant lookup latency is not hidden; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
 

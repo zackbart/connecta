@@ -98,6 +98,11 @@ async function run(payload: RunPayload): Promise<void> {
       payload.code,
       providers,
       payload.options,
+      (entry) => send({
+        type: "log",
+        jobId: payload.id,
+        payloadJson: stringifyBounded(entry, "QuickJS log entry"),
+      }),
     );
     const prepared: ExecutionPayload = {
       outcome: prepareExecuteResultForTransport(raw),

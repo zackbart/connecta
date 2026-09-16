@@ -447,7 +447,6 @@ export async function buildSandboxProviders(
     timeoutMs: hostCallTimeoutMs,
     ...(limits.signal !== undefined ? { requestSignal: limits.signal } : {}),
     unwrapResult: true,
-    beforeDispatch: spendHostCall,
   });
   /**
    * Discovery policy failures use the same thrown vocabulary as calls and
@@ -488,6 +487,7 @@ export async function buildSandboxProviders(
     }
   };
   const callAddress = async (address: unknown, args: unknown) => {
+    spendHostCall();
     const outcome = await invocation.invoke(String(address), args ?? {}, invocationContext());
     limits.diagnostics?.recordCall(outcome);
     if (!outcome.ok) throw new InvocationFailure(outcome.error);
@@ -653,6 +653,7 @@ export function createExecuteTool(
             signal: controller.signal,
             onInvocationFailure: (failure) => {
               invocationFailures.push(failure);
+              if (invocationFailures.length > 64) invocationFailures.shift();
             },
             emitCollector: emitted,
             ...(diagnostics ? { diagnostics } : {}),
@@ -683,6 +684,9 @@ export function createExecuteTool(
         }
       }
     } catch (err) {
+      const logs = err !== null && typeof err === "object" && "logs" in err
+        ? executeLogs(err.logs)
+        : undefined;
       if (err instanceof ExecutorAdmissionError) {
         if (err.code === "executor_overloaded") {
           logger.warn("[connecta] execute_code admission rejected", {
@@ -691,6 +695,7 @@ export function createExecuteTool(
           });
         }
         return failureResponse(err.message, {
+          logs,
           emitted:
             err instanceof ExecutorExecutionError ? emitted : undefined,
           diagnostics,
@@ -705,6 +710,7 @@ export function createExecuteTool(
         });
       }
       return failureResponse(`Executor failed: ${msg(err)}`, {
+        logs,
         emitted,
         diagnostics,
         code: "executor_failed",
@@ -716,14 +722,8 @@ export function createExecuteTool(
       lease?.release();
       options.signal?.removeEventListener("abort", forwardAbort);
     }
-    const logs =
-      outcome.logs && outcome.logs.length > 0
-        ? truncateExecuteText(
-            outcome.logs.join("\n"),
-            MAX_EXECUTE_LOG_CHARS,
-          )
-        : undefined;
-    if (outcome.error) {
+    const logs = executeLogs(outcome.logs);
+    if (outcome.error !== undefined) {
       // Executor bridges necessarily reduce thrown host errors to strings.
       // Match that terminal string back to the request-local typed failure so
       // an unhandled tool failure keeps the same structured contract as
@@ -738,6 +738,7 @@ export function createExecuteTool(
       let invocationFailure: InvocationFailure | undefined;
       for (const match of [
         (candidate: InvocationFailure) =>
+          outcome.error !== "" &&
           [candidate.message, guestFailureFrames.get(candidate)].includes(
             outcome.error,
           ),
@@ -768,7 +769,7 @@ export function createExecuteTool(
           code: invocationFailure.details,
         });
       }
-      const message = `Error: ${outcome.error}`;
+      const message = `Error: ${outcome.error || "Execution failed without an error message."}`;
       return failureResponse(message, {
         logs,
         emitted,
@@ -807,6 +808,12 @@ export function createExecuteTool(
     }
     return response;
   };
+}
+
+function executeLogs(value: unknown): string | undefined {
+  return Array.isArray(value) && value.length > 0 && value.every((entry) => typeof entry === "string")
+    ? truncateExecuteText(value.join("\n"), MAX_EXECUTE_LOG_CHARS)
+    : undefined;
 }
 
 function failureResponse(

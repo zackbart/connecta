@@ -1798,3 +1798,98 @@ it.each(["", "x", "failed"])("does not match short failure prose %j by containme
   const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
   expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
 });
+
+it.each([
+  ["missing.read", "unknown_address"],
+  ["calc.missing", "unknown_tool"],
+  ["broken.read", "catalog_lookup_failed"],
+])("counts refused %s attempts against the host-call budget", async (address, code) => {
+  const providers = await buildSandboxProviders(
+    makeRegistry([calcConnector, brokenConnector]), BASE, silentLogger, undefined,
+    { maxHostCalls: 2 },
+  );
+  const call = required(connectaProvider(providers).fns.call);
+  for (let i = 0; i < 2; i++) {
+    const error = await call(address, {}).then(() => null, (err: InvocationFailure) => err);
+    expect(error?.details.code).toBe(code);
+  }
+  for (const attempt of [
+    () => call(address, {}),
+    () => required(connectaProvider(providers).fns.search)({}),
+  ]) {
+    const error = await attempt().then(() => null, (err: InvocationFailure) => err);
+    expect(error?.details.code).toBe("budget_exceeded");
+  }
+});
+
+it.each([0, 1, 64])("retains only the latest 64 failures for terminal matching (failure %i)", async (escapedIndex) => {
+  const executor: Executor = {
+    async execute(_code, providers) {
+      const messages: string[] = [];
+      for (let i = 0; i < 65; i++) {
+        await required(connectaProvider(providers).fns.call)(`missing_${i}.read`, {})
+          .catch((err: Error) => { messages.push(err.message); });
+      }
+      return { result: undefined, error: required(messages[escapedIndex]) };
+    },
+  };
+  const out = await createExecuteTool(
+    makeRegistry([calcConnector]), BASE, executor, silentLogger, undefined,
+    { maxHostCalls: 100 },
+  )({ code: "", diagnostics: true });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: escapedIndex === 0 ? "executor_failed" : "unknown_address" },
+  });
+});
+
+it("reports an empty terminal executor error as failure with a fixed message", async () => {
+  const out = await createExecuteTool(
+    makeRegistry([calcConnector]), BASE,
+    fakeExecutor({ result: "must not succeed", error: "", logs: ["before failure"] }),
+    silentLogger,
+  )({ code: "", diagnostics: true });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "executor_failed", message: "Error: Execution failed without an error message." },
+    logs: "before failure",
+  });
+});
+
+it("does not retype an empty terminal error as a previously caught empty failure", async () => {
+  const connector = connectorWith({
+    id: "bad", kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => { throw new ConnectorCallError("not_found", ""); },
+  });
+  const executor: Executor = {
+    async execute(_code, providers) {
+      await callCanonical(providers, "bad", "read").catch(() => {});
+      return { result: undefined, error: "" };
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "executor_failed", message: "Error: Execution failed without an error message." },
+  });
+});
+
+it.each([false, true])("preserves logs on thrown executor errors (over cap: %s)", async (large) => {
+  const executor: Executor = {
+    async execute() {
+      throw Object.assign(new Error("executor crashed"), {
+        logs: large ? ["x".repeat(8_000)] : ["first", "second"],
+      });
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
+  const logs = out.structuredContent?.logs as string;
+  if (large) {
+    expect(logs).toMatch(/^x{4000}\n--- TRUNCATED/);
+    expect(logs.length).toBeLessThan(4_200);
+  } else {
+    expect(logs).toBe("first\nsecond");
+  }
+});

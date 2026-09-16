@@ -77,7 +77,9 @@ export function prepareExecuteResultForTransport(
   // the smaller model-facing 4k presentation cap in the parent.
   const logs =
     outcome.logs && outcome.logs.length > 0 ? outcome.logs : undefined;
-  if (outcome.error) {
+  // An empty string is still a failure (E5): the parent renders a fixed
+  // message for it, but this transport must not turn it into a success.
+  if (outcome.error !== undefined) {
     return {
       result: undefined,
       error: outcome.error,

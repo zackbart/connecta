@@ -275,3 +275,10 @@ describe.skipIf(!workerExecutor)(
     });
   },
 );
+
+// E5: an empty terminal error string is a failure on the child transport too,
+// not a success with no result.
+it("keeps an empty error string as a failure through the transport", () => {
+  expect(prepareExecuteResultForTransport({ result: undefined, error: "", logs: ["before failure"] }))
+    .toEqual({ result: undefined, error: "", logs: ["before failure"] });
+});

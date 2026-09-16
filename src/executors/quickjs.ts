@@ -12,6 +12,7 @@ import {
   ExecutorExecutionError,
 } from "../executor-admission.js";
 import { msg } from "../errors.js";
+import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
 import type {
   AdmittingExecutor,
   AdmissionSnapshot,
@@ -61,6 +62,8 @@ export interface QuickJsExecutorOptions {
 
 interface ActiveRun {
   id: number;
+  logs: string[];
+  logChars: number;
   providers: Map<string, ExecutorProvider>;
   resolve: (outcome: ExecuteResult) => void;
   reject: (error: Error) => void;
@@ -385,17 +388,16 @@ class QuickJsChildPool implements AdmittingExecutor {
     child.channel?.ref();
     return new Promise<ExecuteResult>((resolve, reject) => {
       const wallTimer = setTimeout(() => {
-        this.resolveActive(
+        this.rejectActive(
           slot,
-          {
-            result: undefined,
-            error: `QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`,
-          },
+          new Error(`QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`),
         );
         this.recycle(slot);
       }, this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS);
       const active: ActiveRun = {
         id,
+        logs: [],
+        logChars: 0,
         providers: providerMap,
         resolve,
         reject,
@@ -535,7 +537,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         `QuickJS child exited unexpectedly (${exitDescription}).`,
         stderrTail,
       );
-      this.resolveActive(slot, { result: undefined, error: error.message });
+      this.rejectActive(slot, error);
     });
     child.unref();
     child.channel?.unref();
@@ -558,6 +560,24 @@ class QuickJsChildPool implements AdmittingExecutor {
     const active = slot.active;
     if (!active || slot.child !== child) return;
     if (typeof message.payloadJson !== "string") return;
+    if (message.type === "log") {
+      if (message.jobId !== active.id) return;
+      // Keep one extra character so the presentation layer can signal loss.
+      // The final reply owns complete successful logs; this prefix survives
+      // only when that reply cannot arrive. Bound even a compromised child.
+      if (active.logChars >= MAX_EXECUTE_LOG_CHARS + 1) return;
+      if (serializedBytes(message.payloadJson) > MAX_QUICKJS_IPC_BYTES) return;
+      try {
+        stringifyBounded(message, "QuickJS log IPC envelope");
+        const entry: unknown = JSON.parse(message.payloadJson);
+        if (typeof entry !== "string") return;
+        const separator = active.logs.length > 0 ? 1 : 0;
+        const retained = entry.slice(0, MAX_EXECUTE_LOG_CHARS + 1 - active.logChars - separator);
+        active.logs.push(retained);
+        active.logChars += separator + retained.length;
+      } catch { /* Malformed log messages carry no output. */ }
+      return;
+    }
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
       await this.handleHostCall(slot, child, active, message);
@@ -565,10 +585,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     if (message.type !== "result" || message.jobId !== active.id) return;
     if (serializedBytes(message.payloadJson) > MAX_QUICKJS_IPC_BYTES) {
-      this.resolveActive(slot, {
-        result: undefined,
-        error: "QuickJS execution result exceeded the IPC limit.",
-      });
+      this.rejectActive(slot, new Error("QuickJS execution result exceeded the IPC limit."));
       this.recycle(slot);
       return;
     }
@@ -585,10 +602,7 @@ class QuickJsChildPool implements AdmittingExecutor {
         this.recycle(slot);
       }
     } catch (err) {
-      this.resolveActive(slot, {
-        result: undefined,
-        error: `QuickJS child returned an invalid result: ${msg(err)}`,
-      });
+      this.rejectActive(slot, new Error(`QuickJS child returned an invalid result: ${msg(err)}`));
       this.recycle(slot);
     }
   }
@@ -672,14 +686,20 @@ class QuickJsChildPool implements AdmittingExecutor {
   private resolveActive(slot: ChildSlot, outcome: ExecuteResult): void {
     const active = slot.active;
     if (!active) return;
+    // Never concatenate the stream with the final reply: those entries are
+    // the same logs. A normal reply retains its existing full log contract.
+    const resolved = outcome.logs === undefined && active.logs.length > 0
+      ? { ...outcome, logs: active.logs }
+      : outcome;
     this.clearActive(slot, active);
-    active.resolve(outcome);
+    active.resolve(resolved);
   }
 
   private rejectActive(slot: ChildSlot, error: Error): void {
     const active = slot.active;
     if (!active) return;
     this.clearActive(slot, active);
+    if (active.logs.length > 0) Object.assign(error, { logs: active.logs });
     active.reject(error);
   }
 

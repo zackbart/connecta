@@ -180,7 +180,7 @@ const page = await connecta.search({
 });
 ```
 
-**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Top-level `search_tools` is different: it returns `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, the configured `connectorTitle` when present (normalized whitespace, at most 120 UTF-8 bytes), and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. An output shape learned under `S9` also carries `outputSchemaSource: "observed"`; provider declarations carry no source marker. Tool rows expose neither lexical scores nor per-result coverage. An empty or whitespace-only query browses. Non-empty input with no ASCII lexical terms returns no tools and bounded no-match analysis; mixed input searches with its ASCII terms. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes. Each render spends at most 2,000 visits across schema nodes, property and required names, literal values, any constraint-free retry, and its key-only fallback. Resolved `$ref` text is reused within that walk; exhausted work yields `unknown /* truncated */` and the corresponding truncation flag. Each enum node gets 256 of those bytes. About three near-cap enum nodes can therefore coexist while leaving the final quarter for surrounding syntax; the unchanged global fallback still applies above 1,024 bytes. A capped enum preserves whole values before `unknown` and an exact omitted-value count, while an empty enum renders as `never`. Either cap carries `inputSchemaTruncated` or `outputSchemaTruncated`; a shape-wide cap remains structurally valid with `unknown` types plus `/* truncated */`. Small enums remain complete. Use `connecta.describe({ address, format: "json" })` or JSON search for omitted exact constraints.
+**S1.** Returns one flat page: `{ tools, total, offset, limit, hasMore }`, plus `nextOffset` when more remains and `matchMode: "partial"` when no tool matched every term. Top-level `search_tools` is different: it returns `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`. Complete matches normally precede partial matches, but a partial candidate whose complete normalized tool name occurs in the normalized raw query competes by score; conversational cleanup applies only to scoring terms. Other candidates covering at least two terms fill the page after every complete match; when no complete match exists, the existing any-term fallback remains. Each entry in `tools` carries `address`, `name`, the configured `connectorTitle` when present (normalized whitespace, at most 120 UTF-8 bytes), and — when requested — `description`, `inputSchema`, `outputSchema`, `annotations`, and the connector's `guide`. An output shape learned under `S9` also carries `outputSchemaSource: "observed"`; provider declarations carry no source marker. Tool rows expose neither lexical scores nor per-result coverage. An empty or whitespace-only query browses. Non-empty input with no ASCII lexical terms returns no tools and bounded no-match analysis; mixed input searches with its ASCII terms. Compact shapes omit property prose, put required fields first, and cap each shape at 1,024 UTF-8 bytes. Each render spends at most 2,000 visits across schema nodes, property and required names, literal values, any constraint-free retry, and its key-only fallback. Resolved `$ref` text is reused within that walk; exhausted work yields `unknown /* truncated */` and the corresponding truncation flag. Each enum node gets 256 of those bytes. About three near-cap enum nodes can therefore coexist while leaving the final quarter for surrounding syntax; the unchanged global fallback still applies above 1,024 bytes. A capped enum preserves whole values before `unknown` and an exact omitted-value count, while an empty enum renders as `never`. Either cap carries `inputSchemaTruncated` or `outputSchemaTruncated`; a shape-wide cap remains structurally valid with `unknown` types plus `/* truncated */`. Small enums remain complete. `prefixItems` renders as a tuple with the declared `items` rest, an `unknown[]` rest when open, or no rest when `items` is false. `dependentSchemas` and `if`/`then`/`else` keep the base shape plus `/* conditional */` and set the truncation flag. `$dynamicRef` resolves a same-named definition like `$ref`; unresolved dynamic references become `unknown` with the truncation flag. These forms share the byte and work bounds above. Use `connecta.describe({ address, format: "json" })` or JSON search for omitted exact constraints.
 
 **S1a.** `connector` loads only the named catalog; omit it only when the integration is ambiguous, because an unscoped search fans out across every configured connector. `safety: "readOnly"` returns exactly the tools available through `connecta.call`; `"approvalRequired"` returns the complementary fail-closed class, including false, missing, and contradictory annotations. Omitted or `"all"` preserves the complete catalog. These filters grant no authority and change no admission decision.
 
@@ -330,7 +330,7 @@ guest: admission rejection (`executor_overloaded`, retryable, with
 reported to the model as an error result. One seam: a host call still in flight
 when the run is cancelled fails with `cancelled`, catchable on the way out but
 never worth acting on (`Y3`). When shutdown tears down a program that had
-already started, accepted blocks are reported as discarded under `M4`; a failure before execution started carries no discard fields.
+already started, accepted blocks are reported as discarded under `M4`; a failure before execution started carries no discard fields. A returned `error` field is a failure even when empty; an empty string reports `executor_failed` with `Error: Execution failed without an error message.`
 
 **E6.** An error the program raises itself — a `TypeError`, a call to a
 `connecta` member that is not a provider function (including an inherited one
@@ -339,7 +339,7 @@ carrying that message. It is not typed, because it is not a connector failure.
 One precedence rule: connecta recognizes an escaped tool failure by its message —
 exactly first, by containment second for messages of at least eight characters — so a program that *wraps* a failure's
 message in its own text still reports the underlying typed failure. Keeping the
-type beats keeping the prose.
+type beats keeping the prose. Matching retains only the most recent 64 failures per execution, including caught refusals; an older escaped message remains an untyped execution failure. An empty terminal error uses the fixed message in `E5`.
 
 **E7.** `retryable` for `unknown_address`, `unknown_tool`, and `destructive_tool_requires_approval` is pinned false, never inferred from an address containing `503`, `429`, or `temporar`. The first two carry `nextAction: { function: "connecta.search", arguments: { query, connector?, includeSchemas: "compact" } }` — the same scoped discovery the top-level record names, keyed to the surface the caller actually has. A program cannot call `search_tools`, so it is never told to. The message, the derived `query`, and a failed describe entry's `address` clamp caller-authored text to 512 UTF-8 bytes with an `…` marker. Those values land in the text content and `structuredContent`, so an invented 50 KB address would otherwise produce a refusal orders of magnitude past the deployment's result cap. A clipped address still identifies the mistake by its position; a short one — the common case — is exact and untagged.
 
@@ -383,7 +383,7 @@ anything, so paging its result would reward the one behavior code mode exists to
 remove — and stashing every unprojected return value would spend the result store
 on data nobody asked for.
 
-**R5.** `console.log`, `console.warn`, and `console.error` are captured in call order and returned as a single `logs` string, capped at 4,000 characters with a truncation marker. Logs survive program failure when the executor returns an error result, which is what makes them worth writing. An executor that throws or loses its child before returning cannot supply those logs (`X4`). How a non-string argument renders is not contract (`X4`).
+**R5.** `console.log`, `console.warn`, and `console.error` are captured in call order and returned as a single `logs` string, capped at 4,000 characters with a truncation marker. Logs survive program failure through either a returned error result or a thrown error carrying `logs: string[]`. QuickJS streams captured entries to its parent and preserves the received prefix on cancellation, shutdown, deadline termination, child crashes, and IPC failures (`X4`). How a non-string argument renders is not contract (`X4`).
 
 **R6.** Nothing else is added to a normal program result. Passing `diagnostics: true` adds one request-local, payload-free `diagnostics` block; a program that emitted adds `emitted: N` and its blocks (`M2`). Omitted, `false`, and emit-free are byte-for-byte the ordinary response path. Diagnostics exist so catalog, connector, and executor costs are distinguishable without persisting payloads or charging normal responses ([#247](https://github.com/zackbart/connecta/issues/247)).
 
@@ -500,7 +500,7 @@ because connecta enforces them above the sandbox:
 | Result | 24,000 serialized characters |
 | Logs presented to the model | 4,000 characters |
 
-Exhausting the host-call budget fails that call with non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No connector is reached, and the budget does not refill inside one execution.
+Every `call` attempt spends one host call on entry, before address resolution, catalog lookup, safety checks, validation, or dispatch. Unknown addresses, unknown tools, catalog failures, and other pre-dispatch refusals spend the same budget as successful calls; catching a refusal does not refund it. `search` and `describe` likewise spend on entry. Exhausting the host-call budget fails that call with non-retryable `budget_exceeded` (`E2`) and a message naming the budget. No connector is reached, and the budget does not refill inside one execution.
 
 **L5.** The guest is memory-, stack-, and CPU-bounded, and a program that
 exhausts a bound ends the run with an error instead of degrading the host. The
@@ -588,10 +588,14 @@ arguments and captures `log`, `info`, `warn`, `error`, and `debug`; the Dynamic
 Worker renders arguments with `String()` (so an object logs as
 `[object Object]`) and captures only `log`, `warn`, and `error`, prefixing the
 latter two. Only the three captured everywhere are contract (`R5`); rendering is
-not. If the executor throws instead of returning an `ExecuteResult`, no logs
-reach the handler. This includes QuickJS child termination on cancellation or
-shutdown and parent-side IPC failures: captured logs live in the child until
-its result reply. Admission rejection occurs before there are any guest logs.
+not. QuickJS streams each accepted entry within the existing IPC envelope
+bound while retaining its per-entry and cumulative child caps. The parent
+keeps at most 4,001 joined characters for failure recovery, one beyond the
+presentation cap so truncation stays visible. On a normal reply, its complete
+log array takes precedence over that prefix; the two copies are never joined.
+On termination or IPC failure, the parent attaches its retained prefix to the
+thrown error. Admission rejection before the program starts has no guest logs
+to recover.
 
 **X5. Leftover authority.** QuickJS blocks imports and has no `fetch`, `process`, timers, `crypto`, or `WebSocket`. Its Node child starts with an explicitly empty process environment rather than inheriting deployment variables or `NODE_OPTIONS`. A Dynamic Worker has those globals plus a non-contract set of runtime builtins through `import()` and `process.getBuiltinModule()`, including `node:path`, `node:crypto`, `node:net`, `node:tls`, `node:dns`, `node:module`, and `cloudflare:workers`. The upstream set can drift; this list is not an allowlist.
 The supported Worker construction is exactly `new DynamicWorkerExecutor({ loader })`. Do not pass `bindings`, `modules`, or `globalOutbound`: each can grant ambient configuration, code, or egress. Under it, `process.env`, lexical `this.env`, and `cloudflare:workers.env` are empty; `node:fs`, `node:http`, and `node:https` are unavailable through either access route; external `fetch`, `WebSocket`, `node:net`, and `node:tls` fail with workerd's outbound-denial error; DNS lookup ends unresolved; and `fetch("data:...")` resolves locally.
@@ -698,7 +702,7 @@ the upstream `Executor` shape assignable.
 | `M8` | two arms passing one case table, `test/codemode-compat.test.ts` |
 | `M10` | `test/execute-emit.test.ts` (aggregate present, numbers only, absent when nothing emitted) |
 | `X3` | `test/quickjs-executor.test.ts` (cancels a running child) |
-| `X4` | `test/guest-api-contract.test.ts` (string logs only) |
+| `X4` | `test/guest-api-contract.test.ts` (string logs only), `test/quickjs-executor.test.ts` (logs before cancellation), `test/quickjs-child-stderr.test.ts` (crash, shutdown, deadline, IPC failure, bounded parent retention), `test/quickjs-log-limits.test.ts` (unchanged successful logs) |
 | `X6` | `test/quickjs-executor.test.ts` (never-settling await) |
 | `X7` | `P3`'s tests; the Workers superset is deliberately unused |
 

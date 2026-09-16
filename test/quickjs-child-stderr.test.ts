@@ -26,6 +26,10 @@ vi.mock("node:child_process", async (importOriginal) => {
   return { ...actual, fork: forkMock };
 });
 
+import { createExecuteTool } from "../src/execute.js";
+import { connectorWith } from "./fixtures/connectors.js";
+import { makeRegistry, silentLogger } from "./helpers.js";
+
 import { quickJsExecutor } from "../src/executors/quickjs.js";
 
 afterEach(() => {
@@ -82,7 +86,7 @@ describe("QuickJS child stderr diagnostics", () => {
     });
 
     const executor = quickJsExecutor();
-    await executor.execute("async () => 1", []);
+    await expect(executor.execute("async () => 1", [])).rejects.toThrow("QuickJS child exited unexpectedly");
 
     expect(process.env.CONNECTA_QUICKJS_PARENT_SENTINEL).toBe(
       "deployment-secret",
@@ -104,14 +108,14 @@ describe("QuickJS child stderr diagnostics", () => {
     });
 
     const executor = quickJsExecutor();
-    const outcome = await executor.execute("async () => 1", []);
+    const error = await executor.execute("async () => 1", []).catch((err: Error) => err) as Error;
 
-    expect(outcome.error).toContain(
+    expect(error.message).toContain(
       "QuickJS child exited unexpectedly (code 17).",
     );
-    expect(outcome.error).toContain("TAIL_SENTINEL");
-    expect(outcome.error).not.toContain("HEAD_SENTINEL");
-    expect(Buffer.byteLength(outcome.error!)).toBeLessThan(8_400);
+    expect(error.message).toContain("TAIL_SENTINEL");
+    expect(error.message).not.toContain("HEAD_SENTINEL");
+    expect(Buffer.byteLength(error.message)).toBeLessThan(8_400);
     await executor.close?.();
   });
 });
@@ -130,10 +134,13 @@ it.each(["serialize", "send", "callback"] as const)("settles a host-result %s fa
     if (message.type === "run") {
       callback?.(null);
       const run = JSON.parse(message.payloadJson) as { id: number };
-      queueMicrotask(() => child.emit("message", {
-        type: "host-call", jobId: run.id, callId: 1,
-        payloadJson: JSON.stringify({ namespace: "test", functionName: "read", args: [] }),
-      }));
+      queueMicrotask(() => {
+        child.emit("message", { type: "log", jobId: run.id, payloadJson: JSON.stringify("before IPC failure") });
+        child.emit("message", {
+          type: "host-call", jobId: run.id, callId: 1,
+          payloadJson: JSON.stringify({ namespace: "test", functionName: "read", args: [] }),
+        });
+      });
     } else if (message.type === "host-result") {
       const reply = JSON.parse(message.payloadJson) as { error: string };
       replies.push(reply);
@@ -167,12 +174,108 @@ it.each(["serialize", "send", "callback"] as const)("settles a host-result %s fa
     await vi.waitFor(() => expect(settled).toBe(true));
     expect(replies).toHaveLength(1);
     if (fault === "serialize") {
-      expect(await execution).toEqual({ result: "QuickJS host-result IPC envelope could not be serialized within the 1048576-byte IPC limit." });
+      expect(await execution).toEqual({ result: "QuickJS host-result IPC envelope could not be serialized within the 1048576-byte IPC limit.", logs: ["before IPC failure"] });
     } else {
-      expect(await execution).toEqual(new Error(`Host reply ${fault} failed`));
+      expect(await execution).toBeInstanceOf(Error);
+      expect(await execution).toMatchObject({
+        message: `Host reply ${fault} failed`,
+        logs: ["before IPC failure"],
+      });
     }
   } finally {
     await executor.close?.();
     await execution;
+  }
+});
+
+it.each([false, true])("preserves streamed logs after a real child crash (over cap: %s)", async (large) => {
+  const actual = await vi.importActual<typeof import("node:child_process")>("node:child_process");
+  let child: import("node:child_process").ChildProcess | undefined;
+  forkMock.mockImplementationOnce((...args: Parameters<typeof actual.fork>) => {
+    child = actual.fork(...args);
+    return child;
+  });
+  const executor = quickJsExecutor();
+  const connector = connectorWith({
+    id: "crash", kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => {
+      // This call follows the logs on the same IPC channel. No timing guess.
+      child!.kill("SIGKILL");
+      return null;
+    },
+  });
+  try {
+    const out = await createExecuteTool(
+      makeRegistry([connector]), "https://connecta.test", executor, silentLogger,
+    )({ code: `async () => {
+      console.log("before crash");
+      ${large ? 'for (let i = 0; i < 200; i++) console.log("x".repeat(8_000));' : 'console.warn("second");'}
+      await connecta.call("crash.read");
+    }`, diagnostics: true });
+    expect(out.isError).toBe(true);
+    expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
+    const logs = out.structuredContent?.logs as string;
+    if (large) {
+      expect(logs).toMatch(/^before crash\nx{3987}\n--- TRUNCATED/);
+      expect(logs.length).toBeLessThan(4_200);
+    } else {
+      expect(logs).toBe("before crash\nsecond");
+    }
+  } finally {
+    await executor.close?.();
+  }
+});
+
+it.each(["deadline", "shutdown", "malformed result"])("attaches bounded streamed logs on %s", async (failure) => {
+  if (failure === "deadline") vi.useFakeTimers();
+  const child = new CrashingChild();
+  let started!: () => void;
+  const running = new Promise<void>((resolve) => { started = resolve; });
+  child.kill = () => {
+    child.connected = false;
+    queueMicrotask(() => child.emit("exit", 0, null));
+    return true;
+  };
+  child.send = (raw, callback) => {
+    callback?.(null);
+    const message = raw as { type: string; payloadJson: string };
+    if (message.type === "run") {
+      const run = JSON.parse(message.payloadJson) as { id: number };
+      queueMicrotask(() => {
+        // Bad and stale messages must consume none of the retention budget.
+        child.emit("message", { type: "log", jobId: run.id + 1, payloadJson: JSON.stringify("stale") });
+        child.emit("message", { type: "log", jobId: run.id, payloadJson: "{}" });
+        child.emit("message", { type: "log", jobId: run.id, payloadJson: "not JSON" });
+        child.emit("message", { type: "log", jobId: run.id, payloadJson: JSON.stringify("x".repeat(2_000_000)) });
+        for (let i = 0; i < 1_000; i++) {
+          child.emit("message", { type: "log", jobId: run.id, payloadJson: JSON.stringify("y".repeat(100)) });
+        }
+        started();
+        if (failure === "malformed result") {
+          child.emit("message", { type: "result", jobId: run.id, payloadJson: "{}" });
+        }
+      });
+    }
+    return true;
+  };
+  forkMock.mockImplementationOnce(() => {
+    queueMicrotask(() => child.emit("message", { type: "ready" }));
+    return child;
+  });
+  const executor = quickJsExecutor({ timeoutMs: 10 });
+  const pending = executor.execute("async () => {}", []).catch((err: unknown) => err);
+  try {
+    await running;
+    if (failure === "deadline") await vi.advanceTimersByTimeAsync(260);
+    if (failure === "shutdown") await executor.close?.();
+    const error = await pending;
+    expect(error).toBeInstanceOf(Error);
+    const logs = (error as Error & { logs: string[] }).logs;
+    expect(logs.join("\n")).toHaveLength(4_001);
+    expect(logs.join("\n")).toMatch(/^(y{100}\n)+y+$/);
+  } finally {
+    vi.useRealTimers();
+    await executor.close?.();
   }
 });

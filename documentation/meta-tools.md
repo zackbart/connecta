@@ -132,7 +132,14 @@ required-first shape with `unknown` types; other shapes become
 `unknown /* truncated */`. Any cap marks the match with
 `inputSchemaTruncated` or `outputSchemaTruncated`; repeat the search with
 `includeSchemas: "json"` or use the existing describe path when exact
-constraints matter. Small enums and both exact paths remain complete.
+constraints matter. `prefixItems` renders as a tuple, with the `items` type
+as its rest, an `unknown[]` rest when open, and no rest for `items: false`.
+`dependentSchemas` and `if`/`then`/`else` preserve the base shape and append
+`/* conditional */`, setting the truncation flag so the caller reads the exact
+JSON schema. `$dynamicRef` resolves a same-named definition like `$ref`; an
+unresolved dynamic reference renders as `unknown` with the truncation flag.
+These shapes share the same byte and work budgets. Small enums and both exact
+paths remain complete.
 
 ## Connector guide selection
 

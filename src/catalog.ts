@@ -467,6 +467,13 @@ function refName(ref: string): string {
 function declaresShape(s: Record<string, unknown>): boolean {
   return (
     typeof s.$ref === "string" ||
+    typeof s.$dynamicRef === "string" ||
+    Array.isArray(s.allOf) ||
+    Array.isArray(s.prefixItems) ||
+    s.dependentSchemas !== undefined ||
+    s.if !== undefined ||
+    s.then !== undefined ||
+    s.else !== undefined ||
     Array.isArray(s.oneOf) ||
     Array.isArray(s.anyOf) ||
     Array.isArray(s.enum) ||
@@ -635,8 +642,25 @@ function renderSchemaNode(
         )
       : rendered;
 
+  // Conditions cannot be expressed by a single static shape. Preserve the
+  // base and send callers to the exact schema instead of hiding the rules.
+  if (
+    s.dependentSchemas !== undefined || s.if !== undefined ||
+    s.then !== undefined || s.else !== undefined
+  ) {
+    options.work.truncated = true;
+    const base: Record<string, unknown> = Object.create(null);
+    for (const key of propertyNames(s, options.work)) {
+      if (!["dependentSchemas", "if", "then", "else"].includes(key)) base[key] = s[key];
+    }
+    const rendered = declaresShape(base)
+      ? renderSchema(base, defs, seen, depth, options)
+      : "unknown";
+    return `${rendered} /* conditional */`;
+  }
+
   // allOf composes rather than replaces: it is checked before every other
-  // keyword, and renders the schema's own shape alongside its members instead
+  // shape keyword, and renders the schema's own shape alongside its members instead
   // of returning early. A schema carrying both allOf and properties (the usual
   // OpenAPI-derived "extend this base" shape, and equally legal with $ref,
   // enum, const, or items) would otherwise silently drop whichever half lost
@@ -659,11 +683,17 @@ function renderSchemaNode(
     return parts.map(grouped).join(" & ");
   }
 
-  if (typeof s.$ref === "string") {
-    const name = refName(options.work.text(s.$ref));
+  const reference = s.$ref ?? s.$dynamicRef;
+  if (typeof reference === "string") {
+    const dynamic = s.$ref === undefined;
+    const rawName = refName(options.work.text(reference));
+    const name = dynamic ? rawName.replace(/^#/, "") : rawName;
     if (seen.has(name)) return name;
     const target = resolveDefinition(defs, name);
-    if (target === undefined) return name;
+    if (target === undefined) {
+      if (dynamic) options.work.truncated = true;
+      return dynamic ? "unknown" : name;
+    }
     const cacheKey = JSON.stringify([name, depth, [...seen]]);
     let rendered = options.work.refs.get(cacheKey);
     if (rendered === undefined) {
@@ -703,6 +733,18 @@ function renderSchemaNode(
   }
 
   const type = s.type;
+  if (Array.isArray(s.prefixItems)) {
+    const parts = s.prefixItems.map((item) =>
+      renderSchema(item, defs, seen, depth + 1, options),
+    );
+    if (s.items !== false) {
+      const rest = s.items === undefined || s.items === true
+        ? "unknown"
+        : renderSchema(s.items, defs, seen, depth + 1, options);
+      parts.push(`...${grouped(rest)}[]`);
+    }
+    return `[${parts.join(", ")}]`;
+  }
   if (type === "array" || s.items) {
     const items = s.items
       ? renderSchema(s.items, defs, seen, depth + 1, options)
@@ -971,8 +1013,10 @@ function objectKeys(
       : undefined;
   }
 
-  if (typeof s.$ref === "string") {
-    const name = refName(work.text(s.$ref));
+  const reference = s.$ref ?? s.$dynamicRef;
+  if (typeof reference === "string") {
+    const rawName = refName(work.text(reference));
+    const name = s.$ref === undefined ? rawName.replace(/^#/, "") : rawName;
     if (seen.has(name)) return undefined;
     const target = resolveDefinition(defs, name);
     if (target === undefined) return undefined;
@@ -985,7 +1029,7 @@ function objectKeys(
   if (Array.isArray(s.oneOf ?? s.anyOf)) return undefined;
   if (Array.isArray(s.enum)) return undefined;
   if (s.const !== undefined) return undefined;
-  if (s.type === "array" || s.items) return undefined;
+  if (s.type === "array" || s.items || Array.isArray(s.prefixItems)) return undefined;
   if (s.type === "object" || s.properties) {
     const props = s.properties;
     if (props === null || Array.isArray(props) || typeof props !== "object") {

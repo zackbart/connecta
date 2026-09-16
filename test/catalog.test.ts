@@ -417,7 +417,7 @@ describe("compactSchema 2020-12 keyword compatibility", () => {
     };
 
     expect(compactSchema(schema)).toBe(
-      '{ mode: "basic" | "token", apiKey?: string }',
+      '{ mode: "basic" | "token", apiKey?: string } /* conditional */',
     );
   });
 });
@@ -500,7 +500,7 @@ describe("bounded catalog rendering", () => {
   it("bounds raw JSON fallback", () => {
     let schema: JsonSchema = { type: "string" };
     for (let depth = 0; depth < 10_000; depth += 1) {
-      schema = { if: schema };
+      schema = { not: schema };
     }
     expect(compactDiscoverySchema(schema)).toEqual({
       text: "unknown /* truncated */",
@@ -589,5 +589,129 @@ describe("catalog search argument validation", () => {
     const service = new CatalogService(makeRegistry([calcConnector]), BASE);
     expect((await service.search({})).offset).toBe(0);
     expect((await service.search({ offset: 1 })).offset).toBe(1);
+  });
+});
+
+describe("2020-12 schemas in search and describe", () => {
+  const cases: Array<{
+    name: string;
+    schema: JsonSchema;
+    text: string;
+    truncated?: boolean;
+  }> = [
+    {
+      name: "tuple",
+      schema: {
+        type: "array",
+        prefixItems: [{ type: "string" }, { type: "number" }],
+        items: { type: "boolean" },
+      },
+      text: "[string, number, ...boolean[]]",
+    },
+    {
+      name: "open tuple",
+      schema: { prefixItems: [{ type: "string" }] },
+      text: "[string, ...unknown[]]",
+    },
+    {
+      name: "closed tuple",
+      schema: { prefixItems: [{ type: "string" }], items: false },
+      text: "[string]",
+    },
+    {
+      name: "union rest",
+      schema: {
+        prefixItems: [{ type: "string" }],
+        items: { anyOf: [{ type: "number" }, { type: "boolean" }] },
+      },
+      text: "[string, ...(number | boolean)[]]",
+    },
+    {
+      name: "dependentSchemas",
+      schema: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        dependentSchemas: { id: { required: ["other"] } },
+      },
+      text: "{ id?: string } /* conditional */",
+      truncated: true,
+    },
+    {
+      name: "conditional",
+      schema: {
+        type: "object",
+        properties: { mode: { type: "string" } },
+        if: { required: ["mode"] },
+        // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise method.
+        then: { required: ["value"] },
+        else: { required: ["fallback"] },
+      },
+      text: "{ mode?: string } /* conditional */",
+      truncated: true,
+    },
+    {
+      name: "bare conditional",
+      schema: {
+        if: { type: "string" },
+        // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise method.
+        then: { minLength: 2 },
+        else: { type: "number" },
+      },
+      text: "unknown /* conditional */",
+      truncated: true,
+    },
+    {
+      name: "allOf conditional",
+      schema: {
+        allOf: [{ type: "string" }],
+        if: { const: "a" },
+        // oxlint-disable-next-line unicorn/no-thenable -- JSON Schema keyword, not a promise method.
+        then: { minLength: 2 },
+      },
+      text: "string /* conditional */",
+      truncated: true,
+    },
+    {
+      name: "dynamic reference",
+      schema: { $defs: { Entry: { type: "string" } }, $dynamicRef: "#Entry" },
+      text: "string",
+    },
+    {
+      name: "dynamic pointer",
+      schema: { $defs: { Entry: { type: "number" } }, $dynamicRef: "#/$defs/Entry" },
+      text: "number",
+    },
+    {
+      name: "unknown dynamic reference",
+      schema: { $dynamicRef: "#Missing" },
+      text: "unknown",
+      truncated: true,
+    },
+  ];
+  it.each(cases)("renders $name honestly in both routes", async ({ schema, text, truncated }) => {
+    const service = new CatalogService(makeRegistry([connectorWith({
+      id: "shapes", call: async () => null,
+      tools: [{ name: "read", inputSchema: schema, outputSchema: schema }],
+    })]), BASE);
+    const page = await service.search({ includeSchemas: "compact" });
+    const [description] = await service.describe({ address: "shapes.read" });
+    for (const tool of [page.entries[0]!.tool, description!]) {
+      expect(tool.inputSchema).toBe(text);
+      expect(tool.outputSchema).toBe(text);
+      expect(tool.inputSchemaTruncated).toBe(truncated);
+      expect(tool.outputSchemaTruncated).toBe(truncated);
+    }
+    const exactPage = await service.search({ includeSchemas: "json" });
+    const [exactDescription] = await service.describe({ address: "shapes.read", format: "json" });
+    for (const tool of [exactPage.entries[0]!.tool, exactDescription!]) {
+      expect(tool.inputSchema).toEqual(schema);
+      expect(tool.inputSchemaTruncated).toBeUndefined();
+    }
+  });
+
+  it("bounds tuple rendering in both compact routes", () => {
+    const schema = { prefixItems: Array.from({ length: 3_000 }, () => ({ type: "string" })) };
+    expect(compactDiscoverySchema(schema)).toEqual({ text: "unknown /* truncated */", truncated: true });
+    expect(compactSchema(schema)).toBe("unknown /* truncated */");
   });
 });
