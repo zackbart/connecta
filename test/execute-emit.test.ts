@@ -78,7 +78,7 @@ describe("EmitCollector budgets (M5)", () => {
     sink.accept({ type: "text", text: "one" });
     sink.accept({ type: "text", text: "two" });
     expect(() => sink.accept({ type: "text", text: "three" })).toThrowError(
-      /block-count budget exceeded: 2 block\(s\) maximum/,
+      /block-count budget exceeded: 2 block\(s\) maximum, 0 blocks remaining; 9944 of 10000 serialized bytes remaining/,
     );
     expect(sink.blocks).toHaveLength(2);
   });

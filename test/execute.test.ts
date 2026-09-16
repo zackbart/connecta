@@ -987,6 +987,22 @@ describe("buildSandboxProviders", () => {
 
   });
 
+  it.each(["search", "describe"] as const)("counts %s against the shared host-call budget (L4, M7)", async (operation) => {
+    const providers = await buildSandboxProviders(makeRegistry([calcConnector]), BASE, silentLogger);
+    const fns = connectaProvider(providers).fns;
+    for (let i = 0; i < 20; i++) {
+      await required(fns[operation])(operation === "search" ? {} : { address: "calc.add" });
+    }
+    for (const attempt of [
+      () => required(fns.call)("calc.add", { a: 1, b: 2 }),
+      () => required(fns.search)({}),
+      () => required(fns.describe)({ address: "calc.add" }),
+    ]) {
+      const failure = await attempt().then(() => null, (error: unknown) => error as InvocationFailure);
+      expect(failure?.details.code).toBe("budget_exceeded");
+    }
+  });
+
   it("times out a host call even when the connector ignores cancellation", async () => {
     const never = new Promise<never>(() => {});
     const slow: Connector = connectorWith({
@@ -1764,4 +1780,21 @@ describe("execute_code handler", () => {
     expect(result.isError).toBeFalsy();
     await expect(pending).rejects.toThrow();
   });
+});
+
+// E6: a caught connector failure must not classify an unrelated program error.
+it.each(["", "x", "failed"])("does not match short failure prose %j by containment", async (message) => {
+  const connector = connectorWith({
+    id: "bad", kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => { throw new ConnectorCallError("not_found", message); },
+  });
+  const executor: Executor = {
+    async execute(_code, providers) {
+      await callCanonical(providers, "bad", "read").catch(() => {});
+      return { result: undefined, error: "TypeError: x failed independently" };
+    },
+  };
+  const out = await createExecuteTool(makeRegistry([connector]), BASE, executor, silentLogger)({ code: "", diagnostics: true });
+  expect(out.structuredContent).toMatchObject({ error: { code: "executor_failed" } });
 });
