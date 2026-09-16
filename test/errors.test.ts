@@ -222,6 +222,7 @@ describe("framingError", () => {
       "unknown_tool",
       "ambiguous_tool_alias",
       "destructive_tool_requires_approval",
+      "result_processing_failed",
     ]) {
       expect(
         framingError(code, `Unknown address "temporary-503-service.read"`),
@@ -235,10 +236,10 @@ describe("framingError", () => {
 
   it("still reads the message for codes it does not frame itself", () => {
     expect(
-      framingError("result_processing_failed", "upstream 503 while paging"),
+      framingError("catalog_lookup_failed", "upstream 503 while paging"),
     ).toMatchObject({ retryable: true });
     expect(
-      framingError("result_processing_failed", "field shape mismatch"),
+      framingError("catalog_lookup_failed", "field shape mismatch"),
     ).toMatchObject({ retryable: false });
   });
 });

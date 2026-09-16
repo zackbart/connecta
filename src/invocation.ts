@@ -9,6 +9,7 @@ import {
   type ResolvedCatalogTool,
 } from "./catalog-service.js";
 import {
+  boundedEchoText,
   classifyCallError,
   ConnectorCallError,
   echoedCallArgs,
@@ -86,10 +87,10 @@ function assertRawMcpSuccess(
   };
   if (!mcpResult.isError) return;
   throw new Error(
-    mcpResult.content
+    boundedEchoText(mcpResult.content
       ?.filter((block) => block.type === "text")
       .map((block) => block.text ?? "")
-      .join("") || "Downstream tool call failed",
+      .join("") || "Downstream tool call failed"),
   );
 }
 
@@ -333,160 +334,192 @@ export class InvocationService {
       };
     };
 
-    const resolution = await this.catalog.resolveTool(
-      address, defined({ signal: context.requestSignal }),
-    );
-    catalogMs += resolution.catalogMs;
-    if (!resolution.ok) {
-      if (resolution.connector && resolution.toolName) {
-        activityTarget = {
-          connector: resolution.connector,
-          toolName: resolution.toolName,
-        };
-      }
-      if (resolution.cause && context.requestSignal?.aborted) {
-        return failed(callerCancelledDetails());
-      }
-      return failed(resolution.error);
+    if (context.requestSignal?.aborted) {
+      // Preserve the cancelled admission-attempt count without starting discovery.
+      attempts = 1;
+      return failed(callerCancelledDetails());
     }
-    resolved = resolution.resolved;
-    activityTarget = resolved;
-
-    if (!isExplicitlyReadOnly(resolved.definition) && !context.allowDestructive) {
-      const canonicalAddress = `${resolved.connector.id}.${resolved.toolName}`;
-      return failed(
-        framingError(
-          "destructive_tool_requires_approval",
-          `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
-        ),
-      );
-    }
-
-    // Remote MCP tools advertise their input schema in the catalog. Validate
-    // against that same request-local definition before admission or provider
-    // dispatch, so a predictable mismatch stays structured instead of being
-    // flattened into provider-specific error prose. Unsupported schemas retain
-    // validateToolInput's fail-open behavior and reach the downstream normally.
-    if (
-      resolved.connector.kind === "mcp" &&
-      resolved.definition.inputSchema
-    ) {
-      const invalid = validateToolInput(
-        resolved.definition.inputSchema,
-        args ?? {},
-        {
-          address: `${resolved.connector.id}.${resolved.toolName}`,
-          logger: this.registry.contextFor(
-            resolved.connector.id,
-            this.catalog.baseUrl,
-            this.catalog.requestScope,
-          ).logger,
-        },
-      );
-      if (invalid) return failed(classifyCallError(invalid));
-    }
-
-    try {
-      context.beforeDispatch?.();
-    } catch (error) {
-      return failed(
-        error instanceof InvocationFailure
-          ? error.details
-          : classifyCallError(error),
-      );
-    }
-
     let result: unknown;
     let observedResult: unknown;
-    attempts = 1;
-    let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
-    let attemptError: unknown;
-    let attemptFailed = false;
-    try {
-      permit = await timed(
-        (elapsed) => { admissionMs += elapsed; },
-        () => this.registry.admitCall(resolved.connector.id, {
-          toolName: resolved.toolName,
-          args: args ?? {},
-          ...defined({ signal: context.requestSignal }),
-        }),
+    // One deadline owns discovery, queue admission, and provider dispatch.
+    // Only the caller of this function records the final outcome, so a late
+    // cancellation cannot append a second activity event after the deadline.
+    const dispatch = async (
+      callSignal?: AbortSignal,
+    ): Promise<CallErrorDetails | undefined> => {
+      const resolution = await this.catalog.resolveTool(
+        address, defined({ signal: callSignal }),
       );
-      const raw = await timed(
-        (elapsed) => { connectorMs += elapsed; },
-        () => {
-          const call = (callSignal?: AbortSignal) => {
-            const connectorContext = this.registry.contextFor(
-              resolved.connector.id,
+      catalogMs += resolution.catalogMs;
+      if (callSignal?.aborted) throw callSignal.reason;
+      if (!resolution.ok) {
+        if (resolution.connector && resolution.toolName) {
+          activityTarget = {
+            connector: resolution.connector,
+            toolName: resolution.toolName,
+          };
+        }
+        if (resolution.cause && context.requestSignal?.aborted) {
+          return callerCancelledDetails();
+        }
+        return resolution.error;
+      }
+      const target = resolution.resolved;
+      resolved = target;
+      activityTarget = target;
+
+      if (!isExplicitlyReadOnly(target.definition) && !context.allowDestructive) {
+        const canonicalAddress = `${target.connector.id}.${target.toolName}`;
+        return framingError(
+          "destructive_tool_requires_approval",
+          `Tool "${canonicalAddress}" is not explicitly read-only. Invoke it through call_destructive_tool so the MCP host can request explicit approval.`,
+        );
+      }
+
+      // Remote MCP tools advertise their input schema in the catalog. Validate
+      // against that same request-local definition before admission or provider
+      // dispatch, so a predictable mismatch stays structured instead of being
+      // flattened into provider-specific error prose. Unsupported schemas retain
+      // validateToolInput's fail-open behavior and reach the downstream normally.
+      if (
+        target.connector.kind === "mcp" &&
+        target.definition.inputSchema
+      ) {
+        const invalid = validateToolInput(
+          target.definition.inputSchema,
+          args ?? {},
+          {
+            address: `${target.connector.id}.${target.toolName}`,
+            logger: this.registry.contextFor(
+              target.connector.id,
               this.catalog.baseUrl,
               this.catalog.requestScope,
-              defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
-            );
-            if (
-              resolved.connector.credential &&
-              !connectorContext.credential
-            ) {
-              throw new ConnectorCallError(
-                "auth_required",
-                "Operator-managed credential storage is not configured. Call " +
-                  `authorize_connector({ connector: "${resolved.connector.id}" }).`,
+            ).logger,
+          },
+        );
+        if (invalid) return classifyCallError(invalid);
+      }
+
+      try {
+        context.beforeDispatch?.();
+      } catch (error) {
+        return error instanceof InvocationFailure
+          ? error.details
+          : classifyCallError(error);
+      }
+
+      if (callSignal?.aborted) throw callSignal.reason;
+      attempts = 1;
+      let permit: Awaited<ReturnType<RegistryView["admitCall"]>> | undefined;
+      let attemptError: unknown;
+      let attemptFailed = false;
+      try {
+        permit = await timed(
+          (elapsed) => { admissionMs += elapsed; },
+          () => this.registry.admitCall(target.connector.id, {
+            toolName: target.toolName,
+            args: args ?? {},
+            ...defined({ signal: callSignal }),
+          }),
+        );
+        const raw = await timed(
+          (elapsed) => { connectorMs += elapsed; },
+          () => {
+            const call = () => {
+              const connectorContext = this.registry.contextFor(
+                target.connector.id,
+                this.catalog.baseUrl,
+                this.catalog.requestScope,
+                defined({ signal: callSignal, timeoutMs: context.timeoutMs }),
               );
-            }
-            // Cancellation can arrive during admission or context construction.
-            if (callSignal?.aborted) throw callSignal.reason;
-            return resolved.connector.callTool(
-              resolved.toolName,
-              args ?? {},
-              connectorContext,
-            );
-          };
-          if (!context.timeoutMs && !context.requestSignal) return call();
-          return withDeadline(call, {
+              if (
+                target.connector.credential &&
+                !connectorContext.credential
+              ) {
+                throw new ConnectorCallError(
+                  "auth_required",
+                  "Operator-managed credential storage is not configured. Call " +
+                    `authorize_connector({ connector: "${target.connector.id}" }).`,
+                );
+              }
+              // Cancellation can arrive during admission or context construction.
+              if (callSignal?.aborted) throw callSignal.reason;
+              return target.connector.callTool(
+                target.toolName,
+                args ?? {},
+                connectorContext,
+              );
+            };
+            // Race cancellation here too, so an uncooperative connector cannot
+            // retain its admission permit after the enclosing deadline expires.
+            return callSignal
+              ? withDeadline(call, {
+                  signal: callSignal,
+                  timeoutError: new ConnectorCallError("timeout", "Tool call timed out"),
+                })
+              : call();
+          },
+        );
+        // isError is checked here for BOTH result shapes so every adapter
+        // reports the same downstream-failure wording, and the throw lands
+        // inside the attempt where it feeds health.
+        assertRawMcpSuccess(target.connector.kind, raw);
+        observedResult = unwrapMcpResult(target.connector.kind, raw);
+        result = context.unwrapResult ? observedResult : raw;
+      } catch (error) {
+        attemptFailed = true;
+        attemptError = error;
+      } finally {
+        permit?.release();
+      }
+
+      if (attemptFailed) {
+        if (callSignal?.aborted) throw callSignal.reason;
+        const callerCancelled = isCallerCancellation(
+          attemptError,
+          context.requestSignal,
+        );
+        const details = callerCancelled
+          ? callerCancelledDetails()
+          : classifyCallError(attemptError);
+        return details;
+      }
+
+      return undefined;
+    };
+    try {
+      const error = context.timeoutMs || context.requestSignal
+        ? await withDeadline(dispatch, {
             ...defined({
               timeoutMs: context.timeoutMs,
               signal: context.requestSignal,
             }),
             timeoutError: new ConnectorCallError(
-              "timeout",
-              `Tool call timed out after ${context.timeoutMs}ms`,
+              "timeout", `Tool call timed out after ${context.timeoutMs}ms`,
             ),
-          });
-        },
-      );
-      // isError is checked here for BOTH result shapes so every adapter
-      // reports the same downstream-failure wording, and the throw lands
-      // inside the attempt where it feeds health.
-      assertRawMcpSuccess(resolved.connector.kind, raw);
-      observedResult = unwrapMcpResult(resolved.connector.kind, raw);
-      result = context.unwrapResult ? observedResult : raw;
+          })
+        : await dispatch();
+      if (error) return failed(error);
     } catch (error) {
-      attemptFailed = true;
-      attemptError = error;
-    } finally {
-      permit?.release();
-    }
-
-    if (attemptFailed) {
-      const callerCancelled = isCallerCancellation(
-        attemptError,
-        context.requestSignal,
-      );
-      const details = callerCancelled
+      return failed(context.requestSignal?.aborted
         ? callerCancelledDetails()
-        : classifyCallError(attemptError);
-      return failed(details);
+        : classifyCallError(error));
     }
+    // A dispatch that returned no refusal resolved a concrete tool.
+    const completed = resolved;
+    if (!completed) throw new Error("Invocation completed without a resolved tool");
 
     try {
       const value = await timed(
         (elapsed) => { resultProcessingMs += elapsed; },
         async () => {
           const processed = context.processResult
-            ? await context.processResult(result, resolved)
+            ? await context.processResult(result, completed)
             : (result as T);
           try {
             this.registry.observeOutputShape(
-              resolved.connector.id,
-              resolved.definition,
+              completed.connector.id,
+              completed.definition,
               observedResult,
             );
           } catch {
@@ -501,16 +534,16 @@ export class InvocationService {
       return {
         ok: true,
         value,
-        resolved,
+        resolved: completed,
         durationMs: Date.now() - started,
         attempts,
         timing: diagnostics,
       };
-    } catch (error) {
+    } catch {
       return failed(
         framingError(
           "result_processing_failed",
-          error instanceof Error ? error.message : String(error),
+          "The downstream call completed, but its result could not be processed. Do not repeat the call to recover its result.",
         ),
       );
     }

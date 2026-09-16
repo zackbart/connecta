@@ -16,7 +16,7 @@ import {
 } from "./catalog-service.js";
 import type { DeferredWork } from "./connector-scope.js";
 import { resolveDiscoveryConcurrency } from "./concurrency.js";
-import { msg, type CallErrorDetails } from "./errors.js";
+import { boundedEchoText, msg, type CallErrorDetails } from "./errors.js";
 import { serializeResultText } from "./executor-result.js";
 import {
   InvocationService,
@@ -94,7 +94,15 @@ async function discoveryResult(
   try {
     const value = await operation();
     const text = boundedDiscoveryText(value, hint);
-    return jsonResult(value, text);
+    const result = jsonResult(value, text);
+    const bytes = enc.encode(JSON.stringify(result)).length;
+    if (bytes > MAX_DISCOVERY_RESULT_BYTES) {
+      throw new DiscoveryPolicyError(
+        "result_too_large",
+        `Discovery result is ${bytes} UTF-8 bytes, over the ${MAX_DISCOVERY_RESULT_BYTES}-byte ceiling. ${hint}`,
+      );
+    }
+    return result;
   } catch (err) {
     if (err instanceof DiscoveryPolicyError) {
       return discoveryErrorResult(err);
@@ -177,26 +185,34 @@ export function alignEndToCharBoundary(
  * the three give one answer to the same question. A value JSON cannot serialize
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
-/**
- * Stash `text` under `result:<uuid>` (ttl 900s) and describe it as the
- * truncation notice every over-cap path hands back.
- */
+interface ResultStash {
+  set: KVStorage["set"];
+  warn: () => void;
+}
+
+/** Stash a completed result, or return a notice without a paging route. */
 async function stashResult(
   text: string,
-  results: KVStorage,
+  results: ResultStash,
   totalBytes: number,
-): Promise<{
-  truncated: true;
-  resultId: string;
-  totalBytes: number;
-  hint: string;
-  nextAction: {
-    tool: "get_result";
-    arguments: { id: string; offset: 0 };
-  };
-}> {
+) {
   const id = crypto.randomUUID();
-  await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
+  try {
+    await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
+  } catch {
+    // Paging is advisory after a completed call, including an approved write.
+    // Neither backend prose nor a retry hint belongs in this successful result.
+    try {
+      results.warn();
+    } catch {
+      // Logging cannot change the call either.
+    }
+    return {
+      truncated: true,
+      totalBytes,
+      hint: "Paging is unavailable. Use execute_code to reduce read-only results before returning them. Do not repeat a completed write to recover its result.",
+    };
+  }
   return {
     truncated: true,
     resultId: id,
@@ -223,7 +239,7 @@ interface GuardedResult<T> {
 async function guardEncoded(
   text: string,
   bytes: Uint8Array,
-  results: KVStorage,
+  results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<ToolResult>> {
   if (bytes.length <= cap) {
@@ -247,7 +263,7 @@ async function guardEncoded(
 /** {@link guardEncoded} over a string that has not been measured yet. */
 async function guardText(
   text: string,
-  results: KVStorage,
+  results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<ToolResult>> {
   // `JSON.stringify`'s type says `string` where its behavior says `string |
@@ -263,14 +279,20 @@ async function guardText(
 /** Store an oversized JSON value and replace it with a page handle. */
 async function guardValue(
   value: unknown,
-  results: KVStorage,
+  results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<unknown>> {
   const text = serializeResultText(value);
   const bytes = enc.encode(text);
   if (bytes.length <= cap) return { result: value, truncated: false };
+  const notice = await stashResult(text, results, bytes.length);
   return {
-    result: await stashResult(text, results, bytes.length),
+    result: notice.resultId ? notice : {
+      ...notice,
+      preview: dec.decode(
+        bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
+      ),
+    },
     truncated: true,
   };
 }
@@ -295,7 +317,7 @@ async function guardValue(
  */
 async function guardContent(
   content: TextContent[],
-  results: KVStorage,
+  results: ResultStash,
   cap: number,
 ): Promise<GuardedResult<ToolResult>> {
   let text: string;
@@ -458,7 +480,7 @@ export function createMetaTools(
     source: ActivityCallSource,
     options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
-    const results = registry.resultsStorage();
+    const resultStorage = registry.resultsStorage();
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
     const outcome = await invocation.invoke<ProcessedCallResult>(
       call.address,
@@ -474,6 +496,15 @@ export function createMetaTools(
           : {}),
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
+          const results: ResultStash = {
+            set: (key, value, options) => resultStorage.set(key, value, options),
+            warn: () => registry.contextFor(
+              resolved.connector.id, baseUrl, requestScope,
+            ).logger.warn("[connecta] result paging unavailable", {
+              connector: resolved.connector.id,
+              tool: resolved.toolName,
+            }),
+          };
           // Result-size cap for THIS call: the connector's own override wins,
           // then the deployment-wide value, then the built-in default (already
           // folded into `globalCap`). Resolved per call so one request can
@@ -504,8 +535,20 @@ export function createMetaTools(
             );
           }
           if (resolved.connector.kind === "mcp") {
-            const mcpResult = result as { content?: TextContent[] };
-            const content = mcpResult?.content ?? [];
+            const mcpResult = result as {
+              content?: TextContent[];
+              structuredContent?: unknown;
+            };
+            let content = mcpResult?.content ?? [];
+            if (
+              !content.some((block) => block.type === "text") &&
+              mcpResult?.structuredContent !== undefined
+            ) {
+              content = [...content, {
+                type: "text",
+                text: JSON.stringify(mcpResult.structuredContent),
+              }];
+            }
             const guarded = await guardContent(content, results, cap);
             return processed(guarded.result, guarded.truncated);
           }
@@ -529,7 +572,7 @@ export function createMetaTools(
           "invalid_args",
           "input_required_unsupported",
         ].includes(outcome.error.code);
-      const failedResult =
+      const makeFailedResult = () =>
         recoveryRequired ||
         call.resultMode === "value"
           ? jsonResult({
@@ -540,6 +583,20 @@ export function createMetaTools(
               ...(call.diagnostics ? { timing: outcome.timing } : {}),
             })
           : errorResult(outcome.error.message);
+      let failedResult = makeFailedResult();
+      // Value mode repeats the error in text and structuredContent. Account for
+      // both copies and JSON escaping when the bounded provider reason is large.
+      if (!recoveryRequired) {
+        const cap = resolveMaxResultBytes(
+          outcome.resolved?.connector.maxResultBytes, globalCap,
+        );
+        let budget = 512;
+        while (enc.encode(JSON.stringify(failedResult)).length > cap && budget > 0) {
+          budget = Math.floor(budget / 2);
+          outcome.error.message = boundedEchoText(outcome.error.message, budget);
+          failedResult = makeFailedResult();
+        }
+      }
       if (recoveryRequired) {
         failedResult.isError = true;
       }
@@ -595,6 +652,11 @@ export function createMetaTools(
     },
 
     async searchTools(args: SearchArgs): Promise<ToolResult> {
+      if (args.connector !== undefined && enc.encode(args.connector).length > 512) {
+        return discoveryErrorResult(new DiscoveryPolicyError(
+          "invalid_args", "connector must be at most 512 UTF-8 bytes.",
+        ));
+      }
       return discoveryResult(
         async () =>
           groupedSearchResult(
@@ -641,9 +703,23 @@ export function createMetaTools(
         );
       }
       const results = registry.resultsStorage();
-      const stored = await results.get(`result:${args.id}`);
+      let stored: string | null;
+      try {
+        stored = await results.get(`result:${args.id}`);
+      } catch {
+        return {
+          ...jsonResult({
+            error: {
+              code: "unavailable",
+              message: "Result paging storage is unavailable.",
+              retryable: true,
+            },
+          }),
+          isError: true,
+        };
+      }
       if (stored === null || stored === undefined) {
-        return errorResult(`Unknown or expired result id "${args.id}"`);
+        return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
       const bytes = enc.encode(stored);
       const total = bytes.length;
@@ -681,7 +757,7 @@ export function createMetaTools(
     async authorizeConnector(args: AuthorizeArgs): Promise<ToolResult> {
       const connector = registry.getConnector(args.connector);
       if (!connector) {
-        return errorResult(`Unknown connector "${args.connector}"`);
+        return errorResult(`Unknown connector "${boundedEchoText(args.connector)}"`);
       }
       if (!connector.startAuth) {
         if (!connector.credential) {

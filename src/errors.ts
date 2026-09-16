@@ -301,6 +301,7 @@ export interface CallErrorDetails {
  * trusts the flag would cheerfully retry a refusal forever.
  */
 const NEVER_RETRYABLE_FRAMING = new Set([
+  "result_processing_failed",
   "unknown_address",
   "unknown_tool",
   "ambiguous_tool_alias",
