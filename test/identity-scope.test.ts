@@ -1,3 +1,4 @@
+import { bearerToken } from "../src/auth/bearer.js";
 import { fetchTestUiDetails } from "./helpers.js";
 import { encryptedCredentialVault } from "../src/credentials.js";
 import { describe, expect, it } from "vitest";
@@ -45,6 +46,55 @@ function visible(id: string): Connector {
 }
 
 describe("identity-scoped connectors", () => {
+  it.each(["subject", "principal"] as const)("isolates result pages for bearer %s identities without an activity namespace", async (identityKind) => {
+    const auth: InboundAuth | InboundAuth[] = identityKind === "subject"
+      ? [bearerToken("alice", { subjectId: "alice" }), bearerToken("bob", { subjectId: "bob" })]
+      : {
+          kind: "bearer",
+          authorize(request) {
+            const id = /^Bearer (alice|bob)$/.exec(request.headers.get("authorization") ?? "")?.[1];
+            return id ? { ok: true, principal: { namespace: "directory", id } }
+              : { ok: false, response: new Response(null, { status: 401 }) };
+          },
+        };
+    const connecta = createTestConnecta({
+      connectors: [api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => "x".repeat(500) }] })],
+      auth,
+      calls: { maxResultBytes: 100 },
+      logger: silentLogger,
+    });
+    const call = async (token: string, name: string, args: object) =>
+      (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token }))).result;
+    const result = await call("alice", "call_tool", { address: "docs.read" });
+    const { resultId } = JSON.parse(result.content[0].text.split("\n").at(-1));
+    expect(resultId).toBeTypeOf("string");
+    expect((await call("alice", "get_result", { id: resultId })).isError).toBeFalsy();
+    expect((await call("bob", "get_result", { id: resultId })).isError).toBe(true);
+    await connecta.close();
+  });
+
+  it("allows a tool grantee's OAuth handoff but hides wholly ungranted connectors", async () => {
+    let starts = 0;
+    const docs = api("docs", { tools: [{ name: "read", description: "Read docs", annotations: { readOnlyHint: true }, handler: () => null }] });
+    docs.startAuth = async () => { starts++; return { state: "auth_required", authorizationUrl: "https://oauth.test/authorize" }; };
+    const connecta = createTestConnecta({
+      connectors: [docs], auth: users(),
+      identity: {
+        connectorAccess: ({ subject }) => subject?.id === "alice" ? ["docs.read"] : [],
+        credentialAdministration: () => "all",
+      },
+    });
+    const call = async (token: string, connector: string) =>
+      (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name: "authorize_connector", arguments: { connector } }, { token }))).result;
+    expect(JSON.parse((await call("alice", "docs")).content[0].text)).toMatchObject({ recovery: "oauth" });
+    const hidden = await call("bob", "docs");
+    const absent = await call("bob", "absent");
+    expect(hidden.isError).toBe(true);
+    expect(hidden.content[0].text).toBe(absent.content[0].text.replace("absent", "docs"));
+    expect(starts).toBe(1);
+    await connecta.close();
+  });
+
   it("refuses static headers disguised as personal auth", () => {
     expect(() =>
       remoteMcp("bad", {

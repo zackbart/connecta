@@ -43,6 +43,26 @@ permissions default to none. Saving, testing, replacing, or removing a value
 never returns it. The vault is read for each call, so a saved replacement takes
 effect without restarting the deployment.
 
+## Result storage
+
+Direct-call result paging uses the same KV interface with a 15-minute TTL.
+`results.maxStashBytes` defaults to 8 MiB of stored paging envelopes, including
+base64 overhead; `results.maxStashEntries` defaults to 64. Both are
+non-negative safe integers, and zero disables stashing. One registry accounts
+for all subjects and reserves capacity for pending writes. A full stash keeps
+the successful call's preview and returns a paging-unavailable notice, without
+a result id. Expired entries are deleted on later stash attempts before their
+capacity is reused, even when the backend only expires entries on read.
+A deletion failure keeps the reservation. Limits apply to writes by one
+runtime; they do not coordinate other processes or Worker isolates, or count
+entries left by a previous runtime.
+
+The memory store also checks up to 16 existing keys on each `set`, rotating
+through live keys so expired entries that nobody reads are eventually removed.
+There are no timers or background sweeps. Paging values use an ASCII base64
+envelope so only the requested bytes need decoding after the KV read. The
+storage adapter's format and interface stay unchanged.
+
 ## File storage
 
 `fileStorage` is a single-process development store. It loads one snapshot and
@@ -83,7 +103,9 @@ Personal connectors disappear from a request that has no stable human
 principal. For a principal that can see one, connecta partitions connector
 storage, encrypted vault records, catalog caches, OAuth generations, and
 observed result shapes under an opaque SHA-256 identity key. Results used by
-`get_result` are partitioned by the authenticated subject, so one authenticated subject cannot page another subject's call.
+`get_result` are partitioned by the authenticated subject independently of
+activity configuration. Open deployments and providers that supply no identity
+share one results partition. See [the partition and paging contract](./meta-tools.md#result-representation).
 
 Literal `auth: { type: "headers" }` cannot be personal because its secret lives
 in deployment code. `remoteMcp()` refuses that combination at construction.

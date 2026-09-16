@@ -165,6 +165,7 @@ export interface RegistryOptions {
    * to the default 50_000.
    */
   maxResultBytes?: number | undefined;
+  results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
   /**
    * Where payload-free catalog-drift observations go. Present only when the
    * deployment configured an activity store; drift is reported through
@@ -240,6 +241,8 @@ export interface RegistryView {
     input: { toolName: string; args: unknown; signal?: AbortSignal },
   ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
+  /** Reserve runtime-wide capacity before writing a paging envelope. */
+  stashResult(key: string, value: string, ttlSeconds: number): Promise<boolean>;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
@@ -332,6 +335,9 @@ export class Registry implements RegistryView {
   private readonly persistToolCatalog: boolean;
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
+  /** Only keys, byte counts, and expiry survive requests; never write promises. */
+  private readonly resultStash = new Map<string, { bytes: number; expiresAt: number; busy: boolean }>();
+  private resultStashBytes = 0;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
   private callAdmissionClosed = false;
@@ -747,6 +753,44 @@ export class Registry implements RegistryView {
     this.callAdmissionClosed = true;
     for (const admission of this.callAdmission.values()) admission.close();
     for (const registry of this.personalRegistries.values()) registry.closeCallAdmission();
+  }
+
+  /** Reserve capacity and write one ASCII paging envelope in this runtime. */
+  async stashResult(key: string, value: string, ttlSeconds: number, prefix = "results:"): Promise<boolean> {
+    const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
+    const maxEntries = this.opts.results?.maxStashEntries ?? 64;
+    // The paging envelope is ASCII, so its string length is its stored byte count.
+    const bytes = value.length;
+    if (bytes > maxBytes || maxEntries === 0) return false;
+    const now = Date.now();
+    for (const [oldKey, entry] of this.resultStash) {
+      if (entry.busy || entry.expiresAt > now) continue;
+      entry.busy = true;
+      try {
+        // TTL alone cannot reclaim a lazy backend. Keep the charge until deletion
+        // succeeds, including writes which persisted before throwing.
+        await this.opts.storage.delete(oldKey);
+        this.resultStash.delete(oldKey);
+        this.resultStashBytes -= entry.bytes;
+      } finally {
+        entry.busy = false;
+      }
+    }
+    if (this.resultStash.size >= maxEntries || this.resultStashBytes + bytes > maxBytes) return false;
+    const fullKey = prefix + key;
+    const entry = { bytes, expiresAt: Infinity, busy: true };
+    this.resultStash.set(fullKey, entry);
+    this.resultStashBytes += bytes;
+    try {
+      await this.opts.storage.set(fullKey, value, { ttlSeconds });
+      entry.expiresAt = Date.now() + ttlSeconds * 1000;
+      return true;
+    } catch (error) {
+      entry.expiresAt = 0;
+      throw error;
+    } finally {
+      entry.busy = false;
+    }
   }
 
   /**
@@ -1648,6 +1692,11 @@ class ScopedRegistryView implements RegistryView {
       return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
     }
     return registry.admitCall(...args);
+  }
+
+  stashResult(key: string, value: string, ttlSeconds: number): Promise<boolean> {
+    return this.root.stashResult(key, value, ttlSeconds,
+      this.scope.subjectKey ? `subject:${this.scope.subjectKey}:` : "results:");
   }
 
   resultsStorage(): KVStorage {

@@ -167,20 +167,20 @@ export async function authorize(
     if (result.ok) {
       const subjectId = result.subjectId ?? result.userId;
       const actorNamespace = activityActorNamespace(provider);
-      const subject = subjectId && actorNamespace
-        ? { namespace: actorNamespace, id: subjectId }
-        : undefined;
       const derivedPrincipal = result.userId && actorNamespace
         ? { namespace: actorNamespace, id: result.userId }
         : undefined;
       const principal = validIdentityReference(result.principal)
         ? result.principal
         : derivedPrincipal;
+      const subject = subjectId
+        ? { namespace: actorNamespace ?? `connecta:auth:${provider.kind}`, id: subjectId }
+        : principal;
       const interactive = Boolean(result.userId && provider.interactiveOperator);
       const actor: ActivityActor = {
         kind: provider.kind,
         ...(subjectId ? { id: subjectId } : {}),
-        ...(subject ? { namespace: subject.namespace } : {}),
+        ...(subjectId && actorNamespace ? { namespace: actorNamespace } : {}),
       };
       const identity: AuthenticatedIdentity = {
         actor,

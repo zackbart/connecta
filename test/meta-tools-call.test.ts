@@ -1963,3 +1963,116 @@ describe("audit regressions", () => {
   });
 
 });
+
+
+describe("bounded result stash", () => {
+  const notice = (result: { content: { text: string }[] }) =>
+    JSON.parse(required(required(result.content[0]).text.split("\n").at(-1)));
+
+  it.each([
+    { maxStashBytes: 1 },
+    { maxStashEntries: 0 },
+  ])("keeps a preview when the stash refuses %j", async (results) => {
+    const mt = createMetaTools(new Registry([capped("large", 100)], { storage: memoryStorage(), logger: silentLogger, results }), BASE);
+    const result = await mt.callTool({ address: "large.big" });
+    expect(result.isError).toBeFalsy();
+    expect(required(result.content[0]).text.startsWith(FULL.slice(0, 100))).toBe(true);
+    expect(notice(result)).toMatchObject({ truncated: true, totalBytes: FULL.length });
+    expect(notice(result).hint).toContain("Paging is unavailable");
+    expect(notice(result)).not.toHaveProperty("resultId");
+  });
+
+  it.each([{ maxStashEntries: 1 }, { maxStashBytes: 1_000 }])("reserves capacity across subjects before concurrent writes finish: %j", async (results) => {
+    const storage = memoryStorage();
+    let entered!: () => void;
+    let release!: () => void;
+    const writing = new Promise<void>(resolve => { entered = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const root = new Registry([capped("large", 100)], {
+      logger: silentLogger,
+      results,
+      storage: { ...storage, async set(key, value, options) {
+        if (key.startsWith("subject:a:result:")) { entered(); await gate; }
+        await storage.set(key, value, options);
+      } },
+    });
+    const first = createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "a" }), BASE)
+      .callTool({ address: "large.big" });
+    await writing;
+    try {
+      const second = await createMetaTools(root.scoped({ connectorIds: "all", subjectKey: "b" }), BASE)
+        .callTool({ address: "large.big" });
+      expect(notice(second)).not.toHaveProperty("resultId");
+    } finally { release(); }
+    expect(notice(await first)).toHaveProperty("resultId");
+    expect(notice(await createMetaTools(root, BASE).callTool({ address: "large.big" })))
+      .not.toHaveProperty("resultId");
+  });
+
+  it("deletes expired backing entries before reusing their capacity", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(10_000);
+    const values = new Map<string, string>();
+    const root = new Registry([capped("large", 100)], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1 },
+      persistToolCatalog: false,
+      storage: {
+        async get(key) { return values.get(key) ?? null; },
+        async set(key, value) { values.set(key, value); },
+        async delete(key) { values.delete(key); },
+      },
+    });
+    try {
+      const first = notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }));
+      now.mockReturnValue(10_000 + 16 * 60_000);
+      const second = notice(await createMetaTools(root, BASE).callTool({ address: "large.big" }));
+      expect(second).toHaveProperty("resultId");
+      expect(values.has(`results:result:${first.resultId}`)).toBe(false);
+      expect(values.size).toBe(1);
+    } finally { now.mockRestore(); }
+  });
+
+  it("keeps a failed write charged until backing cleanup succeeds", async () => {
+    const storage = memoryStorage();
+    let failWrite = true;
+    let failDelete = true;
+    const root = new Registry([capped("large", 100)], {
+      logger: silentLogger,
+      results: { maxStashEntries: 1 },
+      storage: { ...storage,
+        async set(key, value, options) {
+          await storage.set(key, value, options);
+          if (key.includes("result:") && failWrite) { failWrite = false; throw new Error("write failed after persisting"); }
+        },
+        async delete(key) {
+          if (key.includes("result:") && failDelete) throw new Error("delete unavailable");
+          await storage.delete(key);
+        },
+      },
+    });
+    const call = () => createMetaTools(root, BASE).callTool({ address: "large.big" });
+    expect(notice(await call())).not.toHaveProperty("resultId");
+    expect(notice(await call())).not.toHaveProperty("resultId");
+    expect(await storage.list!("results:result:")).toHaveLength(1);
+    failDelete = false;
+    expect(notice(await call())).toHaveProperty("resultId");
+    expect(await storage.list!("results:result:")).toHaveLength(1);
+  });
+
+  it("pages a large stored result without encoding the full text again", async () => {
+    const payload = "aé界😀".repeat(20_000);
+    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+    const root = makeRegistry([connector], { maxResultBytes: 100 });
+    const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
+    const encode = vi.spyOn(TextEncoder.prototype, "encode");
+    try {
+      // Fresh adapters pin paging across requests, not a request-local cache.
+      for (const offset of [0, 100_001, 150_003]) {
+        const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 1024 })) as { text: string; totalBytes: number };
+        expect(page.text).not.toContain("�");
+        expect(page.totalBytes).toBe(200_002);
+      }
+      expect(encode.mock.calls.every(([text]) => (text?.length ?? 0) < 2048)).toBe(true);
+    } finally { encode.mockRestore(); }
+  });
+});

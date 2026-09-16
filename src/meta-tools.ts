@@ -37,7 +37,6 @@ import {
   DEFAULT_PROBE_TIMEOUT_MS,
   normalizeTimeoutMs,
 } from "./timeout.js";
-import type { KVStorage } from "./types.js";
 
 export {
   MAX_DESCRIBE_ADDRESSES,
@@ -186,19 +185,28 @@ export function alignEndToCharBoundary(
  * at all (a BigInt) still throws, as before, and is reported as a failure.
  */
 interface ResultStash {
-  set: KVStorage["set"];
+  set: RegistryView["stashResult"];
   warn: () => void;
 }
 
 /** Stash a completed result, or return a notice without a paging route. */
 async function stashResult(
-  text: string,
+  bytes: Uint8Array,
   results: ResultStash,
-  totalBytes: number,
 ) {
+  const totalBytes = bytes.length;
   const id = crypto.randomUUID();
   try {
-    await results.set(`result:${id}`, text, { ttlSeconds: RESULT_TTL_SECONDS });
+    // Base64 permits byte-range decoding after a KV read, without scanning or
+    // re-encoding all preceding text. Each chunk is a multiple of three bytes.
+    const chunks: string[] = [];
+    for (let offset = 0; offset < bytes.length; offset += 12_288) {
+      chunks.push(btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288))));
+    }
+    const stored = `connecta-result-v1:${totalBytes}:${chunks.join("")}`;
+    if (!await results.set(`result:${id}`, stored, RESULT_TTL_SECONDS)) {
+      throw new Error("Result stash capacity exhausted");
+    }
   } catch {
     // Paging is advisory after a completed call, including an approved write.
     // Neither backend prose nor a retry hint belongs in this successful result.
@@ -248,7 +256,7 @@ async function guardEncoded(
       truncated: false,
     };
   }
-  const notice = await stashResult(text, results, bytes.length);
+  const notice = await stashResult(bytes, results);
   const head = dec.decode(
     bytes.slice(0, alignEndToCharBoundary(bytes, 0, cap, bytes.length)),
   );
@@ -285,7 +293,7 @@ async function guardValue(
   const text = serializeResultText(value);
   const bytes = enc.encode(text);
   if (bytes.length <= cap) return { result: value, truncated: false };
-  const notice = await stashResult(text, results, bytes.length);
+  const notice = await stashResult(bytes, results);
   return {
     result: notice.resultId ? notice : {
       ...notice,
@@ -339,7 +347,7 @@ async function guardContent(
   if (content.every((b) => b.type === "text")) {
     return guardEncoded(text, bytes, results, cap);
   }
-  const notice = await stashResult(text, results, bytes.length);
+  const notice = await stashResult(bytes, results);
   return {
     result: { content: [{ type: "text", text: JSON.stringify(notice) }] },
     truncated: true,
@@ -480,7 +488,6 @@ export function createMetaTools(
     source: ActivityCallSource,
     options: { allowDestructive?: boolean } = {},
   ): Promise<RunCallOutcome> {
-    const resultStorage = registry.resultsStorage();
     const timeoutMs = normalizeTimeoutMs(call.timeoutMs) ?? defaultToolTimeoutMs;
     const outcome = await invocation.invoke<ProcessedCallResult>(
       call.address,
@@ -497,7 +504,7 @@ export function createMetaTools(
         unwrapResult: call.resultMode === "value",
         processResult: async (result, resolved) => {
           const results: ResultStash = {
-            set: (key, value, options) => resultStorage.set(key, value, options),
+            set: (key, value, ttlSeconds) => registry.stashResult(key, value, ttlSeconds),
             warn: () => registry.contextFor(
               resolved.connector.id, baseUrl, requestScope,
             ).logger.warn("[connecta] result paging unavailable", {
@@ -724,30 +731,46 @@ export function createMetaTools(
       if (stored === null || stored === undefined) {
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
-      const bytes = enc.encode(stored);
-      const total = bytes.length;
+      const requestedOffset = args.offset ?? 0;
+      const maxBytes = args.maxBytes ?? globalCap;
+      // Decode only this page plus UTF-8 boundary lookaround. Legacy raw-text
+      // entries remain readable for their short TTL after an upgrade.
+      const header = /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
+      let bytes: Uint8Array;
+      let total: number;
+      let start = 0;
+      if (header) {
+        total = Number(header[1]);
+        start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
+        const end = Math.min(total, requestedOffset + maxBytes + 4);
+        const binary = atob(stored.slice(header[0].length + start / 3 * 4,
+          header[0].length + Math.ceil(end / 3) * 4));
+        bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+      } else {
+        bytes = enc.encode(stored);
+        total = bytes.length;
+      }
       // Validated above, so no coercion is needed here — only alignment. A
       // client that computes its own offsets can land inside a multi-byte
       // character, which would decode as U+FFFD; the offset actually served is
       // the boundary at or before it, and it is what the response reports back
       // as `offset` (issue #38).
-      const offset = alignStartToCharBoundary(bytes, args.offset ?? 0);
+      const offset = start + alignStartToCharBoundary(bytes, requestedOffset - start);
       // Page size only: a stashed result carries no connector identity, so
       // get_result keeps the deployment-wide default when none is requested.
       // Both sides are validated by now — the argument above, `globalCap` at
       // intake — so `offset + maxBytes` always reaches past `offset`.
-      const maxBytes = args.maxBytes ?? globalCap;
       // Align the slice end to a codepoint boundary so a multi-byte char is
       // never split across pages (which would emit U+FFFD on both sides).
       // `nextOffset` is this aligned end, so it is a valid boundary for the
       // next call and paging reassembles the original byte-for-byte.
-      const end = alignEndToCharBoundary(
+      const end = start + alignEndToCharBoundary(
         bytes,
-        offset,
-        offset + maxBytes,
-        total,
+        offset - start,
+        offset - start + maxBytes,
+        total - start,
       );
-      const slice = dec.decode(bytes.slice(offset, end));
+      const slice = dec.decode(bytes.subarray(offset - start, end - start));
       const nextOffset = end < total ? end : undefined;
       return jsonResult({
         offset,

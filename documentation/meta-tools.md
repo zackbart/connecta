@@ -217,6 +217,33 @@ An existing text mirror stays unchanged; Connecta does not add another copy. New
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
+The direct-call stash keeps results for 15 minutes. `results.maxStashBytes`
+defaults to 8 MiB and `results.maxStashEntries` to 64 per `createConnecta`
+runtime, shared across all subjects and pools. Both accept non-negative safe
+integers; zero disables stashing. The byte budget counts the stored ASCII
+paging envelope, including base64 overhead, rather than only the result text.
+Capacity is reserved before each storage write, so concurrent requests cannot
+oversubscribe it. A full stash refuses new entries. A later stash attempt
+deletes expired entries before reusing their capacity; a failed deletion keeps
+the charge. These bounds cover writes by this runtime, not other processes,
+Worker isolates, or entries left by a previous runtime.
+
+Results belong to the authenticated subject whenever auth supplies a subject
+or user id, independently of activity configuration. The provider's namespace
+is used when present; otherwise the namespace is `connecta:auth:<provider kind>`.
+Keep subject ids distinct within that namespace. An explicit principal is the
+fallback subject when neither id is supplied. Open deployments and auth
+providers that supply no identity share one partition.
+
+New entries store UTF-8 bytes in a base64 envelope. After the KV read,
+`get_result` decodes only the requested byte range and a few boundary bytes;
+it does not encode the full text on every page. Storage still reads one full
+value. Pre-upgrade raw-text entries remain readable during their TTL using
+one full encoding per page. Offsets and `totalBytes` always describe the
+original UTF-8 text, not the envelope. A supplied offset inside a character
+moves back to its start; page ends also align to character boundaries, and a
+page smaller than one character widens just enough to make progress.
+
 A successfully stashed `call_tool` truncation notice carries both the historical `resultId` and an
 exact `nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The
 handle is therefore
@@ -225,7 +252,7 @@ and oversized discovery responses carry no such route — paging a program's
 return value is a refused shape, because a program can shrink anything before
 it returns.
 
-A failed stash write cannot undo a downstream success. Both direct call tools
+A refused stash or failed stash write cannot undo a downstream success. Both direct call tools
 return a truncated preview where usable, with a paging-unavailable notice and
 no `resultId` or paging action. Activity records success; the operator logger
 receives a fixed warning with the connector and tool, without storage error

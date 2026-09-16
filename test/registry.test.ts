@@ -1568,3 +1568,23 @@ describe("catalog stale-while-revalidate", () => {
     }
   });
 });
+
+
+describe("memory storage expiry", () => {
+  it("reclaims expired entries on later sets with bounded rotating work", async () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1_000);
+    const storage = memoryStorage();
+    for (let i = 0; i < 100; i++) await storage.set(`expired-${i}`, "payload", { ttlSeconds: 1 });
+    await storage.set("live", "keep");
+    const deleted = vi.spyOn(Map.prototype, "delete");
+    try {
+      now.mockReturnValue(2_000);
+      await storage.set("later-0", "keep");
+      expect(deleted.mock.calls.length).toBeGreaterThan(0);
+      expect(deleted.mock.calls.length).toBeLessThanOrEqual(16);
+      for (let i = 1; i < 20; i++) await storage.set(`later-${i}`, "keep");
+      expect(deleted.mock.calls.filter(([key]) => String(key).startsWith("expired-"))).toHaveLength(100);
+      expect(await storage.get("live")).toBe("keep");
+    } finally { deleted.mockRestore(); now.mockRestore(); }
+  });
+});
