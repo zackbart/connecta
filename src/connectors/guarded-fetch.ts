@@ -59,13 +59,19 @@ interface GuardedResponse {
   jsonResult(): Promise<{ value: unknown } | { parseError: unknown }>;
 }
 
-/** Parse a decimal `Retry-After` header in seconds into milliseconds. */
+/** Parse delta-seconds or an HTTP-date into a non-negative wait window. */
 export function retryAfterMs(headers: Headers): number | undefined {
   const raw = headers.get("retry-after");
   if (!raw) return undefined;
   const seconds = Number(raw.trim());
-  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
-  return Math.trunc(seconds * 1000);
+  if (Number.isFinite(seconds)) {
+    return seconds < 0 ? undefined : Math.trunc(seconds * 1000);
+  }
+  // Require the HTTP-date shape, so Date.parse cannot reinterpret "-1" as
+  // a calendar date on runtimes that accept loose date strings.
+  if (!/^[A-Za-z]{3}, \d{2} [A-Za-z]{3} \d{4} \d{2}:\d{2}:\d{2} GMT$/.test(raw.trim())) return undefined;
+  const date = Date.parse(raw);
+  return Number.isFinite(date) ? Math.max(0, date - Date.now()) : undefined;
 }
 
 /**

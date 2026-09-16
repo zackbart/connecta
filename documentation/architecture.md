@@ -29,6 +29,15 @@ removes only its own wait. The owner's request signal belongs to its token
 fetch. Cancelling that owner fails current joiners too because promoting one
 could replay a refresh token the authorization server already consumed.
 
+A valid token response is a consumed refresh token whether or not the owner
+survives to save it. The coordinator therefore keeps the accepted tokens on the
+flight, and when the owner fails after that response — cancelled, redirected
+to authorization, or invalidated — it persists the rotation on the host's own
+write, holds contenders behind the pending-mutation marker until that write
+lands, and hands them the saved rotation. No contender ever redeems the retired
+token again, and the marker can no longer outlive the write that clears it
+([#526](https://github.com/zackbart/connecta/issues/526)).
+
 The coordinator retains the owner's abort signal only through one temporary
 listener on the exact active refresh. Save, failure, cancellation, or
 generation retirement removes it along with the map entry. It never retains a

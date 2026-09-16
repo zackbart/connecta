@@ -167,6 +167,10 @@ export async function routeOAuthCallback(
     return refused();
   }
   const expectedPrincipalKey = callbackTarget?.principalKey;
+  // A browser returning from consent normally has no MCP Authorization
+  // header. An interactive bearer provider therefore answers 401 here; state
+  // and the saved state-to-principal handoff still prove ownership below.
+  // Rejecting 401 would break that callback. A 403 is an explicit denial.
   const browserIdentity = await authorizeUiIdentity(context.request, baseUrl, opts.auth, "OAuth callback", context.runtimeContext, opts.identity);
   if (browserIdentity.ok) {
     try { validateAuthPermissions(browserIdentity, opts.registry); } catch { return refused(); }

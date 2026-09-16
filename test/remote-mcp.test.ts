@@ -13,7 +13,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { z } from "zod";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConnectorCallError } from "../src/errors.js";
+import { ConnectorCallError, classifyCallError } from "../src/errors.js";
 import {
   buildSandboxProviders,
   createExecuteTool,
@@ -164,6 +164,7 @@ function makeHttpDownstream(
   opts: {
     sessionId?: string;
     oauth?: boolean;
+    credential?: boolean;
     onDelete?: () => Promise<Response>;
   } = {},
 ) {
@@ -218,6 +219,7 @@ function makeHttpDownstream(
     url,
     description: "Downstream",
     ...(opts.oauth ? { auth: { type: "oauth" as const } } : {}),
+    ...(opts.credential ? { auth: { type: "credential" as const } } : {}),
     _transportFactory: () =>
       // See remote-mcp.ts: exact optional types exposes an SDK declaration
       // mismatch for sessionId, but the class implements this transport at
@@ -731,6 +733,64 @@ describe("probe scope teardown", () => {
 });
 
 describe("downstream session termination", () => {
+  it.each(["rotation", "generation", "disconnect"] as const)("terminates the old session on %s without waiting for DELETE", async (exit) => {
+    const deleting = deferred<void>();
+    const releaseDelete = deferred<Response>();
+    const { connector, requests } = makeHttpDownstream({
+      sessionId: "old-session", oauth: exit !== "rotation", credential: exit === "rotation",
+      onDelete: () => { deleting.resolve(); return releaseDelete.promise; },
+    });
+    let secret = "old-secret";
+    const context = { ...ctx(), requestScope: {}, credential: { get: async () => secret, getAll: async () => ({ value: secret }) } };
+    await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
+    if (exit === "rotation") secret = "new-secret";
+    if (exit === "generation") await context.storage.set("oauth:generation", "v2:replacement");
+    if (exit === "disconnect") await connector.disconnectAuth!(context);
+    else await expect(connector.status!(context)).resolves.toMatchObject({ state: "ok" });
+    // The operation above completes while the provider still holds DELETE.
+    await deleting.promise;
+    expect(requests.filter(r => r.method === "DELETE")).toMatchObject([
+      { sessionId: "old-session", abortedWhenIssued: false },
+    ]);
+    releaseDelete.resolve(new Response(null, { status: 200 }));
+    await connector.closeScope!(context);
+  });
+
+  it("terminates a session acquired by a connect abandoned during generation verification", async () => {
+    const checked = deferred<void>();
+    const releaseCheck = deferred<void>();
+    const deleting = deferred<void>();
+    const backing = memoryStorage();
+    let reads = 0;
+    const storage: KVStorage = {
+      ...backing,
+      async get(key) {
+        if (key === "oauth:generation" && ++reads === 2) {
+          checked.resolve();
+          await releaseCheck.promise;
+          return "v2:replacement";
+        }
+        return backing.get(key);
+      },
+    };
+    const { connector, requests } = makeHttpDownstream({
+      oauth: true, sessionId: "abandoned", onDelete: async () => {
+        deleting.resolve();
+        return new Response(null, { status: 200 });
+      },
+    });
+    const context = { ...ctx(storage), requestScope: {} };
+    const connecting = connector.status!(context);
+    await checked.promise;
+    releaseCheck.resolve();
+    await expect(connecting).resolves.toMatchObject({ state: "auth_required" });
+    await deleting.promise;
+    expect(requests.filter(r => r.method === "DELETE")).toMatchObject([
+      { sessionId: "abandoned", abortedWhenIssued: false },
+    ]);
+    await connector.closeScope!(context);
+  });
+
   it("sends the spec DELETE for a stateful downstream before closing", async () => {
     const { connector, requests } = makeHttpDownstream({ sessionId: "sess-1" });
     const context = { ...ctx(), requestScope: {} };
@@ -1098,5 +1158,51 @@ describe("remoteMcp() redirect policy", () => {
     });
     expect(calls).toHaveLength(1);
     expect(required(calls[0]).get("x-api-key")).toBe("static-secret");
+  });
+});
+
+describe("downstream tool error classification", () => {
+  it.each([-32602, -32603])("classifies JSON-RPC error %i by code and bounds Invalid params", async (code) => {
+    const url = "https://downstream.test/mcp";
+    vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit = {}) => {
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const request = JSON.parse(String(init.body));
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (request.method === "initialize") return Response.json({ jsonrpc: "2.0", id: request.id,
+        result: { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } });
+      return Response.json({ jsonrpc: "2.0", id: request.id, error: { code, message: "Invalid parameter: " + "x".repeat(2000) } });
+    });
+    const connector = remoteMcp("down", { url, versionNegotiation: "legacy" });
+    const context = ctx();
+    const error = await connector.callTool("test", {}, context).catch(error => error);
+    expect(classifyCallError(error)).toMatchObject({
+      code: code === -32602 ? "invalid_args" : "connector_call_failed", retryable: false,
+      message: expect.stringContaining("Invalid parameter:"),
+    });
+    if (code === -32602) expect(new TextEncoder().encode(classifyCallError(error).message).length).toBeLessThanOrEqual(515);
+    await connector.closeScope!(context);
+  });
+
+  it.each([400, 403, 404, 408, 422, 429])("preserves a bounded JSON message from HTTP %i without prose retry inference", async (status) => {
+    const url = "https://downstream.test/mcp";
+    const message = "timeout is not a valid parameter: " + "x".repeat(2000);
+    vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit = {}) => {
+      if (init.method !== "POST") return new Response(null, { status: 405 });
+      const request = JSON.parse(String(init.body));
+      if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+      if (request.method === "initialize") return Response.json({ jsonrpc: "2.0", id: request.id,
+        result: { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } });
+      return Response.json({ error: { message } }, { status });
+    });
+    const connector = remoteMcp("down", { url, versionNegotiation: "legacy" });
+    const context = ctx();
+    const error = await connector.callTool("test", {}, context).catch(error => error);
+    expect(classifyCallError(error)).toMatchObject({
+      code: status === 429 ? "rate_limited" : status === 408 ? "timeout" : "connector_call_failed",
+      retryable: status === 429 || status === 408,
+      message: expect.stringContaining("timeout is not a valid parameter:"),
+    });
+    expect(new TextEncoder().encode(classifyCallError(error).message).length).toBeLessThanOrEqual(515);
+    await connector.closeScope!(context);
   });
 });

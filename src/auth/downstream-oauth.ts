@@ -74,19 +74,70 @@ function sdkAcceptsOAuthTokens(value: unknown): boolean {
   return true;
 }
 
-async function refreshResponseFailure(
-  response: Response,
-): Promise<Error | undefined> {
-  if (!response.ok) {
-    return new Error(`OAuth refresh failed with HTTP ${response.status}.`);
+const MAX_REFRESH_RESPONSE_BYTES = 65_536;
+
+class OversizedRefreshResponse extends Error {
+  constructor() {
+    super(`OAuth refresh response exceeded ${MAX_REFRESH_RESPONSE_BYTES} bytes.`);
   }
+}
+
+async function readRefreshResponse(response: Response): Promise<unknown> {
+  if (Number(response.headers.get("content-length")) > MAX_REFRESH_RESPONSE_BYTES) {
+    void response.body?.cancel().catch(() => {});
+    throw new OversizedRefreshResponse();
+  }
+  const reader = response.clone().body?.getReader();
+  if (!reader) return undefined;
+  const decoder = new TextDecoder();
+  let size = 0;
+  let text = "";
   try {
-    return sdkAcceptsOAuthTokens(await response.clone().json())
-      ? undefined
-      : new Error("OAuth refresh response did not match the token schema.");
-  } catch {
-    return new Error("OAuth refresh response did not contain JSON tokens.");
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > MAX_REFRESH_RESPONSE_BYTES) {
+        // A cloned body's cancellation can await its sibling. Cancel both,
+        // without making the refusal wait for the provider to finish sending.
+        void reader.cancel().catch(() => {});
+        void response.body?.cancel().catch(() => {});
+        throw new OversizedRefreshResponse();
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+    return JSON.parse(text + decoder.decode());
+  } finally {
+    reader.releaseLock();
   }
+}
+
+type RefreshResponseOutcome =
+  | { failure: Error; tokens?: undefined }
+  | { failure?: undefined; tokens: OAuthTokens };
+
+/**
+ * Classify the token endpoint's answer once, on a clone, and keep the parsed
+ * tokens: a valid response has already consumed the rotating refresh token, so
+ * the host persists it (`coordinatedFetch`) rather than trusting the SDK's
+ * later `saveTokens` to arrive on a request that may already be cancelled.
+ */
+async function refreshResponseOutcome(
+  response: Response,
+): Promise<RefreshResponseOutcome> {
+  if (!response.ok) {
+    return { failure: new Error(`OAuth refresh failed with HTTP ${response.status}.`) };
+  }
+  let parsed: unknown;
+  try {
+    parsed = await readRefreshResponse(response);
+  } catch (error) {
+    if (error instanceof OversizedRefreshResponse) throw error;
+    return { failure: new Error("OAuth refresh response did not contain JSON tokens.") };
+  }
+  return sdkAcceptsOAuthTokens(parsed)
+    ? { tokens: parsed as OAuthTokens }
+    : { failure: new Error("OAuth refresh response did not match the token schema.") };
 }
 
 function refreshMutationPendingResponse(): Response {
@@ -110,6 +161,16 @@ interface OAuthRefreshFlight {
   release: (outcome: OAuthRefreshFlightOutcome) => void;
   stopObservingOwnerAbort: () => void;
   mutationId: object;
+  writing: boolean;
+  /**
+   * Set once the token endpoint answered with valid tokens: the authorization
+   * server has consumed the rotating refresh token, so if the SDK's own
+   * saveTokens never arrives (owner cancelled, redirected, or invalidated),
+   * `fail` persists this copy itself rather than stranding the marker or
+   * letting a contender redeem the retired token.
+   */
+  acceptedTokens?: OAuthTokens;
+  persist?: (tokens: OAuthTokens) => Promise<void>;
 }
 
 function aborted(signal: AbortSignal): unknown {
@@ -245,7 +306,8 @@ export class OAuthRefreshCoordinator {
         init?.body instanceof URLSearchParams
           ? init.body.get("refresh_token")
           : new URLSearchParams(String(init?.body ?? "")).get("refresh_token");
-      while (true) {
+      for (let attempt = 0; attempt < 64; attempt++) {
+        if (requestSignal?.aborted) throw aborted(requestSignal);
         const revisionBeforeReads = this.stateRevision;
         const activeGeneration = await provider.generation();
         this.observeAuthoritativeGeneration(activeGeneration);
@@ -328,6 +390,8 @@ export class OAuthRefreshCoordinator {
           release: (outcome) => release(outcome),
           stopObservingOwnerAbort: () => {},
           mutationId: {},
+          writing: false,
+          persist: (tokens) => provider.saveTokens(tokens),
         };
         this.flights.set(generation, flight);
         this.advanceStateRevision();
@@ -351,19 +415,36 @@ export class OAuthRefreshCoordinator {
             input,
             requestSignal ? { ...init, signal: requestSignal } : init,
           );
-          // These responses never reach a successful saveTokens callback. Give
+          // Failed responses never reach a successful saveTokens callback. Give
           // current waiters a bounded failure now while leaving the owner's
           // response untouched for the SDK to parse and classify itself.
-          const failure = await refreshResponseFailure(response);
-          if (failure) {
-            this.fail(generation, flight, failure);
-          } else if (
-            requestSignal?.aborted ||
-            !this.markMutationPending(generation, flight)
-          ) {
-            throw requestSignal?.aborted
-              ? aborted(requestSignal)
-              : new Error("OAuth refresh ended before tokens could be saved.");
+          const outcome = await refreshResponseOutcome(response);
+          if (outcome.failure) {
+            this.fail(generation, flight, outcome.failure);
+            return response;
+          }
+          // A valid response means the authorization server has consumed the
+          // rotating refresh token. The SDK's saveTokens normally persists it;
+          // keep this copy so `fail` can persist it instead if that callback
+          // never comes (the SDK merges the old refresh token the same way).
+          const rotatedRefreshToken =
+            outcome.tokens.refresh_token ?? currentTokens?.refresh_token;
+          flight.acceptedTokens = {
+            ...outcome.tokens,
+            ...(rotatedRefreshToken !== undefined
+              ? { refresh_token: rotatedRefreshToken }
+              : {}),
+          };
+          if (!this.markMutationPending(generation, flight)) {
+            // Already settled (the owner was cancelled first). Still write the
+            // rotation: losing it would leave a dead credential.
+            void flight.persist?.(flight.acceptedTokens).catch(() => {});
+            throw new Error("OAuth refresh ended before tokens could be saved.");
+          }
+          if (requestSignal?.aborted) {
+            // Same recovery as an abort landing later: `fail` persists.
+            this.fail(generation, flight, aborted(requestSignal));
+            throw aborted(requestSignal);
           }
           return response;
         } catch (error) {
@@ -371,7 +452,15 @@ export class OAuthRefreshCoordinator {
           throw error;
         }
       }
+      return refreshMutationPendingResponse();
     };
+  }
+
+  /** Start storage only while this owner still holds its exact flight. */
+  beginMutation(generation: string, flight: OAuthRefreshFlight): boolean {
+    if (this.flights.get(generation) !== flight) return false;
+    flight.writing = true;
+    return true;
   }
 
   /** Publish one exact owner's successful save without disturbing a newer try. */
@@ -385,6 +474,42 @@ export class OAuthRefreshCoordinator {
 
   /** Give joined callers a fetch/flow failure, without rejecting the gate. */
   fail(generation: string, flight: OAuthRefreshFlight, error: unknown): void {
+    // Only saveTokens owns a live credential write. If it has started, its
+    // success/failure callback clears the marker even after owner cancellation.
+    if (flight.writing) {
+      this.settle(generation, flight, { status: "failed", error });
+      return;
+    }
+    // The token endpoint already answered with valid tokens but the SDK will
+    // not save them (the owner was cancelled, redirected, or invalidated).
+    // The old refresh token is spent, so the host persists the rotation
+    // itself and keeps contenders behind the marker until it lands. Joined
+    // callers then receive the saved rotation, never a retired token to
+    // redeem again. saveTokens' own bookkeeping settles the flight when the
+    // provider still holds it; otherwise settle here once the write ends.
+    const tokens = flight.acceptedTokens;
+    if (
+      tokens !== undefined &&
+      flight.persist !== undefined &&
+      this.pendingMutations.get(generation) === flight.mutationId
+    ) {
+      flight.writing = true;
+      void flight.persist(tokens).then(
+        () => {
+          if (this.finishMutation(generation, flight)) {
+            this.settle(generation, flight, { status: "refreshed" });
+          }
+        },
+        (writeError: unknown) => {
+          if (this.finishMutation(generation, flight)) {
+            this.settle(generation, flight, { status: "failed", error: writeError });
+          }
+        },
+      );
+      return;
+    }
+    // A response alone is not a write and must never strand the generation.
+    this.finishMutation(generation, flight);
     this.settle(generation, flight, { status: "failed", error });
   }
 
@@ -537,30 +662,11 @@ export class KvOAuthProvider implements OAuthClientProvider {
     this.refreshFlight = { generation, flight };
   }
 
-  private succeedRefreshFlight(): void {
+  private failRefreshFlight(error: unknown): void {
     const owned = this.refreshFlight;
     this.refreshFlight = undefined;
     if (owned) {
-      this.refreshCoordinator?.succeedMutation(
-        owned.generation,
-        owned.flight,
-      );
-    }
-  }
-
-  private failRefreshFlight(error: unknown, mutationFinished = false): void {
-    const owned = this.refreshFlight;
-    this.refreshFlight = undefined;
-    if (owned) {
-      if (mutationFinished) {
-        this.refreshCoordinator?.failMutation(
-          owned.generation,
-          owned.flight,
-          error,
-        );
-      } else {
-        this.refreshCoordinator?.fail(owned.generation, owned.flight, error);
-      }
+      this.refreshCoordinator?.fail(owned.generation, owned.flight, error);
     }
   }
 
@@ -859,6 +965,15 @@ export class KvOAuthProvider implements OAuthClientProvider {
     tokens: OAuthTokens,
     ctx?: OAuthClientInformationContext,
   ): Promise<void> {
+    // A retired flight (the owner was cancelled or superseded after the
+    // token response) still writes: the authorization server has already
+    // consumed the old refresh token, so dropping the rotated one would leave a
+    // dead credential. writeValue itself refuses when the generation moved.
+    // Only the coordinator bookkeeping belongs to the exact live flight.
+    const owned = this.refreshFlight;
+    const coordinated =
+      owned !== undefined &&
+      this.refreshCoordinator?.beginMutation(owned.generation, owned.flight) === true;
     try {
       await this.writeValue(
         "oauth:tokens",
@@ -866,10 +981,14 @@ export class KvOAuthProvider implements OAuthClientProvider {
         (value) => JSON.stringify(value),
         ctx?.issuer,
       );
-      this.succeedRefreshFlight();
+      if (coordinated) this.refreshCoordinator?.succeedMutation(owned.generation, owned.flight);
     } catch (error) {
-      this.failRefreshFlight(error, true);
+      if (coordinated) this.refreshCoordinator?.failMutation(owned.generation, owned.flight, error);
       throw error;
+    } finally {
+      // The write owns this identity even if an SDK failure callback has
+      // already detached the provider's flight while storage was pending.
+      if (this.refreshFlight === owned) this.refreshFlight = undefined;
     }
   }
 
@@ -915,8 +1034,8 @@ export class KvOAuthProvider implements OAuthClientProvider {
   }
 
   async redirectToAuthorization(authorizationUrl: URL): Promise<void> {
-    if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
     try {
+      if (!this.allowAuthorization) throw new UnauthorizedError("Authorization required. Use authorize_connector or Connect to start consent.");
       await this.writeValue(
         "oauth:pending",
         authorizationUrl.toString(),

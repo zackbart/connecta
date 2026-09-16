@@ -239,7 +239,8 @@ What it owns is mechanical and provider-independent:
   streaming body is abandoned at the ceiling rather than buffered past it.
 - **Normalization.** An unreachable provider becomes a retryable `unavailable`
   instead of whatever `TypeError` the runtime threw, and `ctx.signal` rides
-  every request.
+  every request. `Retry-After` hints accept delta-seconds and HTTP dates;
+  a date in the past means no further wait.
 
 What it deliberately does not own is meaning. It never reads a status code and
 never invents an authentication scheme: the provider's `authenticate` callback
@@ -288,9 +289,13 @@ Connecta deliberately sits between protocol generations
   compatibility concession, so modern protocol support is still discovered.
 - **Legacy sessions:** Connecta's own endpoint creates no protocol session, but
   a stateful legacy downstream can still issue `Mcp-Session-Id`. Closing a
-  request scope explicitly sends the legacy DELETE before closing its transport.
-  SDK v2 `Client.close()` does not do that on Connecta's behalf, so
-  `terminateSession` remains required and tested.
+  request scope, rotating credentials, retiring an OAuth generation, and
+  abandoning a connect all send the legacy DELETE before closing the transport.
+  The DELETE gets at most one second and failures are logged. Rotation and
+  abandoned connects start cleanup without waiting; the connector context has
+  no deferred-work hook. Scope teardown gives its bounded tail back to core,
+  which can attach the runtime's deferred channel. SDK v2 `Client.close()` does
+  not send DELETE on Connecta's behalf.
 - **Modern cache hints:** `tools/list` is deployment-fixed and returns a
   one-hour private cache hint. Downstream hints do not alter Connecta's existing
   five-minute fingerprinted catalog cache; that remains gated in
@@ -352,7 +357,11 @@ For remote MCP tools, that path checks the catalog's advertised `inputSchema`
 before provider dispatch. Supported mismatches become bounded, payload-free
 `invalid_args` findings; a schema the local validator cannot evaluate passes
 through unchanged. Connecta does not parse provider error prose to invent a
-validation classification.
+validation classification. A downstream JSON-RPC `-32602` is an explicit
+`invalid_args` refusal, with a bounded server message and no retry. HTTP 4xx
+refusals preserve a bounded JSON `message`, including `error.message`, and are
+non-retryable; 429 becomes `rate_limited` and 408 becomes `timeout`. The SDK
+still owns OAuth challenges and step-up authorization.
 
 ## Authentication
 
@@ -362,6 +371,21 @@ server issuer discovered and validated by the SDK; see
 [storage and credentials](./storage-and-credentials.md#downstream-oauth).
 The callback route validates `state` before passing the complete callback query
 to the SDK so RFC 9207 `iss` validation is not lost.
+
+Within one runtime, overlapping refreshes share one completion gate per
+credential partition and generation. A valid token response is a consumed
+refresh token, so the coordinator keeps that response's tokens on the flight.
+If the owner then fails before the SDK saves them — cancelled, redirected to
+authorization, or invalidated — the host persists the rotation itself, holds
+contenders behind the mutation marker until that write lands, and hands them
+the saved rotation; a retired token is never redeemed twice. A write already
+running in `saveTokens` clears the marker on its own success or failure, and a
+late duplicate save from a detached owner is harmless. Nothing can leave a
+permanent 503 gate ([#526](https://github.com/zackbart/connecta/issues/526)).
+Refresh token response validation
+reads at most 65,536 bytes, and credential reads stop after 64 revision races
+with `temporarily_unavailable` so churn cannot spin indefinitely. Request
+cancellation is checked before each attempt.
 
 A remote MCP connector that authenticates with a static key has two ways to
 receive one. `{ type: "headers", headers }` bakes the literal value into the
