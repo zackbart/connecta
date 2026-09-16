@@ -51,6 +51,8 @@ export function bearerToken(
             status: 401,
             headers: {
               "Content-Type": "application/json",
+              // A configured secret has no OAuth metadata or issuer to
+              // advertise; interactive adapters own resource discovery.
               "WWW-Authenticate": "Bearer",
             },
           },

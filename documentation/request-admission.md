@@ -15,7 +15,7 @@ it.
 
 ## The pools
 
-Every non-preflight `/mcp` request takes one permit from a deployment-wide FIFO
+Every non-preflight `/mcp` or `/mcp/<pool>` request with an admitted Origin takes one permit from a deployment-wide FIFO
 pool. Initialization, discovery, ordinary calls, and `execute_code` all pay it.
 A program then takes a *second* permit from the deliberately smaller code pool,
 so one request cannot trade ordinary capacity for an unbounded number of
@@ -54,6 +54,38 @@ identity rules give its principals different connector views
 ([`ethos.md`](../ethos.md)), so a global queue is not pretending to supply
 something it does not.
 
+## Origin before admission
+
+MCP checks `Origin` before redirects, request admission, auth, and preflight.
+A present, disallowed origin gets HTTP 403 with the exact body
+`{"error":"origin not allowed"}` and `Cache-Control: no-store`. This local
+check consumes no permit or auth lookup, even when the queue is full or closed.
+Requests without Origin, including ordinary non-browser MCP clients, pass.
+`/health`, OAuth callbacks, and auth metadata retain their existing behavior.
+
+`allowedOrigins` accepts a list of exact HTTP(S) origins or `"*"`. An explicit
+list replaces the defaults, including loopback; an empty list admits only
+originless clients. By default the configured `publicUrl` origin and HTTP(S)
+loopback origins at any port are admitted. Loopback means `localhost`,
+`127.0.0.0/8`, or `[::1]`. Without `publicUrl`, only loopback is admitted.
+The inbound Host header never chooses a trusted browser origin. Invalid list
+entries, including paths, credentials, and opaque origins, refuse construction.
+
+```ts
+createConnecta({
+  publicUrl: "https://connecta.example",
+  allowedOrigins: ["https://connecta.example", "https://client.example"],
+  // …
+});
+```
+
+For unrestricted browser access, set `allowedOrigins: "*"` explicitly. Otherwise
+MCP responses reflect an admitted Origin and carry `Vary: Origin`; originless
+and refused requests have no `Access-Control-Allow-Origin`. Allowed preflight
+returns 204 without auth or admission. The SDK validates SEP-2243 parameter
+headers, so preflight echoes valid requested `mcp-param-*` names alongside the
+fixed MCP header list and varies by `Access-Control-Request-Headers` too.
+
 ## Admission before auth
 
 `/mcp` acquires its permit *before* running the auth gate. This looks backwards
@@ -86,7 +118,7 @@ CORS headers, and a stable JSON-RPC error:
   "jsonrpc": "2.0",
   "id": null,
   "error": {
-    "code": -32001,
+    "code": -31001,
     "message": "Server capacity is exhausted. Retry later.",
     "data": { "code": "server_overloaded", "retryable": true, "retryAfterMs": 1000 }
   }
@@ -94,8 +126,10 @@ CORS headers, and a stable JSON-RPC error:
 ```
 
 `Retry-After` is that hint rounded up to at least one whole second. It is
-advice, not a reservation. Shutdown uses `-32002` / `server_shutting_down` and
-is not retryable. Code-pool overload never reaches this layer: it surfaces as
+advice, not a reservation. Shutdown uses `-31002` / `server_shutting_down` and
+is not retryable. These application codes sit outside JSON-RPC's reserved
+range: MCP forbids new allocations in the legacy `-32000..-32019` range.
+Code-pool overload never reaches this layer: it surfaces as
 an ordinary MCP tool error with `executor_overloaded`, `retryable: true`, and
 the executor's own `retryAfterMs`.
 

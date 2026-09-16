@@ -112,6 +112,18 @@ from "we are throttling ourselves".
 
 ## Enforcement scope
 
+Shared connectors use the root registry's controller. Personal connectors use
+the owning principal's registry, so two accounts each receive their own budget;
+all requests and call paths for one principal still share it. `close()` rejects
+queued and future admissions on both kinds of controller, including a personal
+registry constructed after shutdown.
+
+The principal cache is bounded at 1,024 registries. Eviction closes an idle
+registry so an older request view cannot use an orphaned controller. A registry
+with active calls, queued calls, or unexpired rolling entries is never evicted.
+If all 1,024 are occupied, a new principal view fails closed with HTTP 403 until
+one drains. Cache churn cannot reset a live account's quota.
+
 This is deliberately **per-runtime**. It completely contains fan-out inside one
 request, including parallel `connecta.call` calls in one Worker isolate. A rolling
 budget is exact inside one Node process or Worker isolate, and best-effort
@@ -124,13 +136,16 @@ the bound actually is rather than implying a global one.
 
 ## Observations
 
-`/health` exposes payload-free aggregates at
-`admission.downstreamCalls.connectors.<id>`: retained partition count, current
+`/health` exposes one payload-free aggregate at
+`admission.downstreamCalls.aggregate`, summed across root and retained personal
+controllers: rule and retained partition counts, current
 active and queued gauges, cumulative admitted/queued/rejected/rate-limited/
 cancelled counts, and queue-wait count, total, and maximum. The open endpoint
-never exposes partition keys, tool arguments, or results — a partition key can
+never exposes connector ids, principal ids, partition keys, tool arguments, or results — a partition key can
 be a customer identifier, which is precisely why it stays out of an unauthenticated
-payload. Ordinary payload-free activity records the final call outcome and its
+payload. Queue-wait maxima take the maximum, other counters sum, and `closed`
+means every included controller is closed. Evicted idle controllers no longer
+contribute to these runtime snapshots. Ordinary payload-free activity records the final call outcome and its
 typed error code.
 
 ## Tests that enforce this
@@ -138,5 +153,5 @@ typed error code.
 | Invariant | Suite |
 | --- | --- |
 | Independent partitions, exact rolling-window reset and retry, queued cancellation charging no budget, synchronous cancel during partition derivation, validated values snapshotted rather than read from mutable config, bounded partition state and contained `partitionKey` failures, empty and multi-rule policies refused | `test/call-admission.test.ts` (controller) |
-| One base-registry limiter shared by direct and program calls, promise concurrency with input order preserved, cancellation threading, no dispatch or retry or health poisoning after cancellation, retry hints returned without waiting or poisoning health, payload-free `/health` aggregates | `test/call-admission.test.ts` (integration, Node + Workers) |
+| Shared and personal limiters shared by direct and program calls, independent principal budgets, shutdown covering both, eviction preserving live budgets, promise concurrency with input order preserved, cancellation threading, no dispatch or retry or health poisoning after cancellation, retry hints returned without waiting or poisoning health, payload-free `/health` aggregates | `test/call-admission.test.ts` (integration, Node + Workers) |
 | Where provider budgets are allowed to come from at all | [provider conventions P12](./provider-conventions.md#p12--declare-an-admission-budget-only-when-the-provider-documents-a-number), [provider audit](https://github.com/zackbart/connecta/blob/main/records/provider-audit.md) |

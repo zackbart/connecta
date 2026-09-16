@@ -91,9 +91,11 @@ describe("server /mcp end-to-end", () => {
 
   it("serves CORS on /mcp errors so browsers can read the 401", async () => {
     const c = makeDeployment();
-    const res = await mcpRpc(c, "tools/list", {});
+    const request = mcpRpc("tools/list", {});
+    request.headers.set("Origin", BASE);
+    const res = await c.fetch(request);
     expect(res.status).toBe(401);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
     expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
       "WWW-Authenticate",
     );
@@ -101,8 +103,7 @@ describe("server /mcp end-to-end", () => {
 
   it("serves CORS on successful legacy /mcp responses too", async () => {
     const c = makeDeployment();
-    const res = await mcpRpc(
-      c,
+    const request = mcpRpc(
       "initialize",
       {
         protocolVersion: "2025-06-18",
@@ -111,8 +112,10 @@ describe("server /mcp end-to-end", () => {
       },
       { token: TOKEN },
     );
+    request.headers.set("Origin", BASE);
+    const res = await c.fetch(request);
     expect(res.status).toBe(200);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
     expect(res.headers.get("Access-Control-Expose-Headers")).toContain(
       "mcp-session-id",
     );
@@ -229,6 +232,18 @@ describe("server /mcp end-to-end", () => {
     } finally {
       await client.close();
     }
+  });
+
+  it("keeps the seven tools in registration order across requests", async () => {
+    const c = makeDeployment();
+    for (let i = 0; i < 2; i++) {
+      const body = await readJsonRpc(await mcpRpc(c, "tools/list", {}, { token: TOKEN }));
+      expect(body.result.tools.map((tool: { name: string }) => tool.name)).toEqual([
+        "skills", "search_tools", "call_tool", "call_destructive_tool",
+        "authorize_connector", "get_result", "execute_code",
+      ]);
+    }
+    await c.close();
   });
 
   it("tools/list shows exactly the seven meta-tools", async () => {
@@ -1548,10 +1563,10 @@ describe("server open routes", () => {
   it("OPTIONS returns a CORS preflight 204", async () => {
     const c = makeDeployment();
     const res = await c.fetch(
-      new Request(`${BASE}/mcp`, { method: "OPTIONS" }),
+      new Request(`${BASE}/mcp`, { method: "OPTIONS", headers: { Origin: BASE } }),
     );
     expect(res.status).toBe(204);
-    expect(res.headers.get("Access-Control-Allow-Origin")).toBe("*");
+    expect(res.headers.get("Access-Control-Allow-Origin")).toBe(BASE);
     expect(res.headers.get("X-Content-Type-Options")).toBe("nosniff");
   });
 });

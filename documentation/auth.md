@@ -6,6 +6,16 @@ Cloudflare Access from `/auth/cloudflare-access`. Providers may be combined;
 static bearers are checked first, then other providers in configuration order.
 Connecta no longer issues `cta_` tokens or serves token-management routes.
 
+The bearer adapter challenges with `WWW-Authenticate: Bearer` and deliberately
+omits `resource_metadata`. Its credential is configured out of band; it has no
+OAuth authorization server or registration endpoint to advertise. Interactive
+adapters or the edge own OAuth discovery. Every open deployment with at least
+one connector warns at construction, including API connectors with static auth
+headers. Credential and OAuth connectors add explicit wording about those grants.
+
+MCP browser origins pass the [Origin check](./request-admission.md#origin-before-admission)
+before admission or auth. This is independent of an identity's tool grants.
+
 ## Principals, visibility, and operators
 
 The actor identifies the caller in activity. The subject owns transient results
@@ -78,7 +88,9 @@ The rules, each of which is a test:
   Cloudflare Managed OAuth is application-level and needs nothing.
 
 A `connector.tool` address the live catalog does not contain is unreachable
-and warned once per isolate. Remote catalogs load lazily, so construction
+and warned once while its address remains in a 1,024-entry FIFO. An evicted
+address may warn again; caller-derived grant text cannot grow retained warning
+state without bound. Remote catalogs load lazily, so construction
 cannot check it, and a catalog that drifts later can never widen a grant
 because there is no wildcard: every tool grant is an exact name.
 

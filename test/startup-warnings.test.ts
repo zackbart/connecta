@@ -93,10 +93,11 @@ describe("open-mode credential-exposure warning", () => {
       expect(warnings(logger)).not.toContain("no inbound authentication");
     }],
 
-    ["does not warn in open mode without credentials or OAuth", () => {
+    ["warns in open mode even without credentials or OAuth, since api() headers can carry secrets", () => {
       const logger = spyLogger();
       createTestConnecta({ connectors: [plainConnector], logger });
-      expect(warnings(logger)).not.toContain("no inbound authentication");
+      expect(warnings(logger)).toContain("no inbound authentication");
+      expect(warnings(logger)).not.toContain("Configured credentials and downstream OAuth grants");
     }],
   ] as const)("%s", (_name, run) => run());
 });

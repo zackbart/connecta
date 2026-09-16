@@ -83,6 +83,14 @@ const context = {
   baseUrl: BASE,
 };
 
+/** /health keys drift reports by a truncated SHA-256 of the id, never the id. */
+async function driftKey(id: string): Promise<string> {
+  const hash = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(id)),
+  );
+  return Array.from(hash.subarray(0, 8), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
 describe("vettedCatalog()", () => {
   it("refuses a name classified as both a read and a write", () => {
     expect(() =>
@@ -471,8 +479,9 @@ describe("/health", () => {
     const health = (await (
       await connecta.fetch(new Request(`${BASE}/health`))
     ).json()) as { catalogDrift: Record<string, unknown> };
+    expect(JSON.stringify(health)).not.toContain("linear_test");
     expect(health.catalogDrift).toEqual({
-      linear_test: {
+      [await driftKey("linear_test")]: {
         observedAt: "2026-08-12T00:00:00.000Z",
         unclassifiedTools: 2,
         unservedTools: 1,
@@ -527,7 +536,8 @@ describe("the connector seam is projected, not echoed", () => {
     const health = (await (
       await connecta.fetch(new Request(`${BASE}/health`))
     ).json()) as { catalogDrift: Record<string, Record<string, unknown>> };
-    const report = health.catalogDrift.leaky ?? {};
+    expect(JSON.stringify(health)).not.toContain("leaky");
+    const report = health.catalogDrift[await driftKey("leaky")] ?? {};
     expect(Object.keys(report).sort()).toEqual(REPORT_KEYS);
     expect(report).toMatchObject({
       unclassifiedTools: 2,

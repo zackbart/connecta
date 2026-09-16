@@ -194,6 +194,11 @@ export interface ConnectaConfig {
    * HTTPS URL also redirects matching inbound HTTP requests to HTTPS.
    */
   publicUrl?: string;
+  /**
+   * Exact browser MCP origins, or "*". Defaults to publicUrl's origin and
+   * HTTP(S) loopback origins at any port. Originless clients are admitted.
+   */
+  allowedOrigins?: readonly string[] | "*";
   /** Optional recorder and reader, created by activityHistory() from /activity. */
   activity?: ActivityModule;
   /** Replaceable owner-partitioned credential storage. Omit for config-owned secrets. */
@@ -311,6 +316,7 @@ const CONFIG_SCHEMA = {
   pools: null,
   storage: null,
   publicUrl: null,
+  allowedOrigins: null,
   activity: null,
   vault: null,
   ui: null,
@@ -493,15 +499,18 @@ function warnInsecureConfig(
   const oauthConnectors = config.connectors.filter((c) => c.finishAuth);
   const hasCredentialConnector = config.connectors.some((c) => c.credential);
 
-  // Open mode (no inbound auth) with connectors that expose credentials or
-  // downstream OAuth: any caller reaches everything, including the vault.
+  // Static API headers can carry secrets without declaring credential hooks.
+  // Any configured connector warrants the open-deployment warning.
   if (
     inboundAuth.length === 0 &&
-    (hasCredentialConnector || oauthConnectors.length > 0)
+    config.connectors.length > 0
   ) {
     logger.warn(
       "[connecta] running with no inbound authentication: any caller can " +
         "invoke every shared connector. " +
+        (hasCredentialConnector || oauthConnectors.length > 0
+          ? "Configured credentials and downstream OAuth grants are exposed to those calls. "
+          : "") +
         "Configure `auth` (for example bearerToken(...) or Clerk) to gate access.",
     );
   }
@@ -660,6 +669,7 @@ export function createConnecta(config: ConnectaConfig): Connecta {
     identity: config.identity,
     pools,
     publicUrl: config.publicUrl,
+    allowedOrigins: config.allowedOrigins,
     serverInfo,
     logger,
     activity: config.activity?.store,

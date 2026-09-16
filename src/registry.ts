@@ -23,6 +23,7 @@ import {
 import { ConnectorCallError, msg } from "./errors.js";
 import {
   ConnectorCallAdmissionController,
+  aggregateCallAdmissionSnapshots,
   type CallAdmissionPermit,
   type ConnectorCallAdmissionSnapshot,
 } from "./call-admission.js";
@@ -278,6 +279,7 @@ export interface RegistryScope {
 }
 
 const MAX_PERSONAL_REGISTRIES = 1_024;
+const MAX_ABSENT_GRANT_WARNINGS = 1_024;
 const OAUTH_HANDOFF_TTL_SECONDS = 15 * 60;
 
 async function sha256Hex(value: string): Promise<string> {
@@ -332,7 +334,8 @@ export class Registry implements RegistryView {
   readonly maxResultBytes: number;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
-  /** `connector.tool` grants that matched nothing, warned once per isolate. */
+  private callAdmissionClosed = false;
+  /** Bounded FIFO of absent grants already warned about. */
   private readonly warnedAbsentGrants = new Set<string>();
 
   constructor(
@@ -410,6 +413,17 @@ export class Registry implements RegistryView {
       this.personalRegistries.set(principalKey, existing);
       return existing;
     }
+    if (this.personalRegistries.size >= MAX_PERSONAL_REGISTRIES) {
+      // Eviction must not reset a live rolling budget or orphan queued calls.
+      const idle = [...this.personalRegistries].find(([, candidate]) =>
+        [...candidate.callAdmission.values()].every(admission => admission.isIdle()),
+      );
+      if (!idle) {
+        throw new Error("Personal connector capacity is exhausted; retry after calls and rolling budgets drain.");
+      }
+      idle[1].closeCallAdmission();
+      this.personalRegistries.delete(idle[0]);
+    }
     const registry = new Registry(
       this.configuredConnectors.filter(
         (connector) => connector.authScope === "personal",
@@ -421,14 +435,8 @@ export class Registry implements RegistryView {
         constructionChecks: false,
       },
     );
+    if (this.callAdmissionClosed) registry.closeCallAdmission();
     this.personalRegistries.set(principalKey, registry);
-    const oldest = this.personalRegistries.keys().next().value;
-    if (
-      this.personalRegistries.size > MAX_PERSONAL_REGISTRIES &&
-      typeof oldest === "string"
-    ) {
-      this.personalRegistries.delete(oldest);
-    }
     return registry;
   }
 
@@ -461,6 +469,10 @@ export class Registry implements RegistryView {
     const key = `${connectorId}.${toolName}`;
     if (this.warnedAbsentGrants.has(key)) return;
     this.warnedAbsentGrants.add(key);
+    if (this.warnedAbsentGrants.size > MAX_ABSENT_GRANT_WARNINGS) {
+      const oldest = this.warnedAbsentGrants.values().next().value;
+      if (oldest !== undefined) this.warnedAbsentGrants.delete(oldest);
+    }
     // Grant names are operator data but may carry any non-control character;
     // quote them so a line terminator a log reader honours cannot forge a line.
     const quoted = JSON.stringify(key).replace(
@@ -649,14 +661,20 @@ export class Registry implements RegistryView {
     return Promise.resolve({ waitMs: 0, release() {} });
   }
 
-  /** Payload-free aggregate state for the open health endpoint. */
+  /** Connector totals across root and personal controllers; health removes ids. */
   callAdmissionSnapshot(): Record<string, ConnectorCallAdmissionSnapshot> {
-    return Object.fromEntries(
-      [...this.callAdmission].map(([id, admission]) => [
-        id,
-        admission.snapshot(),
-      ]),
-    );
+    const snapshots = new Map<string, ConnectorCallAdmissionSnapshot[]>();
+    for (const [id, admission] of this.callAdmission) {
+      snapshots.set(id, [admission.snapshot()]);
+    }
+    for (const registry of this.personalRegistries.values()) {
+      for (const [id, admission] of registry.callAdmission) {
+        snapshots.get(id)?.push(admission.snapshot());
+      }
+    }
+    return Object.fromEntries([...snapshots].map(([id, values]) => [
+      id, aggregateCallAdmissionSnapshots(values),
+    ]));
   }
 
   /**
@@ -726,7 +744,9 @@ export class Registry implements RegistryView {
 
   /** Reject queued/future downstream admission; active permits release safely. */
   closeCallAdmission(): void {
+    this.callAdmissionClosed = true;
     for (const admission of this.callAdmission.values()) admission.close();
+    for (const registry of this.personalRegistries.values()) registry.closeCallAdmission();
   }
 
   /**
@@ -1623,10 +1643,11 @@ class ScopedRegistryView implements RegistryView {
   admitCall(
     ...args: Parameters<RegistryView["admitCall"]>
   ): Promise<CallAdmissionPermit> {
-    if (!this.registryFor(args[0])) {
+    const registry = this.registryFor(args[0]);
+    if (!registry) {
       return Promise.reject(new Error(`Unknown connector "${args[0]}"`));
     }
-    return this.root.admitCall(...args);
+    return registry.admitCall(...args);
   }
 
   resultsStorage(): KVStorage {

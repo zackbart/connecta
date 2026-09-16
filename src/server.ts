@@ -1,3 +1,4 @@
+import { aggregateCallAdmissionSnapshots } from "./call-admission.js";
 import { isAdmittingExecutor } from "./executor-admission.js";
 import { createMcpRoute, MCP_CORS_HEADERS } from "./routes/mcp.js";
 import {
@@ -37,6 +38,9 @@ export function createFetchHandler(
     const defer = runtimeContext
       ? runtimeContext.waitUntil.bind(runtimeContext)
       : undefined;
+
+    const originRefusal = routeMcp.rejectOrigin(request);
+    if (originRefusal) return withSecurityHeaders(originRefusal, url, path);
 
     // Container and orchestrator probes reach /health over plain HTTP on
     // loopback, where no proxy has set X-Forwarded-Proto. Redirecting them to
@@ -87,6 +91,9 @@ export function createFetchHandler(
       if (uiResponse) return uiResponse;
 
       if (request.method === "OPTIONS") {
+        const preflight = await routeMcp.handle(context);
+        if (preflight) return preflight;
+
         for (const provider of auth) {
           if (provider.handleMetadata) {
             const response = await provider.handleMetadata(request, baseUrl);
@@ -130,14 +137,27 @@ export function createFetchHandler(
           // Counts only, from refreshes that already happened — the endpoint
           // asks no downstream anything, and `connecta doctor` reads it to
           // report a stale allowlist without a probe of its own (#343).
-          catalogDrift: registry.catalogDriftSnapshot(),
+          // Stable 64-bit hashes preserve that shape without publishing ids.
+          catalogDrift: Object.fromEntries(await Promise.all(
+            Object.entries(registry.catalogDriftSnapshot()).map(async ([id, report]) => {
+              const hash = new Uint8Array(await crypto.subtle.digest(
+                "SHA-256", new TextEncoder().encode(id),
+              ));
+              const key = Array.from(hash.subarray(0, 8), byte =>
+                byte.toString(16).padStart(2, "0"),
+              ).join("");
+              return [key, report];
+            }),
+          )),
           admission: {
             policy: "global-fifo",
             requests: opts.requestAdmission.snapshot(),
             code: codeAdmission ?? { managedByExecutor: true },
             downstreamCalls: {
               policy: "connector-partitioned-per-runtime",
-              connectors: registry.callAdmissionSnapshot(),
+              aggregate: aggregateCallAdmissionSnapshots(
+                Object.values(registry.callAdmissionSnapshot()),
+              ),
             },
             reservedRoutes: [
               "/health",
@@ -152,7 +172,7 @@ export function createFetchHandler(
       const oauthCallback = await routeOAuthCallback(context);
       if (oauthCallback) return oauthCallback;
 
-      const mcp = await routeMcp(context);
+      const mcp = await routeMcp.handle(context);
       if (mcp) return mcp;
 
       return new Response("Not Found", { status: 404 });
