@@ -36,6 +36,7 @@ export type ChildToParentMessage =
       callId: number;
       payloadJson: string;
     }
+  | { type: "log"; jobId: number; payloadJson: string }
   | { type: "result"; jobId: number; payloadJson: string };
 
 export interface HostCallPayload {

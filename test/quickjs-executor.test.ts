@@ -868,3 +868,29 @@ describe("authenticated host failures (E1, X11)", () => {
     expect(out.result).toBe("Host failure exceeded the 4000-character bridge limit.");
   });
 });
+
+it("preserves console logs when a running program is cancelled", async () => {
+  const controller = new AbortController();
+  const connector = connectorWith({
+    id: "cancel", kind: "api",
+    tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+    call: async () => {
+      // The ordered host-call IPC message is proof that both logs arrived.
+      controller.abort();
+      return null;
+    },
+  });
+  const executor = quickJsExecutor();
+  const out = await createExecuteTool(
+    makeRegistry([connector]), "https://connecta.test", executor, silentLogger,
+  )({ code: `async () => {
+    console.log("before cancellation");
+    console.warn("still here");
+    await connecta.call("cancel.read");
+  }`, diagnostics: true }, { signal: controller.signal });
+  expect(out.isError).toBe(true);
+  expect(out.structuredContent).toMatchObject({
+    error: { code: "executor_cancelled" },
+    logs: "before cancellation\nstill here",
+  });
+});

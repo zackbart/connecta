@@ -86,10 +86,13 @@ The rules, each of which is a test:
 - **Grant defaults to deny.** A pool with no `grant` serves nobody. Only a
   literal `true` admits; any other return, a throw, and an undeclared pool
   name produce one 404 identical in status, body, and headers, so a
-  credential does not enumerate the other pools by response. Keep grants
-  pure and fast: a grant that does I/O is the one thing that could make a
-  declared pool distinguishable from an undeclared one by timing. The
-  operator log carries the reason.
+  credential does not enumerate the other pools by response content. Timing
+  is explicitly not hidden: a declared name awaits its grant, while an
+  undeclared name returns without that lookup. We accept this pool-name
+  oracle because names grant no access, a fixed delay cannot hide unbounded
+  grant I/O, and invoking grants for unknown names would add avoidable work
+  while holding an admission permit. Keep grants pure and fast; do not treat
+  pool names as secrets. The operator log carries the refusal reason.
 - **Structural mistakes throw at construction.** A malformed name, an
   unknown connector, an empty pool, and a `connector.tool` address an
   `api()` connector's static catalog lacks all refuse to boot. Remote

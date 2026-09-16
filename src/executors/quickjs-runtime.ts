@@ -196,6 +196,7 @@ function installBridge(
   ctx: QuickJSContext,
   providers: ExecutorProvider[],
   logs: string[],
+  onLog?: (entry: string) => void,
 ): HostBridge {
   const bridge: HostBridge = {
     pending: 0,
@@ -208,13 +209,17 @@ function installBridge(
   // Keep both the in-memory character budget and the twice-JSON-encoded
   // transport budget. Reserve enough byte budget for whichever truncation
   // marker ends the stream.
+  const captureLog = (entry: string) => {
+    logs.push(entry);
+    onLog?.(entry);
+  };
   let logTotalChars = 0;
   let logTotalTransportBytes = 0;
   let logBudgetSpent = false;
   const logFn = ctx.newFunction("__log", (h) => {
     if (logs.length >= MAX_LOG_ENTRIES) {
       if (logs.length === MAX_LOG_ENTRIES) {
-        logs.push(LOG_ENTRY_LIMIT_MARKER);
+        captureLog(LOG_ENTRY_LIMIT_MARKER);
       }
       return;
     }
@@ -231,11 +236,11 @@ function installBridge(
       logTotalTransportBytes + entryTransportBytes >
         MAX_QUICKJS_LOG_TRANSPORT_BYTES - MAX_LOG_MARKER_TRANSPORT_BYTES
     ) {
-      logs.push(LOG_SIZE_LIMIT_MARKER);
+      captureLog(LOG_SIZE_LIMIT_MARKER);
       logBudgetSpent = true;
       return;
     }
-    logs.push(entry);
+    captureLog(entry);
     logTotalChars += entry.length;
     logTotalTransportBytes += entryTransportBytes;
   });
@@ -323,6 +328,7 @@ export async function executeQuickJs(
   code: string,
   providers: ExecutorProvider[],
   options: QuickJsRuntimeOptions,
+  onLog?: (entry: string) => void,
 ): Promise<QuickJsExecutionResult> {
       const { timeoutMs, cpuTimeMs, memoryLimitBytes, maxStackSizeBytes } =
         options;
@@ -357,7 +363,7 @@ export async function executeQuickJs(
       });
 
       const logs: string[] = [];
-      const bridge = installBridge(ctx, providers, logs);
+      const bridge = installBridge(ctx, providers, logs, onLog);
       const finish = <T extends ExecuteResult>(r: T): T => {
         bridge.aborted = true;
         // Outstanding host calls still hold deferred-promise handles; their
