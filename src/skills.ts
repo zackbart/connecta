@@ -1,3 +1,4 @@
+import { boundedEchoText } from "./errors.js";
 import type { Connector } from "./types.js";
 
 export const CONNECTA_INSTRUCTIONS =
@@ -466,14 +467,14 @@ export function resolveSkill(
     if (!connector) {
       return {
         found: false,
-        message: `Unknown connector "${id}". Available skills: ${available()}.`,
+        message: `Unknown connector "${boundedEchoText(id)}". Available skills: ${available()}.`,
       };
     }
     const guide = connectorGuide(connector);
     if (!guide) {
       return {
         found: false,
-        message: `Connector "${id}" has no usage guide. Available skills: ${available()}.`,
+        message: `Connector "${boundedEchoText(id)}" has no usage guide. Available skills: ${available()}.`,
       };
     }
     return { found: true, content: guide };
@@ -483,12 +484,12 @@ export function resolveSkill(
     return {
       found: false,
       message: connectorGuide(bare)
-        ? `Unknown skill "${name}". Connector guides are fetched as "${connectorSkillName(name)}". Available skills: ${available()}.`
-        : `Connector "${name}" has no usage guide. Available skills: ${available()}.`,
+        ? `Unknown skill "${boundedEchoText(name)}". Connector guides are fetched as "${boundedEchoText(connectorSkillName(name))}". Available skills: ${available()}.`
+        : `Connector "${boundedEchoText(name)}" has no usage guide. Available skills: ${available()}.`,
     };
   }
   return {
     found: false,
-    message: `Unknown skill "${name}". Available skills: ${available()}.`,
+    message: `Unknown skill "${boundedEchoText(name)}". Available skills: ${available()}.`,
   };
 }

@@ -1,8 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { connectorWith } from "./fixtures/connectors.js";
 import { BASE, registry, textOf } from "./fixtures/meta-tools.js";
 import { specTypeSchemas } from "@modelcontextprotocol/client";
 import { api } from "../src/connectors/api.js";
+import { CatalogService } from "../src/catalog-service.js";
+import { InvocationService } from "../src/invocation.js";
+import { unwrapMcpResult } from "../src/mcp-result.js";
 import { ConnectorCallError } from "../src/errors.js";
 import {
   alignEndToCharBoundary,
@@ -13,6 +16,7 @@ import { Registry } from "../src/registry.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import type { Connector } from "../src/types.js";
 import {
+  activitySink,
   required,
   calcConnector,
   makeRegistry,
@@ -1767,4 +1771,195 @@ describe("get_result offset validation and alignment", () => {
       bytes.length + 5,
     );
   });
+});
+
+
+describe("audit regressions", () => {
+  it.each(["callTool", "callDestructiveTool"] as const)("keeps %s successful when result storage fails", async (method) => {
+    const store = memoryStorage();
+    const storage = { ...store, set: vi.fn(async (key: string, value: string, opts?: { ttlSeconds?: number }) => {
+      if (key.includes("result:")) throw new Error("KV PUT failed: 503 Service Temporarily Unavailable secret");
+      await store.set(key, value, opts);
+    }) };
+    const warn = vi.fn();
+    const call = vi.fn(async () => "x".repeat(4_000));
+    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: method === "callTool" } }], call });
+    const target = activitySink();
+    const mt = createMetaTools(makeRegistry([connector], { storage, maxResultBytes: 1_000, logger: { ...silentLogger, warn } }), BASE, { activity: target.activity });
+    for (const resultMode of ["mcp", "value"] as const) {
+      const result = await mt[method]({ address: "large.read", resultMode });
+      expect(result.isError).toBeFalsy();
+      expect(JSON.stringify(result)).toContain("Paging is unavailable");
+      expect(JSON.stringify(result)).not.toContain("resultId");
+      expect(JSON.stringify(result)).not.toContain("KV PUT");
+      if (resultMode === "value") expect(textOf(result)).toMatchObject({ ok: true });
+    }
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(target.events).toHaveLength(2);
+    expect(target.events.every((event) => event.outcome === "success")).toBe(true);
+    expect(warn.mock.calls.filter(([line]) => line === "[connecta] result paging unavailable")).toHaveLength(2);
+  });
+
+  it("never retries result processing after a completed downstream call", async () => {
+    const reg = makeRegistry([calcConnector]);
+    const outcome = await new InvocationService(reg, new CatalogService(reg, BASE)).invoke("calc.add", { a: 1, b: 2 }, {
+      source: "call_tool",
+      processResult: () => { throw new Error("503 temporarily unavailable secret"); },
+    });
+    expect(outcome).toMatchObject({ ok: false, error: { code: "result_processing_failed", retryable: false } });
+    expect(JSON.stringify(outcome)).not.toContain("secret");
+  });
+
+  it.each(["mcp", "value"] as const)("bounds a 120 KB MCP error in %s mode", async (resultMode) => {
+    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] }) });
+    const result = await createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), BASE).callTool({ address: "remote.read", resultMode });
+    expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThanOrEqual(1_000);
+    expect(JSON.stringify(result)).toContain("…");
+    expect(() => unwrapMcpResult("mcp", { isError: true, content: [{ type: "text", text: "x".repeat(120_000) }] })).toThrow(/^x{512}…$/);
+  });
+
+  it.each([null, 7, [1, 2], { answer: 42 }].map((value) => [value]))("preserves a structured MCP value %j without a text mirror", async (value) => {
+    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ content: [], structuredContent: value }) });
+    const mt = createMetaTools(makeRegistry([connector]), BASE);
+    expect((await mt.callTool({ address: "remote.read" })).content).toEqual([{ type: "text", text: JSON.stringify(value) }]);
+    expect(textOf(await mt.callTool({ address: "remote.read", resultMode: "value" }))).toMatchObject({ ok: true, data: value });
+  });
+
+  it("guards synthesized structured text and preserves existing text", async () => {
+    let nativeText = false;
+    const connector = connectorWith({ id: "remote", kind: "mcp", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => ({ content: nativeText ? [{ type: "text", text: "native" }] : [{ type: "image", data: "AA==", mimeType: "image/png" }], structuredContent: { large: "x".repeat(4_000) } }) });
+    const mt = createMetaTools(makeRegistry([connector], { maxResultBytes: 1_000 }), BASE);
+    const result = await mt.callTool({ address: "remote.read" });
+    expect(JSON.stringify(result)).toContain("resultId");
+    expect(JSON.stringify(result).length).toBeLessThan(2_000);
+    nativeText = true;
+    expect((await mt.callTool({ address: "remote.read" })).content).toEqual([{ type: "text", text: "native" }]);
+  });
+
+  it.each(["result", "authorization", "skill", "connector skill", "search"])(
+    "bounds caller-authored %s names in refusals",
+    async (kind) => {
+      const mt = createMetaTools(
+        makeRegistry([calcConnector], { maxResultBytes: 1_000 }), BASE,
+      );
+      const huge = "x".repeat(50_000);
+      const result = await (kind === "result" ? mt.getResult({ id: huge })
+        : kind === "authorization" ? mt.authorizeConnector({ connector: huge })
+        : kind === "skill" ? mt.skills({ name: huge })
+        : kind === "connector skill" ? mt.skills({ name: `connector:${huge}` })
+        : mt.searchTools({ query: "read", connector: huge }));
+      expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(1_000);
+      expect(result.isError).toBe(true);
+    },
+  );
+
+  it("maps result read failures to unavailable", async () => {
+    const store = memoryStorage();
+    const mt = createMetaTools(makeRegistry([], { storage: { ...store, get: async () => { throw new Error("storage secret"); } } }), BASE);
+    const result = await mt.getResult({ id: "missing" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatchObject({ error: { code: "unavailable" } });
+    expect(JSON.stringify(result)).not.toContain("secret");
+  });
+
+  it("includes a hanging catalog load in the per-call deadline", async () => {
+    vi.useFakeTimers();
+    try {
+      const call = vi.fn();
+      const connector = connectorWith({ id: "hung", kind: "api", tools: () => new Promise(() => {}), call });
+      const mt = createMetaTools(makeRegistry([connector]), BASE);
+      const pending = mt.callTool({ address: "hung.read", timeoutMs: 100, resultMode: "value" });
+      await vi.advanceTimersByTimeAsync(100);
+      expect(textOf(await pending)).toMatchObject({ ok: false, error: { code: "timeout" } });
+      expect(call).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["admission", "connector"])(
+    "releases the permit when the deadline expires during %s",
+    async (stage) => {
+      vi.useFakeTimers();
+      try {
+        let enter!: () => void;
+        const entered = new Promise<void>((resolve) => { enter = resolve; });
+        const call = vi.fn(() => {
+          enter();
+          return new Promise(() => {});
+        });
+        const connector = connectorWith({
+          id: "limited",
+          kind: "api",
+          callAdmission: { rules: [{ maxConcurrency: 1 }] },
+          tools: [{ name: "read", annotations: { readOnlyHint: true } }],
+          call,
+        });
+        const reg = makeRegistry([connector]);
+        const held = stage === "admission"
+          ? await reg.admitCall("limited", { toolName: "read", args: {} })
+          : undefined;
+        if (stage === "admission") {
+          const admit = reg.admitCall.bind(reg);
+          vi.spyOn(reg, "admitCall").mockImplementation((...args) => {
+            const pendingPermit = admit(...args);
+            enter();
+            return pendingPermit;
+          });
+        }
+        const pending = createMetaTools(reg, BASE).callTool({
+          address: "limited.read", timeoutMs: 100, resultMode: "value",
+        });
+        await entered;
+        await vi.advanceTimersByTimeAsync(100);
+        expect(textOf(await pending)).toMatchObject({
+          ok: false, error: { code: "timeout" },
+        });
+        held?.release();
+        expect(reg.callAdmissionSnapshot().limited).toMatchObject({
+          active: 0, queued: 0,
+        });
+        expect(call).toHaveBeenCalledTimes(stage === "admission" ? 0 : 1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it("does not restart the deadline after catalog resolution", async () => {
+    vi.useFakeTimers();
+    try {
+      let releaseCatalog!: () => void;
+      const ready = new Promise<void>((resolve) => { releaseCatalog = resolve; });
+      let enter!: () => void;
+      const entered = new Promise<void>((resolve) => { enter = resolve; });
+      const call = vi.fn(() => {
+        enter();
+        return new Promise(() => {});
+      });
+      const connector = connectorWith({
+        id: "slow",
+        kind: "api",
+        tools: async () => {
+          await ready;
+          return [{ name: "read", annotations: { readOnlyHint: true } }];
+        },
+        call,
+      });
+      const pending = createMetaTools(makeRegistry([connector]), BASE).callTool({
+        address: "slow.read", timeoutMs: 100, resultMode: "value",
+      });
+      await vi.advanceTimersByTimeAsync(60);
+      releaseCatalog();
+      await entered;
+      await vi.advanceTimersByTimeAsync(40);
+      expect(textOf(await pending)).toMatchObject({
+        ok: false, durationMs: 100, error: { code: "timeout" },
+      });
+      expect(call).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
 });

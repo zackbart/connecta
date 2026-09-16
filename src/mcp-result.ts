@@ -1,3 +1,4 @@
+import { boundedEchoText } from "./errors.js";
 import type { Connector } from "./types.js";
 
 interface McpishResult {
@@ -28,9 +29,9 @@ export function unwrapMcpResult(
       .filter((c) => c.type === "text")
       .map((c) => c.text ?? "")
       .join("\n");
-    throw new Error(text || "Tool call failed");
+    throw new Error(boundedEchoText(text || "Tool call failed"));
   }
-  if (r.structuredContent != null) return r.structuredContent;
+  if (r.structuredContent !== undefined) return r.structuredContent;
   if (content.length > 0 && content.every((c) => c.type === "text")) {
     const text = content.map((c) => c.text ?? "").join("\n");
     try {

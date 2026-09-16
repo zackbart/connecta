@@ -1355,7 +1355,7 @@ describe("search_tools", () => {
     ).toEqual({ name: "read_record_0", recordId: "rec_123" });
 
     const exactResult = await mt.searchTools({
-      limit: 8,
+      limit: 6,
       fullDescriptions: true,
       includeSchemas: "json",
     });
@@ -1807,4 +1807,13 @@ describe("compact schema rendering", () => {
       MAX_COMPACT_DISCOVERY_SCHEMA_BYTES,
     );
   });
+});
+
+
+it("counts both discovery copies and their JSON escaping against the ceiling", async () => {
+  const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", description: "x".repeat(140_000), annotations: { readOnlyHint: true } }] });
+  const result = await createMetaTools(makeRegistry([connector]), BASE).searchTools({ query: "", fullDescriptions: true });
+  expect(result.isError).toBe(true);
+  expect(textOf(result)).toMatchObject({ error: { code: "result_too_large" } });
+  expect(new TextEncoder().encode(JSON.stringify(result)).length).toBeLessThan(MAX_DISCOVERY_RESULT_BYTES);
 });

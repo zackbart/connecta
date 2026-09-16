@@ -43,6 +43,15 @@ permissions default to none. Saving, testing, replacing, or removing a value
 never returns it. The vault is read for each call, so a saved replacement takes
 effect without restarting the deployment.
 
+## File storage
+
+`fileStorage` is a single-process development store. It loads one snapshot and
+rewrites the whole state synchronously on each mutation, including result
+stashes; it does not coordinate concurrent processes. Expired entries are
+removed before that write. Large direct-call results therefore increase both
+retained state and write cost. Use `execute_code` to reduce read-only results
+before returning them, and choose a storage adapter suited to the deployment.
+
 ## Storage continuity
 
 This module extraction changes no encrypted record keys, owner partitions, or

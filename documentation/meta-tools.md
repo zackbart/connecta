@@ -206,18 +206,43 @@ removing or summarizing the text copy is deferred until host-forwarding
 measurements demonstrate that supported clients do not need it.
 
 Plain-text guidance and errors remain text-only. A downstream MCP tool's native
-content blocks also pass through unchanged when `call_tool` uses MCP result
-mode; they are not a duplicated Connecta object result. Newly stashed JSON and
+content blocks pass through when `call_tool` uses MCP result mode. When no
+text block exists and `structuredContent` is present, Connecta appends a text
+block containing its compact JSON, then applies the same content size guard.
+This preserves structured-only results, including `null`, arrays, and scalars.
+An existing text mirror stays unchanged; Connecta does not add another copy. Newly stashed JSON and
 downstream content envelopes use compact serialization, so `get_result` byte
 offsets and totals refer to that exact compact text.
 
-A `call_tool` truncation notice carries both the historical `resultId` and an
+A successfully stashed `call_tool` truncation notice carries both the historical `resultId` and an
 exact `nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The
 handle is therefore
 directly actionable without copying an identifier out of prose. Program results
 and oversized discovery responses carry no such route — paging a program's
 return value is a refused shape, because a program can shrink anything before
 it returns.
+
+A failed stash write cannot undo a downstream success. Both direct call tools
+return a truncated preview where usable, with a paging-unavailable notice and
+no `resultId` or paging action. Activity records success; the operator logger
+receives a fixed warning with the connector and tool, without storage error
+prose. For read-only work, reduce the result inside `execute_code`; repeating
+an approved write is not a way to recover its output. Other result-processing
+failures use a fixed `result_processing_failed` message and are never retryable.
+
+Downstream MCP `isError` text is bounded at its source to 512 UTF-8 bytes plus
+an `…` marker. Error framing may shorten it further to fit the call's result
+cap, counting JSON escaping and both copies in value mode.
+
+The top-level discovery ceiling is 256,000 UTF-8 bytes for the serialized tool
+result, including text, `structuredContent`, and JSON escaping. Measuring only
+one copy would advertise half the bytes the adapter actually returns.
+
+A per-call `timeoutMs` covers catalog resolution, admission, and connector
+execution with one deadline. The admission queue's own timeout may expire
+sooner, but it cannot extend the call deadline. Result processing happens after
+that deadline ends, because a completed downstream call must not turn into a
+retryable timeout while Connecta prepares its response.
 
 ## Lexical discovery
 
@@ -372,6 +397,12 @@ recovery query, each of which lands in both the text content and
 1 KB result cap. Dropping it is not an option the way dropping arguments is:
 the address is the thing being corrected, a clipped one still identifies the
 mistake, and a short one — every real one — comes back exact and untagged.
+
+Unknown `get_result.id`, `authorize_connector.connector`, and `skills.name`
+echoes use the same 512-byte clamp. `search_tools.connector` instead rejects
+values over 512 UTF-8 bytes with `invalid_args` before catalog lookup, so a
+clipped scope can never select a different connector. A failed result-storage
+read returns typed `unavailable` without exposing backend error text.
 
 `call_destructive_tool` accepts an optional
 `reason` of at most 500 characters for the host's human approval view. It is
