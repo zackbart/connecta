@@ -287,6 +287,7 @@ clauses are [Emitted output](#emitted-output) (`M1`–`M10`).
 Both executor bridges reduce a rejected host call to `new Error(message)`. Connecta restores the typed failure in a trusted prelude with a per-execution authenticated frame (`X11`), without turning the rejection into a returned value.
 `message` remains human text, capped at 2,000 JSON-serialized characters including quotes and an `…` marker when clipped. `code` and `retryable` are the stable branch fields; `details` carries the host classification. The complete details object fits 3,700 serialized characters. If optional recovery metadata would exceed that bound, it is omitted whole, preserving `code`, `message`, `retryable`, and `retryAfterMs`; a clipped recovery address or argument would describe a different call. This covers `call`, `search`, `describe`, `emit`, and the host-call budget.
 Program-authored errors stay untyped, and code must never parse error prose.
+An `unavailable` classification may include optional `details.host` as an HTTP(S) origin of at most 253 UTF-8 bytes and `details.code` as a validated network errno, undici transport code, or `timeout` of at most 32 bytes; these diagnostics never enter activity records.
 
 **E2.** The taxonomy: `retryable` is what connecta reports, `Y3` what a program may do.
 
@@ -300,7 +301,7 @@ Program-authored errors stay untyped, and code must never parse error prose.
 | `not_found` | the downstream answered and the resource is not there — the one code that says skip this id rather than stop, raised only where the provider tells absence from a permission gap ([H11](./provider-conventions.md#h11--errors-are-mapped-to-what-the-caller-does-next)) | false |
 | `input_required_unsupported` | a downstream asked for mid-call input | false |
 | `rate_limited` | the downstream reported a rate limit | true |
-| `unavailable` | the downstream is down or unreachable | true |
+| `unavailable` | the downstream is down or unreachable; optional sanitized `details.host` and `details.code` describe the transport failure without paths, queries, credentials, or provider prose | true |
 | `timeout` | the per-call deadline (`execute.hostCallTimeoutMs`, default 15 s) expired | true |
 | `cancelled` | the run ended while this call was in flight (`E5`) | false |
 | `connector_call_failed` | anything else the connector threw | per message |

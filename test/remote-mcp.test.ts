@@ -1206,3 +1206,35 @@ describe("downstream tool error classification", () => {
     await connector.closeScope!(context);
   });
 });
+
+
+describe("remote MCP transport diagnostics", () => {
+  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"].flatMap(code =>
+    ["connect", "call"].map(phase => [code, phase]),
+  ))("preserves sanitized %s diagnostics during %s through the SDK", async (code, phase) => {
+    vi.stubGlobal("fetch", async (_input: unknown, init: RequestInit = {}) => {
+      if (phase === "call") {
+        if (init.method !== "POST") return new Response(null, { status: 405 });
+        const request = JSON.parse(String(init.body));
+        if (request.method === "notifications/initialized") return new Response(null, { status: 202 });
+        if (request.method === "initialize") return Response.json({ jsonrpc: "2.0", id: request.id,
+          result: { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: "test", version: "1" } } });
+      }
+      throw code === "AbortError" ? new DOMException("deadline", "AbortError")
+        : new TypeError("fetch failed", { cause: { code } });
+    });
+    const connector = remoteMcp("down", {
+      url: "https://user:secret@downstream.test:8443/private?token=secret",
+      versionNegotiation: "legacy",
+    });
+    const context = ctx();
+    try {
+      const error = await connector.callTool("read", {}, context).catch(error => error);
+      expect(classifyCallError(error)).toMatchObject({ code: "unavailable", retryable: true,
+        details: { host: "https://downstream.test:8443", code: code === "AbortError" ? "timeout" : code } });
+      expect(JSON.stringify(classifyCallError(error))).not.toMatch(/secret|private|user/);
+    } finally {
+      await connector.closeScope!(context);
+    }
+  });
+});

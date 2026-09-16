@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
+import { guardedFetch } from "../src/connectors/guarded-fetch.js";
+import { createMetaTools } from "../src/meta-tools.js";
 import { api } from "../src/connectors/api.js";
-import { ConnectorCallError } from "../src/errors.js";
+import { classifyCallError, ConnectorCallError } from "../src/errors.js";
 import type { Logger } from "../src/types.js";
 import { connectorContext as ctx } from "./fixtures/misc.js";
-import { required, silentLogger } from "./helpers.js";
+import { activitySink, makeRegistry, required, silentLogger } from "./helpers.js";
 
 const BASE = "https://connecta.test";
 
@@ -323,4 +325,63 @@ describe("api() construction contract", () => {
     const c = construct();
     expect(required(c.staticTools?.[0]).annotations).toEqual({ readOnlyHint: false, destructiveHint: true });
   });
+});
+
+
+describe("api() transport diagnostics", () => {
+  it.each(["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "AbortError"])("classifies structured %s without inventing a downstream host", async (code) => {
+    const connector = api("down", { tools: [{ name: "read", description: "Read downstream",
+      annotations: { readOnlyHint: true }, handler: async () => {
+        throw code === "AbortError" ? new DOMException("deadline", "AbortError")
+          : new TypeError("fetch failed", { cause: { code, hostname: "private.example" } });
+      },
+    }] });
+    const error = await connector.callTool("read", {}, ctx()).catch(error => error);
+    expect(classifyCallError(error)).toMatchObject({ code: "unavailable", retryable: true,
+      details: { code: code === "AbortError" ? "timeout" : code } });
+    expect(classifyCallError(error).details).not.toHaveProperty("host");
+  });
+
+  it("preserves sanitized typed details and never types provider prose", async () => {
+    const typed = new ConnectorCallError("unavailable", "unreachable", {
+      details: { host: "https://user:secret@example.com:8443/private?token=secret", code: "ENOTFOUND" },
+    });
+    for (const cause of [typed, new Error("ECONNREFUSED timeout"), new TypeError("bad handler")]) {
+      const connector = api("down", { tools: [{ name: "read", description: "Read downstream",
+        annotations: { readOnlyHint: true }, handler: () => { throw cause; },
+      }] });
+      const error = await connector.callTool("read", {}, ctx()).catch(error => error);
+      expect(error).toBe(cause);
+    }
+    expect(classifyCallError(typed).details).toEqual({ host: "https://example.com:8443", code: "ENOTFOUND" });
+  });
+});
+
+
+it("serves guarded API diagnostics in value-mode tool results while activity stays payload-free", async () => {
+  const fetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(
+    new TypeError("https://user:secret@api.example/private?secret", { cause: { code: "ECONNREFUSED" } }),
+  );
+  const send = guardedFetch({ provider: "Example", baseUrl: "https://api.example/v1",
+    maxResponseBytes: 1024, authenticate: () => ({}),
+  });
+  const connector = api("example", { tools: [{ name: "read", description: "Read example",
+    annotations: { readOnlyHint: true },
+    handler: (_args, context) => send({ method: "GET", path: "/private" }, context, response => response.json()),
+  }] });
+  const sink = activitySink();
+  const registry = makeRegistry([connector]);
+  try {
+    const result = await createMetaTools(registry, BASE, { activity: sink.activity }).callTool({ address: "example.read", resultMode: "value" });
+    expect(result.structuredContent).toMatchObject({ ok: false, error: {
+      code: "unavailable", retryable: true,
+      details: { host: "https://api.example", code: "ECONNREFUSED" },
+    } });
+    expect(JSON.stringify(result)).not.toMatch(/secret|private|user/);
+    expect(sink.events).toHaveLength(1);
+    expect(sink.events[0]).toMatchObject({ errorCode: "unavailable" });
+    expect(JSON.stringify(sink.events)).not.toMatch(/api\.example|ECONNREFUSED|details|secret/);
+  } finally {
+    fetch.mockRestore();
+  }
 });

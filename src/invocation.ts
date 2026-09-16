@@ -311,6 +311,8 @@ export class InvocationService {
             tool: target.toolName,
             source: context.source,
             code: details.code,
+            // Sanitized transport diagnostics (origin and errno only, #539).
+            ...(details.details ? { details: details.details } : {}),
             attempts,
             durationMs: Date.now() - started,
             message: String(details.message ?? "").slice(0, 300),

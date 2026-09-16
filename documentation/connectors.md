@@ -188,6 +188,21 @@ downstream wrote them, and an unannotated or contradictory one stays
 fail-closed onto `call_destructive_tool`. The contract binds the surfaces we
 write, not the catalogs we relay.
 
+An `unavailable` failure can carry `details.host` and `details.code` in its
+classified error. `host` is an HTTP(S) origin, including a non-default port,
+with no userinfo, path, query, or fragment and at most 253 UTF-8 bytes. `code`
+is an allowlisted network errno, an undici transport code, or `timeout`, at
+most 32 bytes. Invalid or oversized fields are omitted, never clipped.
+`remoteMcp()` and the guarded transport know the failed fetch destination;
+`api()` can classify a handler's structured runtime code but cannot recover
+its destination from `ctx.baseUrl`, which names Connecta itself. A handler can
+supply a known URL in a typed `ConnectorCallError` and the constructor reduces
+it to an origin. AbortError and TimeoutError become diagnostic `timeout`;
+workerd outbound denial supplies no errno, so a fetch boundary reports the
+known origin alone. No provider prose supplies a code or retryability.
+These diagnostics belong in tool failures and the bounded warning log, never
+in payload-free activity records.
+
 ## The guarded fetch transport
 
 Every hand-written HTTP surface re-derives the same safety machinery, and two
@@ -237,6 +252,9 @@ What it owns is mechanical and provider-independent:
   as an absurd response is a fact about the API, not about HTTP. A declared
   `Content-Length` past the ceiling fails before a byte is read, and a
   streaming body is abandoned at the ceiling rather than buffered past it.
+  Without a body stream, text is measured in UTF-8 bytes before it is accepted;
+  JSON is parsed from that same bounded text. Such runtimes still buffer their
+  read internally, but cannot return an oversized body as a successful result.
 - **Normalization.** An unreachable provider becomes a retryable `unavailable`
   instead of whatever `TypeError` the runtime threw, and `ctx.signal` rides
   every request. `Retry-After` hints accept delta-seconds and HTTP dates;

@@ -19,7 +19,12 @@ import {
   OAuthRefreshCoordinator,
 } from "../auth/downstream-oauth.js";
 import { MAX_CATALOG_TOOLS } from "../catalog-limits.js";
-import { boundedEchoText, ConnectorCallError, msg } from "../errors.js";
+import {
+  boundedEchoText,
+  ConnectorCallError,
+  msg,
+  unavailableCallError,
+} from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
 import type {
   Connector,
@@ -467,10 +472,16 @@ export function redirectSafeFetch(
     let hops = 0;
 
     while (true) {
-      const response = await baseFetch(current, {
-        ...init,
-        redirect: "manual",
-      });
+      let response: Response;
+      try {
+        response = await baseFetch(current, {
+          ...init,
+          redirect: "manual",
+        });
+      } catch (cause) {
+        if (cause instanceof ConnectorCallError) throw cause;
+        throw unavailableCallError(cause, current.href);
+      }
       if (!REDIRECT_STATUSES.has(response.status)) return response;
 
       const location = response.headers.get("location");
