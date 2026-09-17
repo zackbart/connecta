@@ -2075,4 +2075,85 @@ describe("bounded result stash", () => {
       expect(encode.mock.calls.every(([text]) => (text?.length ?? 0) < 2048)).toBe(true);
     } finally { encode.mockRestore(); }
   });
+
+  // One page, two results whose sizes differ by a factor of four. Counting the
+  // characters storage hands back is structural: it fails if a page's read grows
+  // with the stash rather than with the page, however fast the machine is.
+  it("reads the same bytes for one page whatever the stored result's size", async () => {
+    const pageRead = async (repeats: number) => {
+      // Ten UTF-8 bytes per repeat, plus the two quotes JSON adds around it.
+      const payload = "aé界😀".repeat(repeats);
+      const inner = memoryStorage();
+      let chars = 0;
+      const storage = { ...inner, async get(key: string) {
+        const value = await inner.get(key);
+        chars += value?.length ?? 0;
+        return value;
+      } };
+      const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+      const root = makeRegistry([connector], { maxResultBytes: 100, storage });
+      const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
+      // Chunks widen rather than multiply past a point, so no result turns into
+      // an unbounded pile of keys — and of writes — on the way in.
+      expect((await inner.list!("results:result:")).length).toBeLessThanOrEqual(33);
+      chars = 0;
+      // One byte past JSON's opening quote plus 10,000 whole repeats: a page
+      // deep inside both results, at the same byte, from a different chunk index.
+      const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset: 100_001, maxBytes: 1024 })) as { text: string; totalBytes: number };
+      expect(page.totalBytes).toBe(repeats * 10 + 2);
+      expect(page.text.startsWith("aé界😀")).toBe(true);
+      expect(page.text).not.toContain("�");
+      return { chars, text: page.text };
+    };
+    const small = await pageRead(30_000); // 300 KB stored
+    const large = await pageRead(120_000); // 1.2 MB stored, same page
+    expect(large.text).toBe(small.text);
+    // Identical but for the decimal digits `totalBytes` adds to the header, and
+    // a couple of chunks rather than the megabyte behind them.
+    expect(large.chars - small.chars).toBeLessThan(8);
+    expect(large.chars).toBeLessThan(200_000);
+  });
+
+  it("reassembles a chunked stash byte-exactly across stored chunk boundaries", async () => {
+    const payload = "aé界😀".repeat(30_000); // 300 KB: several stored chunks
+    const connector = connectorWith({ id: "large", kind: "api", tools: [{ name: "read", annotations: { readOnlyHint: true } }], call: async () => payload });
+    const root = makeRegistry([connector], { maxResultBytes: 100 });
+    const id = notice(await createMetaTools(root, BASE).callTool({ address: "large.read" })).resultId;
+    const full = JSON.stringify(payload); // what was stashed, quotes included
+    // A page size coprime with the chunk width lands boundaries mid-chunk and
+    // mid-character, which is where a byte-range reader would lose or dupe bytes.
+    let text = "";
+    let offset: number | undefined = 0;
+    while (offset !== undefined) {
+      const page = textOf(await createMetaTools(root, BASE).getResult({ id, offset, maxBytes: 7_777 })) as { text: string; nextOffset?: number; totalBytes: number };
+      expect(page.totalBytes).toBe(300_002);
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    expect(text).toBe(full);
+  });
+
+  // A deployment that upgrades mid-TTL still holds entries in the shapes that
+  // came before chunking: v1's single inline envelope, and raw text before that.
+  // Neither may decode into something other than what was stashed.
+  it("still pages entries stashed in the pre-chunk formats", async () => {
+    const stashed = JSON.stringify("aé界😀".repeat(400)); // 4,002 bytes
+    const bytes = new TextEncoder().encode(stashed);
+    const storage = memoryStorage();
+    await storage.set("results:result:inline",
+      `connecta-result-v1:${bytes.length}:${btoa(String.fromCharCode(...bytes))}`);
+    await storage.set("results:result:raw", stashed);
+    const mt = createMetaTools(makeRegistry([calcConnector], { storage }), BASE);
+    for (const id of ["inline", "raw"]) {
+      let text = "";
+      let offset: number | undefined = 0;
+      while (offset !== undefined) {
+        const page = textOf(await mt.getResult({ id, offset, maxBytes: 777 })) as { text: string; nextOffset?: number; totalBytes: number };
+        expect(page.totalBytes).toBe(4_002);
+        text += page.text;
+        offset = page.nextOffset;
+      }
+      expect(text).toBe(stashed);
+    }
+  });
 });

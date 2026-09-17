@@ -48,7 +48,11 @@ effect without restarting the deployment.
 Direct-call result paging uses the same KV interface with a 15-minute TTL.
 `results.maxStashBytes` defaults to 8 MiB of stored paging envelopes, including
 base64 overhead; `results.maxStashEntries` defaults to 64. Both are
-non-negative safe integers, and zero disables stashing. One registry accounts
+non-negative safe integers, and zero disables stashing. A result wider than one
+48 KiB chunk is stored across several keys — `result:<id>` plus
+`result:<id>#<n>`, at most 33 of them — so `get_result` reads only the chunks a
+page covers. That is still one stash entry charged its total envelope length;
+chunking is a read-cost decision, not a capacity one. One registry accounts
 for all subjects and reserves capacity for pending writes. A full stash keeps
 the successful call's preview and returns a paging-unavailable notice, without
 a result id. Expired entries are deleted on later stash attempts before their

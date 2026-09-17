@@ -242,11 +242,14 @@ Keep subject ids distinct within that namespace. An explicit principal is the
 fallback subject when neither id is supplied. Open deployments and auth
 providers that supply no identity share one partition.
 
-New entries store UTF-8 bytes in a base64 envelope. After the KV read,
-`get_result` decodes only the requested byte range and a few boundary bytes;
-it does not encode the full text on every page. Storage still reads one full
-value. Pre-upgrade raw-text entries remain readable during their TTL using
-one full encoding per page. Offsets and `totalBytes` always describe the
+New entries store UTF-8 bytes in a base64 envelope split across storage keys,
+48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
+occupies more than 33 keys, because every chunk is also a write. `get_result`
+reads and decodes only the chunks a page covers plus a few boundary bytes, so
+paging a 1.2 MB result costs the same per page as paging a 300 KB one; it
+neither encodes nor reads the whole result per page. Pre-upgrade entries remain readable during their TTL — the earlier
+single-key envelope reads one full value per page, and raw text before that
+also pays one full encoding. Offsets and `totalBytes` always describe the
 original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.

@@ -2,6 +2,19 @@
 
 All notable changes to this package are documented here.
 
+## Unreleased
+
+### Fixed
+
+- **`get_result` paging cost.** A stashed result is stored as base64 chunks
+  under one key each — 48 KiB of text per chunk, wider for a result over
+  roughly 1.5 MB so the key and write count stays bounded — and a page reads
+  and decodes only the chunks it covers. Paging a large result no longer reads the whole stash — let alone
+  re-encodes it — once per page, so cost tracks the page rather than the total.
+  Offsets, `nextOffset`, `totalBytes`, and character-boundary alignment are
+  unchanged, and entries stashed in the previous formats stay readable for the
+  rest of their 15-minute TTL (#540).
+
 ## 0.24.3 — 2026-09-16
 
 A bug-fix release from a full audit of the execution path, invocation, catalog
