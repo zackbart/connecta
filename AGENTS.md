@@ -62,7 +62,8 @@ when touching packaging, dependencies, or exports.
 
 `connecta init [directory]` is the golden path. It copies `templates/node/`,
 pins the generated deployment to the CLI package's exact version, restores the
-template `.gitignore`, and refuses to merge into an existing path.
+template `.gitignore` and the `CLAUDE.md` symlink, and refuses to merge into an
+existing path.
 `connecta doctor` verifies a running deployment's health, executor, and exact
 seven-tool surface. The template carries its own `Dockerfile` and
 `docker-compose.yml`, so the generated project is the container: setup changes

@@ -4,6 +4,7 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import {
   copyFile,
+  lstat,
   mkdtemp,
   readdir,
   readFile,
@@ -233,6 +234,7 @@ try {
     "ethos.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
+    "templates/node/AGENTS.md",
     "templates/node/Dockerfile",
     "templates/node/docker-compose.yml",
     "templates/node/package.json",
@@ -545,6 +547,8 @@ try {
   for (const generated of [
     ".env.example",
     ".gitignore",
+    "AGENTS.md",
+    "CLAUDE.md",
     "src/index.ts",
     "src/file-activity.ts",
     "tsconfig.json",
@@ -552,6 +556,14 @@ try {
     if (!existsSync(join(work, "generated-deployment", generated))) {
       throw new Error(`Initializer is missing ${generated}`);
     }
+  }
+  if (
+    process.platform !== "win32" &&
+    !(await lstat(
+      join(work, "generated-deployment", "CLAUDE.md"),
+    )).isSymbolicLink()
+  ) {
+    throw new Error("Initializer did not link CLAUDE.md to AGENTS.md");
   }
 
   // Substitute the tarball under test for the registry pin, then exercise the

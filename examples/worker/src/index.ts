@@ -30,7 +30,7 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  *      Dynamic Client Registration. Its Allowed redirect URIs must include
  *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
  *      https://chatgpt.com/connector_platform_oauth_redirect and
- *      https://chatgpt.com/connector/oauth/* forms (see ../README.md).
+ *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
  *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.

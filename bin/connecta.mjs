@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 
 import {
+  copyFile,
   cp,
   lstat,
   mkdtemp,
   readFile,
   rename,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -59,12 +61,20 @@ async function init() {
       recursive: true,
     });
 
-    // npm excludes .gitignore files from packed dependencies. Restore it
-    // explicitly in the generated project.
+    // npm excludes .gitignore files and symlinks from packed dependencies.
+    // Restore both conventions explicitly in the generated project.
     await writeFile(
       join(stage, ".gitignore"),
       ".connecta-state.json\n.connecta-activity.jsonl\n.env\nnode_modules/\n",
     );
+    await rm(join(stage, "CLAUDE.md"), { force: true });
+    try {
+      await symlink("AGENTS.md", join(stage, "CLAUDE.md"));
+    } catch {
+      // Some Windows environments disallow symlink creation. A materialized
+      // fallback preserves discovery even though AGENTS.md remains canonical.
+      await copyFile(join(stage, "AGENTS.md"), join(stage, "CLAUDE.md"));
+    }
 
     const rootPackage = JSON.parse(
       await readFile(join(packageRoot, "package.json"), "utf8"),

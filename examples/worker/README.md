@@ -93,6 +93,10 @@ Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/con
 owns the dashboard/API steps; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 owns client registration, redirect allowlists, and token lifetimes.
 
+[`AGENTS.md`](./AGENTS.md) repeats the callback invariant for coding agents
+working in a copied deployment. Do not remove the entries there when changing
+the Access policy or application.
+
 The checked-in `access.dev` block gives `wrangler dev` a local operator
 identity. Remove the block to test the missing-Access refusal. It has no effect
 on a deployed Worker's production identity.
