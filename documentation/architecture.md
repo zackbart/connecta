@@ -4,8 +4,10 @@ One Web-standard `fetch(request) => Promise<Response>` handler, a long-lived
 registry behind it, and a strict rule about what may be imported. Everything
 else in this repository is a detail of those three things.
 
-Read [`ethos.md`](../ethos.md) first. This guide says how the shape it
-describes is actually assembled, and where a change is likely to break it.
+Read [`ethos.md`](../ethos.md) first; this guide says how the shape it describes
+is assembled and where each subsystem lives. The surface itself belongs to
+[meta-tools](./meta-tools.md), [code mode](./code-mode.md), and
+[inbound auth](./auth.md).
 
 ## The two lifetimes
 
@@ -13,234 +15,235 @@ Almost every bug in this codebase is a lifetime mistake, so the split is worth
 stating before anything else.
 
 **Per isolate, built once.** `createConnecta(config)` returns
-`{ fetch, registry, close }`. The `Registry` owns the connector set, address
-resolution, catalog caches, observed output schemas, connector health, and the
-per-connector call limiters. It is constructed once and lives as long as the
-isolate or process —
-on Workers that means a lazy module-scope singleton, which is why both
-deployment shapes build it outside the request handler.
+`{ fetch, registry, close }` (`src/index.ts`). The `Registry` owns the connector
+set, address resolution, catalog caches, observed output schemas, connector
+health, and the per-connector call limiters. It is built once and lives as long
+as the isolate — on Workers a lazy module-scope singleton, which is why both
+deployment shapes construct it outside the request handler.
 
 An OAuth `remoteMcp()` connector also owns a runtime-local refresh completion
-gate. It coordinates credential mutation across concurrent request scopes but
-never shares their clients, transports, or responses, and never lets a follower
-cancel the owner. Every participant still awaits the refresh inside its own
-request lifetime; a cancelled follower leaves the shared owner untouched and
-removes only its own wait. The owner's request signal belongs to its token
-fetch. Cancelling that owner fails current joiners too because promoting one
-could replay a refresh token the authorization server already consumed.
-
-A valid token response is a consumed refresh token whether or not the owner
-survives to save it. The coordinator therefore keeps the accepted tokens on the
-flight, and when the owner fails after that response — cancelled, redirected
-to authorization, or invalidated — it persists the rotation on the host's own
-write, holds contenders behind the pending-mutation marker until that write
-lands, and hands them the saved rotation. No contender ever redeems the retired
-token again, and the marker can no longer outlive the write that clears it
-([#526](https://github.com/zackbart/connecta/issues/526)).
-
-The coordinator retains the owner's abort signal only through one temporary
-listener on the exact active refresh. Save, failure, cancellation, or
-generation retirement removes it along with the map entry. It never retains a
-token response, client, or transport. If cancellation lands after a valid
-response while its credential write is still running, a generation-keyed
-identity marker rejects new owners until that exact write finishes. The marker
-contains no promise and generation retirement removes it.
+gate (`src/auth/downstream-oauth.ts`). It coordinates credential mutation across
+concurrent request scopes while sharing no client, transport, or response, and
+never lets a follower cancel the owner. The subtle part is that a valid token
+response consumes the refresh token whether or not the owner survives to save it,
+so the accepted tokens live on the flight: cancelling the owner *before* a valid
+response fails the joiners, because promoting one could replay a token the
+authorization server already consumed, while cancelling it *after* one does not —
+the host persists the rotation on its own write, holds contenders behind a
+generation-keyed pending-mutation marker until that write lands, and hands them
+the saved rotation ([#526](https://github.com/zackbart/connecta/issues/526)).
 
 **Per request, and no longer.** The MCP server, its transport, downstream MCP
 clients, abort signals, and the connector scope a probe opens all belong to the
-request that created them. `Nothing request-bound survives a request` is an
-ethos invariant, not a style preference: a client retained across requests on
-Workers is a cross-request capability leak, and a promise awaited after the
-response is work the runtime may have already torn down. Deferred work has one
-sanctioned channel — `ctx.waitUntil`, threaded through `fetch(request, env,
-ctx)`. Best-effort activity writes use it. An agent read that already demanded
-an expired catalog refresh may also use it while serving a complete catalog
-inside its stale window. That refresh owns a new scope and deadline; it never
-carries the inbound scope or signal past the request.
-
-The registry is deliberately on the long side of that line and the MCP server
-deliberately on the short side. A fresh `McpServer` per request is what makes
-the deployment stateless: no sessions, no server push, no resumability, and
-scope resolved from the request rather than remembered.
+request that created them. `Nothing request-bound survives a request` is an ethos
+invariant, not a style preference: a client retained across requests on Workers
+is a cross-request capability leak, and a promise awaited after the response is
+work the runtime may already have torn down. Deferred work has one sanctioned
+channel, `ctx.waitUntil`, threaded through `fetch(request, env, ctx)` — activity
+writes use it, as does a stale-window catalog refresh, which owns a fresh scope
+and deadline rather than carrying the inbound one past the request. And a fresh
+`McpServer` per request is what makes the deployment stateless: no sessions, no
+server push, no resumability, scope resolved rather than remembered.
 
 ## Request lifecycle
 
-`src/server.ts` is the composition root. It checks MCP origins, upgrades the
-scheme when it must, runs the route table, then wraps whatever came back in
-security headers. Route *order* is the contract — several routes would behave
-differently if they were reachable in another order — so the table below is
-read top to bottom.
+`src/server.ts` is the composition root: MCP origin check, scheme upgrade, route
+table, security headers. Route *order* is the contract — several routes would
+behave differently if they were reachable in another order — so read the table
+top to bottom.
 
 | Order | Route | Notes |
 | --- | --- | --- |
-| 0 | MCP Origin check | `/mcp` and every `/mcp/` suffix reject a disallowed `Origin` with a fixed 403 before redirects, admission, auth, or preflight. `allowedOrigins` defaults to the configured public origin plus HTTP(S) loopback origins at any port. Requests without Origin are admitted. |
-| 0 | HTTPS upgrade | 308 to `publicUrl` when it is HTTPS and the request arrived over HTTP. Path and query are *assigned* onto the configured URL, never resolved against it, so a `//host` pathname cannot replace the deployment origin. `/health` is exempt: a loopback container probe must not depend on public DNS and TLS. `/ui` is canonicalized to `/` while upgrading. |
-| 0 | Cloudflare Access (Worker deployment, when enabled) | Edge admission before this route table. Managed OAuth owns its challenge and discovery metadata; an admitted direct invocation carries trusted identity in `ctx.access`. |
-| 1 | Mounted UI routes | The optional UI handles its shells, assets, data, details, and auth mutations before wildcard OPTIONS. Mutation routes refuse preflight rather than inheriting MCP CORS. No UI module means none of these routes. |
-| 2 | MCP preflight | Allowed `OPTIONS` on `/mcp` or any `/mcp/` suffix returns 204 without admission or auth. Reflect the allowed origin and requested valid `mcp-param-*` header names. |
-| 2 | Other `OPTIONS` | Auth metadata gets a chance, otherwise compatibility CORS preflight. |
+| 0 | MCP Origin check | A disallowed `Origin` on `/mcp*` is a fixed 403 before redirects, admission, auth, or preflight — costing no permit and no auth lookup. Originless requests are admitted. |
+| 0 | HTTPS upgrade | 308 to an HTTPS `publicUrl`, with path and query *assigned* onto it rather than resolved against it, so a `//host` pathname cannot replace the origin. `/health` is exempt: a loopback probe must not need public DNS. |
+| 0 | Cloudflare Access (Worker, when enabled) | Edge admission ahead of this table; an admitted invocation carries trusted identity in `ctx.access`. |
+| 1 | Mounted UI routes | Before wildcard OPTIONS, so mutation routes refuse preflight rather than inheriting MCP CORS. No UI module, no routes. |
+| 2 | MCP preflight | Allowed `OPTIONS` on `/mcp*`: 204 without admission or auth. |
+| 2 | Other `OPTIONS` | Auth metadata first, otherwise compatibility CORS preflight. |
 | 3 | `/.well-known/*` | Auth metadata, or 404. |
-| 4 | `/health` | Open payload-free health, executor, admission, and deployment metadata; connector drift uses stable short hashes and downstream admission sums shared and personal controllers without ids. Reserved routes reflect installed modules. |
-| 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state verification and personal ownership checks; independent of UI. |
-| 6 | `/mcp`, `/mcp/<pool>` | Origin check before admission, admission before auth, then a request-local MCP server. A pool path serves the declared pool intersected with the identity's own view; any undeclared suffix, including malformed names, a refusing grant, and a throwing grant return the same 404 status, body, and headers after auth. Grant lookup latency is not hidden; see [pools](./auth.md#pools). |
+| 4 | `/health` | Open and payload-free: health, executor, admission, and deployment metadata, with drift as stable short hashes. |
+| 5 | `/oauth/callback/<connectorId>` | Core downstream OAuth completion, state and personal-ownership checked, independent of the UI. |
+| 6 | `/mcp`, `/mcp/<pool>` | Admission, then auth, then a request-local MCP server. An undeclared pool, a refusing grant, and a throwing grant are one identical 404; see [pools](./auth.md#pools). |
 | 7 | Other paths | 404. Custom HTTP routes belong to the deployment. |
 
+Every response leaves through `withSecurityHeaders`, and the UI module adds a
+nonce-based script CSP and framing denial to its shells.
+`test/server-route-contracts.test.ts` pins the ordering and the exact refusal
+bodies; it exists because the ordering is invisible in any one file and a
+reordering reads like a harmless refactor.
 
-Every response leaves through `withSecurityHeaders`: `nosniff`, a no-referrer
-policy, HSTS on HTTPS, while the UI module adds a nonce-based script CSP and framing denial to its shells. `test/server-route-contracts.test.ts` pins this ordering
-and the exact refusal bodies; it exists because the ordering is invisible in
-any one file and a reordering reads like a harmless refactor.
+An admitted non-preflight `/mcp` request then takes five steps in
+`src/routes/mcp.ts`:
 
-`/mcp` first checks Origin, including on preflight. A disallowed browser origin
-costs no permit and no auth lookup. The explicit `allowedOrigins: "*"` escape
-hatch preserves open CORS; a list reflects only admitted origins and varies
-responses by Origin. An originless client needs no CORS allow-origin header.
-
-An admitted non-preflight request then takes six steps:
-
-1. **Admit.** One permit from the deployment-wide FIFO pool, taken before auth
-   so an unauthenticated flood costs a permit rather than a Clerk lookup
-   ([request admission](./request-admission.md)). The permit is held until the
-   response *body* completes, not until the handler returns.
+1. **Admit.** One permit from the deployment-wide pool, taken before auth so an
+   unauthenticated flood costs a permit rather than a Clerk lookup, and held
+   until the response *body* completes, not until the handler returns.
 2. **Authorize.** Each `InboundAuth` provider's `authorize` in order, bearer
-   before interactive providers. First `ok` admits; if all fail, the last provider's challenge
-   response is returned. No providers configured means open — development
-   only, and it warns at construction.
-3. **Derive the registry view.** Auth supplies a namespaced subject and, for a
-   human, a principal. `identity.connectorAccess` selects declared connector
-   ids and, for a narrower slice, exact `connector.tool` addresses; the
-   scoped view filters every catalog read through them. Personal connectors use the principal partition; result paging uses
-   the subject partition. No caller parameter selects either.
-4. **Narrow to the pool.** On `/mcp/<pool>`, look the name up in the
-   declared pools and run its grant against the authenticated identity. The
-   view becomes the pool intersected with the identity's `connectorAccess`;
-   a pool can never widen it. Anything else is a 404 that names no pool.
-5. **Refuse `?toolkit=`.** Caller-selected toolkits were removed ([#178](https://github.com/zackbart/connecta/issues/178))
-   but the URLs naming them were handed out, so the parameter is a 404 rather
-   than silently serving the full registry. Retiring a scoping boundary into
-   fail-open is the one outcome worse than the 404.
-6. **Serve.** A fresh `McpServer` per request, the seven meta-tools registered
-   against the registry and the response
-   handed back.
+   before interactive. First `ok` admits; if all fail, the last provider's
+   challenge is returned. No providers means open — development only, and it
+   warns at construction.
+3. **Narrow to the pool.** On `/mcp/<pool>`, look the name up, run its grant
+   against the identity, then `intersectAccess` the pool with the identity's own
+   access. A pool can never widen a view; anything else is a 404 naming no pool.
+4. **Derive the registry view.** One `registry.scoped(...)` call with those
+   connector ids, exact `connector.tool` addresses when the identity declares a
+   narrower slice, and the subject and principal keys. Personal connectors use
+   the principal partition, result paging the subject partition, and no caller
+   parameter selects either (`test/identity-scope.test.ts`).
+5. **Serve.** Refuse `?toolkit=` with a 404 — the toolkits are gone
+   ([#178](https://github.com/zackbart/connecta/issues/178)) but their URLs were
+   handed out, and retiring a scoping boundary into fail-open is worse than any
+   404 — then register the seven meta-tools on a fresh `McpServer`
+   (`test/server.test.ts`, `test/code-first-surface.test.ts`).
 
 ## Layers below the meta-tools
 
-The meta-tool handlers are thin. The work sits in four services the registry
-owns or hands out, and a change usually belongs in exactly one of them:
+The meta-tool handlers are thin. The work sits in five modules the registry owns
+or hands out, and a change usually belongs in exactly one of them:
 
 | Module | Owns |
 | --- | --- |
 | `src/registry.ts` | The connector set, identity-scoped views, personal storage partitions, address resolution, catalog TTL/persistence/completeness, refresh single-flight, connector health, per-connector call limiters, and drift. Construction-time refusals live here. |
-| `src/catalog-service.ts` | Request-local tool listing, search, and describe. It coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
+| `src/catalog-service.ts` | Request-local listing, search, and describe. Coalesces reads inside one request and opts agent reads into the runtime's deferred catalog channel when one exists. |
 | `src/invocation.ts` | One tool call: argument validation, call admission, one-attempt timeout, provider retry hints, result unwrapping, size capping, and the activity record. |
 | `src/catalog.ts` | Ranking, description summarizing, and the compact schema renderer discovery shows. |
 | `src/result-shapes.ts` | Bounded runtime-only inference and merging for output shapes learned from successful read-only calls whose providers declared none. |
 
-`src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same
-three services. That is the point: a program's `connecta.call` and a top-level
-`call_tool` reach `InvocationService.invoke` by different routes and get the
-same admission, the same credential resolution, and the same fail-closed
-read-only check. `test/execute.test.ts` asserts that parity directly, because
-the alternative — a sandbox path that quietly diverges — is how generated code
-would mint a capability.
+`src/meta-tools.ts` and `src/execute.ts` are two front doors onto the same two
+services, `CatalogService` and `InvocationService`. That is the point: a
+program's `connecta.call` and a top-level `call_tool` reach
+`InvocationService.invoke` by different routes and get the same admission, the
+same credential resolution, and the same fail-closed read-only check.
+`test/execute.test.ts` asserts the parity directly, because a sandbox path that
+quietly diverges is how generated code would mint a capability.
+
+## Admission, in two places
+
+Request admission (`src/executor-admission.ts`, applied in `src/routes/mcp.ts`)
+bounds the MCP envelope: one deployment-wide FIFO pool, plus a deliberately
+smaller code pool a program takes a *second* permit from, so one request cannot
+trade ordinary capacity for unbounded sandboxes. `admission.code` is only a
+fallback — an executor implementing `acquire()` owns a bounded pool already, its
+settings win, and connecta warns the fallback was ignored. Invalid bounds throw
+at construction, because a pool that quietly became unbounded is worse than a
+deployment that refuses to boot. The queue is global FIFO across identities: a
+capacity boundary, not tenant fairness, and one deployment serves one tenant.
+
+Call admission (`src/call-admission.ts`) answers what the envelope cannot see —
+a connector's optional policy over its own `Connector.callTool` attempts,
+partitioned by an optional `partitionKey` and bounded by concurrency, a
+rolling-window budget, or both. Exactly one rule is accepted, because several
+cannot be faked as sequential leases: consuming a rolling token before a later
+rule refuses would charge a call that never reached the provider, the exact
+accounting error a budget exists to prevent. Both layers are pinned by
+`test/request-admission.test.ts` and `test/call-admission.test.ts`.
+
+## Storage, credentials, and connectors
+
+`KVStorage` is `get`/`set`/`delete` with optional `list(prefix)`; core uses it for
+connector state, catalogs, and result paging — a 15-minute TTL with one
+runtime-wide accounting of stash bytes and entries, where a full stash returns the
+successful call's preview and a paging-unavailable notice rather than a result id.
+Adapters: `src/storage/memory.ts`, `src/storage/file.ts` (Node), and the
+Cloudflare KV/D1 pair in `examples/worker/`, copyable reference source and
+deliberately not an importable subpath.
+
+`src/credentials.ts` is the AES-GCM vault behind the root-exported
+`CredentialVault` contract, selected through the `vault` slot. It binds connector
+id and owner into the authenticated encryption context, because sharing a backend
+is not permission to share a principal's credentials. Two rules carry the
+subsystem: credentials never leave the host — read only through the owning
+connector's `ctx.credential`, rendered by nothing, absent from activity and model
+recovery — and they fail at use, proactive liveness probing having been removed by
+decision. The vault is read per call, so a replacement needs no restart
+(`test/credentials.test.ts`).
+
+Connectors are the boundary between the fixed meta-tool surface and downstream
+capability, and `api()`, `remoteMcp()`, and a hand-written `Connector`
+(`src/connectors/`, plus the prebuilt connections under `src/providers/`) all
+produce instances that take the same catalog, read-only, credential, storage,
+invocation, result-size, and activity paths. Every one is deployment
+configuration, never runtime registration. `authScope: "shared" | "personal"`
+partitions connecta-owned context — state, credentials, OAuth, catalogs, observed
+shapes — by principal, and *only* connecta-owned context: a secret a custom
+handler closes over is shared JavaScript state, and `remoteMcp()` refuses the
+literal-headers-plus-personal version of that mistake. Visibility
+(`identity.connectorAccess`) is a separate rule; hiding a connector does not
+change who owns its auth.
 
 ## Optional deployment modules
 
-`createConnecta` takes closed typed `ui`, `vault`, and `activity` slots. Factories
-live at `/ui`, `/credentials`, and `/activity`; bearer auth lives at
-`/auth/bearer`. Root exports the contracts, never these implementations. There
-is no module array, runtime registration, or plugin lifecycle.
+`createConnecta` takes closed typed `ui`, `vault`, and `activity` slots, with
+factories at `/ui`, `/credentials`, and `/activity` and bearer auth at
+`/auth/bearer`. Root exports the contracts, never the implementations, and there
+is no module array, runtime registration, or plugin lifecycle. Core keeps
+discovery, the executor contract, invocation, permissions, and OAuth callback
+verification; an omitted module contributes no runtime work at all.
 
-Core keeps connector discovery, the executor contract, invocation, permissions,
-and OAuth callback verification together. Optional modules contribute no
-runtime work when omitted. The UI supplies credential handoff URLs only while
-mounted. Status reads never initiate OAuth, and each lazy details request owns
-its downstream scope. See [operator UI](./operator-ui.md).
+The operator UI — `src/ui.ts` (data-free shell and `/ui/data` payload),
+`src/routes/ui.ts`, `src/operator-ui/` (the Preact app and its pure rules) —
+shows a human what a deployment exposes and manages only the authentication
+material code explicitly permitted; it never edits the connector set, catalog,
+annotations, scopes, or permission rules. Two invariants shape it: a status read
+never starts authorization, since OAuth begins with an explicit authorized POST,
+and each lazy details request owns a bounded downstream scope, so one failing
+provider leaves the other connections usable. Credential handoff URLs exist only
+while the UI is mounted; OAuth callbacks never need it.
 
 ## Import-graph purity
 
-Nothing reachable from `src/index.ts` may import a `node:` builtin. The core is
-Web-API only so the same code runs unchanged in workerd and in Node.
+Nothing reachable from `src/index.ts` may import a `node:` builtin, so the same
+core runs unchanged in workerd and in Node. The Node-touching paths — `src/node.ts`
+(the `node:http` adapter), `src/storage/file.ts`, and the QuickJS process pool
+(`src/executors/quickjs.ts` plus its child) — each sit behind an explicit subpath
+and must stay unreachable from the root. `./auth/clerk` is separate because
+`@clerk/backend` is an optional peer rather than a dependency, and
+`./auth/cloudflare-access` for a third reason: it is Web-API-pure, but its trust
+contract is specific to a direct Worker invocation carrying `ctx.access`.
 
-The Node-touching paths are `src/node.ts` (the `node:http` adapter),
-`src/storage/file.ts`, and the QuickJS process pool
-(`src/executors/quickjs.ts` and its child entry). Each lives behind an explicit
-subpath export — `@zackbart/connecta/node`, `@zackbart/connecta/quickjs` — and
-must stay unreachable from the root entry. The optional Clerk adapter is behind
-`./auth/clerk` for the adjacent reason: `@clerk/backend` is an optional peer,
-not a dependency. The zero-dependency Cloudflare Access adapter likewise stays
-behind `./auth/cloudflare-access`: it is Web-API-pure, but its trust contract is
-specific to a direct Worker invocation carrying `ctx.access`.
+`test/purity.test.ts` walks the relative-import graph and fails on any `node:`
+specifier in a reachable file, or on any of those modules — plus the UI bundle,
+encrypted vault, and activity implementation — being reachable at all;
+`test/package-surface.test.ts` and `scripts/check-package.mjs` guard the same
+boundary in the published tarball. The failure mode is not theoretical: one
+convenience import of `node:crypto` in a shared helper stops the whole Worker
+shape from building, in someone else's repository rather than this one.
 
-`test/purity.test.ts` walks the relative-import graph from `src/index.ts` and
-fails on (a) any `node:` specifier in a reachable file and (b) the Node
-adapter, file storage, QuickJS parent or child, auth adapters, UI bundle,
-encrypted vault implementation, or activity implementation being reachable at all. `test/package-surface.test.ts` and
-`scripts/check-package.mjs` guard the other half — that the published tarball
-matches the same boundary.
+## Where else to look
 
-The failure mode this prevents is not theoretical: a single convenience import
-of `node:crypto` in a shared helper makes the whole Worker deployment shape
-stop building, and it will do so in someone else's repository rather than
-this one.
-
-## Where things live
+Beyond the modules already named:
 
 ```
 src/
-  index.ts            createConnecta + the public re-exports (Workers-clean)
   server.ts           route ordering, HTTPS upgrade, security wrapper
   routes/             one file per surface; shared.ts holds the auth gate
-  meta-tools.ts       the six non-execute meta-tools over the registry
-  execute.ts          execute_code, the sandbox host bridge, emitted media
   skills.ts           MCP instructions, the usage skill, connector guides
-  registry.ts         connector set, addresses, health, call limiters
-  catalog-service.ts  request-local catalog access, search, and describe
-  catalog.ts          ranking, summaries, compact schema rendering
-  result-shapes.ts    passive runtime-only observed output schemas
-  invocation.ts       one tool call, end to end
   catalog-drift.ts    vetted manifests and the counts a refresh produces
-  credentials.ts      the AES-GCM connector vault over KVStorage
   activity.ts         optional history factory and best-effort recorder
-  call-admission.ts   connector-partitioned downstream permits and budgets
-  executor-admission.ts  the portable bounded queue both pools use
-  ui.ts               the served operator shell and /ui/data payload
-  operator-ui/        the Preact app, its pure rules, and the built bundle
-  connectors/         remote-mcp.ts, api.ts, guarded-fetch.ts
-  providers/          the maintained prebuilt connections
   auth/               bearer, Cloudflare Access, clerk (optional peer), downstream OAuth
   executors/          the QuickJS pool and child (Node only)
-  storage/            memory.ts, file.ts (Node only)
   node.ts             listen() + fileStorage re-export (Node only)
 ```
+
+There are exactly two deployment shapes — `templates/node/`, which
+`connecta init` copies with its container files, and `examples/worker/` — and
+`test/deployment-shapes.test.ts` with `npm run check:examples` keeps both
+compiling and configuring the real thing.
 
 ## Sharp edges
 
 - **The root registry is shared; identity views are partitioned.** Shared
-  connector caches are visible to later requests in the isolate. Personal
-  connectors use a bounded principal registry, and transient results use the
-  authenticated subject. Anything cached per request still dies with it.
-  Putting a downstream client or credential on the wrong side of those lines
-  is the highest-severity mistake available here.
-- **Route order is behavior.** Moving a mutation route below the
-  wildcard `OPTIONS` opts it into CORS preflight.
-- **Admission runs before auth, on purpose.** Reordering them to "authenticate
-  first" makes the cheapest possible attack the most expensive request.
-- **`close()` is idempotent and ordered.** It closes both admission pools and
-  the connector limiters, then the executor. Node's `listen()` calls it on
+  connector caches are visible to later requests in the isolate; personal
+  connectors use a bounded principal registry and transient results the
+  authenticated subject. Putting a downstream client or credential on the wrong
+  side of those lines is the highest-severity mistake available here.
+- **Route order is behavior.** Moving a mutation route below the wildcard
+  `OPTIONS` opts it into CORS preflight; reordering admission after auth makes
+  the cheapest possible attack the most expensive request.
+- **`close()` is idempotent and ordered.** Both admission pools, then the
+  connector limiters, then the executor; Node's `listen()` calls it on
   SIGTERM/SIGINT.
 - **Structural mistakes throw at construction.** A duplicate connector id, an
-  invalid admission rule, removed `accessTokens` option, or missing executor: all refuse to boot. A deployment that starts in the wrong shape is
-  worse than one that does not start.
-
-## Tests that enforce this
-
-| Invariant | Suite |
-| --- | --- |
-| The core imports no `node:` builtin and reaches no Node-only module | `test/purity.test.ts` |
-| The published surface matches the same boundary | `test/package-surface.test.ts`, `scripts/check-package.mjs` |
-| Route order, per-route auth, and byte-exact refusals | `test/server-route-contracts.test.ts` |
-| `/mcp` end to end, the open routes, exactly seven tools, bounded connector orientation | `test/server.test.ts`, `test/code-first-surface.test.ts` |
-| Construction-time refusals and the grouped config boundary | `test/config.test.ts`, `test/registry.test.ts` |
-| Program and top-level calls take the same enforced path | `test/execute.test.ts` |
-| Both deployment shapes still compile and configure the real thing | `test/deployment-shapes.test.ts`, `npm run check:examples` |
+  invalid admission rule, the removed `accessTokens` option, a missing executor:
+  all refuse to boot (`test/config.test.ts`, `test/registry.test.ts`). Starting
+  in the wrong shape is worse than not starting.

@@ -29,8 +29,9 @@ import type {
   Logger,
 } from "./types.js";
 
-// Configuration defaults and operator-facing meanings are canonical in
-// documentation/operations.md#configuration; these types only define intake.
+// These types are the canonical record of the configuration surface: every
+// field's default and operator-facing meaning belongs in its own doc comment
+// below, where a deployment author reads it from the editor.
 
 /** Tool-catalog caching, persistence, stale fallback, and probe deadlines. */
 export interface ConnectaDiscoveryConfig {

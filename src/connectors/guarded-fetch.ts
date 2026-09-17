@@ -1,4 +1,17 @@
-/** See documentation/connectors.md#the-guarded-fetch-transport. Web APIs only. */
+/**
+ * The safety machinery every hand-written HTTP surface needs, extracted once
+ * (#341): path confinement, encoded query and framed bodies, per-request
+ * credential headers applied last, a refused redirect, a bounded read, and
+ * network-failure normalization. It owns no *meaning* — it never reads a status
+ * code and never invents an auth scheme, because the same 403 means an ungranted
+ * capability at one provider and a token scope at another, and those want
+ * opposite next moves. The provider's `authenticate` supplies headers and its
+ * mapper turns one `GuardedResponse` into a result or a typed failure.
+ *
+ * Not exported this release: the migrations proved the shape preserves behavior
+ * for connectors that already had this machinery, not that it is the right
+ * public surface. Web APIs only.
+ */
 import { ConnectorCallError, unavailableCallError } from "../errors.js";
 import type { ConnectorContext } from "../types.js";
 
@@ -267,7 +280,18 @@ async function drain(
   return body;
 }
 
-/** See documentation/connectors.md#the-guarded-fetch-transport. */
+/**
+ * Every read is capped at `maxResponseBytes`: a streaming body is abandoned at
+ * the ceiling rather than buffered past it, and where a runtime gives no body
+ * stream the text is measured in UTF-8 bytes before it is accepted, with JSON
+ * parsed from that same bounded text. Such a runtime still buffers internally,
+ * but cannot return an oversized body as a successful result.
+ *
+ * A mapper must re-throw `ConnectorCallError` and swallow only what it
+ * recognizes: a bare `catch` around `response.json()` eats this refusal along
+ * with a parse error and turns a response nobody was allowed to read into an
+ * empty success.
+ */
 function boundedResponse(
   provider: string,
   response: Response,
@@ -335,7 +359,11 @@ async function jsonResult(
   }
 }
 
-/** Build the guarded transport described in documentation/connectors.md. */
+/**
+ * Build the transport a connector sends every request through. `maxResponseBytes`
+ * is required rather than defaulted: what counts as an absurd response is a fact
+ * about the API, not about HTTP.
+ */
 export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
   const { provider, maxResponseBytes: limit } = options;
   if (!Number.isInteger(limit) || limit < 1) {
@@ -387,7 +415,9 @@ export function guardedFetch(options: GuardedFetchOptions): GuardedTransport {
           : request.rawBody !== undefined
             ? { body: request.rawBody }
             : {}),
-        // Rationale: documentation/connectors.md#the-guarded-fetch-transport.
+        // A redirect is an instruction to re-send the credential to whatever
+        // origin `Location` names, and a confinement a redirect can undo was
+        // never one. Refused below rather than followed.
         redirect: "manual",
         ...(ctx.signal ? { signal: ctx.signal } : {}),
       });

@@ -19,7 +19,14 @@ export const NOTION_API_BASE_URL = "https://api.notion.com";
 /** Notion's official hosted MCP endpoint. */
 export const NOTION_MCP_ENDPOINT = "https://mcp.notion.com/mcp";
 
-/** See documentation/notion.md#the-pinned-api-version. */
+/**
+ * Pinned with no override. Notion's date-named versions keep working
+ * indefinitely, which makes an override look harmless; it is not. `2026-03-11`
+ * is where databases split into data sources, `archived` became `in_trash`, and
+ * block append took a `position` object instead of an `after` string. Every
+ * projection and write body here assumes those shapes, so an older version would
+ * return quietly wrong results rather than fail loudly.
+ */
 export const NOTION_API_VERSION = "2026-03-11";
 
 /** Notion's hard cap on `page_size` for every paginated endpoint. */
@@ -31,7 +38,12 @@ const DEFAULT_PAGE_SIZE = 25;
 /** Notion's cap on `children` per append, and on blocks per page create. */
 const MAX_CHILDREN_PER_REQUEST = 100;
 
-/** See documentation/notion.md#rate-limiting. */
+/**
+ * Ceiling on the fetches one `get_page_content` walk may spend. Call admission
+ * meters tool calls, not the requests inside them, so a deep `depth` would
+ * otherwise drain the budget invisibly; the walk stops here and reports
+ * `truncated: true` instead.
+ */
 const MAX_CONTENT_REQUESTS = 20;
 
 /**
@@ -44,7 +56,15 @@ const MAX_CONTENT_REQUESTS = 20;
  */
 const NOTION_MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 
-/** See documentation/notion.md#rate-limiting. */
+/**
+ * Notion documents "an average of three requests per second, with some bursts
+ * beyond the average allowed" per connection. 180 calls per minute is that
+ * average over a window short bursts pass and a sustained loop does not, and
+ * `maxConcurrency: 3` is the load-bearing half — an averaged budget cannot stop
+ * forty calls in one tick, and declaring a queue is also what makes the queue
+ * settings legal at construction. Per runtime, and a floor on the real request
+ * rate rather than a ceiling, since one admitted call can spend many fetches.
+ */
 const NOTION_ADMISSION: ConnectorCallAdmissionPolicy = {
   rules: [
     {
@@ -105,7 +125,18 @@ type NotionRequest = Pick<
   "method" | "path" | "query" | "body"
 >;
 
-/** See documentation/notion.md#typed-failures. */
+/**
+ * Map to what the caller should do next, not to what Notion's `code` says
+ * happened. The two that are easy to mistranslate:
+ *
+ * - **403 is not an authentication failure.** The token is fine; the integration
+ *   lacks a capability or was never shared the object, and neither
+ *   `authorize_connector` nor a new token can fix it. Non-retryable call failure.
+ * - **404 does not prove absence.** Notion returns `object_not_found` both for an
+ *   object that does not exist and for one never shared with the integration, and
+ *   will not say which — so not `not_found`, which exists to assert absence
+ *   (H11). The message names both possibilities.
+ */
 function notionFailure(
   status: number,
   body: Record<string, unknown> | undefined,
@@ -186,7 +217,18 @@ function notionFailure(
   });
 }
 
-/** See documentation/connectors.md#the-guarded-fetch-transport. */
+/**
+ * The shared transport owns the mechanical, provider-independent guards: path
+ * confinement re-checked after URL normalization, encoded query construction,
+ * credential headers applied last and unshadowable, a refused 3xx (a redirect is
+ * an instruction to re-send the credential to another origin), and a body
+ * abandoned at `maxResponseBytes`. It deliberately owns no meaning — it never
+ * reads a status code, because Notion's 403 is an ungranted capability while
+ * another provider's is a token scope, and those want opposite next moves. The
+ * mapper below supplies that. Note it must re-throw `ConnectorCallError`: a bare
+ * catch around a body read swallows the transport's own refusal and turns a
+ * response nobody was allowed to read into an empty success.
+ */
 const send = guardedFetch({
   provider: "Notion",
   baseUrl: NOTION_API_BASE_URL,
@@ -225,7 +267,16 @@ async function notionRequest(
   });
 }
 
-// Projections: documentation/notion.md#lean-projections-and-the-raw-escape-hatch.
+// Projections. Notion wraps every property in a discriminated object, every
+// string in an array of annotated rich-text runs, and every user in a nested
+// object, so a small query is tens of kilobytes of structure around a few
+// hundred bytes of meaning. Every read collapses that to ids, plain text, and
+// flattened values. Nothing is lost for good: the reads that can drop something
+// take `raw: true` and return Notion's untouched response instead.
+//
+// Unknown types unwrap rather than switch exhaustively, because Notion ships
+// additive changes to every pinned version at once — a property type newer than
+// this release degrades to its raw value instead of vanishing.
 
 /** Concatenate a rich-text array to its plain text. Safe for every variant. */
 function plainText(value: unknown): string {
@@ -358,7 +409,12 @@ interface TruncatedProperty {
 
 interface ProjectedProperties {
   properties: Record<string, unknown>;
-  /** See documentation/notion.md#lean-projections-and-the-raw-escape-hatch. */
+  /**
+   * Notion cuts `title`, `rich_text`, `relation`, and `people` off at 25 entries
+   * and signals it only with `has_more` on the property. Surfacing them is what
+   * stops an agent reasoning confidently about 25 of 300 relations, and the id
+   * rides along because `get_page_property` addresses by id, not by name.
+   */
   truncated: TruncatedProperty[];
 }
 
@@ -426,7 +482,11 @@ function projectPage(page: any, select?: string[]): Record<string, unknown> {
   };
 }
 
-/** See documentation/notion.md#lean-projections-and-the-raw-escape-hatch. */
+/**
+ * Identity fields only, no properties. A 25-result search across a populated
+ * database would otherwise drag back hundreds of flattened values for results
+ * the agent is about to discard; `get_page` fetches them for the one that hit.
+ */
 function projectSearchHit(hit: any): Record<string, unknown> {
   if (hit?.object === "data_source") {
     return {
@@ -495,7 +555,9 @@ function projectBlock(block: any, depth: number): Record<string, unknown> {
       projected["icon"] = iconRef(payload?.icon);
       break;
     default:
-      // Rationale: documentation/notion.md#lean-projections-and-the-raw-escape-hatch.
+      // A block type this projection does not model keeps its payload verbatim
+      // rather than collapsing to an empty string, so a block type newer than
+      // this release still carries its content.
       if (carriesUnprojectedContent(payload)) projected["raw"] = payload;
       break;
   }
@@ -888,6 +950,9 @@ function buildTools(defaultPageSize: number): ApiTool[] {
     },
     {
       name: "get_page_content",
+      // `raw: true` returns the requested level exactly as Notion sent it and
+      // does not walk nested children, so `depth` is ignored alongside it: a
+      // raw read of a deep page yields one level.
       description:
         "Read a page's body as a flat list of blocks reduced to plain text. Each block keeps its id, type, and depth so it can be quoted, appended after, or drilled into. Nested content requires depth > 0.",
       annotations: { readOnlyHint: true },
@@ -1315,7 +1380,11 @@ function buildTools(defaultPageSize: number): ApiTool[] {
         "Create a page, either as a child of another page or as a row in a data source. Notion has no idempotency key: a retried create makes a second page, so confirm with search before repeating one.",
       annotations: { readOnlyHint: false },
       inputSchema: {
-        // See documentation/notion.md#what-this-connection-does-not-do.
+        // A deliberate subset of the 2026-03-11 create contract, reviewed after
+        // the 0.17.0 drift check (#408). Workspace-private pages, templates,
+        // page placement, and the expanded icon/cover forms stay out: they
+        // change ownership, start asynchronous content work, control ordering,
+        // or depend on file surfaces, none of which extend page/row authoring.
         required: [],
         type: "object",
         properties: {
@@ -1504,6 +1573,10 @@ function buildTools(defaultPageSize: number): ApiTool[] {
     },
     {
       name: "update_page_properties",
+      // Deliberately no locking, templates, or `erase_content` (#409): locking
+      // is coordination state, templates finish asynchronously, and
+      // `erase_content` permanently deletes every child block. None belongs
+      // under an approval named for property replacement.
       description:
         "Overwrite property values on an existing page. Every named property is replaced, not merged, so send a multi_select or relation's complete intended value. Cannot move a page and cannot trash one.",
       // Replaces values that already exist: the host should say so out loud.
@@ -1658,7 +1731,12 @@ function buildTools(defaultPageSize: number): ApiTool[] {
 // Guide and constructor
 // ---------------------------------------------------------------------------
 
-/** See documentation/notion.md#databases-contain-data-sources. */
+/**
+ * Marked `required` for one reason: a Notion database is a container, and the
+ * rows and schema live in a data source inside it. The id in a database URL is a
+ * database id, and passing it to `query_data_source` or `create_page` fails —
+ * a trap no input schema can teach, so the guide has to.
+ */
 function apiUsageGuide(purpose: string, instructions: string | undefined): string {
   const accountInstructions = instructions?.trim();
   return `# Notion usage

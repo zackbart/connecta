@@ -265,8 +265,11 @@ async function terminateSession(
   logger: Logger,
   connectorId: string,
 ): Promise<void> {
-  // See documentation/connectors.md#mcp-version-skew for the legacy DELETE
-  // that Client.close() does not send.
+  // SDK v2's Client.close() does not send the legacy session DELETE on our
+  // behalf. Connecta's own endpoint creates no protocol session, but a stateful
+  // legacy downstream can still issue `Mcp-Session-Id`, and every path that
+  // abandons one — scope teardown, credential rotation, OAuth retirement, an
+  // abandoned connect — owes it this best-effort, one-second DELETE.
   const terminate = (
     transport as Transport & { terminateSession?: () => Promise<void> }
   ).terminateSession;
@@ -1191,8 +1194,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     // the accumulator is returned rather than stored: a cursor is opaque and
     // session-bound, so nothing here may outlive this call.
     async listTools(ctx) {
-      // The complete-catalog rule is documented at
-      // documentation/connectors.md#catalog-contract.
+      // The catalog contract: a downstream catalog is complete or it is a
+      // failure. Follow every page to the end of the cursor chain, preserve
+      // schemas and annotations, and never cache or serve a partial walk.
       const state = stateFor(ctx);
       await ensureConnected(ctx, state);
       // Bind the client once so the whole walk provably rides one session — a

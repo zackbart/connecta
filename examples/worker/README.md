@@ -8,7 +8,7 @@ Workers Paid plan.
 This is also the **starting template for a deployment**: a real deployment
 should be its own repository that pins an exact `@zackbart/connecta` version and
 owns only its connector configuration, auth policy, domain, bindings,
-migrations, and secrets. See [the Cloudflare guide](../../documentation/cloudflare.md).
+migrations, and secrets.
 
 ## Files
 
@@ -17,14 +17,15 @@ migrations, and secrets. See [the Cloudflare guide](../../documentation/cloudfla
 | `src/index.ts` | the Worker entrypoint — connector and auth configuration |
 | `src/cloudflare-kv.ts` | `KVStorage` over Workers KV (deployment-owned, not a package export) |
 | `src/d1-activity.ts` | `ActivityStore` over D1 (deployment-owned; see below) |
+| `src/d1-activity-row.ts` | the row ↔ event mapping `d1-activity.ts` uses, including friction derived from `error_code` for rows written before that column existed |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 
 `cloudflare-kv.ts` and `d1-activity.ts` deliberately live here rather than in
 the package: storage backends are deployment-owned, so the package ships only
 the generic `KVStorage` and `ActivityStore` contracts. Workers KV is eventually
 consistent across locations; use a strongly consistent `KVStorage` adapter when
-OAuth disconnect, credential rotation, or access-token issuance/revocation must
-become globally visible immediately.
+OAuth disconnect or credential rotation must become globally visible
+immediately.
 
 ## Deploy
 
@@ -91,10 +92,6 @@ Through the API, the relevant part of the application is:
 Cloudflare's [Worker Access guide](https://developers.cloudflare.com/workers/configuration/cloudflare-access/)
 owns the dashboard/API steps; its [Managed OAuth guide](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/managed-oauth/)
 owns client registration, redirect allowlists, and token lifetimes.
-
-[`AGENTS.md`](./AGENTS.md) repeats the callback invariant for coding agents
-working in a copied deployment. Do not remove the entries there when changing
-the Access policy or application.
 
 The checked-in `access.dev` block gives `wrangler dev` a local operator
 identity. Remove the block to test the missing-Access refusal. It has no effect
@@ -172,8 +169,7 @@ does not create credentials or permissions by itself.
 Interactive MCP clients use Access Managed OAuth. Unattended clients use Access
 service tokens when needed. Connecta-issued `cta_` tokens and their management
 routes are removed; a configured Connecta bearer cannot cross the Access edge
-alone. See the [migration guide](../../documentation/upgrading.md#0240-optional-modules)
-if an older deployment still issues tokens.
+alone.
 
 Activity uses `activityHistory({ store: d1ActivityStore(env.ACTIVITY_DB) })`
 from `@zackbart/connecta/activity`. Enable the database and bindings described
@@ -295,8 +291,7 @@ To enable it:
    });
    ```
 
-Events carry no arguments, results, generated code, or raw error messages — see
-[activity history](../../documentation/operator-ui.md).
+Events carry no arguments, results, generated code, or raw error messages.
 The Worker entrypoint already forwards `ctx` to `connecta.fetch`, which lets
 async activity writes settle on `waitUntil`.
 

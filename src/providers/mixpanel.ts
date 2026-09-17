@@ -31,7 +31,10 @@ export interface MixpanelOptions {
   authScope?: "shared" | "personal";
   /** Who should use this account and for what decisions. */
   purpose: string;
-  /** Data residency region; see `documentation/mixpanel.md`. */
+  /**
+   * Data residency region, selecting the matching official endpoint. A wrong
+   * region answers empty rather than wrong, which reads as an empty project.
+   */
   region?: MixpanelRegion;
   /**
    * OAuth by default; static headers support Mixpanel service accounts, and
@@ -43,7 +46,12 @@ export interface MixpanelOptions {
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
-  /** Optional per-runtime policy; see `documentation/mixpanel.md#rate-limits`. */
+  /**
+   * Optional per-runtime policy. There is no default: Mixpanel meters its MCP
+   * server per user per hour, and a per-runtime counter over-counts one runtime
+   * serving many users and under-counts many runtimes sharing one credential.
+   * Only an operator who knows the account can pick a number worth enforcing.
+   */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
@@ -86,7 +94,12 @@ const READ_ONLY_TOOLS = new Set([
   "Get-Feature-Flag-Lifecycle-Guidance",
 ]);
 
-/** Reviewed writes; see provider convention P5. */
+/**
+ * Reviewed writes, each with its destructive verdict (P5). Additive writes stay
+ * `additive` because `readOnlyHint: false` already routes them through the
+ * approval path, and claiming destruction only inflates the copy a host shows a
+ * human. Anything unlisted is not read-only, so a new name fails closed.
+ */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["Create-Dashboard", "additive"],
   ["Update-Dashboard", "destructive"],
@@ -116,6 +129,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["Update-Experiment", "destructive"],
   ["Create-Feature-Flag", "additive"],
   ["Update-Feature-Flag", "destructive"],
+  // Applies generated names and descriptions to existing Lexicon events.
   ["Fill-Event-Metadata", "destructive"],
 ]);
 
@@ -187,7 +201,12 @@ const MIXPANEL_SCHEMA_DIGESTS = {
   "Update-Metric": "sha256:739bb6abdab19282afd4a6644a96183daabe9098a5322c44a77b840608a5ee9d",
 } as const;
 
-/** Release-reviewed manifest; see provider conventions P5 and P13. */
+/**
+ * One release-reviewed manifest, used both to classify a live tool and as the
+ * baseline the drift check compares against, so the annotation a caller gets
+ * and the verdict a check reads can never disagree. Drift must surface as an
+ * unclassified tool on the approval path (P5), never a quiet re-guess.
+ */
 export const MIXPANEL_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,

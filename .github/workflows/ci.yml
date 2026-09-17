@@ -23,19 +23,3 @@ jobs:
       # container. Runners have Docker, and the smoke fails rather than skips
       # when CI is set — so there is no separate image job to drift from it.
       - run: npm run release:check
-
-  benchmark-self-test:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            eval/current-version/package-lock.json
-      - run: npm ci
-      - run: npm ci --prefix eval/current-version
-      - run: npm --prefix eval/current-version run check

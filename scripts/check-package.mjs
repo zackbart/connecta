@@ -4,7 +4,6 @@ import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import {
   copyFile,
-  lstat,
   mkdtemp,
   readdir,
   readFile,
@@ -234,7 +233,6 @@ try {
     "ethos.md",
     "templates/node/.dockerignore",
     "templates/node/.env.example",
-    "templates/node/AGENTS.md",
     "templates/node/Dockerfile",
     "templates/node/docker-compose.yml",
     "templates/node/package.json",
@@ -272,9 +270,6 @@ try {
     }
   }
   for (const path of paths) {
-    if (path.startsWith("eval/")) {
-      throw new Error(`Eval-only file leaked into the package: ${path}`);
-    }
     // The tarball is built output, not a checkout (#346). No code export
     // leaves dist/ — only the manifest data export resolves to the package
     // root (#374) — so src/ served nothing but the source and declaration
@@ -316,37 +311,25 @@ try {
       throw new Error(`Platform-specific implementation leaked into ${path}`);
     }
   }
-  // A stub guide says "the prior text lives in git history" — advice a package
-  // consumer cannot take, because they have no history. Placeholders stay out
-  // of the tarball (#346). That makes the `!documentation/...` negations in
-  // `files` a list that rots, so derive the expected set from the guides
-  // themselves: a stub that ships and a finished guide that does not are both
-  // failures, and filling a stub in is what un-excludes it.
+  // Every guide that exists ships. A `!documentation/...` negation in `files`
+  // is how one silently stops shipping, and an excluded guide is worse than a
+  // missing one: the guides that do ship link to it, and a consumer has no git
+  // history to recover it from (#346).
   for (const guide of await readdir(join(root, "documentation"))) {
     if (!guide.endsWith(".md")) continue;
-    const stub = (
-      await readFile(join(root, "documentation", guide), "utf8")
-    ).includes("> **Stub.**");
-    const packedGuide = paths.has(`documentation/${guide}`);
-    if (stub && packedGuide) {
+    if (!paths.has(`documentation/${guide}`)) {
       throw new Error(
-        `Placeholder guide documentation/${guide} is packed; add ` +
-          `"!documentation/${guide}" to package.json "files"`,
-      );
-    }
-    if (!stub && !packedGuide) {
-      throw new Error(
-        `documentation/${guide} is a written guide but is excluded from the ` +
-          `package; drop "!documentation/${guide}" from package.json "files"`,
+        `documentation/${guide} is excluded from the package; drop ` +
+          `"!documentation/${guide}" from package.json "files"`,
       );
     }
   }
-  // Deriving the shipped set from the stub markers says which guides ship, not
-  // whether the ones that ship point somewhere a consumer can follow. A packed
-  // doc linking an excluded guide is the same defect one indirection out — the
-  // reader clicks and lands nowhere (#346), and so does one linking `eval/`,
-  // `test/`, `scripts/`, or the README hero, none of which the tarball carries
-  // (#378). The rule those all answer to lives in check-doc-links --packed
+  // Knowing which guides ship is not knowing whether the ones that ship point
+  // somewhere a consumer can follow. A packed doc linking an unpacked file is
+  // the same defect one indirection out — the reader clicks and lands nowhere
+  // (#346) — and so is one linking `test/`, `scripts/`, or the README hero,
+  // none of which the tarball carries (#378). The rule those all answer to
+  // lives in check-doc-links --packed
   // and reads the same packed list this pack just produced; a link the tarball
   // cannot satisfy either ships its target or becomes a github.com URL.
   const packedManifest = join(work, "packed-paths.txt");
@@ -562,8 +545,6 @@ try {
   for (const generated of [
     ".env.example",
     ".gitignore",
-    "AGENTS.md",
-    "CLAUDE.md",
     "src/index.ts",
     "src/file-activity.ts",
     "tsconfig.json",
@@ -571,14 +552,6 @@ try {
     if (!existsSync(join(work, "generated-deployment", generated))) {
       throw new Error(`Initializer is missing ${generated}`);
     }
-  }
-  if (
-    process.platform !== "win32" &&
-    !(await lstat(
-      join(work, "generated-deployment", "CLAUDE.md"),
-    )).isSymbolicLink()
-  ) {
-    throw new Error("Initializer did not link CLAUDE.md to AGENTS.md");
   }
 
   // Substitute the tarball under test for the registry pin, then exercise the

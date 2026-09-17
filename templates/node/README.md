@@ -74,7 +74,8 @@ connector where each person should connect their own downstream account.
 ### Credential vault
 
 Import `encryptedCredentialVault` from `@zackbart/connecta/credentials`, then
-set `vault: encryptedCredentialVault(storage, credentialKey)`. Set
+set `vault: encryptedCredentialVault(storage, credentialKey)` — `storage` is
+the `fileStorage` binding `src/index.ts` already passes to `createConnecta`. Set
 `CONNECTA_CREDENTIAL_KEY` to a base64 32-byte AES key:
 
 ```sh
@@ -121,7 +122,6 @@ team roster, or policy editor.
   this machine: downstream OAuth calls back to it.
 - Add application code only inside deliberate `api()` connector handlers.
 - Do not copy Connecta package internals into this deployment.
-- `AGENTS.md` is the canonical convention file; `CLAUDE.md` points to it.
 
 Verify a change with:
 

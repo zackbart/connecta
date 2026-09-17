@@ -9,10 +9,10 @@ import { operatorUi } from "@zackbart/connecta/ui";
  * storage, and public origin. Add application logic only inside deliberate
  * api() connector handlers.
  *
- * The operator surface — sign-in, credential vault, access tokens, activity —
- * ships here as commented configuration, because each half needs a secret or a
- * retention decision this file cannot make for you. Uncomment the block you
- * want; README.md § "Turn on the operator surface" walks through all four.
+ * The optional modules — operator sign-in, credential vault, activity — ship
+ * here as commented configuration, because each needs a secret or a retention
+ * decision this file cannot make for you. Uncomment the block you want;
+ * README.md § "Select optional modules" walks through all three.
  *
  * Environment (see .env.example):
  *   CONNECTA_TOKEN           required inbound bearer token
@@ -44,12 +44,12 @@ const port = Number(process.env.PORT ?? 8787);
 // empty state path or public origin is worse than the local default.
 const stateFile = process.env.CONNECTA_STATE_FILE || "./.connecta-state.json";
 const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
+const storage = fileStorage(stateFile);
 
 // Operator sign-in. A bearer token is a client key: it may call tools and read
 // connector status, but only a Clerk-authenticated human may write a visible
-// connector's credential, and only an operator may issue an access token.
-// Without this block the operator pages still render — an operator pastes the
-// bearer to read them — and Credentials and Tokens stay read-only.
+// connector's credential. Without this block the operator UI still renders —
+// an operator pastes the bearer to read it — and connections stay read-only.
 // const clerkPublishableKey = process.env.CLERK_PUBLISHABLE_KEY;
 // const clerkSecretKey = process.env.CLERK_SECRET_KEY;
 // if (!clerkPublishableKey || !clerkSecretKey) {
@@ -59,7 +59,7 @@ const publicUrl = process.env.PUBLIC_URL || `http://localhost:${port}`;
 // }
 
 const connecta = createConnecta({
-  storage: fileStorage(stateFile),
+  storage,
   auth: [
     bearerToken(token, { subjectId: "operator" }),
     // clerkAuth({
@@ -71,20 +71,24 @@ const connecta = createConnecta({
     //   // allowedDomains: ["acme.com"],
     // }),
   ],
-  // Optional member/operator split for Clerk-backed Docker deployments.
-  // Connector access is derived from the authenticated identity and cannot be
-  // selected by an MCP argument. Omit this block for the legacy all-visible,
-  // all-interactive-users-are-operators behavior.
-  // identity: {
-  //   connectorAccess: ({ principal }) =>
-  //     principal?.id === "user_admin" ? "all" : ["time"],
-  //   activityAccess: ({ id }) => id === "user_admin",
-  // },
+  // Code-owned identity resolvers. The two management permissions default to
+  // none, so the template grants them. The commented pair is the optional
+  // member/operator split for Clerk-backed deployments: connector access is
+  // derived from the authenticated identity and cannot be selected by an MCP
+  // argument. Leave them commented for the all-visible,
+  // all-interactive-users-read-activity behavior.
+  identity: {
+    credentialAdministration: () => "all",
+    personalConnection: () => "all",
+    // connectorAccess: ({ principal }) =>
+    //   principal?.id === "user_admin" ? "all" : ["time"],
+    // activityAccess: ({ id }) => id === "user_admin",
+  },
   publicUrl,
   // Required: model-written programs run in a bounded QuickJS child.
   executor: quickJsExecutor(),
   // Credential vault. A connector that declares a `credential` slot becomes
-  // editable at /credentials, and its value is encrypted in the state file
+  // editable inside its connection on /, and its value is encrypted in the state file
   // with this key — so keep the key out of that file and out of source:
   //   node -e "console.log(crypto.randomBytes(32).toString('base64'))"
   // Rotating a credential takes effect on the next call; no restart.
@@ -100,13 +104,10 @@ const connecta = createConnecta({
   //   deploymentId: "production",
   // }),
   ui: operatorUi(),
-  identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
   connectors: [
     api("time", {
       description: "Time — current timestamp",
-      // /credentials lists connectors, not deployments: the page stays hidden
-      // until at least one connector declares a slot, vault or no vault. A
-      // connector that needs an operator-managed secret adds one here —
+      // A connector that needs an operator-managed secret declares a slot —
       //   credential: { label: "API token" },
       // — and reads it inside a handler with `await ctx.credential?.get()`.
       // Telling the time needs no secret, so this one declares nothing.

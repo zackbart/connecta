@@ -95,9 +95,7 @@ Cloudflare Access supplies Worker identity; Node can use Clerk or the optional
 configured bearer adapter. Connecta owns no accounts or groups and issues no
 client access tokens. Shared-credential administration and personal connection
 setup require separate explicit permissions, both denied by default. See
-[inbound auth](./documentation/auth.md#principals-visibility-and-operators),
-[shared and personal auth](./documentation/storage-and-credentials.md#shared-and-personal-auth),
-and the [module migration guide](./documentation/upgrading.md#0240-optional-modules).
+[inbound auth](./documentation/auth.md#principals-visibility-and-operators).
 
 Connecta is not a platform, a marketplace, a policy engine, or a multi-tenant
 service. Those are decisions, and the [ethos](./ethos.md) records each one
@@ -107,9 +105,10 @@ and why.
 
 Setup is written for an agent. Point yours at [`AGENTS.md`](./AGENTS.md) and
 ask it to set up a Connecta deployment; the
-[documentation](./documentation/) covers every subsystem if you want to go
-deeper, and [upgrading](./documentation/upgrading.md) an existing deployment
-is its own runbook.
+[documentation](./documentation/) covers the architecture, the seven tools,
+code mode, and inbound auth if you want to go deeper. When upgrading an
+existing deployment, each [changelog](./CHANGELOG.md) release opens with what
+breaks and what a deployment can ignore.
 
 ## Status
 

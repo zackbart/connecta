@@ -5,7 +5,8 @@
  * Machine-readable classification of a failed connector tool call.
  *
  * A code earns its place by changing what the caller does next, never by
- * naming a cause — the rule provider conventions call H11.
+ * naming a cause — the rule provider conventions call H11, defined in
+ * `test/provider-conventions.test.ts`.
  */
 export type ConnectorCallErrorCode =
   | "timeout"
@@ -13,8 +14,15 @@ export type ConnectorCallErrorCode =
   | "rate_limited"
   | "unavailable"
   | "invalid_args"
-  /** Provider-owned absence; see provider-conventions.md H11 for the rule and
-   * the permission-ambiguity exception. */
+  /**
+   * Provider-owned absence: the caller re-addresses rather than waiting,
+   * re-authorizing, or repairing arguments, and a program looping over ids can
+   * continue past it where `connector_call_failed` would abort. Map a status
+   * here only where the provider distinguishes absence from a permission gap —
+   * where it does not (Notion's `object_not_found` covers both), the honest
+   * code stays `connector_call_failed` or `auth_required` with a message that
+   * states the ambiguity (H11).
+   */
   | "not_found"
   | "input_required_unsupported"
   | "connector_call_failed";
@@ -59,7 +67,8 @@ function boundedIssueText(
  * the payload lands in both the text content and `structuredContent`. The agent
  * already holds what it sent; the echo is a convenience, never the record.
  */
-// Shared by argument and text echoes; see meta-tools.md lines 360-372.
+// One budget shared by the argument and text echoes, so a caller cannot make a
+// refusal larger by splitting what it sent across the two.
 const MAX_ECHOED_BYTES = 512;
 
 /**

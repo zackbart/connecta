@@ -97,7 +97,15 @@ export interface ApiOptions {
   tools: ApiTool[];
 }
 
-/** Enforce provider conventions' two construction-time checks. */
+/**
+ * Three things a hand-written surface is refused for at construction rather
+ * than in production (#340): no description (discovery has nothing to route on
+ * and a guess costs a call), no explicit `readOnlyHint` (connecta never infers
+ * the safety class, so an unclassified tool is a deployment bug), and an
+ * `inputSchema` the validator cannot compile (declaring one is optional;
+ * declaring an unenforceable one is not). None of this reaches a proxied
+ * catalog — the contract binds the surfaces we write, not the ones we relay.
+ */
 function checkToolContract(id: string, tool: ApiTool): void {
   const address = `${id}.${tool.name}`;
   if (typeof tool.description !== "string" || tool.description.trim() === "") {
@@ -118,7 +126,7 @@ function checkToolContract(id: string, tool: ApiTool): void {
   if (tool.inputSchema) compileValidator(tool.inputSchema, { address });
 }
 
-/** A static connector; see provider conventions' two construction-time checks. */
+/** A static connector; every tool passes {@link checkToolContract} first. */
 export function api(id: string, opts: ApiOptions): Connector {
   for (const t of opts.tools) checkToolContract(id, t);
   const defs: ToolDef[] = opts.tools.map((t) => ({

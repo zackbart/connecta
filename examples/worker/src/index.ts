@@ -11,9 +11,9 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  * wrangler.jsonc backs the seven-tool surface.
  *
  * The operator surface is wired here except for activity history, which needs
- * a database this example does not create for you: sign-in, the credential
- * vault, and access-token issuance are on, and activity is three commented
- * lines below. README.md § "The operator surface" walks through all four.
+ * a database this example does not create for you: sign-in and the credential
+ * vault are on, and activity is three commented lines below. README.md
+ * § "Select optional modules" walks through all three.
  *
  * Setup (this example has no package.json of its own — it self-references the
  * installed `@zackbart/connecta` package):
@@ -30,7 +30,7 @@ import { encryptedCredentialVault } from "@zackbart/connecta/credentials";
  *      Dynamic Client Registration. Its Allowed redirect URIs must include
  *      Claude's https://claude.ai/api/mcp/auth_callback plus ChatGPT's
  *      https://chatgpt.com/connector_platform_oauth_redirect and
- *      https://chatgpt.com/connector/oauth/* forms (see ../AGENTS.md).
+ *      https://chatgpt.com/connector/oauth/* forms (see ../README.md).
  *   5. Use the Workers Paid plan required by the `worker_loaders` binding.
  *   6. `wrangler deploy` from this folder (examples/worker), where wrangler.jsonc
  *      lives. Point your MCP client at `<PUBLIC_URL>/mcp`.
@@ -90,22 +90,19 @@ function build(env: Env) {
     //   activityAccess: ({ id }) => id === "ACCESS_USER_UUID",
     // },
     // Connectors that declare a `credential` slot become editable by every
-    // signed-in human who can see that connector at /credentials, encrypted
-    // with this key before anything reaches KV. A saved replacement takes
+    // signed-in human who can see that connector, inside its connection on /,
+    // encrypted with this key before anything reaches KV. A saved replacement takes
     // effect on the next call — no redeploy, and no liveness probe:
     // credentials fail at use.
     //
-    // The key is the vault, not the page: /credentials is a list of connector
-    // slots, so it stays hidden until a connector declares one. Neither
-    // connector below does — Notion here carries a deployment-owned static
-    // header and echo has no secret at all — so this example ships the vault
-    // ready and the page empty. Declare a slot (see the commented shape on
-    // `echo`, or use a provider connector like `notion()`, which declares its
-    // own) and the page appears on the next load.
+    // The key is the vault, not the form: a credential form appears only on a
+    // connector that declares a slot. Neither connector below does — Notion
+    // here carries a deployment-owned static header and echo has no secret at
+    // all — so this example ships the vault ready and nothing to fill in.
+    // Declare a slot (see the commented shape on `echo`, or use a provider
+    // connector like `notion()`, which declares its own) and the form appears
+    // on the next load.
     vault: encryptedCredentialVault(storage, env.CREDENTIAL_ENCRYPTION_KEY),
-    // Eligible human operators can create named, revocable MCP Bearer tokens
-    // at /tokens. Under Worker-level Access those tokens are a rollback tool,
-    // not standalone edge credentials: Access still runs before connecta.
     ui: operatorUi(),
     identity: { credentialAdministration: () => "all", personalConnection: () => "all" },
     // Payload-free activity at /activity, off until a database exists to hold
