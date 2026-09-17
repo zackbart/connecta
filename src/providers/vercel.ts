@@ -1,4 +1,14 @@
-/** See documentation/vercel.md#no-sdk-on-purpose. */
+/**
+ * No `@vercel/sdk` on purpose — not a dependency and not an optional peer.
+ * Direct fetch keeps the root Workers-safe, avoids shipping the SDK's generated
+ * model graph, and lets the reviewed named operations and the REST hatches share
+ * one guarded transport. The trade is API drift, handled explicitly rather than
+ * by the SDK's version bumps: `scripts/drift/vercel-endpoints.json` records the
+ * method, versioned path, spec revision, and request/response digest for every
+ * fixed endpoint, and `npm run providers:check -- --provider vercel` compares
+ * those rows with Vercel's published OpenAPI document at
+ * https://openapi.vercel.sh/ without needing a credential.
+ */
 import { api, defined, type ApiTool } from "../connectors/api.js";
 import { remoteMcp } from "../connectors/remote-mcp.js";
 import { vettedCatalog, withVettedCatalog } from "../catalog-drift.js";

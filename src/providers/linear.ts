@@ -34,19 +34,40 @@ export interface LinearOptions {
   authScope?: "shared" | "personal";
   /** Which workspace this is and what decisions it answers. */
   purpose: string;
-  /** Required endpoint selection; see `documentation/linear.md`. */
+  /**
+   * Endpoint selection, required with no default. Linear's read-only endpoint
+   * advertises the `read` scope alone, so its token cannot reach the write APIs
+   * — a stronger guarantee than any annotation. Neither default is safe:
+   * read-write hands out access nobody asked for, and read-only breaks a
+   * writing deployment at runtime, where no agent can repair it.
+   */
   access: LinearAccess;
-  /** OAuth or a personal API key; see `documentation/linear.md`. */
+  /**
+   * OAuth 2.1 with dynamic client registration by default. Linear's MCP server
+   * also accepts a personal API key in `Authorization: Bearer` — note this is
+   * the MCP endpoint's own documented contract, not the GraphQL API convention.
+   * A personal key carries the acting user's full permissions, so pair it with
+   * `access: "read-only"` unless the deployment genuinely writes.
+   */
   auth?: RemoteMcpAuth;
   /** Workspace-specific conventions appended to the maintained provider guide. */
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
-  /** Optional per-runtime policy; see `documentation/linear.md#rate-limits`. */
+  /**
+   * Optional per-runtime policy. There is no default: Linear documents no
+   * MCP-specific limit, the GraphQL limits it rides are metered per user per
+   * hour (and its own page disagrees with itself on the API-key figure), and
+   * Connecta's counter is per runtime. Only the operator knows the workspace.
+   */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
-/** Reviewed reads; see `documentation/linear.md` and provider convention P5. */
+/**
+ * Reviewed reads, listed by name (P5). The list is a superset: Linear's hosted
+ * `tools/list` varies by plan and enabled features, so a name this workspace
+ * never returns costs nothing while an unlisted new one fails closed.
+ */
 const READ_ONLY_TOOLS = new Set([
   // Issues
   "list_issues",
@@ -109,7 +130,13 @@ const READ_ONLY_TOOLS = new Set([
   "extract_images",
 ]);
 
-/** Reviewed writes; `save_*` upsert rationale lives in `documentation/linear.md`. */
+/**
+ * Reviewed writes with their destructive verdict. Every `save_*` is destructive
+ * because Linear's `save_*` tools are upserts: omitting a record id creates,
+ * supplying one overwrites in place, and the schema cannot tell them apart. The
+ * genuine creates — the `create_*_label` and attachment tools — stay additive,
+ * since `readOnlyHint: false` already routes them through the approval path.
+ */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   // Issues
   ["save_issue", "destructive"],
@@ -143,7 +170,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["create_attachment_from_upload", "additive"],
   ["create_attachment", "additive"],
   ["delete_attachment", "destructive"],
-  // Explicit issue access
+  // Explicit issue access. Both halves change an existing issue's audience.
   ["share_issue", "destructive"],
   ["unshare_issue", "destructive"],
   // Customer requests (plan-gated)
@@ -153,7 +180,12 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["delete_customer_need", "destructive"],
 ]);
 
-/** Release-reviewed manifest; see provider conventions P5 and P13. */
+/**
+ * One release-reviewed manifest, used both to classify a live tool and as the
+ * baseline the drift check compares against, so the annotation a caller gets
+ * and the verdict a check reads can never disagree. Drift must surface as an
+ * unclassified tool on the approval path (P5), never a quiet re-guess.
+ */
 export const LINEAR_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,

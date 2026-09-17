@@ -2,56 +2,74 @@
 
 Connecta keeps one small tool surface in model context and resolves downstream
 tools behind it. `search_tools` finds addresses, the call tools enforce safety
-annotations, and `get_result` pages bounded results.
+annotations, `execute_code` runs read-only work as a program, and `get_result`
+pages bounded results.
 
-## The deployment surface
+This guide is the contract an MCP client sees. The in-program `connecta.*` API
+those tools imply belongs to [code mode](./code-mode.md); inbound identity and
+credential administration belong to [auth](./auth.md).
 
-Every deployment requires an executor and `tools/list` is exactly seven:
-`execute_code`, `search_tools`, `call_tool`, `call_destructive_tool`,
-`authorize_connector`, `get_result`, and `skills`. Discovery uses `connecta.search` and `connecta.describe`; programs compose
-calls with JavaScript promises ([#273](https://github.com/zackbart/connecta/issues/273)).
+## The seven tools
 
-Code-first is what a model sees. Read-only work has two routes: `call_tool` for
-one known address, and `execute_code` when discovery or any wider work is
-needed. Real hosted catalogs reversed the earlier synthetic result that made a
-top-level cold search look cheaper. Keeping discovery inside the program avoids
-returning every candidate schema to the model and removes a model round trip.
-The [guest API contract](./code-mode.md) is what a program is promised.
+Every deployment requires an executor, so `tools/list` is exactly seven. No
+configuration adds an eighth or removes one.
 
-The route is chosen before discovery. An unknown address, a result that will be
-reduced, a call whose arguments depend on an earlier result, or work with
-multiple operations starts with `execute_code` and keeps discovery, calls, and reduction inside it
-when the schemas and result shapes suffice. An unfamiliar provider result may
-return a small sample for inspection before continuing in another call. This
-exception avoids repeated guesses at text formats or collection roots; it does
-not restore a mandatory discovery-only round trip. Distinct operations get distinct short
-`connecta.search` queries in that program. A known address needs only
-`call_tool`.
+| Tool | Arguments | Returns |
+| --- | --- | --- |
+| `execute_code` | `code`, `diagnostics?` | the program's reduced return value, plus a `diagnostics` block when asked |
+| `search_tools` | `query?`, `connector?`, `safety?`, `limit?`, `offset?`, `fullDescriptions?`, `includeSchemas?: "compact" \| "json"` | `{ connectors: [{ id, tools }], total, offset, limit, hasMore }`, plus `queryAnalysis` on a partial or failed search |
+| `call_tool` | `address`, `args?`, `resultMode?: "mcp" \| "value"`, `timeoutMs?`, `diagnostics?` | the downstream result, bounded as [result representation](#result-representation) describes |
+| `call_destructive_tool` | the same, plus `reason?` | the same |
+| `authorize_connector` | `connector`, `force?` | the class-specific handoff in [authorization recovery](#authorization-recovery) |
+| `get_result` | `id`, `offset?`, `maxBytes?` | `{ offset, nextOffset?, totalBytes, text }` |
+| `skills` | `name?` | the listing when `name` is absent, that skill's markdown when it is present |
 
-That routing is about read-only work, because that is the only work a program
-can do. Anything unannotated, write-capable, or destructive is inadmissible
-inside the sandbox, so multi-step destructive work discovers at the top level
-and runs each step through `call_destructive_tool` — where the host can put the
-question to a human. Telling an agent never to search at the top level for
-multiple calls would close the only route that work has
-([#295](https://github.com/zackbart/connecta/issues/295)).
+`limit` defaults to 8 and is capped at 100, as is one `connecta.describe` batch.
+`get_result.offset` is a whole number of bytes ≥ 0 defaulting to 0 and
+`maxBytes` a whole number ≥ 1 defaulting to the deployment result cap — itself
+50,000 bytes unless `calls.maxResultBytes` or a per-connector override says
+otherwise. Both are validated rather than clamped: a bad value is an input
+error. `reason` is at most 500 characters of context for the host's human
+approval view; Connecta neither treats it as authority nor sends it downstream,
+and an empty or whitespace-only one reads as no reason rather than as grounds to
+refuse a consequential call.
 
-`execute_code` accepts optional `diagnostics: true` when a caller is measuring
-a workflow. It adds only compact request-local timing and serialized-size
-aggregates; normal calls carry no diagnostics block or response-context cost.
-The measurements never contain program source, arguments, values, addresses,
+`diagnostics: true` adds compact request-local timing and serialized-size
+aggregates for a caller measuring a workflow: a `diagnostics` block from
+`execute_code`, a `timing` block on a call response that is already structured
+(value mode, or a failure carrying recovery). Normal calls pay nothing for it,
+and the measurements never contain program source, arguments, values, addresses,
 credentials, logs, or raw error text.
 
-Nothing became unreachable. `connecta.describe` takes the same addresses and
-formats as the internal catalog service, ordinary promises compose read-only
-calls, and an unfiltered
-`connecta.search({})` browses every catalog a program can reach. Live connector
-probing is an operator concern: the operator pages and `/health` own it.
+Connecta's own tools carry the annotations it demands of downstream tools:
+read-only hints on all but `authorize_connector`, which mutates stored auth
+state, and `call_destructive_tool`. Otherwise a host that gates on annotations
+would prompt for every search, and a connecta aggregated behind another connecta
+would be refused by its own policy.
 
-Program search includes a bounded `connectorTitle` on each tool when configured, so choosing an account or environment does not require a provider read. It is context, not a ranking input or proof of live access.
+## Routing between the call surfaces
 
-The three discovery routes use deliberately different envelopes. These are
-their smallest successful one-tool shapes:
+The route is chosen before discovery, and read-only work has exactly two:
+`call_tool` for one known address, `execute_code` for everything wider — an
+unknown address, a result that will be reduced, a call whose arguments depend on
+an earlier result, or several operations. A program keeps discovery, calls, and
+reduction together when the schemas and result shapes suffice, and gives each
+distinct operation its own short `connecta.search` query. That is cheaper than it
+looks: discovery inside the program returns no candidate schema to the model and
+costs no round trip. One exception — an unfamiliar provider result may come back
+as a small sample for inspection before continuing in another call, which avoids
+repeated guesses at text formats and collection roots without restoring a
+mandatory discovery-only round trip.
+
+That covers read-only work, because that is the only work a program can do.
+Anything unannotated, write-capable, or destructive is inadmissible inside the
+sandbox, so multi-step destructive work discovers at the top level and runs each
+step through `call_destructive_tool`, where the host can put the question to a
+human. Telling an agent never to search at the top level for multiple calls
+would close the only route that work has.
+
+The three discovery routes use deliberately different envelopes. These are their
+smallest successful one-tool shapes:
 
 ```js
 // Top-level search_tools
@@ -62,185 +80,157 @@ their smallest successful one-tool shapes:
 { tools: [{ name: "get_run", address: "ci.get_run", inputSchema: "{ runId: integer }" }] } // connecta.describe
 ```
 
+Live connector probing is not a fourth: the operator pages and `/health` own it.
+
 ## Discovery context
 
-The deployment-derived `execute_code` description includes a live connector
-inventory before any catalog search. It preserves registry order and uses each
-canonical id and a distinct configured title without generating a second name for programs. Titles normalize whitespace and are capped at 48 UTF-8 bytes, so account and environment hints cannot consume the entire inventory.
-The complete inventory line is capped at 256 UTF-8 bytes. Entries stay whole,
-and a truncated line ends with the exact `+N more` count. This reads only the
-configured registry: it loads no catalog, probes no credential, grants no
-capability, and does not replace canonical discovery or addressing.
+The deployment-derived `execute_code` description carries a live connector
+inventory before any catalog search — registry order, each canonical id, and a
+distinct configured title, with no second name minted for programs. Titles
+normalize whitespace and cap at 48 UTF-8 bytes, the complete line caps at 256,
+entries stay whole, and a truncated line ends with the exact `+N more` count, so
+account and environment hints cannot eat the inventory. It reads only the
+configured registry: no catalog load, no credential probe, no capability, and no
+replacement for canonical discovery or addressing. Program search results carry
+the same bounded `connectorTitle` per tool, so choosing an account or
+environment costs no provider read. Context, not a ranking input and not proof
+of live access.
 
-Start a lookup with two to four distinctive action/object terms, not the full
-request. Read-only lookup belongs in `connecta.search` inside the program.
-Top-level `search_tools` remains available for explicit catalog inspection and
-approval-required discovery. Omit `limit` initially so the default
-eight-result page stays small. When the integration is obvious, set
-`connector` to its id: a scoped search loads that catalog alone, while an
-unscoped search must fan out across every configured connector. Leave the
-search unscoped when the right integration is genuinely ambiguous. Set
-`safety: "readOnly"` for generated code; `safety: "approvalRequired"` finds the
-complementary set that must cross `call_destructive_tool`. Omitting `safety`,
-or setting it to `"all"`, preserves the complete configured catalog. This is
-only a discovery filter: it neither grants authority nor changes invocation admission.
+Read-only lookup belongs in `connecta.search` inside the program; top-level
+`search_tools` stays for explicit catalog inspection and approval-required
+discovery. Both take the same arguments.
+
+| Argument | What it does |
+| --- | --- |
+| `query` | two to four action/object terms; empty or whitespace-only browses |
+| `connector` | scopes to one id, loading that catalog alone instead of fanning out across every configured connector. Set it when the integration is obvious, omit it when the right one is genuinely ambiguous |
+| `safety` | `"readOnly"` for what generated code may call, `"approvalRequired"` for the complementary set that must cross `call_destructive_tool`, omitted or `"all"` for the complete configured catalog |
+| `limit` / `offset` | page the ranked results; omit `limit` initially so the default eight-result page stays small |
+| `includeSchemas` | `"compact"` for the rendered routing view, `"json"` for the exact schema |
+| `fullDescriptions` | unabridged tool purposes, at the obvious cost |
+
+Neither `connector` nor `safety` grants authority or changes invocation
+admission; they select what discovery shows and nothing else.
+
 `includeSchemas: "compact"` adds each match's input and any provider-declared
-output shape. When the provider declared none but an earlier successful call
-learned one, the same field carries the open observed schema beside
-`outputSchemaSource: "observed"`. That marker matters: observed fields and broad
-JSON types are routing evidence, not a provider contract, and every object field
-remains optional and open to unseen names. A provider declaration always wins.
-Bounded plain-object schemas also expose `inputKeys`,
-`requiredInputKeys`, and `outputKeys`; a zero-input object keeps
-`requiredInputKeys: []`, while an output object with no declared properties
-omits `outputKeys`. A truncated shape omits its corresponding list rather than
-repeating a large partial inventory. Matches carry declared
-behavior annotations. Lexical rank is only one signal: select a candidate whose
-required inputs are available, whose schema is complete enough for the call,
-and whose safety and available outputs fit the work. A reducer uses `outputKeys`
-before inspecting the value; it does not assume a collection is named `items`
-or `results`. When that shape is sufficient, call the returned address directly. Reserve schema
-expansion through `connecta.describe` for a search without schemas, an
-ambiguous compact shape, or exact
-constraints that require `format: "json"`.
+output shape, plus `inputKeys`, `requiredInputKeys`, and `outputKeys` for
+bounded plain objects. Where the provider declared no output shape but an
+earlier successful call learned one, the same field carries that open observed
+schema beside `outputSchemaSource: "observed"`. The marker is load-bearing:
+observed names and broad types are routing evidence, never a provider contract,
+and a provider declaration always wins. Observation originates no provider
+traffic and cannot fail a call; the mechanism and its bounds are
+[code mode](./code-mode.md#connectasearch)'s `S9`, and this surface only labels
+what it returns.
 
-Observed schemas originate no provider traffic. A successful explicitly
-read-only call the user already made contributes names and broad types after
-Connecta unwraps the result. Arguments, scalar values, raw results, code,
-credentials, and errors are not retained, though property names may themselves
-be user-authored. Shapes merge in a 256-entry runtime cache for 24 hours under
-the exact tool definition that produced them. A changed definition, process
-restart, or Worker isolate eviction starts cold. Observation cannot fail the
-call, and the declared catalog remains the fallback.
+Lexical rank is one signal among several: pick a candidate whose required inputs
+are available, whose schema is complete enough for the call, and whose safety
+and outputs fit the work. When that shape suffices, call the returned address
+directly; reserve `connecta.describe` for a search without schemas, an ambiguous
+compact shape, or exact constraints that need `format: "json"`.
 
-Compact search is deliberately a routing view, not a second copy of connector
-documentation. Tool purposes are capped at 160 characters, connector
-descriptions and property prose are omitted, required input fields render
-before optional ones, and each input or output shape is capped at 1,024 UTF-8
-bytes. Within that unchanged total, each enum node and each constraint
-annotation may spend at most 256 UTF-8 bytes. Numeric bounds, string length
-bounds, patterns, and formats render beside their type. A constraint that does
-not fit is dropped whole. If constraints push the full shape over 1,024 bytes,
-search retries the shape without them. Compact describe keeps declared
-constraints and property prose within its own 8,192-byte shape cap, sharing
-search's 2,000-visit rendering budget; a capped shape sets
-`inputSchemaTruncated` or `outputSchemaTruncated`, and `format: "json"` or
-JSON search returns the exact schema. A large enum keeps the longest whole-value prefix that fits, then
-adds `unknown` and a comment with the exact omitted-value count. An empty enum
-renders as the valid `never` type. A capped object becomes a valid
-required-first shape with `unknown` types; other shapes become
-`unknown /* truncated */`. Any cap marks the match with
-`inputSchemaTruncated` or `outputSchemaTruncated`; repeat the search with
-`includeSchemas: "json"` or use the existing describe path when exact
-constraints matter. `prefixItems` renders as a tuple, with the `items` type
-as its rest, an `unknown[]` rest when open, and no rest for `items: false`.
-`dependentSchemas` and `if`/`then`/`else` preserve the base shape and append
-`/* conditional */`, setting the truncation flag so the caller reads the exact
-JSON schema. `$dynamicRef` resolves a same-named definition like `$ref`; an
-unresolved dynamic reference renders as `unknown` with the truncation flag.
-These shapes share the same byte and work budgets. Small enums and both exact
-paths remain complete.
+Compact search is a routing view, not a second copy of connector documentation,
+so it spends bytes on shape and none on prose: tool purposes cap at 160
+characters, connector descriptions and property prose are dropped, and required
+input fields render before optional ones. Both surfaces share one renderer, so
+its byte and work budgets, its truncation renderings, and its handling of enums,
+tuples, and conditional keywords are documented once under
+[`connecta.search`](./code-mode.md#connectasearch) and
+[`connecta.describe`](./code-mode.md#connectadescribe). The part a client must
+act on is the flag: any cap sets `inputSchemaTruncated` or
+`outputSchemaTruncated`, and that means repeat with `includeSchemas: "json"`, or
+describe, when the exact constraints matter.
 
-## Connector guide selection
+## Connector guides and skills
 
-A connector may attach a deployment-owned guide as markdown, preserving the
+A connector may attach a deployment-owned guide as markdown, keeping the
 original `usageGuide: string` configuration, or as
-`{ content, summary?, required? }`. The structured form does not register a
-connector or create a shared runtime template. `content` remains the markdown
-returned verbatim by `skills`; `summary` is normalized and refuses construction
-when it exceeds 120 characters. When it is absent, Connecta derives the same
-bounded fallback used by the skills listing: the first meaningful body
-paragraph, joined across physical Markdown line wraps and shortened at a
-sentence, clause, or word boundary, with a heading used only when the guide has
-no body. `required: true` is reserved for generic API wrappers and
-cross-operation conventions a complete downstream schema cannot express.
+`{ content, summary?, required? }` — which registers no connector and creates no
+shared runtime template. `content` is the markdown `skills` returns verbatim.
+`summary` is normalized and refuses construction over 120 characters; absent,
+Connecta derives the same bounded fallback the skills listing uses from the
+guide's first meaningful body paragraph. `required: true` is reserved for
+generic API wrappers and cross-operation conventions a complete downstream
+schema cannot express.
 
-Search and describe results keep the existing `guide: "connector:<id>"`
-pointer and add `guideSummary`. A matching tool also carries
-`guideRequired: true` and `guideRequiredReasons` when Connecta can prove review
-is necessary:
-`connector_required` for the explicit configuration above,
-`approval_required` for an unannotated or write-capable tool, and
-`schema_truncated` when a requested compact input or output shape was capped.
-The boolean is an instruction, not a server-side gate — nothing refuses the
-call, so the agent is told to fetch the guide before making it, for any reason
-listed. `connector_required` and `approval_required` survive exact schema
-expansion; `schema_truncated` is cleared by the describe that returns the exact
-shape, and describe reports whatever reasons remain in the same two fields.
-Otherwise it reads the
-bounded summary: connector-specific sequencing, units, pagination, aliases,
-and generic API conventions still require the guide when they affect the task,
-while a complete and unambiguous one-read schema proceeds directly.
-Guide lookup always uses an exact name returned by `skills({})`, search, or
-describe; callers do not manufacture `connector:<id>` from an unmarked
-connector.
+Search and describe results carry a `guide: "connector:<id>"` pointer and a
+`guideSummary`. A matching tool also carries `guideRequired: true` and
+`guideRequiredReasons` when Connecta can prove review is necessary:
 
-A connector-scoped lexical miss retains that connector's guide metadata under
-`queryAnalysis`. This matters for generic wrappers whose broad tool name does
-not contain endpoint vocabulary: a required guide remains discoverable before
-the caller falls back to an empty-query browse, rather than disappearing with
-the zero-tool page.
+| Reason | Raised by | Survives exact schema expansion |
+| --- | --- | --- |
+| `connector_required` | the explicit `required: true` above | yes |
+| `approval_required` | an unannotated or write-capable tool | yes |
+| `schema_truncated` | a requested compact shape was capped | no — the describe that returns the exact shape clears it |
 
-The built-in `usage` skill is byte-identical across deployments and says to
-read it at most once per task. Connector guides remain scoped to the deployment
-that listed them, even when two deployments happen to use identical content.
-The always-loaded instructions and seven tool definitions own route selection,
-the fail-closed boundary, and the minimum guest syntax. The usage skill owns
-program selection detail, examples, runtime differences, and repair guidance.
-This split avoids two normative copies while preserving a valid first program
-for clients that never fetch the skill. Deployments without connector guides
-receive none of the short conditional guide pointers in their definitions.
+Describe reports whatever reasons remain in the same two fields. The boolean is
+an instruction, not a server-side gate: nothing refuses the call, so the agent
+is merely told to fetch the guide first, for any reason listed. Otherwise the
+bounded summary decides — connector-specific sequencing, units, pagination,
+aliases, and generic API conventions still need the guide when they affect the
+task, while a complete and unambiguous one-read schema proceeds directly. Guide
+lookup always uses an exact name returned by `skills({})`, search, or describe;
+callers never manufacture `connector:<id>` from an unmarked connector.
 
-## Task guidance
+A connector-scoped lexical miss keeps that connector's guide metadata under
+`queryAnalysis`. This matters for generic wrappers whose broad tool name
+contains no endpoint vocabulary: a required guide stays discoverable instead of
+disappearing with the zero-tool page.
 
-`skills({ name: "investigate" })` provides on-demand guidance for purchase
-verification, experiment checks, and customer or deployment investigations.
-The execute description points to it when planning is unclear; routine reads need no additional guide fetch. It explains how to
-resolve app/account/environment, follow evidence across services, establish
-capability limits, and stop with a clear answer or a specific gap. It is shared
-guidance, not a saved workflow or a source of deployment-specific ids. Existing
-connector titles, purposes, and guides still own those distinctions.
-
-The usage skill keeps the executable mechanics. Its dependent-call example
-searches each operation separately, uses the page's `tools` array and canonical
-addresses, and reports unresolved evidence instead of inventing an address or
-querying another account. Its source runs against local fixtures in the QuickJS
-suite, including missing and approval-required evidence.
+Two built-in skills are byte-identical across deployments. `usage` says to read
+it at most once per task and owns program selection detail, examples, runtime
+differences, and repair guidance; `investigate` is on-demand guidance for
+purchase verification, experiment checks, and customer or deployment
+investigations — shared guidance, not a saved workflow and not a source of
+deployment-specific ids. The always-loaded instructions and tool definitions keep
+route selection, the fail-closed boundary, and the minimum guest syntax, so a
+client that never fetches a skill can still write a valid first program. Connector
+guides stay scoped to the deployment that listed them even when two deployments
+use identical content, and a deployment with no connector guides receives none of
+the short conditional guide pointers in its tool definitions.
 
 ## Result representation
 
-For object results, `structuredContent` is the canonical full-fidelity value.
+For object results, `structuredContent` is the canonical full-fidelity value and
 `content` carries the same complete value as compact JSON for clients that only
 consume text. Keeping both follows MCP's backwards-compatibility guidance;
-removing or summarizing the text copy is deferred until host-forwarding
-measurements demonstrate that supported clients do not need it.
+dropping the text copy waits on host-forwarding measurements showing supported
+clients do not need it. Plain-text guidance and errors stay text-only, and a
+downstream MCP tool's native content blocks pass through in MCP result mode.
+When no text block exists and `structuredContent` is present, Connecta appends a
+text block carrying its compact JSON and then applies the same content size
+guard, which preserves structured-only results including `null`, arrays, and
+scalars. An existing text mirror stays unchanged; Connecta adds no second copy.
+Newly stashed JSON and downstream content envelopes use compact serialization,
+so `get_result` offsets and totals describe that exact compact text.
 
-Plain-text guidance and errors remain text-only. A downstream MCP tool's native
-content blocks pass through when `call_tool` uses MCP result mode. When no
-text block exists and `structuredContent` is present, Connecta appends a text
-block containing its compact JSON, then applies the same content size guard.
-This preserves structured-only results, including `null`, arrays, and scalars.
-An existing text mirror stays unchanged; Connecta does not add another copy. Newly stashed JSON and
-downstream content envelopes use compact serialization, so `get_result` byte
-offsets and totals refer to that exact compact text.
+| Bound | Value |
+| --- | --- |
+| Stashed result TTL | 15 minutes |
+| `results.maxStashBytes` | 8 MiB per `createConnecta` runtime |
+| `results.maxStashEntries` | 64 per runtime |
+| Top-level discovery result ceiling | 256,000 UTF-8 bytes |
+| Downstream MCP `isError` text | 512 UTF-8 bytes plus an `…` marker |
 
-The direct-call stash keeps results for 15 minutes. `results.maxStashBytes`
-defaults to 8 MiB and `results.maxStashEntries` to 64 per `createConnecta`
-runtime, shared across all subjects and pools. Both accept non-negative safe
-integers; zero disables stashing. The byte budget counts the stored ASCII
-paging envelope, including base64 overhead, rather than only the result text.
-Capacity is reserved before each storage write, so concurrent requests cannot
-oversubscribe it. A full stash refuses new entries. A later stash attempt
-deletes expired entries before reusing their capacity; a failed deletion keeps
-the charge. These bounds cover writes by this runtime, not other processes,
-Worker isolates, or entries left by a previous runtime.
+The discovery ceiling counts text, `structuredContent`, and JSON escaping
+together, because measuring one copy would advertise half the bytes the adapter
+actually returns; error framing may shorten a bounded `isError` reason further to
+fit the call's result cap on the same arithmetic. Both stash options accept
+non-negative safe integers, zero disabling stashing, and are shared across all
+subjects and pools; they count the stored ASCII paging envelope, base64 overhead
+included, not only the result text. Capacity is reserved before each storage
+write so concurrent requests cannot oversubscribe it, and a full stash refuses
+new entries. A later attempt deletes expired entries before reusing their
+capacity; a failed deletion keeps the charge. These bounds cover writes by this
+runtime — not other processes, Worker isolates, or entries a previous runtime
+left behind.
 
-Results belong to the authenticated subject whenever auth supplies a subject
-or user id, independently of activity configuration. The provider's namespace
-is used when present; otherwise the namespace is `connecta:auth:<provider kind>`.
-Keep subject ids distinct within that namespace. An explicit principal is the
-fallback subject when neither id is supplied. Open deployments and auth
-providers that supply no identity share one partition.
+Results belong to the authenticated subject whenever auth supplies a subject or
+user id, independently of activity configuration, under the provider's namespace
+when it has one and `connecta:auth:<provider kind>` otherwise. Keep subject ids
+distinct within that namespace. An explicit principal is the fallback subject
+when neither id is supplied, and open deployments and auth providers that supply
+no identity share one partition.
 
 New entries store UTF-8 bytes in a base64 envelope split across storage keys,
 48 KiB of result text per chunk — widening past roughly 1.5 MB so no result
@@ -254,106 +244,87 @@ original UTF-8 text, not the envelope. A supplied offset inside a character
 moves back to its start; page ends also align to character boundaries, and a
 page smaller than one character widens just enough to make progress.
 
-A successfully stashed `call_tool` truncation notice carries both the historical `resultId` and an
-exact `nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`. The
-handle is therefore
-directly actionable without copying an identifier out of prose. Program results
-and oversized discovery responses carry no such route — paging a program's
-return value is a refused shape, because a program can shrink anything before
-it returns.
+A successfully stashed `call_tool` truncation notice carries both the historical
+`resultId` and an exact
+`nextAction: { tool: "get_result", arguments: { id, offset: 0 } }`, so the handle
+is actionable without copying an identifier out of prose. Program results and
+oversized discovery responses carry no such route: paging a program's return
+value is a refused shape, because a program can shrink anything before it
+returns.
 
-A refused stash or failed stash write cannot undo a downstream success. Both direct call tools
-return a truncated preview where usable, with a paging-unavailable notice and
-no `resultId` or paging action. Activity records success; the operator logger
-receives a fixed warning with the connector and tool, without storage error
-prose. For read-only work, reduce the result inside `execute_code`; repeating
-an approved write is not a way to recover its output. Other result-processing
-failures use a fixed `result_processing_failed` message and are never retryable.
-
-Downstream MCP `isError` text is bounded at its source to 512 UTF-8 bytes plus
-an `…` marker. Error framing may shorten it further to fit the call's result
-cap, counting JSON escaping and both copies in value mode.
-
-The top-level discovery ceiling is 256,000 UTF-8 bytes for the serialized tool
-result, including text, `structuredContent`, and JSON escaping. Measuring only
-one copy would advertise half the bytes the adapter actually returns.
+A refused or failed stash write cannot undo a downstream success. Both call tools
+then return a truncated preview where one is usable, with a paging-unavailable
+notice and no `resultId` or paging action; an envelope carrying non-text blocks
+gets the notice alone, because the head of a half-written base64 image helps
+nobody. Activity records success, and the operator logger receives a fixed
+warning naming the connector and tool without storage error prose. For read-only
+work, reduce the result inside `execute_code` — repeating an approved write is
+not a way to recover its output. Other result-processing failures use a fixed
+`result_processing_failed` message and are never retryable.
 
 A per-call `timeoutMs` covers catalog resolution, admission, and connector
-execution with one deadline. The admission queue's own timeout may expire
-sooner, but it cannot extend the call deadline. Result processing happens after
-that deadline ends, because a completed downstream call must not turn into a
+execution under one deadline. The admission queue's own timeout may expire
+sooner but cannot extend the call deadline. Result processing happens after that
+deadline ends, because a completed downstream call must not turn into a
 retryable timeout while Connecta prepares its response.
 
 ## Lexical discovery
 
 `search_tools` tokenizes tool names and descriptions at punctuation and
-camel-case boundaries. Exact whole-token matches carry the most weight; a small
-set of inflectional variants preserves singular/plural and verb-form recall
-without allowing arbitrary mid-word substring matches. Ranking weights each
-query term by its document frequency across the available catalogs in that
-search, so a rare domain term outranks a ubiquitous action while action terms
-still distinguish `get`, `list`, `search`, and write operations. The scorer
-always evaluates useful near-matches instead of letting one broad all-term
-description hide them. Complete matches rank before ordinary partial matches;
-a partial candidate whose complete normalized tool name occurs in the
-normalized raw query competes with complete matches by score, and other
-candidates covering at least two terms fill the remaining page after them.
-Conversational cleanup applies only to scoring terms, never to the exact-name
+camel-case boundaries. Exact whole-token matches carry the most weight, and a
+small set of inflectional variants preserves singular/plural and verb-form
+recall without admitting arbitrary mid-word substrings. Each query term is
+weighted by its document frequency across the catalogs available to that search,
+so a rare domain term outranks a ubiquitous action while action terms still
+distinguish `get`, `list`, `search`, and write operations. Complete matches rank
+before ordinary partial matches; a partial candidate whose complete normalized
+tool name occurs in the normalized raw query competes with complete matches by
+score, and other candidates covering at least two terms fill the remaining page.
+Conversational cleanup applies to scoring terms only, never to the exact-name
 phrase check. If no tool covers every non-conversational term, the same scorer
 preserves the wider any-term fallback and marks the result
 `matchMode: "partial"`.
 
-Returned tool rows expose neither lexical scores nor per-result query coverage.
-The mixed complete/partial scorer still ranks rare domain terms, action terms,
-and exact tool-name phrases. Select from the returned purpose, address, schema,
-safety, and output shape. Page-level `queryAnalysis` remains the recovery path
-when no single result covers every term or no match exists.
+Tool rows expose neither lexical scores nor per-result query coverage. Select
+from the returned purpose, address, schema, safety, and output shape; page-level
+`queryAnalysis` is the recovery path when no single result covers every term or
+none exists. It reports `representedTerms` (in the current page),
+`otherResultTerms` (only in another result), and `unmatchedTerms` (no lexical
+match in the catalogs that answered), covers at most eight distinct terms of at
+most 64 displayed characters each while marking longer input `truncated`, and
+never changes lexical ranking. A non-empty query that normalizes to no ASCII
+lexical terms returns no tools rather than unrelated browse results, with the
+clipped raw query in `unmatchedTerms`; a mixed query searches with its ASCII
+terms, and unsupported characters become neither false matches nor coverage
+terms.
 
-Only an empty or whitespace-only query browses. A non-empty query that
-normalizes to no ASCII lexical terms returns no tools instead of unrelated
-browse results. Its bounded `queryAnalysis.unmatchedTerms` contains the clipped
-raw query and guidance asks for ASCII action/object terms. A mixed query still
-searches with its ASCII terms; unsupported characters do not become false
-matches or per-tool coverage terms.
+What the analysis says next depends on why the page is thin:
 
-Every partial or no-match lexical search also returns bounded page-level
-`queryAnalysis`; an all-term result needs no recovery advice.
-`representedTerms` occur in the current page, `otherResultTerms` occur only in
-another result, and
-`unmatchedTerms` have no lexical match in the catalogs that answered. Partial
-results explain that no single tool covered every term and recommend splitting
-distinct intents. A true negative says that no matching capability is
-configured and recommends refining, connector-scoping, or browsing; when a
-connector catalog was unavailable, the response includes
-`unavailableConnectorCount` instead of making that stronger claim. A no-match
-query whose terms name a configured connector's `id` or `title` never makes it
-either: connector identity is not in the lexical index — indexing it would move
-ranking for every query that already matches tools — so instead the guidance on
-an unscoped miss names up to three such connectors by ID and sends the caller
-to a scoped browse. Identity affects that one sentence and nothing else: no
-ranking, no result, and no new field. A search
-explicitly scoped to that unavailable connector also receives `catalogError` —
-the bounded classified failure (`code`, `message`, `retryable`, and any
-`retryAfterMs`) so the caller can tell a transient outage from one a deployment
-operator must clear. It carries nothing else the call-path classifier knows: a
-discovery read is not a call. Unscoped searches keep the count only — one
-connector's failure is not another search's context. An empty query browses
-rather than searches, so it reports no term analysis — except when the scope
-itself failed, where the same fields apply. A browse scoped to an unavailable
-connector carries `unavailableConnectorCount`, `catalogError`, and guidance,
-and an unscoped browse again carries the count alone. A browse scoped to an ID
-that is not configured at all carries `connectorScope`, `unknownConnector`, and
-the same omit-the-connector guidance the term-bearing path gives — nothing was
-attempted, so there is no count and no `catalogError` — and it names no
-connector but the one the caller supplied. A connector that correctly exposes
-no tools still reports no analysis, so the two do not serialize alike. The
-advice to browse a connector with an empty query must not land in silence that
-reads like a connector with no tools. Analysis
-from a connector-filtered search includes `connectorScope` and speaks only
-about that connector; `unknownConnector` distinguishes an unconfigured ID from
-a known connector with no match. Analysis covers at most eight distinct terms
-of at most 64 displayed characters each, marks longer input `truncated`, and
-never changes lexical ranking.
+| Case | Fields and guidance |
+| --- | --- |
+| Partial match | no single tool covered every term; split distinct intents |
+| True negative | no matching capability is configured; refine, connector-scope, or browse |
+| True negative naming a configured connector | the same, plus up to three such connectors named by id and a pointer to a scoped browse |
+| Unscoped search or browse with some connector unavailable | `unavailableConnectorCount` alone |
+| Scoped to an unavailable connector | `unavailableConnectorCount`, `catalogError`, guidance |
+| Scoped to an unconfigured id | `connectorScope`, `unknownConnector`, omit-the-connector guidance |
+| Connector configured and genuinely exposing no tools | no analysis |
+
+Three of those rows earn their asymmetry. An unavailable catalog downgrades the
+claim, because a search may not report that nothing is configured when it does
+not know. Connector identity is deliberately absent from the lexical index —
+indexing it would move ranking for every query that already matches tools — so a
+query naming one gets exactly one extra sentence and nothing else: no ranking
+change, no result, no new field. And a browse scoped to an unavailable connector
+must not serialize like a connector that genuinely has no tools, or the advice to
+browse lands in silence that reads like an answer.
+
+`catalogError` is the bounded classified failure — `code`, `message`,
+`retryable`, and any `retryAfterMs` — so a caller can tell a transient outage
+from one an operator must clear, and nothing else the call-path classifier knows,
+because a discovery read is not a call. Only an explicitly scoped search gets it:
+one connector's failure is not another search's context, and a scope that was
+never configured gets neither it nor a count, since nothing was attempted.
 
 ## Authorization recovery
 
@@ -394,113 +365,79 @@ The tool accepts no secret. `force` applies only to OAuth and may discard its
 stored grant before restarting consent. Static credential values are written
 only through the same-origin interactive-user credential route, and only for a
 connector visible to that user with the relevant shared or personal management
-permission. OAuth start, including `force`, requires that permission too. Core
-callbacks work without the UI for authorized interactive callers. After OAuth consent or a human update, retry
-the original operation; a static update is read from the vault on the next call
-and needs no redeploy.
+permission; OAuth start, `force` included, requires that permission too. Core
+callbacks work without the UI for authorized interactive callers. After OAuth
+consent or a human update, retry the original operation; a static update is read
+from the vault on the next call and needs no redeploy.
 
 ## Routing recovery
 
-Predictable local refusals carry structured recovery on both result modes.
-An unknown connector suggests an unscoped discovery query derived from the
+Predictable local refusals carry structured recovery on both result modes. An
+unknown connector suggests an unscoped discovery query derived from the
 attempted tool name; an unknown tool scopes the same query to the connector that
-answered. The suggested route follows the route the caller took: `tool:
-"search_tools"` for a top-level call, `function: "connecta.search"` with the same
-arguments when the miss happened inside `execute_code`, which has no way to call
-a tool. A read path that reaches an unannotated, write-capable, or destructive
-tool returns `nextAction` for `call_destructive_tool` with the canonical
-address. Nothing is executed by these records.
+answered. The suggested route follows the route the caller took:
+`tool: "search_tools"` for a top-level call, `function: "connecta.search"` with
+the same arguments when the miss happened inside `execute_code`, which has no
+way to call a tool. A read path that reaches an unannotated, write-capable, or
+destructive tool returns `nextAction` for `call_destructive_tool` with the
+canonical address. Nothing is executed by these records.
 
-`connecta.describe` keeps failures inline so one miss cannot discard the other
-schemas. Each failed entry keeps its human `error` and adds `errorDetails` with
-the equivalent invocation `code` and `retryable`. Address and tool misses use
-the same route-aware discovery action above. A close tool-name miss on a known
-connector may also carry `suggestions`: at most three deterministically ranked
-canonical addresses, with no scores or descriptions. An unknown connector
-stays unscoped and has no suggestions. A catalog-load failure carries only
-`code`, bounded `message`, `retryable`, and any `retryAfterMs`; discovery does
-not inherit later additions to the call-failure envelope.
+`connecta.describe` keeps its failures inline instead, so one miss cannot
+discard the other schemas; each failed entry carries a human `error`, typed
+`errorDetails`, the same route-aware discovery action, and — on a close
+tool-name miss against a known connector — at most three deterministically
+ranked canonical `suggestions` with no scores and no descriptions. A
+catalog-load failure carries only `code`, bounded `message`, `retryable`, and
+any `retryAfterMs`: discovery does not inherit later additions to the
+call-failure envelope. The per-entry rules are
+[code mode](./code-mode.md#connectadescribe)'s `S4`.
 
-That route echoes the caller's own arguments back only while they fit a
-512-byte budget, and then whole — never clipped. An error envelope is not
-size-guarded the way a result is, so an unbounded echo would let a large
-argument object produce a refusal many times the deployment's result cap, on
-both `call_tool` and program calls through `connecta.call`. Over budget, `args` is absent and the `purpose` says to
-re-send what was just sent: the agent already holds its own arguments, and half
-of them would describe a call nobody made.
+### Echo budgets
 
-The address gets the same budget and the opposite rule: 512 bytes, clamped
-with a trailing `…` rather than dropped. It is caller-authored too — an
-invented one can be any length — and it reaches the error message *and* the
-recovery query, each of which lands in both the text content and
-`structuredContent`; unbounded, a 50 KB typo produced a 200 KB refusal under a
-1 KB result cap. Dropping it is not an option the way dropping arguments is:
-the address is the thing being corrected, a clipped one still identifies the
-mistake, and a short one — every real one — comes back exact and untagged.
+An error envelope is not size-guarded the way a result is, and every echoed byte
+lands twice — in the text content and in `structuredContent` — so a 50 KB
+invented address once produced a 200 KB refusal against a 1 KB result cap. Every
+caller-authored string a refusal repeats therefore gets 512 UTF-8 bytes, and
+what happens over budget differs by field.
 
-Unknown `get_result.id`, `authorize_connector.connector`, and `skills.name`
-echoes use the same 512-byte clamp. `search_tools.connector` instead rejects
-values over 512 UTF-8 bytes with `invalid_args` before catalog lookup, so a
-clipped scope can never select a different connector. A failed result-storage
-read returns typed `unavailable` without exposing backend error text.
+| Field | Over 512 UTF-8 bytes |
+| --- | --- |
+| `args` on `call_tool` and `connecta.call` | dropped whole; `purpose` says to re-send what was just sent |
+| the attempted address | clamped with a trailing `…` |
+| unknown `get_result.id`, `authorize_connector.connector`, `skills.name` | clamped the same way |
+| `search_tools.connector` | rejected with `invalid_args` before catalog lookup |
 
-`call_destructive_tool` accepts an optional
-`reason` of at most 500 characters for the host's human approval view. It is
-outer-call context only: Connecta neither treats it as authority nor passes it
-to the downstream connector, and an empty or whitespace-only one is read as no
-reason rather than as a reason to refuse the call.
+Arguments go all or nothing because the agent already holds what it sent, and
+half of it would describe a call nobody made. The address gets the opposite rule
+because it is the thing being corrected: a clipped one still identifies the
+mistake, and a short one — every real one — comes back exact and untagged. A
+scope is rejected outright because a clipped one could select a different
+connector. A failed result-storage read returns typed `unavailable` without
+exposing backend error text.
 
-Activity carries an optional coarse `friction` class: `tool_not_found`,
-`schema_retry`, `destructive_reroute`, `auth_required`, or `result_too_large`.
-It is derived from the typed error code, except on the one call that has no
-error code to derive from: a result too large to return inline is friction for
-the agent while remaining `outcome: "success"`. That applies to a `call_tool`
-result, the only source of `result_too_large` friction. (Activity stored by
-older releases may still carry the retired `batch_call` source; nothing writes
-it today.)
-An oversized *discovery* response and an oversized program return are shaped
-differently and produce none, and an `errorCode` is written only when the call
-actually failed. The category adds no arguments, results, search text,
-generated code, credentials, or raw errors.
-
-An address whose connector does not exist is recorded too, as written, provided
-it has the `<connectorId>.<toolName>` shape at all — a string that never split
-into the two fields activity keeps still records nothing. A hallucinated
-connector id is the most common address mistake, and an operator reading
-activity should see it; addresses are already a first-class activity field, so
-nothing new is retained.
-
-What *is* new is that those fields now hold caller-authored text, so the
-recording seam clamps them: `connectorId` and `toolName` at 128 UTF-8 bytes
-each, `address` at 257, with a `…` marker. Far past any real id or tool name,
-and far short of a 40 KB invented one. The clamp is structural rather than a
-policy the writer applies, because "payload-free by construction" has to mean
-the event type has nowhere to put a payload — a 40 KB connector id is a payload
-wearing an id's clothing. Clamped rather than skipped: the invented id is
-exactly what an operator needs to see, and its first 128 bytes say as much
-about the mistake as all 40,000 would.
+Activity records each of these refusals with the coarse `friction` class derived
+from its typed error code — `tool_not_found`, `schema_retry`,
+`destructive_reroute`, `auth_required` — and clamps the caller-authored
+`connectorId`, `toolName`, and `address` it keeps, both under
+[code mode](./code-mode.md#activity)'s `V2` and `V3`. A `call_tool` result too
+large to return inline is the one exception: it is friction
+(`result_too_large`) on a call whose `outcome` is still `"success"`, so it
+carries no `errorCode`.
 
 ## Argument recovery
 
-A remote MCP tool's advertised `inputSchema` is checked in the shared
-invocation path before admission and provider dispatch. A mismatch is the
-non-retryable `invalid_args`, consistently across `call_tool`,
-`call_destructive_tool`, generated-code failures, and rejected promises. The error
-names the connector and operation and carries bounded `validation.issues`:
-JSON Pointer `path`, schema-keyword `code`, and expected shape. Submitted
-values are never copied into those findings.
+A remote MCP tool's advertised `inputSchema` is checked in the shared invocation
+path before admission and provider dispatch, so a mismatch is the non-retryable
+`invalid_args` identically on `call_tool`, `call_destructive_tool`,
+generated-code failures, and rejected promises. The error names the connector and
+operation and carries `validation.issues`: JSON Pointer `path`, schema-keyword
+`code`, and expected shape, with submitted values never copied into a finding. At
+most three are returned, and `validation.truncated` says when more exist — the
+same three-item bound describe's nearby-address list uses.
 
-At most three findings are returned; `validation.truncated` says when more
-exist. `nextAction` points to discovery scoped to the same connector and tool
-name when the compact schema is needed — routed like any other miss, so a
-program is sent to `connecta.search` and a top-level call to `search_tools` —
-while `retry` says to correct the listed arguments and reissue the original
-operation. A declared property reports only its failed schema keyword, while a
-truly undeclared property reports `additionalProperties`; validator-internal
-duplicate `additionalProperties` branches never reach the caller. A schema the local
-validator cannot evaluate passes through to the provider. Provider error prose
-is not parsed or guessed, so an unknown format remains
-`connector_call_failed`.
-
-Describe's nearby-address list uses the same three-item recovery bound. It
-contains addresses only; it never serializes ranking scores or result prose.
+`nextAction` points to discovery scoped to the same connector and tool name when
+the compact schema is needed, routed like any other miss: a program to
+`connecta.search`, a top-level call to `search_tools`. `retry` says to correct
+the listed arguments and reissue the original operation. Which keyword a finding
+names, and what the local validator declines to evaluate, is
+[code mode](./code-mode.md#errors)'s `E8`.

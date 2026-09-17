@@ -14,7 +14,12 @@ import type {
 export const REVENUECAT_MCP_ENDPOINT = "https://mcp.revenuecat.ai/mcp";
 
 export interface RevenueCatOptions {
-  /** Display name; scope defaults are in `documentation/revenuecat.md`. */
+  /**
+   * Display name. It defaults to the credential's scope, because that is what
+   * decides how an agent must address the connector: `RevenueCat (single
+   * project)` for a project-wide `sk_` key, plain `RevenueCat` for an
+   * account-scoped OAuth session that must resolve a `project_id` first.
+   */
   title?: string;
   /** Downstream auth ownership. Defaults to one shared deployment grant. */
   authScope?: "shared" | "personal";
@@ -24,17 +29,38 @@ export interface RevenueCatOptions {
    * so it goes in the guide's first line and its summary.
    */
   purpose: string;
-  /** OAuth or a single-project API v2 key; see `documentation/revenuecat.md`. */
+  /**
+   * OAuth (account-scoped, reaches every project the account can see) or an
+   * API v2 `sk_` secret key, which RevenueCat scopes to exactly one project —
+   * hence one key, one connector, and no `project` option: checking a declared
+   * project against `list-projects` at construction would be the unasked-for
+   * credential test P10 forbids. Nor can Connecta tell a read-only key from a
+   * write-enabled one without spending a call, so every write is offered and a
+   * read-only key's refusal arrives from RevenueCat.
+   */
   auth?: RemoteMcpAuth;
   /** Project-specific conventions appended to the maintained provider guide. */
   instructions?: string;
   /** Connector-specific inline result limit; omit to inherit the deployment. */
   maxResultBytes?: number;
-  /** Optional per-runtime policy; see `documentation/revenuecat.md#rate-limits`. */
+  /**
+   * Optional per-runtime policy. There is no default even though RevenueCat
+   * publishes numbers (API v2, read 2026-08-18): the limit is per minute per
+   * domain — 480 for customer information, virtual currencies, and refunds; 60
+   * for audiences and project configuration; 25 for charts and metrics — and a
+   * policy carries one rule, so any single number is wrong for most tools. The
+   * metering scope is per developer for developer-level keys, which a
+   * per-runtime counter cannot approximate either. The operator picks (P12).
+   */
   callAdmission?: ConnectorCallAdmissionPolicy;
 }
 
-/** Reviewed reads; see `documentation/revenuecat.md` and convention P5. */
+/**
+ * Reviewed reads, every `Read` row of RevenueCat's tool reference as read on
+ * 2026-08-30 (P5). The list is a superset: plan, platform, and beta enrollment
+ * gate parts of the catalog, so a name this account never returns costs
+ * nothing while an unlisted new one fails closed.
+ */
 const READ_ONLY_TOOLS = new Set([
   // Projects and apps
   "get-account-billing",
@@ -102,28 +128,50 @@ const READ_ONLY_TOOLS = new Set([
   "get-paywall-ai-task",
 ]);
 
-/** Reviewed writes and verb exceptions: `documentation/revenuecat.md`. */
+/**
+ * Reviewed writes with their destructive verdict. Most follow the verb, and
+ * additive writes stay additive because `readOnlyHint: false` already routes
+ * them through the approval path — asserting a destruction that does not happen
+ * only inflates the copy a human reads. The verdicts the verb does not decide
+ * carry their reason on the row.
+ *
+ * `render-paywall-screenshot` is deliberately in neither map: RevenueCat's
+ * reference gives it no access column, so the live annotation stands and a
+ * catalog that omits one fails closed. Guessing from a harmless-sounding name
+ * is what P5 exists to prevent.
+ */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   // Projects and apps
   ["create-app", "additive"],
   ["create-project", "additive"],
   ["update-app", "destructive"],
   ["update-project-ui-config", "destructive"],
+  // Filed `Write` by RevenueCat, so it cannot take the read path, but it leaves
+  // the saved credentials alone and only records a check's outcome.
   ["validate-app-credentials", "additive"],
 
   // Products and prices
   ["archive-product", "destructive"],
   ["create-product", "additive"],
+  // Named `create-`, but "Configure prices for a product": the price set
+  // already exists, so this overwrites it, and it is money-facing.
   ["create-product-prices", "destructive"],
+  // "Fills *missing* App Store subscription territory prices" — by
+  // RevenueCat's own word it writes only where nothing is set.
   ["equalize-subscription-prices", "additive"],
+  // An upsert.
   ["set-product-store-state", "destructive"],
+  // Sends products to Apple for review.
   ["submit-products-to-store", "destructive"],
   ["unarchive-product", "destructive"],
   ["update-product", "destructive"],
+  // Reserves a new App Store Connect review screenshot slot; replaces nothing.
   ["upload-product-store-state-screenshot", "additive"],
 
   // Entitlements
   ["archive-entitlement", "destructive"],
+  // Attach adds membership and removes nothing; detach is the destructive half.
+  // Filing both destructive would make the pair read identically to a human.
   ["attach-products-to-entitlement", "additive"],
   ["create-entitlement", "additive"],
   ["detach-products-from-entitlement", "destructive"],
@@ -132,6 +180,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
 
   // Offerings and packages
   ["archive-offering", "destructive"],
+  // The attach/detach argument again, one level down.
   ["attach-products-to-package", "additive"],
   ["create-offering", "additive"],
   ["create-packages", "additive"],
@@ -147,6 +196,7 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   // Paywalls
   ["attach-offering-to-paywall", "destructive"],
   ["detach-offering-from-paywall", "destructive"],
+  // Copies an existing paywall's current draft; the original is untouched.
   ["duplicate-paywall", "additive"],
   ["publish-paywall", "destructive"],
   ["unpublish-paywall", "destructive"],
@@ -171,16 +221,25 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["update-virtual-currency", "destructive"],
 
   // Integrations and webhooks
+  // Destructive on consequence, not on the verb: no existing integration
+  // changes, but with filters omitted the new one starts delivering every
+  // customer event in the project to a URL the caller typed.
   ["create-webhook-integration", "destructive"],
   ["delete-webhook-integration", "destructive"],
   ["update-webhook-integration", "destructive"],
 
-  // Paywall editing
+  // Paywall editing. Both start an async task; the difference is what the task
+  // touches — a new paywall, or a draft that already exists.
   ["create-paywall-ai", "additive"],
   ["edit-paywall-ai", "destructive"],
 ]);
 
-/** Release-reviewed manifest; see provider conventions P5 and P13. */
+/**
+ * One release-reviewed manifest, used both to classify a live tool and as the
+ * baseline the drift check compares against, so the annotation a caller gets
+ * and the verdict a check reads can never disagree. Names and verdicts only —
+ * no schemas are vendored; the live `tools/list` response stays authoritative.
+ */
 export const REVENUECAT_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,

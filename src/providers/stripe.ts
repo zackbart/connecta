@@ -52,7 +52,14 @@ export interface StripeHeaderOptions extends StripeCommonOptions {
 
 export type StripeOptions = StripeOAuthOptions | StripeHeaderOptions;
 
-/** Account limits and local concurrency rationale: `documentation/stripe.md`. */
+/**
+ * Stripe documents no MCP-specific limit, so these transcribe the account limit
+ * MCP traffic spends: 100 requests per second live, 25 in a sandbox. OAuth takes
+ * the sandbox rule (`mode ?? "sandbox"` below) because one session can reach
+ * either mode and the policy is fixed before the account-scoped call begins.
+ * The `maxConcurrency` figures are Connecta's own choice — Stripe says
+ * per-account and per-endpoint concurrency limits exist but publishes no number.
+ */
 const STRIPE_ADMISSION: Readonly<
   Record<StripeMode, ConnectorCallAdmissionPolicy>
 > = {
@@ -100,17 +107,31 @@ const READ_ONLY_TOOLS = new Set([
   "search_stripe_documentation",
 ]);
 
-/** Reviewed writes, including mixed read/create tools: `documentation/stripe.md`. */
+/**
+ * Reviewed writes with their destructive verdict. `stripe_api_write` is the
+ * sibling of `stripe_api_read` and carries every `POST`, `PATCH`, `PUT`, and
+ * `DELETE`. Additive writes leave `destructiveHint` unset: `readOnlyHint: false`
+ * already routes them through the approval path, and asserting destruction they
+ * do not perform would misstate their effect.
+ */
 const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["stripe_api_write", "destructive"],
   ["create_refund", "destructive"],
+  // Creates and continues provider-side guide state; destroys nothing.
   ["stripe_implementation_planner", "additive"],
+  // Retrieval mixed with query-run creation behind one tool.
   ["stripe_analytics", "additive"],
   ["stripe_report", "additive"],
   ["send_stripe_mcp_feedback", "additive"],
 ]);
 
-/** Release-reviewed manifest; see provider conventions P5 and P13. */
+/**
+ * One release-reviewed manifest, used both to classify a live tool and as the
+ * baseline the drift check compares against, so the annotation a caller gets and
+ * the verdict a check reads can never disagree. Stripe publishes no stability or
+ * deprecation policy for this tool set, so treat it as unversioned: an
+ * unclassified, unannotated name fails closed onto the approval path (P5).
+ */
 export const STRIPE_VETTED_CATALOG = vettedCatalog({
   reads: READ_ONLY_TOOLS,
   writes: WRITE_TOOLS,
@@ -120,7 +141,12 @@ export const STRIPE_VETTED_CATALOG = vettedCatalog({
 const LIVE_KEY = /\b(?:sk|rk|pk)_live_/;
 const TEST_KEY = /\b(?:sk|rk|pk)_test_/;
 
-/** Refuse a recognizable key/mode mismatch; see `documentation/stripe.md`. */
+/**
+ * Refuse a recognizable key/mode mismatch. This is the only mode guard Connecta
+ * can offer, and it needs the key as a literal header to read the prefix: an
+ * operator-managed key is not in the deployment file, so its declared mode
+ * stands alone and a key pointed at the other environment fails at Stripe.
+ */
 function assertModeMatchesKey(
   id: string,
   mode: StripeMode,

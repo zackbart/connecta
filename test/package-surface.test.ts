@@ -232,15 +232,11 @@ describe("public package boundary", () => {
     ).toBe(true);
     // A range in the manifest and a different one in the prose a deployment
     // follows is the same drift one file over.
-    for (const doc of [
-      join("examples", "worker", "README.md"),
-      join("documentation", "operations.md"),
-    ]) {
-      expect(
-        readFileSync(join(ROOT, doc), "utf8"),
-        `${doc} does not state the published @cloudflare/codemode range`,
-      ).toContain(published);
-    }
+    const doc = join("examples", "worker", "README.md");
+    expect(
+      readFileSync(join(ROOT, doc), "utf8"),
+      `${doc} does not state the published @cloudflare/codemode range`,
+    ).toContain(published);
   });
 
   it("publishes every provider independently from the root entry", async () => {
@@ -289,8 +285,8 @@ describe("public package boundary", () => {
   // The Cloudflare prebuilt connection is hand-written fetch against the
   // documented v4 REST API. That is a deliberate choice over wrapping the
   // generated `cloudflare` SDK, so the SDK must not appear as a dependency, an
-  // optional peer, or a dev dependency — any of the three would make the
-  // no-dependency claim in documentation/cloudflare.md untrue.
+  // optional peer, or a dev dependency — any of the three would reintroduce the
+  // install weight the hand-written surface exists to avoid.
   it("does not depend on the Cloudflare service API SDK", () => {
     expect(packageJson.dependencies).not.toHaveProperty("cloudflare");
     expect(packageJson.peerDependencies).not.toHaveProperty("cloudflare");

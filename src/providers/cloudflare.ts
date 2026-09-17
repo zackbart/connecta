@@ -1,4 +1,14 @@
-/** See documentation/cloudflare.md#no-sdk-on-purpose. */
+/**
+ * No official `cloudflare` SDK on purpose. What the SDK sells — typed request
+ * wrappers and pagination helpers — is what this connection replaces: an agent
+ * gets a projected result and a `page.hasMore` boolean, so the SDK's types
+ * would be re-projected away at the boundary, and the dependency would cost an
+ * optional peer, an install step, and an import that never belongs in the root
+ * graph. Cloudflare's v4 API is authenticated `fetch` over a uniform
+ * `{ success, errors, messages, result, result_info }` envelope, so Web APIs
+ * alone keep this provider Workers-clean. `test/package-surface.test.ts` pins
+ * it: no `cloudflare` package in any dependency field, every import relative.
+ */
 import { api, defined, type ApiTool } from "../connectors/api.js";
 import {
   remoteMcp,
@@ -29,7 +39,11 @@ export const CLOUDFLARE_MCP_ENDPOINT = "https://mcp.cloudflare.com/mcp";
 /** Authentication schemes accepted by Cloudflare's v4 API. */
 export type CloudflareAuthentication = "apiToken" | "globalApiKey";
 
-/** See documentation/cloudflare.md#dns-record-types. */
+/**
+ * The 21 record types Cloudflare accepts. Eight carry a single `content`
+ * string; the other thirteen carry a per-type structured `data` object.
+ * `list_dns_records` filters on all 21 because reading them costs nothing.
+ */
 export const CLOUDFLARE_DNS_RECORD_TYPES = [
   "A",
   "AAAA",
@@ -54,7 +68,15 @@ export const CLOUDFLARE_DNS_RECORD_TYPES = [
   "URI",
 ] as const;
 
-/** Content-valued types only; see documentation/cloudflare.md#dns-record-types. */
+/**
+ * Content-valued types only, and the only types `create_dns_record` and
+ * `update_dns_record` accept. Covering the thirteen structured-`data` types
+ * would mean either a free-form `data` passthrough — the untyped body this
+ * connection exists to avoid — or thirteen more hand-written schemas for record
+ * types that are rare in day-to-day zone administration. They stay fully
+ * readable; writing one goes through the approval-gated raw mutation tool with
+ * Cloudflare's documented per-type `data` body.
+ */
 export const CLOUDFLARE_CONTENT_DNS_RECORD_TYPES = [
   "A",
   "AAAA",
@@ -120,7 +142,17 @@ export type CloudflareConnectionOptions =
   | CloudflareOptions
   | CloudflareMcpOptions;
 
-/** See documentation/cloudflare.md#rate-limits. */
+/**
+ * Cloudflare documents a global limit of 1,200 requests per five minutes per
+ * user, counted cumulatively across the dashboard, API keys, and API tokens
+ * (developers.cloudflare.com/fundamentals/api/reference/limits/). The matching
+ * rolling window here is a best-effort approximation, not an enforcement: each
+ * runtime keeps its own counter, so N isolates or processes can each admit
+ * 1,200, and a human's dashboard traffic counts for Cloudflare but not for us.
+ * `maxConcurrency` is the bound that actually protects a shared credential,
+ * because one `execute_code` program can fan out faster than the window
+ * notices.
+ */
 function admissionPolicy(maxConcurrency: number): ConnectorCallAdmissionPolicy {
   return {
     rules: [
@@ -282,7 +314,17 @@ function errorCodes(errors: CloudflareEnvelopeError[]): Set<number> {
  * would risk telling an agent its token was broken when its arguments were.
  * Genuine 10000 auth failures arrive with 401 or 403 and are caught by status.
  *
- * See documentation/cloudflare.md#typed-failures for provenance and routing.
+ * Provenance worth knowing before editing this set: Cloudflare publishes no
+ * official table mapping error codes to causes, so these six — and the 10000
+ * observation above — come from community reports and probing rather than
+ * documentation. They are well-supported readings Cloudflare could invalidate
+ * without notice; prefer `verify_api_token` or `verify_global_api_key` when a
+ * diagnosis actually matters.
+ *
+ * Cloudflare also rate-limits authentication failures separately from the
+ * global limit: a few requests with a bad token return 429 with code 10502.
+ * That is one more reason to diagnose a broken token once with a verify tool
+ * rather than by retrying real calls.
  */
 const AUTH_ERROR_CODES = new Set([1001, 6003, 6111, 9103, 9106, 9107]);
 
@@ -301,7 +343,9 @@ function failureFor(
 ): ConnectorCallError {
   const detail = describeErrors(errors);
   const codes = errorCodes(errors);
-  // Ordering rationale: documentation/cloudflare.md#typed-failures.
+  // 429 is checked before the authentication codes on purpose: Cloudflare
+  // reuses the generic 10000 code on throttled responses, and reading a rate
+  // limit as an auth failure would tell an agent to stop when it should wait.
   if (status === 429) {
     const wait = retryAfterMs(headers);
     return new ConnectorCallError(
@@ -325,7 +369,10 @@ function failureFor(
       `Cloudflare rejected the request (HTTP ${status}). ${detail}`,
     );
   }
-  // 404 rationale: documentation/cloudflare.md#typed-failures.
+  // Cloudflare refuses a token that may not touch a resource with 401 or 403,
+  // so a 404 here is a real absence rather than a permission gap wearing a
+  // miss — the unambiguous case `not_found` exists for, and something an agent
+  // can act on by re-running discovery for the id.
   if (status === 404) {
     return new ConnectorCallError(
       "not_found",
@@ -820,7 +867,17 @@ const RAW_INPUT_PROPERTY: JsonSchema = {
     "Return Cloudflare's unprojected result instead of the lean shape. Use only when a field the projection drops is genuinely needed; the raw shape is much larger.",
 };
 
-/** Bound provenance: documentation/cloudflare.md#where-the-perpage-bounds-come-from. */
+/**
+ * Local enforcement of a `perPage` range is only a favor when the bound is
+ * really Cloudflare's, so `bounds` decides what the description admits to.
+ * `list_accounts`/`list_zones` (5–50) and `list_kv_namespaces` (1–1000) are
+ * Cloudflare's documented bounds. `list_dns_records` takes Cloudflare's
+ * minimum but is `clamped` at 1,000: Cloudflare's schema documents `per_page`
+ * on `/zones/{id}/dns_records` up to 5,000,000, a nominal ceiling no listing
+ * will honor, and a local cap an agent is told about beats a page size that
+ * fails somewhere inside Cloudflare. `list_pages_projects` is `undocumented` —
+ * Cloudflare publishes no bounds and no default for it, so 1–100 is ours.
+ */
 function pagingInputProperties(
   minPerPage: number,
   maxPerPage: number,
@@ -855,7 +912,12 @@ function pagingInputProperties(
   };
 }
 
-/** Cursor convention: documentation/cloudflare.md#results. */
+/**
+ * Four endpoints — `list_zone_rulesets`, `list_r2_buckets`, `list_r2_objects`,
+ * `list_kv_keys` — page by cursor and get no `page` object. Both the argument
+ * and the result say so, so the loop condition is legible from either end of
+ * one tool rather than only to a reader who compared all of them.
+ */
 const CURSOR_INPUT_PROPERTY: JsonSchema = {
   type: "string",
   description:
@@ -1369,7 +1431,12 @@ const QUERY_INPUT_PROPERTY: JsonSchema = {
   },
 };
 
-// Header boundary: documentation/cloudflare.md#the-whole-v4-escape-hatch.
+// Connector-owned and refused: Authorization, Cookie, Host, Content-Length,
+// Content-Type, Transfer-Encoding — authentication, host selection, content
+// type, and request framing are not the caller's to set. That list stays out of
+// this description on purpose: the compact renderer inlines a shared property
+// description once per tool, and spelling the six out three times pushed
+// cloudflare_api_upload's compact input past the 1,024-byte discovery budget.
 const HEADERS_INPUT_PROPERTY: JsonSchema = {
   type: "array",
   description:
@@ -1925,7 +1992,11 @@ function buildTools(
                   path: "/zones",
                   query: {
                     name: optionalString(args, "name"),
-                    // Undefaulted on purpose — see documentation/cloudflare.md#scoping.
+                    // Undefaulted on purpose: list_zones is the discovery step,
+                    // and quietly filtering it by a configured accountId would
+                    // be a restriction in all but name — one with no argument
+                    // that escapes it, since an empty accountId would fall back
+                    // to the default again.
                     "account.id": optionalString(args, "accountId"),
                     status: optionalString(args, "status"),
                     page: optionalNumber(args, "page"),
@@ -1954,7 +2025,13 @@ function buildTools(
         (result, args) => args["raw"] === true ? result : projectZone(result),
       ),
     ),
-    // Removed tools: documentation/cloudflare.md#what-the-named-surface-deliberately-leaves-out.
+    // No bulk `list_zone_settings` on purpose (#361): Cloudflare's published
+    // document marks GET /zones/{zoneId}/settings and its PATCH sibling
+    // deprecated with no bulk replacement, and the tool projected nothing while
+    // *growing* the payload 22.7% by wrapping an unpaginated settings array in a
+    // page object. Read one setting here; an operator who genuinely wants the
+    // whole set names /zones/{zoneId}/settings through cloudflare_api_get, at
+    // the caller's risk rather than promised by connecta's catalog.
     cfTool(
       "get_zone_setting",
       "Get one zone setting by its Cloudflare setting id, such as ssl, always_use_https, min_tls_version, brotli, or development_mode.",
@@ -2935,8 +3012,18 @@ function buildTools(
                 }),
       ),
     ),
-    // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` on purpose (#350) —
-    // see documentation/cloudflare.md#what-the-named-surface-deliberately-leaves-out.
+    // No `get_r2_metrics`, `set_r2_cors`, or `delete_r2_cors` on purpose (#350).
+    // A named tool is a permanent line item in every deployment's catalog, and
+    // these lost the comparison against the escape hatches: `get_r2_metrics`
+    // took an account id, put it in a path, and returned the response untouched,
+    // which `cloudflare_api_get` at /accounts/{accountId}/r2/metrics already
+    // does. `set_r2_cors` declared its rule list as free-form objects — the
+    // untyped body refused everywhere else — and returned Cloudflare's response
+    // unprojected, so it beat the raw route on nothing. `delete_r2_cors`
+    // validated fine and went anyway, because naming only the delete would mean
+    // one CORS policy is set through the raw route and cleared through a named
+    // tool. Read with `get_r2_cors`; write with `cloudflare_api_mutate` at
+    // PUT/DELETE /accounts/{accountId}/r2/buckets/{bucketName}/cors.
     cfTool(
       "get_r2_cors",
       "Get the browser CORS rules configured on an R2 bucket.",
@@ -3515,8 +3602,12 @@ function buildTools(
                 (key) => Array.isArray(args[key]) && (args[key] as unknown[]).length > 0,
               );
               const everything = args["everything"] === true;
-              // Cloudflare's purge body accepts exactly one variant. Refusing here
-              // turns a confusing provider 400 into a schema-shaped failure.
+              // One variant per call is this connection's contract, not a
+              // documented API restriction: Cloudflare's schema models the body as
+              // `anyOf`, which does not forbid combining. Refusing locally gives an
+              // agent `invalid_args` naming the conflict instead of a purge whose
+              // actual scope is ambiguous. Combined purging would be a deliberate
+              // change here.
               if (everything && targeted.length > 0) {
                 throw new ConnectorCallError(
                   "invalid_args",

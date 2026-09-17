@@ -4,6 +4,20 @@ All notable changes to this package are documented here.
 
 ## Unreleased
 
+### Changed
+
+- **The documentation is four guides.** `documentation/` now ships
+  `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`. The
+  operations, upgrading, connector, provider, admission, storage, and operator
+  UI guides are removed; the rationale source comments used to defer to them
+  for now lives in those comments, and the provider conventions H1–H14 and
+  P1–P13 are defined in `test/provider-conventions.test.ts`. Each release's
+  opening paragraph here is the upgrade guidance. `records/` and `eval/` are
+  removed with the `load:admission` script and the CI job that served them.
+- **`connecta init` no longer writes `AGENTS.md` or a `CLAUDE.md` symlink.**
+  The template and the Worker example ship without agent instruction files; an
+  existing deployment's copies are its own and nothing reads them.
+
 ### Fixed
 
 - **`get_result` paging cost.** A stashed result is stored as base64 chunks
@@ -176,7 +190,7 @@ returns `"all"` or connector ids and declares no pools.
 - **Tool-level grants in `identity.connectorAccess`.** Entries may be a
   connector id (every tool) or an exact `connector.tool` address (that tool
   only); grants are additive. The scoped registry view filters below the
-  catalog service, so `search_tools`, `describe_tools`, `call_tool`,
+  catalog service, so `search_tools`, `call_tool`,
   `call_destructive_tool`, a program's `connecta.search` and `connecta.call`,
   and the connection UI all see the same list, and an ungranted tool fails as
   `unknown_tool` exactly like an absent one. There is no wildcard: a remote
@@ -185,6 +199,11 @@ returns `"all"` or connector ids and declares no pools.
   request with 403 rather than failing open.
 
 ## 0.24.1 — 2026-09-08
+
+A small additive release for deployments whose providers run long: two
+optional `execute.*` settings and a log line for failed calls. Nothing breaks
+and nothing needs migrating; a deployment that sets neither option behaves as
+it did on 0.24.0.
 
 ### Added
 

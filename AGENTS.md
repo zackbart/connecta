@@ -32,8 +32,8 @@ Cloudflare Workers.
 `check:operator-ui` → `check:lint` → `check:unused` → `typecheck` → `test`
 (both vitest projects) → `build` → `check:examples`. It is also the `prepack`
 hook. `npm run release:check` adds `check:security` and `check:package` and is
-what CI runs on publish; use it when touching packaging, dependencies, or
-exports.
+what CI runs on every pull request, on `main`, and again on publish; use it
+when touching packaging, dependencies, or exports.
 
 ## The map
 
@@ -41,13 +41,13 @@ exports.
   decisions table, and the invariants every change must preserve. Check it
   before building something new; "we already decided not to" is a real answer
   there, and its removed/provisional verdicts override anything staler.
-- [`documentation/`](./documentation/) — per-subsystem guides for agents
-  working on the repo. All of them are written now
-  ([#348](https://github.com/zackbart/connecta/issues/348)); the retired manual
-  (`docs/<name>.md`) survives only in git history, which is worth mining for
-  rationale a rewrite dropped and worth nothing where it disagrees with
-  `ethos.md`. Start with `architecture.md`, then the guide for the subsystem
-  you are changing.
+- [`documentation/`](./documentation/) — four guides for agents working on the
+  repo: `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`.
+  Everything else — connectors, providers, admission, storage, the operator
+  UI, operations — is documented where it lives, in the source and its tests.
+  The guides that once covered those survive only in git history, which is
+  worth mining for rationale and worth nothing where it disagrees with
+  `ethos.md` or the code. Start with `architecture.md`.
 - [`README.md`](./README.md) — the human-facing overview.
 - [`templates/node/`](./templates/node/) — the one standalone Node deployment
   shape copied by `connecta init`, Docker-ready rather than Docker-only. Keep
@@ -56,7 +56,7 @@ exports.
   diff away from one of them is the shape
   [#344](https://github.com/zackbart/connecta/issues/344) deleted.
 
-**Read `ethos.md` and the subsystem's guide before changing a subsystem.**
+**Read `ethos.md` before changing a subsystem, and its guide when it has one.**
 
 ## Deployment setup
 
@@ -96,8 +96,9 @@ Two boundaries CI enforces that are not obvious from reading a file:
   forbidden is a platform-bound adapter becoming importable from the package,
   not a file appearing in the artifact. `@clerk/backend` and
   `quickjs-emscripten` are optional peers behind the `./auth/clerk` and
-  `./quickjs` subpaths and must never become dependencies or install with
-  core. Enforced by `test/package-surface.test.ts` and
+  `./quickjs` subpaths, and `@cloudflare/codemode` is the third, peered
+  without a subpath because a Worker deployment imports it directly. None may
+  become a dependency or install with core. Enforced by `test/package-surface.test.ts` and
   `scripts/check-package.mjs`. Anything heavyweight or platform-bound gets a
   subpath and an optional peer.
 
@@ -108,10 +109,7 @@ Every `*.test.ts` belongs to exactly one explicit list: runtime-portable suites
 in `WORKERS_SUITES`, Node-bound suites in `NODE_ONLY_SUITES` with a reason. The
 `node` project runs both lists; the `workers` project re-runs the portable list
 inside workerd. `test/suite-partition.test.ts` walks the directory and fails on
-an unclassified, double-classified, stale, or reasonless entry. New behavior
-also gets a row in the test map in `documentation/operations.md`, which
-classifies every suite — one missing from it is either new and undocumented or
-dead, and neither is a state to leave the repository in.
+an unclassified, double-classified, stale, or reasonless entry.
 
 ## Conventions
 
@@ -132,9 +130,8 @@ dead, and neither is a state to leave the repository in.
   documentation and OpenAPI contracts and never reads a provider credential.
   Remote MCP schemas remain owned by the live `tools/list` response rather than
   a vendored copy. Findings are read by a human and become GitHub issues;
-  nothing files itself.
-  See
-  [`documentation/provider-conventions.md`](./documentation/provider-conventions.md#the-maintainer-run-drift-check).
+  nothing files itself. `scripts/drift-check.mjs` is the reference for what
+  each flag covers.
 - **Releases.** `npm run release:check`, tag `v<version>` matching
   `package.json` exactly (the publish workflow verifies this and fails
   otherwise), and publishing fires on GitHub **Release publication**, not on the
