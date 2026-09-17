@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { Notice, OperatorPage } from "../view.js";
+import type { Notice, OperatorPage, Tone } from "../view.js";
 import { PAGE_META } from "../view.js";
 import { navigate } from "./store.js";
 
@@ -27,6 +27,35 @@ export function NoticeLine({
     >
       {notice ? notice.message : null}
     </p>
+  );
+}
+
+/** A status word with a tone: the page's only decoration, used consistently. */
+export function Badge({
+  tone = "neutral",
+  children,
+}: {
+  tone?: Tone;
+  children: ComponentChildren;
+}) {
+  return <span class={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
+}
+
+/** One number from the summary strip, with the word that explains it. */
+export function Stat({
+  value,
+  label,
+  tone = "neutral",
+}: {
+  value: number | string;
+  label: string;
+  tone?: Tone;
+}) {
+  return (
+    <div class={tone === "neutral" ? "stat" : `stat ${tone}`}>
+      <span class="stat-value">{value}</span>
+      <span class="stat-label">{label}</span>
+    </div>
   );
 }
 
@@ -87,7 +116,7 @@ export function PageLink({
 export function CopyButton({
   value,
   label,
-  class: className = "linklike",
+  class: className = "btn",
 }: {
   value: string;
   label: string;

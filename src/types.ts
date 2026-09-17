@@ -572,6 +572,45 @@ export interface ConnectaBranding {
   };
   /** `theme-color` meta value. Defaults to "#ffffff". */
   themeColor?: string;
+  /**
+   * Operator-page appearance. Every field is optional and every rejected value
+   * silently takes its default — a malformed theme must not take the page down
+   * — so `createConnecta` warns at startup about anything it dropped.
+   *
+   * Deliberately five knobs rather than a palette: surfaces, borders, muted
+   * text, and the status colors derive from these, which is what keeps a
+   * deployment from theming its way into an unreadable page.
+   */
+  theme?: ConnectaTheme;
+}
+
+/**
+ * The operator UI's themeable tokens. These land in a `:root` block on the
+ * operator page, so each one is gated by a narrow syntactic check rather than
+ * trusted: an unvalidated value here would let deployment config write
+ * arbitrary CSS into the page.
+ */
+export interface ConnectaTheme {
+  /**
+   * The one brand color: links, focus rings, primary actions, the active nav
+   * item. Hex only (`#rgb`, `#rrggbb`, or `#rrggbbaa`). Defaults to `#2f5fe0`.
+   */
+  accent?: string;
+  /**
+   * Corner rounding for cards, inputs, and buttons. A CSS length (`10px`,
+   * `0.5rem`) or a bare number read as pixels. `0` restores square corners.
+   * Defaults to `10px`.
+   */
+  radius?: string | number;
+  /** Body font stack. A plain CSS font-family list. Defaults to a system stack. */
+  fontFamily?: string;
+  /** Monospace font stack for addresses, ids, and the endpoint URL. */
+  monoFamily?: string;
+  /**
+   * `"system"` (the default) follows the operator's OS setting; `"light"` and
+   * `"dark"` pin the page to one palette.
+   */
+  colorScheme?: "system" | "light" | "dark";
 }
 
 /** An inbound authentication provider (bearer token, interactive identity, ...). */

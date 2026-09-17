@@ -95,12 +95,12 @@ function Gate({ state }: { state: OperatorState }) {
   const signedIn = auth.kind === "clerk" && Boolean(window.Clerk?.user);
   const loading = state.session === "loading";
   return (
-    <section id="gate">
-      <div class="lead pgrid">
-        <h1 id="gateHeading" class="pcap" tabIndex={-1}>
+    <section id="gate" class="gate">
+      <div>
+        <h1 id="gateHeading" tabIndex={-1}>
           {PAGE_META[state.page].label}
         </h1>
-        <div class="pbody lead-copy">
+        <div class="lead-copy">
           <p>{productDescription}</p>
           <p id="gateCopy" class="meta">
             {loading ? "Checking your session…" : gateCopy(auth.kind, signedIn)}
@@ -108,18 +108,18 @@ function Gate({ state }: { state: OperatorState }) {
           {loading ? null : auth.kind === "clerk" ? (
             <div id="clerkGate" class="actions gate-actions">
               {signedIn ? (
-                <button class="linklike" type="button" onClick={signOut}>
+                <button class="btn" type="button" onClick={signOut}>
                   Sign out
                 </button>
               ) : (
-                <button id="signin" class="linklike" type="button" onClick={signIn}>
+                <button id="signin" class="btn primary" type="button" onClick={signIn}>
                   Team sign in
                 </button>
               )}
             </div>
           ) : auth.kind === "cloudflare-access" ? (
             <div class="actions gate-actions">
-              <button class="linklike" type="button" onClick={signOut}>
+              <button class="btn" type="button" onClick={signOut}>
                 Sign out of Cloudflare Access
               </button>
             </div>
@@ -144,7 +144,7 @@ function Gate({ state }: { state: OperatorState }) {
                 value={token}
                 onInput={(event) => setToken(event.currentTarget.value)}
               />
-              <button id="save" class="linklike" type="submit">
+              <button id="save" class="btn primary" type="submit">
                 Open operator pages
               </button>
             </form>

@@ -8,6 +8,10 @@ import {
 } from "../src/ui.js";
 import {
   activitySummary,
+  authScopeLabel,
+  connectorStatusTone,
+  permissionLabel,
+  summarizeConnectors,
   actorLabel,
   actorStableId,
   credentialUnavailableCopy,
@@ -374,5 +378,108 @@ describe("operator app state", () => {
     );
 
 
+  });
+});
+
+
+describe("connector summary strip", () => {
+  const connector = (
+    status: UiConnector["status"],
+    extra: Partial<UiConnector> = {},
+  ): UiConnector => ({
+    id: `c-${status}-${extra.toolCount ?? 0}`,
+    status,
+    toolCount: 0,
+    tools: [],
+    ...extra,
+  });
+
+  it("counts each state once and adds up the tools", () => {
+    expect(
+      summarizeConnectors([
+        connector("ok", { toolCount: 3 }),
+        connector("ok", { toolCount: 4 }),
+        connector("auth_required"),
+        connector("error"),
+      ]),
+    ).toEqual({
+      total: 4,
+      connected: 2,
+      attention: 1,
+      unavailable: 1,
+      tools: 7,
+      drifting: 0,
+    });
+  });
+
+  // A connector still loading its catalog has no answer yet. Counting it as
+  // connected would overstate the deployment and counting it as unavailable
+  // would raise an alarm nobody can act on, so it lands only in `total`.
+  it("claims a loading connector as neither connected nor failing", () => {
+    const summary = summarizeConnectors([connector("loading")]);
+    expect(summary.total).toBe(1);
+    expect(summary.connected + summary.attention + summary.unavailable).toBe(0);
+  });
+
+  it("counts a connector as drifting only when a refresh saw a difference", () => {
+    const observedAt = "2026-01-01T00:00:00.000Z";
+    expect(
+      summarizeConnectors([
+        connector("ok", {
+          catalogDrift: {
+            observedAt,
+            unclassifiedTools: 1,
+            unservedTools: 0,
+            annotationConflicts: 0,
+            schemaChanges: 0,
+          },
+        }),
+        connector("ok", {
+          catalogDrift: {
+            observedAt,
+            unclassifiedTools: 0,
+            unservedTools: 0,
+            annotationConflicts: 0,
+            schemaChanges: 0,
+          },
+        }),
+        connector("ok"),
+      ]).drifting,
+    ).toBe(1);
+  });
+
+  it("gives every status a tone, defaulting an unknown one to danger", () => {
+    expect(connectorStatusTone("ok")).toBe("ok");
+    expect(connectorStatusTone("auth_required")).toBe("warn");
+    expect(connectorStatusTone("loading")).toBe("neutral");
+    expect(connectorStatusTone("error")).toBe("danger");
+    expect(connectorStatusTone("something-new")).toBe("danger");
+  });
+
+  it("reads an absent auth scope as shared, the way the payload means it", () => {
+    expect(authScopeLabel(undefined)).toBe("shared auth");
+    expect(authScopeLabel("shared")).toBe("shared auth");
+    expect(authScopeLabel("personal")).toBe("personal auth");
+  });
+
+  it("describes what this identity may do with the connection's auth", () => {
+    const permissions = {
+      use: true,
+      manageSharedAuth: false,
+      connectPersonal: false,
+    };
+    expect(permissionLabel(connector("ok"))).toContain("managed by your deployment");
+    expect(
+      permissionLabel(
+        connector("ok", { permissions: { ...permissions, connectPersonal: true } }),
+      ),
+    ).toContain("your own account");
+    expect(
+      permissionLabel(
+        connector("ok", {
+          permissions: { ...permissions, manageSharedAuth: true, connectPersonal: true },
+        }),
+      ),
+    ).toContain("shared authentication");
   });
 });

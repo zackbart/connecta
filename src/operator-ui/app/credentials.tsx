@@ -97,17 +97,19 @@ function CredentialForm({
           })}
         </div>
       )}
-      <button class="linklike" type="button" disabled={busy} onClick={submit}>
-        {busy ? "Saving…" : "Save"}
-      </button>
-      <button
-        class="linklike"
-        type="button"
-        disabled={busy}
-        onClick={() => editCredential(null)}
-      >
-        Cancel
-      </button>
+      <div class="actions">
+        <button class="btn primary" type="button" disabled={busy} onClick={submit}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+        <button
+          class="btn quiet"
+          type="button"
+          disabled={busy}
+          onClick={() => editCredential(null)}
+        >
+          Cancel
+        </button>
+      </div>
     </div>
   );
 }
@@ -127,20 +129,16 @@ export function CredentialCard({
   const removable = configured || Boolean(credential.removable);
   return (
     <section
-      class="credential-card"
+      class="subcard"
       id={`credential-${connector.id}`}
       aria-labelledby={`credential-title-${connector.id}`}
     >
-      <div class="credential-head">
-        <div class="connector-title">
-          <h2 id={`credential-title-${connector.id}`}>
-            {credential.label}
-          </h2>
-        </div>
-        <span class="credential-state">{credentialStateLabel(credential)}</span>
+      <div class="subcard-head">
+        <h3 id={`credential-title-${connector.id}`}>{credential.label}</h3>
+        <span class="meta">{credentialStateLabel(credential)}</span>
       </div>
       {credential.description ? (
-        <p class="credential-copy meta">{credential.description}</p>
+        <p class="meta">{credential.description}</p>
       ) : null}
       {credential.fields?.length ? (
         <div class="credential-field-summary">
@@ -164,11 +162,11 @@ export function CredentialCard({
       {/* Leftover stored fields are not an error — the credential still works,
           so this stays muted copy rather than the msg block a failure earns. */}
       {credential.notice ? (
-        <p class="credential-copy meta">{credential.notice}</p>
+        <p class="meta">{credential.notice}</p>
       ) : null}
-      <div class="credential-actions">
+      <div class="actions">
         <button
-          class="linklike"
+          class="btn"
           type="button"
           disabled={busy}
           onClick={() => editCredential(editing ? null : connector.id)}
@@ -177,7 +175,7 @@ export function CredentialCard({
         </button>
         {configured && credential.testable ? (
           <button
-            class="linklike"
+            class="btn"
             type="button"
             disabled={busy}
             onClick={() => void testCredential(connector.id)}
@@ -187,7 +185,7 @@ export function CredentialCard({
         ) : null}
         {removable ? (
           <button
-            class="linklike danger"
+            class="btn danger"
             type="button"
             disabled={busy}
             onClick={() => void removeCredential(connector.id)}

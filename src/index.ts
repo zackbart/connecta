@@ -7,7 +7,11 @@ import { Registry } from "./registry.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
-import { droppedBrandingUrls, droppedUiAuthUrls } from "./branding.js";
+import {
+  droppedBrandingUrls,
+  droppedThemeTokens,
+  droppedUiAuthUrls,
+} from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import {
@@ -562,6 +566,20 @@ function warnInsecureConfig(
       `[connecta] branding ${dropped.join(", ")} dropped: a branding URL is ` +
         "used as an href, so it must be an absolute http(s) URL (favicon.href " +
         "may also be a root-relative path). The default is rendered instead.",
+    );
+  }
+
+  // Theme tokens are written into a `:root` block, so each one is gated
+  // syntactically and a rejected value takes the stylesheet's default. Same
+  // reason as the branding URLs above: the page still renders, so without this
+  // line the operator's only evidence is that their color never showed up.
+  const droppedTheme = droppedThemeTokens(config.ui?.branding?.theme);
+  if (droppedTheme.length > 0) {
+    logger.warn(
+      `[connecta] branding ${droppedTheme.join(", ")} dropped: accent must be ` +
+        "a hex color, radius a CSS length, the font families a plain " +
+        "font-family list, and colorScheme one of system/light/dark. The " +
+        "default is rendered instead.",
     );
   }
 
