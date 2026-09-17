@@ -13,10 +13,9 @@ All notable changes to this package are documented here.
   for now lives in those comments, and the provider conventions H1–H14 and
   P1–P13 are defined in `test/provider-conventions.test.ts`. Each release's
   opening paragraph here is the upgrade guidance. `records/` and `eval/` are
-  removed with the `load:admission` script and the CI job that served them.
-- **`connecta init` no longer writes `AGENTS.md` or a `CLAUDE.md` symlink.**
-  The template and the Worker example ship without agent instruction files; an
-  existing deployment's copies are its own and nothing reads them.
+  removed with the `load:admission` script and the CI job that served them. The
+  template and Worker example keep their `AGENTS.md`, which now points at this
+  changelog for upgrades.
 
 ### Fixed
 

@@ -31,6 +31,7 @@ describe("deployment shapes", () => {
 
   it("pins hosted MCP callbacks in the Worker deployment instructions", () => {
     const worker = join(ROOT, "examples", "worker");
+    const agents = readFileSync(join(worker, "AGENTS.md"), "utf8");
     const readme = readFileSync(join(worker, "README.md"), "utf8");
     const source = readFileSync(join(worker, "src", "index.ts"), "utf8");
     const callbacks = [
@@ -39,9 +40,13 @@ describe("deployment shapes", () => {
       "https://chatgpt.com/connector/oauth/*",
     ];
     for (const callback of callbacks) {
+      expect(agents).toContain(callback);
       expect(readme).toContain(callback);
       expect(source).toContain(callback);
     }
+    expect(agents).toContain(
+      "oauth_configuration.dynamic_client_registration.allowed_uris",
+    );
     expect(readme).toContain(
       '"dynamic_client_registration": {',
     );
@@ -53,6 +58,8 @@ describe("deployment shapes", () => {
       ".dockerignore",
       ".env.example",
       ".gitignore",
+      "AGENTS.md",
+      "CLAUDE.md",
       "Dockerfile",
       "README.md",
       "docker-compose.yml",

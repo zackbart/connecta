@@ -122,6 +122,7 @@ team roster, or policy editor.
   this machine: downstream OAuth calls back to it.
 - Add application code only inside deliberate `api()` connector handlers.
 - Do not copy Connecta package internals into this deployment.
+- `AGENTS.md` is the canonical convention file; `CLAUDE.md` points to it.
 
 Verify a change with:
 
