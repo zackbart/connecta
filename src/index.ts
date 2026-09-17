@@ -569,10 +569,10 @@ function warnInsecureConfig(
     );
   }
 
-  // Theme tokens are written into a `:root` block, so each one is gated
+  // Theme tokens are written into a `:root` block, so each is gated
   // syntactically and a rejected value takes the stylesheet's default. Same
   // reason as the branding URLs above: the page still renders, so without this
-  // line the operator's only evidence is that their color never showed up.
+  // line the only evidence is that the operator's color never showed up.
   const droppedTheme = droppedThemeTokens(config.ui?.branding?.theme);
   if (droppedTheme.length > 0) {
     logger.warn(

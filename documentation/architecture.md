@@ -191,13 +191,13 @@ provider leaves the other connections usable. Credential handoff URLs exist only
 while the UI is mounted; OAuth callbacks never need it.
 
 Its appearance is one token layer. `src/operator-ui/browser.css` resolves every
-color, radius, and font through a custom property and derives the rest with
-`color-mix`, so `branding.theme` is a `:root` block appended after that
-stylesheet rather than a second design system — five gated tokens in
-`src/branding.ts`, each syntactically narrow because deployment config that
-reaches a `<style>` element is CSS injection if it is not. The dark palette is
-the same tokens under `prefers-color-scheme`, which `colorScheme` can pin with a
-`data-scheme` attribute on the page.
+color, radius, and font through a custom property and mixes the rest from those
+with `color-mix`, so `branding.theme` only has to append a `:root` block after
+that stylesheet. The five tokens it accepts are gated in `src/branding.ts`, each
+by a narrow syntactic check: deployment config reaches a `<style>` element here,
+and an unvalidated value would be CSS injection. The dark palette is the same
+tokens under `prefers-color-scheme`; `colorScheme` pins one with a `data-scheme`
+attribute on the page.
 
 ## Import-graph purity
 

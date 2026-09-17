@@ -9,6 +9,7 @@ import {
 import {
   activitySummary,
   authScopeLabel,
+  connectorSummaryParts,
   connectorStatusTone,
   permissionLabel,
   summarizeConnectors,
@@ -412,9 +413,8 @@ describe("connector summary strip", () => {
     });
   });
 
-  // A connector still loading its catalog has no answer yet. Counting it as
-  // connected would overstate the deployment and counting it as unavailable
-  // would raise an alarm nobody can act on, so it lands only in `total`.
+  // A connector still loading its catalog has no answer yet, so it lands in
+  // `total` and nowhere else.
   it("claims a loading connector as neither connected nor failing", () => {
     const summary = summarizeConnectors([connector("loading")]);
     expect(summary.total).toBe(1);
@@ -446,6 +446,34 @@ describe("connector summary strip", () => {
         connector("ok"),
       ]).drifting,
     ).toBe(1);
+  });
+
+  it("names only the counts an operator has to act on", () => {
+    const healthy = connectorSummaryParts({
+      total: 2,
+      connected: 2,
+      attention: 0,
+      unavailable: 0,
+      tools: 9,
+      drifting: 0,
+    });
+    expect(healthy.map((part) => part.text)).toEqual(["2 connected", "9 tools"]);
+    expect(healthy.every((part) => part.tone === "neutral")).toBe(true);
+
+    const troubled = connectorSummaryParts({
+      total: 3,
+      connected: 1,
+      attention: 1,
+      unavailable: 1,
+      tools: 1,
+      drifting: 0,
+    });
+    expect(troubled).toEqual([
+      { text: "1 connected", tone: "neutral" },
+      { text: "1 needs authorization", tone: "warn" },
+      { text: "1 unavailable", tone: "danger" },
+      { text: "1 tool", tone: "neutral" },
+    ]);
   });
 
   it("gives every status a tone, defaulting an unknown one to danger", () => {

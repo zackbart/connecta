@@ -1,12 +1,11 @@
 /*
- * One token layer, two palettes, and a small set of primitives. Every color,
- * radius, and font on the page resolves through a custom property here, which
- * is what makes `branding.theme` a four-line `:root` block appended after this
- * stylesheet rather than a second design system.
+ * One token layer, two palettes, a small set of primitives. Every color,
+ * radius, and font resolves through a custom property here, so `branding.theme`
+ * only has to append a `:root` block after this stylesheet to retheme the page.
  *
- * Derived colors use `color-mix` against the tokens instead of being spelled
- * out, so a deployment that sets one accent gets a consistent set of tints,
- * hovers, and focus rings without configuring any of them.
+ * Tints, hovers, and focus rings are mixed from the tokens with `color-mix`
+ * instead of being written out, so setting one accent keeps all of them
+ * consistent with it.
  */
 
   :root {
@@ -29,7 +28,6 @@
     --warn: #9a5b06;
     --danger: #bb3226;
     --on-accent: #ffffff;
-    --shadow: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 4%);
 
     /* Accent as text reads differently from accent as a fill; both derive. */
     --link: var(--accent);
@@ -40,10 +38,9 @@
   }
 
   /*
-   * The dark palette applies when the OS asks for it and the deployment has not
-   * pinned a scheme, or when the deployment pinned dark outright. Both
-   * selectors set the same tokens, so there is one dark palette rather than two
-   * that can drift.
+   * Dark applies when the OS asks for it and the deployment has not pinned a
+   * scheme, or when the deployment pinned dark. Both selectors set the same
+   * tokens, so there is one dark palette and not two that can drift apart.
    */
   @media (prefers-color-scheme: dark) {
     html:not([data-scheme="light"]) { color-scheme: dark; }
@@ -62,7 +59,6 @@
       --ok: #4cc48c;
       --warn: #e2a33f;
       --danger: #f4776c;
-      --shadow: none;
       --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
       --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
     }
@@ -78,7 +74,6 @@
     --ok: #4cc48c;
     --warn: #e2a33f;
     --danger: #f4776c;
-    --shadow: none;
     --link: color-mix(in srgb, var(--accent) 55%, #ffffff);
     --tint: color-mix(in srgb, var(--accent) 16%, var(--surface));
   }
@@ -267,13 +262,6 @@
 
   /* Surfaces */
 
-  .card {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    padding: var(--pad);
-  }
   .section { display: grid; gap: .75rem; margin-top: 1.75rem; }
   .section-head {
     align-items: baseline;
@@ -299,37 +287,14 @@
     padding: .5rem .75rem;
   }
   .error-notice { color: var(--danger); }
-  /* Notices are always mounted so focus and live regions have a stable target;
-     an empty one must not leave a gap in the layout it sits in. */
+  /* Notices stay mounted so focus and live regions have a stable target. An
+     empty one should not leave a gap in the layout. */
   .meta:empty, .error-notice:empty { display: none; }
 
-  /* Summary strip */
-
-  .stats {
-    display: grid;
-    gap: .75rem;
-    grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
-  }
-  .stat {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
-    display: grid;
-    gap: .15rem;
-    padding: .75rem var(--pad);
-  }
-  .stat-value { font-size: 1.5rem; font-weight: 600; line-height: 1.2; }
-  .stat-label {
-    align-items: center;
-    color: var(--muted);
-    display: flex;
-    font-size: .8125rem;
-    gap: .35rem;
-  }
-  .stat.ok .stat-value { color: var(--ok); }
-  .stat.warn .stat-value { color: var(--warn); }
-  .stat.danger .stat-value { color: var(--danger); }
+  .summary { color: var(--muted); font-size: .875rem; }
+  .summary .sep { opacity: .5; }
+  .summary .warn { color: var(--warn); }
+  .summary .danger { color: var(--danger); }
 
   /* Endpoint */
 
@@ -351,7 +316,6 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
     overflow: hidden;
   }
   .rows > * + * { border-top: 1px solid var(--border); }
@@ -377,7 +341,7 @@
     gap: .35rem;
     justify-content: flex-end;
   }
-  /* The disclosure caret, rotated by the row's own open state. */
+  /* Disclosure caret, rotated by the row's open state. */
   .conn-caret {
     border-right: 1.5px solid var(--muted);
     border-bottom: 1.5px solid var(--muted);
@@ -412,8 +376,8 @@
     justify-content: space-between;
   }
   details > .subcard, details > .tool-list { margin-top: .5rem; }
-  /* A connector with a hundred tools should not turn the row list into a
-     scroll of its own; the panel takes the scrolling instead. */
+  /* A connector with a hundred tools scrolls inside its own panel instead of
+     stretching the row list. */
   .tool-list { display: grid; gap: .4rem; max-height: 22rem; overflow: auto; }
   .filter { flex: 0 1 18rem; min-width: 10rem; width: auto; }
   .connector-drift { display: grid; gap: .15rem; }
@@ -477,7 +441,6 @@
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    box-shadow: var(--shadow);
     overflow: hidden;
   }
   .activity-list > * + * { border-top: 1px solid var(--border); }
@@ -504,15 +467,10 @@
   /* Gate */
 
   .gate {
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    box-shadow: var(--shadow);
     display: grid;
     gap: .75rem;
     margin: 3rem auto 0;
     max-width: 30rem;
-    padding: 1.75rem;
   }
   .gate h1 { font-size: 1.25rem; }
   .gate .row { flex-wrap: nowrap; }

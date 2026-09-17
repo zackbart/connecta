@@ -75,10 +75,9 @@ export function resolveBranding(
 }
 
 /**
- * Hex colors only — `#rgb`, `#rrggbb`, `#rrggbbaa`. The narrowest form that
- * covers what a brand color actually is, and the one that cannot carry a
- * `url()`, a `var()`, or a closing brace into the `:root` block this value is
- * written into.
+ * Hex colors only: `#rgb`, `#rrggbb`, `#rrggbbaa`. A hex value cannot carry a
+ * `url()`, a `var()`, or a closing brace into the `:root` block it is written
+ * into, which is the whole reason the gate is this narrow.
  */
 const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
@@ -86,11 +85,11 @@ const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 const CSS_LENGTH = /^(?:0|[0-9]{1,3}(?:\.[0-9]{1,3})?)(px|rem|em)?$/;
 
 /**
- * One family name: bare, or wrapped in matching quotes. Narrow on purpose —
- * every character CSS needs to end a declaration or open a function (`;`, `{`,
- * `}`, `(`, `)`, backslash, `<`, `>`, `@`, `*`, `/`, `:`) is absent by construction,
- * and requiring the quotes to match means a value cannot leave an open string
- * that swallows whatever CSS follows it.
+ * One family name: bare, or wrapped in matching quotes. The character class
+ * excludes everything CSS needs to end a declaration or open a function (`;`,
+ * `{`, `}`, `(`, `)`, backslash, `<`, `>`, `@`, `*`, `/`, `:`), and matched
+ * quotes mean the value cannot leave an open string that swallows the CSS
+ * after it.
  */
 const FONT_NAME = /^(?:"[a-z0-9 ._-]+"|'[a-z0-9 ._-]+'|[a-z][a-z0-9 ._-]*)$/i;
 
@@ -105,10 +104,10 @@ function isFontStack(value: string): boolean {
 const COLOR_SCHEMES = ["system", "light", "dark"] as const;
 
 /**
- * Read a theme the same way branding URLs are read: gate every field, drop what
- * fails, and never throw — this runs during `createConnecta`, where a malformed
- * value must degrade to the stylesheet's own default rather than refuse to
- * serve the page. `droppedThemeTokens` names the drops for the startup warning.
+ * Read a theme the way branding URLs are read: gate every field, drop what
+ * fails, never throw. This runs during `createConnecta`, so a malformed value
+ * has to fall back to the stylesheet default instead of refusing to serve the
+ * page. `droppedThemeTokens` names the drops for the startup warning.
  */
 export function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
   const accent = trimmedString(theme?.accent);
@@ -128,9 +127,9 @@ export function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
 }
 
 /**
- * `radius` is the one token that takes a number as well as a string, because
- * "10" is what anyone writing it in a config file reaches for first. A bare
- * number means pixels; a string must already carry its unit or be zero.
+ * `radius` accepts a number as well as a string, since a config file is more
+ * likely to say `10` than `"10px"`. A bare number means pixels; a string must
+ * carry its own unit or be zero.
  */
 function radiusLength(radius: unknown): string | undefined {
   if (typeof radius === "number") {
@@ -162,8 +161,8 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
   if (isSetValue(theme.monoFamily) && !resolved.monoFamily) {
     dropped.push("monoFamily");
   }
-  // Compared against the trimmed value the resolver actually reads, so
-  // `" dark "` — which is applied — is not reported as dropped.
+  // Compared against the trimmed value the resolver reads, so `" dark "` is
+  // not reported as dropped when it was applied.
   if (
     isSetValue(theme.colorScheme) &&
     trimmedString(theme.colorScheme) !== resolved.colorScheme
@@ -175,10 +174,9 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
 
 /**
  * The resolved theme as a `:root` block, or "" when a deployment configured
- * nothing. Emitted after the stylesheet so it overrides the defaults, and every
- * value in it has passed a gate above — this function performs no escaping of
- * its own, because a value that needed escaping should never have survived
- * `resolveTheme`.
+ * nothing. It is emitted after the stylesheet so it overrides the defaults.
+ * There is no escaping here: every value has already passed a gate above, and
+ * anything that would need escaping is dropped rather than rewritten.
  */
 export function themeCss(theme: ResolvedTheme): string {
   const declarations = [

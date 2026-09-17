@@ -4,6 +4,7 @@ import {
   authScopeLabel,
   connectorStatusLabel,
   connectorStatusTone,
+  connectorSummaryParts,
   driftCounts,
   driftState,
   driftSummary,
@@ -15,7 +16,7 @@ import {
   type OperatorState,
 } from "../view.js";
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
-import { Badge, CopyButton, Empty, NoticeLine, Stat } from "./parts.js";
+import { Badge, CopyButton, Empty, NoticeLine } from "./parts.js";
 import { oauthAction, refreshConnector, setConnectorFilter } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -58,14 +59,13 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
 }
 
 /**
- * One connector, as a single line until an operator asks for more. The closed
- * row carries only what is true at a glance — state, tool count, who owns the
- * authentication — and everything that needs reading or acting on lives in the
- * body. A list of twenty connectors should still be one screen.
+ * One connector as a single line until an operator asks for more. The closed
+ * row shows state, tool count, and who owns the authentication; everything
+ * that needs reading or acting on is in the body, which keeps a twenty-
+ * connector deployment to one screen.
  *
- * The disclosure is a native `<details>` rather than store state on purpose:
- * open rows are a browser concern, and keeping them out of the store means an
- * identity change cannot leave one connector's panel open over another's data.
+ * The disclosure is a native `<details>` and not store state, so an identity
+ * change cannot leave one connector's panel open over another's data.
  */
 function ConnectorRow({
   connector,
@@ -202,28 +202,18 @@ function ConnectorRow({
   );
 }
 
-/**
- * The deployment's state above the list it summarizes. Zeros are still shown:
- * "nothing needs attention" is the answer an operator opened this page for, and
- * hiding the tile would make its absence mean either that or a bug.
- */
-function SummaryStrip({ connectors }: { connectors: UiConnector[] }) {
-  const summary = summarizeConnectors(connectors);
+/** The deployment's state in one line, above the list it summarizes. */
+function SummaryLine({ connectors }: { connectors: UiConnector[] }) {
+  const parts = connectorSummaryParts(summarizeConnectors(connectors));
   return (
-    <div class="stats" id="connectorSummary">
-      <Stat value={summary.connected} label="Connected" tone="ok" />
-      <Stat
-        value={summary.attention}
-        label="Need authorization"
-        tone={summary.attention > 0 ? "warn" : "neutral"}
-      />
-      <Stat
-        value={summary.unavailable}
-        label="Unavailable"
-        tone={summary.unavailable > 0 ? "danger" : "neutral"}
-      />
-      <Stat value={summary.tools} label="Tools available" />
-    </div>
+    <p class="summary" id="connectorSummary">
+      {parts.map((part, index) => (
+        <span key={part.text}>
+          {index > 0 ? <span class="sep"> · </span> : null}
+          <span class={part.tone === "neutral" ? "" : part.tone}>{part.text}</span>
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -250,11 +240,11 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
               ? `${data.serverInfo?.name || productName} v${data.connectaVersion || "?"}`
               : productOperatorLabel}
           </p>
+          {data ? <SummaryLine connectors={data.connectors} /> : null}
           <NoticeLine id="oauthNotice" notice={state.oauthNotice} />
           <NoticeLine id="credentialNotice" notice={state.credentialNotice} />
         </div>
       </div>
-      {data ? <SummaryStrip connectors={data.connectors} /> : null}
       <section class="section" aria-labelledby="connectorLedgerHeading">
         <div class="section-head">
           <h2 id="connectorLedgerHeading">Connectors</h2>

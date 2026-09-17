@@ -145,10 +145,10 @@ See [inbound identity](../../documentation/auth.md#principals-visibility-and-ope
 ### UI and encrypted credentials
 
 Import `operatorUi` from `@zackbart/connecta/ui` and set `ui: operatorUi()`.
-Branding belongs in `operatorUi({ branding })`, including `branding.theme` —
+Branding belongs in `operatorUi({ branding })`, including `branding.theme`:
 `accent`, `radius`, `fontFamily`, `monoFamily`, and `colorScheme`. Every other
-color derives from those, so one accent themes the whole page, and a value that
-fails its gate falls back to the default with a startup warning naming it. Omit
+color is mixed from those, so one accent themes the whole page. A value that
+fails its gate falls back to the default, and the startup warning names it. Omit
 the import and option to serve no UI routes; OAuth callbacks still work in core
 for authorized interactive MCP callers.
 

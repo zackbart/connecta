@@ -217,11 +217,11 @@ export function connectorStatusTone(status: string): Tone {
 }
 
 /**
- * The deployment in four numbers, so the page answers "is anything wrong" above
- * the list rather than only inside it. `attention` is the count an operator can
- * act on right now; `unavailable` is the count they cannot. A connector still
- * loading its catalog is in `total` and nowhere else — claiming it as connected
- * or as failing would both be guesses.
+ * The deployment in four numbers, so the page answers "is anything wrong"
+ * above the list instead of only inside it. `attention` is what an operator
+ * can act on now; `unavailable` is what they cannot. A connector still loading
+ * its catalog counts only toward `total`, since calling it connected or failed
+ * would be a guess either way.
  */
 export interface ConnectorSummary {
   total: number;
@@ -254,15 +254,40 @@ export function summarizeConnectors(
   return summary;
 }
 
+/**
+ * The one line above the list. Connected and tool counts are always present;
+ * the two counts an operator may have to act on appear only when they are not
+ * zero, so a healthy deployment stays short.
+ */
+export function connectorSummaryParts(
+  summary: ConnectorSummary,
+): Array<{ text: string; tone: Tone }> {
+  return [
+    { text: `${summary.connected} connected`, tone: "neutral" as Tone },
+    ...(summary.attention
+      ? [
+          {
+            text: `${summary.attention} need${summary.attention === 1 ? "s" : ""} authorization`,
+            tone: "warn" as Tone,
+          },
+        ]
+      : []),
+    ...(summary.unavailable
+      ? [{ text: `${summary.unavailable} unavailable`, tone: "danger" as Tone }]
+      : []),
+    { text: toolCountLabel(summary.tools), tone: "neutral" as Tone },
+  ];
+}
+
 /** Who owns this connector's downstream credentials, in two words. */
 export function authScopeLabel(scope: UiConnector["authScope"]): string {
   return scope === "personal" ? "personal auth" : "shared auth";
 }
 
 /**
- * What this identity may do with a connector, as one line. Use is implied by
- * seeing it at all; the sentence is about authentication, which is the part
- * that differs between operators.
+ * What this identity may do with a connector, in one line. Being able to use it
+ * is implied by seeing it at all, so the sentence covers authentication, which
+ * is the part that differs between operators.
  */
 export function permissionLabel(connector: UiConnector): string {
   if (connector.permissions?.manageSharedAuth) {

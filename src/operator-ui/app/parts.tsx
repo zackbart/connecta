@@ -30,7 +30,7 @@ export function NoticeLine({
   );
 }
 
-/** A status word with a tone: the page's only decoration, used consistently. */
+/** A status word with a tone. The page's one piece of decoration. */
 export function Badge({
   tone = "neutral",
   children,
@@ -39,24 +39,6 @@ export function Badge({
   children: ComponentChildren;
 }) {
   return <span class={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
-}
-
-/** One number from the summary strip, with the word that explains it. */
-export function Stat({
-  value,
-  label,
-  tone = "neutral",
-}: {
-  value: number | string;
-  label: string;
-  tone?: Tone;
-}) {
-  return (
-    <div class={tone === "neutral" ? "stat" : `stat ${tone}`}>
-      <span class="stat-value">{value}</span>
-      <span class="stat-label">{label}</span>
-    </div>
-  );
 }
 
 export function Empty({ children }: { children: ComponentChildren }) {

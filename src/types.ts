@@ -573,27 +573,26 @@ export interface ConnectaBranding {
   /** `theme-color` meta value. Defaults to "#ffffff". */
   themeColor?: string;
   /**
-   * Operator-page appearance. Every field is optional and every rejected value
-   * silently takes its default — a malformed theme must not take the page down
-   * — so `createConnecta` warns at startup about anything it dropped.
+   * Operator-page appearance. Every field is optional, and a rejected value
+   * takes its default rather than failing the page, so `createConnecta` warns
+   * at startup about anything it dropped.
    *
-   * Deliberately five knobs rather than a palette: surfaces, borders, muted
-   * text, and the status colors derive from these, which is what keeps a
-   * deployment from theming its way into an unreadable page.
+   * Five knobs, not a palette. Surfaces, borders, muted text, and the status
+   * colors all derive from these, so a deployment sets an accent and gets a
+   * readable page instead of thirty chances to break one.
    */
   theme?: ConnectaTheme;
 }
 
 /**
  * The operator UI's themeable tokens. These land in a `:root` block on the
- * operator page, so each one is gated by a narrow syntactic check rather than
- * trusted: an unvalidated value here would let deployment config write
- * arbitrary CSS into the page.
+ * page, so each is gated by a narrow syntactic check: an unvalidated value
+ * here would let deployment config write arbitrary CSS.
  */
 export interface ConnectaTheme {
   /**
-   * The one brand color: links, focus rings, primary actions, the active nav
-   * item. Hex only (`#rgb`, `#rrggbb`, or `#rrggbbaa`). Defaults to `#2f5fe0`.
+   * The brand color: links, focus rings, primary actions, the active nav item.
+   * Hex only (`#rgb`, `#rrggbb`, or `#rrggbbaa`). Defaults to `#2f5fe0`.
    */
   accent?: string;
   /**

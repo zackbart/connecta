@@ -182,9 +182,8 @@ describe("operator theme tokens", () => {
     expect(resolveTheme({ radius: -1 }).radius).toBeUndefined();
   });
 
-  // Every token lands in a `:root` block, so the gate's job is to reject
-  // anything that could close a declaration, open a function, or leave a string
-  // unterminated — not merely anything unusual.
+  // Every token lands in a `:root` block, so the gates reject anything that
+  // could close a declaration, open a function, or leave a string open.
   it.each([
     ["accent", "red"],
     ["accent", "#12"],
@@ -196,8 +195,7 @@ describe("operator theme tokens", () => {
     ["monoFamily", "Menlo /* comment */"],
     ["colorScheme", "invert"],
   ] as const)("drops a hostile %s (%s)", (token, value) => {
-    // Deliberately untyped: these are the values that reach a JS call site,
-    // which is the only place they could ever be this shape.
+    // Untyped on purpose: a JS call site is where a value this shape arrives.
     const theme = { [token]: value } as ConnectaTheme;
     const resolved = resolveTheme(theme) as unknown as Record<string, unknown>;
     if (token === "colorScheme") expect(resolved.colorScheme).toBe("system");
