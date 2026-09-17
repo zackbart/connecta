@@ -167,6 +167,50 @@ export function alignEndToCharBoundary(
   return e;
 }
 
+/** Prefix of the chunked paging envelope; `v1`'s single inline key still reads. */
+const RESULT_ENVELOPE_V2 = "connecta-result-v2:";
+
+/** `<total bytes>:<bytes per chunk>:` follow the prefix, then chunk 0's base64. */
+const RESULT_ENVELOPE_V2_HEADER = new RegExp(`^${RESULT_ENVELOPE_V2}(\\d+):(\\d+):`);
+
+/**
+ * Smallest chunk of result text stored under one key. A multiple of three so
+ * every chunk's base64 stands alone and a byte offset inside it lands on a
+ * whole quad, and a little under the 50,000-byte default page so a default page
+ * reads two or three chunks rather than dozens.
+ */
+const RESULT_CHUNK_BYTES = 49_152;
+
+/**
+ * Keys one stashed result may occupy. Chunking trades write count for read
+ * count, and both are real: every chunk is a storage write at stash time, and
+ * `fileStorage` rewrites its whole file per write. Above roughly 1.5 MB the
+ * chunks widen instead of multiplying, so a result costs a bounded number of
+ * writes and a page still reads a small fraction of it.
+ */
+const RESULT_MAX_CHUNKS = 32;
+
+/** Chunk width for a result of `totalBytes`, always a multiple of three. */
+function resultChunkBytes(totalBytes: number): number {
+  return Math.max(
+    RESULT_CHUNK_BYTES,
+    Math.ceil(totalBytes / RESULT_MAX_CHUNKS / 3) * 3,
+  );
+}
+
+/**
+ * Base64 of `bytes`, in three-byte-aligned batches so the argument list of one
+ * spread never grows with the result. Alignment matters: an unaligned batch
+ * would pad mid-stream and the concatenation would no longer decode.
+ */
+function base64Of(bytes: Uint8Array): string {
+  let out = "";
+  for (let offset = 0; offset < bytes.length; offset += 12_288) {
+    out += btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288)));
+  }
+  return out;
+}
+
 // --- result-size guard + get_result (feature 1) ---------------------------
 
 /**
@@ -197,14 +241,18 @@ async function stashResult(
   const totalBytes = bytes.length;
   const id = crypto.randomUUID();
   try {
-    // Base64 permits byte-range decoding after a KV read, without scanning or
-    // re-encoding all preceding text. Each chunk is a multiple of three bytes.
-    const chunks: string[] = [];
-    for (let offset = 0; offset < bytes.length; offset += 12_288) {
-      chunks.push(btoa(String.fromCharCode(...bytes.subarray(offset, offset + 12_288))));
+    // Base64 permits byte-range decoding, and splitting the envelope across
+    // keys keeps a page's storage read proportional to the page instead of to
+    // the whole result (issue #540). Chunk 0 carries the header; the get_result
+    // reader below maps a byte offset back to chunk index and base64 quad.
+    const chunkBytes = resultChunkBytes(totalBytes);
+    const chunks = [`${RESULT_ENVELOPE_V2}${totalBytes}:${chunkBytes}:`];
+    for (let offset = 0; offset < bytes.length; offset += chunkBytes) {
+      const chunk = base64Of(bytes.subarray(offset, offset + chunkBytes));
+      if (offset === 0) chunks[0] += chunk;
+      else chunks.push(chunk);
     }
-    const stored = `connecta-result-v1:${totalBytes}:${chunks.join("")}`;
-    if (!await results.set(`result:${id}`, stored, RESULT_TTL_SECONDS)) {
+    if (!await results.set(`result:${id}`, chunks, RESULT_TTL_SECONDS)) {
       throw new Error("Result stash capacity exhausted");
     }
   } catch {
@@ -713,39 +761,71 @@ export function createMetaTools(
         );
       }
       const results = registry.resultsStorage();
-      let stored: string | null;
-      try {
-        stored = await results.get(`result:${args.id}`);
-      } catch {
-        return {
-          ...jsonResult({
-            error: {
-              code: "unavailable",
-              message: "Result paging storage is unavailable.",
-              retryable: true,
-            },
-          }),
-          isError: true,
-        };
-      }
-      if (stored === null || stored === undefined) {
+      const unavailableResult = () => ({
+        ...jsonResult({
+          error: {
+            code: "unavailable",
+            message: "Result paging storage is unavailable.",
+            retryable: true,
+          },
+        }),
+        isError: true,
+      });
+      // `false` is a storage failure — retryable, and distinct from an id that
+      // is simply gone. Every key a page touches answers the same way, so a
+      // backend that dies halfway through a multi-chunk page says so.
+      const read = async (key: string): Promise<string | null | false> => {
+        try {
+          return await results.get(key) ?? null;
+        } catch {
+          return false;
+        }
+      };
+      const stored = await read(`result:${args.id}`);
+      if (stored === false) return unavailableResult();
+      if (stored === null) {
         return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
       }
       const requestedOffset = args.offset ?? 0;
       const maxBytes = args.maxBytes ?? globalCap;
-      // Decode only this page plus UTF-8 boundary lookaround. Legacy raw-text
-      // entries remain readable for their short TTL after an upgrade.
-      const header = /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
+      // Read and decode only the chunks this page covers, plus a few bytes of
+      // UTF-8 boundary lookaround. Pre-upgrade entries stay readable for their
+      // short TTL: v1 inlined the whole envelope under one key, which is this
+      // format with a single chunk as wide as the result, and raw text before
+      // that still pays one full encode per page.
+      const chunked = RESULT_ENVELOPE_V2_HEADER.exec(stored.slice(0, 80));
+      const inline = chunked ? null : /^connecta-result-v1:(\d+):/.exec(stored.slice(0, 64));
+      const header = chunked ?? inline;
       let bytes: Uint8Array;
       let total: number;
       let start = 0;
       if (header) {
         total = Number(header[1]);
+        const chunkBytes = chunked ? Number(chunked[2]) : Math.max(total, 1);
         start = Math.floor(Math.max(0, Math.min(requestedOffset, total) - 3) / 3) * 3;
         const end = Math.min(total, requestedOffset + maxBytes + 4);
-        const binary = atob(stored.slice(header[0].length + start / 3 * 4,
-          header[0].length + Math.ceil(end / 3) * 4));
-        bytes = Uint8Array.from(binary, char => char.charCodeAt(0));
+        bytes = new Uint8Array(Math.max(0, end - start));
+        const lastChunk = Math.floor(Math.max(end - 1, start) / chunkBytes);
+        for (let index = Math.floor(start / chunkBytes); index <= lastChunk; index++) {
+          const encoded = index === 0
+            ? stored.slice(header[0].length)
+            : await read(`result:${args.id}#${index}`);
+          if (encoded === false) return unavailableResult();
+          if (encoded === null) {
+            // A chunk expired or was evicted under its own header; the id can no
+            // longer serve this range, and inventing U+0000 filler would be worse.
+            return errorResult(`Unknown or expired result id "${boundedEchoText(args.id)}"`);
+          }
+          const chunkStart = index * chunkBytes;
+          // Both bounds are chunk-local. `from` inherits `start`'s three-byte
+          // alignment because every chunk boundary is a multiple of three.
+          const from = Math.max(start, chunkStart) - chunkStart;
+          const to = Math.min(end, chunkStart + chunkBytes, total) - chunkStart;
+          const binary = atob(encoded.slice(from / 3 * 4, Math.ceil(to / 3) * 4));
+          for (let at = from; at < to; at++) {
+            bytes[chunkStart + at - start] = binary.charCodeAt(at - from);
+          }
+        }
       } else {
         bytes = enc.encode(stored);
         total = bytes.length;

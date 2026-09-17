@@ -35,7 +35,7 @@ describe("ConnectaConfig boundary", () => {
       expect(() => unsafeCreateConnecta({ connectors: [], executor, results })).toThrow("results");
     }
     const app = createConnecta({ connectors: [], executor, results: { maxStashBytes: 0, maxStashEntries: 0 } });
-    expect(await app.registry.stashResult("result:disabled", "body", 900)).toBe(false);
+    expect(await app.registry.stashResult("result:disabled", ["body"], 900)).toBe(false);
     await app.close();
   });
 

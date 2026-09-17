@@ -241,8 +241,8 @@ export interface RegistryView {
     input: { toolName: string; args: unknown; signal?: AbortSignal },
   ): Promise<CallAdmissionPermit>;
   resultsStorage(): KVStorage;
-  /** Reserve runtime-wide capacity before writing a paging envelope. */
-  stashResult(key: string, value: string, ttlSeconds: number): Promise<boolean>;
+  /** Reserve runtime-wide capacity before writing a paging envelope's chunks. */
+  stashResult(key: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean>;
   /** Local declared-vs-stored credential mismatch, with no downstream I/O. */
   credentialDriftFor(id: string): Promise<string | undefined>;
   /** Value-free shape learned from successful calls, never a provider declaration. */
@@ -336,7 +336,13 @@ export class Registry implements RegistryView {
   /** Result-size guard cap threaded to the meta-tools. */
   readonly maxResultBytes: number;
   /** Only keys, byte counts, and expiry survive requests; never write promises. */
-  private readonly resultStash = new Map<string, { bytes: number; expiresAt: number; busy: boolean }>();
+  private readonly resultStash = new Map<string, {
+    /** Every backing key this envelope wrote, so expiry reclaims all of them. */
+    keys: readonly string[];
+    bytes: number;
+    expiresAt: number;
+    busy: boolean;
+  }>();
   private resultStashBytes = 0;
   private readonly configuredConnectors: Connector[];
   private readonly personalRegistries = new Map<string, Registry>();
@@ -755,12 +761,20 @@ export class Registry implements RegistryView {
     for (const registry of this.personalRegistries.values()) registry.closeCallAdmission();
   }
 
-  /** Reserve capacity and write one ASCII paging envelope in this runtime. */
-  async stashResult(key: string, value: string, ttlSeconds: number, prefix = "results:"): Promise<boolean> {
+  /**
+   * Reserve capacity and write one ASCII paging envelope in this runtime.
+   *
+   * `chunks[0]` lands on `<prefix><key>` and `chunks[n]` on `<prefix><key>#<n>`
+   * — the layout get_result reads back, so a page fetches only the chunks it
+   * covers instead of the whole stored result (issue #540). Chunking is a
+   * read-cost decision, not a capacity one: however many keys an envelope
+   * occupies, it is one stash entry charged its total ASCII length.
+   */
+  async stashResult(key: string, chunks: readonly string[], ttlSeconds: number, prefix = "results:"): Promise<boolean> {
     const maxBytes = this.opts.results?.maxStashBytes ?? 8 * 1024 * 1024;
     const maxEntries = this.opts.results?.maxStashEntries ?? 64;
     // The paging envelope is ASCII, so its string length is its stored byte count.
-    const bytes = value.length;
+    const bytes = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     if (bytes > maxBytes || maxEntries === 0) return false;
     const now = Date.now();
     for (const [oldKey, entry] of this.resultStash) {
@@ -769,7 +783,7 @@ export class Registry implements RegistryView {
       try {
         // TTL alone cannot reclaim a lazy backend. Keep the charge until deletion
         // succeeds, including writes which persisted before throwing.
-        await this.opts.storage.delete(oldKey);
+        for (const staleKey of entry.keys) await this.opts.storage.delete(staleKey);
         this.resultStash.delete(oldKey);
         this.resultStashBytes -= entry.bytes;
       } finally {
@@ -778,11 +792,16 @@ export class Registry implements RegistryView {
     }
     if (this.resultStash.size >= maxEntries || this.resultStashBytes + bytes > maxBytes) return false;
     const fullKey = prefix + key;
-    const entry = { bytes, expiresAt: Infinity, busy: true };
+    const keys = chunks.map((_, index) => index === 0 ? fullKey : `${fullKey}#${index}`);
+    const entry = { keys, bytes, expiresAt: Infinity, busy: true };
     this.resultStash.set(fullKey, entry);
     this.resultStashBytes += bytes;
     try {
-      await this.opts.storage.set(fullKey, value, { ttlSeconds });
+      // Trailing chunks first: the header chunk is what makes an id readable, so
+      // a write that fails midway leaves no envelope pointing at absent chunks.
+      for (let index = keys.length - 1; index >= 0; index--) {
+        await this.opts.storage.set(keys[index]!, chunks[index]!, { ttlSeconds });
+      }
       entry.expiresAt = Date.now() + ttlSeconds * 1000;
       return true;
     } catch (error) {
@@ -1694,8 +1713,8 @@ class ScopedRegistryView implements RegistryView {
     return registry.admitCall(...args);
   }
 
-  stashResult(key: string, value: string, ttlSeconds: number): Promise<boolean> {
-    return this.root.stashResult(key, value, ttlSeconds,
+  stashResult(key: string, chunks: readonly string[], ttlSeconds: number): Promise<boolean> {
+    return this.root.stashResult(key, chunks, ttlSeconds,
       this.scope.subjectKey ? `subject:${this.scope.subjectKey}:` : "results:");
   }
 
