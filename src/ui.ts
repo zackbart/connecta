@@ -42,7 +42,7 @@ export {
   type UiData,
 } from "./operator-ui/model.js";
 
-import { resolveBranding, isSafeHttpsUrl } from "./branding.js";
+import { resolveBranding, isSafeHttpsUrl, themeCss } from "./branding.js";
 export { CONNECTA_FAVICON_SVG, resolveBranding, isSafeHttpUrl, isSafeHttpsUrl, isSafeIconHref } from "./branding.js";
 /**
  * A JS string literal safe to inline in a script element. Escaping `/` keeps
@@ -361,8 +361,16 @@ export function renderUiHtml(
       ? `<script${nonceAttr} crossorigin="anonymous" data-clerk-publishable-key="${escapeHtmlAttr(clerk.publishableKey)}" src="${escapeHtmlAttr(clerkScriptOrigin)}/npm/@clerk/clerk-js@6/dist/clerk.browser.js"></script>`
       : "";
 
+  // A pinned scheme is an attribute, not a stylesheet edit: the dark palette
+  // keys off `html[data-scheme]`, so "system" leaves the attribute off and the
+  // media query decides.
+  const schemeAttr =
+    brand.theme.colorScheme === "system"
+      ? ""
+      : ` data-scheme="${brand.theme.colorScheme}"`;
+
   return `<!doctype html>
-<html lang="en">
+<html lang="en"${schemeAttr}>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -372,22 +380,24 @@ export function renderUiHtml(
 <link rel="shortcut icon" href="/favicon.ico">
 <title>${escapeHtmlAttr(title)}</title>
 ${clerkScript}
-<style>${OPERATOR_UI_CSS}</style>
+<style>${OPERATOR_UI_CSS}${themeCss(brand.theme)}</style>
 </head>
 <body>
 <a class="skip-link" href="#operatorContent">Skip to operator page</a>
-<header class="masthead shell pgrid">
-  ${owner}
-  <div class="mast-nav">
-    ${product}
+<header class="masthead shell">
+  <div class="masthead-inner">
+    <div class="mast-nav">
+      ${owner}
+      ${product}
+    </div>
     <div id="operatorNav"></div>
   </div>
 </header>
 
 <main id="operatorContent" class="page shell" tabindex="-1">
-  <div class="lead pgrid">
-    <h1 class="pcap">${OPERATOR_PAGE_LABELS[page]}</h1>
-    <div class="pbody lead-copy">
+  <div class="lead">
+    <h1>${OPERATOR_PAGE_LABELS[page]}</h1>
+    <div class="lead-copy">
       <p>${escapeHtmlAttr(brand.description)}</p>
       <noscript><p class="msg">The operator pages need JavaScript. Nothing else here
       does — agents reach this deployment through <span class="mono">/mcp</span>.</p></noscript>

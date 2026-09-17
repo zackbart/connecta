@@ -1,4 +1,4 @@
-import type { ConnectaBranding, UiAuthConfig } from "./types.js";
+import type { ConnectaBranding, ConnectaTheme, UiAuthConfig } from "./types.js";
 /** Connecta's default monochrome "C" mark. */
 export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
   <style>
@@ -7,6 +7,14 @@ export const CONNECTA_FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" vie
   </style>
   <path class="fg" d="M27 9.4A13 13 0 1 0 27 22.6l-4.4-2.5a8 8 0 1 1 0-8.2z"/>
 </svg>`;
+
+export interface ResolvedTheme {
+  accent?: string;
+  radius?: string;
+  fontFamily?: string;
+  monoFamily?: string;
+  colorScheme: "system" | "light" | "dark";
+}
 
 interface ResolvedBranding {
   productName: string;
@@ -19,6 +27,8 @@ interface ResolvedBranding {
   /** href for the page's icon link. */
   faviconHref: string;
   themeColor: string;
+  /** Only the tokens that survived their gate; the stylesheet owns the rest. */
+  theme: ResolvedTheme;
 }
 
 const DEFAULT_FAVICON_HREF = "/favicon.svg";
@@ -60,18 +70,133 @@ export function resolveBranding(
         ? faviconHref
         : DEFAULT_FAVICON_HREF,
     themeColor: trimmedString(branding?.themeColor) ?? "#ffffff",
+    theme: resolveTheme(branding?.theme),
   };
 }
 
 /**
+ * Hex colors only: `#rgb`, `#rrggbb`, `#rrggbbaa`. A hex value cannot carry a
+ * `url()`, a `var()`, or a closing brace into the `:root` block it is written
+ * into, which is the whole reason the gate is this narrow.
+ */
+const HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
+
+/** A single non-negative CSS length, or a bare number the caller reads as px. */
+const CSS_LENGTH = /^(?:0|[0-9]{1,3}(?:\.[0-9]{1,3})?)(px|rem|em)?$/;
+
+/**
+ * One family name: bare, or wrapped in matching quotes. The character class
+ * excludes everything CSS needs to end a declaration or open a function (`;`,
+ * `{`, `}`, `(`, `)`, backslash, `<`, `>`, `@`, `*`, `/`, `:`), and matched
+ * quotes mean the value cannot leave an open string that swallows the CSS
+ * after it.
+ */
+const FONT_NAME = /^(?:"[a-z0-9 ._-]+"|'[a-z0-9 ._-]+'|[a-z][a-z0-9 ._-]*)$/i;
+
+/** A font-family list: comma-separated names and nothing else. */
+function isFontStack(value: string): boolean {
+  if (value.length > 200) return false;
+  const names = value.split(",");
+  return names.length <= 12 &&
+    names.every((name) => FONT_NAME.test(name.trim()));
+}
+
+const COLOR_SCHEMES = ["system", "light", "dark"] as const;
+
+/**
+ * Read a theme the way branding URLs are read: gate every field, drop what
+ * fails, never throw. This runs during `createConnecta`, so a malformed value
+ * has to fall back to the stylesheet default instead of refusing to serve the
+ * page. `droppedThemeTokens` names the drops for the startup warning.
+ */
+export function resolveTheme(theme?: ConnectaTheme): ResolvedTheme {
+  const accent = trimmedString(theme?.accent);
+  const fontFamily = trimmedString(theme?.fontFamily);
+  const monoFamily = trimmedString(theme?.monoFamily);
+  const scheme = trimmedString(theme?.colorScheme);
+  const radius = radiusLength(theme?.radius);
+  return {
+    ...(accent && HEX_COLOR.test(accent) ? { accent } : {}),
+    ...(radius !== undefined ? { radius } : {}),
+    ...(fontFamily && isFontStack(fontFamily) ? { fontFamily } : {}),
+    ...(monoFamily && isFontStack(monoFamily) ? { monoFamily } : {}),
+    colorScheme: COLOR_SCHEMES.includes(scheme as (typeof COLOR_SCHEMES)[number])
+      ? (scheme as ResolvedTheme["colorScheme"])
+      : "system",
+  };
+}
+
+/**
+ * `radius` accepts a number as well as a string, since a config file is more
+ * likely to say `10` than `"10px"`. A bare number means pixels; a string must
+ * carry its own unit or be zero.
+ */
+function radiusLength(radius: unknown): string | undefined {
+  if (typeof radius === "number") {
+    return Number.isFinite(radius) && radius >= 0 && radius <= 999
+      ? `${radius}px`
+      : undefined;
+  }
+  const value = trimmedString(radius);
+  if (!value || !CSS_LENGTH.test(value)) return undefined;
+  return /[a-z]$/i.test(value) || value === "0" ? value : `${value}px`;
+}
+
+/**
+ * Names of the theme tokens the operator set that failed their gate. Same
+ * contract as `droppedBrandingUrls`: rendering falls back silently, so this is
+ * the only place an operator learns their value never reached the page.
+ */
+export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
+  if (!theme) return [];
+  const resolved = resolveTheme(theme);
+  const dropped: string[] = [];
+  if (isSetValue(theme.accent) && !resolved.accent) dropped.push("accent");
+  if (isSetValue(theme.radius) && resolved.radius === undefined) {
+    dropped.push("radius");
+  }
+  if (isSetValue(theme.fontFamily) && !resolved.fontFamily) {
+    dropped.push("fontFamily");
+  }
+  if (isSetValue(theme.monoFamily) && !resolved.monoFamily) {
+    dropped.push("monoFamily");
+  }
+  // Compared against the trimmed value the resolver reads, so `" dark "` is
+  // not reported as dropped when it was applied.
+  if (
+    isSetValue(theme.colorScheme) &&
+    trimmedString(theme.colorScheme) !== resolved.colorScheme
+  ) {
+    dropped.push("colorScheme");
+  }
+  return dropped.map((token) => `theme.${token}`);
+}
+
+/**
+ * The resolved theme as a `:root` block, or "" when a deployment configured
+ * nothing. It is emitted after the stylesheet so it overrides the defaults.
+ * There is no escaping here: every value has already passed a gate above, and
+ * anything that would need escaping is dropped rather than rewritten.
+ */
+export function themeCss(theme: ResolvedTheme): string {
+  const declarations = [
+    theme.accent ? `--accent:${theme.accent}` : "",
+    theme.radius !== undefined ? `--radius:${theme.radius}` : "",
+    theme.fontFamily ? `--sans:${theme.fontFamily}` : "",
+    theme.monoFamily ? `--mono:${theme.monoFamily}` : "",
+  ].filter(Boolean);
+  return declarations.length ? `:root{${declarations.join(";")}}` : "";
+}
+
+/**
  * Whether the operator meant to supply a value here — the question every
- * dropped-URL warning asks before naming a field, and one definition so the
+ * dropped-value warning asks before naming a field, and one definition so the
  * branding and `uiAuth` warnings cannot answer it differently. A non-string
  * counts as set: the intent was there and is exactly what the warning reports
  * on. A blank or whitespace-only string does not; that is indistinguishable
  * from leaving the field alone, and both take the default silently.
  */
-function isSetUrlValue(value: unknown): boolean {
+function isSetValue(value: unknown): boolean {
   return typeof value === "string"
     ? trimmedString(value) !== undefined
     : value !== undefined && value !== null;
@@ -88,13 +213,13 @@ export function droppedBrandingUrls(branding?: ConnectaBranding): string[] {
   const resolved = resolveBranding(branding);
   const faviconHref = branding.favicon?.href;
   return [
-    ...(isSetUrlValue(branding.productUrl) && !resolved.productUrl
+    ...(isSetValue(branding.productUrl) && !resolved.productUrl
       ? ["productUrl"]
       : []),
-    ...(isSetUrlValue(branding.ownerUrl) && !resolved.ownerUrl
+    ...(isSetValue(branding.ownerUrl) && !resolved.ownerUrl
       ? ["ownerUrl"]
       : []),
-    ...(isSetUrlValue(faviconHref) &&
+    ...(isSetValue(faviconHref) &&
     trimmedString(faviconHref) !== resolved.faviconHref
       ? ["favicon.href"]
       : []),
@@ -177,7 +302,7 @@ export function isSafeHttpsUrl(url: unknown): boolean {
  * `frontendApiUrl` is required, so anything that fails its gate is a drop.
  * `signInUrl` and `signUpUrl` are optional, so only a value the operator
  * *supplied* and the gate then rejected is worth a warning — an unset field
- * took no default away from anyone. `isSetUrlValue` decides that, the same way
+ * took no default away from anyone. `isSetValue` decides that, the same way
  * and for the same reasons it decides it for the branding URLs: a warning that
  * fires for one and not the other would be reporting on the field rather than
  * on the operator's intent. Rendering is not consulted for this: it drops on
@@ -189,10 +314,10 @@ export function droppedUiAuthUrls(uiAuth?: UiAuthConfig): string[] {
   if (!uiAuth || uiAuth.kind !== "clerk") return [];
   return [
     ...(isSafeHttpsUrl(uiAuth.frontendApiUrl) ? [] : ["uiAuth.frontendApiUrl"]),
-    ...(isSetUrlValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl)
+    ...(isSetValue(uiAuth.signInUrl) && !isSafeHttpsUrl(uiAuth.signInUrl)
       ? ["uiAuth.signInUrl"]
       : []),
-    ...(isSetUrlValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl)
+    ...(isSetValue(uiAuth.signUpUrl) && !isSafeHttpsUrl(uiAuth.signUpUrl)
       ? ["uiAuth.signUpUrl"]
       : []),
   ];

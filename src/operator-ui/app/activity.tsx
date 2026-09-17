@@ -18,10 +18,7 @@ function ActivityRow({ event }: { event: UiActivityEvent }) {
   return (
     <article class={`activity-item ${outcome}`}>
       <div class="activity-stamp">
-        <span
-          class={outcome === "success" ? "dot ok" : "dot"}
-          aria-hidden="true"
-        />
+        <span class={`dot ${outcome}`} aria-hidden="true" />
         <div>
           <time class="activity-time" dateTime={event.occurredAt}>
             {formatDate(event.occurredAt)}
@@ -50,12 +47,12 @@ export function ActivityPage({ state }: { state: OperatorState }) {
   const visible = filterActivity(state.activityEvents, state.activitySearch);
   return (
     <section id="activityView">
-      <div class="lead pgrid">
-        <h1 id="activityHeading" class="pcap" tabIndex={-1}>
+      <div class="lead">
+        <h1 id="activityHeading" tabIndex={-1}>
           Activity
         </h1>
-        <div class="pbody">
-          <p class="activity-copy" id="activitySummary">
+        <div class="lead-copy">
+          <p id="activitySummary">
             {activitySummary(state.activityEvents)}
           </p>
           {!enabled ? (
@@ -66,7 +63,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
             </Unavailable>
           ) : (
             <div id="activityAvailable">
-              <div class="row activity-controls">
+              <div class="row">
                 <input
                   id="activitySearch"
                   type="search"
@@ -79,7 +76,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
                 />
                 <button
                   id="refreshActivity"
-                  class="linklike"
+                  class="btn"
                   type="button"
                   disabled={loading}
                   onClick={() => void loadActivity(true)}
@@ -90,7 +87,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
               <NoticeLine id="activityNotice" notice={state.activityNotice} />
               <div
                 id="activityList"
-                class="activity-ledger"
+                class="activity-list"
                 aria-busy={loading ? "true" : "false"}
               >
                 {loading && state.activityEvents.length === 0 ? (
@@ -99,7 +96,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
                   state.activityEvents.length === 0 ? (
                   <p class="activity-empty">
                     <button
-                      class="linklike"
+                      class="btn"
                       type="button"
                       onClick={() => void loadActivity(true)}
                     >
@@ -124,7 +121,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
               {state.activityCursor ? (
                 <button
                   id="moreActivity"
-                  class="linklike activity-more"
+                  class="btn activity-more"
                   type="button"
                   disabled={loading}
                   onClick={() => void loadActivity(false)}

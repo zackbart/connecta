@@ -101,7 +101,7 @@ describe("status UI", () => {
       expect(body).toContain(`const INITIAL_PAGE = "${page}";`);
       // The shell is a mount point and a no-JS fallback. Everything with a
       // state — nav, gate, and the four pages — is rendered by the bundle.
-      expect(body).toContain(`<h1 class="pcap">${label}</h1>`);
+      expect(body).toContain(`<h1>${label}</h1>`);
       expect(body).toContain('<div id="operatorNav"></div>');
       expect(body).toContain('<main id="operatorContent"');
       expect(body).toContain("<noscript>");

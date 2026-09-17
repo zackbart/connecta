@@ -1,6 +1,7 @@
 import type { CatalogDriftReport } from "../types.js";
 import type {
   CredentialManagementCapability,
+  UiConnector,
   UiData,
 } from "./model.js";
 
@@ -203,6 +204,99 @@ export function connectorStatusLabel(status: string): string {
 
 export function toolCountLabel(count: number): string {
   return `${count} ${count === 1 ? "tool" : "tools"}`;
+}
+
+/** The tone a status carries wherever it is rendered as a badge or a tile. */
+export type Tone = "ok" | "warn" | "danger" | "neutral";
+
+export function connectorStatusTone(status: string): Tone {
+  if (status === "ok") return "ok";
+  if (status === "auth_required") return "warn";
+  if (status === "loading") return "neutral";
+  return "danger";
+}
+
+/**
+ * The deployment in four numbers, so the page answers "is anything wrong"
+ * above the list instead of only inside it. `attention` is what an operator
+ * can act on now; `unavailable` is what they cannot. A connector still loading
+ * its catalog counts only toward `total`, since calling it connected or failed
+ * would be a guess either way.
+ */
+export interface ConnectorSummary {
+  total: number;
+  connected: number;
+  attention: number;
+  unavailable: number;
+  tools: number;
+  /** Connectors whose last observed catalog refresh differed from the manifest. */
+  drifting: number;
+}
+
+export function summarizeConnectors(
+  connectors: readonly UiConnector[],
+): ConnectorSummary {
+  const summary: ConnectorSummary = {
+    total: connectors.length,
+    connected: 0,
+    attention: 0,
+    unavailable: 0,
+    tools: 0,
+    drifting: 0,
+  };
+  for (const connector of connectors) {
+    if (connector.status === "ok") summary.connected += 1;
+    else if (connector.status === "auth_required") summary.attention += 1;
+    else if (connector.status !== "loading") summary.unavailable += 1;
+    summary.tools += connector.toolCount || 0;
+    if (driftState(connector.catalogDrift) === "warning") summary.drifting += 1;
+  }
+  return summary;
+}
+
+/**
+ * The one line above the list. Connected and tool counts are always present;
+ * the two counts an operator may have to act on appear only when they are not
+ * zero, so a healthy deployment stays short.
+ */
+export function connectorSummaryParts(
+  summary: ConnectorSummary,
+): Array<{ text: string; tone: Tone }> {
+  return [
+    { text: `${summary.connected} connected`, tone: "neutral" as Tone },
+    ...(summary.attention
+      ? [
+          {
+            text: `${summary.attention} need${summary.attention === 1 ? "s" : ""} authorization`,
+            tone: "warn" as Tone,
+          },
+        ]
+      : []),
+    ...(summary.unavailable
+      ? [{ text: `${summary.unavailable} unavailable`, tone: "danger" as Tone }]
+      : []),
+    { text: toolCountLabel(summary.tools), tone: "neutral" as Tone },
+  ];
+}
+
+/** Who owns this connector's downstream credentials, in two words. */
+export function authScopeLabel(scope: UiConnector["authScope"]): string {
+  return scope === "personal" ? "personal auth" : "shared auth";
+}
+
+/**
+ * What this identity may do with a connector, in one line. Being able to use it
+ * is implied by seeing it at all, so the sentence covers authentication, which
+ * is the part that differs between operators.
+ */
+export function permissionLabel(connector: UiConnector): string {
+  if (connector.permissions?.manageSharedAuth) {
+    return "You can manage shared authentication for this connection.";
+  }
+  if (connector.permissions?.connectPersonal) {
+    return "You can connect your own account to this connection.";
+  }
+  return "Authentication for this connection is managed by your deployment.";
 }
 
 /**

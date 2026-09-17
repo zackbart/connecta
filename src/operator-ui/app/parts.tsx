@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import type { ComponentChildren } from "preact";
-import type { Notice, OperatorPage } from "../view.js";
+import type { Notice, OperatorPage, Tone } from "../view.js";
 import { PAGE_META } from "../view.js";
 import { navigate } from "./store.js";
 
@@ -17,10 +17,16 @@ export function NoticeLine({
 }) {
   // The element stays mounted with a stable id so a focus request can land on
   // it, and so assistive technology announces a change rather than an arrival.
+  // `notice` is what keeps an empty one rendered and measurable at zero height;
+  // hiding it outright would take the live region with it.
   return (
     <p
       id={id}
-      class={notice?.tone === "error" ? `${className} error-notice` : className}
+      class={
+        notice?.tone === "error"
+          ? `notice ${className} error-notice`
+          : `notice ${className}`
+      }
       role={notice?.tone === "error" ? "alert" : "status"}
       aria-live="polite"
       tabIndex={-1}
@@ -28,6 +34,17 @@ export function NoticeLine({
       {notice ? notice.message : null}
     </p>
   );
+}
+
+/** A status word with a tone. The page's one piece of decoration. */
+export function Badge({
+  tone = "neutral",
+  children,
+}: {
+  tone?: Tone;
+  children: ComponentChildren;
+}) {
+  return <span class={tone === "neutral" ? "badge" : `badge ${tone}`}>{children}</span>;
 }
 
 export function Empty({ children }: { children: ComponentChildren }) {
@@ -87,7 +104,7 @@ export function PageLink({
 export function CopyButton({
   value,
   label,
-  class: className = "linklike",
+  class: className = "btn",
 }: {
   value: string;
   label: string;

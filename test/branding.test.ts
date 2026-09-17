@@ -4,7 +4,8 @@ import { describe, expect, it, vi } from "vitest";
 import { bearerToken } from "../src/auth/bearer.js";
 import { memoryStorage } from "../src/storage/memory.js";
 import { resolveBranding } from "../src/ui.js";
-import type { ConnectaBranding, Logger } from "../src/types.js";
+import { droppedThemeTokens, resolveTheme, themeCss } from "../src/branding.js";
+import type { ConnectaBranding, ConnectaTheme, Logger } from "../src/types.js";
 import { calcApi, makeDeployment } from "./fixtures/http.js";
 
 const BASE = "https://connecta.test";
@@ -133,6 +134,115 @@ describe("branding defaults", () => {
     expect(
       resolveBranding({ favicon: { href: "/assets/acme.svg" } }).faviconHref,
     ).toBe("/assets/acme.svg");
+  });
+});
+
+describe("operator theme tokens", () => {
+  it("defaults to the stylesheet's own tokens and the OS color scheme", () => {
+    const theme = resolveTheme();
+    expect(theme).toEqual({ colorScheme: "system" });
+    expect(themeCss(theme)).toBe("");
+    expect(droppedThemeTokens()).toEqual([]);
+  });
+
+  it("keeps the values a deployment is allowed to set", () => {
+    const theme = resolveTheme({
+      accent: "#7C3AED",
+      radius: 4,
+      fontFamily: "Inter, system-ui, sans-serif",
+      monoFamily: '"JetBrains Mono", monospace',
+      colorScheme: "dark",
+    });
+    expect(theme).toEqual({
+      accent: "#7C3AED",
+      radius: "4px",
+      fontFamily: "Inter, system-ui, sans-serif",
+      monoFamily: '"JetBrains Mono", monospace',
+      colorScheme: "dark",
+    });
+    expect(themeCss(theme)).toBe(
+      ':root{--accent:#7C3AED;--radius:4px;--sans:Inter, system-ui, sans-serif;' +
+        '--mono:"JetBrains Mono", monospace}',
+    );
+    expect(droppedThemeTokens({ accent: "#7C3AED", radius: 4 })).toEqual([]);
+  });
+
+  // The resolver trims before reading, so the warning must too: a value that
+  // was applied and a value that was dropped cannot both print as dropped.
+  it("does not report a padded value the resolver accepted", () => {
+    const theme = { colorScheme: " dark " as NonNullable<ConnectaTheme["colorScheme"]> };
+    expect(resolveTheme(theme).colorScheme).toBe("dark");
+    expect(droppedThemeTokens(theme)).toEqual([]);
+  });
+
+  it("reads radius as pixels only when the operator left off the unit", () => {
+    expect(resolveTheme({ radius: "0.5rem" }).radius).toBe("0.5rem");
+    expect(resolveTheme({ radius: "12" }).radius).toBe("12px");
+    expect(resolveTheme({ radius: 0 }).radius).toBe("0px");
+    expect(resolveTheme({ radius: -1 }).radius).toBeUndefined();
+  });
+
+  // Every token lands in a `:root` block, so the gates reject anything that
+  // could close a declaration, open a function, or leave a string open.
+  it.each([
+    ["accent", "red"],
+    ["accent", "#12"],
+    ["accent", "var(--x)"],
+    ["accent", "#fff;} html{display:none"],
+    ["fontFamily", "Inter; } html { display: none }"],
+    ["fontFamily", "url(https://evil.example/f.css)"],
+    ["fontFamily", 'Inter", x: expression(alert(1))'],
+    ["monoFamily", "Menlo /* comment */"],
+    ["colorScheme", "invert"],
+  ] as const)("drops a hostile %s (%s)", (token, value) => {
+    // Untyped on purpose: a JS call site is where a value this shape arrives.
+    const theme = { [token]: value } as ConnectaTheme;
+    const resolved = resolveTheme(theme) as unknown as Record<string, unknown>;
+    if (token === "colorScheme") expect(resolved.colorScheme).toBe("system");
+    else expect(resolved[token]).toBeUndefined();
+    expect(droppedThemeTokens(theme)).toEqual([`theme.${token}`]);
+    expect(themeCss(resolveTheme(theme))).not.toContain(value);
+  });
+
+  it("pins the page's color scheme and appends the token block", async () => {
+    const body = await (
+      await makeDeployment(
+        brandingConfig({ theme: { accent: "#123456", colorScheme: "dark" } }),
+      ).fetch(new Request(`${BASE}/`))
+    ).text();
+    expect(body).toContain('<html lang="en" data-scheme="dark">');
+    expect(body).toContain(":root{--accent:#123456}</style>");
+  });
+
+  it("leaves the html element alone when the scheme follows the OS", async () => {
+    const body = await (
+      await makeDeployment(brandingConfig({ theme: { accent: "#123456" } }))
+        .fetch(new Request(`${BASE}/`))
+    ).text();
+    // The stylesheet still carries its `[data-scheme]` selectors; what an
+    // unpinned deployment must not carry is the attribute that triggers them.
+    expect(body).toContain('<html lang="en">');
+    expect(body).not.toContain('<html lang="en" data-scheme');
+  });
+
+  it("warns once, naming every theme token it dropped", async () => {
+    const logger = spyLogger();
+    makeDeployment(
+      brandingConfig(
+        {
+          theme: {
+            accent: "red",
+            radius: "wide",
+            colorScheme: "neon" as NonNullable<ConnectaTheme["colorScheme"]>,
+          },
+        },
+        { logger },
+      ),
+    );
+    const warned = warnings(logger);
+    expect(warned).toContain("theme.accent");
+    expect(warned).toContain("theme.radius");
+    expect(warned).toContain("theme.colorScheme");
   });
 });
 

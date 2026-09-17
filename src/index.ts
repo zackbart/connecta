@@ -7,7 +7,11 @@ import { Registry } from "./registry.js";
 import { parseConnectorAccess, POOL_NAME_RE } from "./connector-access.js";
 import type { ConnectorAccess, ResolvedPool } from "./connector-access.js";
 import { createFetchHandler } from "./server.js";
-import { droppedBrandingUrls, droppedUiAuthUrls } from "./branding.js";
+import {
+  droppedBrandingUrls,
+  droppedThemeTokens,
+  droppedUiAuthUrls,
+} from "./branding.js";
 import { memoryStorage } from "./storage/memory.js";
 import { CONNECTA_VERSION } from "./version.js";
 import {
@@ -565,6 +569,20 @@ function warnInsecureConfig(
     );
   }
 
+  // Theme tokens are written into a `:root` block, so each is gated
+  // syntactically and a rejected value takes the stylesheet's default. Same
+  // reason as the branding URLs above: the page still renders, so without this
+  // line the only evidence is that the operator's color never showed up.
+  const droppedTheme = droppedThemeTokens(config.ui?.branding?.theme);
+  if (droppedTheme.length > 0) {
+    logger.warn(
+      `[connecta] branding ${droppedTheme.join(", ")} dropped: accent must be ` +
+        "a hex color, radius a CSS length, the font families a plain " +
+        "font-family list, and colorScheme one of system/light/dark. The " +
+        "default is rendered instead.",
+    );
+  }
+
   // Operator shells render exactly one provider's browser sign-in config — the
   // first that offers one, matching the server route's `find` — and that
   // provider's URLs reach the browser: frontendApiUrl as the loader's
@@ -766,6 +784,7 @@ export type {
   CatalogDriftCounts,
   CatalogDriftReport,
   ConnectaBranding,
+  ConnectaTheme,
   Connector,
   ConnectorCallAdmissionInput,
   ConnectorCallAdmissionPolicy,

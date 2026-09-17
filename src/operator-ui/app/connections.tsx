@@ -1,16 +1,22 @@
 import { CredentialCard } from "./credentials.js";
 import { filterUiConnectors, type UiConnector } from "../model.js";
 import {
+  authScopeLabel,
   connectorStatusLabel,
+  connectorStatusTone,
+  connectorSummaryParts,
   driftCounts,
   driftState,
   driftSummary,
+  formatDate,
+  permissionLabel,
   safeHttpHref,
+  summarizeConnectors,
   toolCountLabel,
   type OperatorState,
 } from "../view.js";
 import { mcpUrl, productName, productOperatorLabel } from "./config.js";
-import { CopyButton, Empty, NoticeLine } from "./parts.js";
+import { Badge, CopyButton, Empty, NoticeLine } from "./parts.js";
 import { oauthAction, refreshConnector, setConnectorFilter } from "./store.js";
 
 const DRIFT_HEADING: Record<ReturnType<typeof driftState>, string> = {
@@ -37,7 +43,7 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
       data-drift={state}
     >
       <p class="cap">{DRIFT_HEADING[state]}</p>
-      <p class="meta drift-summary">{driftSummary(drift)}</p>
+      <p class="meta">{driftSummary(drift)}</p>
       {state === "unavailable" ? null : (
         <ul class="drift-counts">
           {driftCounts(drift).map(({ key, label, count }) => (
@@ -52,7 +58,16 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
   );
 }
 
-function ConnectorCard({
+/**
+ * One connector as a single line until an operator asks for more. The closed
+ * row shows state, tool count, and who owns the authentication; everything
+ * that needs reading or acting on is in the body, which keeps a twenty-
+ * connector deployment to one screen.
+ *
+ * The disclosure is a native `<details>` and not store state, so an identity
+ * change cannot leave one connector's panel open over another's data.
+ */
+function ConnectorRow({
   connector,
   tools,
   expanded,
@@ -69,104 +84,136 @@ function ConnectorCard({
 }) {
   const name = connector.title || connector.id;
   const authorization = safeHttpHref(connector.authorizationUrl);
+  const drift = driftState(connector.catalogDrift);
   return (
-    <div class="card">
-      <div class="connector-head">
-        <div>
-          <div class="connector-title">
-            <span class={`dot ${connector.status}`} aria-hidden="true" />
-            <h2>{name}</h2>
-          </div>
-          {connector.description ? (
-            <p class="connector-description meta">{connector.description}</p>
+    <details class="conn" open={expanded}>
+      <summary class="conn-head">
+        <span class="conn-main">
+          <span class={`dot ${connector.status}`} aria-hidden="true" />
+          <h2 class="conn-name">{name}</h2>
+          {connector.title ? (
+            <span class="conn-id mono">{connector.id}</span>
           ) : null}
-        </div>
-        <div class="connector-state cap">
-          {connectorStatusLabel(connector.status)} ·{" "}
-          {connector.status === "loading" ? "Tools not loaded" : toolCountLabel(connector.toolCount)}
-          <br />
-          <span class="mono">{connector.id}</span>
-          <br />
-          <span>
-            {connector.authScope === "personal" ? "personal auth" : "shared auth"}
-          </span>
-        </div>
-      </div>
-      {connector.message ? (
-        <p class="connector-message msg">{connector.message}</p>
-      ) : null}
-      {connector.authorizationUrl ? (
-        <p class={authorization ? "connector-auth" : "connector-auth meta"}>
+        </span>
+        <span class="conn-badges">
+          {drift === "warning" ? <Badge tone="warn">drift</Badge> : null}
+          <Badge>{authScopeLabel(connector.authScope)}</Badge>
+          <Badge>
+            {connector.status === "loading"
+              ? "tools not loaded"
+              : toolCountLabel(connector.toolCount)}
+          </Badge>
+          <Badge tone={connectorStatusTone(connector.status)}>
+            {connectorStatusLabel(connector.status)}
+          </Badge>
+          <span class="conn-caret" aria-hidden="true" />
+        </span>
+      </summary>
+      <div class="conn-body">
+        {connector.description ? (
+          <p class="conn-note">{connector.description}</p>
+        ) : null}
+        {connector.message ? <p class="msg">{connector.message}</p> : null}
+        {connector.authorizationUrl && !authorization ? (
+          <p class="meta">Authorization URL: {connector.authorizationUrl}</p>
+        ) : null}
+        <p class="meta">{permissionLabel(connector)}</p>
+        <div class="actions">
           {authorization ? (
-            <a
-              class="linklike"
-              href={authorization}
-              target="_blank"
-              rel="noopener"
-            >
-              Authorize connector →
+            <a class="btn primary" href={authorization} target="_blank" rel="noopener">
+              Authorize connector
             </a>
-          ) : (
-            `Authorization URL: ${connector.authorizationUrl}`
-          )}
-        </p>
-      ) : null}
-      <p class="meta">Can use this connection · {connector.permissions?.manageSharedAuth ? "Can manage shared authentication" : connector.permissions?.connectPersonal ? "Can connect your account" : "Authentication managed by your deployment"}</p>
-      {connector.oauth && oauthManagement ? (
-        <div class="credential-actions">
-          {connector.status === "ok" ? (
-          <button
-            type="button"
-            class="linklike danger"
-            aria-label={`Disconnect OAuth for ${name}`}
-            disabled={busy}
-            onClick={() => void oauthAction(connector.id, "disconnect")}
-          >
-            Disconnect OAuth
-          </button>
+          ) : null}
+          {connector.oauth && oauthManagement ? (
+            <>
+              <button
+                type="button"
+                class="btn"
+                aria-label={`${
+                  connector.status === "ok"
+                    ? "Reconnect OAuth for"
+                    : "Restart authorization for"
+                } ${name}`}
+                disabled={busy}
+                onClick={() => void oauthAction(connector.id, "reconnect")}
+              >
+                {connector.status === "ok" ? "Reconnect OAuth" : "Connect account"}
+              </button>
+              {connector.status === "ok" ? (
+                <button
+                  type="button"
+                  class="btn danger"
+                  aria-label={`Disconnect OAuth for ${name}`}
+                  disabled={busy}
+                  onClick={() => void oauthAction(connector.id, "disconnect")}
+                >
+                  Disconnect OAuth
+                </button>
+              ) : null}
+            </>
           ) : null}
           <button
+            class="btn quiet"
             type="button"
-            class="linklike"
-            aria-label={`${
-              connector.status === "ok"
-                ? "Reconnect OAuth for"
-                : "Restart authorization for"
-            } ${name}`}
-            disabled={busy}
-            onClick={() => void oauthAction(connector.id, "reconnect")}
+            aria-label={`Refresh ${name}`}
+            disabled={connector.status === "loading"}
+            onClick={() => void refreshConnector(connector.id)}
           >
-            {connector.status === "ok"
-              ? "Reconnect OAuth"
-              : "Connect account"}
+            Refresh
           </button>
         </div>
-      ) : null}
-      {connector.credential ? <CredentialCard connector={connector} credential={connector.credential} editing={state.credentialEditing === connector.id} busy={state.credentialBusy === connector.id} /> : null}
-      <button class="linklike" type="button" disabled={connector.status === "loading"} onClick={() => void refreshConnector(connector.id)}>Refresh connection</button>
-      <details><summary class="linklike">Connection diagnostics</summary><DriftPanel connector={connector} /></details>
-      {connector.catalogAccess ? (
-        <p class="meta">
-          Last agent catalog read · {connector.catalogAccess.state} ·{" "}
-          {new Date(connector.catalogAccess.observedAt).toLocaleString()}
-        </p>
-      ) : null}
-      {tools.length ? (
-        <details open={expanded}>
-          <summary class="linklike">Show tools ({tools.length})</summary>
-          <div class="tool-list">
-            {tools.map((tool) => (
-              <div class="tool" key={tool.address}>
-                <code>{tool.address}</code>
-                {tool.description ? (
-                  <span class="td">{tool.description}</span>
-                ) : null}
-              </div>
-            ))}
+        {connector.credential ? (
+          <CredentialCard
+            connector={connector}
+            credential={connector.credential}
+            editing={state.credentialEditing === connector.id}
+            busy={state.credentialBusy === connector.id}
+          />
+        ) : null}
+        {tools.length ? (
+          <details open={expanded}>
+            <summary class="disclosure">Tools ({tools.length})</summary>
+            <div class="tool-list">
+              {tools.map((tool) => (
+                <div class="tool" key={tool.address}>
+                  <code>{tool.address}</code>
+                  {tool.description ? (
+                    <span class="td">{tool.description}</span>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          </details>
+        ) : null}
+        <details>
+          <summary class="disclosure">Diagnostics</summary>
+          <div class="subcard">
+            <DriftPanel connector={connector} />
+            {connector.catalogAccess ? (
+              <p class="meta">
+                Last agent catalog read · {connector.catalogAccess.state} ·{" "}
+                {formatDate(connector.catalogAccess.observedAt)}
+              </p>
+            ) : null}
           </div>
         </details>
-      ) : null}
-    </div>
+      </div>
+    </details>
+  );
+}
+
+/** The deployment's state in one line, above the list it summarizes. */
+function SummaryLine({ connectors }: { connectors: UiConnector[] }) {
+  const parts = connectorSummaryParts(summarizeConnectors(connectors));
+  return (
+    <p class="summary" id="connectorSummary">
+      {parts.map((part, index) => (
+        <span key={part.text}>
+          {index > 0 ? <span class="sep"> · </span> : null}
+          <span class={part.tone === "neutral" ? "" : part.tone}>{part.text}</span>
+        </span>
+      ))}
+    </p>
   );
 }
 
@@ -176,73 +223,70 @@ export function ConnectionsPage({ state }: { state: OperatorState }) {
   const filtered = data ? filterUiConnectors(data.connectors, query) : [];
   return (
     <section id="connectionsView">
-      <div class="lead pgrid">
-        <h1 id="connectionsHeading" class="pcap" tabIndex={-1}>
+      <div class="lead">
+        <h1 id="connectionsHeading" tabIndex={-1}>
           Connections
         </h1>
-        <div class="pbody lead-copy">
-          <p>Use this endpoint to give an MCP client access to the tools below.</p>
+        <div class="lead-copy">
+          <p>Point an MCP client at this endpoint to reach the tools below.</p>
           <div class="endpoint">
-            <div class="endpoint-row">
-              <code id="mcpUrl" class="mono">
-                {mcpUrl}
-              </code>
-              <CopyButton value={mcpUrl} label="Copy URL" />
-            </div>
+            <code id="mcpUrl" class="mono">
+              {mcpUrl}
+            </code>
+            <CopyButton value={mcpUrl} label="Copy URL" />
           </div>
           <p class="cap" id="serverInfo">
             {data
               ? `${data.serverInfo?.name || productName} v${data.connectaVersion || "?"}`
               : productOperatorLabel}
           </p>
+          {data ? <SummaryLine connectors={data.connectors} /> : null}
           <NoticeLine id="oauthNotice" notice={state.oauthNotice} />
           <NoticeLine id="credentialNotice" notice={state.credentialNotice} />
         </div>
       </div>
-      <section class="section pgrid" aria-labelledby="connectorLedgerHeading">
-        <h2 class="pcap" id="connectorLedgerHeading">
-          Connectors
-        </h2>
-        <div class="pbody">
-          <div class="row toolbar">
-            <input
-              id="filter"
-              type="search"
-              placeholder="Filter connectors or tools…"
-              aria-label="Filter connectors or tools"
-              value={state.connectorFilter}
-              onInput={(event) =>
-                setConnectorFilter(event.currentTarget.value)
-              }
-            />
-          </div>
-          <div
-            id="list"
-            class="connector-tools"
-            aria-busy={state.refreshing || !data ? "true" : "false"}
-          >
-            {!data ? (
-              <Empty>Loading connectors…</Empty>
-            ) : filtered.length === 0 ? (
-              <Empty>
-                {query
-                  ? "No connectors or tools match this filter."
-                  : "No connectors are declared in this deployment."}
-              </Empty>
-            ) : (
-              filtered.map(({ connector, tools }) => (
-                <ConnectorCard
-                  key={connector.id}
-                  connector={connector}
-                  tools={tools}
-                  expanded={Boolean(query)}
-                  oauthManagement={Boolean(connector.permissions?.manageSharedAuth || connector.permissions?.connectPersonal)}
-                  state={state}
-                  busy={state.oauthBusy === connector.id}
-                />
-              ))
-            )}
-          </div>
+      <section class="section" aria-labelledby="connectorLedgerHeading">
+        <div class="section-head">
+          <h2 id="connectorLedgerHeading">Connectors</h2>
+          <input
+            id="filter"
+            type="search"
+            class="filter"
+            placeholder="Filter connectors or tools…"
+            aria-label="Filter connectors or tools"
+            value={state.connectorFilter}
+            onInput={(event) => setConnectorFilter(event.currentTarget.value)}
+          />
+        </div>
+        <div
+          id="list"
+          class={!data || filtered.length === 0 ? "" : "rows"}
+          aria-busy={state.refreshing || !data ? "true" : "false"}
+        >
+          {!data ? (
+            <Empty>Loading connectors…</Empty>
+          ) : filtered.length === 0 ? (
+            <Empty>
+              {query
+                ? "No connectors or tools match this filter."
+                : "No connectors are declared in this deployment."}
+            </Empty>
+          ) : (
+            filtered.map(({ connector, tools }) => (
+              <ConnectorRow
+                key={connector.id}
+                connector={connector}
+                tools={tools}
+                expanded={Boolean(query)}
+                oauthManagement={Boolean(
+                  connector.permissions?.manageSharedAuth ||
+                    connector.permissions?.connectPersonal,
+                )}
+                state={state}
+                busy={state.oauthBusy === connector.id}
+              />
+            ))
+          )}
         </div>
       </section>
     </section>

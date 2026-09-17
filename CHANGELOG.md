@@ -6,16 +6,25 @@ All notable changes to this package are documented here.
 
 ### Changed
 
-- **The documentation is four guides.** `documentation/` now ships
-  `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`. The
-  operations, upgrading, connector, provider, admission, storage, and operator
-  UI guides are removed; the rationale source comments used to defer to them
-  for now lives in those comments, and the provider conventions H1–H14 and
-  P1–P13 are defined in `test/provider-conventions.test.ts`. Each release's
-  opening paragraph here is the upgrade guidance. `records/` and `eval/` are
-  removed with the `load:admission` script and the CI job that served them. The
-  template and Worker example keep their `AGENTS.md`, which now points at this
-  changelog for upgrades.
+- **The operator UI reads as a dashboard.** The connections page opens with one
+  summary line — connected, anything needing authorization, anything
+  unavailable, tools available — and then one row per connector: status dot,
+  name, auth scope, tool count, state. What used to be stacked in every card at
+  once (the description, the permission line, OAuth actions, the credential
+  panel, diagnostics, drift, and the tool list) is now behind a row you expand,
+  so a deployment with twenty connectors is a screen instead of a scroll.
+  Nothing about what the page may show or do changed: same payload, same gates,
+  and the drift panel still refuses to render a tool name or a schema.
+- **The stylesheet is a token layer, and a deployment can theme it.**
+  `branding.theme` takes `accent`, `radius`, `fontFamily`, `monoFamily`, and
+  `colorScheme`; every other color is mixed from those, so setting one accent
+  themes the page. Light and dark are the same tokens, following the operator's
+  OS setting unless `colorScheme` pins one. Each token is gated the way the
+  branding URLs already were — a hex color, a CSS length, a plain font-family
+  list, one of `system`/`light`/`dark` — and a rejected value takes the default
+  and gets named in a startup warning. The gates are narrow because these
+  values land in a `:root` block on the page, where anything unvalidated would
+  be CSS injection.
 
 ### Fixed
 

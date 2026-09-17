@@ -81,8 +81,8 @@ describe("status UI credential management", () => {
     ).text();
     expect(html).not.toContain("live-key-secret");
     // Credentials is rendered from /ui/data, so the page ships both branches:
-    // the notice prints as muted copy, not the underlined `.msg` an error gets.
-    expect(html).toContain('"credential-copy meta"');
+    // the notice prints as muted copy, not the `.msg` block an error gets.
+    expect(html).toContain('{ class: "meta", children: credential.notice }');
     expect(html).toContain('"msg"');
 
     const test = await credentialRequest(
