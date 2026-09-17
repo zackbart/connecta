@@ -2,7 +2,29 @@
 
 All notable changes to this package are documented here.
 
-## Unreleased
+## 0.24.4 — 2026-09-17
+
+The operator UI is the release. Its connections page is now a summary line and
+one row per connector instead of a wall of expanded cards, and the stylesheet
+behind it resolves through design tokens a deployment can set with the new
+`branding.theme`. Nothing a deployment configures today changes meaning, no
+storage format moved, and the page shows exactly what it showed before under
+the same gates — an operator who has the page bookmarked will find it reads
+differently, and that is the whole of the upgrade. The documentation cut to
+four guides lands here too, along with one execution-path fix.
+
+### Added
+
+- **`branding.theme`.** Five tokens — `accent`, `radius`, `fontFamily`,
+  `monoFamily`, and `colorScheme` — set on `operatorUi({ branding })`. Every
+  other color on the operator page is mixed from those, so setting one accent
+  themes the page rather than leaving half of it on the defaults. Light and
+  dark are the same tokens and follow the operator's OS setting unless
+  `colorScheme` pins one. Each token is gated the way the branding URLs already
+  were: a hex color, a CSS length, a plain font-family list, one of
+  `system`/`light`/`dark`. A rejected value takes the default and gets named in
+  a startup warning. The gates are narrow because these values land in a
+  `:root` block on the page, where anything unvalidated would be CSS injection.
 
 ### Changed
 
@@ -11,31 +33,32 @@ All notable changes to this package are documented here.
   unavailable, tools available — and then one row per connector: status dot,
   name, auth scope, tool count, state. What used to be stacked in every card at
   once (the description, the permission line, OAuth actions, the credential
-  panel, diagnostics, drift, and the tool list) is now behind a row you expand,
-  so a deployment with twenty connectors is a screen instead of a scroll.
-  Nothing about what the page may show or do changed: same payload, same gates,
-  and the drift panel still refuses to render a tool name or a schema.
-- **The stylesheet is a token layer, and a deployment can theme it.**
-  `branding.theme` takes `accent`, `radius`, `fontFamily`, `monoFamily`, and
-  `colorScheme`; every other color is mixed from those, so setting one accent
-  themes the page. Light and dark are the same tokens, following the operator's
-  OS setting unless `colorScheme` pins one. Each token is gated the way the
-  branding URLs already were — a hex color, a CSS length, a plain font-family
-  list, one of `system`/`light`/`dark` — and a rejected value takes the default
-  and gets named in a startup warning. The gates are narrow because these
-  values land in a `:root` block on the page, where anything unvalidated would
-  be CSS injection.
+  panel, diagnostics, drift, and the tool list) is now behind a row an operator
+  expands, so a deployment with twenty connectors is a screen instead of a
+  scroll. Nothing about what the page may show or do changed: same payload,
+  same gates, and the drift panel still refuses to render a tool name or a
+  schema (#554).
+- **The documentation is four guides.** `documentation/` now ships
+  `architecture.md`, `meta-tools.md`, `code-mode.md`, and `auth.md`. The
+  operations, upgrading, connector, provider, admission, storage, and operator
+  UI guides are removed; the rationale source comments used to defer to them
+  for now lives in those comments, and the provider conventions H1–H14 and
+  P1–P13 are defined in `test/provider-conventions.test.ts`. Each release's
+  opening paragraph here is the upgrade guidance. `records/` and `eval/` are
+  removed with the `load:admission` script and the CI job that served them. The
+  template and Worker example keep their `AGENTS.md`, which now points at this
+  changelog for upgrades (#552, #553).
 
 ### Fixed
 
 - **`get_result` paging cost.** A stashed result is stored as base64 chunks
   under one key each — 48 KiB of text per chunk, wider for a result over
   roughly 1.5 MB so the key and write count stays bounded — and a page reads
-  and decodes only the chunks it covers. Paging a large result no longer reads the whole stash — let alone
-  re-encodes it — once per page, so cost tracks the page rather than the total.
-  Offsets, `nextOffset`, `totalBytes`, and character-boundary alignment are
-  unchanged, and entries stashed in the previous formats stay readable for the
-  rest of their 15-minute TTL (#540).
+  and decodes only the chunks it covers. Paging a large result no longer reads
+  the whole stash — let alone re-encodes it — once per page, so cost tracks the
+  page rather than the total. Offsets, `nextOffset`, `totalBytes`, and
+  character-boundary alignment are unchanged, and entries stashed in the
+  previous formats stay readable for the rest of their 15-minute TTL (#540).
 
 ## 0.24.3 — 2026-09-16
 
