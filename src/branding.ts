@@ -162,9 +162,11 @@ export function droppedThemeTokens(theme?: ConnectaTheme): string[] {
   if (isSetValue(theme.monoFamily) && !resolved.monoFamily) {
     dropped.push("monoFamily");
   }
+  // Compared against the trimmed value the resolver actually reads, so
+  // `" dark "` — which is applied — is not reported as dropped.
   if (
     isSetValue(theme.colorScheme) &&
-    theme.colorScheme !== resolved.colorScheme
+    trimmedString(theme.colorScheme) !== resolved.colorScheme
   ) {
     dropped.push("colorScheme");
   }

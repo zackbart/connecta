@@ -784,6 +784,7 @@ export type {
   CatalogDriftCounts,
   CatalogDriftReport,
   ConnectaBranding,
+  ConnectaTheme,
   Connector,
   ConnectorCallAdmissionInput,
   ConnectorCallAdmissionPolicy,

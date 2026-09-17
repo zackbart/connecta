@@ -106,7 +106,7 @@ function Gate({ state }: { state: OperatorState }) {
             {loading ? "Checking your session…" : gateCopy(auth.kind, signedIn)}
           </p>
           {loading ? null : auth.kind === "clerk" ? (
-            <div id="clerkGate" class="actions gate-actions">
+            <div id="clerkGate" class="actions">
               {signedIn ? (
                 <button class="btn" type="button" onClick={signOut}>
                   Sign out
@@ -118,7 +118,7 @@ function Gate({ state }: { state: OperatorState }) {
               )}
             </div>
           ) : auth.kind === "cloudflare-access" ? (
-            <div class="actions gate-actions">
+            <div class="actions">
               <button class="btn" type="button" onClick={signOut}>
                 Sign out of Cloudflare Access
               </button>
@@ -126,7 +126,7 @@ function Gate({ state }: { state: OperatorState }) {
           ) : (
             <form
               id="tokenGate"
-              class="row gate-actions"
+              class="row"
               onSubmit={(event) => {
                 event.preventDefault();
                 const value = token.trim();

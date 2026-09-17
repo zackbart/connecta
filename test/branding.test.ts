@@ -167,6 +167,14 @@ describe("operator theme tokens", () => {
     expect(droppedThemeTokens({ accent: "#7C3AED", radius: 4 })).toEqual([]);
   });
 
+  // The resolver trims before reading, so the warning must too: a value that
+  // was applied and a value that was dropped cannot both print as dropped.
+  it("does not report a padded value the resolver accepted", () => {
+    const theme = { colorScheme: " dark " as NonNullable<ConnectaTheme["colorScheme"]> };
+    expect(resolveTheme(theme).colorScheme).toBe("dark");
+    expect(droppedThemeTokens(theme)).toEqual([]);
+  });
+
   it("reads radius as pixels only when the operator left off the unit", () => {
     expect(resolveTheme({ radius: "0.5rem" }).radius).toBe("0.5rem");
     expect(resolveTheme({ radius: "12" }).radius).toBe("12px");

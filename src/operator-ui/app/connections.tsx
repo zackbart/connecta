@@ -42,7 +42,7 @@ function DriftPanel({ connector }: { connector: UiConnector }) {
       data-drift={state}
     >
       <p class="cap">{DRIFT_HEADING[state]}</p>
-      <p class="meta drift-summary">{driftSummary(drift)}</p>
+      <p class="meta">{driftSummary(drift)}</p>
       {state === "unavailable" ? null : (
         <ul class="drift-counts">
           {driftCounts(drift).map(({ key, label, count }) => (
@@ -90,7 +90,7 @@ function ConnectorRow({
       <summary class="conn-head">
         <span class="conn-main">
           <span class={`dot ${connector.status}`} aria-hidden="true" />
-          <span class="conn-name">{name}</span>
+          <h2 class="conn-name">{name}</h2>
           {connector.title ? (
             <span class="conn-id mono">{connector.id}</span>
           ) : null}

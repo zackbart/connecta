@@ -63,7 +63,7 @@ export function ActivityPage({ state }: { state: OperatorState }) {
             </Unavailable>
           ) : (
             <div id="activityAvailable">
-              <div class="row activity-controls">
+              <div class="row">
                 <input
                   id="activitySearch"
                   type="search"

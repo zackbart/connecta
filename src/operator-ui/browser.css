@@ -159,9 +159,6 @@
     max-width: var(--shell);
     width: 100%;
   }
-  .brand, .product { text-decoration: none; }
-  .brand { color: var(--text); font-weight: 600; }
-  .product { color: var(--muted); }
   .mast-nav, .mast-actions, .page-nav, .session-actions {
     align-items: center;
     display: flex;
@@ -186,6 +183,10 @@
     color: var(--link);
     font-weight: 500;
   }
+  .brand, .product { padding-left: 0; padding-right: 0; text-decoration: none; }
+  .brand { color: var(--text); font-weight: 600; }
+  .brand:hover, .product:hover { background: none; }
+  .product { color: var(--muted); }
   .page { padding-bottom: 4rem; padding-top: 2rem; }
   .lead { margin-bottom: 1.5rem; }
   .lead-copy { color: var(--muted); display: grid; gap: .5rem; margin-top: .35rem; }
@@ -367,7 +368,7 @@
   .conn-head::-webkit-details-marker { display: none; }
   .conn-head:hover { background: var(--surface-2); }
   .conn-main { align-items: center; display: flex; gap: .6rem; min-width: 0; }
-  .conn-name { font-weight: 500; overflow-wrap: anywhere; }
+  .conn-name { font-size: 1rem; font-weight: 500; overflow-wrap: anywhere; }
   .conn-id { color: var(--muted); }
   .conn-badges {
     align-items: center;
