@@ -17,10 +17,16 @@ export function NoticeLine({
 }) {
   // The element stays mounted with a stable id so a focus request can land on
   // it, and so assistive technology announces a change rather than an arrival.
+  // `notice` is what keeps an empty one rendered and measurable at zero height;
+  // hiding it outright would take the live region with it.
   return (
     <p
       id={id}
-      class={notice?.tone === "error" ? `${className} error-notice` : className}
+      class={
+        notice?.tone === "error"
+          ? `notice ${className} error-notice`
+          : `notice ${className}`
+      }
       role={notice?.tone === "error" ? "alert" : "status"}
       aria-live="polite"
       tabIndex={-1}

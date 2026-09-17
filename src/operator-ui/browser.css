@@ -287,9 +287,12 @@
     padding: .5rem .75rem;
   }
   .error-notice { color: var(--danger); }
-  /* Notices stay mounted so focus and live regions have a stable target. An
-     empty one should not leave a gap in the layout. */
-  .meta:empty, .error-notice:empty { display: none; }
+  /* Notices stay mounted so focus and live regions have a stable target, which
+     is also why an empty one collapses to no height instead of `display: none`:
+     a live region that appears and fills in the same frame is announced
+     unreliably, and a hidden element is out of the accessibility tree until it
+     is not. */
+  .notice:empty { block-size: 0; margin: 0; }
 
   .summary { color: var(--muted); font-size: .875rem; }
   .summary .sep { opacity: .5; }
@@ -330,6 +333,9 @@
     padding: .7rem var(--pad);
   }
   .conn-head::-webkit-details-marker { display: none; }
+  /* `.rows` clips to its radius, so the row's focus ring has to be inset or
+     the container crops it off. */
+  .conn-head:focus-visible { outline-offset: -2px; }
   .conn-head:hover { background: var(--surface-2); }
   .conn-main { align-items: center; display: flex; gap: .6rem; min-width: 0; }
   .conn-name { font-size: 1rem; font-weight: 500; overflow-wrap: anywhere; }
