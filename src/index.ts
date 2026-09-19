@@ -609,15 +609,15 @@ function warnInsecureConfig(
 
   // A credential test hook that cannot test the declared credential shape.
   // The shape picks the hook (see `credentialTestRule`) and the other one is
-  // never substituted, so the connector is simply not testable: /credentials offers no
-  // Test action and the route answers 400. Without this line the only way to
-  // discover the mistake is to click a button that isn't there.
+  // never substituted, so the connection offers no Test action in the operator
+  // UI and the route answers 400. Without this line the only way to discover
+  // the mistake is to click a button that isn't there.
   for (const connector of config.connectors) {
     const { mismatch } = credentialTestRule(connector);
     if (!mismatch) continue;
     logger.warn(
       `[connecta] connector "${connector.id}" cannot test its credential: ` +
-        `${describeCredentialTestMismatch(mismatch)}. /credentials offers no Test ` +
+        `${describeCredentialTestMismatch(mismatch)}. The connection in the operator UI offers no Test ` +
         `action and POST /ui/credentials/${connector.id}/test answers 400 ` +
         "until the matching hook is implemented.",
     );

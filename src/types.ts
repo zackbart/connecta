@@ -123,7 +123,7 @@ export interface ConnectorCredentialFieldConfig {
   name: string;
   /** Short field label, e.g. "Account email". */
   label: string;
-  /** Plain-language guidance shown in /credentials. Never include the credential itself. */
+  /** Plain-language guidance shown in the connection's credential form in the operator UI. Never include the credential itself. */
   description?: string;
   /** Input placeholder, e.g. "you@example.com". */
   placeholder?: string;
@@ -135,7 +135,7 @@ export interface ConnectorCredentialFieldConfig {
 export interface ConnectorCredentialConfig {
   /** Short group or field label, e.g. "API token" or "Service credentials". */
   label: string;
-  /** Plain-language guidance shown in /credentials. Never include the credential itself. */
+  /** Plain-language guidance shown in the connection's credential form in the operator UI. Never include the credential itself. */
   description?: string;
   /** Password-field placeholder, e.g. "Paste API token". */
   placeholder?: string;
@@ -274,14 +274,14 @@ export interface Connector {
    * configuration; no runtime registration or shared mutable copy exists.
    */
   usageGuide?: string | ConnectorUsageGuide;
-  /** Optional human-managed credential slot rendered on /credentials. */
+  /** Optional human-managed credential slot rendered in the connection in the operator UI. */
   credential?: ConnectorCredentialConfig;
-  /** Optional server-side check used by /credentials' Test action. */
+  /** Optional server-side check used by the connection's Test action in the operator UI. */
   testCredential?(
     value: string,
     ctx: ConnectorContext,
   ): Promise<CredentialTestResult>;
-  /** Optional multi-field credential check used by /credentials' Test action. */
+  /** Optional multi-field credential check used by the connection's Test action in the operator UI. */
   testCredentials?(
     values: ConnectorCredentialValues,
     ctx: ConnectorContext,
