@@ -459,6 +459,132 @@ describe("bounded catalog rendering", () => {
     expect(text).toContain("/* truncated */");
   });
 
+  it("stops a wide described object before appending over-budget members", () => {
+    let lastRendered = -1;
+    const properties: Record<string, unknown> = {};
+    for (let index = 0; index < 20; index += 1) {
+      Object.defineProperty(properties, `field${index}`, {
+        enumerable: true,
+        get() {
+          lastRendered = index;
+          return { type: "string", description: "😀".repeat(1_000) };
+        },
+      });
+    }
+
+    const result = compactSchema({ type: "object", properties });
+    expect(result).toContain("/* truncated */");
+    expect(new TextEncoder().encode(result).length).toBeLessThanOrEqual(8_192);
+    expect(lastRendered).toBe(2);
+  });
+
+  it.each(["oneOf", "allOf", "prefixItems"] as const)(
+    "stops a wide %s before rendering every member",
+    (keyword) => {
+      let rendered = 0;
+      const members: unknown[] = [];
+      for (let index = 0; index < 20; index += 1) {
+        const properties: Record<string, unknown> = {};
+        Object.defineProperty(properties, "value", {
+          enumerable: true,
+          get() {
+            rendered += 1;
+            return { type: "string", description: "😀".repeat(1_000) };
+          },
+        });
+        members.push({ type: "object", properties });
+      }
+
+      const schema = keyword === "prefixItems"
+        ? { prefixItems: members, items: false }
+        : { [keyword]: members };
+      const result = compactSchema(schema);
+      expect(result).toContain("/* truncated */");
+      expect(rendered).toBeLessThan(20);
+    },
+  );
+
+  it("stops a wide type union before rendering every member", () => {
+    let lastRendered = -1;
+    const types: string[] = [];
+    for (let index = 0; index < 20; index++) {
+      Object.defineProperty(types, index, {
+        enumerable: true,
+        get() {
+          lastRendered = index;
+          return "x".repeat(1_000);
+        },
+      });
+    }
+    const result = compactSchema({ type: types });
+    expect(result).toContain("/* truncated */");
+    expect(lastRendered).toBe(8);
+  });
+
+  it("keeps multibyte composites at the byte limit and counts their punctuation", () => {
+    const prefix = "{ value?: string // ";
+    const suffix = " }";
+    const room = 8_192 - prefix.length - suffix.length;
+    const description = "😀".repeat(Math.floor(room / 4)) + "x".repeat(room % 4);
+    const object = (text: string) => ({
+      type: "object",
+      properties: { value: { type: "string", description: text } },
+    });
+    const expected = `${prefix}${description}${suffix}`;
+    expect(new TextEncoder().encode(expected).length).toBe(8_192);
+    expect(compactSchema(object(description))).toBe(expected);
+    expect(compactSchema(object(description + "x"))).toContain("/* truncated */");
+
+    const value = "😀".repeat(2_047);
+    const tuple = (text: string) => ({ prefixItems: [{ const: text }], items: false });
+    const expectedTuple = `[${JSON.stringify(value)}]`;
+    expect(new TextEncoder().encode(expectedTuple).length).toBe(8_192);
+    expect(compactSchema(tuple(value))).toBe(expectedTuple);
+    expect(compactSchema(tuple(value + "x"))).toContain("/* truncated */");
+  });
+
+  it("stops raw JSON before serializing every large string", () => {
+    let serialized = 0;
+    const values: string[] = [];
+    for (let index = 0; index < 1_500; index += 1) {
+      Object.defineProperty(values, index, {
+        enumerable: true,
+        get() {
+          serialized += 1;
+          return "x".repeat(4_000);
+        },
+      });
+    }
+
+    const result = compactSchema({ unknownKeyword: values });
+    expect(result).toContain("/* truncated */");
+    expect(serialized).toBeLessThan(10);
+  });
+
+  it("keeps escaped, multibyte, and array JSON within the byte cap", () => {
+    const emoji = "😀".repeat(2_045);
+    expect(compactSchema({ const: emoji })).toBe(JSON.stringify(emoji));
+    expect(compactSchema({ const: `${emoji}😀😀😀` })).toBe(
+      "unknown /* truncated */",
+    );
+
+    const values = Array.from({ length: 7 }, () => "x".repeat(1_000));
+    expect(compactSchema({ unknownKeyword: values })).toBe(
+      JSON.stringify({ unknownKeyword: values }),
+    );
+
+    const arrayAtLimit = ["😀".repeat(2_047)];
+    expect(new TextEncoder().encode(JSON.stringify(arrayAtLimit)).length).toBe(8_192);
+    expect(compactSchema({ const: arrayAtLimit })).toBe(JSON.stringify(arrayAtLimit));
+    const escapedAtLimit = "\n".repeat(4_095);
+    expect(new TextEncoder().encode(JSON.stringify(escapedAtLimit)).length).toBe(8_192);
+    expect(compactSchema({ const: escapedAtLimit })).toBe(JSON.stringify(escapedAtLimit));
+    expect(compactSchema({ const: escapedAtLimit + "\n" })).toContain("/* truncated */");
+    const omitted = { value: "x".repeat(8_180), ignored: undefined };
+    expect(new TextEncoder().encode(JSON.stringify(omitted)).length).toBe(8_192);
+    expect(compactSchema({ const: omitted })).toBe(JSON.stringify(omitted));
+  });
+
   it("stops visiting a wide schema after the work budget", () => {
     let visits = 0;
     const member = {

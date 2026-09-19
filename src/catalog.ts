@@ -42,10 +42,27 @@ class SchemaWork {
     const visit = this.visit.bind(this);
     const text = this.text.bind(this);
     const ancestors: object[] = [];
+    let serializedBytes = 0;
+    const addSerialized = (value: string): void => {
+      serializedBytes += schemaEncoder.encode(value).length;
+      if (serializedBytes > this.byteLimit) throw schemaSizeExceeded;
+    };
     return this.text(JSON.stringify(value, function (key, item: unknown) {
       visit();
       text(key);
       if (typeof item === "string") text(item);
+      const omitted =
+        item === undefined || typeof item === "function" || typeof item === "symbol";
+      const root = key === "" && ancestors.length === 0;
+      if (!omitted) {
+        // Array indexes are implicit in JSON. Object keys and primitive values
+        // are the useful lower bound; the final text check remains authoritative
+        // for braces, commas, and values whose encoding is larger than this bound.
+        if (!root && !Array.isArray(this)) addSerialized(JSON.stringify(key));
+        if (typeof item !== "object" || item === null) {
+          addSerialized(JSON.stringify(item));
+        }
+      }
       if (item !== null && typeof item === "object") {
         while (ancestors.length && ancestors[ancestors.length - 1] !== this) {
           ancestors.pop();
@@ -609,6 +626,35 @@ interface RenderOptions {
   onConstraintTruncated?: () => void;
 }
 
+function boundedParts(
+  work: SchemaWork,
+  separator: string,
+  prefix: string,
+  suffix: string,
+): { add(part: string): void; finish(): string; readonly length: number } {
+  // Check each addition before joining so a rejected schema never creates a
+  // large intermediate string just to discover that the final result is over.
+  const parts: string[] = [];
+  let bytes =
+    schemaEncoder.encode(prefix).length + schemaEncoder.encode(suffix).length;
+  const separatorBytes = schemaEncoder.encode(separator).length;
+  return {
+    get length() {
+      return parts.length;
+    },
+    add(part) {
+      const partBytes = schemaEncoder.encode(part).length;
+      const added = partBytes + (parts.length > 0 ? separatorBytes : 0);
+      if (bytes + added > work.byteLimit) throw schemaSizeExceeded;
+      parts.push(part);
+      bytes += added;
+    },
+    finish() {
+      return `${prefix}${parts.join(separator)}${suffix}`;
+    },
+  };
+}
+
 function renderSchema(
   schema: unknown,
   defs: JsonSchema,
@@ -672,15 +718,20 @@ function renderSchemaNode(
     for (const key of propertyNames(s, options.work)) {
       if (key !== "allOf") own[key] = s[key];
     }
-    const parts = declaresShape(own)
-      ? [renderSchema(own, defs, seen, depth, options)]
-      : [];
+    const parts = boundedParts(options.work, " & ", "", "");
+    const groupParts = declaresShape(own)
+      ? s.allOf.length > 0
+      : s.allOf.length > 1;
+    if (declaresShape(own)) {
+      const rendered = renderSchema(own, defs, seen, depth, options);
+      parts.add(groupParts ? grouped(rendered) : rendered);
+    }
     for (const member of s.allOf) {
-      parts.push(renderSchema(member, defs, seen, depth + 1, options));
+      const rendered = renderSchema(member, defs, seen, depth + 1, options);
+      parts.add(groupParts ? grouped(rendered) : rendered);
     }
     if (parts.length === 0) return "unknown";
-    if (parts.length === 1) return parts[0] as string;
-    return parts.map(grouped).join(" & ");
+    return parts.finish();
   }
 
   const reference = s.$ref ?? s.$dynamicRef;
@@ -707,11 +758,11 @@ function renderSchemaNode(
 
   const union = (s.oneOf ?? s.anyOf) as unknown[] | undefined;
   if (Array.isArray(union)) {
-    const rendered =
-      union
-        .map((u) => renderSchema(u, defs, seen, depth + 1, options))
-        .join(" | ") ||
-      "unknown";
+    const parts = boundedParts(options.work, " | ", "", "");
+    for (const member of union) {
+      parts.add(renderSchema(member, defs, seen, depth + 1, options));
+    }
+    const rendered = parts.finish() || "unknown";
     return constrain(rendered);
   }
   if (Array.isArray(s.enum)) {
@@ -734,16 +785,17 @@ function renderSchemaNode(
 
   const type = s.type;
   if (Array.isArray(s.prefixItems)) {
-    const parts = s.prefixItems.map((item) =>
-      renderSchema(item, defs, seen, depth + 1, options),
-    );
+    const parts = boundedParts(options.work, ", ", "[", "]");
+    for (const item of s.prefixItems) {
+      parts.add(renderSchema(item, defs, seen, depth + 1, options));
+    }
     if (s.items !== false) {
       const rest = s.items === undefined || s.items === true
         ? "unknown"
         : renderSchema(s.items, defs, seen, depth + 1, options);
-      parts.push(`...${grouped(rest)}[]`);
+      parts.add(`...${grouped(rest)}[]`);
     }
-    return `[${parts.join(", ")}]`;
+    return parts.finish();
   }
   if (type === "array" || s.items) {
     const items = s.items
@@ -762,39 +814,41 @@ function renderSchemaNode(
         ]
       : declaredKeys;
     if (keys.length === 0) return "{}";
-    return `{ ${keys
-      .map((key) => {
-        const optional = required.has(key) ? "" : "?";
-        const rendered = renderSchema(
-          props[key],
-          defs,
-          seen,
-          depth + 1,
-          options,
-        );
-        const description = (
-          props[key] as Record<string, unknown> | null
-        )?.description;
-        if (options.propertyDescriptions && typeof description === "string") {
-          options.work.text(description);
-        }
-        options.work.text(key);
-        const comment =
-          options.propertyDescriptions && typeof description === "string"
-            ? ` // ${description}`
-            : "";
-        return `${key}${optional}: ${rendered}${comment}`;
-      })
-      .join(", ")} }`;
+    const parts = boundedParts(options.work, ", ", "{ ", " }");
+    for (const key of keys) {
+      const optional = required.has(key) ? "" : "?";
+      const rendered = renderSchema(
+        props[key],
+        defs,
+        seen,
+        depth + 1,
+        options,
+      );
+      const description = (
+        props[key] as Record<string, unknown> | null
+      )?.description;
+      if (options.propertyDescriptions && typeof description === "string") {
+        options.work.text(description);
+      }
+      options.work.text(key);
+      const comment =
+        options.propertyDescriptions && typeof description === "string"
+          ? ` // ${description}`
+          : "";
+      parts.add(`${key}${optional}: ${rendered}${comment}`);
+    }
+    return parts.finish();
   }
   if (typeof type === "string") {
     return constrain(options.work.text(type));
   }
   if (Array.isArray(type)) {
-    const rendered = type.map((item) => {
+    const parts = boundedParts(options.work, " | ", "", "");
+    for (const item of type) {
       options.work.visit();
-      return options.work.text(String(item));
-    }).join(" | ");
+      parts.add(options.work.text(String(item)));
+    }
+    const rendered = parts.finish();
     return constrain(rendered);
   }
   if (options.renderConstraints && constraintEntries(s).length > 0) {
