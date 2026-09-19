@@ -432,7 +432,7 @@ describe("stripe()", () => {
       }),
     );
     // A static credential has one mode whether it came from the deployment or
-    // from /credentials, so it gets the fixed-mode guide, not the OAuth one.
+    // from its connection in the operator UI, so it gets the fixed-mode guide, not the OAuth one.
     expect(guideOf(connector)).toContain("Mode: production");
     expect(guideOf(connector)).toContain("This is a PRODUCTION Stripe connection.");
 

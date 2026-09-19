@@ -74,9 +74,9 @@ export interface ApiOptions {
    * discovery metadata. See `Connector.usageGuide`.
    */
   usageGuide?: string | ConnectorUsageGuide;
-  /** Optional operator-managed credential exposed through ctx.credential and /credentials. */
+  /** Optional operator-managed credential exposed through ctx.credential and the connection in the operator UI. */
   credential?: ConnectorCredentialConfig;
-  /** Optional validation behind /credentials' Test action. */
+  /** Optional validation behind the connection's Test action in the operator UI. */
   testCredential?: (
     value: string,
     ctx: ConnectorContext,

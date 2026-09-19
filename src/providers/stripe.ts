@@ -40,8 +40,9 @@ export interface StripeOAuthOptions extends StripeCommonOptions {
  * Static credentials have one fixed mode, including Stripe Connect calls.
  *
  * Both static shapes belong here: a key the deployment supplies as a literal
- * header, and one the operator pastes at `/credentials`. Neither can discover
- * its own mode — a restricted key answers for exactly one — so both declare it.
+ * header, and one the operator pastes into the connection in the operator UI.
+ * Neither can discover its own mode, since a restricted key answers for
+ * exactly one, so both declare it.
  */
 export interface StripeHeaderOptions extends StripeCommonOptions {
   auth: Exclude<RemoteMcpAuth, { type: "oauth" }>;

@@ -216,7 +216,7 @@ function vercelTransport(baseUrl: string): GuardedTransport {
       if (!token) {
         throw new ConnectorCallError(
           "auth_required",
-          "No Vercel access token is configured for this connector. An operator must add one on /credentials before any Vercel call can run.",
+          "No Vercel access token is configured for this connector. Call authorize_connector for recovery options. When available, an operator can add the token in this connection in the operator UI.",
         );
       }
       return { Authorization: `Bearer ${token}` };

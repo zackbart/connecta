@@ -39,8 +39,8 @@ import type {
 } from "../types.js";
 
 /**
- * A static downstream credential the operator supplies at `/credentials`
- * rather than the deployment baking into its source.
+ * A static downstream credential supplied through the connection in the
+ * operator UI rather than baked into deployment source.
  *
  * The connector, its endpoint, and the credential *slot* stay declared in
  * code; only the secret arrives through the operator route, exactly as for
@@ -52,8 +52,8 @@ import type {
 interface RemoteMcpCredentialAuth {
   type: "credential";
   /**
-   * Operator-facing slot description rendered on `/credentials`. Defaults to
-   * `{ label: "API key" }`; a maintained provider passes the name the provider
+   * Slot description rendered in the connection in the operator UI. Defaults
+   * to `{ label: "API key" }`; a maintained provider passes the name the provider
    * itself uses. Named `fields` are refused — this shape reads the reserved
    * `value` field only.
    */
@@ -658,8 +658,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       );
     }
     // Both static shapes send a secret on every request; that an operator
-    // typed one into /credentials rather than a deployment file changes who
-    // owns it, not whether the wire carries it in the clear.
+    // typed one into the operator UI rather than a deployment file changes
+    // who owns it, not whether the wire carries it in the clear.
     if (opts.auth?.type === "headers" || credentialAuth) {
       logger.warn(
         `[connecta] connector "${id}" sends static credentials to ${opts.url} over a non-https:// connection — those tokens will be transmitted in cleartext.`,
@@ -690,7 +690,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
    * key to read it with). Deliberately the same `auth_required` code an absent
    * OAuth grant produces: the agent's next move is `authorize_connector`
    * either way, and that tool reads `connector.credential` to hand the
-   * operator `/credentials` instead of a consent URL.
+   * operator the connection in the UI when available instead of a consent URL.
    */
   class CredentialRequiredError extends ConnectorCallError {
     constructor(message: string) {
@@ -707,8 +707,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (!ctx.credential) {
       throw new CredentialRequiredError(
         `Connector "${id}" needs an operator-managed credential, but ` +
-          "credential storage is not configured. Set " +
-          "credentials.encryptionKey and redeploy.",
+          "credential storage is not configured. Configure vault in deployment code and redeploy. Call authorize_connector for recovery options.",
       );
     }
     // A stored-shape mismatch already arrives as a typed auth_required from
@@ -729,8 +728,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (carriesIllegalHeaderChar(value)) {
       throw new CredentialRequiredError(
         `Connector "${id}"'s stored credential contains a character a header ` +
-          "cannot carry (a line break or other control character) — re-enter " +
-          "it on /credentials. The value is not shown or logged.",
+          "cannot carry (a line break or other control character). Call " +
+          "authorize_connector for recovery options. When available, re-enter " +
+          "it in this connection in the operator UI. The value is not shown or logged.",
       );
     }
     return value;
@@ -762,8 +762,9 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       if (quoted.some((secret) => current instanceof Error && current.message.includes(secret))) {
         return new CredentialRequiredError(
           `Connector "${id}" could not send its stored credential as a ` +
-            "header — re-enter it on /credentials. The value is not shown or " +
-            "logged.",
+            "header. Call authorize_connector for recovery options. When available, " +
+            "re-enter it in this connection in the operator UI. " +
+            "The value is not shown or logged.",
         );
       }
       current = current.cause;
@@ -966,8 +967,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     }
     // The static-credential counterpart of the epoch read above, and
     // deliberately beside it: the vault is read before any cached client is
-    // trusted, so an operator's rotation on /credentials takes effect on the
-    // next call rather than the next deploy. Compared by digest — the
+    // trusted, so an operator's rotation in the UI takes effect on the next
+    // call rather than the next deploy. Compared by digest — the
     // plaintext lives in this function's scope and never reaches `state`.
     let credentialValue: string | null = null;
     let credentialFramed: string | null = null;
@@ -1133,8 +1134,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
       : {}),
     ...(opts.usageGuide !== undefined ? { usageGuide: opts.usageGuide } : {}),
     // Declaring the slot is what makes the rest of the operator surface work:
-    // /credentials renders it, the shape check compares against it, and
-    // authorize_connector reads it to return the operator handoff rather than
+    // the connection's credential form renders it, the shape check compares
+    // against it, and authorize_connector returns the operator handoff rather than
     // an OAuth URL this connector has none of.
     ...(credentialAuth
       ? {
@@ -1398,8 +1399,8 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         }
         if (state.authRequired) {
           // Only an OAuth connector has a pending consent URL to offer. A
-          // credential connector's downstream 401 is repaired on /credentials,
-          // so do not reach into OAuth storage to look for one.
+          // credential connector's downstream 401 is repaired in the operator
+          // UI connection, so do not reach into OAuth storage to look for one.
           return {
             state: "auth_required",
             message: credentialAuth

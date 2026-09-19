@@ -175,7 +175,7 @@ function notionFailure(
   if (status === 401) {
     return new ConnectorCallError(
       "auth_required",
-      `${labelled} The Notion integration token is missing or invalid — an operator must set a valid token on /credentials.`,
+      `${labelled} The Notion integration token is missing or invalid. Call authorize_connector for recovery options. When available, an operator can set a valid token in this connection in the operator UI.`,
     );
   }
   if (status === 403) {
@@ -239,7 +239,7 @@ const send = guardedFetch({
     if (!token) {
       throw new ConnectorCallError(
         "auth_required",
-        "No Notion integration token is configured for this connector — an operator must add one on /credentials before any Notion call can run.",
+        "No Notion integration token is configured for this connector. Call authorize_connector for recovery options. When available, an operator can add the token in this connection in the operator UI.",
       );
     }
     return { Authorization: `Bearer ${token}` };

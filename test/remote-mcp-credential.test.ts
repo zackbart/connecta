@@ -90,7 +90,7 @@ function credentialCtx(read: () => string | null): ConnectorContext {
   };
 }
 
-/** A context with no vault behind it — `credentials.encryptionKey` unset. */
+/** A context with no configured vault. */
 function vaultlessCtx(): ConnectorContext {
   return connectorContext();
 }
@@ -107,7 +107,7 @@ describe("remoteMcp() credential auth — the declared slot", () => {
     });
     expect(connector.credential).toEqual({ label: "API key" });
     // No startAuth: authorize_connector reads that absence plus the declared
-    // slot to return the /credentials handoff instead of a consent URL.
+    // slot to return the operator UI handoff instead of a consent URL.
     expect(connector.startAuth).toBeUndefined();
     expect(connector.testCredential).toBeTypeOf("function");
   });
@@ -271,7 +271,7 @@ describe("remoteMcp() credential auth — an empty slot", () => {
     });
   });
 
-  it("names credentials.encryptionKey when there is no vault at all", async () => {
+  it("names the vault configuration when there is no vault at all", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,
@@ -283,7 +283,7 @@ describe("remoteMcp() credential auth — an empty slot", () => {
       .then(() => null, (error: unknown) => error);
 
     expect(err).toMatchObject({ code: "auth_required" });
-    expect((err as Error).message).toContain("credentials.encryptionKey");
+    expect((err as Error).message).toContain("Configure vault in deployment code");
   });
 
   it("treats a whitespace-only stored value as no credential", async () => {
@@ -424,10 +424,34 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
       .then(() => null, (error: unknown) => error);
 
     expect(err).toMatchObject({ code: "auth_required" });
-    expect((err as Error).message).toContain("re-enter it on /credentials");
+    expect((err as Error).message).toContain("re-enter it in this connection in the operator UI");
+    expect((err as Error).message).toContain("authorize_connector");
     assertNoLeak((err as Error).message);
     // Nothing reached the downstream: the check runs before any transport.
     expect(captured).toHaveLength(0);
+  });
+
+  it("replaces a transport error that quotes the secret with recovery guidance", async () => {
+    const secret = "private-header-secret";
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+      _transportFactory: () => ({
+        start: async () => { throw new TypeError(`Cannot send Bearer ${secret}`); },
+        send: async () => {},
+        close: async () => {},
+      }),
+    });
+    const ctx = credentialCtx(() => secret);
+    try {
+      const err = await connector.listTools(ctx).catch((error: unknown) => error);
+      expect(err).toMatchObject({ code: "auth_required" });
+      expect((err as Error).message).toContain("authorize_connector");
+      expect((err as Error).message).toContain("re-enter it in this connection in the operator UI");
+      expect((err as Error).message).not.toContain(secret);
+    } finally {
+      await connector.closeScope?.(ctx);
+    }
   });
 
   it("keeps it out of every surface an agent or operator can read", async () => {
@@ -458,7 +482,7 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
     // 2. Connector status, which the operator page renders.
     assertNoLeak(JSON.stringify(await registry.statusFor("down", BASE)));
 
-    // 3. The /credentials Test result.
+    // 3. The connection's credential Test result.
     assertNoLeak(
       JSON.stringify(
         await connector.testCredential!(
@@ -641,7 +665,7 @@ describe("remoteMcp() credential auth — through the deployment", () => {
     ]);
   });
 
-  it("hands authorize_connector the /credentials recovery, not an OAuth URL", async () => {
+  it("hands authorize_connector the operator UI recovery, not an OAuth URL", async () => {
     serveDownstream();
     const connector = remoteMcp("down", {
       url: URL_UNDER_TEST,

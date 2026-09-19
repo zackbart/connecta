@@ -390,6 +390,8 @@ describe("notion() request construction", () => {
     expect(error).toBeInstanceOf(ConnectorCallError);
     expect(error.code).toBe("auth_required");
     expect(error.retryable).toBe(false);
+    expect(error.message).toContain("this connection in the operator UI");
+    expect(error.message).toContain("authorize_connector");
     expect(calls).toHaveLength(0);
   });
 });
@@ -1084,7 +1086,8 @@ describe("notion() error mapping", () => {
     expect(error.code).toBe("auth_required");
     expect(error.retryable).toBe(false);
     expect(error.message).toContain("unauthorized");
-    expect(error.message).toContain("/credentials");
+    expect(error.message).toContain("this connection in the operator UI");
+    expect(error.message).toContain("authorize_connector");
   });
 
   caseOf("does not send a capability failure to re-authorization", async () => {

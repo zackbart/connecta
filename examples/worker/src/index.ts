@@ -50,8 +50,8 @@ interface Env {
   CONNECTA_KV: KVNamespace;
   /**
    * Base64 32-byte AES key encrypting operator-managed credentials in KV.
-   * Unset means no vault: /credentials stays read-only and connecta says so at
-   * startup. Never put it in KV — it is what protects KV.
+   * Unset means no vault: credential management is unavailable in the operator
+   * UI. Never put it in KV, since it is what protects KV.
    */
   CREDENTIAL_ENCRYPTION_KEY: string;
   DOWNSTREAM_TOKEN: string;
@@ -121,8 +121,8 @@ function build(env: Env) {
           type: "headers",
           headers: { Authorization: `Bearer ${env.DOWNSTREAM_TOKEN}` },
           // The vault-backed alternative for a downstream that authenticates
-          // with a static key: the operator pastes it at /credentials and
-          // rotates it there, so no Worker secret holds it.
+          // with a static key: the operator manages it inside its connection
+          // in the operator UI, so no Worker secret holds it.
           //   type: "credential",
           //   credential: { label: "Notion internal integration token" },
         },
@@ -132,8 +132,8 @@ function build(env: Env) {
       }),
       api("echo", {
         description: "Echo — text transforms",
-        // What a vault-backed connector adds — an operator edits this slot at
-        // /credentials and the handler reads it with
+        // What a vault-backed connector adds — an operator edits this slot
+        // inside its connection in the operator UI and the handler reads it with
         // `await ctx.credential?.get()`, so the secret never lives in source
         // or in a Worker variable:
         //   credential: { label: "API token" },

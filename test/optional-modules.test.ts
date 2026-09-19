@@ -40,6 +40,27 @@ describe("optional deployment modules", () => {
     expect((await app.fetch(new Request(BASE + "/", { headers }))).status).toBe(200);
   });
 
+  it.each([
+    { ui: false, vault: false },
+    { ui: false, vault: true },
+    { ui: true, vault: false },
+  ])("offers no credential handoff when a recovery module is missing (%j)", async modules => {
+    const storage = memoryStorage();
+    const app = createConnecta({
+      connectors: [connector()], executor, auth, logger: "silent", publicUrl: BASE,
+      ...(modules.ui ? { ui: operatorUi() } : {}),
+      ...(modules.vault ? { vault: encryptedCredentialVault(storage, btoa("a".repeat(32))) } : {}),
+    });
+    const response = await mcpRpc(app, "tools/call", {
+      name: "authorize_connector", arguments: { connector: "shared" },
+    }, { baseUrl: BASE, token: "human" });
+    const body = await response.json() as any;
+    const recovery = JSON.parse(body.result.content[0].text);
+    expect(recovery).toMatchObject({ connector: "shared", recovery: "unavailable" });
+    expect(recovery).not.toHaveProperty("operatorUrl");
+    expect(recovery.message).toContain("vault and ui");
+  });
+
   it("returns configured connections without touching provider status or tools", async () => {
     const slow = connector("slow"), fast = connector("fast");
     slow.status = vi.fn(() => new Promise<never>(() => {}));

@@ -27,7 +27,7 @@ export type StoredCredentialShape =
 /**
  * Compare a connector's current declaration with the keys in its stored
  * credential. Values are deliberately ignored: callers may pass decrypted
- * values or `/credentials`' masked field metadata and get the same answer.
+ * values or the operator UI's masked credential field metadata and get the same answer.
  *
  * The test is CONTAINMENT, not equality: the stored key set is compatible when
  * it holds every field currently declared — the reserved `value` key for a
@@ -111,7 +111,7 @@ export interface CredentialTestRule {
 
 /**
  * The one rule deciding whether a connector's credential can be tested — read
- * by /credentials' `testable` flag, by `POST /ui/credentials/<id>/test` when
+ * by the operator UI's credential `testable` flag, by `POST /ui/credentials/<id>/test` when
  * it picks a hook, and by the construction-time mismatch warning, so those
  * three cannot drift apart.
  *
