@@ -138,7 +138,7 @@ describe("deployment shapes", () => {
     );
     expect(read(".gitignore")).toContain(".connecta-activity.jsonl");
     expect(read("README.md")).toContain("## Select optional modules");
-    // A vault is not a page: /credentials lists connector slots, and neither
+    // A vault is not a page: the operator UI lists connector slots, and neither
     // shape's shipped connectors need one. Both carry the slot's shape in
     // place so nobody follows the vault step and finds a hidden page (#345).
     expect(source).toContain('//   credential: { label: "API token" },');

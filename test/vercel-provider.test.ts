@@ -840,7 +840,7 @@ describe("Vercel typed failures and credential test", () => {
       call(connection(), "list_projects", {}, context(null)),
     ).rejects.toMatchObject({
       code: "auth_required",
-      message: expect.stringContaining("this connection in the operator UI"),
+      message: expect.stringMatching(/authorize_connector.*this connection in the operator UI/),
     });
     expect(globalThis.fetch).not.toHaveBeenCalled();
   });

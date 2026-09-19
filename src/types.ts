@@ -162,7 +162,7 @@ export interface ConnectorContext {
   /**
    * Read-only access to this connector's human-managed credential. Present
    * only when the connector declares `credential` and the deployment configures
-   * `credentials.encryptionKey`.
+   * `vault`.
    */
   credential?: ConnectorCredentialAccess;
   /**

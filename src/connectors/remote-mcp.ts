@@ -707,7 +707,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
     if (!ctx.credential) {
       throw new CredentialRequiredError(
         `Connector "${id}" needs an operator-managed credential, but ` +
-          "credential storage is not configured. Configure vault in deployment code and redeploy.",
+          "credential storage is not configured. Configure vault in deployment code and redeploy. Call authorize_connector for recovery options.",
       );
     }
     // A stored-shape mismatch already arrives as a typed auth_required from

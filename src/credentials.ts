@@ -41,7 +41,7 @@ function base64ToBytes(value: string): Uint8Array {
     binary = atob(value);
   } catch {
     throw new Error(
-      "credentials.encryptionKey must be a base64-encoded 32-byte key",
+      "The credential vault encryption key must be a base64-encoded 32-byte key",
     );
   }
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
@@ -136,7 +136,7 @@ export class CredentialVault implements Vault {
     const raw = base64ToBytes(encryptionKey.trim());
     if (raw.byteLength !== KEY_BYTES) {
       throw new Error(
-        "credentials.encryptionKey must be a base64-encoded 32-byte key",
+        "The credential vault encryption key must be a base64-encoded 32-byte key",
       );
     }
     this.key = crypto.subtle.importKey(

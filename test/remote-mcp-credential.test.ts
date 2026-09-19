@@ -425,9 +425,33 @@ describe("remoteMcp() credential auth — a value a header cannot carry", () => 
 
     expect(err).toMatchObject({ code: "auth_required" });
     expect((err as Error).message).toContain("re-enter it in this connection in the operator UI");
+    expect((err as Error).message).toContain("authorize_connector");
     assertNoLeak((err as Error).message);
     // Nothing reached the downstream: the check runs before any transport.
     expect(captured).toHaveLength(0);
+  });
+
+  it("replaces a transport error that quotes the secret with recovery guidance", async () => {
+    const secret = "private-header-secret";
+    const connector = remoteMcp("down", {
+      url: URL_UNDER_TEST,
+      auth: { type: "credential" },
+      _transportFactory: () => ({
+        start: async () => { throw new TypeError(`Cannot send Bearer ${secret}`); },
+        send: async () => {},
+        close: async () => {},
+      }),
+    });
+    const ctx = credentialCtx(() => secret);
+    try {
+      const err = await connector.listTools(ctx).catch((error: unknown) => error);
+      expect(err).toMatchObject({ code: "auth_required" });
+      expect((err as Error).message).toContain("authorize_connector");
+      expect((err as Error).message).toContain("re-enter it in this connection in the operator UI");
+      expect((err as Error).message).not.toContain(secret);
+    } finally {
+      await connector.closeScope?.(ctx);
+    }
   });
 
   it("keeps it out of every surface an agent or operator can read", async () => {
