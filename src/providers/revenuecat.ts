@@ -57,7 +57,7 @@ export interface RevenueCatOptions {
 
 /**
  * Reviewed reads, every `Read` row of RevenueCat's tool reference as read on
- * 2026-08-30 (P5). The list is a superset: plan, platform, and beta enrollment
+ * 2026-09-21 (P5). The list is a superset: plan, platform, and beta enrollment
  * gate parts of the catalog, so a name this account never returns costs
  * nothing while an unlisted new one fails closed.
  */
@@ -75,7 +75,11 @@ const READ_ONLY_TOOLS = new Set([
   // Products and prices
   "get-product",
   "get-product-store-state",
+  // Deprecated in RevenueCat's reference — superseded by the plan family's
+  // own read-back below — but still served, so the classification stands.
   "get-product-store-state-operation",
+  "get-product-store-state-plan",
+  "list-product-store-state-plans",
   "list-products",
   // Entitlements
   "get-entitlement",
@@ -154,19 +158,37 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   ["archive-product", "destructive"],
   ["create-product", "additive"],
   // Named `create-`, but "Configure prices for a product": the price set
-  // already exists, so this overwrites it, and it is money-facing.
+  // already exists, so this overwrites it, and it is money-facing. Deprecated
+  // in RevenueCat's reference; products are priced through the plan family
+  // below, but the tool is still served, so the classification stands.
   ["create-product-prices", "destructive"],
   // "Fills *missing* App Store subscription territory prices" — by
-  // RevenueCat's own word it writes only where nothing is set.
+  // RevenueCat's own word it writes only where nothing is set. Deprecated in
+  // RevenueCat's reference; still served, so the classification stands.
   ["equalize-subscription-prices", "additive"],
-  // An upsert.
+  // An upsert. Deprecated in RevenueCat's reference — the store-state plan
+  // family below replaces it — but still served, so the classification stands.
   ["set-product-store-state", "destructive"],
   // Sends products to Apple for review.
   ["submit-products-to-store", "destructive"],
   ["unarchive-product", "destructive"],
   ["update-product", "destructive"],
   // Reserves a new App Store Connect review screenshot slot; replaces nothing.
+  // Deprecated in RevenueCat's reference; still served, so the classification
+  // stands.
   ["upload-product-store-state-screenshot", "additive"],
+
+  // Product store state plans, the workflow RevenueCat deprecated
+  // `set-product-store-state` for. Create brings a draft into being and
+  // touches nothing else; plan recomputes an existing plan's proposed change,
+  // overwriting its previous planning; apply pushes the whole plan into
+  // RevenueCat and the app stores; update and discard act on an existing plan
+  // by name. Every step past create is asynchronous.
+  ["create-product-store-state-plan", "additive"],
+  ["plan-product-store-state-plan", "destructive"],
+  ["apply-product-store-state-plan", "destructive"],
+  ["update-product-store-state-plan", "destructive"],
+  ["discard-product-store-state-plan", "destructive"],
 
   // Entitlements
   ["archive-entitlement", "destructive"],
@@ -192,6 +214,11 @@ const WRITE_TOOLS: ReadonlyMap<string, "additive" | "destructive"> = new Map([
   // Targeting and audiences
   ["create-audience", "additive"],
   ["update-audience", "destructive"],
+  // Targeting rules follow the verb: create brings one into being, update
+  // and delete act on a rule the project already has.
+  ["create-targeting-rule", "additive"],
+  ["update-targeting-rule", "destructive"],
+  ["delete-targeting-rule", "destructive"],
 
   // Paywalls
   ["attach-offering-to-paywall", "destructive"],
@@ -270,7 +297,8 @@ function sharedUsageGuide(): string {
 - Customer and subscription objects are large, and a customer's history is larger. Page with the cursor the list returned rather than raising the page size, and reduce inside \`execute_code\` — select the fields the question needs and return those, not the whole object.
 - Whether a customer should have access is \`gives_access\` on each subscription from \`list-subscriptions\`, which RevenueCat calls the authoritative flag. \`status\` and \`expires_date\` describe the store-side state and disagree with it during grace periods, billing retries, and promotional grants — answer access questions from \`gives_access\` and say which subscription it came from.
 - \`get-chart-data\` is the metrics path: read \`get-chart-options-schema\` for the chart you want before calling it, rather than guessing an option name. \`get-overview-metrics\` and \`get-revenue-metric\` answer the summary questions in one call.
-- \`create-paywall-ai\`, \`edit-paywall-ai\`, and \`set-product-store-state\` are asynchronous. They return a task or operation id; poll it with \`get-paywall-ai-task\` or \`get-product-store-state-operation\` rather than assuming the work finished when the call returned.
+- \`create-paywall-ai\` and \`edit-paywall-ai\` are asynchronous. Poll the task id they return with \`get-paywall-ai-task\` rather than assuming the work finished when the call returned.
+- Store changes ride the plan workflow, not the deprecated direct tools: \`create-product-store-state-plan\`, then \`plan-product-store-state-plan\`, then \`apply-product-store-state-plan\`. Every step past the create is asynchronous — read the plan back with \`get-product-store-state-plan\` between steps instead of assuming the last one finished.
 - This connection's tool list is not a fixed set. RevenueCat gates parts of its MCP catalog by plan, platform, and beta enrollment — paywall AI editing, benchmarks, experiments, virtual currencies, and the account-billing tools are the usual absentees — so search this connector for what it actually exposes rather than assuming a documented tool is here.
 - \`render-paywall-screenshot\` is unclassified on purpose because RevenueCat's reference gives it no access column. The current server marks it read-only, which Connecta preserves; without that annotation it fails closed onto \`call_destructive_tool\`.
 - RevenueCat meters API v2 per minute and per domain, and the domains differ: 480 requests per minute for customer information and virtual currencies, 60 for project configuration and audiences, 25 for charts and metrics. It answers a breach with \`429\`, a \`Retry-After\` header, and a \`backoff_ms\` field. Back off on that rather than retrying immediately, and expect chart sweeps to hit the ceiling long before customer reads do.

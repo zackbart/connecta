@@ -255,7 +255,8 @@ describe("revenuecat()", () => {
     expect(guide).toContain("answer access questions from `gives_access`");
     expect(guide).toContain("Page with the cursor the list returned");
     expect(guide).toContain("get-paywall-ai-task");
-    expect(guide).toContain("get-product-store-state-operation");
+    expect(guide).toContain("get-product-store-state-plan");
+    expect(guide).toContain("apply-product-store-state-plan");
     expect(guide).toContain("authorize_connector");
     expect(guide).toContain("call_destructive_tool");
     // The unclassified tool is named rather than left to be discovered.
@@ -296,14 +297,14 @@ describe("revenuecat()", () => {
     const verdicts = REVENUECAT_VETTED_CATALOG.tools;
     const counts = { "read-only": 0, additive: 0, destructive: 0 };
     for (const { verdict } of verdicts.values()) counts[verdict] += 1;
-    // The 2026-09-01 reading of RevenueCat's tool reference: 105 tools, of
-    // which 104 carry an access column.
+    // The 2026-09-21 reading of RevenueCat's tool reference: 115 tools, of
+    // which 114 carry an access column.
     expect(counts).toEqual({
-      "read-only": 51,
-      additive: 17,
-      destructive: 36,
+      "read-only": 53,
+      additive: 19,
+      destructive: 42,
     });
-    expect(verdicts.size).toBe(104);
+    expect(verdicts.size).toBe(114);
     expect(verdicts.get("get-refund-request-preferences")?.verdict).toBe(
       "read-only",
     );
@@ -334,6 +335,18 @@ describe("revenuecat()", () => {
     expect(verdictFor("grant-customer-entitlement")).toBe("destructive");
     expect(verdictFor("assign-customer-offering")).toBe("destructive");
     expect(verdictFor("unarchive-product")).toBe("destructive");
+    // The store-state plan family: create brings a draft into being; the rest
+    // act on a plan record that already exists, and apply pushes the whole
+    // plan into RevenueCat and the stores.
+    expect(verdictFor("create-product-store-state-plan")).toBe("additive");
+    expect(verdictFor("plan-product-store-state-plan")).toBe("destructive");
+    expect(verdictFor("apply-product-store-state-plan")).toBe("destructive");
+    expect(verdictFor("update-product-store-state-plan")).toBe("destructive");
+    expect(verdictFor("discard-product-store-state-plan")).toBe("destructive");
+    // Targeting rules follow the verb.
+    expect(verdictFor("create-targeting-rule")).toBe("additive");
+    expect(verdictFor("update-targeting-rule")).toBe("destructive");
+    expect(verdictFor("delete-targeting-rule")).toBe("destructive");
     // Their counterparts, so the pair stays legible in the approval copy.
     expect(verdictFor("detach-products-from-entitlement")).toBe("destructive");
     expect(verdictFor("detach-products-from-package")).toBe("destructive");
