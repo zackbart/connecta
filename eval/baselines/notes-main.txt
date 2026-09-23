@@ -1,0 +1,9 @@
+Baseline taken on main's src tree (b3c220c30044, connecta 0.24.4) with Claude Code 2.1.280, 45 trials, $7.02 total. 34/45 pass: Sonnet 12/15, Opus 12/15, Haiku 10/15. No trial errored and no rate-limit guard fired.
+
+Every truncation trial (18/18) hit Claude Code's own result limit before it saw connecta's. connecta's default inline cap is 50,000 bytes, and its truncation notice, which carries the resultId and the get_result nextAction, sits at the tail of the result. Claude Code replaces any result over its limit with a pointer to a spill file. These agents run with no file tools, so they never see the notice. The read-only task still passed 9/9 because every model re-read the log inside execute_code, the route connecta's guidance prefers. The write task failed 9/9. Sonnet and Haiku re-ran the billable export (3 writes per trial), which is the exactly-once violation this task exists to catch. Opus ran it once, then stopped and asked. The diagnostic run agent-main-mcp100k.json raises MAX_MCP_OUTPUT_TOKENS to 100,000 and the result is the same: Claude Code also spills results over roughly 50 KB ("Output too large (62KB)"), whatever that variable says.
+
+The truncated preview is the head of the serialized content envelope ([{"type":"text","text":"…), not the text itself. JSON-lines payloads therefore come back double-escaped, which inflates the preview's tokens.
+
+Sonnet stopped to ask permission for writes it had been told to make in 4 of 15 trials. The runner answers "Yes, go ahead." and counts each nudge; the advisory check no-confirmation-needed records it. Opus and Haiku never needed a nudge.
+
+Haiku has two genuine failures. In the join task it chose an open feature request for the top-MRR customer instead of an open bug. In the auth task it told the human to call authorize_connector rather than calling it itself. Haiku's first execute_code attempts often use require('connecta') or a bare function body, which costs it several retries.

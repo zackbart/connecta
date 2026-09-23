@@ -1,0 +1,10 @@
+// Local-only smoke config for the Worker shape over loopback fakes (see
+// worker-fakes.ts). Vars arrive on the wrangler command line.
+{
+  "name": "connecta-eval-worker-fakes",
+  "main": "worker-fakes.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "kv_namespaces": [{ "binding": "CONNECTA_KV", "id": "connecta-eval-local" }],
+  "worker_loaders": [{ "binding": "LOADER" }]
+}

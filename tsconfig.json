@@ -27,10 +27,13 @@
     "baseUrl": ".",
     "paths": {
       "@zackbart/connecta": ["./src/index.ts"],
+      // The one published subpath whose target is not `src/<subpath>.ts`.
+      // The eval harness (eval/) imports connecta only by its published names.
+      "@zackbart/connecta/quickjs": ["./src/executors/quickjs.ts"],
       "@zackbart/connecta/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "eval/**/*.ts"],
   "exclude": [
     "node_modules",
     "examples",

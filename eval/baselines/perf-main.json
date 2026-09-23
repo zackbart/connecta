@@ -1,0 +1,119 @@
+{
+ "kind": "connecta-eval/perf",
+ "version": 1,
+ "meta": {
+  "createdAt": "2026-09-23T21:40:15.595Z",
+  "git": {
+   "commit": "4f536a896daf",
+   "branch": "refactor/p0.5-eval-harness",
+   "dirty": true,
+   "srcTree": "b3c220c30044",
+   "srcDirty": false
+  },
+  "packageVersion": "0.24.4",
+  "node": "v26.9.0",
+  "platform": "darwin-arm64"
+ },
+ "bundle": {
+  "entry": "src/index.ts",
+  "platform": "neutral (workerd, worker, browser conditions)",
+  "minifiedBytes": 935731,
+  "gzipBytes": 235346,
+  "topInputs": [
+   {
+    "path": "node_modules/zod",
+    "bytes": 327624
+   },
+   {
+    "path": "node_modules/@modelcontextprotocol/client",
+    "bytes": 190468
+   },
+   {
+    "path": "node_modules/@modelcontextprotocol/server",
+    "bytes": 187772
+   },
+   {
+    "path": "src/registry.ts",
+    "bytes": 21976
+   },
+   {
+    "path": "node_modules/@cfworker/json-schema",
+    "bytes": 21587
+   },
+   {
+    "path": "node_modules/@modelcontextprotocol/core",
+    "bytes": 16467
+   },
+   {
+    "path": "src/skills.ts",
+    "bytes": 15373
+   },
+   {
+    "path": "src/catalog-service.ts",
+    "bytes": 15032
+   },
+   {
+    "path": "src/connectors/remote-mcp.ts",
+    "bytes": 14644
+   },
+   {
+    "path": "src/auth/downstream-oauth.ts",
+    "bytes": 13911
+   },
+   {
+    "path": "src/meta-tools.ts",
+    "bytes": 13596
+   },
+   {
+    "path": "src/execute.ts",
+    "bytes": 13270
+   },
+   {
+    "path": "src/catalog.ts",
+    "bytes": 11719
+   },
+   {
+    "path": "src/index.ts",
+    "bytes": 9338
+   },
+   {
+    "path": "src/call-admission.ts",
+    "bytes": 7542
+   }
+  ]
+ },
+ "latency": {
+  "deployment": "node-template-shape, six loopback fake MCP servers",
+  "samples": 40,
+  "operations": [
+   {
+    "name": "tools/list",
+    "p50Ms": 1.430250000000001,
+    "p90Ms": 2.3902499999999804,
+    "minMs": 1.0042500000000132,
+    "maxMs": 3.8989159999999856
+   },
+   {
+    "name": "search_tools (compact schemas)",
+    "p50Ms": 1.3223750000000223,
+    "p90Ms": 2.5901669999999513,
+    "minMs": 1.007833000000005,
+    "maxMs": 3.566291999999976
+   },
+   {
+    "name": "call_tool (one read)",
+    "p50Ms": 2.954250000000002,
+    "p90Ms": 4.760415999999964,
+    "minMs": 2.0181669999999485,
+    "maxMs": 5.45799999999997
+   },
+   {
+    "name": "execute_code (search + 2 reads + reduce)",
+    "p50Ms": 4.936750000000075,
+    "p90Ms": 7.210959000000003,
+    "minMs": 3.6728749999999764,
+    "maxMs": 10.855042000000026
+   }
+  ]
+ }
+}
