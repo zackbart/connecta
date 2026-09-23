@@ -1,11 +1,21 @@
 // Node's built-in code-mode executor. QuickJS itself lives in a disposable
 // child process: guest CPU, WASM aborts, and interpreter OOMs cannot block or
 // terminate the HTTP-serving process.
+//
+// The pool is Effect inside and Promise at the edge. A child process is a
+// scoped resource: its Scope owns the startup watchdog and a finalizer that
+// kills the process and waits a bounded time for it to go. Retiring a child —
+// recycled after a deadline, a cancellation, a released lease, or shutdown —
+// is closing that Scope, so every path out of a child runs the same teardown.
+// Respawn after a crash waits out a Schedule. The IPC protocol stays plain:
+// the child's messages arrive as Node events, and host calls are the
+// Promise-shaped provider functions execute.ts hands over.
 
 import { Buffer } from "node:buffer";
 import { fork, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { Deferred, Duration, Effect, Exit, Schedule, Scope } from "effect";
 import {
   AdmissionController,
   ExecutorAdmissionError,
@@ -13,6 +23,7 @@ import {
 } from "../executor-admission.js";
 import { msg } from "../errors.js";
 import { MAX_EXECUTE_LOG_CHARS } from "../executor-result.js";
+import { detach, fromSignal, runEdge } from "../runtime/run.js";
 import type {
   AdmittingExecutor,
   AdmissionSnapshot,
@@ -60,27 +71,44 @@ export interface QuickJsExecutorOptions {
   queueTimeoutMs?: number;
 }
 
+// One execution in flight on a slot. `outcome` is settled exactly once — by
+// the child's result, a crash, a failed send, the wall deadline, the caller's
+// abort, a released lease, or shutdown — and the running program awaits it.
 interface ActiveRun {
   id: number;
   logs: string[];
   logChars: number;
   providers: Map<string, ExecutorProvider>;
-  resolve: (outcome: ExecuteResult) => void;
-  reject: (error: Error) => void;
-  signal?: AbortSignal;
-  onAbort?: () => void;
-  wallTimer: ReturnType<typeof setTimeout>;
+  outcome: Deferred.Deferred<ExecuteResult, Error>;
 }
 
+// One forked child process and the Scope that owns it.
+interface Child {
+  readonly process: ChildProcess;
+  readonly scope: Scope.Closeable;
+  // Settled by the child's "ready" message, or failed by whatever ends it
+  // first. Shared: a caller that stops waiting leaves the child warming for
+  // the next lease on the slot.
+  readonly ready: Deferred.Deferred<void, Error>;
+  // Settled by the first of "exit" and "close"; the finalizer's bounded wait.
+  readonly exited: Deferred.Deferred<void>;
+  // Set when the pool let the child go. Its exit is then expected and never
+  // counts as a crash.
+  retired: boolean;
+}
+
+// The crash-respawn step: from the time of a crash to the earliest moment a
+// replacement may start.
+type CrashStep = (crashedAt: number) => Effect.Effect<number>;
+
 interface ChildSlot {
-  child?: ChildProcess | undefined;
-  ready?: Promise<void> | undefined;
-  resolveReady?: (() => void) | undefined;
-  rejectReady?: ((error: Error) => void) | undefined;
-  readyTimer?: ReturnType<typeof setTimeout> | undefined;
+  child?: Child | undefined;
   active?: ActiveRun | undefined;
-  expectedExit?: ChildProcess | undefined;
-  consecutiveCrashes: number;
+  // Crashes not yet charged to the backoff; the next spawn charges them.
+  crashes: number[];
+  // The backoff Schedule's live step state, for as long as a crash streak
+  // lasts. A result from a child ends the streak.
+  backoff?: CrashStep | undefined;
   notBefore: number;
 }
 
@@ -93,8 +121,27 @@ const DEFAULT_MAX_QUEUE_SIZE = 32;
 const DEFAULT_QUEUE_TIMEOUT_MS = 5_000;
 const CHILD_EXIT_GRACE_MS = 250;
 const CHILD_STARTUP_TIMEOUT_MS = 10_000;
+// How long a retired child gets to exit after SIGTERM before SIGKILL.
+const CHILD_KILL_GRACE_MS = 1_000;
 const MAX_CHILD_STDERR_BYTES = 8 * 1024;
 const MAX_ERROR_CHARS = 4_000;
+
+// Respawn backoff after consecutive crashes: 100 ms, doubling, capped at 5 s.
+// A value, not a running effect: stepping it happens inside a request's fiber.
+const CRASH_BACKOFF = Schedule.min([
+  Schedule.exponential(Duration.millis(100)),
+  Schedule.spaced(Duration.seconds(5)),
+]);
+
+const crashBackoff: Effect.Effect<CrashStep> = Effect.map(
+  Schedule.toStep(CRASH_BACKOFF),
+  (step) => (crashedAt) =>
+    step(crashedAt, undefined).pipe(
+      Effect.map(([, delay]) => crashedAt + Duration.toMillis(delay)),
+      // Neither schedule ever halts; a halt here would be a broken invariant.
+      Effect.orDie,
+    ),
+);
 
 function retainStderrTail(current: Buffer, chunk: Buffer | string): Buffer {
   const incoming = typeof chunk === "string" ? Buffer.from(chunk) : chunk;
@@ -161,62 +208,54 @@ function errorPayload(error: string): string {
   } satisfies HostResultPayload);
 }
 
-function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  if (ms <= 0) return Promise.resolve();
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", onAbort);
-      reject(
-        new ExecutorAdmissionError(
-          "executor_cancelled",
-          "Execution was cancelled while the sandbox was restarting.",
-        ),
-      );
-    };
-    signal?.addEventListener("abort", onAbort, { once: true });
-    if (signal?.aborted) onAbort();
-  });
+function cancelled(message: string): ExecutorAdmissionError {
+  return new ExecutorAdmissionError("executor_cancelled", message);
 }
 
-function waitForReady(
-  ready: Promise<void>,
-  signal?: AbortSignal,
-): Promise<void> {
-  if (!signal) return ready;
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (operation: () => void) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", onAbort);
-      operation();
-    };
-    const onAbort = () =>
-      finish(() =>
-        reject(
-          new ExecutorAdmissionError(
-            "executor_cancelled",
-            "Execution was cancelled while the sandbox was starting.",
-          ),
+function shuttingDown(): ExecutorAdmissionError {
+  return new ExecutorAdmissionError(
+    "executor_closed",
+    "Executor is shutting down.",
+  );
+}
+
+/**
+ * Wait for `effect` unless the caller's signal aborts first, which fails with
+ * `executor_cancelled`. An already-aborted signal fails without waiting, even
+ * when the effect would have completed at once.
+ */
+function unlessCancelled<A, E>(
+  effect: Effect.Effect<A, E>,
+  signal: AbortSignal | undefined,
+  message: string,
+): Effect.Effect<A, E | ExecutorAdmissionError> {
+  if (!signal) return effect;
+  if (signal.aborted) return Effect.fail(cancelled(message));
+  return Effect.raceAllFirst([
+    effect,
+    fromSignal(signal).pipe(Effect.mapError(() => cancelled(message))),
+  ]);
+}
+
+/**
+ * The child's release: SIGTERM, then wait for the exit, bounded — a child
+ * still there after the grace gets SIGKILL and is not waited on further. A
+ * child that already exited is left alone.
+ */
+function terminate(child: Child): Effect.Effect<void> {
+  return Effect.suspend(() => {
+    if (Deferred.isDoneUnsafe(child.exited)) return Effect.void;
+    child.process.kill();
+    return Effect.raceAllFirst([
+      Deferred.await(child.exited),
+      Effect.sleep(Duration.millis(CHILD_KILL_GRACE_MS)).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            child.process.kill("SIGKILL");
+          }),
         ),
-      );
-    signal.addEventListener("abort", onAbort, { once: true });
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    void ready.then(
-      () => finish(resolve),
-      (error: unknown) =>
-        finish(() =>
-          reject(error instanceof Error ? error : new Error(String(error))),
-        ),
-    );
+      ),
+    ]);
   });
 }
 
@@ -227,6 +266,9 @@ class QuickJsChildPool implements AdmittingExecutor {
   private readonly slots: ChildSlot[];
   private readonly available: ChildSlot[];
   private readonly runtimeOptions: QuickJsRuntimeOptions;
+  // Scope closes still in flight, so close() can wait out every child rather
+  // than only the ones it retired itself.
+  private readonly retiring = new Set<Promise<void>>();
   private closed = false;
   private nextJobId = 1;
 
@@ -274,7 +316,7 @@ class QuickJsChildPool implements AdmittingExecutor {
       ),
     };
     this.slots = Array.from({ length: concurrency }, () => ({
-      consecutiveCrashes: 0,
+      crashes: [],
       notBefore: 0,
     }));
     this.available = [...this.slots];
@@ -295,11 +337,13 @@ class QuickJsChildPool implements AdmittingExecutor {
         if (released) throw new Error("Executor lease was already released.");
         if (executed) throw new Error("Executor lease may execute only once.");
         executed = true;
-        return this.run(slot, code, providers, options.signal);
+        return runEdge(this.run(slot, code, providers, options.signal));
       },
       release: () => {
         if (released) return;
         released = true;
+        // A lease let go mid-run takes its child with it: the program is
+        // abandoned, and the next lease must not inherit its leftovers.
         if (slot.active) {
           this.rejectActive(
             slot,
@@ -333,102 +377,77 @@ class QuickJsChildPool implements AdmittingExecutor {
     if (this.closed) return;
     this.closed = true;
     this.admission.close();
-    const exits = this.slots.map((slot) => this.stopSlot(slot));
-    await Promise.allSettled(exits);
+    for (const slot of this.slots) this.stopSlot(slot);
+    await Promise.allSettled(this.retiring);
   }
 
-  private async run(
+  // One execution on a leased slot: a ready child, the run message, then the
+  // outcome raced against the wall deadline and the caller's abort. Either of
+  // those settles the outcome and recycles the child; the race's losers are
+  // interrupted, which clears their timer and abort listener.
+  private run(
     slot: ChildSlot,
     code: string,
     providers: ExecutorProvider[],
     signal?: AbortSignal,
-  ): Promise<ExecuteResult> {
-    if (signal?.aborted) {
-      throw new ExecutorAdmissionError(
-        "executor_cancelled",
-        "Execution was cancelled before it started.",
-      );
-    }
-    await this.ensureChild(slot, signal);
-    if (signal?.aborted) {
-      throw new ExecutorAdmissionError(
-        "executor_cancelled",
-        "Execution was cancelled before it started.",
-      );
-    }
-    const child = slot.child;
-    if (!child?.connected) {
-      throw new Error("QuickJS child IPC channel is unavailable.");
-    }
-
-    const id = this.nextJobId++;
-    const providerMap = new Map(providers.map((item) => [item.name, item]));
-    let payloadJson: string;
-    let runMessage: ParentToChildMessage;
-    try {
-      payloadJson = stringifyBounded(
-        {
-          id,
-          code,
-          providers: providers.map((item) => ({
-            name: item.name,
-            ...(item.prelude ? { prelude: item.prelude } : {}),
-          })),
-          options: this.runtimeOptions,
-        } satisfies RunPayload,
-        "QuickJS run payload",
-      );
-      runMessage = { type: "run", payloadJson };
-      stringifyBounded(runMessage, "QuickJS run IPC envelope");
-    } catch (err) {
-      return { result: undefined, error: msg(err) };
-    }
-
-    child.ref();
-    child.channel?.ref();
-    return new Promise<ExecuteResult>((resolve, reject) => {
-      const wallTimer = setTimeout(() => {
-        this.rejectActive(
-          slot,
-          new Error(`QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`),
+  ): Effect.Effect<ExecuteResult, Error> {
+    return Effect.gen({ self: this }, function* () {
+      if (signal?.aborted) {
+        return yield* Effect.fail(
+          cancelled("Execution was cancelled before it started."),
         );
-        this.recycle(slot);
-      }, this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS);
+      }
+      yield* this.ensureChild(slot, signal);
+      if (signal?.aborted) {
+        return yield* Effect.fail(
+          cancelled("Execution was cancelled before it started."),
+        );
+      }
+      const child = slot.child?.process;
+      if (!child?.connected) {
+        return yield* Effect.fail(
+          new Error("QuickJS child IPC channel is unavailable."),
+        );
+      }
+
+      const id = this.nextJobId++;
+      const providerMap = new Map(providers.map((item) => [item.name, item]));
+      let runMessage: ParentToChildMessage;
+      try {
+        const payloadJson = stringifyBounded(
+          {
+            id,
+            code,
+            providers: providers.map((item) => ({
+              name: item.name,
+              ...(item.prelude ? { prelude: item.prelude } : {}),
+            })),
+            options: this.runtimeOptions,
+          } satisfies RunPayload,
+          "QuickJS run payload",
+        );
+        runMessage = { type: "run", payloadJson };
+        stringifyBounded(runMessage, "QuickJS run IPC envelope");
+      } catch (err) {
+        return { result: undefined, error: msg(err) };
+      }
+
+      child.ref();
+      child.channel?.ref();
       const active: ActiveRun = {
         id,
         logs: [],
         logChars: 0,
         providers: providerMap,
-        resolve,
-        reject,
-        ...(signal ? { signal } : {}),
-        wallTimer,
+        outcome: Deferred.makeUnsafe(),
       };
-      active.onAbort = () => {
-        this.rejectActive(
-          slot,
-          new ExecutorAdmissionError(
-            "executor_cancelled",
-            "Execution was cancelled.",
-          ),
-        );
-        this.recycle(slot);
-      };
-      signal?.addEventListener("abort", active.onAbort, { once: true });
       slot.active = active;
-      if (signal?.aborted) {
-        active.onAbort();
-        return;
-      }
       try {
-        child.send(
-          runMessage,
-          (error) => {
-            if (!error || slot.active?.id !== id) return;
-            this.rejectActive(slot, error);
-            this.recycle(slot);
-          },
-        );
+        child.send(runMessage, (error) => {
+          if (!error || slot.active?.id !== id) return;
+          this.rejectActive(slot, error);
+          this.recycle(slot);
+        });
       } catch (err) {
         this.rejectActive(
           slot,
@@ -436,46 +455,152 @@ class QuickJsChildPool implements AdmittingExecutor {
         );
         this.recycle(slot);
       }
+
+      // Settle the outcome from outside the child, then leave the verdict to
+      // the outcome contender: exactly one party ever settles it. A run that
+      // has already settled keeps its child.
+      const endWith = (error: Error) =>
+        Effect.sync(() => {
+          if (slot.active !== active) return;
+          this.rejectActive(slot, error);
+          this.recycle(slot);
+        }).pipe(Effect.andThen(Effect.never));
+      const contenders: Array<Effect.Effect<ExecuteResult, Error>> = [
+        Deferred.await(active.outcome),
+        Effect.sleep(
+          Duration.millis(this.runtimeOptions.timeoutMs + CHILD_EXIT_GRACE_MS),
+        ).pipe(
+          Effect.andThen(
+            endWith(
+              new Error(
+                `QuickJS child exceeded the ${this.runtimeOptions.timeoutMs}ms wall budget and was terminated.`,
+              ),
+            ),
+          ),
+        ),
+      ];
+      if (signal) {
+        contenders.push(
+          fromSignal(signal).pipe(
+            Effect.catch(() => endWith(cancelled("Execution was cancelled."))),
+          ),
+        );
+      }
+      return yield* Effect.raceAllFirst(contenders);
     });
   }
 
-  private async ensureChild(
+  // A ready child on the slot: the warm one, or a new one once any crash
+  // backoff has passed. Waiting stops at the caller's abort, but a child that
+  // is still starting keeps starting for whoever leases the slot next.
+  private ensureChild(
     slot: ChildSlot,
-    signal?: AbortSignal,
-  ): Promise<void> {
-    if (this.closed) {
-      throw new ExecutorAdmissionError(
-        "executor_closed",
-        "Executor is shutting down.",
-      );
-    }
-    if (slot.child?.connected) {
-      if (slot.ready) await waitForReady(slot.ready, signal);
-      return;
-    }
-    await delay(Math.max(0, slot.notBefore - Date.now()), signal);
-    if (this.closed) {
-      throw new ExecutorAdmissionError(
-        "executor_closed",
-        "Executor is shutting down.",
-      );
-    }
+    signal: AbortSignal | undefined,
+  ): Effect.Effect<void, Error> {
+    return Effect.gen({ self: this }, function* () {
+      if (this.closed) return yield* Effect.fail(shuttingDown());
+      const current = slot.child;
+      if (current?.process.connected) {
+        return yield* this.awaitReady(current, signal);
+      }
+      // Disconnected but not yet closed: already on its way out.
+      if (current) this.retire(slot, current);
 
-    const sourceMode = import.meta.url.endsWith(".ts");
-    const childUrl = new URL(
-      sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js",
-      import.meta.url,
+      for (const crashedAt of slot.crashes.splice(0)) {
+        slot.backoff ??= yield* crashBackoff;
+        slot.notBefore = yield* slot.backoff(crashedAt);
+      }
+      const wait = slot.notBefore - Date.now();
+      if (wait > 0) {
+        yield* unlessCancelled(
+          Effect.sleep(Duration.millis(wait)),
+          signal,
+          "Execution was cancelled while the sandbox was restarting.",
+        );
+      }
+      if (this.closed) return yield* Effect.fail(shuttingDown());
+
+      const child = yield* this.spawn(slot);
+      return yield* this.awaitReady(child, signal);
+    });
+  }
+
+  private awaitReady(
+    child: Child,
+    signal: AbortSignal | undefined,
+  ): Effect.Effect<void, Error> {
+    if (Deferred.isDoneUnsafe(child.ready)) return Deferred.await(child.ready);
+    return unlessCancelled(
+      Deferred.await(child.ready),
+      signal,
+      "Execution was cancelled while the sandbox was starting.",
     );
-    const childPath = fileURLToPath(childUrl);
-    if (!existsSync(childPath)) {
-      throw new Error(
-        `QuickJS child entry is missing at ${childPath}. ` +
-          "The @zackbart/connecta/quickjs subpath requires the package file " +
-          "layout on disk; externalize @zackbart/connecta (or at least " +
-          "@zackbart/connecta/quickjs) when bundling the server.",
+  }
+
+  // Acquire a child into a Scope of its own. The Scope outlives the request
+  // that started the child — a warm child serves many leases — and closes
+  // when the pool retires it. The watchdog is forked during acquisition, so
+  // its finalizer is registered before the release and runs after it: the
+  // SIGTERM goes out first, synchronously, and the watchdog stops after.
+  private spawn(slot: ChildSlot): Effect.Effect<Child, Error> {
+    return Effect.suspend(() => {
+      const sourceMode = import.meta.url.endsWith(".ts");
+      const childUrl = new URL(
+        sourceMode ? "./quickjs-child.ts" : "./quickjs-child.js",
+        import.meta.url,
       );
-    }
-    const child = fork(childPath, [], {
+      const childPath = fileURLToPath(childUrl);
+      if (!existsSync(childPath)) {
+        return Effect.fail(
+          new Error(
+            `QuickJS child entry is missing at ${childPath}. ` +
+              "The @zackbart/connecta/quickjs subpath requires the package file " +
+              "layout on disk; externalize @zackbart/connecta (or at least " +
+              "@zackbart/connecta/quickjs) when bundling the server.",
+          ),
+        );
+      }
+      const scope = Scope.makeUnsafe();
+      return Effect.acquireRelease(
+        Effect.sync(() => this.forkChild(slot, scope, childPath, sourceMode)).pipe(
+          Effect.tap((child) =>
+            Effect.forkIn(this.startupWatchdog(slot, child), scope),
+          ),
+        ),
+        terminate,
+      ).pipe(Scope.provide(scope));
+    });
+  }
+
+  // Fails a child that never reports ready. It lives in the child's Scope,
+  // so it ends with the child, and it finishes as soon as readiness settles
+  // either way, so a ready child leaves no timer behind.
+  private startupWatchdog(slot: ChildSlot, child: Child): Effect.Effect<void> {
+    return Effect.raceFirst(
+      Deferred.await(child.ready).pipe(Effect.ignore),
+      Effect.sleep(Duration.millis(CHILD_STARTUP_TIMEOUT_MS)).pipe(
+        Effect.andThen(
+          Effect.sync(() =>
+            this.failChildStartup(
+              slot,
+              child,
+              new Error(
+                `QuickJS child did not become ready within ${CHILD_STARTUP_TIMEOUT_MS}ms.`,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  private forkChild(
+    slot: ChildSlot,
+    scope: Scope.Closeable,
+    childPath: string,
+    sourceMode: boolean,
+  ): Child {
+    const subprocess = fork(childPath, [], {
       // The child needs only its entry path, exec arguments, and IPC channel.
       // Do not copy deployment credentials or Node startup configuration into
       // the process that contains the guest runtime.
@@ -483,46 +608,50 @@ class QuickJsChildPool implements AdmittingExecutor {
       execArgv: sourceMode ? ["--import", "tsx"] : [],
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
+    const child: Child = {
+      process: subprocess,
+      scope,
+      ready: Deferred.makeUnsafe(),
+      exited: Deferred.makeUnsafe(),
+      retired: false,
+    };
     let stderrTail: Buffer = Buffer.alloc(0);
-    child.stderr?.on("data", (chunk: Buffer | string) => {
+    subprocess.stderr?.on("data", (chunk: Buffer | string) => {
       stderrTail = retainStderrTail(stderrTail, chunk);
     });
     (
-      child.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null
+      subprocess.stderr as (NodeJS.ReadableStream & { unref?: () => void }) | null
     )?.unref?.();
     slot.child = child;
-    slot.ready = new Promise<void>((resolve, reject) => {
-      slot.resolveReady = resolve;
-      slot.rejectReady = reject;
-    });
-    slot.readyTimer = setTimeout(() => {
-      if (slot.child !== child || !slot.ready) return;
-      const error = new Error(
-        `QuickJS child did not become ready within ${CHILD_STARTUP_TIMEOUT_MS}ms.`,
-      );
-      this.failChildStartup(slot, child, error);
-    }, CHILD_STARTUP_TIMEOUT_MS);
-    child.on("message", (message: ChildToParentMessage) => {
+    subprocess.on("message", (message: ChildToParentMessage) => {
       void this.onMessage(slot, child, message);
     });
-    child.on("error", (error) => {
+    subprocess.on("error", (error) => {
       if (slot.child !== child) return;
-      if (slot.ready) {
+      if (!Deferred.isDoneUnsafe(child.ready)) {
         this.failChildStartup(slot, child, error);
         return;
       }
       this.rejectActive(slot, error);
       this.recycle(slot);
     });
+    subprocess.once("exit", () => {
+      Deferred.doneUnsafe(child.exited, Exit.void);
+    });
     // `close`, unlike `exit`, runs after the stdio streams have closed, so the
     // diagnostic includes stderr bytes flushed immediately before a crash.
-    child.on("close", (code, exitSignal) => {
-      const expected = slot.expectedExit === child;
-      if (slot.expectedExit === child) slot.expectedExit = undefined;
+    subprocess.on("close", (code, exitSignal) => {
+      Deferred.doneUnsafe(child.exited, Exit.void);
+      const expected = child.retired;
+      const current = slot.child === child;
       const exitDescription = `${
         exitSignal ? `signal ${exitSignal}` : `code ${String(code)}`
       }`;
-      this.rejectChildReady(
+      // Charge the crash and detach the child before failing its readiness:
+      // a settled Deferred resumes its waiter synchronously, and a successor
+      // must never find a dead child on the slot or a crash not yet counted.
+      if (!expected) this.recordCrash(slot);
+      this.retire(
         slot,
         child,
         childExitError(
@@ -530,23 +659,23 @@ class QuickJsChildPool implements AdmittingExecutor {
           stderrTail,
         ),
       );
-      if (slot.child === child) slot.child = undefined;
-      if (expected) return;
-      this.recordCrash(slot);
-      const error = childExitError(
-        `QuickJS child exited unexpectedly (${exitDescription}).`,
-        stderrTail,
+      if (expected || !current) return;
+      this.rejectActive(
+        slot,
+        childExitError(
+          `QuickJS child exited unexpectedly (${exitDescription}).`,
+          stderrTail,
+        ),
       );
-      this.rejectActive(slot, error);
     });
-    child.unref();
-    child.channel?.unref();
-    if (slot.ready) await waitForReady(slot.ready, signal);
+    subprocess.unref();
+    subprocess.channel?.unref();
+    return child;
   }
 
   private async onMessage(
     slot: ChildSlot,
-    child: ChildProcess,
+    child: Child,
     message: ChildToParentMessage,
   ): Promise<void> {
     // A compromised child is exactly the adversary this process boundary
@@ -554,7 +683,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     // Refuse malformed intake before touching any field.
     if (!message || typeof message !== "object") return;
     if (message.type === "ready") {
-      this.resolveChildReady(slot, child);
+      if (slot.child === child) Deferred.doneUnsafe(child.ready, Exit.void);
       return;
     }
     const active = slot.active;
@@ -580,7 +709,7 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     if (message.type === "host-call") {
       if (message.jobId !== active.id) return;
-      await this.handleHostCall(slot, child, active, message);
+      await this.handleHostCall(slot, child.process, active, message);
       return;
     }
     if (message.type !== "result" || message.jobId !== active.id) return;
@@ -591,7 +720,9 @@ class QuickJsChildPool implements AdmittingExecutor {
     }
     try {
       const payload = JSON.parse(message.payloadJson) as ExecutionPayload;
-      slot.consecutiveCrashes = 0;
+      // A result ends any crash streak: the next crash backs off from 100 ms.
+      slot.crashes.length = 0;
+      slot.backoff = undefined;
       slot.notBefore = 0;
       this.resolveActive(slot, payload.outcome);
       if (payload.timedOut) {
@@ -691,93 +822,47 @@ class QuickJsChildPool implements AdmittingExecutor {
     const resolved = outcome.logs === undefined && active.logs.length > 0
       ? { ...outcome, logs: active.logs }
       : outcome;
-    this.clearActive(slot, active);
-    active.resolve(resolved);
+    this.clearActive(slot);
+    Deferred.doneUnsafe(active.outcome, Exit.succeed(resolved));
   }
 
   private rejectActive(slot: ChildSlot, error: Error): void {
     const active = slot.active;
     if (!active) return;
-    this.clearActive(slot, active);
+    this.clearActive(slot);
     if (active.logs.length > 0) Object.assign(error, { logs: active.logs });
-    active.reject(error);
+    Deferred.doneUnsafe(active.outcome, Exit.fail(error));
   }
 
-  private clearActive(slot: ChildSlot, active: ActiveRun): void {
-    clearTimeout(active.wallTimer);
-    if (active.onAbort) {
-      active.signal?.removeEventListener("abort", active.onAbort);
-    }
+  private clearActive(slot: ChildSlot): void {
     slot.active = undefined;
-    slot.child?.unref();
-    slot.child?.channel?.unref();
-  }
-
-  private resolveChildReady(slot: ChildSlot, child: ChildProcess): void {
-    if (slot.child !== child || !slot.ready) return;
-    if (slot.readyTimer) clearTimeout(slot.readyTimer);
-    const resolve = slot.resolveReady;
-    slot.ready = undefined;
-    slot.resolveReady = undefined;
-    slot.rejectReady = undefined;
-    slot.readyTimer = undefined;
-    resolve?.();
-  }
-
-  private rejectChildReady(
-    slot: ChildSlot,
-    child: ChildProcess,
-    error: Error,
-  ): void {
-    if (slot.child !== child || !slot.ready) return;
-    if (slot.readyTimer) clearTimeout(slot.readyTimer);
-    const reject = slot.rejectReady;
-    slot.ready = undefined;
-    slot.resolveReady = undefined;
-    slot.rejectReady = undefined;
-    slot.readyTimer = undefined;
-    reject?.(error);
+    slot.child?.process.unref();
+    slot.child?.process.channel?.unref();
   }
 
   private recordCrash(slot: ChildSlot): void {
-    slot.consecutiveCrashes++;
-    slot.notBefore =
-      Date.now() +
-      Math.min(5_000, 100 * 2 ** (slot.consecutiveCrashes - 1));
+    slot.crashes.push(Date.now());
   }
 
-  private failChildStartup(
-    slot: ChildSlot,
-    child: ChildProcess,
-    error: Error,
-  ): void {
-    if (slot.child !== child || !slot.ready) return;
-    // Detach before the rejected readiness promise can release the lease. A
-    // queued successor must never observe a connected child that is unready
-    // and already on its way out.
-    slot.expectedExit = child;
-    this.rejectChildReady(slot, child, error);
-    slot.child = undefined;
+  private failChildStartup(slot: ChildSlot, child: Child, error: Error): void {
+    if (slot.child !== child || Deferred.isDoneUnsafe(child.ready)) return;
     this.recordCrash(slot);
-    child.kill();
+    this.retire(slot, child, error);
   }
 
   private recycle(slot: ChildSlot): void {
     const child = slot.child;
     if (!child) return;
-    this.rejectChildReady(
+    this.retire(
       slot,
       child,
       new Error("QuickJS child was recycled before becoming ready."),
     );
-    slot.expectedExit = child;
-    slot.child = undefined;
-    child.kill();
   }
 
-  private stopSlot(slot: ChildSlot): Promise<void> {
+  private stopSlot(slot: ChildSlot): void {
     const child = slot.child;
-    if (!child) return Promise.resolve();
+    if (!child) return;
     this.rejectActive(
       slot,
       new ExecutorExecutionError(
@@ -785,24 +870,24 @@ class QuickJsChildPool implements AdmittingExecutor {
         "Executor is shutting down.",
       ),
     );
-    this.rejectChildReady(
-      slot,
-      child,
-      new ExecutorAdmissionError(
-        "executor_closed",
-        "Executor is shutting down.",
-      ),
-    );
-    slot.expectedExit = child;
-    slot.child = undefined;
-    return new Promise((resolve) => {
-      const timer = setTimeout(resolve, 1_000);
-      child.once("exit", () => {
-        clearTimeout(timer);
-        resolve();
-      });
-      child.kill();
-    });
+    this.retire(slot, child, shuttingDown());
+  }
+
+  // Let a child go: off the slot first, so nothing new reaches it, then its
+  // Scope closes — the finalizer's SIGTERM is sent before this returns, since
+  // a detached fiber runs synchronously up to its first wait — and last its
+  // readiness fails with `readyError` if it never reported ready. Idempotent.
+  // The bounded wait for the exit continues in the background; close() waits
+  // for every one still running.
+  private retire(slot: ChildSlot, child: Child, readyError?: Error): void {
+    if (slot.child === child) slot.child = undefined;
+    if (!child.retired) {
+      child.retired = true;
+      const closing = detach(Scope.close(child.scope, Exit.void));
+      this.retiring.add(closing);
+      void closing.then(() => this.retiring.delete(closing));
+    }
+    if (readyError) Deferred.doneUnsafe(child.ready, Exit.fail(readyError));
   }
 }
 

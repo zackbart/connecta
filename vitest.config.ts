@@ -125,6 +125,10 @@ export const NODE_ONLY_SUITES = [
     reason: "runs the Node QuickJS child-process executor",
   },
   {
+    file: "test/quickjs-pool.test.ts",
+    reason: "mocks Node child-process forks to script child lifecycles",
+  },
+  {
     file: "test/quickjs-log-limits.test.ts",
     reason: "runs the Node QuickJS child-process executor",
   },
