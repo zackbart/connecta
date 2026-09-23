@@ -27,14 +27,26 @@
     { "binding": "CONNECTA_KV", "id": "replace-with-kv-namespace-id" }
   ],
 
-  // Activity history. Create with `wrangler d1 create connecta-activity`,
-  // paste the id, apply the schema in README.md, then uncomment the matching
-  // lines in src/index.ts. Off by default so this example deploys without a
-  // database.
+  // D1 databases, off by default so this example deploys without one.
+  // Uncomment the array and keep the entries you use.
+  //
+  // ACTIVITY_DB: activity history. Create with `wrangler d1 create
+  // connecta-activity`, paste the id, apply the schema in README.md, then
+  // uncomment the matching lines in src/index.ts.
+  //
+  // STORAGE_DB: strongly consistent storage with compare-and-set, in place of
+  // CONNECTA_KV. Create with `wrangler d1 create connecta-storage`, paste the
+  // id, apply the schema in README.md § "Strongly consistent storage", then
+  // pass `d1Storage(env.STORAGE_DB)` as `storage` in src/index.ts.
   // "d1_databases": [
   //   {
   //     "binding": "ACTIVITY_DB",
   //     "database_name": "connecta-activity",
+  //     "database_id": "replace-with-d1-database-id"
+  //   },
+  //   {
+  //     "binding": "STORAGE_DB",
+  //     "database_name": "connecta-storage",
   //     "database_id": "replace-with-d1-database-id"
   //   }
   // ],

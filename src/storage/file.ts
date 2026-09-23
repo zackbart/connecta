@@ -374,5 +374,35 @@ export function fileStorage(
         .filter((key) => Boolean(fresh(key)) && key.startsWith(prefix))
         .sort();
     },
+    // Atomic twice over: the lock makes this process the only writer of the
+    // file, and nothing between the comparison and the persisted rename
+    // yields, so no other call on this store can interleave. A write that
+    // cannot be persisted is rolled back so memory never claims a value the
+    // file does not hold.
+    async compareAndSet(key, expected, next, opts) {
+      assertOpen();
+      lock.assertHeld();
+      const previous = fresh(key);
+      if ((previous?.value ?? null) !== expected) return false;
+      if (next === null) {
+        if (!previous) return true;
+        delete data[key];
+      } else {
+        data[key] = {
+          value: next,
+          ...(opts?.ttlSeconds
+            ? { exp: Date.now() + opts.ttlSeconds * 1000 }
+            : {}),
+        };
+      }
+      try {
+        persist();
+      } catch (error) {
+        if (previous) data[key] = previous;
+        else delete data[key];
+        throw error;
+      }
+      return true;
+    },
   };
 }

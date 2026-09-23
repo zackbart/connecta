@@ -18,24 +18,25 @@ export function memoryStorage(): KVStorage {
     }
     return e;
   };
+  const write = (key: string, value: string, ttlSeconds?: number) => {
+    // Rotate through at most 16 existing keys. Live entries cannot keep an
+    // expired tail resident forever, and no request starts a background job.
+    for (let i = 0; i < 16; i++) {
+      const next = sweep.next();
+      if (next.done) { sweep = map.keys(); break; }
+      fresh(next.value);
+    }
+    map.set(key, {
+      value,
+      ...(ttlSeconds ? { exp: Date.now() + ttlSeconds * 1000 } : {}),
+    });
+  };
   return {
     async get(key) {
       return fresh(key)?.value ?? null;
     },
     async set(key, value, opts) {
-      // Rotate through at most 16 existing keys. Live entries cannot keep an
-      // expired tail resident forever, and no request starts a background job.
-      for (let i = 0; i < 16; i++) {
-        const next = sweep.next();
-        if (next.done) { sweep = map.keys(); break; }
-        fresh(next.value);
-      }
-      map.set(key, {
-        value,
-        ...(opts?.ttlSeconds
-          ? { exp: Date.now() + opts.ttlSeconds * 1000 }
-          : {}),
-      });
+      write(key, value, opts?.ttlSeconds);
     },
     async delete(key) {
       map.delete(key);
@@ -47,6 +48,14 @@ export function memoryStorage(): KVStorage {
           return key.startsWith(prefix) && map.has(key);
         })
         .sort();
+    },
+    // Atomic because nothing between the read and the write yields: the body
+    // runs to completion before any other call on this map can start.
+    async compareAndSet(key, expected, next, opts) {
+      if ((fresh(key)?.value ?? null) !== expected) return false;
+      if (next === null) map.delete(key);
+      else write(key, next, opts?.ttlSeconds);
+      return true;
     },
   };
 }

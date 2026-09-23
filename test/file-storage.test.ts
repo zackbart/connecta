@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { fileStorage } from "../src/storage/file.js";
+import { compareAndSetContract, requireCas } from "./storage-contract.js";
 
 vi.mock("node:fs", async (importOriginal) => ({
   ...await importOriginal<typeof import("node:fs")>(),
@@ -430,5 +431,80 @@ describe("fileStorage", () => {
     expect(error).toHaveBeenCalledOnce();
     expect(required(error.mock.calls[0])[0]).toContain("not valid JSON");
     expect(consoleError).not.toHaveBeenCalled();
+  });
+});
+
+describe("fileStorage compareAndSet", () => {
+  compareAndSetContract(() => requireCas(openStore(tempStatePath())));
+
+  it("stays atomic across reopen: a persisted claim still refuses a second claimant", async () => {
+    const path = tempStatePath();
+    const first = requireCas(openStore(path));
+    expect(await first.compareAndSet("claim", null, "a")).toBe(true);
+    first.close();
+
+    const second = requireCas(openStore(path));
+    expect(await second.compareAndSet("claim", null, "b")).toBe(false);
+    expect(await second.get("claim")).toBe("a");
+    expect(await second.compareAndSet("claim", "a", null)).toBe(true);
+    second.close();
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({});
+
+    const third = requireCas(openStore(path));
+    const results = await Promise.all(
+      Array.from({ length: 50 }, (_, i) => third.compareAndSet("claim", null, `c${i}`)),
+    );
+    expect(results.filter(Boolean)).toHaveLength(1);
+    third.close();
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({
+      claim: { value: `c${results.indexOf(true)}` },
+    });
+  });
+
+  it("persists the expiry it writes, so a reopened store sees the claim lapse", async () => {
+    vi.useFakeTimers({ toFake: ["Date"], now: Date.parse("2026-01-01T00:00:00.000Z") });
+    const path = tempStatePath();
+    const first = requireCas(openStore(path));
+    expect(await first.compareAndSet("lease", null, "held", { ttlSeconds: 5 })).toBe(true);
+    first.close();
+    const second = requireCas(openStore(path));
+    expect(await second.compareAndSet("lease", null, "thief")).toBe(false);
+    second.close();
+    vi.setSystemTime(Date.now() + 6_000);
+    const third = requireCas(openStore(path));
+    expect(await third.compareAndSet("lease", null, "next")).toBe(true);
+    expect(await third.get("lease")).toBe("next");
+  });
+
+  it("refuses a lost lock and leaves memory agreeing with the file", async () => {
+    const path = tempStatePath();
+    const store = requireCas(openStore(path));
+    await store.set("k", "v");
+    const replacement = JSON.stringify({ pid: process.pid, createdAt: 1, id: "replacement" });
+    writeFileSync(`${path}.lock`, replacement);
+    await expect(store.compareAndSet("k", "v", "stale")).rejects.toThrow("lock was lost");
+    expect(await store.get("k")).toBe("v");
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ k: { value: "v" } });
+  });
+
+  it("rolls back a claim whose write cannot be persisted", async () => {
+    const path = tempStatePath();
+    const store = requireCas(openStore(path));
+    await store.set("k", "v");
+    vi.spyOn(fs, "renameSync").mockImplementation(() => { throw new Error("rename failed"); });
+    await expect(store.compareAndSet("k", "v", "next")).rejects.toThrow("rename failed");
+    await expect(store.compareAndSet("fresh", null, "x")).rejects.toThrow("rename failed");
+    await expect(store.compareAndSet("k", "v", null)).rejects.toThrow("rename failed");
+    expect(await store.get("k")).toBe("v");
+    expect(await store.get("fresh")).toBeNull();
+    vi.restoreAllMocks();
+    expect(await store.compareAndSet("k", "v", "next")).toBe(true);
+    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ k: { value: "next" } });
+  });
+
+  it("refuses to claim through a closed store", async () => {
+    const store = requireCas(openStore(tempStatePath()));
+    store.close();
+    await expect(store.compareAndSet("k", null, "v")).rejects.toThrow("is closed");
   });
 });

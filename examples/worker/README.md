@@ -16,15 +16,17 @@ migrations, and secrets.
 | --- | --- |
 | `src/index.ts` | the Worker entrypoint — connector and auth configuration |
 | `src/cloudflare-kv.ts` | `KVStorage` over Workers KV (deployment-owned, not a package export) |
+| `src/d1-storage.ts` | `KVStorage` over D1 with atomic compare-and-set (optional; see below) |
 | `src/d1-activity.ts` | `ActivityStore` over D1 (deployment-owned; see below) |
 | `src/d1-activity-row.ts` | the row ↔ event mapping `d1-activity.ts` uses, including friction derived from `error_code` for rows written before that column existed |
 | `wrangler.jsonc` | Worker name, vars, bindings, `compatibility_flags` |
 
-`cloudflare-kv.ts` and `d1-activity.ts` deliberately live here rather than in
-the package: storage backends are deployment-owned, so the package ships only
-the generic `KVStorage` and `ActivityStore` contracts. Workers KV is eventually
-consistent across locations; use a strongly consistent `KVStorage` adapter when
-OAuth disconnect or credential rotation must become globally visible
+`cloudflare-kv.ts`, `d1-storage.ts`, and `d1-activity.ts` deliberately live
+here rather than in the package: storage backends are deployment-owned, so the
+package ships only the generic `KVStorage` and `ActivityStore` contracts.
+Workers KV is eventually consistent across locations; use a strongly consistent
+`KVStorage` adapter, such as [`d1-storage.ts`](#strongly-consistent-storage-optional),
+when OAuth disconnect or credential rotation must become globally visible
 immediately.
 
 ## Deploy
@@ -213,6 +215,50 @@ serves the seven-tool surface. Do not add `bindings`, `modules`, or
 `globalOutbound`; they grant guest code ambient authority. A copied deployment
 owns the package install — see
 [copied into its own repository](#copied-into-its-own-repository).
+
+## Strongly consistent storage (optional)
+
+`KVStorage` has an optional atomic `compareAndSet`, for a subsystem that must
+claim a key exactly once. **Workers KV cannot provide it.** It is eventually
+consistent: two locations can each read a key as absent and both write, so
+`cloudflare-kv.ts` declares no `compareAndSet` rather than fake one with a read
+followed by a write. `src/d1-storage.ts` is a complete `KVStorage` over D1
+that does provide it, one SQL statement per claim, with TTLs honored at read
+time. It replaces the KV namespace rather than sitting beside it: every piece
+of connecta state lives in one store.
+
+1. Create the database and uncomment the `STORAGE_DB` entry of the
+   `d1_databases` binding in `wrangler.jsonc`, pasting in the id it prints:
+
+   ```sh
+   wrangler d1 create connecta-storage
+   ```
+
+2. Apply the schema (keep it in a deployment-owned `migrations/` directory):
+
+   ```sql
+   CREATE TABLE IF NOT EXISTS connecta_kv (
+     key           TEXT PRIMARY KEY,
+     value         TEXT NOT NULL,
+     expires_at_ms INTEGER
+   );
+
+   CREATE INDEX IF NOT EXISTS connecta_kv_expiry
+     ON connecta_kv (expires_at_ms);
+   ```
+
+3. In `src/index.ts`, add `STORAGE_DB: D1Database` to `Env` and build the store
+   from it:
+
+   ```ts
+   import { d1Storage } from "./d1-storage.js";
+
+   const storage = d1Storage(env.STORAGE_DB);
+   ```
+
+   Switching an existing deployment starts from empty state: downstream OAuth
+   connections must be re-authorized and vault credentials re-entered, because
+   nothing copies them out of the KV namespace.
 
 ## Activity history (optional)
 
