@@ -26,6 +26,7 @@ import {
   unavailableCallError,
 } from "../errors.js";
 import { CONNECTA_VERSION } from "../version.js";
+import { learnedUrlRefusal } from "../url-safety.js";
 import { inheritOAuthSealer, oauthSealerFor } from "../oauth-sealing.js";
 import type {
   Connector,
@@ -460,7 +461,8 @@ function redirectedInit(init: RequestInit, status: number): RequestInit {
  * Wrap fetch with explicit, bounded redirect handling.
  *
  * The starting URL of each fetch call is trusted by its caller (the configured
- * MCP endpoint, or an OAuth URL discovered by the pinned SDK). Only Location
+ * MCP endpoint, or an OAuth URL the pinned SDK discovered and
+ * `learnedUrlSafeFetch` already admitted). Only Location
  * values are policy-controlled here. No rejected target is ever fetched, so
  * arbitrary static header names receive the same protection as Authorization.
  */
@@ -548,6 +550,41 @@ export function redirectSafeFetch(
       init = redirectedInit(init, response.status);
       current = next;
     }
+  };
+}
+
+class RemoteMcpDestinationError extends ConnectorCallError {
+  constructor(connectorId: string, reason: string) {
+    super(
+      "connector_call_failed",
+      `Connector "${connectorId}" refused an OAuth URL the downstream advertised: ${reason}.`,
+    );
+    this.name = "RemoteMcpDestinationError";
+  }
+}
+
+/**
+ * Refuse, before any request leaves, a URL the downstream taught the OAuth
+ * flow that points somewhere connecta must not go (see `url-safety.ts`).
+ *
+ * The SDK learns authorization-server, token, and registration URLs from the
+ * downstream's own metadata and fetches them through the transport's fetch,
+ * so this sits on that fetch: above `redirectSafeFetch`, whose same-origin
+ * rule keeps every hop on the host checked here, and below the refresh
+ * coordinator, which already treats a non-retryable `ConnectorCallError` as
+ * connecta's own refusal rather than a token-endpoint verdict.
+ */
+function learnedUrlSafeFetch(
+  connectorId: string,
+  configured: URL,
+  baseFetch: FetchLike,
+): FetchLike {
+  return async (input, init) => {
+    const reason = learnedUrlRefusal(configured, new URL(input));
+    if (reason !== undefined) {
+      throw new RemoteMcpDestinationError(connectorId, reason);
+    }
+    return await baseFetch(input, init);
   };
 }
 
@@ -869,7 +906,7 @@ export function remoteMcp(id: string, opts: RemoteMcpOptions): Connector {
         authProvider: oauthProvider,
         fetch: refreshCoordinator.coordinatedFetch(
           oauthProvider,
-          guardedFetch,
+          learnedUrlSafeFetch(id, url, guardedFetch),
           ctx.signal,
         ),
       });
