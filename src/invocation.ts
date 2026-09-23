@@ -36,7 +36,7 @@ function defined<T extends object>(
 }
 
 /** Add the effect's wall time to `bucket` however it ends, interruption included. */
-function timed<A, E, R>(
+export function timed<A, E, R>(
   bucket: (elapsed: number) => void,
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> {
@@ -234,7 +234,12 @@ export class InvocationService {
     return runEdge(this.pipeline(address, args, context));
   }
 
-  private pipeline<T>(
+  /**
+   * `invoke` without the Promise, for a caller already running a fiber —
+   * code mode's host calls yield it rather than crossing a second edge. It
+   * never fails: every outcome, refusals included, is its success value.
+   */
+  pipeline<T>(
     address: string,
     args: unknown,
     context: InvocationContext<T>,
