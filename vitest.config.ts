@@ -51,6 +51,7 @@ export const WORKERS_SUITES = [
   "test/remote-mcp.test.ts",
   "test/revenuecat-provider.test.ts",
   "test/runtime.test.ts",
+  "test/runtime-admission.test.ts",
   "test/server-route-contracts.test.ts",
   "test/server.test.ts",
   "test/startup-warnings.test.ts",

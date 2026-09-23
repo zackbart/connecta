@@ -128,22 +128,26 @@ export function withDeadlineEffect<A, E, R>(
     const forwardAbort = () => controller.abort(options.signal?.reason);
     options.signal?.addEventListener("abort", forwardAbort, { once: true });
     if (options.signal?.aborted) forwardAbort();
-    const aborted = fromSignal(controller.signal);
-    const deadline = options.timeoutMs === undefined
-      ? aborted
-      : Effect.raceFirst(
-          aborted,
-          Effect.sleep(Duration.millis(options.timeoutMs)).pipe(
-            Effect.andThen(
-              Effect.sync(() => controller.abort(options.timeoutError)),
-            ),
-            Effect.andThen(Effect.never),
-          ),
-        );
-    return Effect.raceFirst(
+    // One race, not a race nested in a race: every contender is a forked
+    // fiber, and forks are most of what a deadline costs (P1-S02 measured
+    // about 2µs per raceFirst). Fork order is unchanged — operation, abort,
+    // timer — and the timer still aborts the signal before anything is
+    // interrupted, so the abort contender wins with the labelled reason.
+    const contenders: Array<Effect.Effect<A, unknown, R>> = [
       Effect.suspend(() => operation(controller.signal)),
-      deadline,
-    ).pipe(
+      fromSignal(controller.signal),
+    ];
+    if (options.timeoutMs !== undefined) {
+      contenders.push(
+        Effect.sleep(Duration.millis(options.timeoutMs)).pipe(
+          Effect.andThen(
+            Effect.sync(() => controller.abort(options.timeoutError)),
+          ),
+          Effect.andThen(Effect.never),
+        ),
+      );
+    }
+    return Effect.raceAllFirst(contenders).pipe(
       Effect.ensuring(
         Effect.sync(() => {
           controller.abort();

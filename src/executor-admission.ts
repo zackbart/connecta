@@ -1,3 +1,6 @@
+import { Deferred, Duration, Effect } from "effect";
+import { admit, provideAdmissionProgram } from "./runtime/admission.js";
+import { fromSignal, runEdge } from "./runtime/run.js";
 import type {
   AdmittingExecutor,
   AdmissionSnapshot,
@@ -54,13 +57,15 @@ export interface AdmissionLease {
   release(): void;
 }
 
+/**
+ * One queued caller. Its outcome is a Deferred completed by exactly one party:
+ * release() with a lease, close() with a shutdown error, or the waiting fiber
+ * itself on timeout or abort. remove() arbitrates, as it always has — only
+ * the party that takes the waiter out of the queue may settle it.
+ */
 interface Waiter {
-  queuedAt: number;
-  resolve: (lease: AdmissionLease) => void;
-  reject: (error: ExecutorAdmissionError) => void;
-  signal?: AbortSignal;
-  onAbort?: () => void;
-  timer?: ReturnType<typeof setTimeout>;
+  readonly queuedAt: number;
+  readonly outcome: Deferred.Deferred<AdmissionLease, ExecutorAdmissionError>;
 }
 
 export interface AdmissionControllerOptions {
@@ -157,78 +162,21 @@ export class AdmissionController {
   }
 
   acquire(options: { signal?: AbortSignal } = {}): Promise<AdmissionLease> {
-    if (this.closed) {
-      this.closedTotal++;
-      return Promise.reject(
-        new ExecutorAdmissionError(
-          "executor_closed",
-          "Executor is shutting down.",
-        ),
-      );
-    }
-    if (options.signal?.aborted) {
-      this.cancelledTotal++;
-      return Promise.reject(
-        new ExecutorAdmissionError(
-          "executor_cancelled",
-          "Execution was cancelled before admission.",
-        ),
-      );
-    }
-    if (this.active < this.concurrency) {
-      this.active++;
-      this.admittedTotal++;
-      return Promise.resolve(this.makeLease(0));
-    }
-    if (this.waiters.length >= this.maxQueueSize) {
-      this.rejectedTotal++;
-      return Promise.reject(this.overloaded("Executor queue is full."));
-    }
-
-    return new Promise<AdmissionLease>((resolve, reject) => {
-      const waiter: Waiter = {
-        queuedAt: Date.now(),
-        resolve,
-        reject,
-        ...(options.signal ? { signal: options.signal } : {}),
-      };
-      waiter.onAbort = () => {
-        if (!this.remove(waiter)) return;
-        this.cleanup(waiter);
-        this.cancelledTotal++;
-        reject(
-          new ExecutorAdmissionError(
-            "executor_cancelled",
-            "Execution was cancelled while queued.",
-          ),
-        );
-      };
-      options.signal?.addEventListener("abort", waiter.onAbort, { once: true });
-      waiter.timer = setTimeout(() => {
-        if (!this.remove(waiter)) return;
-        this.cleanup(waiter);
-        this.rejectedTotal++;
-        reject(
-          this.overloaded(
-            `Executor admission timed out after ${this.queueTimeoutMs}ms.`,
-          ),
-        );
-      }, this.queueTimeoutMs);
-      this.waiters.push(waiter);
-      this.queuedTotal++;
-    });
+    return runEdge(admit(this, options));
   }
 
   close(): void {
     if (this.closed) return;
     this.closed = true;
     for (const waiter of this.waiters.splice(0)) {
-      this.cleanup(waiter);
       this.closedTotal++;
-      waiter.reject(
-        new ExecutorAdmissionError(
-          "executor_closed",
-          "Executor is shutting down.",
+      Deferred.doneUnsafe(
+        waiter.outcome,
+        Effect.fail(
+          new ExecutorAdmissionError(
+            "executor_closed",
+            "Executor is shutting down.",
+          ),
         ),
       );
     }
@@ -257,14 +205,13 @@ export class AdmissionController {
     if (this.closed) return;
     const waiter = this.waiters.shift();
     if (!waiter) return;
-    this.cleanup(waiter);
     const waitMs = Math.max(0, Date.now() - waiter.queuedAt);
     this.admittedTotal++;
     this.queueWaitCount++;
     this.queueWaitTotalMs += waitMs;
     this.queueWaitMaxMs = Math.max(this.queueWaitMaxMs, waitMs);
     this.active++;
-    waiter.resolve(this.makeLease(waitMs));
+    Deferred.doneUnsafe(waiter.outcome, Effect.succeed(this.makeLease(waitMs)));
   }
 
   private remove(waiter: Waiter): boolean {
@@ -274,11 +221,115 @@ export class AdmissionController {
     return true;
   }
 
-  private cleanup(waiter: Waiter): void {
-    if (waiter.timer !== undefined) clearTimeout(waiter.timer);
-    if (waiter.onAbort) {
-      waiter.signal?.removeEventListener("abort", waiter.onAbort);
+  // The waiting fiber was interrupted — an Effect caller's scope closed, not a
+  // signal. Withdraw the waiter if it is still queued; if release() handed it
+  // a slot in the same breath, give the slot back, because nobody is left to
+  // receive the lease. (A line comment, not JSDoc: TypeScript copies a private
+  // member's JSDoc into the published declaration.)
+  private cleanup(waiter: Waiter): Effect.Effect<void> {
+    if (this.remove(waiter)) {
+      this.cancelledTotal++;
+      return Effect.void;
     }
+    if (!Deferred.isDoneUnsafe(waiter.outcome)) return Effect.void;
+    return Deferred.await(waiter.outcome).pipe(
+      Effect.tap((lease) => Effect.sync(() => lease.release())),
+      Effect.ignore,
+    );
+  }
+
+  // The admission program, handed to src/runtime/admission.ts. It lives in a
+  // static block because the class declaration ships, private member names
+  // and all: a new method or field would change the published `.d.ts`, and a
+  // static block is the one place outside an instance method that may read
+  // this bookkeeping while emitting nothing there.
+  static {
+    provideAdmissionProgram((controller, signal) =>
+      Effect.suspend(() => {
+        if (controller.closed) {
+          controller.closedTotal++;
+          return Effect.fail(
+            new ExecutorAdmissionError(
+              "executor_closed",
+              "Executor is shutting down.",
+            ),
+          );
+        }
+        if (signal?.aborted) {
+          controller.cancelledTotal++;
+          return Effect.fail(
+            new ExecutorAdmissionError(
+              "executor_cancelled",
+              "Execution was cancelled before admission.",
+            ),
+          );
+        }
+        if (controller.active < controller.concurrency) {
+          controller.active++;
+          controller.admittedTotal++;
+          return Effect.succeed(controller.makeLease(0));
+        }
+        if (controller.waiters.length >= controller.maxQueueSize) {
+          controller.rejectedTotal++;
+          return Effect.fail(controller.overloaded("Executor queue is full."));
+        }
+
+        const waiter: Waiter = {
+          queuedAt: Date.now(),
+          outcome: Deferred.makeUnsafe(),
+        };
+        controller.waiters.push(waiter);
+        controller.queuedTotal++;
+
+        // A timeout or abort settles the waiter only if it takes it out of the
+        // queue first. Otherwise release() or close() got there in the same
+        // tick, and the outcome they recorded is the answer.
+        const giveUp = (
+          count: () => void,
+          error: () => ExecutorAdmissionError,
+        ): Effect.Effect<AdmissionLease, ExecutorAdmissionError> =>
+          Effect.suspend(() => {
+            if (!controller.remove(waiter)) return Deferred.await(waiter.outcome);
+            count();
+            return Effect.fail(error());
+          });
+
+        // One flat race; each contender is a forked fiber.
+        const contenders = [
+          Deferred.await(waiter.outcome),
+          Effect.sleep(Duration.millis(controller.queueTimeoutMs)).pipe(
+            Effect.andThen(
+              giveUp(
+                () => controller.rejectedTotal++,
+                () =>
+                  controller.overloaded(
+                    `Executor admission timed out after ${controller.queueTimeoutMs}ms.`,
+                  ),
+              ),
+            ),
+          ),
+        ];
+        if (signal) {
+          contenders.push(
+            fromSignal(signal).pipe(
+              Effect.catch(() =>
+                giveUp(
+                  () => controller.cancelledTotal++,
+                  () =>
+                    new ExecutorAdmissionError(
+                      "executor_cancelled",
+                      "Execution was cancelled while queued.",
+                    ),
+                ),
+              ),
+            ),
+          );
+        }
+        return Effect.raceAllFirst(contenders).pipe(
+          Effect.onInterrupt(() => controller.cleanup(waiter)),
+        );
+      }),
+    );
   }
 }
 
