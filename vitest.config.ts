@@ -52,6 +52,7 @@ export const WORKERS_SUITES = [
   "test/revenuecat-provider.test.ts",
   "test/runtime.test.ts",
   "test/runtime-admission.test.ts",
+  "test/runtime-call-admission.test.ts",
   "test/server-route-contracts.test.ts",
   "test/server.test.ts",
   "test/startup-warnings.test.ts",

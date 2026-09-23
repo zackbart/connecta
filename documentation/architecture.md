@@ -227,7 +227,8 @@ shape from building, in someone else's repository rather than this one.
 
 ## Effect inside
 
-Request admission and deadlines run on Effect v4; the rest of the core has
+Request admission, downstream call admission, deadlines, bounded settled
+fan-out, and connector scope close run on Effect v4; the rest of the core has
 not moved yet. Every published signature stays Promise-shaped, so each
 converted module is a shell and a core. The shell keeps its exported class or
 function exactly as it was: same members, same errors, same `.d.ts`, private
@@ -235,8 +236,14 @@ member names included. The core is an Effect program behind it.
 `AdmissionController.acquire()` runs the admission program and resolves with
 the lease, or rejects with the same `ExecutorAdmissionError`. An Effect caller
 skips the Promise and takes the program from `src/runtime/admission.ts`
-(`admit`, or `acquireScoped` for a lease its Scope releases). `withDeadline` is
-the Promise face of `withDeadlineEffect`.
+(`admit`, or `acquireScoped` for a lease its Scope releases). Call admission
+follows the same shape, kept a separate controller as #453 requires:
+`ConnectorCallAdmissionController.acquire()` over `src/runtime/call-admission.ts`
+(`admitCall`, `acquireCallScoped`), with the rolling window read from the
+fiber's Clock. `closeConnectorScope` is the Promise face of `closeScope` in
+`src/runtime/connector-scope.ts`, which an Effect caller registers as a Scope
+finalizer (`closeScopeOnExit`). `withDeadline` is the Promise face of
+`withDeadlineEffect`.
 
 `src/runtime/run.ts` is the only place a fiber starts, and
 `test/purity.test.ts` fails if any other file calls `Effect.run*`, `runFork`,

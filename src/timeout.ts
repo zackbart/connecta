@@ -20,32 +20,6 @@ export function normalizeTimeoutMs(
   return Math.max(1, Math.trunc(value));
 }
 
-/**
- * Resolve after `ms`, or false when the caller aborts first.
- *
- * Deliberately a bare timer rather than a run of `Effect.sleep`: there is no
- * work here for a fiber to own, and Effect's clock reads a zero or negative
- * wait as a microtask yield and a non-finite one as forever, where
- * `setTimeout` treats both as "next macrotask". Effect code sleeps with
- * `Effect.sleep` and never needs this.
- */
-export function sleep(ms: number, signal?: AbortSignal): Promise<boolean> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      signal?.removeEventListener("abort", cancel);
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(true), ms);
-    const cancel = () => finish(false);
-    signal?.addEventListener("abort", cancel, { once: true });
-    if (signal?.aborted) cancel();
-  });
-}
-
 export interface DeadlineOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
