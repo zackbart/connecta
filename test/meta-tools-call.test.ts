@@ -983,7 +983,7 @@ describe("call_tool size guard + get_result", () => {
     const mt = createMetaTools(registryWithData, BASE);
     const result = await mt.callTool({ address: "data.big" });
     const lines = required(result.content[0]).text.split("\n");
-    const notice = JSON.parse(required(lines[lines.length - 1])) as {
+    const notice = JSON.parse(required(lines[0])) as {
       truncated: boolean;
       resultId: string;
       totalBytes: number;
@@ -996,7 +996,7 @@ describe("call_tool size guard + get_result", () => {
     expect(notice.totalBytes).toBeGreaterThan(100);
     expect(notice.nextAction).toEqual({
       tool: "get_result",
-      arguments: { id: notice.resultId, offset: 0 },
+      arguments: { id: notice.resultId, offset: 100 },
     });
 
     // Round-trip the full text back through get_result.
@@ -1074,7 +1074,7 @@ describe("call_tool size guard + get_result", () => {
     );
     const call = await mt.callTool({ address: "mb.get" });
     const lines = required(call.content[0]).text.split("\n");
-    const notice = JSON.parse(required(lines[lines.length - 1])) as { resultId: string };
+    const notice = JSON.parse(required(lines[0])) as { resultId: string };
 
     const expected = JSON.stringify(JSON.parse(original));
     let offset = 0;
@@ -1111,7 +1111,7 @@ describe("call_tool size guard + get_result", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "mb2.get" });
-    const head = required(call.content[0]).text.split("\n")[0];
+    const head = required(call.content[0]).text.split("\n")[1];
     expect(head).not.toContain("�");
     // Head is a byte-exact prefix of the original (JSON-encoded) string.
     const full = JSON.stringify("abc😀defghijklmnop");
@@ -1154,7 +1154,7 @@ describe("per-connector maxResultBytes override", () => {
     head: string;
     notice: Notice;
   } {
-    const [head, notice] = required(result.content[0]).text.split("\n");
+    const [notice, head] = required(result.content[0]).text.split("\n");
     return {
       head: required(head),
       notice: JSON.parse(required(notice)) as Notice,
@@ -1271,7 +1271,7 @@ describe("maxResultBytes validation", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "c.big" });
-    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[1])) as {
+    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[0])) as {
       resultId: string;
     };
     return { mt, resultId: notice.resultId };
@@ -1321,7 +1321,7 @@ describe("maxResultBytes validation", () => {
       BASE,
     );
     const result = await mt.callTool({ address: "c.big" });
-    // Falls back to the built-in 50_000, so 502 bytes stay inline whole.
+    // Falls back to the built-in 24_000, so 502 bytes stay inline whole.
     expect(required(result.content[0]).text, `cap ${String(maxResultBytes)}`).toBe(FULL);
   });
 
@@ -1331,7 +1331,7 @@ describe("maxResultBytes validation", () => {
       BASE,
     );
     const result = await mt.callTool({ address: "c.big" });
-    const [head] = required(result.content[0]).text.split("\n");
+    const [, head] = required(result.content[0]).text.split("\n");
     // Inherits the deployment-wide 400 exactly as an unset override would.
     expect(head, `override ${String(override)}`).toBe(FULL.slice(0, 400));
   });
@@ -1355,7 +1355,7 @@ describe("maxResultBytes validation", () => {
     const result = await createMetaTools(registry, BASE).callTool({
       address: "c.big",
     });
-    expect(required(result.content[0]).text.split("\n")[0]).toBe(FULL.slice(0, warned));
+    expect(required(result.content[0]).text.split("\n")[1]).toBe(FULL.slice(0, warned));
   });
 
   it("leaves valid caps byte-identical at every level", async () => {
@@ -1371,13 +1371,12 @@ describe("maxResultBytes validation", () => {
         BASE,
       ).callTool({ address: "c.big" });
       const expected = cap >= FULL.length ? FULL : FULL.slice(0, cap);
-      expect(required(viaGlobal.content[0]).text.split("\n")[0], `global ${cap}`).toBe(
-        expected,
-      );
-      expect(
-        required(viaOverride.content[0]).text.split("\n")[0],
-        `override ${cap}`,
-      ).toBe(expected);
+      const preview = (result: typeof viaGlobal) =>
+        cap >= FULL.length
+          ? required(result.content[0]).text
+          : required(result.content[0]).text.split("\n")[1];
+      expect(preview(viaGlobal), `global ${cap}`).toBe(expected);
+      expect(preview(viaOverride), `override ${cap}`).toBe(expected);
     }
   });
 });
@@ -1484,7 +1483,7 @@ describe("handler returns JSON cannot represent", () => {
       BASE,
     );
     const call = await mt.callTool({ address: "ret.get" });
-    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[1])) as {
+    const notice = JSON.parse(required(required(call.content[0]).text.split("\n")[0])) as {
       resultId: string;
       totalBytes: number;
     };
@@ -1556,12 +1555,13 @@ describe("mcp-mode content size guard", () => {
       address: "down.fetch",
     });
     const lines = required(result.content[0]).text.split("\n");
-    const notice = JSON.parse(required(lines[lines.length - 1])) as Notice;
-    const head = lines.slice(0, -1).join("\n");
+    const notice = JSON.parse(required(lines[0])) as Notice;
+    const head = lines.slice(1).join("\n");
     expect(notice.truncated).toBe(true);
-    // One unit for all three: the cap, the head served, and totalBytes.
+    // One unit for the cap and totalBytes: the envelope. The preview is the
+    // blocks' readable text, bounded by the same cap.
     expect(notice.totalBytes).toBe(byteLength(full));
-    expect(head).toBe(full.slice(0, cap));
+    expect(head).toBe(content.map((b) => b.text).join("\n").slice(0, cap));
     expect(byteLength(head)).toBeLessThanOrEqual(cap);
   });
 
@@ -1686,7 +1686,7 @@ describe("get_result offset validation and alignment", () => {
     );
     const call = await mt.callTool({ address: "mb.get" });
     const lines = required(call.content[0]).text.split("\n");
-    const notice = JSON.parse(required(lines[lines.length - 1])) as { resultId: string };
+    const notice = JSON.parse(required(lines[0])) as { resultId: string };
     return { mt, resultId: notice.resultId };
   }
 
@@ -1967,7 +1967,7 @@ describe("audit regressions", () => {
 
 describe("bounded result stash", () => {
   const notice = (result: { content: { text: string }[] }) =>
-    JSON.parse(required(required(result.content[0]).text.split("\n").at(-1)));
+    JSON.parse(required(required(result.content[0]).text.split("\n")[0]));
 
   it.each([
     { maxStashBytes: 1 },
@@ -1976,7 +1976,7 @@ describe("bounded result stash", () => {
     const mt = createMetaTools(new Registry([capped("large", 100)], { storage: memoryStorage(), logger: silentLogger, results }), BASE);
     const result = await mt.callTool({ address: "large.big" });
     expect(result.isError).toBeFalsy();
-    expect(required(result.content[0]).text.startsWith(FULL.slice(0, 100))).toBe(true);
+    expect(required(result.content[0]).text.split("\n")[1]).toBe(FULL.slice(0, 100));
     expect(notice(result)).toMatchObject({ truncated: true, totalBytes: FULL.length });
     expect(notice(result).hint).toContain("Paging is unavailable");
     expect(notice(result)).not.toHaveProperty("resultId");
@@ -2155,5 +2155,170 @@ describe("bounded result stash", () => {
       }
       expect(text).toBe(stashed);
     }
+  });
+});
+
+describe("truncated results lead with their get_result handle", () => {
+  // JSON lines: quote-heavy, so a serialized content envelope would escape
+  // every one of them and a preview cut from it would read `\"ts\":…`.
+  const JSON_LINES = Array.from({ length: 400 }, (_, i) =>
+    JSON.stringify({ ts: `2026-09-16T00:${String(i % 60).padStart(2, "0")}:00Z`, actor: `user${i}@example.com`, action: "login" }),
+  ).join("\n");
+
+  /** A kind:"mcp" connector returning `content`, read-only or write-capable. */
+  function downstream(content: unknown[], readOnly: boolean): Connector {
+    return connectorWith({
+      id: "down",
+      kind: "mcp",
+      tools: [{ name: "run", annotations: { readOnlyHint: readOnly } }],
+      call: async () => ({ content }),
+    });
+  }
+
+  interface LeadingNotice {
+    truncated: true;
+    resultId: string;
+    totalBytes: number;
+    nextAction: { tool: string; arguments: { id: string; offset: number } };
+    hint: string;
+  }
+
+  /** The first line of a truncated text result is its notice; the rest is the preview. */
+  function lead(result: { content: { text: string }[] }): { notice: LeadingNotice; preview: string } {
+    expect(result.content).toHaveLength(1);
+    const text = required(result.content[0]).text;
+    const newline = text.indexOf("\n");
+    expect(newline).toBeGreaterThan(0);
+    return {
+      notice: JSON.parse(text.slice(0, newline)) as LeadingNotice,
+      preview: text.slice(newline + 1),
+    };
+  }
+
+  async function pageFrom(mt: ReturnType<typeof createMetaTools>, id: string, from: number): Promise<string> {
+    let text = "";
+    let offset: number | undefined = from;
+    while (offset !== undefined) {
+      const page = textOf(await mt.getResult({ id, offset })) as { text: string; nextOffset?: number };
+      text += page.text;
+      offset = page.nextOffset;
+    }
+    return text;
+  }
+
+  it("puts the notice and its next action before the preview", async () => {
+    const mt = createMetaTools(makeRegistry([capped("c")], { maxResultBytes: 100 }), BASE);
+    const { notice, preview } = lead(await mt.callTool({ address: "c.big" }));
+    expect(notice).toMatchObject({ truncated: true, totalBytes: FULL.length });
+    expect(notice.resultId).toBeTypeOf("string");
+    // The preview is the first `cap` bytes, so paging continues where it stops.
+    expect(preview).toBe(FULL.slice(0, 100));
+    expect(notice.nextAction).toEqual({
+      tool: "get_result",
+      arguments: { id: notice.resultId, offset: 100 },
+    });
+    expect(preview + await pageFrom(mt, notice.resultId, 100)).toBe(FULL);
+  });
+
+  it.each([
+    ["callTool", true],
+    ["callDestructiveTool", false],
+  ] as const)("keeps the %s handle inside what a cutting client still shows", async (method, readOnly) => {
+    // Claude Code replaces an oversized MCP result with its first 2,000
+    // characters of `JSON.stringify(content, null, 2)`. A tail notice never
+    // survives that; a leading one must.
+    const mt = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], readOnly)], { maxResultBytes: 10_000 }),
+      BASE,
+    );
+    const result = await mt[method]({ address: "down.run" });
+    const { notice } = lead(result);
+    const shown = JSON.stringify(result.content, null, 2).slice(0, 2_000);
+    expect(shown).toContain(notice.resultId);
+    expect(shown).toContain("get_result");
+    expect(shown).toContain(String(notice.totalBytes));
+  });
+
+  it("tells a write's caller that the call already ran and must not be repeated", async () => {
+    const mt = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], false)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { notice } = lead(await mt.callDestructiveTool({ address: "down.run", reason: "export" }));
+    expect(notice.hint).toMatch(/already ran/i);
+    expect(notice.hint).toMatch(/do not (call|repeat|run)/i);
+    expect(notice.hint).toContain("get_result");
+    const value = textOf(
+      await mt.callDestructiveTool({ address: "down.run", reason: "export", resultMode: "value" }),
+    ) as { data: LeadingNotice };
+    expect(value.data.hint).toMatch(/already ran/i);
+
+    const read = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { notice: readNotice } = lead(await read.callTool({ address: "down.run" }));
+    expect(readNotice.hint).not.toMatch(/already ran/i);
+    expect(readNotice.hint).toContain("get_result");
+  });
+
+  it("previews a lone text block as its text, not its serialized envelope", async () => {
+    const mt = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: JSON_LINES }], true)], { maxResultBytes: 1_000 }),
+      BASE,
+    );
+    const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
+    expect(preview.startsWith('[{"type"')).toBe(false);
+    expect(preview).not.toContain('\\"');
+    expect(preview).toBe(JSON_LINES.slice(0, 1_000));
+    expect(notice.totalBytes).toBe(byteLength(JSON_LINES));
+    expect(notice.nextAction.arguments.offset).toBe(1_000);
+    // The stash holds the same text, so the preview plus the pages after it
+    // reassemble the downstream text byte for byte.
+    expect(preview + await pageFrom(mt, notice.resultId, notice.nextAction.arguments.offset))
+      .toBe(JSON_LINES);
+  });
+
+  it("previews several text blocks as readable text and pages their content array", async () => {
+    const content = [
+      { type: "text", text: JSON_LINES.slice(0, 700) },
+      { type: "text", text: JSON_LINES.slice(700, 1_400) },
+    ];
+    const mt = createMetaTools(makeRegistry([downstream(content, true)], { maxResultBytes: 500 }), BASE);
+    const { notice, preview } = lead(await mt.callTool({ address: "down.run" }));
+    expect(preview).toBe(JSON_LINES.slice(0, 500));
+    expect(preview).not.toContain('\\"');
+    // Block boundaries live only in the envelope, which pages from the start.
+    expect(notice.totalBytes).toBe(byteLength(JSON.stringify(content)));
+    expect(notice.nextAction.arguments.offset).toBe(0);
+    expect(JSON.parse(await pageFrom(mt, notice.resultId, 0))).toEqual(content);
+  });
+
+  it("defaults the inline cap to 24,000 bytes", () => {
+    expect(makeRegistry([]).maxResultBytes).toBe(24_000);
+  });
+
+  it.each([
+    ["callTool", true],
+    ["callDestructiveTool", false],
+  ] as const)("keeps a default-capped %s result under 25,000 bytes whole", async (method, readOnly) => {
+    // 25,000 is Claude Code's default MAX_MCP_OUTPUT_TOKENS, and a token covers
+    // at least one byte, so this also bounds the tokens; its 50,000-character
+    // persistence threshold is further off still.
+    const text = "é".repeat(60_000);
+    const mt = createMetaTools(makeRegistry([downstream([{ type: "text", text }], readOnly)]), BASE);
+    const result = await mt[method]({ address: "down.run" });
+    const { notice, preview } = lead(result);
+    expect(byteLength(preview)).toBeLessThanOrEqual(24_000);
+    expect(byteLength(preview)).toBeGreaterThan(23_990);
+    expect(byteLength(required(result.content[0]).text)).toBeLessThan(25_000);
+    expect(notice.totalBytes).toBe(byteLength(text));
+
+    const inline = createMetaTools(
+      makeRegistry([downstream([{ type: "text", text: "x".repeat(24_000) }], readOnly)]),
+      BASE,
+    );
+    expect((await inline[method]({ address: "down.run" })).content)
+      .toEqual([{ type: "text", text: "x".repeat(24_000) }]);
   });
 });

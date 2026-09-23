@@ -66,7 +66,7 @@ describe("identity-scoped connectors", () => {
     const call = async (token: string, name: string, args: object) =>
       (await readJsonRpc(await mcpRpc(connecta, "tools/call", { name, arguments: args }, { token }))).result;
     const result = await call("alice", "call_tool", { address: "docs.read" });
-    const { resultId } = JSON.parse(result.content[0].text.split("\n").at(-1));
+    const { resultId } = JSON.parse(result.content[0].text.split("\n")[0]);
     expect(resultId).toBeTypeOf("string");
     expect((await call("alice", "get_result", { id: resultId })).isError).toBeFalsy();
     expect((await call("bob", "get_result", { id: resultId })).isError).toBe(true);

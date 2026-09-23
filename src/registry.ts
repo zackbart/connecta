@@ -58,7 +58,7 @@ const ID_RE = /^[a-z0-9_-]+$/;
 const DEFAULT_TTL_SECONDS = 300;
 const DEFAULT_STALE_SECONDS = 3600;
 const CATALOG_CHUNK_TTL_GRACE_SECONDS = 300;
-const DEFAULT_MAX_RESULT_BYTES = 50_000;
+const DEFAULT_MAX_RESULT_BYTES = 24_000;
 const encoder = new TextEncoder();
 
 /**
@@ -187,7 +187,7 @@ export interface RegistryOptions {
   /**
    * Cap on inline result size before truncation + get_result paging. Must be a
    * whole number of bytes >= 1; anything else warns at startup and falls back
-   * to the default 50_000.
+   * to the default 24_000.
    */
   maxResultBytes?: number | undefined;
   results?: { maxStashBytes?: number; maxStashEntries?: number } | undefined;
